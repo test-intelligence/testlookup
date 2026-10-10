@@ -9,9 +9,11 @@ For each analysed failure with confidence >= threshold:
 Concurrency-safe: uses SELECT ... FOR UPDATE SKIP LOCKED to prevent
 duplicate defect creation from parallel pipeline executions.
 """
+import hashlib
+
 import structlog
 
-from sqlalchemy import select, text
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.agents.base import BaseAgent
@@ -33,6 +35,53 @@ logger = structlog.get_logger("agents.triage")
 _AUTO_TRIAGE_CONFIDENCE = settings.AI_CONFIDENCE_THRESHOLD
 # Categories that always get a ticket (even at lower confidence)
 _HIGH_PRIORITY_CATEGORIES = {"PRODUCT_BUG", "INFRASTRUCTURE"}
+
+
+async def _recurring_open_defect(db, project_id, fingerprint, tc_id):
+    """The OPEN defect already tracking this test, or None.
+
+    Matched on the test's fingerprint (``signature_fingerprint``, or the
+    linked test case's for rows written before it was recorded) within the
+    project. A row from an EARLIER run takes a recurrence; this run's own row
+    (a re-run of its pipeline) is simply the existing defect. Serialized per
+    (project, test) until the caller commits, so two runs' pipelines cannot
+    both open one.
+    """
+    if not fingerprint:
+        return None
+    digest = hashlib.sha256(f"triage-defect|{project_id}|{fingerprint}".encode()).digest()
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(:lock_id)"),
+        {"lock_id": int.from_bytes(digest[:8], "big", signed=True)},
+    )
+    row = (
+        await db.execute(
+            select(Defect.id, Defect.test_case_id, Defect.jira_ticket_id, Defect.jira_ticket_url)
+            .outerjoin(TestCase, TestCase.id == Defect.test_case_id)
+            .where(
+                Defect.project_id == project_id,
+                Defect.resolution_status == "OPEN",
+                or_(
+                    Defect.signature_fingerprint == fingerprint,
+                    TestCase.test_fingerprint == fingerprint,
+                ),
+            )
+            .order_by(Defect.created_at.asc())
+            .limit(1)
+        )
+    ).first()
+    if row is None:
+        return None
+    if str(row.test_case_id) != str(tc_id):
+        await db.execute(
+            update(Defect)
+            .where(Defect.id == row.id)
+            .values(
+                recurrence_count=func.coalesce(Defect.recurrence_count, 0) + 1,
+                last_recurrence_at=func.now(),
+            )
+        )
+    return row
 
 
 def _outcome_unknown_result(tc_id: object) -> dict:
@@ -214,24 +263,37 @@ class DefectTriageAgent(BaseAgent):
         async with AsyncSessionLocal() as db:
             # Look up test case name
             tc_result = await db.execute(
-                select(TestCase.test_name, TestCase.suite_name).where(TestCase.id == tc_id)
+                select(TestCase.test_name, TestCase.suite_name, TestCase.test_fingerprint)
+                .where(TestCase.id == tc_id)
             )
             tc = tc_result.first()
             test_name = tc.test_name if tc else tc_id
+            fingerprint = getattr(tc, "test_fingerprint", None) if tc else None
 
-            # Step 1: Atomically insert defect — DB enforces uniqueness via partial index
-            stmt = pg_insert(Defect).values(
-                test_case_id=tc_id,
-                project_id=project_id,
-                ai_confidence_score=analysis.get("confidence_score"),
-                failure_category=analysis.get("failure_category", "UNKNOWN"),
-                resolution_status="OPEN",
-            ).on_conflict_do_nothing(
-                index_elements=["test_case_id"],
-                index_where=text("resolution_status = 'OPEN' AND test_case_id IS NOT NULL"),
-            ).returning(Defect.id)
-            result = await db.execute(stmt)
-            new_row = result.first()
+            # Step 0: the same TEST failing again. ``test_case_id`` is one run's
+            # row, so the conflict guard below only ever deduplicated a re-run
+            # of the same run: a test red in 12 runs held 12 OPEN defects (and,
+            # with Jira on, 12 tickets), and the release gate counted every one
+            # (E2E 2026-10-10). The open defect for this test in this project
+            # takes the recurrence instead, as the one-click Jira path does.
+            recurring = await _recurring_open_defect(db, project_id, fingerprint, tc_id)
+            if recurring is not None:
+                new_row = None
+            else:
+                # Step 1: Atomically insert defect — DB enforces uniqueness via partial index
+                stmt = pg_insert(Defect).values(
+                    test_case_id=tc_id,
+                    project_id=project_id,
+                    ai_confidence_score=analysis.get("confidence_score"),
+                    failure_category=analysis.get("failure_category", "UNKNOWN"),
+                    resolution_status="OPEN",
+                    signature_fingerprint=fingerprint,
+                ).on_conflict_do_nothing(
+                    index_elements=["test_case_id"],
+                    index_where=text("resolution_status = 'OPEN' AND test_case_id IS NOT NULL"),
+                ).returning(Defect.id)
+                result = await db.execute(stmt)
+                new_row = result.first()
             await db.commit()
             if new_row is not None:
                 # VIZ-212: a new OPEN defect changes the cached dashboard's counts.
@@ -244,13 +306,16 @@ class DefectTriageAgent(BaseAgent):
             # If insert was a no-op, an open defect already exists. Retry Jira
             # creation only when the existing defect still has no ticket.
             if new_row is None:
-                existing_result = await db.execute(
-                    select(Defect.id, Defect.jira_ticket_id, Defect.jira_ticket_url).where(
-                        Defect.test_case_id == tc_id,
-                        Defect.resolution_status == "OPEN",
+                if recurring is not None:
+                    existing = recurring
+                else:
+                    existing_result = await db.execute(
+                        select(Defect.id, Defect.jira_ticket_id, Defect.jira_ticket_url).where(
+                            Defect.test_case_id == tc_id,
+                            Defect.resolution_status == "OPEN",
+                        )
                     )
-                )
-                existing = existing_result.first()
+                    existing = existing_result.first()
                 if not existing:
                     return {
                         "test_case_id": tc_id,

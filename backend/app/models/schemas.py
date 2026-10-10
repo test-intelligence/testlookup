@@ -1064,6 +1064,10 @@ class SummaryReportResponse(BaseModel):
     runs_per_day: Optional[float] = None
     avg_duration_ms: int
     latest_run_at: Optional[str] = None
+    # Set only when the window holds NO run: the newest in-scope run before it,
+    # so an empty report can say when the project last ran instead of reading
+    # like a broken page ("no records in the last 24 hours", E2E 2026-10-10).
+    last_run_before_window_at: Optional[str] = None
     # Field-level scope exception (VIZ-202 review): ``meta.ignored_filters``
     # is per dimension and the rest of the body IS release-scoped, so the one
     # field that is not says so here. Text: summary_report_service.FLAKY_COUNT_SCOPE_NOTE.

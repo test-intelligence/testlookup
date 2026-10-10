@@ -43,6 +43,7 @@ import DataUnavailable from '@/components/ui/DataUnavailable'
 import { SectionErrorBoundary } from '@/components/ui/SectionErrorBoundary'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
+import { describeEmptyWindow, formatAgeDays } from '@/utils/emptyWindow'
 import { useSummaryReport, useSummaryReportScope } from '@/hooks/useSummaryReport'
 import { summaryReportService } from '@/services/summaryReportService'
 import { validateEnvelopeMeta, type EnvelopeMeta } from '@/lib/viz/contracts'
@@ -131,6 +132,7 @@ export default function SummaryReportPage() {
   // Live) is snapped to the nearest option here, as the picker snaps it.
   const storedDays = useTimeWindowStore(s => s.days)
   const days = snapToAllowed(storedDays, DAYS_OPTIONS)
+  const setStoredDays = useTimeWindowStore(s => s.setDays)
 
   // Aggregation mode is page-local (no other page has the concept).
   const [mode, setMode] = useState<SummaryReportMode>(() => loadStoredMode())
@@ -151,7 +153,7 @@ export default function SummaryReportPage() {
     const saved = view.filters?.summary
     const savedMode = saved && typeof saved === 'object' ? (saved as { mode?: unknown }).mode : undefined
     if (savedMode === 'latest' || savedMode === 'window') setMode(savedMode)
-  }, [])
+  }, [setMode])
   const viewsMenu = useReportViewsMenu({
     route: '/reports/summary',
     windowDays: days,
@@ -176,6 +178,22 @@ export default function SummaryReportPage() {
   const { data, isLoading, error: reportError, mutate: retryReport } = useSummaryReport({ days, mode })
 
   const windowLabel = days === 1 ? '24h' : `${days}d`
+
+  // An empty window said only "no runs in the last 24h", which reads like a
+  // broken page when the project ran yesterday (E2E 2026-10-10: every demo
+  // project's newest run was 39 h old). Say when it last ran and offer the
+  // smallest window that includes it, as the Overview does.
+  const emptyWindow = describeEmptyWindow({
+    totalInWindow: data?.run_count,
+    newestRunAt: data?.latest_run_at ?? data?.last_run_before_window_at ?? null,
+    days,
+    options: DAYS_OPTIONS,
+  })
+  const emptyWindowDescription = emptyWindow.kind === 'outside-window'
+    ? `No test runs were recorded for ${project?.name ?? 'this project'} in the last ${windowLabel}. `
+      + `Its most recent run was ${formatAgeDays(emptyWindow.ageDays)}`
+      + (emptyWindow.suggestedDays == null ? ', outside every available window.' : ', outside this window.')
+    : `No test runs were recorded for ${project?.name ?? 'this project'} in the last ${windowLabel}. Ingest a run or widen the window to populate this report.`
 
   // VIZ-607: PDF (charts drawn by the server) or Excel (a sheet per part, native charts).
   // `inBackground`: the "… in background" items, which send even a small report
@@ -388,8 +406,18 @@ export default function SummaryReportPage() {
       {!hasData || totals == null || data == null ? (
         <EmptyState
           title="No executions in this window"
-          description={`No test runs were recorded for ${project.name} in the last ${windowLabel}. Ingest a run or widen the window to populate this report.`}
+          description={emptyWindowDescription}
           icon={<BarChart3 className="h-6 w-6" />}
+          action={emptyWindow.kind === 'outside-window' && emptyWindow.suggestedDays != null ? (
+            <button
+              type="button"
+              data-testid="summary-widen-window"
+              onClick={() => setStoredDays(emptyWindow.suggestedDays as number)}
+              className="btn-secondary text-sm"
+            >
+              Show last {emptyWindow.suggestedDays} days
+            </button>
+          ) : undefined}
         />
       ) : (
         <>
