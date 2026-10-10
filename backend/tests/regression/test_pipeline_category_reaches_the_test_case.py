@@ -114,3 +114,33 @@ def test_the_backfill_migration_never_overwrites_a_set_label():
     assert "(tc.failure_category IS NULL OR tc.failure_category = 'UNKNOWN')" in sql
     assert "'UNKNOWN'" not in sql.split("a.failure_category IN")[1].split(")")[0]
     assert m.down_revision == "0199"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("correction, bumped", [(True, True), (False, False)])
+async def test_a_correction_bumps_the_analytics_epoch_after_its_commit(correction, bumped):
+    """The correction writes test_cases.failure_category, which the category
+    charts read through the analytics cache: bump after the commit, or they
+    keep the old category until the TTL (the backend.analytics-epoch-bump
+    guard caught this)."""
+    from types import SimpleNamespace
+
+    from app.models.postgres import FeedbackRating
+    from app.routers import feedback as router
+
+    order: list[str] = []
+    db = MagicMock()
+    db.commit = AsyncMock(side_effect=lambda: order.append("commit"))
+    project = uuid.uuid4()
+    body = SimpleNamespace(
+        rating=FeedbackRating.INCORRECT if correction else FeedbackRating.CORRECT,
+        corrected_category="PRODUCT_BUG" if correction else None,
+    )
+    with patch.object(router.feedback_service, "submit_feedback", AsyncMock(return_value={"feedback_id": "f"})), \
+            patch.object(router.feedback_service, "evict_corrected_analysis_cache", AsyncMock()), \
+            patch.object(router.feedback_service, "corrected_project_id",
+                         AsyncMock(return_value=project if correction else None)), \
+            patch("app.services.cache_service.bump_analytics_epoch",
+                  AsyncMock(side_effect=lambda pid: order.append(f"bump:{pid}"))):
+        await router.submit_feedback(uuid.uuid4(), body, db=db, current_user=SimpleNamespace(id=uuid.uuid4()))
+    assert order == (["commit", f"bump:{project}"] if bumped else ["commit"])

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Optional
 import uuid
 
 from fastapi import HTTPException
@@ -59,6 +60,29 @@ def _apply_correction(analysis, body) -> None:
     if body.corrected_root_cause:
         analysis.root_cause_summary = body.corrected_root_cause
     analysis.requires_human_review = False
+
+
+async def corrected_project_id(db: AsyncSession, analysis_id: uuid.UUID, body) -> Optional[uuid.UUID]:
+    """The project whose analytics a correction changed, or None.
+
+    A correction now writes ``test_cases.failure_category`` -- the column the
+    Failure Analysis categories, chart rows and digests read -- so the router
+    bumps that project's analytics epoch after its commit (the
+    ``backend.analytics-epoch-bump`` guard), or the cached charts would keep
+    the old category until their TTL.
+    """
+    if not _is_correction(body):
+        return None
+    from app.models.postgres import TestCase  # noqa: PLC0415
+
+    return (
+        await db.execute(
+            select(TestRun.project_id)
+            .join(TestCase, TestCase.test_run_id == TestRun.id)
+            .join(AIAnalysis, AIAnalysis.test_case_id == TestCase.id)
+            .where(AIAnalysis.id == analysis_id)
+        )
+    ).scalar_one_or_none()
 
 
 async def evict_corrected_analysis_cache(
