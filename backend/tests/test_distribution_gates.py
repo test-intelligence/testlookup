@@ -335,16 +335,8 @@ async def test_release_advisory_route_commits_exact_subject_audit(
         commit=AsyncMock(),
     )
 
-    class _Context:
-        async def __aenter__(self):
-            return db
-
-        async def __aexit__(self, *_args):
-            return False
-
     exact = AsyncMock(return_value=_envelope("pending_review"))
     audit = AsyncMock()
-    monkeypatch.setattr(release_readiness, "AsyncSessionLocal", _Context)
     monkeypatch.setattr(
         release_readiness,
         "get_release_council",
@@ -357,6 +349,7 @@ async def test_release_advisory_route_commits_exact_subject_audit(
         RUN,
         allow_advisory=True,
         current_user=_user("QA_LEAD"),
+        db=db,  # the request's session (test_page_reads_use_one_connection)
     )
 
     assert out.recommendation == "ADVISORY_GO"

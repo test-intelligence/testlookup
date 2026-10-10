@@ -25,6 +25,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import { appSettingsService } from '@/services/appSettingsService'
 import type { IntegrationsConfigRead, SmtpConfigRead } from '@/services/appSettingsService'
+import { tlsMismatch, tlsModeForPort } from './smtpTls'
 
 
 const HELP_TOPIC = helpTopicParam('/settings/notifications')
@@ -238,7 +239,16 @@ export function SmtpConfigCard() {
                         id={id}
                         type="number"
                         value={port}
-                        onChange={e => setPort(Number(e.target.value))}
+                        onChange={e => {
+                          const next = Number(e.target.value)
+                          setPort(next)
+                          // The two well-known submission ports imply the mode:
+                          // 465 = implicit TLS, 587 = STARTTLS. Left as it was,
+                          // Gmail on 587 kept implicit TLS and every send failed
+                          // with an SSL error (owner report 2026-10-10).
+                          const paired = tlsModeForPort(next)
+                          if (paired !== null) setImplicitTls(paired)
+                        }}
                         min={1}
                         max={65535}
                         className="input w-full text-sm"
@@ -322,7 +332,7 @@ export function SmtpConfigCard() {
                   )}
                 </Field>
                 {passwordSet && password === '' && (
-                  <div className="mt-1.5">
+                  <div className="mt-1.5" data-testid="smtp-password-status">
                     {clearPassword ? (
                       <span className="text-xs text-[var(--status-broken)] flex items-center gap-1">
                         <XCircle className="w-3.5 h-3.5" />
@@ -336,13 +346,22 @@ export function SmtpConfigCard() {
                         </button>
                       </span>
                     ) : (
-                      <button
-                        type="button"
-                        onClick={() => setClearPassword(true)}
-                        className="text-xs text-[var(--status-failed)] hover:text-[var(--status-failed)] transition-colors"
-                      >
-                        Clear stored password
-                      </button>
+                      // A stored password used to show only a red "Clear stored
+                      // password" link under an empty field, which read as an
+                      // error: "unable to save the SMTP password" (owner report
+                      // 2026-10-10) when it had saved. Say it is stored; keep
+                      // Clear as a quiet secondary action.
+                      <span className="text-xs text-[var(--color-text-muted)] flex items-center gap-1">
+                        <CheckCircle className="w-3.5 h-3.5 text-[var(--status-passed)]" />
+                        Password saved. Leave blank to keep it.{' '}
+                        <button
+                          type="button"
+                          onClick={() => setClearPassword(true)}
+                          className="underline hover:text-[var(--color-text-secondary)] transition-colors"
+                        >
+                          Clear
+                        </button>
+                      </span>
                     )}
                   </div>
                 )}
@@ -352,12 +371,23 @@ export function SmtpConfigCard() {
             {/* TLS / STARTTLS mode toggle */}
             <div className="flex items-center justify-between">
               <div>
-                <span className="text-sm text-[var(--color-text-secondary)]">Connection security mode</span>
+                <span className="text-sm text-[var(--color-text-secondary)]">
+                  Connection security mode:{' '}
+                  <strong data-testid="smtp-tls-mode">{implicitTls ? 'Implicit TLS' : 'STARTTLS'}</strong>
+                </span>
                 <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
                   Toggle between implicit TLS (typically port 465) and STARTTLS (typically port 587). Plain SMTP is not supported.
                 </p>
+                {tlsMismatch(port, implicitTls) && (
+                  <p className="text-xs text-[var(--status-broken)] mt-1 flex items-center gap-1" data-testid="smtp-tls-mismatch">
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    {tlsMismatch(port, implicitTls)}
+                  </p>
+                )}
               </div>
               <button
+                type="button"
+                aria-label={implicitTls ? 'Use STARTTLS' : 'Use implicit TLS'}
                 onClick={() => setImplicitTls(v => !v)}
                 className={`relative w-11 h-6 rounded-full transition-colors ${
                   implicitTls ? 'bg-[var(--color-btn-primary-bg)]' : 'bg-[var(--color-bg-hover)]'

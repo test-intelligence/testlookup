@@ -1,15 +1,19 @@
 """Settings-stored integration tokens remain authoritative after reload."""
-import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-sys.modules.setdefault("aiosmtplib", MagicMock())
-
-from app.routers import app_settings as router  # noqa: E402
-from app.models.schemas import IntegrationsConfigUpdate  # noqa: E402
-from app.services.secret_service import is_secret_field, strip_secrets_from_config  # noqa: E402
+# Imported BEFORE any test patches ``secret_service.read_secret``: this module
+# binds ``read_secret`` at import, so first importing it under that patch (as
+# ``patch("...integration_config_service.read_secret")`` did when no earlier
+# test had) captured the fake as the "original" and restored the fake -- every
+# later test saw it. aiosmtplib is a real dependency; the sys.modules stub that
+# stood here replaced it for every later test that ran first in a fresh process.
+import app.services.integration_config_service  # noqa: F401
+from app.routers import app_settings as router
+from app.models.schemas import IntegrationsConfigUpdate
+from app.services.secret_service import is_secret_field, strip_secrets_from_config
 
 
 def test_notification_webhooks_are_stripped_from_plaintext_settings():

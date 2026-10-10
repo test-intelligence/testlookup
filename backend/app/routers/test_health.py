@@ -9,6 +9,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
     get_current_active_user,
@@ -17,7 +18,7 @@ from app.core.deps import (
     require_run_access,
     resolve_release_query_scope,
 )
-from app.db.postgres import AsyncSessionLocal
+from app.db.postgres import get_db
 from app.models.postgres import Project, TestRun, User, UserRole
 from app.models.schemas import FlakyCoachResponse, TestHealthResponse
 from app.services.test_health_coach_service import (
@@ -35,21 +36,24 @@ router = APIRouter(prefix="/api/v1", tags=["Test Health"])
 async def get_test_health(
     run_id: uuid.UUID,
     current_user: User = Depends(require_run_access()),
+    # The request's own session: a second one per request starved the
+    # 3-connection pool -- two concurrent loads waited the full 30 s
+    # pool timeout (E2E 2026-10-10, /flaky).
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get test health findings for a specific run.
     Returns anti-pattern analysis, health scores, and stabilization recommendations.
     """
-    async with AsyncSessionLocal() as db:
-        # Verify run exists
-        run_result = await db.execute(select(TestRun).where(TestRun.id == run_id))
-        run = run_result.scalar_one_or_none()
-        if not run:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Test run not found.",
-            )
-        return await get_run_test_health(run_id, db)
+    # Verify run exists
+    run_result = await db.execute(select(TestRun).where(TestRun.id == run_id))
+    run = run_result.scalar_one_or_none()
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Test run not found.",
+        )
+    return await get_run_test_health(run_id, db)
 
 
 @router.get("/projects/{project_id}/flaky-coach", response_model=FlakyCoachResponse)
@@ -64,23 +68,26 @@ async def get_project_flaky_coach(
     release_id: Optional[str] = Query(
         None, description="Only flaky tests that ran in this release."
     ),
+    # The request's own session: a second one per request starved the
+    # 3-connection pool -- two concurrent loads waited the full 30 s
+    # pool timeout (E2E 2026-10-10, /flaky).
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get project-level flaky test leaderboard with quarantine recommendations.
     Ranked by impact score (failure_rate × frequency).
     """
-    async with AsyncSessionLocal() as db:
-        # Verify project exists
-        proj_result = await db.execute(select(Project).where(Project.id == project_id))
-        if not proj_result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Project not found.",
-            )
-        release = await resolve_release_query_scope(db, release_id, current_user)
-        return await get_flaky_coach(
-            project_id, db, days=days, limit=limit, release_id=release
+    # Verify project exists
+    proj_result = await db.execute(select(Project).where(Project.id == project_id))
+    if not proj_result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found.",
         )
+    release = await resolve_release_query_scope(db, release_id, current_user)
+    return await get_flaky_coach(
+        project_id, db, days=days, limit=limit, release_id=release
+    )
 
 
 @router.post("/projects/{project_id}/flaky-coach/refresh")
@@ -89,19 +96,22 @@ async def refresh_project_flaky_coach(
     days: int = Query(default=30, ge=1, le=365),
     current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
     _: User = Depends(require_project_access()),
+    # The request's own session: a second one per request starved the
+    # 3-connection pool -- two concurrent loads waited the full 30 s
+    # pool timeout (E2E 2026-10-10, /flaky).
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Trigger a refresh of the flaky coach data for a project.
     Recomputes quarantine recommendations from test case history.
     """
-    async with AsyncSessionLocal() as db:
-        proj_result = await db.execute(select(Project).where(Project.id == project_id))
-        if not proj_result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Project not found.",
-            )
-        count = await refresh_flaky_coach(project_id, db, days=days)
-        await db.commit()
+    proj_result = await db.execute(select(Project).where(Project.id == project_id))
+    if not proj_result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found.",
+        )
+    count = await refresh_flaky_coach(project_id, db, days=days)
+    await db.commit()
 
     return {"status": "completed", "flaky_tests_found": count}
