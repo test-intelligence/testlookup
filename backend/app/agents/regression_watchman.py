@@ -383,6 +383,13 @@ class RegressionWatchman(BaseAgent):
                 TestRun.project_id == project_id,
                 TestRun.id != test_run_id,
                 TestRun.pass_rate >= settings.RELEASE_PASS_RATE_THRESHOLD * 0.85,
+                # A baseline precedes the run it judges: a late or re-run
+                # analysis must not compare against runs ingested after it.
+                TestRun.created_at < (
+                    select(TestRun.created_at)
+                    .where(TestRun.id == test_run_id)
+                    .scalar_subquery()
+                ),
             )
             .order_by(TestRun.created_at.desc())
             .limit(_BASELINE_RUN_COUNT)

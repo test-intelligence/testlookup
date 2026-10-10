@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.mongo import Collections
 from app.services.eval_label_provenance import checksum_from_analysis
+from app.services.failure_category_sync import apply_human_category
 from app.services.privacy_service import sanitize_for_persistence
 
 from app.models.postgres import AIAnalysis, AIFeedback, DecisionReportFeedback, Defect, FeedbackRating, ModelVersion, TestRun
@@ -122,6 +123,7 @@ async def submit_feedback(db: AsyncSession, analysis_id: uuid.UUID, body, curren
         # Close the correction loop. The analysis is what every product surface
         # renders; the AIFeedback row is only the training label.
         _apply_correction(analysis, body)
+        await apply_human_category(db, analysis.test_case_id, body.corrected_category)
 
     # stage-only: router handler commits
     return {"feedback_id": str(feedback.id), "message": "Feedback recorded — thank you!"}
@@ -392,6 +394,7 @@ async def update_feedback(db: AsyncSession, analysis_id: uuid.UUID, body, curren
 
     if _is_correction(body):
         _apply_correction(analysis, body)
+        await apply_human_category(db, analysis.test_case_id, body.corrected_category)
     # A retraction (INCORRECT -> CORRECT, or the category cleared) deliberately
     # leaves the analysis alone: AIAnalysis keeps no pre-correction original, so
     # the AI's first verdict is unrecoverable once a correction overwrote it.

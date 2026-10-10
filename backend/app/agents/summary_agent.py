@@ -141,6 +141,26 @@ def _layer_has_content(layer: object) -> bool:
     return any(value for value in layer.values())
 
 
+_FAILED_EXPLANATION_PREFIX = "AI analysis could not complete."
+
+
+def _usable_root_cause(analysis: dict) -> str:
+    """The analysis's root cause, or "" when its explanation step failed.
+
+    A failed explanation (unparseable LLM output, a timeout) stores
+    ``"AI analysis could not complete. Reason: Could not parse structured
+    output from agent (invalid_json) ..."`` as its root cause, while keeping
+    the classifier's category and confidence. Quoted to the summary model as
+    a cause, it came back as "6 tests failing due to invalid JSON parsing
+    issues" -- the pipeline's own failure reported as the run's (E2E
+    2026-10-10).
+    """
+    text = str(analysis.get("root_cause_summary") or "").strip()
+    if analysis.get("schema_validated") is False or text.startswith(_FAILED_EXPLANATION_PREFIX):
+        return ""
+    return text
+
+
 def _format_results_line(run_data: dict[str, Any]) -> str:
     """One results line whose numbers actually reconcile.
 
@@ -466,7 +486,10 @@ class SummaryAgent(BaseAgent):
             if analysis.get("confidence_score", 0) >= 50:
                 cat = analysis.get("failure_category", "UNKNOWN")
                 conf = analysis.get("confidence_score", 0)
-                summary = analysis.get("root_cause_summary", "")[:200]
+                summary = (
+                    _usable_root_cause(analysis)[:200]
+                    or "root cause not determined (the AI explanation step failed)"
+                )
                 is_flaky = " [FLAKY]" if analysis.get("is_flaky") else ""
                 name = (
                     analysis.get("test_name")
@@ -1308,7 +1331,7 @@ class SummaryAgent(BaseAgent):
         """Retrieve similar historical failures via semantic search (blocks before LLM)."""
         top_error = ""
         for _tc_id, analysis in self._sorted_analyses(analyses)[:5]:
-            root_cause = str(analysis.get("root_cause_summary") or "").strip()
+            root_cause = _usable_root_cause(analysis)
             if root_cause and len(root_cause) > 20:
                 top_error = root_cause[:200]
                 break
@@ -1462,7 +1485,7 @@ class SummaryAgent(BaseAgent):
 
         likely_cause = "Insufficient evidence to determine root cause."
         for analysis in analyses.values():
-            root_cause_summary = str(analysis.get("root_cause_summary") or "").strip()
+            root_cause_summary = _usable_root_cause(analysis)
             if root_cause_summary:
                 likely_cause = root_cause_summary
                 break
