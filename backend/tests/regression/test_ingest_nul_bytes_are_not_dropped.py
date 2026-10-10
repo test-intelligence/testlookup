@@ -128,3 +128,23 @@ def test_a_build_number_that_was_only_nul_is_still_refused():
             "project_id": str(uuid.uuid4()), "build_number": "\x00",
             "results": [{"test_name": "t", "status": "PASSED"}],
         })
+
+
+def test_live_event_content_is_stripped_but_identifiers_are_refused_not_rewritten():
+    """A batch id is an idempotency key: rewriting a NUL out of it would change
+    which retry it matches, so the live schemas leave identifiers to their own
+    control-character check (test_live_protocol_schema) and strip the rest."""
+    from pydantic import ValidationError
+
+    from app.models.schemas import LiveEventBatch
+
+    ok = LiveEventBatch.model_validate({
+        "session_id": "s-1", "run_id": "r-1", "batch_id": "b-1",
+        "events": [{"event_type": "test_result", "test_name": "t\x00", "error_message": "e\x00"}],
+    })
+    assert ok.events[0].test_name == "t" and ok.events[0].error_message == "e"
+    with pytest.raises(ValidationError):
+        LiveEventBatch.model_validate({
+            "session_id": "s-1", "run_id": "r-1", "batch_id": "b\x00-1",
+            "events": [{"event_type": "test_result"}],
+        })

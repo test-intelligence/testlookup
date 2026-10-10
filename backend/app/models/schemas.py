@@ -1,7 +1,7 @@
 """Pydantic v2 request/response schemas for all API endpoints."""
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, ClassVar, Dict, List, Literal, Optional, Union
 
 from pydantic import (
     AliasChoices,
@@ -2967,11 +2967,21 @@ class _NulFreeInput(BaseModel):
     output is where they come from; nothing downstream can store them.
     """
 
+    #: Identity fields left as sent, so their own validation still refuses a
+    #: control character: a batch id is an idempotency key, and quietly
+    #: rewriting "bad<NUL>id" to "badid" would change which retry it matches.
+    _NUL_KEPT_FIELDS: ClassVar[frozenset[str]] = frozenset()
+
     @model_validator(mode="before")
     @classmethod
     def _strip_nul_bytes(cls, data):
         from app.services.ingestion_sanitization import strip_nul_bytes  # noqa: PLC0415
 
+        if isinstance(data, dict) and cls._NUL_KEPT_FIELDS:
+            return {
+                key: value if key in cls._NUL_KEPT_FIELDS else strip_nul_bytes(value)
+                for key, value in data.items()
+            }
         return strip_nul_bytes(data)
 
 
@@ -3059,6 +3069,7 @@ class LiveEventBatch(_NulFreeInput):
     A batch of events sent from a client machine.
     Batching amortises HTTP overhead — 50–1000 events per call is recommended.
     """
+    _NUL_KEPT_FIELDS: ClassVar[frozenset[str]] = frozenset({"session_id", "run_id", "batch_id"})
     session_id: str = Field(..., min_length=1, max_length=255)
     run_id: str = Field(..., min_length=1, max_length=100)
     batch_id: Optional[str] = Field(
@@ -3105,6 +3116,7 @@ class LiveStreamIngestRequest(_NulFreeInput):
     call for a given ``(project_id, run_id)`` pair auto-creates the session;
     subsequent calls reuse it. Clients never call ``/sessions`` themselves.
     """
+    _NUL_KEPT_FIELDS: ClassVar[frozenset[str]] = frozenset({"session_id", "run_id", "batch_id"})
     run_id: str = Field(..., min_length=1, max_length=100)
     batch_id: Optional[str] = Field(
         None,
