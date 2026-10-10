@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import require_project_access, require_project_role, require_role
+from app.core.deps import require_role
 from app.db.postgres import get_db
 from app.models.postgres import (
     AIEvalBaseline,
@@ -522,13 +522,28 @@ async def run_agent_stack_release_gate(
     )
 
 
+async def _authorize_body_project(db: AsyncSession, user: User, project_id: uuid.UUID) -> None:
+    """Membership of the project named in the BODY.
+
+    ``require_project_access()`` / ``require_project_role()`` read the URL
+    path, and these routes carry the project in the body, so both were
+    no-ops: any signed-in user wrote a G2 verdict into any project (which
+    gates that project's agent tier changes), and a global QA lead switched
+    off another project's reviewer second-model check (E2E 2026-10-10).
+    """
+    from app.core.deps import resolve_project_scope  # noqa: PLC0415
+
+    await resolve_project_scope(db, user, str(project_id))
+
+
 @router.post("/tier-comparison")
 async def run_tier_comparison(
     body: TierComparisonRequest,
-    current_user: User = Depends(require_project_access()),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
     db: AsyncSession = Depends(get_db),
 ):
     """Run G2 against paired golden outputs and optionally retain the decision."""
+    await _authorize_body_project(db, current_user, body.project_id)
     from app.services.tier_comparison_service import (
         TierOutputPair,
         compare_tier_outputs,
@@ -578,11 +593,11 @@ async def run_tier_comparison(
 @router.post("/reviewer-quality")
 async def run_reviewer_quality(
     body: ReviewerQualityRequest,
-    current_user: User = Depends(require_project_access()),
-    _lead: User = Depends(require_project_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
     db: AsyncSession = Depends(get_db),
 ):
     """Run G3 and apply its guarded second-model retirement decision."""
+    await _authorize_body_project(db, current_user, body.project_id)
     from app.services.agent_capability_registry import get_capability
     from app.services.reviewer_quality_service import (
         disable_second_model_if_eligible,

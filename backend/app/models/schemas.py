@@ -2954,7 +2954,24 @@ SuppliedCommitRangeInput = Union[List[SuppliedCommit], SuppliedCommitRange]
 
 # ── Live Stream Schemas ───────────────────────────────────────────────────────
 
-class LiveSessionCreate(BaseModel):
+class _NulFreeInput(BaseModel):
+    """Strips U+0000 from every string of an ingestion request body.
+
+    PostgreSQL text cannot hold a NUL. One in a build number or branch made
+    ``POST /ingest`` answer 500 (the run-identity lookup failed) and, in a
+    result, rejected that row from the run (E2E 2026-10-10). Captured test
+    output is where they come from; nothing downstream can store them.
+    """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _strip_nul_bytes(cls, data):
+        from app.services.ingestion_sanitization import strip_nul_bytes  # noqa: PLC0415
+
+        return strip_nul_bytes(data)
+
+
+class LiveSessionCreate(_NulFreeInput):
     """Request body to register a new live execution session.
 
     ``project_id`` accepts either a project UUID *or* a human-readable project
@@ -3033,7 +3050,7 @@ class LiveEvent(BaseModel):
     metadata: Optional[dict] = None
 
 
-class LiveEventBatch(BaseModel):
+class LiveEventBatch(_NulFreeInput):
     """
     A batch of events sent from a client machine.
     Batching amortises HTTP overhead — 50–1000 events per call is recommended.
@@ -3076,7 +3093,7 @@ class LiveStreamMeta(BaseModel):
     metadata: Optional[dict] = None
 
 
-class LiveStreamIngestRequest(BaseModel):
+class LiveStreamIngestRequest(_NulFreeInput):
     """API-key-authenticated streaming ingest. Server auto-manages the session.
 
     A client-chosen ``run_id`` (any stable identifier — CI build id, UUID, etc.)
@@ -3123,7 +3140,7 @@ class IngestTestResult(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
 
-class IngestPayload(BaseModel):
+class IngestPayload(_NulFreeInput):
     """JSON batch ingest request body for POST /api/v1/ingest."""
     project_id: str = Field(..., description="Project UUID")
     build_number: str = Field(..., min_length=1, max_length=BUILD_NUMBER_MAX_LENGTH)

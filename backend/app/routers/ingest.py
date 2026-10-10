@@ -12,6 +12,7 @@ Project-scoped API keys are restricted to their bound project; non-scoped
 keys / JWTs must still be members of the target project (enforced by
 ``resolve_project_scope``).
 """
+import re
 import uuid
 from datetime import datetime
 
@@ -20,7 +21,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_api_key_context, get_db, resolve_project_scope
+from app.core.deps import ensure_ingest_role, get_api_key_context, get_db, resolve_project_scope
 from app.models.postgres import IngestionSource, User
 from app.services.activity.service import ActorRef, record as record_activity
 from app.models.schemas import BUILD_NUMBER_MAX_LENGTH, IngestPayload, IngestResponse, UploadStatusResponse
@@ -103,6 +104,7 @@ async def ingest_batch(
     AI analysis pipeline.
     """
     current_user, bound_project_id = auth
+    ensure_ingest_role(current_user)
     target_project_id = _parse_project_uuid(str(payload.project_id))
 
     # Project-scoped API key: enforce that ingestion targets the bound project
@@ -342,6 +344,24 @@ async def ingest_file(
     and ``playwright_ingest`` feature flags respectively — 503 is returned if
     a disabled format is requested.
     """
+    # PostgreSQL text cannot hold U+0000: a NUL in a form field failed the
+    # run-identity lookup with a 500. The JSON bodies strip them in the schema
+    # (``_NulFreeInput``); multipart fields arrive here as plain strings.
+    (
+        build_number, branch, commit_hash, release_name, ci_provider, ci_repo,
+        ci_actor, ci_run_url, jenkins_job, environment, commit_range,
+    ) = (
+        v.replace("\x00", "") if isinstance(v, str) else v
+        for v in (
+            build_number, branch, commit_hash, release_name, ci_provider, ci_repo,
+            ci_actor, ci_run_url, jenkins_job, environment, commit_range,
+        )
+    )
+    if not build_number:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="build_number must not be empty",
+        )
     if format not in _SUPPORTED_FORMATS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -352,6 +372,7 @@ async def ingest_file(
         )
 
     current_user, bound_project_id = auth
+    ensure_ingest_role(current_user)
     target_project_id = _parse_project_uuid(project_id)
 
     # Project-scoped API key: enforce that ingestion targets the bound project
@@ -601,6 +622,13 @@ async def get_upload_status(
     )
 
 
+_PLAYWRIGHT_ROOT_RE = re.compile(r'\{\s*"config"\s*:\s*\{')
+_PLAYWRIGHT_CONFIG_MARKERS = (
+    '"projects"', '"rootDir"', '"configFile"', '"forbidOnly"', '"fullyParallel"',
+    '"reportSlowTests"',
+)
+
+
 def _detect_format(filename: str, content: bytes) -> str:
     """Auto-detect test result file format from filename and first 4 KB of content.
 
@@ -651,6 +679,17 @@ def _detect_format(filename: str, content: bytes) -> str:
         '"config"' in stripped[:2048]
         and '"projects"' in stripped[:2048]
         and '"suites"' in stripped[:2048]
+    ):
+        return "playwright"
+    # ...but ``suites`` comes AFTER the whole ``config`` block, which carries
+    # ``argv``, every project and the metadata: this repo's own config puts it
+    # at byte 2573, so a real report missed the check above, fell through to
+    # the ``.json`` -> allure fallback and failed as "no test results"
+    # (E2E 2026-10-10). The reporter always writes ``config`` as the FIRST
+    # root key, with Playwright-only settings in it; no other supported
+    # format opens that way.
+    if looks_like_json and _PLAYWRIGHT_ROOT_RE.match(stripped) and any(
+        marker in stripped for marker in _PLAYWRIGHT_CONFIG_MARKERS
     ):
         return "playwright"
 

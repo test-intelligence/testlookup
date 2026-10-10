@@ -28,7 +28,7 @@ from app.routers import ingest as ingest_router
 pytestmark = pytest.mark.regression
 
 PROJECT = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-USER = SimpleNamespace(id="u-1", is_active=True)
+USER = SimpleNamespace(id="u-1", is_active=True, role="QA_ENGINEER")
 
 
 class _Stop(Exception):

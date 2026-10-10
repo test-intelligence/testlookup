@@ -515,7 +515,7 @@ async def test_stream_close_route_bumps_after_commit(journal, monkeypatch):
     monkeypatch.setattr(stream_service, "finalize_closed_session_redis", AsyncMock())
 
     await route.close_session(
-        session_id=str(uuid.uuid4()), db=_Session(journal), auth=(SimpleNamespace(), None)
+        session_id=str(uuid.uuid4()), db=_Session(journal), auth=(SimpleNamespace(role="QA_ENGINEER"), None)
     )
 
     _assert_bumped_after_commit(journal, project_id)
@@ -531,7 +531,7 @@ async def test_stream_close_route_does_not_bump_an_already_closed_session(
     monkeypatch.setattr(stream_service, "finalize_closed_session_redis", AsyncMock())
 
     await route.close_session(
-        session_id=str(uuid.uuid4()), db=_Session(journal), auth=(SimpleNamespace(), None)
+        session_id=str(uuid.uuid4()), db=_Session(journal), auth=(SimpleNamespace(role="QA_ENGINEER"), None)
     )
     assert _bumps(journal) == []
 
@@ -549,7 +549,7 @@ async def test_stream_close_route_rollback_does_not_bump(journal, monkeypatch):
         await route.close_session(
             session_id=str(uuid.uuid4()),
             db=_Session(journal, fail_commit=True),
-            auth=(SimpleNamespace(), None),
+            auth=(SimpleNamespace(role="QA_ENGINEER"), None),
         )
     assert _bumps(journal) == []
 

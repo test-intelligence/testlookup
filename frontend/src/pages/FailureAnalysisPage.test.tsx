@@ -13,6 +13,13 @@ import FailureAnalysisPage, {
 } from './FailureAnalysisPage'
 import { shiftDayIso, utcDayIso } from '@/utils/calendarDay'
 import { DEFAULT_TIME_WINDOW_DAYS, useTimeWindowStore } from '@/store/timeWindowStore'
+import { useAuthStore } from '@/store/authStore'
+
+// Correct and Classify are QA engineer and above (E2E 2026-10-10): the suites
+// below act as one; the viewer test at the end sets its own role.
+beforeEach(() => {
+  useAuthStore.setState({ user: { id: 'eng', role: 'QA_ENGINEER' } as never })
+})
 
 // P1: the header's Views menu reads this page's saved views (none here).
 vi.mock('@/services/savedViewsService', () => ({
@@ -1725,5 +1732,42 @@ describe('FailureAnalysisPage — the headline counts', () => {
     const banner = screen.getByRole('region', { name: 'Failure verdict' })
     expect(banner).toHaveTextContent('test_checkout failed 3 times in 7 days')
     expect(banner).not.toHaveTextContent(/of 3 runs/)
+  })
+})
+
+
+describe('FailureAnalysisPage — a viewer is not offered category writes (E2E 2026-10-10)', () => {
+  beforeEach(() => {
+    try { localStorage.removeItem('testlookup-time-window') } catch { /* ignore */ }
+    useTimeWindowStore.setState({ days: DEFAULT_TIME_WINDOW_DAYS })
+    useAuthStore.setState({ user: { id: 'v', role: 'VIEWER' } as never })
+  })
+
+  it('shows the uncategorised share but neither Correct nor Classify, in the card or the ⋯ menu', async () => {
+    // The API answers 403 below QA_ENGINEER for both: a correction rewrites
+    // the AI analysis and Classify relabels every uncategorised failure.
+    const { useFlakyTests, useFailureCategories, useTopFailing, useTrendData } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useTopFailing as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useFailureCategories as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [{ category: 'UNKNOWN', count: 10 }] },
+      isLoading: false,
+    })
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { data: [{ date: '2026-05-16', passed: 5, failed: 10, skipped: 0, broken: 0, total: 15, pass_rate: 33 }] },
+      isLoading: false,
+    })
+
+    renderFailures('?tab=categories')
+
+    expect(await screen.findByText(/100% of failures are sitting in/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Correct the classification/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Classify them so owners can be auto-routed/i })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    expect(await screen.findByRole('menuitem', { name: /Export CSV/i })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /Classify uncategorised failures/i })).toBeNull()
+    expect(screen.queryByText('Classify uncategorised failures')).toBeNull()
   })
 })

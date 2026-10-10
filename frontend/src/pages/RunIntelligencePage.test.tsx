@@ -14,6 +14,7 @@ import { useEffect, type ReactNode } from 'react'
 import { MemoryRouter, Route, Routes, useLocation, useParams } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FailureClusterIntel, Provenance, RunModeSummary, ScoringModel } from '@/services/runIntelligenceService'
+import { useAuthStore } from '@/store/authStore'
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -1069,5 +1070,22 @@ describe('RunDecisionReport — the Evidence tab\'s decision report (P4)', () =>
       </MemoryRouter>,
     )
     expect(container).toBeEmptyDOMElement()
+  })
+})
+
+
+describe('RunIntelligencePage — File defect is QA engineer and above (E2E 2026-10-10)', () => {
+  // ``POST /deep-investigate/{run}/clusters/{id}/promote`` creates an OPEN
+  // defect on the release: QA_ENGINEER, like ``/analytics/defects``.
+  it.each([
+    ['VIEWER', false],
+    ['TESTER', false],
+    ['QA_ENGINEER', true],
+  ])('as %s the failure block offers File defect: %s', (role, offered) => {
+    useAuthStore.setState({ user: { id: 'u', role } as never })
+    mockHooks({ intelligence: MOCK_INTELLIGENCE })
+    renderRunIntel()
+    expect(screen.getByText(/DB Timeouts/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /File defect/i }) !== null).toBe(offered)
   })
 })

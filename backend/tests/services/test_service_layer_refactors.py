@@ -1409,7 +1409,7 @@ async def test_feedback_service_submit_feedback_backpropagates_incorrect_correct
         corrected_root_cause="New cause",
         comment="Wrong label",
     )
-    current_user = SimpleNamespace(id=uuid.uuid4())
+    current_user = SimpleNamespace(id=uuid.uuid4(), role="QA_ENGINEER")
     db = FakeAsyncDB([FakeExecuteResult(scalar=analysis)])
 
     async def fake_commit():

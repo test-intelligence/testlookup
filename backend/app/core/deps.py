@@ -828,6 +828,32 @@ def require_role(min_role: UserRole, *, allow_project_key: bool = False) -> Call
     return _check
 
 
+INGEST_MIN_ROLE = UserRole.QA_ENGINEER
+
+
+def ensure_ingest_role(user: User) -> None:
+    """Writing test results needs QA_ENGINEER, whatever the credential.
+
+    The ingest and live-session routes authenticate with
+    ``get_api_key_context`` (JWT or API key) and checked project membership
+    only, so a VIEWER or TESTER member posted results, attached them to a
+    release, merged them into a CI run sharing the build number, and closed
+    other members' live runs (E2E 2026-10-10). The UI has always reserved
+    Upload for QA_ENGINEER, and only QA_ENGINEER+ may create an API key, so a
+    CI key -- its owner's role -- passes unchanged.
+    """
+    try:
+        idx = _ROLE_ORDER.index(_normalize_user_role(user.role))
+    except ValueError:
+        idx = -1
+    if idx < _ROLE_ORDER.index(INGEST_MIN_ROLE):
+        _count_auth_failure("insufficient_role")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Requires at least {INGEST_MIN_ROLE.value} role to submit test results",
+        )
+
+
 def require_instance_admin() -> Callable:
     """ADMIN, and not through an API key bound to one project.
 

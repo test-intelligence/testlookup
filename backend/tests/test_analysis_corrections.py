@@ -173,7 +173,7 @@ async def test_submit_feedback_invalidates_cache_on_incorrect_correction():
         corrected_root_cause="real bug",
         comment=None,
     )
-    user = SimpleNamespace(id=uuid.uuid4())
+    user = SimpleNamespace(id=uuid.uuid4(), role="QA_ENGINEER")
 
     # ``submit_feedback`` now resolves the analysis' owning project and checks
     # membership before mutating it. That is a second ``db.execute`` -- and this

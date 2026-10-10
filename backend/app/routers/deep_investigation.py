@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
     get_accessible_project_ids,
-    get_current_active_user,
     require_role,
     require_run_access,
     resolve_project_scope,
@@ -90,7 +89,9 @@ class DeepFindingResponse(BaseModel):
 async def trigger_deep_investigation(
     run_id: uuid.UUID,
     body: TriggerDeepRequest,
-    current_user: User = Depends(get_current_active_user),
+    # QA_ENGINEER, as the page's button and ``POST /analyze`` require: each
+    # call queues an LLM pipeline, and a VIEWER member could loop it.
+    current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
     _: User = Depends(require_run_access()),
 ):
     """
@@ -230,7 +231,10 @@ async def promote_cluster_to_defect(
     run_id: uuid.UUID,
     cluster_id: str,
     body: DefectPromotionRequest,
-    current_user: User = Depends(get_current_active_user),
+    # QA_ENGINEER, like ``POST /analytics/defects``: a VIEWER member created
+    # OPEN defects on the release, which the gate and the KPIs count
+    # (E2E 2026-10-10).
+    current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_run_access()),
 ):

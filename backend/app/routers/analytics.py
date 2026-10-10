@@ -798,7 +798,10 @@ async def notify_suite_owner(
 async def classify_uncategorized_failures(
     payload: ClassifyUncategorizedRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    # QA_ENGINEER, like ``POST /analyze`` that writes the same column for one
+    # test: with membership alone a VIEWER relabelled a year of failures in
+    # one call (E2E 2026-10-10).
+    current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
 ):
     """Assign ``payload.category`` to every failing test case in the project's
     window that's currently unlabelled (``failure_category IS NULL`` or

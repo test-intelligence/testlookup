@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
     StreamingApiKeyContext,
+    ensure_ingest_role,
     get_accessible_project_ids,
     get_api_key_context,
     get_current_active_user,
@@ -55,6 +56,7 @@ async def create_session(
 
     if not current_user.is_active:
         raise HTTPException(status_code=403, detail="Inactive user account")
+    ensure_ingest_role(current_user)
 
     # Project-scoped API key enforcement moved into stream_service.create_session
     # so it can compare against the *resolved* project — payload.project_id may
@@ -94,6 +96,8 @@ async def close_session(
     auth: tuple[User, uuid.UUID | None] = Depends(get_api_key_context),
 ):
     current_user, bound_project_id = auth
+    # Closing finalizes the run (counts, AI pipeline): a write, like opening.
+    ensure_ingest_role(current_user)
     closed_project_id = await stream_service.close_session(
         db, session_id, bound_project_id=bound_project_id, user=current_user,
     )

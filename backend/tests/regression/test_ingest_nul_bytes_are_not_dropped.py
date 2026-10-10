@@ -101,3 +101,30 @@ def test_the_shared_upsert_and_the_batch_task_strip_them_too():
 
     assert "case_data = strip_nul_bytes(case_data)" in inspect.getsource(ingestion._upsert_test_case)
     assert "payload = strip_nul_bytes(payload)" in inspect.getsource(tasks.ingest_uploaded_results)
+
+
+def test_a_nul_in_a_run_level_field_is_stripped_at_the_schema():
+    """Live (round 1): ``build_number="...\x00"`` made ``POST /ingest`` a 500,
+    the run-identity lookup failing before anything was queued."""
+    from app.models.schemas import IngestPayload, LiveSessionCreate
+
+    p = IngestPayload.model_validate({
+        "project_id": str(uuid.uuid4()), "build_number": "b-1\x00", "branch": "ma\x00in",
+        "results": [{"test_name": "t\x00", "status": "FAILED", "error_message": "x\x00"}],
+    })
+    assert (p.build_number, p.branch) == ("b-1", "main")
+    assert p.results[0].test_name == "t" and p.results[0].error_message == "x"
+    s = LiveSessionCreate.model_validate({"project_id": "P\x00", "client_name": "c", "build_number": "\x00b"})
+    assert (s.project_id, s.build_number) == ("P", "b")
+
+
+def test_a_build_number_that_was_only_nul_is_still_refused():
+    from pydantic import ValidationError
+
+    from app.models.schemas import IngestPayload
+
+    with pytest.raises(ValidationError):
+        IngestPayload.model_validate({
+            "project_id": str(uuid.uuid4()), "build_number": "\x00",
+            "results": [{"test_name": "t", "status": "PASSED"}],
+        })

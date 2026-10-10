@@ -24,6 +24,30 @@ def _is_correction(body) -> bool:
     return bool(body.corrected_category) and body.rating == FeedbackRating.INCORRECT
 
 
+def _require_correction_role(body, current_user) -> None:
+    """A correction rewrites the analysis every surface renders: QA_ENGINEER.
+
+    Plain rating feedback stays open to every member. Applying a correction
+    overwrites the root cause and category, clears ``requires_human_review``
+    and plants a training label, and reading that analysis already needs
+    QA_ENGINEER (``GET /analyze``). With membership alone a VIEWER did all of
+    that (E2E 2026-10-10).
+    """
+    if not _is_correction(body):
+        return
+    from app.core.deps import _ROLE_ORDER, _normalize_user_role  # noqa: PLC0415
+    from app.models.postgres import UserRole  # noqa: PLC0415
+
+    try:
+        idx = _ROLE_ORDER.index(_normalize_user_role(current_user.role))
+    except ValueError:
+        idx = -1
+    if idx < _ROLE_ORDER.index(UserRole.QA_ENGINEER):
+        raise HTTPException(
+            403, detail="Correcting an AI analysis requires at least QA_ENGINEER role"
+        )
+
+
 def _apply_correction(analysis, body) -> None:
     """Push a correction onto the analysis every product surface renders.
 
@@ -78,6 +102,7 @@ async def submit_feedback(db: AsyncSession, analysis_id: uuid.UUID, body, curren
     # ``_invalidate_analysis_cache_for`` below already performs exactly this
     # join -- the scope was one line away the whole time.
     await _require_analysis_access(db, analysis, current_user)
+    _require_correction_role(body, current_user)
 
     feedback = AIFeedback(
         analysis_id=analysis_id,
@@ -363,6 +388,7 @@ async def update_feedback(db: AsyncSession, analysis_id: uuid.UUID, body, curren
     # touch that project -- membership can be revoked after the fact. Without
     # this the edit is the cross-tenant write the submit path was fixed for.
     await _require_analysis_access(db, analysis, current_user)
+    _require_correction_role(body, current_user)
 
     if _is_correction(body):
         _apply_correction(analysis, body)
