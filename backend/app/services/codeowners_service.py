@@ -59,6 +59,7 @@ import structlog
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.http_client import http_verify
 from app.models.postgres import (
     ProjectMember,
     ServiceOwnershipRule,
@@ -361,7 +362,7 @@ async def fetch_codeowners_text(
             return None, f"blocked_unsafe_target:{block}"
 
         async def _do_get(target: str = url) -> httpx.Response:
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx.AsyncClient(verify=http_verify(), timeout=15.0) as client:
                 return await client.get(target, headers=headers)
 
         try:

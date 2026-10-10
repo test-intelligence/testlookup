@@ -68,6 +68,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.http_client import http_verify
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import (
     FailureCluster,
@@ -523,7 +524,7 @@ async def _gh_get(
     seam's default)."""
     if client is not None:
         return await client.get(url, headers=headers, params=params)
-    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as one_shot:
+    async with httpx.AsyncClient(verify=http_verify(), timeout=_HTTP_TIMEOUT) as one_shot:
         return await one_shot.get(url, headers=headers, params=params)
 
 
@@ -605,7 +606,7 @@ async def _fetch_connector_range(
         "User-Agent": "TestLookup/1.0",
         "X-GitHub-Api-Version": "2022-11-28",
     }
-    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+    async with httpx.AsyncClient(verify=http_verify(), timeout=_HTTP_TIMEOUT) as client:
         try:
             resp = await _gh_get(compare_url, headers, client=client)
         except httpx.HTTPError as exc:

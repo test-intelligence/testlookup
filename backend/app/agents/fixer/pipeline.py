@@ -428,6 +428,7 @@ async def fetch_default_branch(
     "main"). Best-effort: None on any failure — callers fall back to "main"
     only when unknown."""
     import httpx
+    from app.core.http_client import http_verify
 
     from app.services.github_checks_service import _ssrf_block_reason
 
@@ -435,7 +436,7 @@ async def fetch_default_branch(
     if await _ssrf_block_reason(repo_url):
         return None
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(verify=http_verify(), timeout=15.0) as client:
             resp = await client.get(repo_url, headers={
                 "Authorization": f"Bearer {pat}",
                 "Accept": _GH_HEADERS_ACCEPT,
@@ -467,6 +468,7 @@ async def open_draft_pr(
     ``{"skipped"|"error": reason}``. Reuses the GitHub PAT/SSRF/HTTP patterns
     from ``github_checks_service``; never raises."""
     import httpx
+    from app.core.http_client import http_verify
 
     from app.services.github_checks_service import _ssrf_block_reason
 
@@ -485,7 +487,7 @@ async def open_draft_pr(
         return {"error": f"blocked target: {block}"}
 
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
+        async with httpx.AsyncClient(verify=http_verify(), timeout=20.0) as client:
             repo = await client.get(repo_url, headers=headers)
             if repo.status_code != 200:
                 return {"error": f"repo lookup HTTP {repo.status_code}"}
@@ -619,6 +621,7 @@ async def poll_open_fixer_prs() -> dict[str, int]:
         return summary
 
     import httpx
+    from app.core.http_client import http_verify
 
     from app.db.postgres import AsyncSessionLocal
     from app.services import secret_service
@@ -664,7 +667,7 @@ async def poll_open_fixer_prs() -> dict[str, int]:
 
     # Phase 2 — poll GitHub with NO session open, reusing ONE client.
     terminal: list[tuple[uuid.UUID, uuid.UUID, str, Optional[str], bool]] = []
-    async with httpx.AsyncClient(timeout=15.0) as client:
+    async with httpx.AsyncClient(verify=http_verify(), timeout=15.0) as client:
         for row in open_rows:
             cred = creds.get(row.project_id)
             if cred is None:

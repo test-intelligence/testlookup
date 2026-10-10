@@ -39,6 +39,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.http_client import http_verify
 from app.core.config import settings
 from app.models.postgres import Release
 from app.services.github_checks_service import (
@@ -111,7 +112,7 @@ async def _authorized_get(
         "Accept": "application/vnd.github+json",
         "User-Agent": "TestLookup/1.0",
     }
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+    async with httpx.AsyncClient(verify=http_verify(), timeout=_TIMEOUT) as client:
         resp = await client.get(url, headers=headers, params=params or {})
     if resp.status_code != 200:
         raise GitHubSyncUnavailable(f"GitHub returned {resp.status_code} for {path}")

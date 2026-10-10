@@ -44,6 +44,15 @@ Found in the homelab end-to-end pass against the deployed fake:
   reported "SMTP_ENABLED=false". It now probes the sender's own configuration,
   with the sender's TLS rule (STARTTLS on 587).
 
+**Every outbound client honours `HTTP_CA_BUNDLE`.** The Jira finding had
+fourteen siblings: GitHub checks, PR comments and release sync, GitLab, CODEOWNERS,
+commit attribution, the fixer agent's GitHub calls and the Ollama check each
+built their own `httpx.AsyncClient(timeout=...)` with the default trust store,
+so behind an internal CA (GitHub Enterprise, self-hosted GitLab) those paths
+failed TLS while the rest of the app worked. Each now passes
+`verify=http_verify()`, and a guard test fails any new client under `app/` that
+passes neither that nor a policy-carrying `transport=`.
+
 New setting: **`WEBHOOK_PRIVATE_ALLOWED_HOSTS`** (exact host names, empty by
 default). Online, Slack and Teams webhooks go through the public-only client,
 which refuses private addresses; a host named here (an on-prem Slack-compatible

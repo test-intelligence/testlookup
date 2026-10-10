@@ -281,7 +281,7 @@ type = 'workflow_dispatch'
 
 ## backend/app/agents/fixer/runners.py — FakeRunner
 
-[backend/app/agents/fixer/runners.py:553](../../backend/app/agents/fixer/runners.py#L553)
+[backend/app/agents/fixer/runners.py:555](../../backend/app/agents/fixer/runners.py#L555)
 
 Bases: `ValidationRunner`.
 
@@ -18271,7 +18271,7 @@ size: int
 
 ## backend/app/services/codeowners_service.py — CodeownersEntry
 
-[backend/app/services/codeowners_service.py:100](../../backend/app/services/codeowners_service.py#L100)
+[backend/app/services/codeowners_service.py:101](../../backend/app/services/codeowners_service.py#L101)
 
 Bases: ``.
 
@@ -18285,7 +18285,7 @@ owners: list[str] = field(default_factory=list)
 
 ## backend/app/services/commit_attribution_service.py — _ConnectorTarget
 
-[backend/app/services/commit_attribution_service.py:531](../../backend/app/services/commit_attribution_service.py#L531)
+[backend/app/services/commit_attribution_service.py:532](../../backend/app/services/commit_attribution_service.py#L532)
 
 Bases: ``.
 
@@ -19002,7 +19002,7 @@ reason: str
 
 ## backend/app/services/github_checks_service.py — _CheckEnrichment
 
-[backend/app/services/github_checks_service.py:470](../../backend/app/services/github_checks_service.py#L470)
+[backend/app/services/github_checks_service.py:471](../../backend/app/services/github_checks_service.py#L471)
 
 Bases: ``.
 
@@ -19023,7 +19023,7 @@ kind_labels: dict[str, str] = field(default_factory=dict)
 
 ## backend/app/services/github_pr_comment_service.py — _Partition
 
-[backend/app/services/github_pr_comment_service.py:177](../../backend/app/services/github_pr_comment_service.py#L177)
+[backend/app/services/github_pr_comment_service.py:178](../../backend/app/services/github_pr_comment_service.py#L178)
 
 Bases: ``.
 
@@ -19040,7 +19040,7 @@ has_baseline: bool = False
 
 ## backend/app/services/github_pr_comment_service.py — _PRCommentContext
 
-[backend/app/services/github_pr_comment_service.py:491](../../backend/app/services/github_pr_comment_service.py#L491)
+[backend/app/services/github_pr_comment_service.py:492](../../backend/app/services/github_pr_comment_service.py#L492)
 
 Bases: ``.
 
@@ -19061,7 +19061,7 @@ has_fixed: bool
 
 ## backend/app/services/gitlab_integration_service.py — _MRNoteContext
 
-[backend/app/services/gitlab_integration_service.py:426](../../backend/app/services/gitlab_integration_service.py#L426)
+[backend/app/services/gitlab_integration_service.py:427](../../backend/app/services/gitlab_integration_service.py#L427)
 
 Bases: ``.
 
@@ -19073,7 +19073,7 @@ __slots__ = ('integration_id', 'api_root', 'project_ref', 'mr_iid', 'pat', 'mode
 
 ## backend/app/services/gitlab_integration_service.py — _CommitStatusContext
 
-[backend/app/services/gitlab_integration_service.py:759](../../backend/app/services/gitlab_integration_service.py#L759)
+[backend/app/services/gitlab_integration_service.py:760](../../backend/app/services/gitlab_integration_service.py#L760)
 
 Bases: ``.
 
