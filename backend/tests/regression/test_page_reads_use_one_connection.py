@@ -38,3 +38,28 @@ def test_the_handler_uses_the_requests_session(handler):
     db = inspect.signature(handler).parameters.get("db")
     assert db is not None and db.default.dependency is get_db, handler.__name__
     assert "AsyncSessionLocal(" not in inspect.getsource(handler), handler.__name__
+
+
+@pytest.mark.asyncio
+async def test_a_cold_flaky_coach_releases_the_request_connection_before_populating():
+    """On a cache miss the coach populates on a dedicated write session (which
+    reads storage config on yet another). Holding the request's connection
+    across that made one cold load need the whole 2+1 pool."""
+    import uuid
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from app.services import test_health_coach_service as svc
+
+    order: list[str] = []
+    db = MagicMock()
+    db.new, db.dirty, db.deleted = [], [], []
+    db.close = AsyncMock(side_effect=lambda: order.append("close"))
+    populate = AsyncMock(side_effect=lambda *a, **k: order.append("populate"))
+    loads = AsyncMock(side_effect=[[], []])
+    with patch.object(svc, "_load_flaky_cache", loads), \
+            patch.object(svc, "_populate_flaky_cache_in_new_session", populate):
+        try:
+            await svc.get_flaky_coach(uuid.uuid4(), db, days=30, limit=50)
+        except Exception:  # noqa: BLE001 -- what follows the populate is not under test
+            pass
+    assert order[:2] == ["close", "populate"], order

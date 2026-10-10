@@ -498,6 +498,16 @@ async def get_flaky_coach(
     if not rows:
         # Cache miss: populate via a dedicated write session so this
         # endpoint stays pure-read on the caller's transaction.
+        #
+        # Hand the caller's pooled connection back first, so it is free while
+        # the populate holds its own (and the storage-config read inside it
+        # takes another). Holding all three, two concurrent cold loads
+        # exhausted the API's 2+1 pool and both waited out the 30 s pool
+        # timeout (E2E 2026-10-10). ``close`` ends the read transaction
+        # without expiring anything; the session begins a new one on the
+        # re-read below. Only when nothing is staged: a read stages nothing.
+        if not (db.new or db.dirty or db.deleted):
+            await db.close()
         await _populate_flaky_cache_in_new_session(project_id, days)
         rows = await _load_flaky_cache(db, project_id, limit)
 
