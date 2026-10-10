@@ -11,6 +11,7 @@ recurrence count; triage now does the same.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -39,7 +40,10 @@ class _Session:
         self.statements.append(sql)
         result = MagicMock()
         if sql.startswith("SELECT test_cases.test_name"):
-            result.first.return_value = SimpleNamespace(test_name="test_always_red", suite_name="s", test_fingerprint=FP)
+            result.first.return_value = SimpleNamespace(
+                test_name="test_always_red", suite_name="s", test_fingerprint=FP,
+                created_at=datetime(2026, 10, 10, 16, 0, tzinfo=timezone.utc),
+            )
         elif "pg_advisory_xact_lock" in sql:
             result.first.return_value = None
         elif sql.startswith("SELECT defects.id, defects.test_case_id"):
@@ -78,6 +82,9 @@ async def test_the_same_test_failing_in_a_later_run_takes_a_recurrence_not_a_new
     assert not any(s.startswith("INSERT INTO defects") for s in session.statements), session.statements
     bumps = [s for s in session.statements if s.startswith("UPDATE defects SET recurrence_count")]
     assert len(bumps) == 1, session.statements
+    # Idempotent per run (live: two triage calls for ONE run counted twice):
+    # only an occurrence later than the last counted one bumps the count.
+    assert "defects.last_recurrence_at IS NULL OR defects.last_recurrence_at <" in bumps[0]
     lookup = next(s for s in session.statements if s.startswith("SELECT defects.id, defects.test_case_id"))
     assert "defects.signature_fingerprint =" in lookup and "test_cases.test_fingerprint =" in lookup
     assert "defects.resolution_status =" in lookup

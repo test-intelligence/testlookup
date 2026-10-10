@@ -712,6 +712,15 @@ async def get_api_key_context(
     if bearer_token:
         user = await _bearer_user_or_fall_through(db, bearer_token)
         if user is not None:
+            # The API-key branch refuses a deactivated owner; the bearer branch
+            # did not, so a deactivated user's unexpired JWT (up to 12 h) kept
+            # ingesting and opening live runs (E2E 2026-10-10).
+            if not user.is_active:
+                _count_auth_failure("inactive_user")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Inactive user account",
+                )
             return user, None
 
     if x_api_key:

@@ -71,6 +71,7 @@ ROLE_GATED = [
     ("POST", "/api/v1/ai-eval/tier-comparison", "QA_LEAD"),
     ("POST", "/api/v1/ai-eval/reviewer-quality", "QA_LEAD"),
     ("POST", "/api/v1/analytics/classify-uncategorized", "QA_ENGINEER"),
+    ("POST", "/api/v1/analytics/notify-owner", "QA_ENGINEER"),
     ("POST", f"/api/v1/deep-investigate/{RUN}", "QA_ENGINEER"),
     ("POST", f"/api/v1/deep-investigate/{RUN}/clusters/c1/promote", "QA_ENGINEER"),
     ("POST", "/api/v1/reports/email-trends", "QA_LEAD"),
@@ -184,3 +185,21 @@ async def test_a_share_link_lasts_only_as_long_as_its_creators_access(creator, a
         else:
             with pytest.raises(ValueError, match="no longer valid"):
                 await share_link_service.validate_share_link(db, "tok")
+
+
+@pytest.mark.asyncio
+async def test_a_deactivated_users_jwt_no_longer_reaches_ingest_or_live_routes():
+    """``get_api_key_context`` refused a deactivated API-key owner but not a
+    deactivated JWT holder, so an unexpired token (up to 12 h) kept ingesting
+    and opening live runs after an admin turned the account off."""
+    from app.core import deps
+
+    inactive = SimpleNamespace(id=uuid.uuid4(), role="QA_ENGINEER", is_active=False, api_key_project_id=None)
+    with patch.object(deps, "_bearer_user_or_fall_through", AsyncMock(return_value=inactive)):
+        with pytest.raises(HTTPException) as exc:
+            await deps.get_api_key_context(db=AsyncMock(), bearer_token="t", x_api_key=None)
+    assert exc.value.status_code == 403 and exc.value.detail == "Inactive user account"
+
+    active = SimpleNamespace(id=uuid.uuid4(), role="QA_ENGINEER", is_active=True, api_key_project_id=None)
+    with patch.object(deps, "_bearer_user_or_fall_through", AsyncMock(return_value=active)):
+        assert await deps.get_api_key_context(db=AsyncMock(), bearer_token="t", x_api_key=None) == (active, None)

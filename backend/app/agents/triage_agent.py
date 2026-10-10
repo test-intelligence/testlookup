@@ -37,7 +37,7 @@ _AUTO_TRIAGE_CONFIDENCE = settings.AI_CONFIDENCE_THRESHOLD
 _HIGH_PRIORITY_CATEGORIES = {"PRODUCT_BUG", "INFRASTRUCTURE"}
 
 
-async def _recurring_open_defect(db, project_id, fingerprint, tc_id):
+async def _recurring_open_defect(db, project_id, fingerprint, tc_id, occurred_at=None):
     """The OPEN defect already tracking this test, or None.
 
     Matched on the test's fingerprint (``signature_fingerprint``, or the
@@ -46,6 +46,10 @@ async def _recurring_open_defect(db, project_id, fingerprint, tc_id):
     (a re-run of its pipeline) is simply the existing defect. Serialized per
     (project, test) until the caller commits, so two runs' pipelines cannot
     both open one.
+
+    ``last_recurrence_at`` records when the failure recurred (this run's test
+    case time), and only a LATER occurrence counts: a retried or re-triggered
+    pipeline for the same run would otherwise bump the count again each time.
     """
     if not fingerprint:
         return None
@@ -73,12 +77,16 @@ async def _recurring_open_defect(db, project_id, fingerprint, tc_id):
     if row is None:
         return None
     if str(row.test_case_id) != str(tc_id):
+        when = occurred_at if occurred_at is not None else func.now()
         await db.execute(
             update(Defect)
-            .where(Defect.id == row.id)
+            .where(
+                Defect.id == row.id,
+                or_(Defect.last_recurrence_at.is_(None), Defect.last_recurrence_at < when),
+            )
             .values(
                 recurrence_count=func.coalesce(Defect.recurrence_count, 0) + 1,
-                last_recurrence_at=func.now(),
+                last_recurrence_at=when,
             )
         )
     return row
@@ -263,7 +271,10 @@ class DefectTriageAgent(BaseAgent):
         async with AsyncSessionLocal() as db:
             # Look up test case name
             tc_result = await db.execute(
-                select(TestCase.test_name, TestCase.suite_name, TestCase.test_fingerprint)
+                select(
+                    TestCase.test_name, TestCase.suite_name, TestCase.test_fingerprint,
+                    TestCase.created_at,
+                )
                 .where(TestCase.id == tc_id)
             )
             tc = tc_result.first()
@@ -276,7 +287,10 @@ class DefectTriageAgent(BaseAgent):
             # with Jira on, 12 tickets), and the release gate counted every one
             # (E2E 2026-10-10). The open defect for this test in this project
             # takes the recurrence instead, as the one-click Jira path does.
-            recurring = await _recurring_open_defect(db, project_id, fingerprint, tc_id)
+            recurring = await _recurring_open_defect(
+                db, project_id, fingerprint, tc_id,
+                occurred_at=getattr(tc, "created_at", None) if tc else None,
+            )
             if recurring is not None:
                 new_row = None
             else:

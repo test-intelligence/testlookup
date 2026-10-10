@@ -1750,7 +1750,10 @@ describe('FailureAnalysisPage — a viewer is not offered category writes (E2E 2
     const { useRuns } = await import('@/hooks/useRuns')
     ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
     ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
-    ;(useTopFailing as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useTopFailing as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [{ test_name: 'test A', fail_count: 4, test_fingerprint: 'fp-a' }] },
+      isLoading: false,
+    })
     ;(useFailureCategories as ReturnType<typeof vi.fn>).mockReturnValue({
       data: { items: [{ category: 'UNKNOWN', count: 10 }] },
       isLoading: false,
@@ -1769,5 +1772,7 @@ describe('FailureAnalysisPage — a viewer is not offered category writes (E2E 2
     expect(await screen.findByRole('menuitem', { name: /Export CSV/i })).toBeInTheDocument()
     expect(screen.queryByRole('menuitem', { name: /Classify uncategorised failures/i })).toBeNull()
     expect(screen.queryByText('Classify uncategorised failures')).toBeNull()
+    // Notify mails the suite owner: QA engineer and above too.
+    expect(screen.queryByText('Notify suite owner')).toBeNull()
   })
 })

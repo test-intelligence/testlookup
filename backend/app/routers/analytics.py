@@ -713,7 +713,10 @@ async def ai_analysis_summary(
 async def notify_suite_owner(
     payload: NotifyTestOwnerRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    # QA_ENGINEER: each call mails a person, with a caller-supplied failure
+    # count, and the answer names their address. Membership alone let a
+    # VIEWER send it as often as they liked (E2E 2026-10-10).
+    current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
 ):
     """Fire an email at the suite owner of ``payload.test_name`` so they can
     triage the recurring failure. Resolution chain mirrors the suite-owner

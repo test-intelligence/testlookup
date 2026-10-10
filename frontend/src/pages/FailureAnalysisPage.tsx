@@ -2009,9 +2009,9 @@ export default function FailureAnalysisPage() {
   // auto-quarantine is disabled"): Mute says so instead of opening a dialog
   // that can only fail (browser E2E pass, 2026-10-08).
   const quarantineOn = useFeatureFlagStatus('flaky_auto_quarantine')
-  // Correct and Classify rewrite failure categories (and the AI analysis):
-  // QA engineer and above, as the API requires. Offered to a viewer they
-  // could only fail.
+  // Correct and Classify rewrite failure categories (and the AI analysis), and
+  // Notify mails the suite owner: QA engineer and above, as the API requires.
+  // Offered to a viewer they could only fail.
   const { isQaEngineer } = usePermissions()
 
   const actionTarget = model.topFailingTest
@@ -2215,7 +2215,7 @@ export default function FailureAnalysisPage() {
       icon: <Download className="h-3.5 w-3.5" aria-hidden="true" />,
       onClick: () => handleExportCsv({ topFailing, flaky, categories, project, days, suiteFilter: suiteLabel || null }),
     },
-    ...(model.topFailingTest
+    ...(model.topFailingTest && isQaEngineer
       ? [{
           label: 'Notify suite owner',
           icon: <Mail className="h-3.5 w-3.5" aria-hidden="true" />,
