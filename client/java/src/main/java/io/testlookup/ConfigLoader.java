@@ -17,15 +17,21 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * Discovers and loads testlookup.yaml configuration, overlaying environment
- * variables and JVM system properties.
+ * Discovers and loads testlookup.properties / testlookup.yaml configuration,
+ * overlaying environment variables and JVM system properties.
  *
- * <p>Discovery order (first file found wins):
+ * <p>Sources, lowest precedence first: a {@code testlookup.properties} on the
+ * classpath (e.g. {@code src/test/resources}); then the first filesystem file
+ * found of
  * <ol>
+ *   <li>{@code ./testlookup.properties}</li>
+ *   <li>{@code ./.testlookup/testlookup.properties}</li>
  *   <li>{@code ./testlookup.yaml}</li>
  *   <li>{@code ./.testlookup/config.yaml}</li>
+ *   <li>{@code ~/.testlookup/testlookup.properties}</li>
  *   <li>{@code ~/.testlookup/config.yaml}</li>
  * </ol>
+ * then environment variables, then JVM system properties.
  *
  * <p>Precedence (highest wins):
  * Builder args &gt; JVM system props &gt; Environment vars &gt; Config file &gt; Defaults
@@ -64,7 +70,6 @@ public final class ConfigLoader {
         {"TESTLOOKUP_BUILD",       "ci.build_number"},
         {"TESTLOOKUP_BRANCH",      "ci.branch"},
         {"TESTLOOKUP_COMMIT",      "ci.commit_hash"},
-        {"TESTLOOKUP_UPLOAD_MODE", "upload.mode"},
         // Canonical names matching the ReportPortal rp.* convention.
         {"TESTLOOKUP_ENDPOINT",    "server.url"},
         {"TESTLOOKUP_PROJECT",     "project.id"},
@@ -72,6 +77,9 @@ public final class ConfigLoader {
         {"TESTLOOKUP_SUITE",       "reporting.suite_name"},
         {"TESTLOOKUP_RELEASE",     "reporting.release_name"},
         {"TESTLOOKUP_FRAMEWORK",   "reporting.framework"},
+        // TLS for self-signed / homelab servers (same names as the Python SDK).
+        {"TESTLOOKUP_CA_CERT",     "auth.ca_cert_path"},
+        {"TESTLOOKUP_INSECURE",    "auth.insecure"},
     };
 
     /** Maps JVM system property names to dot-path config keys. */
@@ -91,6 +99,9 @@ public final class ConfigLoader {
         {"testlookup.branch",     "ci.branch"},
         {"testlookup.commit",     "ci.commit_hash"},
         {"testlookup.framework",  "reporting.framework"},
+        {"testlookup.ca_cert_path", "auth.ca_cert_path"},
+        {"testlookup.caCertPath", "auth.ca_cert_path"},
+        {"testlookup.insecure",   "auth.insecure"},
     };
 
     /**
@@ -112,6 +123,8 @@ public final class ConfigLoader {
         {"testlookup.branch",     "ci.branch"},
         {"testlookup.commit",     "ci.commit_hash"},
         {"testlookup.framework",  "reporting.framework"},
+        {"testlookup.ca_cert_path", "auth.ca_cert_path"},
+        {"testlookup.insecure",   "auth.insecure"},
     };
 
     private ConfigLoader() { }
@@ -121,8 +134,12 @@ public final class ConfigLoader {
      *
      * @return nested Map representing the merged config (never null)
      */
-    @SuppressWarnings("unchecked")
     public static Map<String, Object> load() {
+        return load(System.getenv(), System.getProperties());
+    }
+
+    /** {@link #load()} with the environment and system properties injected (tests). */
+    static Map<String, Object> load(Map<String, String> env, Properties sysProps) {
         Map<String, Object> config = new HashMap<>();
 
         // 1a. Try classpath testlookup.properties (Java convention:
@@ -145,7 +162,7 @@ public final class ConfigLoader {
 
         // 2. Overlay environment variables
         for (String[] mapping : ENV_MAP) {
-            String val = System.getenv(mapping[0]);
+            String val = env.get(mapping[0]);
             if (val != null && !val.isEmpty()) {
                 setNested(config, mapping[1], val);
             }
@@ -153,7 +170,7 @@ public final class ConfigLoader {
 
         // 3. Overlay JVM system properties (higher precedence than env vars)
         for (String[] mapping : SYSPROP_MAP) {
-            String val = System.getProperty(mapping[0]);
+            String val = sysProps.getProperty(mapping[0]);
             if (val != null && !val.isEmpty()) {
                 setNested(config, mapping[1], val);
             }
@@ -188,6 +205,19 @@ public final class ConfigLoader {
      *
      * @return the value, or {@code defaultVal} if missing or not a number
      */
+    /**
+     * Get a nested boolean flag by dot-path. "true", "1", "yes" and "on"
+     * (any case) are true — properties files and env vars carry strings.
+     */
+    public static boolean getFlag(Map<String, Object> config, String dotPath) {
+        String s = getString(config, dotPath, null);
+        if (s == null) return false;
+        switch (s.trim().toLowerCase(java.util.Locale.ROOT)) {
+            case "true": case "1": case "yes": case "on": return true;
+            default: return false;
+        }
+    }
+
     public static int getInt(Map<String, Object> config, String dotPath, int defaultVal) {
         String s = getString(config, dotPath, null);
         if (s == null) return defaultVal;

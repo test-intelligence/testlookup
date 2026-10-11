@@ -1,5 +1,106 @@
 # Changelog
 
+## Unreleased - SDK reporter fixes found while documenting the SDKs
+
+Documenting the Python, JS and Java SDKs for the open-source release
+(`testlookup_oss_audit/phase2/docs2-sdk-subagent.md`) found reporters that
+could not authenticate, recorded tests twice or not at all, and config keys
+that worked on one path and not the next. Each fix has a regression test that
+fails on the old code. The JS findings were reproduced with real Jest 29.7 and
+Mocha 10.8 against a packed build before fixing, and checked the same way
+after.
+
+**Python (`client/testlookup_reporter.py`)**
+- **The pytest plugin could not use an API key.** It handed every credential
+  to `TestLookupReporter` as `token=`, which went out as `Authorization:
+  Bearer`. The server reads API keys only from `X-API-Key` and decodes a Bearer
+  value as a JWT, so a `qai_` key from `testlookup.api.key` /
+  `TESTLOOKUP_API_KEY` got 401 and `pytest_sessionstart` raised before the
+  first test -- `client/examples/python/pytest_smoke` failed as shipped. A
+  `qai_` credential is now always sent as `X-API-Key`, whichever option it came
+  through; `TestLookupReporter(api_key=...)` and `--testlookup-api-key` are new.
+  A JWT still goes as Bearer. When both are configured the API key wins, as in
+  the Java SDK.
+- **`testlookup.suite` and `testlookup.release` never reached a pytest run.**
+  The defaults were applied in `session()`, and the plugin opens its session
+  through `_create_session()`. Defaults are now applied there.
+- **Env vars worked on some paths only.** `TESTLOOKUP_CA_CERT` /
+  `TESTLOOKUP_INSECURE` were read only by `LiveStream` (the plugin could not
+  reach a self-signed server); `TESTLOOKUP_COMMIT` / `TESTLOOKUP_FRAMEWORK` only
+  by `LiveStream`; `TESTLOOKUP_BUILD` / `_BRANCH` / `_LAUNCH` not at all by
+  `session()`; `LiveStream` ignored `TESTLOOKUP_RELEASE`. Every mapped variable
+  now does the same thing on `session()`, the pytest plugin and `LiveStream`;
+  `test_env_vars_every_path.py` checks each one on each path and fails when a
+  variable is mapped without a tested effect. The plugin's flags no longer
+  default to the legacy env vars directly, so `TESTLOOKUP_ENDPOINT` beats
+  `TESTLOOKUP_URL` in pytest as everywhere else.
+- **`TESTLOOKUP_UPLOAD_MODE` is removed**: mapped for years, read by nothing.
+  `testlookup.yaml.example` now lists only keys the SDK reads (it also offered
+  `server.verify_ssl`, `ci.tags`, a `frameworks:` block, and `framework:
+  "auto"`, which would have been sent literally).
+- A CA bundle path becomes an `ssl.SSLContext`: httpx 0.28 deprecates
+  `verify=<str>`, and that warning failed a run under `-W error`.
+- `__version__` said 1.0.0; the package is 1.1.0 (pinned by a test now).
+
+**JS (`client/js`)**
+- **The Jest reporter recorded every test twice.** Jest >= 27.4 calls
+  `onTestCaseResult` per test and `onTestResult` per file, and both streamed
+  (3 tests → 5 results in a real run; skipped tests reach only `onTestResult`,
+  so they were the only ones recorded once). `onTestResult` now streams only
+  what `onTestCaseResult` did not, counted per file and name.
+- **`require()` could not load the package.** The exports map offered only an
+  `import` condition while `tsc` emits CommonJS: Jest ("Could not resolve a
+  module for a custom reporter") and Mocha load reporters with `require`, and
+  every subpath failed with `ERR_PACKAGE_PATH_NOT_EXPORTED`. Each export now has
+  `types` + `default`.
+- **The Mocha reporter crashed the run** ("this._reporter is not a
+  constructor"): it was `exports.default`, which Mocha does not unwrap. It is
+  now `module.exports`, waits for the session through Mocha's `done()` hook,
+  and queues results that finish before the session opens instead of dropping
+  them.
+- **API keys:** `apiKey` (and `TESTLOOKUP_API_KEY`, `testlookup.api.key`) is
+  sent as `X-API-Key`; auth was always Bearer.
+- **`config-loader.ts` was never imported.** The Jest and Mocha reporters now
+  resolve every option through it (option > env var > file), so
+  `testlookup.properties`, `TESTLOOKUP_ENDPOINT`, `_PROJECT`, `_LAUNCH`,
+  `_SUITE`, `_RELEASE` and `_FRAMEWORK` work; its file order now matches the
+  Python and Java SDKs.
+- `verifySsl` never did anything (Node's fetch has no per-request TLS switch).
+  It is deprecated and `verifySsl: false` now warns, naming
+  `NODE_EXTRA_CA_CERTS` / `NODE_TLS_REJECT_UNAUTHORIZED`.
+
+**Java (`client/java`)**
+- **The JUnit 5 extension recorded no results at all on JUnit 5.11** (the
+  version the pom declares): its `TestWatcher` callbacks looked the session up
+  through the test's own store, which JUnit closes before calling them, so every
+  lookup threw and JUnit only logged it. It also opened one session per test
+  class (N classes → N runs) and reported `duration_ms = 0`. The session now
+  lives in the root store for the whole run, and durations are measured.
+- **`testlookup.properties` build / branch / commit / launch were ignored** by
+  the TestNG listener and the JUnit extension, which read only `-D` and env
+  vars. Both now resolve through `ConfigLoader` (TestNG suite parameters still
+  win).
+- **TLS:** `TESTLOOKUP_CA_CERT` / `testlookup.ca_cert_path` (trust only that
+  CA) and `TESTLOOKUP_INSECURE` / `testlookup.insecure`, plus
+  `Builder.caCertPath()` / `insecure()`. Tested against a real HTTPS server with
+  a keytool-made certificate; CA mode still checks the hostname, insecure mode
+  does not. `TESTLOOKUP_UPLOAD_MODE` is removed here too.
+
+**Examples:** `client/examples/python/pytest_smoke/testlookup.properties`
+carried a real-looking API key; it is now the `qai_REPLACE_ME` placeholder the
+other samples use.
+
+**For the owner -- `run_complete`:** only Python's `LiveStream` sends a
+`run_complete` event; the session-based reporters (Python `TestLookupReporter`
+and pytest plugin, JS, Java) finish with `DELETE /api/v1/stream/sessions/{id}`.
+That DELETE and a `run_complete` on `/stream/ingest` run the same
+`stream_service.close_session` (TestRun upsert, analysis). A `run_complete`
+sent over the session reporters' `/events/batch` would only mark the live run
+complete (`live_consumer._on_run_complete`), which the DELETE's close covers
+too -- so the session reporters already finalize runs, and adding the event
+would change nothing. Unchanged here; the docs that say every SDK sends
+`run_complete` are wrong.
+
 ## Unreleased - Error sweeps: every page, every action, every GET endpoint
 
 Owner request 2026-10-10: test every page navigation for 500s and every UI

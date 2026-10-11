@@ -137,10 +137,12 @@ public class TestLookupReporter {
         this.releaseName    = b.releaseName;
         this.batchSize      = Math.min(b.batchSize > 0 ? b.batchSize : BATCH_SIZE, MAX_BATCH_SIZE);
         this.batchIntervalMs = b.batchIntervalMs > 0 ? b.batchIntervalMs : BATCH_INTERVAL_MS;
-        this.http = HttpClient.newBuilder()
+        HttpClient.Builder hb = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(CONNECT_TIMEOUT_SEC))
-            .version(HttpClient.Version.HTTP_1_1)
-            .build();
+            .version(HttpClient.Version.HTTP_1_1);
+        javax.net.ssl.SSLContext tls = Tls.contextFor(b.caCertPath, Boolean.TRUE.equals(b.insecure));
+        if (tls != null) hb.sslContext(tls);
+        this.http = hb.build();
     }
 
     public static class Builder {
@@ -154,6 +156,8 @@ public class TestLookupReporter {
         private String releaseName;
         private int    batchSize;
         private int    batchIntervalMs;
+        private String caCertPath;
+        private Boolean insecure;
 
         public Builder baseUrl(String v)         { this.baseUrl        = v; return this; }
         /** Set JWT Bearer token for authentication. Mutually exclusive with {@link #apiKey}. */
@@ -169,6 +173,17 @@ public class TestLookupReporter {
         public Builder releaseName(String v)     { this.releaseName    = v; return this; }
         public Builder batchSize(int v)          { this.batchSize      = v; return this; }
         public Builder batchIntervalMs(int v)    { this.batchIntervalMs = v; return this; }
+        /**
+         * Trust only the CA certificate(s) in this PEM file — for a server with a
+         * self-signed or private-CA certificate. Default: testlookup.ca_cert_path /
+         * TESTLOOKUP_CA_CERT. Wins over {@link #insecure}.
+         */
+        public Builder caCertPath(String v)      { this.caCertPath     = v; return this; }
+        /**
+         * Skip TLS certificate and hostname verification (dev only). Default:
+         * testlookup.insecure / TESTLOOKUP_INSECURE.
+         */
+        public Builder insecure(boolean v)       { this.insecure       = v; return this; }
 
         /**
          * Build the reporter, resolving unset fields from testlookup.yaml and
@@ -189,6 +204,8 @@ public class TestLookupReporter {
             if (this.releaseName == null) this.releaseName = ConfigLoader.getString(cfg, "reporting.release_name", null);
             if (this.batchSize <= 0)     this.batchSize   = ConfigLoader.getInt(cfg, "reporting.batch_size", 0);
             if (this.batchIntervalMs<=0) this.batchIntervalMs = ConfigLoader.getInt(cfg, "reporting.batch_interval_ms", 0);
+            if (this.caCertPath == null) this.caCertPath  = ConfigLoader.getString(cfg, "auth.ca_cert_path", null);
+            if (this.insecure == null)   this.insecure    = ConfigLoader.getFlag(cfg, "auth.insecure");
 
             boolean hasAuth = this.token != null || this.apiKey != null;
             if (this.baseUrl == null || !hasAuth || this.projectId == null) {
@@ -816,6 +833,75 @@ public class TestLookupReporter {
             } catch (Exception e) {
                 LOG.severe("TestLookup: unexpected error during batch POST: " + e.getMessage());
                 statFailed.addAndGet(events.size());
+            }
+        }
+    }
+
+    // ── TLS ───────────────────────────────────────────────────────────────────
+
+    /**
+     * The SSLContext for a CA bundle or for insecure mode, or {@code null} for
+     * the JVM's default trust store. Mirrors the Python SDK: a CA path wins and
+     * becomes the only trust anchor; insecure trusts any certificate for any
+     * host.
+     */
+    static final class Tls {
+        private Tls() { }
+
+        static javax.net.ssl.SSLContext contextFor(String caCertPath, boolean insecure) {
+            try {
+                if (caCertPath != null && !caCertPath.isEmpty()) {
+                    java.security.KeyStore trust = java.security.KeyStore.getInstance(
+                        java.security.KeyStore.getDefaultType());
+                    trust.load(null, null);
+                    java.security.cert.CertificateFactory cf =
+                        java.security.cert.CertificateFactory.getInstance("X.509");
+                    int n = 0;
+                    try (java.io.InputStream in = new java.io.FileInputStream(caCertPath)) {
+                        for (java.security.cert.Certificate cert : cf.generateCertificates(in)) {
+                            trust.setCertificateEntry("testlookup-ca-" + n++, cert);
+                        }
+                    }
+                    if (n == 0) {
+                        throw new IllegalStateException("no certificate in " + caCertPath);
+                    }
+                    javax.net.ssl.TrustManagerFactory tmf = javax.net.ssl.TrustManagerFactory.getInstance(
+                        javax.net.ssl.TrustManagerFactory.getDefaultAlgorithm());
+                    tmf.init(trust);
+                    javax.net.ssl.SSLContext ctx = javax.net.ssl.SSLContext.getInstance("TLS");
+                    ctx.init(null, tmf.getTrustManagers(), null);
+                    return ctx;
+                }
+                if (insecure) {
+                    LOG.warning("TestLookup: TLS verification disabled "
+                        + "(testlookup.insecure / TESTLOOKUP_INSECURE / Builder.insecure).");
+                    javax.net.ssl.SSLContext ctx = javax.net.ssl.SSLContext.getInstance("TLS");
+                    ctx.init(null, new javax.net.ssl.TrustManager[] { new TrustAll() }, null);
+                    return ctx;
+                }
+                return null;
+            } catch (IllegalStateException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new IllegalStateException(
+                    "TestLookup: cannot load CA certificate " + caCertPath + ": " + e.getMessage(), e);
+            }
+        }
+
+        /**
+         * Accepts every chain. Extending X509ExtendedTrustManager matters: for
+         * a plain X509TrustManager the JDK adds its own hostname check, so a
+         * certificate for another name would still be refused.
+         */
+        private static final class TrustAll extends javax.net.ssl.X509ExtendedTrustManager {
+            @Override public void checkClientTrusted(java.security.cert.X509Certificate[] c, String a) { }
+            @Override public void checkServerTrusted(java.security.cert.X509Certificate[] c, String a) { }
+            @Override public void checkClientTrusted(java.security.cert.X509Certificate[] c, String a, java.net.Socket s) { }
+            @Override public void checkServerTrusted(java.security.cert.X509Certificate[] c, String a, java.net.Socket s) { }
+            @Override public void checkClientTrusted(java.security.cert.X509Certificate[] c, String a, javax.net.ssl.SSLEngine e) { }
+            @Override public void checkServerTrusted(java.security.cert.X509Certificate[] c, String a, javax.net.ssl.SSLEngine e) { }
+            @Override public java.security.cert.X509Certificate[] getAcceptedIssuers() {
+                return new java.security.cert.X509Certificate[0];
             }
         }
     }

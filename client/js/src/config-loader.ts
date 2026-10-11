@@ -3,16 +3,20 @@
  *
  * Reads a declarative ``testlookup.properties`` file (preferred — matches the
  * ReportPortal convention) or a legacy ``testlookup.yaml`` from the cwd /
- * ``.testlookup`` / home directory, then overlays environment variables.
+ * ``.testlookup`` / home directory, then overlays environment variables. The
+ * Jest and Mocha reporters resolve every setting they are not given through
+ * here: reporter option > environment variable > config file.
  *
- * Discovery order (first match wins per file kind):
+ * Discovery order (first file found wins; only that one file is read) — the
+ * same order as the Python and Java SDKs:
  *   1. ./testlookup.properties
- *   2. ./testlookup.yaml
- *   3. ./.testlookup/testlookup.properties
+ *   2. ./.testlookup/testlookup.properties
+ *   3. ./testlookup.yaml
  *   4. ./.testlookup/config.yaml
  *   5. ~/.testlookup/testlookup.properties
  *   6. ~/.testlookup/config.yaml
  *
+ * YAML needs the optional ``yaml`` package; without it a YAML file is skipped.
  * Canonical key prefix is ``testlookup.*`` — matches the dotted convention
  * used across all four SDKs.
  */
@@ -63,6 +67,9 @@ const PROPERTIES_KEYS: Record<string, keyof ResolvedConfig> = {
   'testlookup.framework': 'framework',
 }
 
+// Later entries win when both are set: TESTLOOKUP_ENDPOINT over
+// TESTLOOKUP_URL, TESTLOOKUP_PROJECT over TESTLOOKUP_PROJECT_ID — the same
+// rule as the Python SDK.
 const ENV_KEYS: Record<string, keyof ResolvedConfig> = {
   TESTLOOKUP_URL:        'baseUrl',
   TESTLOOKUP_ENDPOINT:   'baseUrl',
@@ -95,10 +102,10 @@ const YAML_PATHS: Array<{ section: string[]; key: string; field: keyof ResolvedC
 
 function findFile(): { path: string; kind: 'properties' | 'yaml' } | null {
   const candidates: Array<{ rel: string; kind: 'properties' | 'yaml' }> = [
-    { rel: 'testlookup.properties',                    kind: 'properties' },
-    { rel: 'testlookup.yaml',                          kind: 'yaml' },
+    { rel: 'testlookup.properties',                           kind: 'properties' },
     { rel: path.join('.testlookup', 'testlookup.properties'), kind: 'properties' },
-    { rel: path.join('.testlookup', 'config.yaml'),    kind: 'yaml' },
+    { rel: 'testlookup.yaml',                                 kind: 'yaml' },
+    { rel: path.join('.testlookup', 'config.yaml'),           kind: 'yaml' },
   ]
   for (const c of candidates) {
     if (fs.existsSync(c.rel)) return { path: c.rel, kind: c.kind }
