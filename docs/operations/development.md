@@ -4,7 +4,7 @@
 
 ## Isolate your checkout and services
 
-Use a separate clone/worktree for concurrent branches. This handoff was authored in `testlookup_docs` on `codex/documentation-handoff`, leaving the active `testlookup_new` checkout unchanged. A separate filesystem checkout alone does not isolate Compose: several services have fixed container names and ports. Run one stack at a time or create a deliberate full override for names, ports, networks and data volumes.
+Use a separate clone or Git worktree for concurrent branches. A separate filesystem checkout alone does not isolate Compose: several services have fixed container names and ports. Run one stack at a time or create a deliberate full override for names, ports, networks and data volumes.
 
 ## Container-first setup
 

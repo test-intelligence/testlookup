@@ -29,11 +29,10 @@ The machine-readable [source inventory](../reference/source-inventory.csv) recor
 | `scripts` | Setup, seed, release/backup operations, quality ratchets and documentation generators |
 | `docker-compose*.yml`, `Makefile`, `install.sh` | Local/release/VM/air-gap startup and common operator tasks |
 | `k8s`, `homelabsetup`, `openshiftsetup` | Kubernetes base/overlays, K3s and OpenShift deployment workflows |
-| `infra`, `deploy` | Cloud/monitoring assets, image manifest and cutover runbooks |
-| `.github/workflows`, `Jenkinsfile`, `jenkins` | CI, release, infrastructure and deployment automation |
-| `benchmarks`, `samples`, `postman` | Performance/evaluation fixtures, report examples and API collections |
-| `architecture`, `docs`, `user-guide`, `UserGuides` | Architecture deep dives, handoff, operator and end-user documentation |
-| `qa`, `research`, `design_handoff_ui_improvements` | Dated verification evidence, proposals and UI design artifacts |
+| `infra`, `deploy` | Cloud/monitoring assets and the image manifest |
+| `.github/workflows` | CI, release, infrastructure and deployment automation |
+| `benchmarks`, `samples` | Performance/evaluation fixtures and report examples |
+| `architecture`, `docs`, `user-guide` | Architecture deep dives, maintainer docs and the operator guide (the end-user guide is `frontend/src/content/guide`) |
 
 ## Domain/service map
 

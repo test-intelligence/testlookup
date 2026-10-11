@@ -1,27 +1,28 @@
 # Search and discovery
 
-Finding a run, a test, or a failure you have seen before.
+Finding a run, a test, a defect or a release you have seen before.
 
-## What you can search
+## Global search
 
-- **Global search** across entities you have access to.
-- **Similar failures** from a specific failure — "has this happened before?"
-- **Filters** by entity type, project and date.
+Type in the search box in the top bar and press Enter (or press `/` anywhere to jump to it). Results open on the **Search** page (`/search`), where you can refine the query. It matches test names, suites, error messages, build numbers, branches, jobs, Jira IDs and release names.
 
-## Keyword and semantic search
+The **Entity scope** chips narrow the results to one kind: **All**, **Tests**, **Runs**, **Suites**, **Defects**, **Flaky** or **Releases**, each with its count. The query, mode and scope are in the page address, so you can share a search.
 
-Two mechanisms:
+## Keyword only, for now
 
-- **Keyword** — always available. Matches text.
-- **Semantic** — matches on meaning rather than wording, so a failure phrased differently can still match. Requires a configured vector store.
+Global search matches **keywords**. The **Hybrid** and **Semantic** mode chips are shown but disabled: global search spans six kinds of record, and only keyword matching covers all of them. Hover a disabled chip to see why.
 
-> **Note.** When semantic search is not configured or unavailable, search **falls back to keyword matching**. Results are still returned; they will be literal rather than conceptual. If similar-failure results look shallow, this is the first thing to check with an administrator.
+Semantic (meaning-based) matching is used elsewhere, where it covers the data involved: grouping similar failures into clusters, recalling earlier analyses of similar failures for the analysis pipeline and for [Ask AI](/docs/ask-ai), and [generating test cases from your documents](/docs/test-management). It needs the optional vector store; without it, those features fall back to keyword matching and say so rather than failing. The API also offers similar failures for one test result (`GET /api/v1/search/similar/<test result id>`).
 
-## Indexing
+## Index status
 
-Searchable content is indexed as it arrives. An index can be rebuilt when it drifts or after bulk changes — an administrator action, not an instant one.
+The Search page shows whether the index is ready (**Index ready**), how many items are indexed for each kind, and **Index freshness**. Each kind is marked **Live**, **Embedding** (still being indexed) or **Down**.
 
-> **Tip.** Newly ingested data may take a moment to appear in search even though it is already visible under Runs. The run listing reads the database; search reads the index.
+A background job brings the index up to date every hour.
+
+> **Tip.** Newly ingested data may take a moment to appear in search even though it is already visible under **Runs**. The run list reads the database; search reads the index.
+
+A QA lead can force a rebuild for one project through the API; see [Step-by-step workflows](/docs/workflows#reindex-search).
 
 ## Scope and permissions
 
@@ -29,15 +30,15 @@ Search is **project-scoped**. You see only what you have access to, and one proj
 
 ## Reading results
 
-Ranking reflects relevance, not probability. A high-ranked result is *more like* your query than the ones below it; it is not "85% likely to be the same bug". Similar-failure results are candidates to compare, and the comparison is yours to make.
+Ranking reflects how well a result matches your words, not a probability. A high-ranked result is *more like* your query than the ones below it; it is not "85% likely to be the same bug".
 
 ## Limitations
 
-- Semantic quality depends on the embedding configuration.
-- Very short error messages carry little signal either way.
+- Keyword search does not match a failure described in different words. Search for a distinctive part of the error message, the test name or the build number.
+- Very short queries match a lot.
 - An index that has not been rebuilt after bulk deletion may briefly return stale entries.
 
 ## Related
 
 - [Investigating failures](/docs/failure-analysis)
-- [Administration](/docs/administration)
+- [Settings and administration](/docs/administration)

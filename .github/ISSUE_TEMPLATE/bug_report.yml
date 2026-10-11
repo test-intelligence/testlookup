@@ -1,0 +1,77 @@
+name: Bug report
+description: Something in TestLookup does not work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. **Security vulnerabilities do not belong here** — report them privately (Security tab → Report a vulnerability, see SECURITY.md).
+        Please remove secrets, API keys, host names and personal data from anything you paste.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The smallest set of steps (and, if you can, a sample result file) that shows the problem.
+      placeholder: |
+        1. Upload samples/junit/... to a new project
+        2. Open the run's Analysis tab
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: TestLookup version
+      description: The release tag, or the commit from `GET /health/version` (`build.revision`).
+      placeholder: v0.1.0 / 1a2b3c4d
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment mode
+      options:
+        - Docker Compose from a clone (make dev / make quickstart)
+        - Docker Compose release images (install.sh)
+        - Kubernetes (k8s overlays)
+        - Single-node K3s (homelabsetup/)
+        - OpenShift / air-gapped bundle
+        - Managed cloud (EKS / GKE / AKS)
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - Ingestion / reporters (SDKs)
+        - Runs, failures, flaky tests
+        - Release gate / releases
+        - AI analysis / Ask AI
+        - Test management
+        - Administration, auth, SSO
+        - Integrations (Jira, Slack, email, GitHub, GitLab, webhooks)
+        - CLI
+        - MCP server
+        - Deployment / upgrade
+        - Documentation
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Backend/worker log lines or browser console errors around the failure (secrets removed). This is rendered as code.
+      render: shell
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Browser and OS for UI bugs; AI provider and model for AI bugs (`LLM_PROVIDER`, `LLM_MODEL`, `AI_OFFLINE_MODE`).

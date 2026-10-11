@@ -1,8 +1,8 @@
 # Test-intelligence roadmap — implementation plan
 
 **Status**: plan only, nothing implemented. **Created** 2026-08-14.
-**Source of truth for the evidence**: [`research/TEST_INTELLIGENCE_RESEARCH.md`](../research/TEST_INTELLIGENCE_RESEARCH.md)
-(11 adversarially-verified findings, 7 refuted claims, §3 roadmap).
+**Evidence**: a maintainers' research note (not published in this repository)
+with 11 adversarially-verified findings, 7 refuted claims and a roadmap.
 **Design docs this will change**: `architecture/FLAKY_INTELLIGENCE.md`,
 `architecture/DATABASE_SCHEMA.md`, `architecture/RELEASE_GATE.md`,
 `architecture/AI_QUALITY.md`.

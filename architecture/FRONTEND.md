@@ -146,5 +146,5 @@ data). The `.badge-*` primitives already sit on the tokens.
 ## Related docs
 
 - Route-level UX behaviors users see: [user-guide/](../user-guide/README.md)
-- Theme-token remediation plan: `design_handoff_ui_improvements/` (local) + the palette ratchet in the auto-routine
+- Theme tokens: the palette ESLint rule (§4) and `frontend/scripts/check-theme-tokens.mjs`
 - Build/deploy of the bundle: [DEPLOYMENT.md](./DEPLOYMENT.md)

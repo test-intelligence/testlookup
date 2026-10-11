@@ -187,4 +187,4 @@ chain from prompt to action is reconstructable after the fact.
 - Pipeline structure & mode routing: [README.md §5](./README.md#5-ai-analysis-pipeline-langgraph)
 - What verdicts feed: [RELEASE_GATE.md](./RELEASE_GATE.md)
 - The flaky-specific evidence layers: [FLAKY_INTELLIGENCE.md](./FLAKY_INTELLIGENCE.md)
-- The user-facing correction workflow: [user-guide/triaging-failures.md](../user-guide/triaging-failures.md)
+- The user-facing correction workflow: [Correcting a classification](../frontend/src/content/guide/failure-analysis.md#correcting-a-classification)

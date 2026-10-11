@@ -6,16 +6,37 @@ The shortest path from an empty account to a run you can explore. About ten minu
 
 ## 1. Sign in
 
-Open your TestLookup URL and sign in with the username and password you were given. On success you land on **Overview**.
+Open your TestLookup URL and sign in with the username and password you were given. On success you land on **Home** (the page is titled **Dashboard**).
 
-If sign-in fails, check with your administrator that the account is active — see [Troubleshooting](/docs/troubleshooting#permission-and-access-problems).
+- **First sign-in with a temporary password.** An account an administrator created for you (and a self-registered one) must set its own password first: the **Set your password** page asks for a new password (at least 8 characters), then sends you back to sign in with it.
+- **Two-factor authentication.** If your account uses it, a second step (**One more step**) asks for the code from your authenticator app, or **Use a recovery code instead**. If your organisation requires two-factor sign-in and you have not set it up, you are asked to **Set up two-factor authentication** before you can continue. You can turn it on yourself any time under **My profile**.
+- **Single sign-on.** When your organisation uses SSO, the sign-in page shows **Sign in with SSO**. If SSO is required, password sign-in is only available to administrator accounts.
+- **No account?** **Register** on the sign-in page creates one. A new account belongs to no project, so it sees no data until an administrator adds it to a project and sets its role.
+
+After 10 failed attempts in a row (the default), an account is locked for 15 minutes. If sign-in fails, check with your administrator that the account is active — see [Troubleshooting](/docs/troubleshooting#permission-and-access-problems).
+
+## The first-run checklist
+
+**? → Getting started** (`/getting-started`) is a setup checklist for the selected project. Each step has a **Set Up** button that opens the page where you do it, and is ticked when the app sees it done, not when you click through:
+
+| Step | Ticked when |
+|---|---|
+| **Create a Project** | As soon as the project exists |
+| **Upload Test Results** | The project has at least one run |
+| **Connect Jira** | The Jira integration is enabled |
+| **Connect Telemetry** | Splunk, OpenShift or Slack is enabled |
+| **View Run Intelligence** | You have opened a run's **Analysis** tab (the step keeps the page's old name) |
+
+Steps you do not need can be skipped (**Skip this step**, undone with **Restore**); skipped steps count as done. The checklist stays available from the Help menu after it is complete.
+
+A project with no runs at all also shows a **Welcome to TestLookup** guide on **Home**, with the same first steps and copy-paste upload commands. Dismissing it hides it for that project only.
 
 ## 2. Create or pick a project
 
 A **project** is the isolation boundary. Runs, tests, failures, defects and search results belong to exactly one project, and users only see projects they are a member of.
 
-- **Settings → Projects → New** to create one. The name is yours; whoever creates it becomes a member.
-- Already have projects? Pick one from the project selector in the header.
+- **Admin → Project → Projects → New Project** creates one (`QA_LEAD` or higher). Give it a name and a slug (the slug cannot be changed later); a Jira project key and an OpenShift namespace are optional. You become a member, and the project gets a default QA-lead account that unassigned failures fall back to.
+- Already have projects? Pick one from the project selector in the header. Below `QA_LEAD`, ask a QA lead or administrator to create a project or add you to one.
 
 ### "All Projects" mode
 
@@ -28,11 +49,13 @@ The selector also offers **All Projects**, which aggregates across every project
 
 ## 3. Send your first test run
 
-There are three routes in. Pick one.
+There are three routes in. Pick one. Sending results needs the `QA_ENGINEER` role or higher.
 
 ### Option A — upload a file (fastest to try)
 
-Use the upload control in the app and select a report your suite already produces (JUnit XML, TestNG, Allure, Cypress, Playwright, pytest, Robot, Cucumber, NUnit, TRX, xUnit, or a zipped archive). TestLookup detects the format from the content.
+Open **Runs** and click **Upload report**, then drop a report your suite already produces (JUnit XML, TestNG, Allure, Cypress, Playwright, pytest, Robot, Cucumber, NUnit, TRX, xUnit, or a zipped archive, up to 50 MB). TestLookup detects the format from the content. In **All Projects**, the dialog asks which project the run belongs to. See [Getting results in](/docs/ingestion#upload-a-report-from-the-app).
+
+Upload is on for a new install. If there is no **Upload report** button, an administrator has turned it off (the `manual_upload` feature flag); use option B or C, or ask them to turn it back on.
 
 ### Option B — POST a JSON batch (good for a first API test)
 
@@ -68,7 +91,7 @@ curl -X POST "$TESTLOOKUP_URL/api/v1/ingest/file" \
 
 ### Getting an API key
 
-**Settings → Project → Streaming API keys**, or `POST /api/v1/keys`. The key is shown **once** — store it in your CI secret store immediately. Ingestion endpoints accept either an `X-API-Key` header or a normal signed-in session, so you can experiment from the browser before wiring CI.
+**My API keys** (open **My profile** from the account menu, then **My API keys** in the side navigation), or `POST /api/v1/keys`; any `QA_ENGINEER` or higher can create one. An administrator can also issue a project-bound key for CI under **Admin → Project → Streaming API keys**. The key is shown **once** — store it in your CI secret store immediately. Ingestion endpoints accept either an `X-API-Key` header or a normal signed-in session, so you can experiment from the browser before wiring CI. See [Getting results in](/docs/ingestion#api-keys).
 
 > **Warning.** Never commit an API key, paste it into a ticket, or put it in a build log. Treat it like a password. See [Security and privacy](/docs/security).
 

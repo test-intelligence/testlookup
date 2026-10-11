@@ -859,7 +859,7 @@ enum: frozenset[str] = frozenset()
 
 ## backend/app/core/config.py — Settings
 
-[backend/app/core/config.py:110](../../backend/app/core/config.py#L110)
+[backend/app/core/config.py:111](../../backend/app/core/config.py#L111)
 
 Bases: `BaseSettings`.
 
@@ -949,7 +949,7 @@ HIGH_VOLUME_SAMPLE_EVERY_N: int = 2
 INGESTION_DLQ_ENABLED: bool = True
 CANONICAL_DELETION_WINDOW_RUNS: int = 5
 LLM_PROVIDER: Literal['ollama', 'lmstudio', 'localai', 'vllm', 'openai', 'gemini', 'anthropic', 'openrouter'] = 'ollama'
-LLM_MODEL: str = 'qwen2.5:3b-instruct-q5_K_M'
+LLM_MODEL: str = 'qwen2.5:7b-instruct'
 LLM_TEMPERATURE: float = 0.1
 LLM_MAX_TOKENS: int = 4096
 OLLAMA_BASE_URL: str = 'http://localhost:11434'
@@ -962,7 +962,7 @@ GOOGLE_API_KEY: Optional[str] = None
 ANTHROPIC_API_KEY: Optional[str] = None
 OPENROUTER_API_KEY: Optional[str] = None
 OPENROUTER_BASE_URL: str = 'https://openrouter.ai/api/v1'
-OPENROUTER_SITE_URL: str = 'https://github.com/anandtopu/testlookup'
+OPENROUTER_SITE_URL: str = 'https://github.com/test-intelligence/testlookup'
 OPENROUTER_APP_NAME: str = 'TestLookup'
 LLM_PRICE_OVERRIDES: Optional[str] = None
 EMBEDDING_PROVIDER: str = 'ollama'
@@ -1125,8 +1125,8 @@ LOG_FORMAT: Literal['json', 'text'] = 'json'
 model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', case_sensitive=True, extra='ignore', env_ignore_empty=True, populate_by_name=True)
 ```
 
-- Validator/serializer `_validate_llm_cluster_slot_lease`: [backend/app/core/config.py:640](../../backend/app/core/config.py#L640). Read source for the cross-field or conversion rule.
-- Validator/serializer `_validate_sso_max_provisioned_role`: [backend/app/core/config.py:655](../../backend/app/core/config.py#L655). Read source for the cross-field or conversion rule.
+- Validator/serializer `_validate_llm_cluster_slot_lease`: [backend/app/core/config.py:641](../../backend/app/core/config.py#L641). Read source for the cross-field or conversion rule.
+- Validator/serializer `_validate_sso_max_provisioned_role`: [backend/app/core/config.py:656](../../backend/app/core/config.py#L656). Read source for the cross-field or conversion rule.
 ## backend/app/core/deps.py — AuthorizedTestCaseContext
 
 [backend/app/core/deps.py:45](../../backend/app/core/deps.py#L45)

@@ -4,14 +4,48 @@ Everything TestLookup knows starts here. This page covers every route in, what h
 
 ## The routes in
 
-| Route | Endpoint | Best for |
+| Route | How | Best for |
 |---|---|---|
-| **File upload** | `POST /api/v1/ingest/file` | Reports your framework already writes |
+| **Upload in the app** | **Runs → Upload report** | Trying TestLookup, or a one-off report |
+| **File upload over the API** | `POST /api/v1/ingest/file` | Reports your framework already writes, from CI |
 | **JSON batch** | `POST /api/v1/ingest` | Custom harnesses, scripts, quick tests |
-| **Streaming / live** | `POST /api/v1/stream/ingest` | Long suites you want to watch as they run |
-| **CLI / SDKs** | wrap the above | CI pipelines |
+| **Streaming / live** | a reporter SDK, or `POST /api/v1/stream/ingest` | Long suites you want to watch as they run |
+| **CLI** | `testlookup upload file` | CI pipelines with a shell step |
 
 All of them authenticate with either an `X-API-Key` header or a signed-in session.
+
+> **Who can send results.** Sending results needs the `QA_ENGINEER` role or above in that project, whatever the route; viewers and testers get `403`. An API key acts with its owner's role.
+
+## Upload a report from the app
+
+1. Open **Runs** and click **Upload report** (or go to `/runs?upload=1`).
+2. Drop one or more report files, or click to browse: `.xml`, `.trx`, `.json` or `.zip`, up to **50 MB**. Several files are zipped together in the browser; a `.zip` must be uploaded on its own.
+3. In **All Projects**, choose the **Project**. Otherwise the selected project is used.
+4. Leave **Format** on **Auto-detect** unless detection gets it wrong.
+5. Optionally open **Optional metadata** to set a **Build label**, **Release**, **Branch** and **Commit**. Without a build label, one is generated.
+6. **Upload**. The dialog shows the report being processed, then **View run** opens it.
+
+Ticking **Skip AI analysis** makes the upload faster; you can run the analysis later from the run's page.
+
+The **Upload report** button is controlled by the `manual_upload` feature flag. It is **on** for a new install; an administrator can turn it off under **Settings → System → Feature flags**, for example to make CI the only way in. If the button is missing, that flag is off. If it is greyed out with "QA Engineer role required", your role is below `QA_ENGINEER`.
+
+## API keys
+
+Scripts, CI jobs and SDKs authenticate with an API key in the `X-API-Key` header:
+
+- **My API keys** (`/settings/my-api-keys`; open **My profile** from the account menu and pick it from the side navigation) — keys you own, for your own scripts and pipelines. Any `QA_ENGINEER` or above can create them. Choose a name, an optional expiry (1–365 days) and optional scopes (`stream:write`, `project:write`, `project:admin`; none means full access).
+- **Streaming API keys** (**Admin → Project → Streaming API keys**) — keys bound to one project, limited to streaming results (`stream:write`), with a 90-day expiry by default. Only an administrator can generate them; QA leads can see their own.
+- Or `POST /api/v1/keys`.
+
+A key is shown **once**; store it in your CI secret store straight away. It carries the permissions of the user who created it, narrowed by its scopes. Revoke a key from the page that lists it.
+
+## Streaming while tests run
+
+An uploaded report arrives after the suite finishes. A **reporter SDK** instead streams each test result as it completes, so the run appears on [Runs → Live](/docs/live) while it is still executing and its partial results are visible straight away. SDKs exist for Python (pytest), Java (TestNG and JUnit 5), JavaScript/TypeScript (Jest and Mocha) and Go; download them from **Connect a test runner** on the Live page. When the suite finishes, the SDK closes the session and the run is finalised like any other.
+
+## Attaching a run to a release
+
+A run joins a [release](/docs/releases) when it arrives with a release name: **Release** in the upload dialog, `release_name` on the API, `--release` on the CLI, or the SDK's release setting. A QA lead can also set or change it afterwards with **Set release** on the run's page.
 
 ## Supported formats
 
@@ -105,7 +139,13 @@ Returns `{"items": [...], "total": N, "page": 1, "size": 10, "pages": N}`.
 
 ## CI integration
 
-The pattern is the same everywhere: run tests, then post the report.
+The pattern is the same everywhere: run tests, then post the report. With the CLI (installed from the repository's `cli/` folder):
+
+```bash
+testlookup upload file reports/junit.xml --project "$TESTLOOKUP_PROJECT" --build "$CI_BUILD_NUMBER"
+```
+
+Or with `curl`:
 
 ```bash
 # after your test step, regardless of its exit code
@@ -120,6 +160,8 @@ curl -sf -X POST "$TESTLOOKUP_URL/api/v1/ingest/file" \
 > **Important.** Run the upload step **even when tests fail** — that is exactly the run you want recorded. In most CI systems that means an `always()` / `if: always()` condition.
 
 Store the API key in your CI secret store. See [API, CLI, SDKs and MCP](/docs/integrations).
+
+The SDKs and the CLI also attach **CI context** (repository, pull-request number, a link back to the CI run) and, from the CLI and Python SDK, the **commit range** since the base branch, which powers pull-request comments and suspect-commit ranking. Pipeline recipes for those, and for failing a build only on real (non-quarantined) failures, are in the operator guide in the repository (`user-guide/getting-results-in.md` and `user-guide/flaky-tests.md`).
 
 ## Troubleshooting
 

@@ -6,10 +6,10 @@ These are observed contracts/operational constraints or explicitly identified fo
 
 ## Important limits
 
-- The summary report has a confirmed release-filter propagation defect: headline/suite/step metrics remain project-wide while top failures receive `release_id`. Its `unique_tests` basis label also does not describe every mode/fallback. See the exact [aggregation rules and examples](../pipelines/reporting.md) and [open application actions](../reviews/2026-09-18-documentation-action-register.md). These are observed source behavior, not guarantees inferred from OpenAPI descriptions.
+- The summary report has a confirmed release-filter propagation defect: headline/suite/step metrics remain project-wide while top failures receive `release_id`. Its `unique_tests` basis label also does not describe every mode/fallback. See the exact [aggregation rules and examples](../pipelines/reporting.md). These are observed source behavior, not guarantees inferred from OpenAPI descriptions.
 
 - API contracts are not uniformly complete: some endpoints return plain dicts, streamed files or manually shaped responses. [Generated gap list](../reference/api-contract-gaps.md) makes this visible; use the linked handler/serializer until a response model is added.
-- Source import and schema generation do not prove live migration compatibility, database availability, queue delivery, model behavior or external integration credentials. This task did not deploy or run production traffic.
+- Source import and schema generation do not prove live migration compatibility, database availability, queue delivery, model behavior or external integration credentials. Verify a specific installation with the checks in the [deployment guide](../operations/deployment.md#startup-and-upgrade-order).
 - Report review enforcement defaults off. The system can record would-refuse audit events without preventing distribution. Enable it intentionally after checking downstream consumers and existing reports.
 - Asynchronous paths are eventually consistent. Upload 202, Redis task status, durable run, pipeline completion, accepted review and successful delivery are separate observations. Redis file status expires after 24 hours.
 - Core AI can use rules/available ML; deep/model/RAG features need configured resources, flags and evidence. A fallback preserves availability but can reduce analytical depth. Confidence is not a calibrated probability unless a specific evaluator demonstrates it.
@@ -17,8 +17,8 @@ These are observed contracts/operational constraints or explicitly identified fo
 - The modern feature-flag service defaults unknown flags off (subject to explicit legacy environment fallback); the legacy facade has fail-open global semantics. Changing callers without checking this can change behavior.
 - Admission quota/backpressure probes can fail open on Redis errors. They are traffic-management mechanisms, not guaranteed hard capacity protection during an outage.
 - Multi-store persistence has no distributed transaction. Outboxes/reconciliation/tombstones improve recovery but do not guarantee globally exactly-once effects.
-- Homelab local-path storage is node-local. Multiple application replicas do not protect a failed disk; off-node backups and restore drills remain necessary.
-- Several large modules concentrate responsibilities (`postgres.py`, `schemas.py`, workflow/tasks and quality gate). Splitting them is a maintainability proposal, not prerequisite work for this documentation branch.
+- K3s `local-path` storage (the single-node K3s deployment) is node-local. Multiple application replicas do not protect a failed disk; off-node backups and restore drills remain necessary.
+- Several large modules concentrate responsibilities (`postgres.py`, `schemas.py`, workflow/tasks and quality gate). Splitting them is a maintainability proposal, not prerequisite work.
 
 ## Symptom-to-boundary troubleshooting
 
@@ -39,6 +39,6 @@ These are observed contracts/operational constraints or explicitly identified fo
 
 ## Prioritized future improvements
 
-Complete typed response contracts for unstructured endpoints and validate frontend/CLI/MCP consumers against them. The backend CI job now runs handoff regeneration, link/example checks and tool regression tests; observe the next hosted run before claiming CI execution evidence. Periodically reconcile legacy docs with source and current deployment evidence. Measure latency/throughput/accuracy on representative data before publishing capacity claims. Keep service extraction and storage consolidation decisions driven by measured operational cost rather than module count.
+Complete typed response contracts for unstructured endpoints and validate frontend/CLI/MCP consumers against them. The backend CI job runs reference regeneration, link/example checks and the documentation-tool regression tests. Periodically reconcile the deep-dive documents in `architecture/` with the source. Measure latency/throughput/accuracy on representative data before publishing capacity claims. Keep service extraction and storage consolidation decisions driven by measured operational cost rather than module count.
 
-For actionable status/owners/evidence, use the [review action register](../reviews/2026-09-18-action-register.md).
+Track follow-up work as GitHub issues so status, owners and evidence stay in one place.

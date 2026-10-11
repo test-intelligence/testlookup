@@ -1,40 +1,43 @@
 # TestLookup — Architecture
 
-> Last verified 2026-08-08 against `main` @ 596cf09 and the live homelab deployment.
-> Counts in this folder are checked against the code, not carried forward.
-> This folder is the developer-facing architecture set:
+> These are the engineering deep dives behind the short overview in
+> [`ARCHITECTURE.md`](../ARCHITECTURE.md). Counts, schedules and examples here are
+> point-in-time; the generated reference in [`docs/reference/`](../docs/reference/api-index.md)
+> and the code are authoritative where they differ.
 >
 > - **README.md** (this file) — system & runtime architecture, with diagrams.
-> - **[DATABASE_SCHEMA.md](./DATABASE_SCHEMA.md)** — ER diagrams + full schema reference for all 109 PostgreSQL tables, plus the Mongo/Redis/MinIO/Chroma layout.
+> - **[DATABASE_SCHEMA.md](./DATABASE_SCHEMA.md)** — ER diagrams + schema reference for the PostgreSQL tables, plus the MongoDB / Valkey / object-store / ChromaDB layout ([generated table reference](../docs/reference/data-dictionary.md)).
 > - **[DEVELOPER_GUIDE.md](./DEVELOPER_GUIDE.md)** — conventions, quality-gate ratchets, how to add/fix code, and the recurring bug classes.
 > - **[FLAKY_INTELLIGENCE.md](./FLAKY_INTELLIGENCE.md)** — the flaky-detection subsystem (FLK P1–P6): evidence layers, verdict assembly, quarantine lifecycle, step-flip surfaces.
 > - **[RELEASE_GATE.md](./RELEASE_GATE.md)** — how GO / CONDITIONAL_GO / NO_GO is decided: input signals, policy layer, band floor, council synthesis, overrides.
 > - **[AI_QUALITY.md](./AI_QUALITY.md)** — the mechanisms that keep the AI layer honest: semantic cache, the human-correction learning loop, evidence grading, cluster integrity.
 > - **[INGESTION_SCALE.md](./INGESTION_SCALE.md)** — ingestion under load: admission gates, shard queues, buffer caps + the drainer, DLQ/recovery, and AI cost controls.
 > - **[SECURITY.md](./SECURITY.md)** — identity, the authz guard family + HMAC-signed membership cache, tenancy layers, secure-by-default deployment, offline-first, audit.
-> - **[DEPLOYMENT.md](./DEPLOYMENT.md)** — the topologies: compose variants, the release-image path, k8s base + per-target overlays, CI/CD pipelines, environment gotchas.
+> - **[DEPLOYMENT.md](./DEPLOYMENT.md)** — the topologies: compose variants, the release-image path, k8s base + per-target overlays, CI/CD pipelines, environment gotchas. Step-by-step install guides per mode: [docs/operations/deployment.md](../docs/operations/deployment.md).
 > - **[FRONTEND.md](./FRONTEND.md)** — the SPA: pages→hooks→services→one-Axios layering, Zustand client-state model, the six-theme token system, and the enforcing ratchets.
 > - **[VISUALIZATION_ENGINES_ADR.md](./VISUALIZATION_ENGINES_ADR.md)** — why charts use Recharts + per-type ECharts + three.js: the CSP, bundle-budget and air-gap constraints, the measured spike, and the tooltip-XSS rule.
 > - **[VIZ_PERFORMANCE_BASELINE.md](./VIZ_PERFORMANCE_BASELINE.md)** — the homelab load test behind the visualization latency budgets: 1M-row dataset, single-user and concurrency results, the 429 burst, export timings, and the per-pod capacity conclusion.
 > - **[OBSERVABILITY.md](./OBSERVABILITY.md)** — metrics/traces/logs plus agent decision logs, the Grafana/alerting stack, and the health surfaces.
 > - **[KNOWLEDGE_RAG.md](./KNOWLEDGE_RAG.md)** — the optional RAG layer: indexing sources → chunks, grounded generation with citations, and the redaction/faithfulness/staleness guards.
 > - **[AI_EVALUATION.md](./AI_EVALUATION.md)** — model-ops: golden/feedback datasets, eval runs + drift, the model registry, and the pre-release gate that blocks regressing AI changes.
-> - **[testing/README.md](./testing/README.md)** — testability map, requirements traceability, E2E/exploratory/UAT suites, measured coverage gaps, and the improvement roadmap.
-> - **[AGENTIC_OPENAPI_ARCHITECTURE.md](./AGENTIC_OPENAPI_ARCHITECTURE.md)** — target design for the agentic layer: per-agent OpenAPI exposure, user-defined workflows, per-agent config, SLM/LLM tiering, the generic reviewer, the run state machine (leases, fencing, retry), the human-review gate, evals as the control loop, and the E1–E9 backlog. Cross-reviewed; raw findings in the [review log](./AGENTIC_OPENAPI_ARCHITECTURE.review-log.md).
+> - **[AGENTIC_RUNTIME.md](./AGENTIC_RUNTIME.md)** — the agent runtime adapter: parent/child investigations, the dispatch outbox, typed claims and action proposals, report evaluation, the provider privacy boundary and memory provenance.
+> - **[AGENT_DECISION_REPORT.md](./AGENT_DECISION_REPORT.md)** — the signed decision report the deep pipeline publishes, and its critic.
+> - **[WORKFLOWS.md](./WORKFLOWS.md)** — versioned, user-defined agent workflows.
+> - **[TEST_INTELLIGENCE_PLAN.md](./TEST_INTELLIGENCE_PLAN.md)** — a roadmap proposal for further test-intelligence features (plan only).
 >
-> The root [`ARCHITECTURE.md`](../ARCHITECTURE.md) is the short, marketing-adjacent
-> overview; this folder is the detailed engineering reference.
+> The root [`ARCHITECTURE.md`](../ARCHITECTURE.md) is the short overview; this
+> folder is the detailed engineering reference.
 
 TestLookup is **local-first test-failure intelligence for CI/QA**. It ingests
-test results from **twelve report formats** — JUnit, pytest, TestNG, Allure,
-Cypress, Playwright, Robot Framework, Cucumber, NUnit3, TRX, xUnit.net, and an
-LLM-JSON fallback — clusters failures, explains root causes (rules / ML /
+test results from **eleven report formats** — JUnit, pytest, TestNG, Allure,
+Cypress, Playwright, Robot Framework, Cucumber, NUnit3, TRX and xUnit.net, with
+content-based auto-detection — clusters failures, explains root causes (rules / ML /
 local-LLM), and emits release-risk signals (GO / CONDITIONAL_GO / NO_GO).
 
 On top of that base it runs an **agentic layer** (Investigator, Fixer) under
 explicit budgets and policies, attributes failures to commits and owners, gates
-releases, and reports engineer-hours saved. Everything is surfaced via a web UI
-(38 pages), REST API (81 routers), CLI, and an MCP server — and the whole system
+releases, and reports engineer-hours saved. Everything is surfaced via a web UI,
+a REST API, a CLI and an MCP server ([generated inventory](../docs/reference/client-surfaces.md)) — and the whole system
 is able to run **fully offline**, including a fully air-gapped install.
 
 ---
@@ -86,20 +89,20 @@ flowchart TB
 
 | Component | Tech | Port (compose host) | Responsibility |
 |-----------|------|---------------------|----------------|
-| **Frontend** | React 18 + Vite + TS + Tailwind + Zustand + SWR | 3000 | Dashboard, analytics, admin |
+| **Frontend** | React 19 + Vite + TS + Tailwind + Zustand + SWR | 3000 | Dashboard, analytics, admin |
 | **Backend** | FastAPI + SQLAlchemy 2.0 (async) + Motor | 8000 | REST API, auth, ingestion orchestration, business logic |
 | **MCP server** | Model Context Protocol (stdio + SSE) | 8002 | Tools/resources for AI clients; talks to the backend over HTTP |
 | **CLI** | Typer + Rich | — | Terminal QA workflows over the REST API |
 | **Workers** | Celery (+ beat) | — | Ingestion, AI pipeline, notifications, maintenance |
-| **PostgreSQL** | 16 | 5433→5432 | Relational system of record (109 tables, Alembic head `0117`) |
+| **PostgreSQL** | 16 | 5433→5432 | Relational system of record ([tables](../docs/reference/data-dictionary.md), [migrations](../docs/reference/migrations.md)) |
 | **MongoDB** | 7 | 27017 | Immutable logs, raw ingest blobs, run summaries |
-| **Redis** | 7 | 6379 | Celery broker/result, live-session state, event Streams, cache |
-| **MinIO** | S3-compatible | 9000 (API) / 9001 (console) | Report files, PDFs, compliance packs, RAG docs |
+| **Valkey** | 8 (Redis-compatible; settings keep the `REDIS_*` names) | 6379 | Celery broker/result, live-session state, event Streams, cache |
+| **Object store** | S3-compatible (versitygw in the shipped stacks; `MINIO_*` settings) | 9000 (API) | Report files, PDFs, compliance packs, RAG docs |
 | **ChromaDB** | optional | 8001→8000 | Per-project embeddings for semantic search |
 | **Ollama** | optional | 11434 | Local LLM for triage/summary |
 
 > Postgres is published on **5433** (container 5432) to avoid colliding with a
-> local Postgres; ChromaDB on **8001**; MinIO on **9000/9001**.
+> local Postgres; ChromaDB on **8001**; the object store on **9000**.
 
 ### Request layering
 
@@ -321,17 +324,23 @@ Surfaces: `/agents` (activity), `/settings/ai-agents` (policy + budgets),
 
 ## 8. External surfaces
 
-- **MCP server** (`mcp/`) — ~30 tools/resources/prompts over stdio (desktop AI clients) or SSE (:8002). Authenticates once with `TESTLOOKUP_USERNAME`/`PASSWORD`/`API_URL`, caches the JWT, and refreshes on 401. Exposes projects, runs, run-intelligence, deep investigation, search, reports, metrics, and enterprise surfaces (decision trail, flaky quarantine, LLM budget, governance).
+- **MCP server** (`mcp/`) — tools, resources and prompts ([generated list](../docs/reference/client-surfaces.md)) over stdio (desktop AI clients) or SSE (:8002). In stdio mode it signs in with `TESTLOOKUP_USERNAME`/`PASSWORD` against `TESTLOOKUP_API_URL`, caches the JWT and refreshes on 401; over SSE every client sends its own bearer access token. Exposes projects, runs, run-intelligence, deep investigation, search, reports, metrics, and enterprise surfaces (decision trail, flaky quarantine, LLM budget, governance).
 - **CLI** (`cli/`) — Typer app: `auth`, `projects`, `runs`, `tests`, `search`, `intelligence`, `deep`, `reports`, `keys`, `upload`. Talks to the REST API with auto-JWT refresh.
 - **Client SDKs** (`client/`) — Python (pytest plugin + async live SDK), Java (TestNG listener + JUnit5 extension), JS/TS (Jest reporter), Go. Shared wire contract: create session → stream events → close (triggers `persist_live_session`), or batch `POST /ingest`. The Python/Java SDKs emit a heartbeat to keep idle runs off the 5-minute reaper.
 
 ## 9. Offline-first design (`AI_OFFLINE_MODE`)
 
-`AI_OFFLINE_MODE` **defaults to `True`** (`backend/app/core/config.py`). With it on,
-all outbound/LLM-dependent work is skipped: ingestion completes without AI
-dispatch, live-failure analysis is a no-op, GitHub Checks / outbound webhooks /
-knowledge-RAG sync are skipped, and AI surfaces render "analysis unavailable
-(offline mode)". Production sets it `False` to enable the pipeline.
+`AI_OFFLINE_MODE` **defaults to `True`** (`backend/app/core/config.py`). It is a
+hard egress ceiling, not an AI off-switch: model calls are allowed only to local
+or private endpoints (Ollama, LM Studio, LocalAI, vLLM, validated by
+`llm_policy_service`), hosted providers are refused, and outbound integrations
+that would leave the network (GitHub Checks, outbound webhooks, knowledge sync)
+are skipped. The Investigator's model re-weighing and the Fixer's patch
+generation do not run at all in offline mode; both fall back to their
+deterministic results. A database setting can
+make the system *more* restrictive but never re-enable egress the environment
+forbids (`ai_config_resolver`). Set `AI_OFFLINE_MODE=false` only when a hosted
+provider or an off-network integration is intended.
 
 > When adding any outbound integration, **check `AI_OFFLINE_MODE` first** — it is
 > a recurring bug class. See

@@ -31,7 +31,7 @@ refusal but cannot shorten a hang, so a Redis outage used to time out the
 MinIO and ChromaDB probes and report both ``degraded`` while both were
 healthy.
 
-Source: [backend/app/routers/health.py:291](../../../backend/app/routers/health.py#L291).
+Source: [backend/app/routers/health.py:301](../../../backend/app/routers/health.py#L301).
 
 Dependency chain: .
 
@@ -91,7 +91,7 @@ are slow / 429ing". A single GET answers:
 Everything is best-effort — a degraded Redis returns partial data
 rather than 500'ing the health endpoint itself.
 
-Source: [backend/app/routers/health.py:344](../../../backend/app/routers/health.py#L344).
+Source: [backend/app/routers/health.py:354](../../../backend/app/routers/health.py#L354).
 
 Dependency chain: .
 
@@ -133,7 +133,7 @@ Kubernetes liveness probe.
 Returns 200 as long as the process is running and the event loop is responsive.
 Never checks external dependencies — a database outage must NOT restart the pod.
 
-Source: [backend/app/routers/health.py:225](../../../backend/app/routers/health.py#L225).
+Source: [backend/app/routers/health.py:235](../../../backend/app/routers/health.py#L235).
 
 Dependency chain: .
 
@@ -179,7 +179,7 @@ Kubernetes readiness probe.
 Checks PostgreSQL, MongoDB, and Redis connectivity concurrently.
 Returns 503 if any of those is unavailable so the load balancer stops sending traffic.
 
-Source: [backend/app/routers/health.py:239](../../../backend/app/routers/health.py#L239).
+Source: [backend/app/routers/health.py:249](../../../backend/app/routers/health.py#L249).
 
 Dependency chain: .
 
@@ -236,7 +236,7 @@ Always returns 200 (the process is alive if it can answer at all).
 ``build.revision`` / ``build.built_at`` fall back to ``"unknown"`` in
 local/dev runs where the image-build env is unset.
 
-Source: [backend/app/routers/health.py:262](../../../backend/app/routers/health.py#L262).
+Source: [backend/app/routers/health.py:272](../../../backend/app/routers/health.py#L272).
 
 Dependency chain: .
 

@@ -333,7 +333,7 @@ easier to over-read than to under-read:
   [DEPLOYMENT.md](./DEPLOYMENT.md)). There is no in-cluster mTLS between
   the backend, the workers, and the datastores.
 
-### 7a. The MinIO upload path is only as tenant-safe as the MinIO credential
+### 7a. The direct-to-bucket upload path is only as tenant-safe as the S3 credential
 
 Re-audit N13. `POST /webhooks/minio` takes the project from the object key --
 `{project_id}/runs/{build}/upload_complete.json` -- and reads the run's result
@@ -368,8 +368,14 @@ its own MinIO user, and keep the root credential for the backend and operators:
 }
 ```
 
-Runbook (the `mc` alias `local` is the root alias `scripts/setup-minio.sh`
-creates; `<bucket>` is `MINIO_BUCKET_NAME`):
+The bundled object store (versitygw) runs with a single root account: it
+has no per-user accounts configured, so on it the policy above cannot be
+applied — keep the S3 credential out of CI entirely and send results through
+the API (`POST /api/v1/ingest/file` with a project-scoped streaming API key),
+which is the default ingest path and needs no S3 credential at all. With a
+MinIO-compatible server that supports users and policies, the runbook is (the
+`mc` alias `local` points at the server with the root credential; `<bucket>`
+is `MINIO_BUCKET_NAME`):
 
 ```sh
 PROJECT=<project_id>          # the UUID the project's runs are filed under

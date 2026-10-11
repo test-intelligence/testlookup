@@ -117,7 +117,7 @@ retry loops and 145 duplicate-key events.
 
 `create_run_from_payload` now **resumes** an existing run when the explicit id
 already exists in that project, so the write is idempotent per
-`(entity, run)` — the convention `backend/CLAUDE.md` already required.
+`(entity, run)`, as every ingestion write path is required to be.
 
 > **Diagnostic note.** Redis queue depths read **0** throughout, because the
 > tasks were in retry-ETA rather than queued. "The queue is empty" is actively

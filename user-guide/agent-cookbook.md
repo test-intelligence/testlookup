@@ -1,6 +1,6 @@
 # Agent cookbook
 
-Recipes for driving TestLookup from an AI agent — Claude Code, Claude Desktop, Cursor, or any MCP-capable client — through the [MCP server](cli-sdk-mcp.md#the-mcp-server). The server exposes **62 tools** covering the read path (runs, failures, flakiness, release gates), the US-14.1 **write path** — an agent can complete a triage loop end-to-end: investigate a failure, correct a wrong AI classification, propose a quarantine, file the Jira ticket, and re-route the failure to the right engineer — and, new in the agentic plan's AI-5, the **Investigator agent** (start/poll shadow-mode investigations) plus the **fix-outcome learning loop** (`record_fix_outcome`) that lets a coding agent's merged fix teach the classifier.
+Recipes for driving TestLookup from an AI agent — Claude Code, Claude Desktop, Cursor, or any MCP-capable client — through the [MCP server](cli-sdk-mcp.md#the-mcp-server). The server's tools cover the read path (runs, failures, flakiness, release gates), the **write path** — an agent can complete a triage loop end-to-end: investigate a failure, correct a wrong AI classification, propose a quarantine, file the Jira ticket, and re-route the failure to the right engineer — the **Investigator agent** (start and poll shadow-mode investigations), and the **fix-outcome learning loop** (`record_fix_outcome`) that lets a coding agent's merged fix teach the classifier. The complete list of tools, resources and prompts is in [mcp/README.md](../mcp/README.md).
 
 Everything here is **local-first**: the MCP server talks to *your* TestLookup backend on *your* network. Your test data never leaves your infrastructure — the recipes work fully offline against a default `AI_OFFLINE_MODE=true` deployment with no LLM configured at all (the agent on your side does the reasoning; TestLookup supplies the data and the actions).
 
@@ -26,7 +26,7 @@ Add to your project's `.mcp.json` (or run `claude mcp add`):
       "env": {
         "TESTLOOKUP_API_URL": "http://localhost:8000",
         "TESTLOOKUP_USERNAME": "agent-bot",
-        "TESTLOOKUP_PASSWORD": "your-pass"
+        "TESTLOOKUP_PASSWORD": "<agent-bot password>"
       }
     }
   }
@@ -85,7 +85,7 @@ The MCP server holds **no privileges of its own** — every tool call becomes a 
 5. `get_flaky_tests` / `list_quarantine_requests` — separate known-flaky from real.
 6. For each real failure: `get_assignment_options` → `assign_failure` to route it to the suite owner or the engineer you name.
 
-**Outcome:** a cluster-by-cluster verdict ("1 product bug, 2 infra failures, 3 known-flaky") and the real failures sitting in the right people's [My Failures](triaging-failures.md#your-inbox-my-failures) inboxes.
+**Outcome:** a cluster-by-cluster verdict ("1 product bug, 2 infra failures, 3 known-flaky") and the real failures sitting in the right people's [Inboxes](../frontend/src/content/guide/inbox.md).
 
 ## Recipe 2 — Investigate a cluster and correct a bad classification
 
@@ -98,7 +98,7 @@ The MCP server holds **no privileges of its own** — every tool call becomes a 
 3. `trigger_ai_analysis` — fresh root-cause pass if the evidence is stale.
 4. `correct_classification(project_id, fingerprint, corrected_category="PRODUCT_BUG", comment=...)` — overrides the verdict.
 
-**Outcome:** the analysis row now says PRODUCT_BUG, the stale verdict is evicted from the analysis cache so similar failures aren't mislabelled, and the correction is stored as a training signal for the next fine-tune cycle ([correcting the AI](triaging-failures.md#correcting-the-ai-and-why-its-worth-doing)).
+**Outcome:** the analysis row now says PRODUCT_BUG, the stale verdict is evicted from the analysis cache so similar failures aren't mislabelled, and the correction is stored as a training signal for the next fine-tune cycle ([how the ML classifier learns](ai-features.md#how-the-ml-classifier-learns)).
 
 ## Recipe 3 — Quarantine a flaky test and file the Jira ticket
 
@@ -141,7 +141,7 @@ The MCP server holds **no privileges of its own** — every tool call becomes a 
 5. For stale entries: `list_defects` / `create_defect` to make sure each has an owner and a ticket.
 6. `get_transition_policy` → `set_transition_policy(project_id, enabled_events=[..., "test.quarantine_stale", "test.ready_to_unquarantine"])` — so next week's review starts from notifications instead of a manual sweep.
 
-**Outcome:** recovered tests back in rotation, stale quarantines escalated with tickets, and the team subscribed to the lifecycle events that keep the debt visible. Background: [Flaky tests & quarantine](flaky-tests.md).
+**Outcome:** recovered tests back in rotation, stale quarantines escalated with tickets, and the team subscribed to the lifecycle events that keep the debt visible. Background: [Quarantine policy and CI gating](flaky-tests.md).
 
 ## Recipe 6 — Investigate a regression end-to-end
 

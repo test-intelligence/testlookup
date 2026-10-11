@@ -1,101 +1,268 @@
 # testlookup-cli
 
-**TestLookup CLI — QA intelligence from your terminal.**
+**TestLookup CLI: QA intelligence from your terminal.**
 
-Upload test results, query failures, and gate a build on the release verdict
-without leaving the shell. Talks to a TestLookup server over its REST API; it
-holds no state of its own beyond a saved connection profile.
+Upload test reports, inspect runs and failures, read AI analysis, and gate a CI
+job on real (non-quarantined) failures without leaving the shell. The CLI talks
+to a TestLookup server over its REST API. The only state it keeps is a saved
+connection profile.
 
-## Install
+## Install (from source)
+
+The CLI is not published to a package registry. Install it from a clone of the
+repository (Python 3.11 or newer):
 
 ```bash
-pip install ./cli          # from a checkout
+git clone https://github.com/test-intelligence/testlookup.git
+cd testlookup
+python -m venv .venv && . .venv/bin/activate   # optional, recommended
+pip install ./cli
 testlookup --help
+testlookup --version
 ```
 
-## Connect
+The package is `testlookup-cli`; it installs one console script, `testlookup`.
+
+## Connect and authenticate
+
+There are two ways to authenticate. Use a login on a workstation and an API key
+in CI.
+
+**Interactive login (JWT).** `auth login` posts your username and password to
+`/api/v1/auth/login`, stores the returned access and refresh tokens in a
+profile, and makes that profile active. When the server answers 401, the CLI
+refreshes the access token once with the refresh token and saves the new one.
 
 ```bash
-testlookup auth login      # stores a profile (URL + API key)
-testlookup doctor          # one-shot verdict: profile + reachability + auth
-testlookup health          # confirm the server is reachable
+testlookup auth login --url http://localhost:8000      # prompts for username and password
+testlookup auth whoami                                 # active profile, URL, auth type
+testlookup doctor                                      # profile, reachability, auth in one verdict
 ```
 
-`doctor` is the fastest way to debug a fresh install: it checks that a server
-URL is resolved, that the server is reachable (and reports its build), and that
-your credentials are accepted — exiting non-zero only on a hard failure, so it
-works as a CI preflight too.
+**API key (CI).** Set `TESTLOOKUP_URL` and `TESTLOOKUP_API_KEY` and do not run
+`auth login` on the runner. The key is sent as the `X-API-Key` header. Create a
+key in the web UI under **Settings → API Keys**, or with
+`testlookup keys create --name ci` while logged in (the raw key is shown once).
 
-Configuration resolves in this order — later wins:
+```bash
+export TESTLOOKUP_URL=https://testlookup.example.com
+export TESTLOOKUP_API_KEY=qai_your_api_key_here
+testlookup doctor
+```
 
-1. saved profile in `profiles.json` (platform config dir)
-2. `TESTLOOKUP_URL` / `TESTLOOKUP_API_KEY` environment variables
-3. explicit command-line options
+Accepting or rejecting an AI report review needs a signed-in user: `reviews
+accept` and `reviews reject` refuse to run with an API key.
 
-`TESTLOOKUP_PROFILE` selects which saved profile to use.
+`doctor` checks, in order, that a server URL is resolved, that the server
+answers `GET /health/version` (and reports its version and build), and that the
+credentials are accepted (an authenticated `GET /api/v1/projects`). It exits 1
+only when a check fails outright; a reachable server with no credentials is a
+warning, so it also works as a CI preflight. `health` reports the server's own
+view of its dependencies (`GET /health/ready`) and exits non-zero unless the
+status is `ready`.
+
+## Configuration
+
+| Setting | Where it comes from |
+|---|---|
+| Profile name | `--profile <name>` on a command, else `TESTLOOKUP_PROFILE`, else the `active_profile` file written by `auth login`, else `default` |
+| Saved profiles | `profiles.json` in the per-user config directory: `~/.config/testlookup/` on Linux, `~/Library/Application Support/testlookup/` on macOS, `%LOCALAPPDATA%\testlookup\testlookup\` on Windows. Written owner-only (0600) on POSIX. |
+| Server URL | The saved profile's `url`. If the selected profile is not saved: `TESTLOOKUP_URL`, default `http://localhost:8000` |
+| Credentials | The saved profile's tokens (from `auth login`). If the selected profile is not saved: `TESTLOOKUP_API_KEY` (sent as `X-API-Key`); without it, requests are unauthenticated |
+
+Resolution is all-or-nothing per profile: when the selected profile name exists
+in `profiles.json`, the CLI uses it and ignores `TESTLOOKUP_URL` and
+`TESTLOOKUP_API_KEY`. The environment variables are the fallback for a profile
+name that has not been saved, which is the normal case on a CI runner. On a
+machine that already has a saved `default` profile, select an unsaved name (for
+example `TESTLOOKUP_PROFILE=env`) to use the environment variables instead.
+There is no global `--url` option; `auth login --url` sets the URL of the
+profile it saves.
+
+`auth logout` removes the stored tokens and keeps the profile's URL.
+
+## Command reference
+
+Every group has `--help`, for example `testlookup upload file --help`.
+
+| Group | Subcommands | Purpose |
+|---|---|---|
+| `auth` | `login`, `logout`, `whoami` | Log in with username and password (saves a JWT profile), clear stored tokens, show the active profile |
+| `doctor` | (none; run `testlookup doctor`) | One-shot setup check: profile, server reachability and build, credentials |
+| `health` | (none; run `testlookup health`) | Server readiness from `GET /health/ready`, with per-dependency detail |
+| `projects` | `list`, `get <project-id>` | List accessible projects, show one project |
+| `runs` | `list`, `get <run-id>` | List runs (`--project`, `--status`, `--page`, `--size`), show one run |
+| `tests` | `list <run-id>`, `get <run-id> <test-id>` | List a run's test cases (`--status`, `--suite`, `--page`, `--size`); show one test case, with `--show-steps` to summarise its step tree |
+| `search` | (none; run `testlookup search "<query>"`) | Global search across tests, runs, suites, defects and more (`--types`, `--project`) |
+| `intelligence` | `show <run-id>`, `refresh <run-id>` | Run intelligence summary (status, pass rate, release recommendation, executive summary); force a refresh |
+| `deep` | `start`, `status`, `clusters`, `findings` (each takes `<run-id>`) | Queue a deep investigation, check its pipeline status, list failure clusters and findings |
+| `reports` | `pdf <run-id>`, `share <run-id>` | Download a PDF report (`--out`, `--layout executive\|engineering`); create a time-limited share link (`--expires` 1-30 days) |
+| `reviews` | `list <project-id>`, `accept <review-id>`, `reject <review-id>` | Human review of AI-generated reports: list the queue (`--state`, `--limit`), accept (`--notes`), reject (`--reason`, `--notes`) |
+| `analytics` | `trends`, `chart` | The chart data the UI draws, as a table, CSV or JSON (see [Chart data](#chart-data)) |
+| `keys` | `create`, `list`, `revoke <key-id>` | Create a personal API key (`--name`), list keys, revoke one (`--yes` skips the prompt) |
+| `upload` | `file <path>`, `dir <directory>` | Upload one report file, or every `.xml`, `.json` and `.trx` file in a directory (see [Uploading results](#uploading-results)) |
+| `ci-verdict` | (top-level command) | Quarantine-aware CI gate: exit 0 when every failure in a run is quarantined (see [Gating CI with ci-verdict](#gating-ci-with-ci-verdict)) |
 
 ## Common tasks
 
 ```bash
-# Upload results after a test run
-testlookup upload file results.xml --project my-project --build "$CI_PIPELINE_IID" --format auto
+# Upload results after a test run (--project is the project UUID)
+testlookup upload file results.xml --project "$PROJECT_ID" --build "$BUILD_ID" --wait
 
-# Fail a CI job on the release verdict (exit 0 = GO, 1 = NO_GO, 2 = error)
-testlookup ci-verdict --run <run-id> --project my-project
+# Gate the job on real failures only
+testlookup ci-verdict --run "$RUN_ID" --project "$PROJECT_ID"
 
 # Look around
-testlookup runs list --project my-project
-testlookup tests failing --project my-project
+testlookup projects list
+testlookup runs list --project "$PROJECT_ID" --status FAILED
+testlookup tests list "$RUN_ID" --status FAILED
+testlookup tests get "$RUN_ID" "$TEST_ID" --show-steps
 testlookup search "connection reset"
+testlookup intelligence show "$RUN_ID"
 
-# Human review of AI reports (accept/reject need `auth login`; API keys are refused)
-testlookup reviews list <project-id>
-testlookup reviews accept <review-id> --notes "checked against the logs"
-testlookup reviews reject <review-id> --reason unsupported_claim
+# Human review of AI reports (accept and reject need `auth login`)
+testlookup reviews list "$PROJECT_ID"
+testlookup reviews accept "$REVIEW_ID" --notes "checked against the logs"
+testlookup reviews reject "$REVIEW_ID" --reason unsupported_claim
 
-# Chart data: the same series the UI's charts draw (release- and suite-scoped)
-testlookup analytics trends --project <project-id> --release <release-id> --suite checkout --days 90
-testlookup analytics trends --project <project-id> --by suite --format csv > pass-rate-by-suite.csv
+# Reports
+testlookup reports pdf "$RUN_ID" --out run-report.pdf --layout engineering
+testlookup reports share "$RUN_ID" --expires 14
+```
+
+## Uploading results
+
+`testlookup upload file <path>` sends one report to `POST /api/v1/ingest/file`.
+`testlookup upload dir <directory>` does the same for every `.xml`, `.json` and
+`.trx` file directly in that directory (not recursive), one ingestion job per
+file, and exits 1 if any file fails.
+
+| Option | Meaning |
+|---|---|
+| `-p`, `--project` | Project UUID (required) |
+| `-b`, `--build` | Build number or identifier (required) |
+| `--branch`, `--commit`, `--release` | Git branch, commit SHA, release name |
+| `-f`, `--format` | `auto` (default, detected from content), `junit`, `testng`, `allure`, `cypress`, `playwright`, `pytest`, `robot`, `cucumber`, `nunit`, `trx`, `xunit`. An unknown value is rejected before any request. |
+| `--ci-provider`, `--repo`, `--pr-number`, `--ci-actor`, `--ci-run-url` | Override the auto-detected CI context |
+| `--commit-range-base <ref>` | Pin the base of the collected commit range |
+| `--no-commit-range` | Do not collect the commit range from local git |
+| `--wait` / `--no-wait` | Wait until the server has ingested the report and exit non-zero if it refuses it (over the result cap, unparseable, empty). Default `--no-wait`: the command returns once the upload is accepted. |
+| `--wait-timeout <seconds>` | How long `--wait` waits (default 600; for `upload dir` one budget covers every file) |
+| `--profile`, `-o`/`--output` | Profile to use; `table`, `json` or `yaml` output |
+
+An upload that meets a 429 or 503 is retried, honouring `Retry-After` (otherwise
+backing off from 0.5 s), for up to five minutes in total. The accepted upload's
+JSON carries `run_id` and `task_id`:
+
+```bash
+RUN_ID=$(testlookup upload file results.xml -p "$PROJECT_ID" -b "$BUILD_ID" --wait -o json | jq -r '.run_id')
+```
+
+## Gating CI with ci-verdict
+
+`testlookup ci-verdict --run <run-id>` fetches the run's `FAILED` and `BROKEN`
+test cases and the project's quarantine manifest
+(`GET /api/v1/projects/{project_id}/quarantine/manifest`), then splits the
+failures into real and quarantined. A failure counts as quarantined when its
+fingerprint (`sha256(class_name::test_name)[:16]`, recomputed by the CLI)
+matches a manifest entry, or, failing that, when its exact
+`(test_name, suite_name)` pair does. It does not read the release-gate
+verdict (GO / NO_GO); `testlookup intelligence show <run-id>` prints the run's
+release recommendation, and the MCP `check_run_release_readiness` tool returns
+the full decision.
+
+| Option | Meaning |
+|---|---|
+| `--run <run-id>` | Run to judge (required) |
+| `-p`, `--project <project-id>` | Project; inferred from the run when omitted |
+| `--strict` | Exit 1 on any failure, quarantined ones included |
+| `--fail-open` | On an API or network error, exit 0 with a warning instead of 2 |
+| `--timeout-seconds N` | Wait up to N seconds (polling every 5 s) for an in-progress run to finish; default 0 judges the current state |
+| `--profile`, `-o`/`--output` | Profile to use; `table` or `json` (the full partition) |
+
+| Exit code | Meaning |
+|---|---|
+| `0` | No real failures; quarantined failures do not block (also: an infrastructure error with `--fail-open`) |
+| `1` | At least one real (non-quarantined) failure, or any failure with `--strict` |
+| `2` | API or network error, or the run was still in progress after `--timeout-seconds`. Fails closed by default. |
+
+CI recipes for GitHub Actions, Jenkins and GitLab are in
+[Flaky tests](../user-guide/flaky-tests.md#gating-ci-on-real-failures-only-testlookup-ci-verdict).
+
+## Chart data
+
+```bash
+testlookup analytics trends --project "$PROJECT_ID" --release "$RELEASE_ID" --suite checkout --days 90
+testlookup analytics trends --project "$PROJECT_ID" --by suite --format csv > pass-rate-by-suite.csv
 testlookup analytics chart --metric duration_p95 --group-by week --group-by environment -o json
 ```
 
-`analytics trends` is `--metric pass_rate` per UTC day; `--by <dimension>` adds one
-series per value (the 7 largest plus "other", unless `--top-n` says otherwise).
-`analytics chart` takes any metric over one or two `--group-by` dimensions.
-`--release` and `--suite` repeat (OR within each, AND across); a release is a
-UUID or `unattributed`. Both read `GET /api/v1/analytics/chart-data`, the endpoint
-MCP's `get_chart_data` reads too. `--format csv` writes the UI export's layout
-(scope as `# Label,value` lines, a gap as an empty cell, never 0) as UTF-8 with
-`\n` line ends and no BOM; `table` draws a sparkline per series. The UI's
-Trends page draws its catalogue charts from the same endpoint, but its
-pass-rate trend card reads `/metrics/trends`, which counts every run that
-touched a suite whole, so under `--suite` that card and these commands
+`analytics trends` is `--metric pass_rate` per UTC day by default; `--by
+<dimension>` adds one series per value (the 7 largest plus "other", unless
+`--top-n` says otherwise). `analytics chart` takes any `--metric` over one or
+two `--group-by` dimensions. Both take `--project` (omit it for every project
+you can read), `--days` (default 30, 1-365) and `--top-n`. `--release` and
+`--suite` repeat (OR within each, AND across); a release is a UUID or
+`unattributed`, and an unreadable release refuses the whole request (exit 4).
+Both read `GET /api/v1/analytics/chart-data`, the endpoint MCP's
+`get_chart_data` reads too.
+
+`--format` (alias `--output`, `-o`) is `table`, `csv` or `json`. `csv` writes
+the UI export's layout (scope as `# Label,value` lines, a gap as an empty cell,
+never 0) as UTF-8 with `\n` line ends and no BOM; `table` draws a sparkline per
+series. The UI's Trends page draws its catalogue charts from the same endpoint,
+but its pass-rate trend card reads `/metrics/trends`, which counts every run
+that touched a suite whole, so under `--suite` that card and these commands
 differ. The server allows 120 chart-data requests a minute per user.
 
-Every command supports `--output json` for piping. JSON mode keeps stdout
-clean — diagnostics go to stderr — so `| jq` works without filtering.
+## Output and exit codes
 
-Commands that show AI-generated reports (`intelligence show`) print the report's
-review state and the AI disclaimer to stderr. `unknown` means the server sent
-no review status: treat the report as an unreviewed draft.
+Commands that print data take `-o`/`--output`: `table` (default) or `json`, and
+most also accept `yaml`. Exceptions: `reports pdf` uses `-o` for the output
+file path, `analytics` takes `table|csv|json`, and `intelligence refresh`,
+`deep start` and `keys revoke` print only a confirmation. Errors and warnings
+go to stderr, so `-o json | jq` sees only the JSON document.
 
-## Command groups
+Commands that show AI-generated reports (`intelligence show`) print the
+report's review state and the AI disclaimer to stderr. `unknown` means the
+server sent no review status: treat the report as an unreviewed draft.
 
-`auth` · `doctor` · `health` · `projects` · `runs` · `tests` · `search` ·
-`intelligence` · `deep` · `reports` · `reviews` · `analytics` · `keys` · `upload`, plus the top-level
-`ci-verdict`.
+Apart from `ci-verdict` (above), failures map to stable exit codes:
 
-Run `testlookup <group> --help` for details on any of them.
+| Code | Meaning |
+|---|---|
+| `0` | Success |
+| `1` | General error, server error (including 429), unreachable server, or a failed check (`doctor`, `health`, `upload dir`) |
+| `2` | Validation error (HTTP 400/422) or a command-line usage error |
+| `3` | Authentication failed (HTTP 401) |
+| `4` | Permission denied (HTTP 403) |
+| `5` | Not found (HTTP 404) |
+| `6` | Timed out (HTTP 408/504, or a client-side timeout) |
 
 ## CI context and commit ranges
 
-In CI the CLI auto-detects provider metadata (branch, build number, PR/MR,
-commit SHA) for GitHub Actions, GitLab, Jenkins, Azure Pipelines and CircleCI,
-and collects the commit range from local git so failures can be attributed to
-the changes that plausibly caused them. Both are best-effort and never fail a
-run; disable with `--no-commit-range` or `TESTLOOKUP_COMMIT_RANGE=0`.
+`upload` detects CI context from the standard environment variables of GitHub
+Actions, GitLab CI, Jenkins, Azure DevOps and CircleCI: the provider,
+repository, pull or merge request number, actor and run URL. Branch, build
+number and commit SHA are not detected; pass `--build` (required), `--branch`
+and `--commit` yourself. Precedence, lowest first: detection, then the
+`TESTLOOKUP_CI_PROVIDER`, `TESTLOOKUP_CI_REPO`, `TESTLOOKUP_PR_NUMBER`,
+`TESTLOOKUP_CI_ACTOR` and `TESTLOOKUP_CI_RUN_URL` environment variables, then
+the matching options.
 
-See `user-guide/` in the repository for the full CI recipes.
+`upload` also collects the commit range (base..`HEAD`, up to 100 commits with
+their changed files) from local git, so failures can be attributed to the
+commits that plausibly caused them. Pin the base with `--commit-range-base` or
+`TESTLOOKUP_COMMIT_RANGE_BASE`; turn collection off with `--no-commit-range` or
+`TESTLOOKUP_COMMIT_RANGE=0`. Both detection and collection are best-effort and
+never fail an upload. See
+[Getting results in](../user-guide/getting-results-in.md#commit-range-who-changed-what)
+for base selection and the shallow-clone caveat.
+
+## Further reading
+
+- [CLI, SDKs and MCP server](../user-guide/cli-sdk-mcp.md): choosing between the CLI, the reporter SDKs and the MCP server
+- [Getting results in](../user-guide/getting-results-in.md#3-cli): the CLI in CI pipelines
 
 ## Tests
 

@@ -1,31 +1,51 @@
 # TestLookup MCP Server
 
-The MCP (Model Context Protocol) server exposes TestLookup's full API surface to AI assistants, IDEs, and CI agents. It ships **62 tools**, **11 resources**, and **7 prompt workflows** across two transports (stdio for local clients, SSE for remote/CI).
+The MCP (Model Context Protocol) server exposes TestLookup to AI assistants, IDEs and CI agents. It ships **68 tools**, **11 resources** and **7 prompts**, over two transports: stdio for a local client and SSE for networked clients. Every tool call becomes a REST call to the TestLookup API, authenticated as a TestLookup user, so the backend's role and project checks apply unchanged.
 
-Beyond reads, the server carries **write-path tools** (PMF US-14.1) so an agent can close the triage loop end-to-end: propose/release quarantines, bulk-promote recovered tests, file deduplicated Jira defects with a dry-run preview, correct AI classifications, reassign failures, and manage notification policy. Stdio writes execute under its configured login; network writes execute under each presenting caller's bearer token. Both use backend RBAC and are audit-logged with that identity — see the [agent cookbook](../user-guide/agent-cookbook.md) for worked recipes.
+Beyond reads, the server carries **write-path tools** so an agent can close the triage loop: propose and release quarantines, bulk-promote recovered tests, file deduplicated Jira defects (with an optional dry-run preview), correct AI classifications, reassign failures, and manage notification policy. Stdio writes run under the configured login; SSE writes run under each caller's own bearer token. Both are audit-logged with that identity. See the [agent cookbook](../user-guide/agent-cookbook.md) for worked recipes.
 
-The Agentic-plan AI-5 surface makes MCP a first-class agent workflow entry point: `start_investigation` / `get_investigation` / `list_investigations` drive the shadow-mode **Investigator agent** (it diagnoses; the calling agent acts via the write tools), the `testlookup://runs/{run_id}/investigation` resource carries a run's latest verdict, `record_fix_outcome` feeds merged/reverted fix outcomes back into the AI-F1 label system as `human_indirect` training signals, and the `fix_this_flaky_test` prompt packages the whole flaky-fix loop.
+`start_investigation` / `get_investigation` / `list_investigations` drive the shadow-mode **Investigator agent** (it diagnoses; the calling agent acts through the write tools), the `testlookup://runs/{run_id}/investigation` resource carries a run's latest verdict, `record_fix_outcome` feeds merged or reverted fixes back to the classifier as `human_indirect` training signals, and the `fix_this_flaky_test` prompt packages the whole flaky-fix loop.
 
-## Quick start
+## Install (from source)
+
+The server is not published to a package or MCP registry. Run it from a clone of the repository with Python 3.11 (the version the container image uses):
 
 ```bash
-# Install dependencies
-make mcp-install
-
-# Start in stdio mode (for Claude Desktop / Cursor / local IDE)
-make mcp-start
-
-# Start in SSE mode (for web clients / CI agents)
-make mcp-sse              # or: make mcp-sse-docker
+git clone https://github.com/test-intelligence/testlookup.git
+cd testlookup
+pip install -r mcp/requirements.txt      # or: make mcp-install
 ```
 
-The MCP server talks to the TestLookup backend at `http://localhost:8000` by default. Local stdio clients can use username/password auto-login. Every network SSE client must send its own TestLookup access token; the server validates that token for each request and forwards the same caller identity to the backend.
+| Command | What it starts |
+|---|---|
+| `python mcp/server.py` or `make mcp-start` | stdio transport (the default), for a local client that launches the server as a subprocess |
+| `python mcp/server.py --transport sse --port 8002` or `make mcp-sse` | SSE transport on `0.0.0.0:8002` (`--port` defaults to 8002) |
+| `make mcp-sse-docker` (`docker compose up -d mcp`) | The `mcp` Compose service: SSE on port 8002, published on `127.0.0.1:8002`, talking to the `backend` service |
+
+The server reads its settings from `TESTLOOKUP_*` environment variables and from a `.env` file in the working directory; [mcp/.env.example](.env.example) is a template.
+
+## Authentication
+
+The MCP server authenticates to the TestLookup API as a user, with a JWT access token. It does **not** accept or use API keys.
+
+**stdio.** Set `TESTLOOKUP_USERNAME` and `TESTLOOKUP_PASSWORD`. On the first tool call the server logs in (`POST /api/v1/auth/login`), keeps the access token in memory, and logs in again once if the API answers 401. Without credentials, requests go out unauthenticated and fail until the client calls the `login` tool, which logs in for the rest of the stdio session.
+
+**SSE.** There is no server-wide identity. Every request (the `/sse` stream and each `/messages/` post) must carry `Authorization: Bearer <access token>`, where the token is a TestLookup JWT access token. The server checks it against `GET /api/v1/auth/me` on every request, with no caching, so revocation and deactivation take effect at once. The token's `jti` owns the SSE session: a refreshed token has to reconnect. `TESTLOOKUP_USERNAME` / `TESTLOOKUP_PASSWORD` are never used as a network identity, and the `login` tool refuses to run on a network session.
+
+To get an access token for an SSE client, log in as the user the agent should act as (access tokens last 12 hours unless the server's `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` says otherwise):
+
+```bash
+curl -s -X POST http://localhost:8000/api/v1/auth/login \
+  -d "username=${TESTLOOKUP_USERNAME}" -d "password=${TESTLOOKUP_PASSWORD}" | jq -r .access_token
+```
+
+Create a dedicated user per agent and give it only the role its job needs; see [Security model](../user-guide/agent-cookbook.md#security-model-rbac-and-audit).
 
 ## Client configuration
 
-### Claude Desktop (stdio)
+### stdio clients (Claude Desktop, Claude Code, Cursor, VS Code and others)
 
-Add to your `claude_desktop_config.json`:
+Most MCP clients take a server entry of this shape. Use the Python interpreter that has `mcp/requirements.txt` installed and an absolute path to `server.py`:
 
 ```json
 {
@@ -35,45 +55,23 @@ Add to your `claude_desktop_config.json`:
       "args": ["/absolute/path/to/testlookup/mcp/server.py"],
       "env": {
         "TESTLOOKUP_API_URL": "http://localhost:8000",
-        "TESTLOOKUP_USERNAME": "admin",
-        "TESTLOOKUP_PASSWORD": "your-password"
+        "TESTLOOKUP_USERNAME": "agent-bot",
+        "TESTLOOKUP_PASSWORD": "${TESTLOOKUP_PASSWORD}"
       }
     }
   }
 }
 ```
 
-### VS Code (Cline / Continue)
+Where the block goes depends on the client: `claude_desktop_config.json` for Claude Desktop, `.mcp.json` for Claude Code, `.cursor/mcp.json` for Cursor. Some clients (VS Code's `.vscode/mcp.json`, for example) name the top-level key `servers` instead of `mcpServers`; check your client's documentation. Not every client expands `${...}` in `env`; if yours does not, set the variable in the environment the client starts from.
 
-For Cline, add to your `.vscode/mcp.json`:
-
-```json
-{
-  "servers": {
-    "testlookup": {
-      "command": "python",
-      "args": ["/absolute/path/to/testlookup/mcp/server.py"],
-      "env": {
-        "TESTLOOKUP_API_URL": "http://localhost:8000",
-        "TESTLOOKUP_USERNAME": "admin",
-        "TESTLOOKUP_PASSWORD": "your-password"
-      }
-    }
-  }
-}
-```
-
-For Continue, add to `~/.continue/config.json` under `mcpServers`.
-
-### CI agents (SSE)
-
-Point any MCP-capable CI agent at the SSE endpoint:
+### SSE clients
 
 ```json
 {
   "mcpServers": {
     "testlookup": {
-      "url": "https://your-host/sse",
+      "url": "https://testlookup-mcp.example.com/sse",
       "headers": {
         "Authorization": "Bearer ${TESTLOOKUP_ACCESS_TOKEN}"
       }
@@ -82,24 +80,26 @@ Point any MCP-capable CI agent at the SSE endpoint:
 }
 ```
 
-The SSE transport runs on port 8002 by default. Send the same bearer header on the SSE connection and its `/messages/` requests. In production, expose the full MCP host through TLS; a token is never accepted as a server-wide default and the network `login` tool cannot switch identity.
+Expose SSE only through TLS in production. The server enforces DNS-rebinding protection: the `Host` header must match `TESTLOOKUP_MCP_ALLOWED_HOSTS` (loopback only by default), so set it to your public host name, and set `TESTLOOKUP_MCP_ALLOWED_ORIGINS` if browsers connect. `GET /health/live` reports process liveness; `GET /health/ready` returns 503 while the TestLookup API is not ready.
 
 ### Environment variables
 
+All settings use the `TESTLOOKUP_` prefix (`mcp/config.py`).
+
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `TESTLOOKUP_API_URL` | `http://localhost:8000` | Backend URL |
-| `TESTLOOKUP_USERNAME` | -- | Local stdio auto-login username; ignored as network identity |
-| `TESTLOOKUP_PASSWORD` | -- | Local stdio auto-login password; ignored as network identity |
-| `TESTLOOKUP_REQUEST_TIMEOUT` | `120.0` | HTTP timeout (seconds) |
-| `TESTLOOKUP_AUTH_TIMEOUT` | `5.0` | Backend token-validation/readiness timeout (seconds) |
-| `TESTLOOKUP_AUTH_MAX_CONNECTIONS` | `50` | Maximum concurrent backend authentication connections |
-| `TESTLOOKUP_MCP_ALLOWED_HOSTS` | loopback hosts | Comma-separated exact Host allowlist; set the public TLS ingress host |
-| `TESTLOOKUP_MCP_ALLOWED_ORIGINS` | -- | Comma-separated browser Origin allowlist, when Origin is sent |
+| `TESTLOOKUP_API_URL` | `http://localhost:8000` | TestLookup API base URL |
+| `TESTLOOKUP_USERNAME` | (empty) | stdio auto-login username; never used as a network identity |
+| `TESTLOOKUP_PASSWORD` | (empty) | stdio auto-login password; never used as a network identity |
+| `TESTLOOKUP_REQUEST_TIMEOUT` | `120.0` | HTTP timeout for API calls, in seconds (AI analysis can take a minute) |
+| `TESTLOOKUP_AUTH_TIMEOUT` | `5.0` | Timeout for SSE token validation and the readiness check, in seconds |
+| `TESTLOOKUP_AUTH_MAX_CONNECTIONS` | `50` | Connection pool size for token validation |
+| `TESTLOOKUP_MCP_ALLOWED_HOSTS` | `127.0.0.1:*,localhost:*,[::1]:*` | Comma-separated `Host` allowlist for SSE; `:*` allows any port |
+| `TESTLOOKUP_MCP_ALLOWED_ORIGINS` | (empty) | Comma-separated browser `Origin` allowlist for SSE |
 
 ## Demo prompts
 
-Copy-paste these into Claude Desktop or your MCP client to verify the integration works:
+Paste these into your MCP client to check the integration:
 
 ```
 List all QA projects in TestLookup
@@ -110,7 +110,7 @@ Show me the dashboard metrics for the first project over the last 7 days
 ```
 
 ```
-What are the top 5 flaky tests across all projects?
+What are the top 5 flaky tests in project <name>?
 ```
 
 ```
@@ -134,29 +134,31 @@ Run a deep investigation on the latest run for project <name>
 ```
 
 ```
-Show the LLM cost budget overview -- which projects are closest to their cap?
+Show the LLM cost budget overview: which projects are closest to their cap?
 ```
 
 ```
 List open quarantine proposals and approve the one with the highest flip rate
 ```
 
-## Tool reference (62 tools)
+## Tool reference (68 tools)
+
+A `?` marks an optional parameter.
 
 ### Auth and health
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `login` | `username`, `password` | Authenticate and cache JWT token |
-| `health_check` | -- | Backend connectivity, version, LLM provider, dependency status |
+| `login` | `username`, `password` | Log in a local stdio session and cache its JWT; refused on network (SSE) sessions |
+| `health_check` | none | API status, version, environment, uptime and per-dependency health (`/health/details`) |
 
 ### Projects
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `list_projects` | -- | All active projects with integration config |
-| `get_project` | `project_id` | Full project config with Jira/OCP/Splunk details |
-| `create_project` | `name`, `slug`, ... | Register new project |
+| `list_projects` | none | Active projects with IDs and integration keys |
+| `get_project` | `project_id` | Full project record with integration configuration |
+| `create_project` | `name`, `slug`, `description?`, `jira_project_key?`, `splunk_index?`, `ocp_namespace?`, `jenkins_job_pattern?` | Register a new project |
 
 ### Test runs and cases
 
@@ -165,7 +167,8 @@ List open quarantine proposals and approve the one with the highest flip rate
 | `list_test_runs` | `project_id`, `status?`, `days?`, `page?`, `size?` | Runs newest-first with pass rate |
 | `get_run_details` | `run_id` | Aggregated stats, timeline, OCP context |
 | `list_test_cases` | `run_id`, `status?`, `suite?`, `page?`, `size?` | Filter by status/suite with error snippets |
-| `get_test_case` | `run_id`, `test_id` | Full test record with Allure labels |
+| `get_test_case` | `run_id`, `test_id`, `include_steps?` | Full test record with Allure labels; `include_steps=true` adds the latest run's step tree |
+| `get_test_step_flips` | `run_id`, `test_id` | Step-level flakiness across retained runs: which step flipped between PASSED and FAILED, how often, in how many runs, and its current status. Read-only. |
 
 ### Metrics and quality KPIs
 
@@ -182,9 +185,9 @@ List open quarantine proposals and approve the one with the highest flip rate
 | `get_failure_categories` | `project_id`, `days?` | Distribution by root cause category |
 | `get_top_failing_tests` | `project_id`, `days?`, `limit?` | Highest raw failure count |
 | `get_coverage_report` | `project_id`, `days?` | Suite coverage: unique tests, per-suite pass rates |
-| `get_defects` | `project_id`, `resolution_status?`, `page?`, `size?` | Defects with Jira links |
-| `list_defects` | `project_id`, `resolution_status?`, `limit?` | Defect list reads (lightweight, limit-based) |
-| `create_defect` | `project_id`, `fingerprint?/cluster_id?`, `target?`, `issue_type?`, `dry_run?` | **Write.** One-click Jira issue (or `target="webhook"` event) for a failure signature; `dry_run=true` returns the server preview; dedup-first (QA_ENGINEER+) |
+| `get_defects` | `project_id`, `resolution_status?`, `page?`, `size?` | Defects with Jira links (paginated) |
+| `list_defects` | `project_id`, `resolution_status?`, `limit?` | Defect list (lightweight, limit-based) |
+| `create_defect` | `project_id`, `fingerprint?` or `cluster_id?`, `target?`, `issue_type?`, `jira_project_key?`, `assignee?`, `extra_comment?`, `dry_run?` | **Write.** One-click Jira issue (or `target="webhook"` event) for a failure signature; `dry_run=true` returns the server preview without creating anything (default `false`); dedup-first (QA_ENGINEER+) |
 | `get_ai_analysis_summary` | `project_id`, `days?` | AI triage coverage and confidence distribution |
 | `get_chart_data` | `group_by`, `metric?`, `project_id?`, `release_id?`, `suite_name?`, `days?`, `top_n?` | A metric over 1-2 dimensions, the same series the REST API and UI charts draw, returned verbatim with `meta`. The only analytics tool that is release- and suite-scoped; without `project_id` it covers every project you can read. Errors carry `code`/`param`/`allowed` |
 
@@ -196,12 +199,12 @@ trend card, which reads `/api/v1/metrics/trends`: it counts every run that
 touched a suite whole, so under a suite filter it differs from
 `get_chart_data` (which counts only the suite's own tests).
 
-### AI root-cause analysis
+### AI root-cause analysis and test search
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `trigger_ai_analysis` | `test_case_id`, `service_name?`, `ocp_pod_name?` | LangChain ReAct agent (10-60s) |
-| `search_tests` | `query`, `project_id?`, `status?`, `days?` | Full-text search across tests (status/date filters, paginated) |
+| `trigger_ai_analysis` | `test_case_id`, `service_name?`, `ocp_pod_name?`, `ocp_namespace?`, `run_id?` | Root-cause analysis for one test case (10-60 s) |
+| `search_tests` | `query`, `project_id?`, `status?`, `days?`, `page?`, `size?` | Full-text search across tests with status and date filters, paginated |
 | `search_test_cases` | `query`, `project_id?` | Legacy test-case-only keyword search |
 
 ### Run intelligence and deep investigation
@@ -209,33 +212,33 @@ touched a suite whole, so under a suite filter it differs from
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `get_run_intelligence` | `run_id` | Unified snapshot: summary, clusters, release decision, risk score |
-| `refresh_intelligence` | `run_id` | Force-refresh cached snapshot |
-| `get_run_summary` | `run_id`, `mode?` | Narrative summary (executive/developer/manager) |
-| `trigger_deep_analysis` | `run_id` | Queue multi-agent deep investigation; returns task ID |
+| `refresh_intelligence` | `run_id` | Force-refresh the cached snapshot |
+| `get_run_summary` | `run_id`, `mode?` | Narrative summary (`executive`, `developer` or `manager`) |
+| `trigger_deep_analysis` | `run_id` | Queue a multi-agent deep investigation; returns a task ID |
 | `get_pipeline_status` | `run_id`, `workflow_type?` | Pipeline execution status and stage summary |
 | `get_failure_clusters` | `run_id` | Failure clusters with representative errors |
 | `get_deep_findings` | `run_id` | Root-cause findings per cluster |
 
-### Investigator agent (AI-5)
+### Investigator agent
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `start_investigation` | `run_id` | **Write (safe).** Launch the shadow-mode hypothesis-loop Investigator for a run; 403 (policy disabled) / 409 (already running, carries the active id) / 429 (daily budget) come back as structured results (QA_ENGINEER+) |
-| `get_investigation` | `investigation_id` | Full detail: status, budget vs spend, five hypothesis boards, verdict (primary cause, confidence, narrative, recommended actions) — long prose compact-rendered |
-| `list_investigations` | `project_id`, `limit?` | Recent investigations newest-first with primary cause + confidence |
+| `get_investigation` | `investigation_id` | Full detail: status, budget vs spend, five hypothesis boards, verdict (primary cause, confidence, narrative, recommended actions) |
+| `list_investigations` | `project_id`, `limit?` | Recent investigations newest-first with primary cause and confidence |
 
-### Agents (E1.5)
+### Agents
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `list_agents` | none | The agent catalog: permission, whether each agent is invocable on its own, sync-eligible, report-producing |
 | `get_agent` | `agent_id` | One catalog entry: input/output contracts, dependencies, how to invoke it |
-| `invoke_agent` | `agent_id`, `project_id`, `test_run_id`, `mode?`, `idempotency_key?` | **Write (side effect).** Runs one invocable agent on a stored test run. Always sends an `Idempotency-Key` (yours, or a new one it returns), so a retry with the same key cannot run the agent twice |
+| `invoke_agent` | `agent_id`, `project_id`, `test_run_id`, `mode?`, `config_overrides?`, `idempotency_key?` | **Write (side effect).** Runs one invocable agent on a stored test run and spends the project's AI budget. Always sends an `Idempotency-Key` (yours, or a new one it returns), so a retry with the same key cannot run the agent twice |
 | `get_agent_invocation` | `invocation_id` | Status, attempts, output, and `review_state` of an invocation |
 
 `INVOKABLE_AGENT_IDS` in `tools/agents.py` mirrors the backend registry; `backend/tests/test_mcp_agent_catalog_parity.py` fails when they drift.
 
-### Human review (E8.4)
+### Human review
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
@@ -247,7 +250,7 @@ touched a suite whole, so under a suite filter it differs from
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `global_search` | `query`, `entity_types?`, `project_id?` | Search all entities: tests, runs, suites, defects, releases |
+| `global_search` | `query`, `entity_types?`, `project_id?` | Search all entities: tests, runs, suites, defects, flaky tests, releases |
 
 ### Release and reports
 
@@ -255,7 +258,7 @@ touched a suite whole, so under a suite filter it differs from
 |------|-----------|-------------|
 | `check_release_readiness` | `project_id`, `days?` | Project-level GREEN/AMBER/RED rollup over a time window |
 | `check_run_release_readiness` | `run_id` | Single-run GO/CONDITIONAL_GO/NO_GO with risk score and blocking issues |
-| `create_share_link` | `run_id`, `expires_days?`, `layout?` | Time-limited share URL for run reports |
+| `create_share_link` | `run_id`, `expires_days?`, `layout?` | Time-limited share URL for a run report |
 
 ### Decision trail
 
@@ -268,25 +271,25 @@ touched a suite whole, so under a suite filter it differs from
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `list_compliance_packs` | `release_id` | Generated audit ZIPs with manifest SHA-256 |
-| `generate_compliance_pack` | `release_id`, `notes?`, `retention_days?` | Generate tamper-evident audit ZIP — SHA-256 checksum chain, no HMAC/PKI (QA_LEAD+ required) |
+| `generate_compliance_pack` | `release_id`, `notes?`, `retention_days?` | Generate a tamper-evident audit ZIP: SHA-256 checksum chain, no HMAC or PKI (QA_LEAD+) |
 
 ### Flaky quarantine
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `list_quarantine_requests` | `project_id`, `status?`, `live_only?`, `limit?` | Review queue with flip rates |
-| `get_quarantine_stats` | `project_id` | Count per status |
-| `approve_quarantine` | `request_id`, `notes?`, `quarantine_duration_days?` | Approve and activate quarantine |
-| `reject_quarantine` | `request_id`, `notes?` | Reject proposal |
-| `propose_quarantine` | `project_id`, `fingerprint`, `reason`, `test_name?`, `suite_name?`, `quarantine_duration_days?` | **Write.** File a PROPOSED request for QA Lead review — never quarantines directly (QA_LEAD+) |
+| `list_quarantine_requests` | `project_id?`, `status?`, `live_only?`, `limit?` | Review queue with flip rates, across the projects you can read unless `project_id` is given |
+| `get_quarantine_stats` | `project_id?` | Count per status |
+| `approve_quarantine` | `request_id`, `notes?`, `quarantine_duration_days?` | Approve and activate a quarantine |
+| `reject_quarantine` | `request_id`, `notes?` | Reject a proposal |
+| `propose_quarantine` | `project_id`, `fingerprint`, `reason`, `test_name?`, `suite_name?`, `quarantine_duration_days?` | **Write.** File a PROPOSED request for QA Lead review; never quarantines directly (QA_LEAD+) |
 | `release_quarantine` | `request_id`, `reason` | **Write.** End an active quarantine early; the test counts against gates again (QA_LEAD+) |
-| `promote_ready_quarantines` | `project_id`, `dry_run=true` | **Write (bulk).** dry_run lists `ready_to_promote` entries; `dry_run=false` releases them, max 10/call, each reported (QA_LEAD+) |
+| `promote_ready_quarantines` | `project_id`, `dry_run?` | **Write (bulk).** `dry_run=true` (the default) lists `ready_to_promote` entries; `dry_run=false` releases them, at most 10 per call, each reported (QA_LEAD+) |
 
 ### LLM cost budget
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `get_billing_overview` | -- | Workspace LLM spend this month |
+| `get_billing_overview` | none | Workspace LLM spend this month |
 | `get_project_llm_usage` | `project_id` | Current-period cost, tokens, cap utilization |
 | `get_project_llm_quota` | `project_id` | Budget config: cap, action, enabled |
 
@@ -297,22 +300,22 @@ touched a suite whole, so under a suite filter it differs from
 | `list_release_gate_policies` | `project_id?` | Active GO/NO_GO rules |
 | `list_saved_views` | `project_id?`, `page?` | Saved filter views |
 | `list_digest_subscriptions` | `project_id?` | Scheduled quality report subscriptions |
-| `list_ownership_rules` | `project_id?` | Service ownership glob patterns |
-| `list_feature_flags` | -- | All feature flags (admin only) |
-| `check_feature_flag` | `key`, `project_id?` | Evaluate flag for caller's context |
+| `list_ownership_rules` | `project_id` | Service ownership glob patterns for a project |
+| `list_feature_flags` | none | All feature flags (admin only) |
+| `check_feature_flag` | `key`, `project_id?` | Evaluate a flag for the caller's context |
 
 ### Classification feedback (write path)
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `correct_classification` | `project_id`, `fingerprint`, `corrected_category`, `comment?`, `corrected_root_cause?` | **Write.** Override a wrong AI failure category; updates the analysis, evicts the cached verdict, and stores an `ai_feedback` training signal under the caller's identity |
-| `record_fix_outcome` | `project_id`, `fingerprint`, `outcome`, `reference?`, `comment?` | **Write.** Record a fix's fate (`fixed` / `not_fixed` / `reverted`) against the latest analysis — lands as a `human_indirect` AI-F1 training signal (source `fix_outcome`); how a coding agent's merged fix teaches the classifier (AI-5) |
+| `record_fix_outcome` | `project_id`, `fingerprint`, `outcome`, `reference?`, `comment?` | **Write.** Record a fix's fate (`fixed` / `not_fixed` / `reverted`) against the latest analysis; lands as a `human_indirect` training signal (source `fix_outcome`) |
 
 ### Failure assignment (write path)
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `get_assignment_options` | `test_case_id` | Valid assignees (resolved suite owner + QA_ENGINEER members) |
+| `get_assignment_options` | `test_case_id` | Valid assignees (resolved suite owner and QA_ENGINEER members) |
 | `assign_failure` | `test_case_id`, `new_assignee_user_id` | **Write.** Reassign a FAILED/BROKEN test case to a new owner's my-failures inbox (QA_LEAD/ADMIN on the project) |
 
 ### Notification policy
@@ -320,25 +323,25 @@ touched a suite whole, so under a suite filter it differs from
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `get_transition_policy` | `project_id` | Per-project transition-notification policy (which events fire) |
-| `set_transition_policy` | `project_id`, `transitions_enabled?`, `per_run_events_enabled?`, `enabled_events?`, `consecutive_failure_threshold?` | **Write.** Full-replace the policy — affects what every project member is notified about |
+| `set_transition_policy` | `project_id`, `transitions_enabled?`, `per_run_events_enabled?`, `enabled_events?`, `consecutive_failure_threshold?` | **Write.** Replace the whole policy; affects what every project member is notified about |
 
 ## Resource reference (11 resources)
 
-Resources are passive, read-only context URIs that AI clients can fetch as background knowledge.
+Resources are read-only context URIs that clients can fetch as background knowledge.
 
 | URI | Description |
 |-----|-------------|
 | `testlookup://projects` | Index of all active projects |
-| `testlookup://projects/{project_id}` | Full project record + integrations |
-| `testlookup://projects/{project_id}/metrics` | Live dashboard KPIs (last 7 days) |
+| `testlookup://projects/{project_id}` | Full project record and integrations |
+| `testlookup://projects/{project_id}/metrics` | Dashboard KPIs (last 7 days) |
 | `testlookup://projects/{project_id}/runs/latest` | 10 most recent runs |
-| `testlookup://projects/{project_id}/quarantine-manifest` | CI quarantine manifest: currently-effective quarantines with lifecycle flags |
+| `testlookup://projects/{project_id}/quarantine-manifest` | CI quarantine manifest: currently effective quarantines with lifecycle flags (what `testlookup ci-verdict` matches against) |
 | `testlookup://projects/{project_id}/flaky-tests` | Flakiness leaderboard (30 days, top 20) |
-| `testlookup://projects/{project_id}/defects/open` | Open defects |
-| `testlookup://runs/{run_id}` | Full run record + aggregated stats |
-| `testlookup://runs/{run_id}/failures` | Failed/broken test cases (up to 200) |
-| `testlookup://runs/{run_id}/investigation` | Latest Investigator-agent investigation for the run (hypotheses + verdict), null with a hint when none exists |
-| `testlookup://tests/{run_id}/{test_id}` | Full test case + error + Allure labels |
+| `testlookup://projects/{project_id}/defects/open` | Open defects (up to 100) |
+| `testlookup://runs/{run_id}` | Full run record and aggregated stats |
+| `testlookup://runs/{run_id}/failures` | Test cases with status `FAILED` (up to 200) |
+| `testlookup://runs/{run_id}/investigation` | Latest Investigator-agent investigation for the run (hypotheses and verdict), or a hint when there is none |
+| `testlookup://tests/{run_id}/{test_id}` | Full test case, error and Allure labels |
 
 ## Prompt reference (7 prompts)
 
@@ -350,22 +353,28 @@ Prompts are reusable investigation workflows that expand into sequences of tool 
 | `release_readiness_report` | `project_id`, `release_version?` | Executive go/no-go: metrics, trends, categories, blockers, flakiness risk |
 | `weekly_quality_digest` | `project_id` | Team digest: pass rate trend, top failures, flakiness watch, action items |
 | `flakiness_investigation` | `project_id`, `threshold_pct?` | Prioritised remediation: quick wins vs strategic improvements |
-| `defect_triage_session` | `project_id` | Structured triage: review defects, identify duplicates, produce P1/P2/P3 list |
+| `defect_triage_session` | `project_id` | Structured triage: review defects, identify duplicates, produce a P1/P2/P3 list |
 | `suite_health_check` | `project_id`, `suite_name` | Suite analysis: coverage, worst tests, failure patterns, health score |
-| `fix_this_flaky_test` | `project_id`, `fingerprint` | Packaged flaky-fix workflow (AI-5): evidence + Investigator verdict → history recall → quarantine proposal → local reproduce & fix → `record_fix_outcome` on merge |
+| `fix_this_flaky_test` | `project_id`, `fingerprint` | Packaged flaky-fix workflow: evidence and Investigator verdict, history recall, quarantine proposal, local reproduce and fix, `record_fix_outcome` on merge |
 
 ## Hardening notes (known gaps)
 
-These are documented for transparency and tracked as follow-up work:
+- **Input validation**: tools accept any string for enum fields (status, resolution_status); the API validates them, the MCP tools do not pre-validate.
+- **Stdio token lifecycle**: the stdio token is process-local and is renewed only when the API answers 401.
+- **Output format**: read tools return Markdown strings, not structured JSON, which suits AI clients but not programmatic consumers. The write tools return structured dicts (`ok`, `action`, `status_code`/`detail` on failure).
+- **Concurrency**: stdio serves one client. SSE validates every request and binds each connection to its access token's `jti` and user.
+- **Rate limiting**: the server itself does not rate-limit. The packaged Kubernetes ingress and OpenShift route for MCP (`k8s/base/ingress.yaml`, `k8s/overlays/openshift/route.yaml`) set connection and request-rate limits; apply equivalent controls at any other public gateway.
 
-- **Input validation**: tools accept any string for enum fields (status, resolution_status); backend validates but MCP tools don't pre-validate
-- **Stdio token lifecycle**: the single-client stdio token is process-local; it relies on 401 detection for re-auth
-- **Output format**: read tools return markdown strings, not structured JSON -- adequate for AI clients but less ideal for programmatic consumers. The US-14.1 write tools return structured dicts (`ok`, `action`, `status_code`/`detail` on failure); migrating reads to the same shape is future work
-- **Concurrency**: stdio is a single-client boundary; SSE validates and binds each connection to its presenting access-token `jti` and user
-- **Rate limiting**: packaged Kubernetes/OpenShift ingress applies connection/rate limits; apply equivalent controls at other public gateways
+## Tests
+
+```bash
+cd mcp && python -m pytest tests -q
+```
 
 ## Further reading
 
-- [README.md](../README.md) -- product overview
-- [ARCHITECTURE.md](../ARCHITECTURE.md) -- system architecture
-- [THREAT_MODEL.md](../THREAT_MODEL.md) -- data flow and security boundaries (includes MCP)
+- [CLI, SDKs and MCP server](../user-guide/cli-sdk-mcp.md#the-mcp-server): how the MCP server fits next to the CLI and the SDKs
+- [Agent cookbook](../user-guide/agent-cookbook.md): client setup and worked agent recipes
+- [README.md](../README.md): product overview
+- [ARCHITECTURE.md](../ARCHITECTURE.md): system architecture
+- [THREAT_MODEL.md](../THREAT_MODEL.md): data flow and security boundaries (includes MCP)

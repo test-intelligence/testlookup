@@ -117,7 +117,7 @@ pipeline database model.
   by the child's atomic queued-to-running claim. Permanent delivery failure
   terminalizes the queued child and its task instead of leaking active capacity.
 - Children run on the isolated `agent_children` queue (concurrency one in
-  the homelab manifest). The parent uses a bounded join; timeout terminalizes
+  the shipped Compose and Kubernetes manifests). The parent uses a bounded join; timeout terminalizes
   queued children and their outbox rows, requests cooperative cancellation of
   running children, and produces an explicit degraded result.
 - A child re-resolves project, run, producing pipeline, cluster row, member
@@ -259,7 +259,7 @@ loss from leaving an active reservation that blocks later stages.
   immutability, durable outbox recovery, concurrent dispatch serialization,
   child cancellation, retention cascades, and startup claim failure before any
   provider call, action-ledger idempotency, and report-evaluation-cycle
-  persistence. The disposable homelab fixtures are removed after each test;
+  persistence. The disposable test fixtures are removed after each test;
   the latest run passed all ten integration tests. Live PostgreSQL+Mongo
   supersession publication and idempotent replay are included. The remaining
   broker-loss visibility-timeout drill was completed on the current deployed
@@ -276,8 +276,8 @@ loss from leaving an active reservation that blocks later stages.
   ``worker_cancel_long_running_tasks_on_connection_loss`` so interrupted
   executions are cancelled for broker redelivery. The deployed revision has
   also passed the opt-in disposable visibility regression, and CI runs that
-  same late-ack/redelivery test against its Redis service. A homelab Redis
-  pod-restart drill
+  same late-ack/redelivery test against its Redis service. A Redis
+  pod-restart drill on a test cluster
   now confirms the namespaced AOF marker survives replacement, the base and
   incremental AOF files load, and the active worker fleet returns ready. A
   disposable-authority PostgreSQL
@@ -295,39 +295,6 @@ loss from leaving an active reservation that blocks later stages.
   Remaining pre-pilot work is governance and evaluation evidence, not an
   untested child claim, outbox, cancellation, retention, or artifact-authority
   path.
-
-## Homelab deployment verification (2026-08-13 UTC)
-
-- Immutable build tag: `build-20260813-033346`.
-- Secret-free build-context SHA-256: `ebcaa5a39732ca96b872842c4606504a07c981903d925ef102a0ec4f65c26baa`.
-- Resolved backend digest: `sha256:04b93d29eac54ba4c3a555886c08e7cadf72c238c95f9cc348f05d5ae4b42076`.
-- Resolved frontend digest: `sha256:d25aa538d0d3e3da52986bc3672418e51c0263a67687cf3b2d5d7619022217c3`.
-- Resolved MCP digest: `sha256:b0ca5b695aa7b5763b966b2373b8b1b5f0f498270b0130cb6c6d67b3403a6383`.
-- Kubernetes state: all 18 TestLookup pods Ready (15 deployments; backend,
-  critical, and ingestion workers use 2 replicas). Both backend pods resolved the same
-  digest and source-module hash.
-- Database schema: Alembic `0128 (head)`.
-- Live probe: in-pod `/health/live` returned `status=alive`.
-- Runtime API: the deployed OpenAPI document contains
-  `/api/v1/agents/pipelines/{pipeline_id}/agentic-runtime`.
-- Retention authority smoke: a temporary published Mongo report with a nested
-  artifact reference was protected by the deployed retention helper while a
-  live PostgreSQL `SELECT 1` succeeded; the temporary report was deleted.
-- Report publication smoke: publishing the same pipeline twice returned one
-  immutable report ID and left one published document.
-- The homelab Kustomize overlay remains declarative; no temporary ConfigMap or
-  builder/PVC resources remain in the namespace.
-
-The deploy script accepts Docker or Podman through `CONTAINER_ENGINE`, keeps
-the Kubernetes TLS compatibility override explicit and process-local, and
-fails closed when registry or Ready-pod image authority cannot be proven.
-
-The current worktree privacy, report-version, and pilot-readiness revision is
-included in the immutable build above. It was built with a disposable
-in-cluster Kaniko job after the source archive checksum was verified, then
-rolled out only after all three registry manifest digests matched the Ready
-pod image IDs. Temporary builder jobs, namespace, source archive, and build
-context were removed after rollout.
 
 ## Change/Ownership domain-evidence slice
 
@@ -363,41 +330,11 @@ The terminal decision report now exposes a bounded, typed claim projection. Each
 
 The fields are optional in the frontend reader for compatibility with older published reports. New backend reports always emit bounded arrays, and missing/failed specialist context produces an explicit unknown claim rather than an inferred fact.
 
-## Homelab deployment record — typed claims/actions
-
-- Build tag: `build-20260812-084146`
-- Backend/frontend images: deployed and Ready (backend 2/2, frontend 1/1)
-- Alembic: `0122 (head)`
-- Typed backend imports: `typed-claims-imports-ok`
-- Health: `http://192.168.0.201/health/live` with Host `testlookup.local` returned `status=alive`
-- Child worker and all application workloads: Ready
-- Deployment script completed with frontend digest verification
-
 ## Claim-level evidence inspection (2026-08-12)
 
 Typed claims now carry a bounded projection of the signed evidence authority: the decision evidence hash, up to five authorized artifact references (artifact/evidence ID, source, kind, checksum, scope, sensitivity, freshness, and sanitized excerpt), and the run metric definition reference. The report hash remains visible in the drawer so the user can distinguish the evidence context from a newer or stale report.
 
 The frontend opens these references in a modal drawer with separate evidence and counter-evidence sections, confidence basis, source stage, and report fingerprint. It does not fetch unbound IDs or expose raw URI/body fields; older reports without claim arrays remain compatible and show no fabricated evidence. This is an inspection projection only; artifact mutation and external actions remain behind existing authorization boundaries.
-
-## Homelab deployment record — claim evidence drawer
-
-- Build tag: `build-20260812-085810`
-- Backend/frontend images: deployed and Ready (backend 2/2, frontend 1/1)
-- Alembic: `0122 (head)`
-- Typed imports: `claim-drawer-imports-ok`
-- Health: `http://192.168.0.201/health/live` returned `status=alive`
-- Child worker and application workloads: Ready
-- Frontend image digest verification completed by the deployment script
-
-## Homelab deployment record — report-preserving claim evidence drawer
-
-- Build tag: `build-20260812-090708`
-- Backend/frontend images: deployed and Ready (backend 2/2, frontend 1/1)
-- Alembic: `0122 (head)`
-- Typed imports: `claim-drawer-imports-ok`
-- Health: `http://192.168.0.201/health/live` returned `status=alive`
-- Child worker and application workloads: Ready
-- Frontend image digest verification completed by the deployment script
 
 ## Phase 5 report-scoped structured feedback (2026-08-12)
 
@@ -417,17 +354,6 @@ constraint. The Run Intelligence UI exposes utility buttons and a claim
 correction dialog only for a currently verified report; corrections require a
 reason and bound evidence selection. Existing analysis feedback remains
 backward compatible and continues to feed the training loop.
-
-## Homelab deployment record — report-scoped feedback
-
-- Build tag: `build-20260812-143108`
-- Backend/frontend images: deployed and Ready (backend 2/2, frontend 1/1)
-- Alembic: `0123 (head)`
-- Backend imports: `report-feedback-imports-ok`
-- API route: `/api/v1/runs/{run_id}/decision-reports/{report_id}/feedback` registered
-- Health: `http://192.168.0.201/health/live` returned `status=alive`
-- Child worker and application workloads: Ready
-- Frontend image digest verification completed by the deployment script
 
 ## Phase 3 cluster-child orchestration slice (2026-08-12)
 
@@ -453,26 +379,23 @@ attempts, budgets, stop reasons, and truncation status.
 Validation for this slice: the focused cluster-child and privacy/log regression
 sets pass (56 cluster-child tests plus the broader Log/report/privacy set);
 Ruff, Python compilation,
-offline migration checks, and diff checks passed. Review report:
-`docs/reviews/phase3-cluster-child-runtime/00-action-plan.md`.
+offline migration checks, and diff checks passed.
 
 The child feature remains shadow/dark-gated pending project policy, pilot, and
 the remaining real-PostgreSQL cancellation/retention race approval. SQL outbox dispatch, stale-sent
   redelivery, deterministic task identity, terminal-child exclusion, Redis
   pod-restart persistence, and concurrent queued/running child cancellation
   plus retention cascade cleanup are covered by live checks. A
-populated child-resume claim was also exercised against the homelab PostgreSQL
+populated child-resume claim was also exercised against a test-cluster PostgreSQL
 service using a disposable authoritative cluster fixture; the fixture was
-removed after verification. A homelab rollout was verified on
-2026-08-12 using the overlay build documented in
-`docs/deployment/homelab-phase6-report-eval-20260812.md`; all backend workers,
-beat, API, and frontend pods were Ready, the child worker imported the runtime,
-and `/health/live` returned `alive`. The deployment still does not enable the
+removed after verification. A test-cluster rollout confirmed that all backend
+workers, beat, API, and frontend pods became Ready, the child worker imported
+the runtime, and `/health/live` returned `alive`. That rollout did not enable the
 feature flag or substitute for live PostgreSQL contention/rollback tests.
 
 Current Phase 3 iteration validation: the source-focused Phase 3 regression set
 passes; three live
-PostgreSQL child-runtime integration tests passed in the homelab (outbox,
+PostgreSQL child-runtime integration tests passed on a test cluster (outbox,
 concurrent cancellation, and retention cascade); Redis AOF/PVC restart
 persistence passed; Ruff, compilation, and diff checks passed.
 
@@ -493,8 +416,7 @@ substitute for approved pilot labels.
 The evaluator result is embedded in `DecisionReportV1.verification` under
 `report_evaluation` and is included in the critic check set. Invalid citations
 or policy contradictions reject publication; threshold warnings remain visible
-for shadow/canary analysis. The implementation and review are recorded in
-`docs/reviews/phase6-report-eval/00-action-plan.md`. GA still requires an
+for shadow/canary analysis. GA still requires an
 approved representative corpus, two consecutive passing cycles, pilot utility
 evidence, and provider/memory/action-governance completion. Authoritative
 report-cycle evaluation now aggregates only persisted utility feedback scoped
@@ -564,9 +486,7 @@ and reusing an idempotency key with a different payload fails closed. This is
 proposal-only: external Jira/release mutations still require their existing
 approval and integration boundaries.
 
-The action-ledger rollout is documented in
-`docs/deployment/homelab-agent-action-ledger-20260812.md`; migration `0125`
-introduced the ledger and the current homelab head is `0128`. Generic approval API wiring, external execution
+Migration `0125` introduced the ledger. Generic approval API wiring, external execution
 outbox delivery, and live PostgreSQL race tests remain follow-up gates before
 enabling autonomous action execution.
 
@@ -584,11 +504,6 @@ and resolution rate. Cycles built from caller-supplied corpora intentionally
 mark action governance unavailable because those corpora are not authoritative
 action ledgers.
 
-The current action-governance revision is deployed to the homelab with immutable
-backend/frontend digests and Alembic `0128 (head)`; the exact rollout and
-runtime checks are recorded in
-`docs/deployment/homelab-phase6-action-governance-20260813.md`.
-
 ## Protected PostgreSQL CI gate (2026-08-13)
 
 The CI workflow now includes a separate `postgres-integration` job. It starts a
@@ -599,5 +514,5 @@ PostgreSQL+Mongo report-supersession tests with the integration DSN set. The
 job is a dependency of image publication, so a skipped or failed protected
 database/publication suite cannot be hidden behind a successful build. The
 first GitHub execution remains required evidence; the same protected list has
-passed against the deployed homelab PostgreSQL/Mongo services, while local
+passed against PostgreSQL/Mongo services on a test cluster, while local
 YAML, quality-gate, and router regression checks pass.

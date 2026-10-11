@@ -245,9 +245,9 @@ pass first.
 ## 6. Cost as a first-class signal (`agent_cost_service`)
 
 Model-ops includes spend: `get_pipeline_cost_summary` and `check_alerts` track
-per-pipeline AI cost and fire alerts, feeding the **Intelligence spend** the
-[Intelligence Hub](../user-guide/ai-features.md#run-intelligence-intelligence-runsidintelligence)
-shows and complementing the per-project [LLM budget gate](./INGESTION_SCALE.md#6-keeping-the-ai-layer-affordable-under-volume).
+per-pipeline AI cost and fire alerts (a run's analysis is on the
+[run Analysis tab](../frontend/src/content/guide/runs.md#analysis)),
+complementing the per-project [LLM budget gate](./INGESTION_SCALE.md#6-keeping-the-ai-layer-affordable-under-volume).
 A "better" model that costs 10× is a trade-off the numbers make visible.
 
 ## 7. Design invariants

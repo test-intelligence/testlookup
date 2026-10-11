@@ -1,70 +1,73 @@
-# Troubleshooting & FAQ
+# Troubleshooting (operators)
 
-A symptom-first index into the rest of the guide. Find your symptom, jump to the likely cause. When a fix lives in another guide, this points you there rather than repeating it.
+Symptoms that need someone with access to the deployment, configuration or settings pages. For symptoms an end user can check alone (an empty page, a project selector on All Projects, a narrow time window, counts that differ between pages), send them to **Troubleshooting** in the in-app guide (`/docs/troubleshooting`, source [troubleshooting.md](../frontend/src/content/guide/troubleshooting.md)).
 
-## "The page is empty — no data, no error"
+## First checks
 
-The classic. Check these three, in order:
+- **`/health/details`** on the API (for example `http://localhost:8000/health/details`) reports every dependency and the running build. `/health/ready` is the readiness probe; `/health/live` only says the process is up; `/health/version` is the build identity without probes.
+- **Settings → Integrations → Integration health** shows whether each configured integration is reachable and delivering.
+- **Settings → Security & access → Audit dashboard** shows whether an event or a settings change was recorded at all.
+- The observability stack (metrics, traces, alerts) is described in [architecture/OBSERVABILITY.md](../architecture/OBSERVABILITY.md).
 
-1. **No project selected.** Almost nothing renders until a specific project is chosen in the top bar. If you're an admin in **All Projects** mode, some pages (and the Runs **Upload** button) are intentionally disabled — pick one project.
-2. **The time window excludes your data.** Every analytics page shares one [time window](dashboards.md#the-golden-rule-the-shared-time-window). If it's set to "last 7 days" and your last run was two weeks ago, the page is correctly empty. Widen it.
-3. **A backend validation error (422).** These now surface as a toast (they used to be silent — the historical "empty page" footgun). If you see a red validation toast, the request shape was rejected; the message names the field.
+## A run shows totals but no per-test rows
 
-## "Counts don't match between two pages"
+The run finalised its totals but the per-test rows lagged or failed.
 
-Almost always one of two things — see the [discrepancy cheat-sheet](dashboards.md#reading-discrepancies-cheat-sheet):
+- **Just now?** Wait a few seconds; processing is asynchronous.
+- **Persistently?** Per-test rows are queued to an ingestion **shard** queue, and every ingestion worker must subscribe to **all** shard queues. A worker listening only to the plain `ingestion` queue produces exactly this symptom. See [architecture/INGESTION_SCALE.md](../architecture/INGESTION_SCALE.md). A recovery task re-stages such runs within a couple of minutes once a worker picks the queue up.
 
-- **Different aggregation.** The Summary Report has a **window** mode (unique tests across the window — matches Coverage) and a **latest** mode (latest run per suite — deliberately smaller). Two pages in different modes *should* differ.
-- **Executions vs unique tests.** The Runs page counts executions; Coverage counts unique tests. A suite run 5× shows 5 executions but maybe 20 unique tests.
-- **Different window.** The shared window follows you, but confirm both pages are actually on the same one.
+## Suites or Coverage are empty while Runs is populated
 
-## "A run shows totals but no per-test rows"
+Same root cause as above: the shard-queue subscription on the workers. It is not a problem with the upload.
 
-The run finalized its aggregates but the per-test persistence lagged or failed:
+## The Upload button is missing on Runs
 
-- **Just now?** Give it a few seconds — processing is asynchronous.
-- **Persistently?** This is an operator-side issue: the run's per-test rows are queued to an ingestion **shard**, and workers must subscribe to **all** shard queues. A worker on the plain `ingestion` queue only produces exactly this symptom. (Details: [architecture/INGESTION_SCALE.md](../architecture/INGESTION_SCALE.md).) The auto-recovery beat also re-stages such runs within a couple of minutes.
+The `manual_upload` feature flag is off. It ships on for a new install; an instance upgraded from an older version keeps its stored value. Turn it on under **Settings → System → Feature flags** (administrators only). See [Connecting CI and test frameworks](getting-results-in.md#1-upload-from-the-dashboard).
 
-## "`/suites` or `/coverage` is empty but `/runs` is populated"
+## A workflow page says it is turned off
 
-Same root cause as above — the shard-queue subscription gap on the worker. It's an operator fix, not a problem with your upload.
+Several workflows ship behind feature flags that are **off** on a new install: quarantine proposals (`flaky_auto_quarantine`), outbound webhooks (`outbound_webhooks`), LLM cost-budget enforcement (`llm_cost_budget`), release phase enforcement (`release_phase_gate_enforcement`), compliance packs (`release_compliance_pack`), GitHub checks (`github_checks`) and GitLab (`gitlab`). The [feature-flag reference](../docs/operations/feature-flags.md) lists every flag and what it gates.
 
-## "The Upload button is missing on Runs"
+A flag that "does nothing" after you set it is usually one of:
 
-Two possibilities:
+- `enabled_global` is the master switch. A project list on its own does not turn the flag on.
+- `rollout_percent` is 0.
+- The flag value is cached for about 30 seconds; give it a moment.
 
-- You're in **All Projects** mode — pick a specific project.
-- The `manual_upload` feature flag is off (admins toggle it under [Feature Flags](administration.md#operating-the-instance)).
+## A webhook, Jira issue or chat notification did not fire
 
-## "My webhook / Jira ticket / integration didn't fire"
+1. **Offline mode.** `AI_OFFLINE_MODE` defaults to `true`, and it is a hard switch above every integration setting: in a default install nothing outbound fires. Turn it off deliberately, or use the narrow allow-lists described in the [integrations reference](../docs/operations/integrations.md).
+2. **The feature flag** for that integration (`outbound_webhooks`, `github_checks`, `gitlab`).
+3. **Integration health** for reachability and the last error.
+4. **The audit dashboard** for whether the event was recorded.
 
-- **Offline mode.** `AI_OFFLINE_MODE` defaults to **on**, and it's a hard kill-switch *above* every integration flag — in a default install nothing outbound fires regardless of settings. Enable outbound integrations deliberately.
-- **Then check [Integration Health](administration.md#connecting-to-your-world)** (`/settings/integration-health`) — it's the status board for configured/reachable/delivering, and the first place to look.
-- **Then the [Audit Dashboard](administration.md#operating-the-instance)** for whether the event was recorded at all.
+## AI features are unavailable
 
-## "AI features (chat, deep investigation narratives) aren't working"
+Rules and the ML classifier run offline by default. The **language-model** tier (Ask AI, narrative reports, generated test cases, investigation narratives) needs a reachable model:
 
-The AI tier has two levels. Rules + ML run offline by default; the **LLM** tier needs a local model (Ollama). If chat is unavailable or investigations lack narrative depth, the local LLM isn't enabled — start it with the local-LLM profile (`make dev-llm`; see [AI features](ai-features.md#what-needs-what)). Analysis never hard-fails on a missing model — it degrades LLM → ML → rules.
+- **No local model running.** On Compose, start the local-LLM profile (`make dev-llm`); on an air-gapped install, side-load the models ([Offline model pack](offline-model-pack.md)).
+- **Analysis mode is Rules or ML.** Ask AI says so and stays hidden from the sidebar until **Settings → AI → AI configuration** uses LLM or Auto mode.
+- **A hosted provider is configured while `AI_OFFLINE_MODE` is on.** Offline mode only lets the app reach a model endpoint whose address is loopback or private, so a hosted API is refused.
 
-## "My Failures is empty but I know there are failures"
+Analysis never hard-fails on a missing model; it falls back from the language model to ML to rules and records why. See [AI configuration](ai-features.md).
 
-If you're an admin/QA-lead, you're probably on **Mine** scope while the failures auto-assigned to the project's default QA-lead user. Flip to **Team** scope ([Triaging failures](triaging-failures.md#your-inbox-my-failures)), then configure real suite owners so future failures route to people.
+## Generated test cases look wrong or do not appear
 
-## "The bisect / compare button isn't available"
+- **Generation needs the language-model tier.** Offline without a model, it returns a stub.
+- **Low faithfulness** is the signal to reject the draft: it is not supported by its citations. Read the cited passages.
+- **No relevant results**: the wrong project, or the source has not been indexed yet (check its freshness). See [Knowledge base & test generation](knowledge-base.md).
 
-Bisect-from-green needs both a green baseline and a failed run for the suite in the current window. No green run in range → no baseline to bisect from. Widen the window. (See [Working with runs](working-with-runs.md#bisect-from-green--the-regression-shortcut).)
+## Changes are not showing in the app
 
-## "Generated test cases look wrong / aren't appearing"
+A stale browser bundle. Hard-refresh. If it persists, confirm the frontend image actually updated (`/health/version` on the API reports the backend build; the Help menu shows the frontend build).
 
-- **Generation needs the optional AI stack** (local LLM); offline it returns a stub. Enable local-LLM.
-- **Low faithfulness?** That's the signal to reject — the draft isn't supported by its citations. Read the cited chunks. ([Knowledge base](knowledge-base.md).)
-- **No relevant results?** You may be in the wrong project, or the source isn't indexed yet (check its freshness).
+## Sign-in problems for everyone at once
 
-## "Changes I made aren't showing in the app"
+- **`503` "MFA is enabled but its stored secret cannot be read"**: `APP_SECRET_KEY` was rotated without carrying the old key in `APP_SECRET_KEY_PREVIOUS`. See [Administration → If MFA stops working for everyone at once](administration.md#if-mfa-stops-working-for-everyone-at-once).
+- **`503` on every request after sign-in**: the token-revocation store (Valkey) is unreachable. Revocation fails closed by design; restore the cache service.
 
-If you deployed a change and don't see it, you may be looking at a **stale browser bundle**. Hard-refresh; if it persists, an operator should confirm the frontend image/bundle actually updated.
+## Related
 
-## Still stuck?
-
-- **Live probe** the affected page before assuming a deploy problem — most "empty page" reports resolve to project/window/scope above.
-- **Operators**: `/health/details` gives per-dependency status + the running build's provenance; the [observability stack](../architecture/OBSERVABILITY.md) has metrics, traces, and alerts.
+- [Administration & settings](administration.md)
+- [Sizing & capacity](sizing.md)
+- [Offline model pack](offline-model-pack.md)

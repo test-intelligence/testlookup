@@ -43,7 +43,7 @@ This is the part worth reading carefully.
 
 > **Important.** With an external provider configured, **the content of your failures is sent to a third party**. That may be entirely acceptable — it is a decision to make deliberately, with the same care as any other data-processing choice, not one to discover later.
 
-An **offline mode** setting acts as a hard ceiling on outbound integrations. Verify its value on your deployment rather than assuming a default.
+An **offline mode** setting acts as a hard ceiling on outbound calls. It is **on** in a default installation: the app then only reaches a model on your own network, and Jira, Slack, Teams, email to outside relays, webhooks, GitHub and GitLab are all blocked. Your administrator may have turned it off; **Admin → AI → AI configuration** shows its current state.
 
 ## Report sharing
 

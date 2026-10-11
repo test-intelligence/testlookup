@@ -1,182 +1,120 @@
 # Administration & settings
 
-The admin surface splits into three concerns: **people & projects**, **connecting TestLookup to your world**, and **operating the instance**. Most pages under `/settings/*` require admin access and are project-aware (the top-bar project selector scopes what you're configuring).
+The operator side of running TestLookup: who can do what, people and projects, sign-in (SSO, SCIM, MFA, lockout), integrations and notifications, the AI agents, commit attribution, retention, and backup, restore and upgrades.
+
+What each settings page shows, field by field, is in the in-app guide: **Settings and administration** (`/docs/administration` on your instance, source [administration.md](../frontend/src/content/guide/administration.md)). This page does not repeat it; it covers the decisions and procedures behind those pages.
+
+## Roles and access
+
+Five roles, each including the abilities of those below it: `VIEWER` < `TESTER` < `QA_ENGINEER` < `QA_LEAD` < `ADMIN`. Project membership decides which projects a user sees; the role decides what they can do there.
+
+- **The settings area** (the sidebar's **Admin**, `/settings` and every settings page except **Profile**, **My notifications** and **My API keys**) needs **`QA_LEAD` or `ADMIN`**.
+- **Administrator only, read and write**: **SSO & identity**, **Feature flags**, **MFA & lockout**, **Retention & purge**, **Project data** (reset), changing user roles and project membership, generating streaming (project-bound) API keys.
+- **QA leads can read, administrators change**: **AI configuration**, **Integrations** (Jira, Splunk, OpenShift, Slack, Teams), **Email (SMTP)**, **Data & storage**, **LLM cost budget**, **Gate policies**, the **AI evaluation** write actions, and the audit dashboard's CSV export.
+- **QA leads**: projects, releases and their phases, linking runs to releases, ownership rules, team channels, outbound webhooks, quarantine decisions, AI-report reviews, gate overrides, agent policies, workflows.
+- **QA engineers**: sending results, owning API keys, triage, corrections, defects, suites and test cases.
+
+Some pages show a button to a QA lead that the API then refuses (for example **Save** on Email (SMTP), the audit **Export CSV**, editing gate policies, deleting a release). The API's rule is the one listed above.
 
 ## People & projects
 
-- **Projects** (`/projects`) — create, describe, and archive test projects. Each project is the tenancy boundary: its own runs, owners, policies, API keys, and caches. Creating a project also auto-provisions its default QA-lead user (see [Test management](test-management.md#the-default-qa-lead)).
-- **Users** (`/users`) — accounts, roles (ADMIN / QA_LEAD / QA_ENGINEER / …), avatar, and API-key expiry. Roles gate what pages show: e.g. only admins get "All Projects", only leads+ get the Mine/Team triage toggle.
-- **Project members & ownership** — per-project membership lives on the project's members tab; failure-routing ownership lives in [Test management & ownership](test-management.md#ownership-who-gets-the-failure).
-- **Profile** (`/settings/profile`) — your own name, email, avatar color, password.
-- **SSO** (`/settings/sso`) — single sign-on configuration (per-tab config/domain settings).
+- **Projects** (`/projects`) — create, edit and archive. Each project is the tenancy boundary: its own runs, owners, policies, API keys and caches. Creating a project makes the creator a member and auto-provisions the project's default QA-lead user (see [Test catalog governance and ownership](test-management.md#the-default-qa-lead)). **Archive** is a soft delete that also revokes the project's credentials; there is no un-archive in the app.
+- **Users** (`/users`) — QA leads see the list; administrators **Add User** (a temporary password, shown once, that must be changed at first sign-in), change roles inline, edit, and activate or deactivate accounts. Roles gate what pages show: only administrators get **All Projects**, and only QA leads and administrators get the team scope in the Inbox.
+- **Members & access** (`/users?tab=project-members`) — per-project membership and roles, and the project's default QA lead. Administrators add, change and remove members; QA leads can reset the default QA lead's password.
+- **Self-registration.** The sign-in page always offers **Register**, and `POST /api/v1/auth/register` is open (rate-limited to 5 a minute). A self-registered account belongs to no project, must change its password at first sign-in, and is created with the `QA_ENGINEER` role. Nothing in the app turns registration off; if your instance is reachable by people who should not have accounts, restrict access to the sign-in page at your proxy, and deactivate unexpected accounts under **Users**.
+- **Invitations.** **Invite User** records an invitation, but there is not yet a page that accepts it; create accounts with **Add User** instead.
+- **Development quick login.** The sign-in page's passwordless "quick login" panel exists only in development frontend builds, and the backend honours it only with `APP_ENV=development` and `DEV_AUTO_LOGIN_ENABLED`. A production build never shows it.
 
-## Connecting to your world
+## Single sign-on (SAML) and SCIM
 
-- **API Keys** (`/settings/api-keys`) — create keys for the CLI, SDKs, CI, and MCP; scope and expiry per key.
-- **Integrations** (`/settings/integrations`, `/settings/github`) — outbound integrations (GitHub, Jira, notification channels). Everything here is **subordinate to `AI_OFFLINE_MODE`**: in the default offline install these are inert regardless of flags — enable outbound mode deliberately before expecting webhooks or ticket creation to fire.
-- **Webhooks** (`/settings/webhooks`) — outbound event webhooks with delivery history.
-- **Notifications** (`/settings/notifications`) — channel + per-event preferences; what lands in the bell menu vs email.
-- **Digests** (`/settings/digests`) — scheduled summary digests (daily/weekly roll-ups to a channel). Email digests can optionally carry an **attached analysis report** (see below). A third schedule, **weekly retro**, is available behind a flag (see below).
-- **Attached analysis report** — check *Attach analysis report* on a daily/weekly **email** digest subscription and each delivery carries `testlookup-report-<project>-<date>[-weekly].html`: a single self-contained HTML file (inline styles + SVG charts, no external assets, works offline) with the full window analysis — executive summary (unique tests across the window, same semantics as the Summary Report/Coverage pages, plus a day-by-day sparkline on weekly), runs table, new-vs-recurring failures with top failing tests and clusters, the failure-kind triad, flaky & quarantine debt, slowest tests, the latest release-gate verdict, open linked defects (including the "closed in Jira but still failing" badge), and failures grouped by owning team. Daily digests cover 1 day; weekly cover 7. The subscription must be project-scoped; a failed report build never blocks the digest itself (it arrives with an apology note instead). Slack/Teams digests are unchanged apart from a one-line pointer at the email attachment. The same document is downloadable on demand from the [Summary Report](dashboards.md#summary-report-reportssummary) page or `GET /api/v1/projects/{id}/reports/analysis?window=1d|7d` (QA Engineer+).
-- **Integration Health** (`/settings/integration-health`) — the status board for everything above: which integrations are configured, reachable, and delivering. Check here first when "the webhook didn't fire".
+TestLookup supports **SAML 2.0** single sign-on (no OIDC or LDAP) and **SCIM 2.0** provisioning. Both are off until the deployment enables them:
 
-### GitHub (`/settings/github`)
+| Setting | Default | Meaning |
+|---|---|---|
+| `SSO_ENABLED` | `false` | Turns SAML sign-in on |
+| `SCIM_ENABLED` | `false` | Turns the SCIM 2.0 API (`/api/v1/scim/v2`) on |
+| `SAML_SP_ENTITY_ID` | a placeholder URL | TestLookup's entity ID as the service provider; set it to your own URL |
+| `SAML_BASE_URL` | `http://localhost:8000` | The public base URL used to build the ACS URL; set it to your instance's public URL |
+| `SAML_ALLOW_IDP_INITIATED` | `false` | Accept identity-provider-initiated sign-ins (weaker replay protection) |
+| `SAML_CLOCK_SKEW_SECONDS` | `60` | Allowed clock drift |
+| `SSO_ADMIN_FALLBACK_ENABLED` | `true` | Administrators may still use password sign-in when SSO is required |
+| `SSO_ALLOW_PRIVATE_IDP_ENDPOINTS` | `false` | Let **Test Connection** reach an identity provider on a private address |
+| `SSO_MAX_PROVISIONED_ROLE` | `ADMIN` | The highest role SSO or SCIM may grant; set it lower (for example `QA_LEAD`) to refuse identity-provider-driven admin grants |
 
-Per-project: one repo (`owner/name` + API base URL for GitHub Enterprise), one PAT (stored encrypted; needs `repo` scope or fine-grained `checks:write` + `issues:write`). Gated by the `github_checks` feature flag and, as always, `AI_OFFLINE_MODE`. Two outbound surfaces:
+Where these go for your deployment is in the [configuration reference](../docs/operations/configuration.md).
 
-- **Check runs** — every ingested run with a full 40-char commit SHA posts a check run (pass/fail counts + deep link to Run Intelligence) next to the commit's CI results. The check carries up to **50 per-test annotations** (GitHub's per-request cap — overflow is noted in the check text): newly-failed tests first (vs the same baseline the PR comment uses), then remaining failures by cluster size, with known-flaky failures annotated at `warning` level instead of `failure`. File/line locations are best-effort parsed from stack traces (Python and JS/TS traces with repo-relative paths resolve; Java surefire frames carry only a bare file name, so those failures — and anything else without a derivable location — are listed in the check's text instead of being pinned to a guessed path). The check summary shows the same **newly failed / known flaky / fixed** counts as the PR comment. **Flaky-aware conclusion:** a run whose failures are *all* known-flaky/quarantined concludes `neutral` (titled "N failures — all known-flaky/quarantined") instead of `failure` — mirroring the `ci-verdict` semantics on the Checks surface; any real failure still concludes `failure`. This behavior is always on when check runs are enabled (no separate toggle).
-- **PR summary comment** — when a run arrives with PR context (repo + PR number, [auto-detected by the SDKs/CLI in CI](getting-results-in.md#ci-context-prs)) matching the configured repo, TestLookup keeps **one sticky comment** on that PR: **newly failed** tests vs the baseline run (latest completed run on `main`/`master`, falling back to the latest run on another branch), **known flaky** failures (quarantined tests + flaky-coach detections — labeled as likely not caused by the PR), and tests the PR **fixed**, plus a still-failing-on-baseline count. Re-runs update the same comment — never a second one. The **PR summary comment** mode selector controls it: `off`, `failures_only` (default — but a PR that went red→green still gets its existing comment updated to green), or `always`.
+Then, in **Settings → Security & access → SSO & identity** (administrators):
 
-Delivery problems land in the page's **Last error** banner and on Integration Health.
+1. **SSO Configuration**: enter the identity provider's **IdP Entity ID**, **IdP SSO URL** and **IdP Certificate (PEM)**; TestLookup's **SP Entity ID** and **SP ACS URL** (`<SAML_BASE_URL>/api/v1/sso/acs`; the SP metadata is at `/api/v1/sso/metadata`); an optional **Group Attribute**; the enforcement (**Optional (password login allowed)** or **SSO Required (admin fallback only)**); and the **default role** for new SSO users (Viewer, Tester, QA Engineer or QA Lead). Mapping identity-provider groups to roles (`role_mapping`) is set through the SSO configuration API (`/api/v1/sso/configs`).
+2. **Test Connection** checks the certificate and reaches the identity provider's SSO URL.
+3. **Activate**. Activating an **SSO Required** configuration asks for confirmation, because password sign-in then works only for administrators (and only while `SSO_ADMIN_FALLBACK_ENABLED` is on).
+4. For provisioning, **SCIM Tokens → Generate Token** (shown once) and give it to the identity provider with the SCIM base URL `<your API URL>/api/v1/scim/v2`.
 
-### GitLab (`/settings/gitlab`)
-
-Per-project GitLab integration for self-managed instances and gitlab.com — the same shape as GitHub, for teams whose VCS is GitLab. One **base URL** (defaults to `https://gitlab.com`; set `https://gitlab.mycorp.com` for a self-managed instance — the API root is `{base}/api/v4`), one **project path** (`group/project`, or a numeric project id), and one **PAT** (stored encrypted via the secret service, never returned by the API — the config only reports `has_token`; needs `api` scope, or a project/group access token with the same). Gated by the `gitlab` feature flag and, as always, `AI_OFFLINE_MODE`. Two outbound surfaces, both posted server-side after a run finalizes (no GitLab token in your CI):
-
-- **MR note** — when a run arrives with merge-request context (`CI_PROJECT_PATH` + `CI_MERGE_REQUEST_IID`, [auto-detected by the SDKs/CLI in GitLab CI](getting-results-in.md#ci-context-prs)) matching the configured project path, TestLookup keeps **one sticky note** on that MR: **newly failed** tests vs the baseline run, **known flaky** failures, and tests the MR **fixed**, plus a still-failing-on-baseline count — the *identical* body, baseline selection, and classification as the GitHub PR summary comment (they never disagree). Re-runs update the same note (keyed by a hidden marker) — never a second one. The **Merge-request comment** mode selector controls it: `off`, `failures_only` (default — a red→green MR still gets its existing note updated to green), or `always`.
-- **Commit status** — when enabled (**Commit status** toggle, on by default), every ingested run with a commit SHA posts a pipeline commit status on that commit (`success` when green, `failed` on any failure) with a deep link back to Run Intelligence, so the MR's pipeline widget reflects TestLookup's verdict.
-
-The repo guard is strict: an MR IID is project-scoped, so a run's `ci_repo` must equal the configured project path (case-insensitive) before anything is posted. Use the **Test connection** button to confirm the base URL + PAT resolve the project (it calls `GET /api/v4/projects/:path` and reports the resolved numeric id). CI recipe: [`reference/testlookup-gitlab-ci.yml`](reference/testlookup-gitlab-ci.yml) covers both the JUnit-artifact upload and the live-streaming SDK path. Delivery problems land in **Last error** and on Integration Health.
-
-## Operating the instance
-
-- **AI Settings / AI Evaluation** (`/settings/ai`, `/settings/ai-eval`) — covered in [AI features](ai-features.md#configuring-the-ai-tier-settingsai-settingsai-eval): mode, local model, budgets, and the AI-quality dashboard.
-- **Feature Flags** (`/settings/feature-flags`) — runtime toggles (e.g. `manual_upload`, quarantine features). Admin-only; flags are cached, so allow a moment for changes to propagate.
-- **Audit Dashboard** (`/settings/audit`) — the tenant audit flow: who did what, when — gate overrides, quarantine decisions, admin mutations. Backed by append-oriented audit storage, so it survives UI changes.
-- **Storage** (`/settings/storage`) — object-storage (MinIO/S3) status for reports, compliance packs, and RAG documents.
-- **Project Data** (`/settings/project-data`) — per-project data management: retention and cleanup operations. Admin-only and deliberate — actions here delete data.
-- **Seed Data** (`/settings/seed-data`) — load the demo dataset into a project (the same data `make quickstart` ships), useful for evaluating features or training a team without real CI wired up.
-- **Performance** (`/settings/performance`) — instance performance diagnostics.
-- **Billing** (`/settings/billing`) — usage/spend views (AI spend also surfaces in the [Intelligence Hub](ai-features.md#run-intelligence-intelligence-runsidintelligence)).
+**Identity Events** shows sign-ins, provisioning and role changes for the last 30 days; **Sync Status** shows federated users, the last SSO sign-in and SCIM sync, and recent failures. SSO-managed accounts are exempt from the MFA requirement below.
 
 ## Multi-factor authentication & account lockout
 
-Shipped 2026-08-05 (migration 0117). Before this, MFA had to come from your IdP
-over SAML and there was no lockout at all — if you have a copy of the compliance
-mapping from before that date, those two rows are out of date.
+Shipped 2026-08-05 (migration 0117). Before this, MFA had to come from your IdP over SAML and there was no lockout at all.
 
 ### Enrolling
 
-Anyone can turn on MFA for their own account, whether or not policy requires it.
+Anyone can turn on MFA for their own account (**My profile → Two-Factor Authentication**), whether or not policy requires it.
 
-1. Start enrollment. The server returns a base32 secret and an `otpauth://`
-   provisioning URI; the UI renders it as a QR code and also shows the secret so
-   you can type it into an authenticator that cannot scan.
-2. Enter a six-digit code from the authenticator to confirm. **Nothing changes
-   until you do** — an abandoned enrollment leaves the account exactly as it
-   was.
-3. Confirming enables MFA and shows **ten recovery codes, once**. Only their
-   digests are stored, so nobody — including an admin with database access —
-   can recover them later. Save them somewhere that is not the phone holding
-   the authenticator.
+1. Start enrollment. The server returns a base32 secret and an `otpauth://` provisioning URI; the UI renders it as a QR code and also shows the secret so you can type it into an authenticator that cannot scan.
+2. Enter a six-digit code from the authenticator to confirm. **Nothing changes until you do** — an abandoned enrollment leaves the account exactly as it was.
+3. Confirming enables MFA and shows **ten recovery codes, once**. Only their digests are stored, so nobody — including an admin with database access — can recover them later. Save them somewhere that is not the phone holding the authenticator.
 
-Codes are standard RFC 6238 TOTP: six digits, 30-second period, and one step
-of clock drift tolerated in either direction. A code that has already been
-accepted cannot be used again, even within its own 30-second window, so
-"press the button twice" fails the second time by design.
+Codes are standard RFC 6238 TOTP: six digits, 30-second period, and one step of clock drift tolerated in either direction. A code that has already been accepted cannot be used again, even within its own 30-second window.
 
 ### Signing in with MFA
 
-Password first, then a second factor. The intermediate token the server hands
-back between the two steps is **not** a session — it is only accepted by the
-verification endpoint, and it expires in five minutes and works exactly once.
-If you abandon a half-finished sign-in, start over from the login screen.
-
-At the second step you can enter either an authenticator code or one of your
-recovery codes.
+Password first, then a second factor. The intermediate token the server hands back between the two steps is **not** a session — it is only accepted by the verification endpoint, and it expires in five minutes and works exactly once. At the second step you can enter either an authenticator code or one of your recovery codes.
 
 ### Recovery codes
 
-- Ten codes, single-use, formatted `XXXX-XXXX-XXXX-XXXX`. Spacing and case do
-  not matter when you type one back.
+- Ten codes, single-use, formatted `XXXX-XXXX-XXXX-XXXX`. Spacing and case do not matter when you type one back.
 - Using one consumes it permanently. The response tells you how many are left.
-- You can reissue the whole set at any time (password + a live second factor
-  required). **Reissuing invalidates every previous code**, including unused
-  ones.
-- Running out is not a lock-out on its own — you can reissue while you still
-  have your authenticator. It becomes a lock-out only if you lose the
-  authenticator *and* have no codes left, which is what breakglass is for.
+- You can reissue the whole set at any time (password + a live second factor required). **Reissuing invalidates every previous code**, including unused ones.
+- Running out is not a lock-out on its own — you can reissue while you still have your authenticator. It becomes a lock-out only if you lose the authenticator *and* have no codes left, which is what breakglass is for.
 
 ### Turning MFA off
 
-Requires your password **and** a live second factor. A password alone would let
-anyone holding a stolen session strip the factor that session was supposed to
-be protected by.
-
-If workspace policy requires MFA for your role, you cannot turn it off — an
-admin has to change the policy or use breakglass.
+Requires your password **and** a live second factor. If workspace policy requires MFA for your role, you cannot turn it off — an admin has to change the policy or use breakglass.
 
 ### Workspace policy (admin)
 
-Settings → MFA policy. Four settings, workspace-wide:
+**Settings → Security & access → MFA & lockout** (administrators). Workspace-wide:
 
 | Setting | Default | What it does |
 |---|---|---|
-| Require MFA | off | Master switch for the requirement. Enrollment is always *available* regardless. |
-| Required for role | — | MFA is required for this role **and every role above it** (VIEWER < TESTER < QA_ENGINEER < QA_LEAD < ADMIN). Leaving it empty with the switch on means *everyone*. |
-| Lockout enabled | **on** | See below. |
-| Lockout threshold | 10 | Consecutive failures before the account locks. Minimum 3. |
-| Lockout duration | 15 min | How long the lock lasts. |
+| Require MFA to sign in | off | Master switch for the requirement. Enrollment is always *available* regardless. |
+| Applies to | everyone | MFA is required for the chosen role **and every role above it**, or for everyone. |
+| Lock accounts after repeated failures | **on** | See below. |
+| Failed attempts before lockout | 10 | Consecutive failures before the account locks (3–100). |
+| Lockout duration | 15 min | How long the lock lasts (1–1440 minutes). |
 
-Turning the requirement on takes effect immediately for new sign-ins, and
-within one access-token lifetime for sessions that are already live — the
-token-refresh path re-checks the policy and sends affected users back to the
-login screen, where they are handed an enrollment challenge instead of a
-session. They cannot get back in without enrolling.
+Turning the requirement on takes effect immediately for new sign-ins, and within one access-token lifetime for sessions that are already live — the token-refresh path re-checks the policy and sends affected users back to the login screen, where they are handed an enrollment challenge instead of a session.
 
-**SSO-managed accounts are exempt from the requirement.** Any account with a
-federated identity link, or one that was provisioned over SCIM, is skipped:
-your IdP already owns that account's authentication, and stacking a second
-factor we control on top of one the IdP does not know about creates a
-lock-out risk with no extra assurance. SAML sign-in (`/api/v1/sso/acs`) does
-not consult this policy at all. The exemption is from the *requirement* only —
-an SSO-managed user who enrolls voluntarily is still challenged when they use
-the local password path.
+**SSO-managed accounts are exempt from the requirement.** Any account with a federated identity link, or one that was provisioned over SCIM, is skipped: your IdP already owns that account's authentication. SAML sign-in (`/api/v1/sso/acs`) does not consult this policy at all. An SSO-managed user who enrolls voluntarily is still challenged when they use the local password path.
 
-**API keys are never challenged.** A key embedded in a CI pipeline cannot type
-a TOTP code, so keys keep working when you turn the policy on. The flip side is
-that a key is a single-factor way into the account, so treat key issuance as a
-sensitive grant — they are per-user, listed under Settings → API Keys, and
-revocable. Keys *can* read MFA status but cannot enroll, disable, or reissue
-recovery codes; those need an interactive sign-in.
+**API keys are never challenged.** A key embedded in a CI pipeline cannot type a TOTP code, so keys keep working when you turn the policy on. The flip side is that a key is a single-factor way into the account, so treat key issuance as a sensitive grant — keys are per-user, listed under **My API keys** (and, for project-bound keys, **Streaming API keys**), and revocable. Keys *can* read MFA status but cannot enroll, disable, or reissue recovery codes.
 
 ### Account lockout
 
-**This is on by default.** After 10 consecutive failed attempts — failed
-passwords and failed second factors both count — the account locks for 15
-minutes and answers `429` with a `Retry-After` header even for the correct
-password.
+**This is on by default.** After 10 consecutive failed attempts — failed passwords and failed second factors both count — the account locks for 15 minutes and answers `429` with a `Retry-After` header even for the correct password.
 
-Details worth knowing:
+- A **completely** successful sign-in resets the counter. A correct password followed by a failed second factor does not.
+- Failures while the account is already locked do **not** extend the lock, so someone hammering an account cannot keep its owner out indefinitely.
+- The lock expires on its own. There is nothing to clear manually in the normal case.
+- Counters live on the user row in PostgreSQL, so the limit is genuinely global — it is not per-worker and it survives a restart. (The separate per-IP rate limits on the auth endpoints are in-process and per-worker; they are anti-automation, not account protection.)
+- Attempts against a username that does not exist are never counted. Only the per-IP rate limit applies there.
+- Every lock writes an `ACCOUNT_LOCKED` row to the identity event trail.
 
-- A **completely** successful sign-in resets the counter. A correct password
-  followed by a failed second factor does not.
-- Failures while the account is already locked do **not** extend the lock, so
-  someone hammering an account cannot keep its owner out indefinitely.
-- The lock expires on its own. There is nothing to clear manually in the normal
-  case.
-- Counters live on the user row in PostgreSQL, so the limit is genuinely
-  global — it is not per-worker and it survives a restart. (The separate
-  per-IP rate limits on the auth endpoints are in-process and per-worker; they
-  are anti-automation, not account protection.)
-- Attempts against a username that does not exist are never counted. Only the
-  per-IP rate limit applies there.
-- Every lock writes an `ACCOUNT_LOCKED` row to the identity event trail
-  (`/settings/audit`).
-
-Note that `identity_events` has **no retention clock** — the per-project purge
-does not touch it, because the table has no project scope. MFA failures and
-lockouts accumulate there indefinitely. That is why there is no per-attempt
-"login failed" event; the events that do exist are either operator-initiated or
-capped by the lockout threshold. If a sustained attack inflates the table,
-prune it out-of-band.
+`identity_events` has **no retention clock** — the per-project purge does not touch it, because the table has no project scope. If a sustained attack inflates the table, prune it out-of-band.
 
 ### Breakglass — lost authenticator, no recovery codes left
 
-There is deliberately no admin button for this. A user who can reset their own
-second factor does not have one, and an endpoint that resets *someone else's*
-factor is an account-takeover primitive sitting behind whatever your weakest
-admin session is. It is a script, run with deployment-level access:
+There is deliberately no admin button for this: an endpoint that resets *someone else's* factor is an account-takeover primitive. It is a script, run with deployment-level access:
 
 ```bash
 # Inside the backend container:
@@ -194,118 +132,132 @@ kubectl -n testlookup exec -it deployment/testlookup-backend -- \
 python /app/scripts/mfa_breakglass.py --user alice --dry-run
 ```
 
-- **`MFA_BREAKGLASS_ENABLED` must be set in the backend environment.** It is
-  environment-only, defaults to false, and there is no in-app toggle — turning
-  it on requires access to the deployment, not to a session. This mirrors
-  `SSO_ADMIN_FALLBACK_ENABLED`.
+- **`MFA_BREAKGLASS_ENABLED` must be set in the backend environment.** It is environment-only, defaults to false, and there is no in-app toggle. This mirrors `SSO_ADMIN_FALLBACK_ENABLED`.
 - `--reason` is mandatory. It is written to the audit trail.
-- The reset clears MFA (flag, seed, and every recovery code) and any active
-  lockout, in one transaction with an `MFA_BREAKGLASS_RESET` identity event.
-  There is no path where the factor is cleared without the trail recording it.
+- The reset clears MFA (flag, seed, and every recovery code) and any active lockout, in one transaction with an `MFA_BREAKGLASS_RESET` identity event.
 - `--keep-lockout` clears MFA but leaves an active lock in place.
-- The user then signs in with their password alone. **If policy requires MFA
-  for their role, their very next login hands them an enrollment challenge**,
-  so the account does not sit unprotected.
-
-Do not confuse this with the SSO admin fallback
-(`SSO_ADMIN_FALLBACK_ENABLED`): that lets an ADMIN use password login while SSO
-is enforced, and says nothing about a second factor.
+- The user then signs in with their password alone. **If policy requires MFA for their role, their very next login hands them an enrollment challenge.**
 
 ### If MFA stops working for everyone at once
 
-One failure mode is worth recognising on sight: **`503` at sign-in with "MFA is
-enabled but its stored secret cannot be read"**.
+One failure mode is worth recognising on sight: **`503` at sign-in with "MFA is enabled but its stored secret cannot be read"**.
 
-TOTP seeds are encrypted with a key derived from `APP_SECRET_KEY`. If that key
-is rotated without carrying the old one in `APP_SECRET_KEY_PREVIOUS`, every
-enrolled seed becomes undecryptable. TestLookup refuses those logins rather
-than treating an unreadable seed as "this user has no MFA" — silently
-downgrading to single-factor at exactly that moment would be the worst possible
-behaviour.
+TOTP seeds are encrypted with a key derived from `APP_SECRET_KEY`. If that key is rotated without carrying the old one in `APP_SECRET_KEY_PREVIOUS`, every enrolled seed becomes undecryptable. TestLookup refuses those logins rather than treating an unreadable seed as "this user has no MFA". Fix it by restoring the previous key in `APP_SECRET_KEY_PREVIOUS` and restarting. If the old key is genuinely gone, use breakglass per affected user and have them re-enroll.
 
-Fix it by restoring the previous key in `APP_SECRET_KEY_PREVIOUS` and
-restarting. If the old key is genuinely gone, use breakglass per affected user
-and have them re-enroll.
+## Connecting to your world
 
-## AI agents — autonomy, budgets, and the activity ledger
+Everything outbound — Jira, Slack, Teams, email to an outside relay, outbound webhooks, GitHub, GitLab, a hosted LLM — is **subordinate to `AI_OFFLINE_MODE`**, which defaults to `true`: in a default install these are inert regardless of their own settings. Turn outbound mode on deliberately, or use the narrow allow-lists (`OFFLINE_NOTIFICATION_ALLOWED_HOSTS` for the deployment-wide Slack, Teams and SMTP destinations; `OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS` for email recipients). Every outbound client honours a corporate CA bundle (`HTTP_CA_BUNDLE`). The environment variables for each integration are in the [integrations reference](../docs/operations/integrations.md).
 
-Two pages govern the agents that can *act* on your project (the Investigator,
-which reasons about failures, and the Fixer, which can propose a code change).
-They are separate from the AI analysis that classifies every run — see
-[AI features](ai-features.md).
+### Integrations (`/settings/integrations`)
 
-**Both agents ship disabled.** Turning one on is a deliberate admin decision.
+One card per integration; QA leads can read, administrators save. Tokens and webhook URLs are stored encrypted; a value saved here wins over the environment variable, and an empty secret field clears the stored one so the environment value applies again.
 
-### `/settings/ai-agents` — policy and budgets
+| Integration | Fields | Used for |
+|---|---|---|
+| **Jira** | Domain, Email, Default Project Key, API Token | One-click issues, recurrence notes, status sync-back. See [Issue trackers and defect automation](defects.md) |
+| **Splunk** | Base URL, API Token | Log evidence for the analysis pipeline |
+| **OpenShift / Kubernetes** | API URL, Default Namespace, Service Account Token | Pod and event evidence for the analysis pipeline |
+| **Slack** | Webhook URL, Default Channel | The shared notification channel and digests |
+| **Microsoft Teams** | Webhook URL | The shared notification channel and digests |
 
-Per project, per agent:
+There is no test button on this page; **Integration health** probes each connection.
 
-| control | what it does |
-|---|---|
-| **enabled** | whether the agent runs at all |
-| **Agent autonomy mode** | `shadow` — run and record what it *would* have done, changing nothing. `active` — allowed to act |
-| **Budgets** | `max_runs_per_day`, `max_llm_calls_per_run`, `max_tokens_per_run` |
+### Email (SMTP) & channels (`/settings/notifications`)
 
-**Start in `shadow`.** The agent does its full reasoning and records the actions
-it *would* have taken, so you can compare proposed-vs-taken over real failures
-before granting it autonomy. The system records how many shadow runs have
-completed and keeps a promotion note, so moving an agent to `active` is a
-decision with a paper trail rather than a toggle someone flipped.
+The SMTP relay: host, port, from address, optional username and password, and **Implicit TLS** (port 465) or **STARTTLS** (587 or 25); plain SMTP is not supported. **Send test email** sends to your own address using the **saved** settings, and applies the offline allow-lists. Saving needs an administrator. Each person's event choices live on their own **My notifications** page, which can also point at a personal Slack or Teams webhook (personal and team webhooks are not covered by `OFFLINE_NOTIFICATION_ALLOWED_HOSTS`).
 
-Budgets are the second safety net: an agent that misbehaves costs a bounded
-amount before it stops.
+### Team channels (`/settings/team-channels`)
 
-### `/settings/agent-activity` — what actually happened
+For each team named in the ownership rules, a Slack webhook, Teams webhook or email destination (`QA_LEAD`). A failing test's alerts go to the owning team's channel; a cluster goes to the team owning more than half of its tests; anything else (no channel, unowned, mixed ownership, failed delivery) falls back to each person's own notification settings.
 
-Every agent run is ledgered: which agent, what triggered it, status, **actions
-proposed vs actions taken**, tokens, cost, and duration. Filter by agent, or
-read "All agents" for the whole project.
+### Outbound webhooks (`/settings/webhooks`)
 
-The gap between *proposed* and *taken* is the number to watch — in `shadow` mode
-taken is always zero, and that difference is exactly the evidence you need to
-decide whether the agent is worth promoting.
+Per-project subscriptions that POST events to your own HTTPS endpoints.
 
-Each run also records the digest of the prompt set that produced it, so a
-decision made months ago can be reproduced against the prompts as they were at
-the time — not as they are now.
+> **Off by default.** Delivery needs the `outbound_webhooks` feature flag (ships **off**) and `AI_OFFLINE_MODE=false`. The page does not show a banner when the flag is off: **Test** answers "No delivery enqueued — check that outbound_webhooks is enabled, AI_OFFLINE_MODE is off…" and **Replay** answers `503`.
 
-### The Fixer never merges
+- **Events**: `run.completed`, `defect.promoted`, `defect.create_requested` (the Jira-dialog fallback, see [defects.md](defects.md#no-jira-use-the-webhook-fallback)), `release.decided`, `flaky.quarantined`, `quota.exceeded`.
+- **Headers**: `X-TestLookup-Event` (the event type), `X-TestLookup-Delivery` (a delivery id), and, when the subscription has a secret, `X-TestLookup-Signature`: the hex HMAC-SHA256 of the raw request body, keyed with the secret. Verify it before trusting a payload.
+- **Retries**: 408, 425, 429, 5xx and network errors are retried with backoff up to **Max retries** (default 5, at most 10); other 4xx responses fail at once. **Recent deliveries** lists the last 20 attempts, with **Replay** for failed ones.
+- Creating, editing, testing and replaying need `QA_LEAD`.
 
-When enabled and active, the Fixer proposes a patch, validates it by **re-running
-the failing test in an ephemeral sandbox**, and only then opens a **draft** pull
-request. It cannot merge, and a patch that fails validation is recorded as a
-failed attempt rather than offered to you. Review the draft PR like any other.
+### Digests (`/settings/digests`)
 
-> **Needs a local LLM.** With no model installed the Investigator's hypothesis
-> stages stay `pending` and the run reports `failed` — an honest unavailable
-> state rather than a silent no-op.
+Scheduled summaries to email, Slack or Teams: **Daily** (dispatched at 07:00 UTC), **Weekly**, **Per Run** (all, failed only, or degraded only), **Per Release**, **Per Suite**, and **Weekly Retro** (see below).
 
+**Attached analysis report**: tick *Attach analysis report* on a daily or weekly **email** digest for one project, and each delivery carries `testlookup-report-<project>-<date>[-weekly].html`: a single self-contained HTML file (inline styles and SVG charts, works offline) with the full window analysis — executive summary (unique tests across the window), runs, new-vs-recurring failures with top failing tests and clusters, the failure-kind split, flaky and quarantine debt, slowest tests, the latest release-gate verdict, open linked defects (including the "closed in Jira but still failing" badge), and failures grouped by owning team. Daily covers 1 day, weekly 7. A failed report build never blocks the digest itself. The same document is downloadable from the Summary report or `GET /api/v1/projects/{id}/reports/analysis?window=1d|7d` (`QA_ENGINEER` and above).
 
 ### Weekly retro digest (`weekly_retro_digest` flag)
 
-A per-team "week in review" rather than another roll-up of numbers. Off by
-default; enable the `weekly_retro_digest` flag, then pick the **weekly retro**
-schedule on a digest subscription.
+A per-team "week in review". Off by default; enable the `weekly_retro_digest` flag, then pick the **Weekly Retro** schedule on a digest subscription. It is sent on Mondays shortly after 07:00 UTC.
 
-Each edition composes:
+Each edition composes the week's **top 5 failures** (ranked by count × severity), **recovered flaky tests** (quarantines released since last week), **new regressions** against the previous week's baseline, and a short **written summary**. The summary goes through the same LLM factory as everything else, so an air-gapped deployment gets a template-based summary with the same numbers. With the flag off, retro subscriptions are simply skipped.
 
-- the week's **top 5 failures**, ranked by count × severity;
-- **recovered flaky tests** — quarantines released since last week, so progress
-  is visible and not just debt;
-- **new regressions** against the previous week's baseline;
-- a short **written summary** of the week's quality story.
+### Integration health (`/settings/integration-health`)
 
-**It degrades honestly offline.** The narrative paragraph goes through the same
-LLM factory as everything else, so it respects `AI_OFFLINE_MODE`: an air-gapped
-deployment gets a template-based summary carrying the same raw numbers instead
-of a generated narrative. You lose the prose, not the content.
+The status board for everything above: Jira, Splunk, GitHub, OpenShift, Slack, Teams, SMTP, the local model server and the vector store, probed every 15 minutes (**Probe All Now** to probe at once). Check here first when "the webhook didn't fire", then the audit dashboard.
 
-With the flag off, retro subscriptions are simply skipped by the digest
-dispatcher — no error, no half-sent mail.
+### GitHub (`/settings/github`)
+
+Per-project: one repo (`owner/name` + API base URL for GitHub Enterprise), one PAT (stored encrypted; needs `repo` scope or fine-grained `checks:write` + `issues:write`). Gated by the `github_checks` feature flag (ships **off**) and, as always, `AI_OFFLINE_MODE`. Two outbound surfaces:
+
+- **Check runs** — every ingested run with a full 40-character commit SHA posts a check run (pass/fail counts + a deep link to the run's Analysis tab) next to the commit's CI results. The check carries up to **50 per-test annotations** (GitHub's per-request cap — overflow is noted in the check text): newly failed tests first, then remaining failures by cluster size, with known-flaky failures annotated at `warning` level instead of `failure`. File/line locations are parsed from stack traces where possible (Python and JS/TS traces with repo-relative paths resolve; Java surefire frames carry only a bare file name, so those failures are listed in the check's text instead). **Flaky-aware conclusion:** a run whose failures are *all* known-flaky or quarantined concludes `neutral` ("N failures — all known-flaky/quarantined") instead of `failure`, mirroring `testlookup ci-verdict`; any real failure still concludes `failure`.
+- **PR summary comment** — when a run arrives with PR context (repo + PR number, [auto-detected by the SDKs/CLI in CI](getting-results-in.md#ci-context-prs)) matching the configured repo, TestLookup keeps **one sticky comment** on that PR: **newly failed** tests vs the baseline run (latest completed run on `main`/`master`, falling back to the latest run on another branch), **known flaky** failures (labelled as likely not caused by the PR), and tests the PR **fixed**, plus a still-failing-on-baseline count. Re-runs update the same comment. The **PR summary comment** mode selector: `off`, `failures_only` (default — a PR that went red→green still gets its existing comment updated), or `always`.
+
+Delivery problems land in the page's **Last error** banner and on Integration health.
+
+### GitLab (`/settings/gitlab`)
+
+Per-project GitLab integration for self-managed instances and gitlab.com. One **base URL** (defaults to `https://gitlab.com`; the API root is `{base}/api/v4`), one **project path** (`group/project`, or a numeric project id), and one **PAT** (stored encrypted, never returned; needs `api` scope, or a project/group access token with the same). Gated by the `gitlab` feature flag (ships **off**) and `AI_OFFLINE_MODE`. Two surfaces, both posted server-side after a run finalizes (no GitLab token in your CI):
+
+- **MR note** — when a run arrives with merge-request context (`CI_PROJECT_PATH` + `CI_MERGE_REQUEST_IID`, [auto-detected in GitLab CI](getting-results-in.md#ci-context-prs)) matching the configured project path, TestLookup keeps **one sticky note** on that MR with the same body, baseline and classification as the GitHub PR comment. Mode selector: `off`, `failures_only` (default) or `always`.
+- **Commit status** — when enabled (on by default), every ingested run with a commit SHA posts a pipeline commit status (`success` when green, `failed` on any failure) with a link back to the run.
+
+An MR IID is project-scoped, so a run's `ci_repo` must equal the configured project path (case-insensitive) before anything is posted. **Test connection** confirms the base URL and PAT resolve the project. CI recipe: [`reference/testlookup-gitlab-ci.yml`](reference/testlookup-gitlab-ci.yml).
+
+## Operating the instance
+
+- **AI configuration, AI evaluation, LLM cost budget** — see [AI configuration](ai-features.md).
+- **Feature flags** (`/settings/feature-flags`, administrators) — every flag row, with a global switch, rollout percentage and optional project and role lists. Values are cached for about 30 seconds. Several workflows ship **off** — `flaky_auto_quarantine`, `outbound_webhooks`, `llm_cost_budget`, `release_phase_gate_enforcement`, `release_compliance_pack`, `github_checks`, `gitlab` — while `manual_upload` (dashboard upload) and `ask_ai_chat` ship **on** for a new install. An instance upgraded from a release where `manual_upload` was seeded off keeps that value; turn it on here. The full list and evaluation rules: [feature-flag reference](../docs/operations/feature-flags.md).
+- **Audit dashboard** (`/settings/audit`) — who did what, when: gate overrides, quarantine decisions, settings and identity changes, report exports. Filter by category and 7/30/90 days. **Export CSV** needs an administrator.
+- **Activity log** (`/activity`) — the per-project event ledger (runs, analysis, releases, configuration, membership, integrations, agents), searchable and filterable by actor type, with a before/after diff per event. **Export CSV** needs `QA_LEAD` on the project.
+- **Data & storage** (`/settings/storage`) — connection status for PostgreSQL, MongoDB and the cache, the object-storage target (endpoint, bucket, SSL) and the vector store (host, port, collection). Values saved here override the environment defaults; QA leads read, administrators save.
+- **Project data** (`/settings/project-data`, administrators) — **reset only**: **Delete test runs**, or **Wipe project data** (also the catalogue, releases, policies, baselines, test cases, plans, strategies and knowledge sources; the project, members, API keys, AI and SSO configuration and flag overrides stay). Both require typing the project name. There is no export or import; use [backups](#backup-restore--upgrades) for that.
+- **Performance** (`/settings/performance`) — read-only latency budgets, search and pool configuration, and reference scale scenarios.
+- **Seed data** — loads demo data; only in development builds against a backend with `APP_ENV=development`. In production use `make quickstart` on a separate demo instance instead.
+
+## AI agents — autonomy, budgets, and the activity ledger
+
+Two agents can act on a project's failures beyond the analysis that classifies every run: the **Investigator** (reasons about failure clusters) and the **Fixer** (proposes a code change for a flaky test). Their analysis-mode settings are in [AI configuration](ai-features.md).
+
+**Defaults**: the Investigator is **enabled in Shadow mode** (it reasons and records what it would do, changing nothing); the Fixer is **disabled**. Moving either further is a deliberate decision.
+
+### `/settings/ai-agents` — policy and budgets
+
+Per project, per agent (saving needs `QA_LEAD`):
+
+| Control | What it does |
+|---|---|
+| **Enabled** | Whether the agent runs at all |
+| **Autonomy mode** | **Shadow** — run and record what it *would* have done; proposes nothing. **Suggest** — proposes actions that need explicit human approval; nothing executes without it. The proposals are served by the agent-actions API (`/api/v1/projects/{id}/agent-actions`, `QA_LEAD`); there is no approval page in the app yet. **Act** is not available yet |
+| **Budgets** | Investigator: max runs a day, LLM calls, tokens and seconds per run (defaults 10 runs a day, 30 calls, 60,000 tokens, 300 seconds). Fixer: max tests per run, attempts per test, validation reruns, open PRs |
+| **Schedule** (Fixer) | **Off (manual only)**, **Daily** or **Weekly** |
+
+**Start in Shadow.** The agent does its full reasoning and records the actions it *would* have taken, so you can compare proposed-vs-taken over real failures before granting more. The page shows how many shadow runs have completed.
+
+### `/settings/agent-activity` — what actually happened
+
+Every agent run is ledgered: agent, mode, trigger, status, **actions proposed vs actions taken**, tokens, cost and duration, with the Fixer's attempts below. In Shadow mode, taken is always zero — the gap is the evidence for promoting the agent. Each run also records the digest of the prompt set that produced it, so a decision can be reproduced against the prompts as they were.
+
+### The Fixer never merges
+
+When enabled, the Fixer proposes a test-code-only patch and validates it by **re-running the failing test in an ephemeral sandbox**; only in **Suggest** mode, and only for a validated patch, does it open a **draft** pull request. It cannot merge, and a patch that fails validation is recorded as a failed attempt. See [Fixer](fixer.md).
+
+> **Needs a reachable language model.** With no model the Investigator's hypothesis stages stay `pending` and the run reports `failed` — an honest unavailable state rather than a silent no-op.
 
 ## Commit attribution & TIA readiness
 
-Every run can carry a **commit range** — the commits that landed between a baseline and the run's own commit. It powers suspect ranking on a failure, and it is the raw material for any future test-impact analysis (which tests a given file change is likely to break).
+Every run can carry a **commit range** — the commits that landed between a baseline and the run's own commit. It powers suspect ranking on a failure (**Suspects** on the Failures page), and it is the raw material for any future test-impact analysis.
 
 **Where the range comes from** (`source`):
 
@@ -315,24 +267,24 @@ Every run can carry a **commit range** — the commits that landed between a bas
 | `connector` | Fetched from the configured GitHub integration (subject to `AI_OFFLINE_MODE` and the `github_checks` flag). |
 | `unavailable` | Neither path yielded anything. Recorded explicitly, with no invented range. |
 
-**What the range is measured *from*** (`base_source`) — reported separately, because these anchors are not equally trustworthy:
+**What the range is measured *from*** (`base_source`):
 
 | `base_source` | Strength | Meaning |
 |---|---|---|
 | `supplied` | strong | You told us the base ref. |
-| `green_baseline` | strong | The last fully-green prior run on the branch. "Landed since a known-good state" is literally true. |
-| `last_completed_run` | **weak** | The last *completed* prior run, pass or fail. Used when the project has no all-green run to anchor on. The range may include changes that were already present when the baseline failed — treat it as "here's roughly the window", not a clean before/after. |
+| `green_baseline` | strong | The last fully-green prior run on the branch. |
+| `last_completed_run` | **weak** | The last *completed* prior run, pass or fail, used when the project has no all-green run. Treat it as "roughly the window", not a clean before/after. |
 | `unavailable` | — | No base could be determined. |
 
-The API exposes `base_anchor_is_strong` alongside the label so a weak anchor can be caveated rather than presented as a green baseline.
+The API exposes `base_anchor_is_strong` alongside the label.
 
-**Changed-file detail.** Suspect ranking and any path-based model need each commit's changed files, and each one is a separate GitHub API call. `COMMIT_RANGE_FILE_FETCH_LIMIT` (default **25**) caps how many commits in a range get that detail; commits past the cap are stored with an empty file list. An authenticated PAT allows 5 000 GitHub REST calls/hour, and one resolve costs `1 + limit` calls — so 25 supports ~190 runs/hour, 50 supports ~98, 100 supports ~49. Raise it only if you are deliberately building a test-impact corpus, since a commit stored without files contributes nothing to a path model.
+**Changed-file detail.** `COMMIT_RANGE_FILE_FETCH_LIMIT` (default **25**) caps how many commits in a connector-fetched range get their changed-file list, because each is a separate GitHub API call. An authenticated PAT allows 5,000 GitHub REST calls an hour and one resolve costs `1 + limit` calls, so 25 supports about 190 runs an hour. Raise it only if you are deliberately building a test-impact corpus.
 
-**Is there enough data to model with yet?** `GET /api/v1/metrics/tia-readiness?project_id=…&days=90` answers that for **one project, from that project's own runs** — never a fleet average. It counts the runs whose range resolved *and* carries changed files, the calendar span they cover, and the distinct paths seen, then returns either `available: true` or `available: false` with an `insufficient_data_reason` naming the single thing to fix next (no ranges at all / ranges but no file detail / too few runs / too short a span / too narrow a path spread). The thresholds it applies are returned in the response so you can judge them yourself — they are a floor below which training is obviously premature, not a promise that training above them will work.
+**Is there enough data to model with yet?** `GET /api/v1/metrics/tia-readiness?project_id=…&days=90` answers that for one project from its own runs: `available: true`, or `available: false` with an `insufficient_data_reason` naming the single thing to fix next. The thresholds it applies are returned with the answer.
 
 ## Data retention & purge
 
-Per-project retention policies keep disk usage bounded without giving up your audit trail. Policies are **off by default** — nothing is ever purged until an ADMIN enables a project's policy. Everything is served by `GET/PUT /api/v1/projects/{id}/retention-policy` plus the `preview` and `purge` sub-endpoints.
+Per-project retention policies keep disk usage bounded without giving up your audit trail. Policies are **off by default** — nothing is ever purged until an administrator enables a project's policy under **Settings → Project → Retention & purge**. The API is `GET/PUT /api/v1/projects/{id}/retention-policy` plus the `preview` and `purge` sub-endpoints.
 
 Four retention classes, each with its own clock (days):
 
@@ -341,31 +293,28 @@ Four retention classes, each with its own clock (days):
 | Raw events | 90 | Live-stream event archives on runs (`event_archive`), raw ingest payloads (Allure/TestNG/REST) and live event documents in MongoDB. |
 | Runs | 365 | Test runs and everything that hangs off them in PostgreSQL (test cases, analyses, clusters, decisions — the full cascade), plus run-scoped MongoDB documents (execution logs, pod events, run summaries, AI analysis traces). |
 | Artifacts | 180 | Object storage: raw report uploads under the run's prefix and pipeline intermediate artifacts. |
-| Audit | 2555 (~7 y) | Access/test-management audit rows, AI provenance records, the immutable pipeline event log, and **expired** compliance packs. Must be ≥ the runs window — audit records always outlive the runs they describe. |
+| Audit | 2555 (~7 y) | Access/test-management audit rows, AI provenance records, the immutable pipeline event log, and **expired** compliance packs. Must be ≥ the runs window. |
 
 Bounds: raw events/artifacts 7–3650, runs 30–3650, audit 365–3650 days.
 
 **Preview-first workflow (recommended):**
-1. `POST .../retention-policy/preview` — a synchronous dry run that returns the per-class cutoffs and exactly what a purge would delete right now (runs, test cases, per-collection Mongo docs, object counts, audit rows, expired packs). Preview works while the policy is still disabled and writes nothing — it's how you decide what windows to set.
-2. Tune the windows with `PUT .../retention-policy` and enable the policy.
-3. Either wait for the nightly sweep (02:00 UTC, enabled projects only) or trigger `POST .../retention-policy/purge` with the project's name typed as `confirmation_name` (mismatch → 422; disabled policy → 409). The purge runs in the background worker.
+1. **Preview purge** (`POST .../retention-policy/preview`) — a dry run returning the per-class cutoffs and exactly what a purge would delete now. It works while the policy is still disabled and writes nothing.
+2. Tune the windows and enable the policy (**Save policy**).
+3. Wait for the nightly sweep (02:00 UTC, enabled projects only) or **Purge now**, typing the project's name to confirm (`confirmation_name`; a mismatch is `422`, a disabled policy `409`). The purge runs in the background worker.
 
-Every execute-mode purge — scheduled or manual — writes a **purge-audit record** (`settings_audit_log`, key `retention_purge:<project_id>`) with the cutoffs, per-store deletion counts, duration, and any errors. The latest one is surfaced as `last_purge` on the policy GET.
+Every purge — scheduled or manual — writes a **purge-audit record** (`settings_audit_log`, key `retention_purge:<project_id>`) with the cutoffs, per-store deletion counts, duration and errors; the latest is `last_purge` on the policy.
 
-**What is NEVER purged:**
-- `settings_audit_log` itself — it holds the purge-audit records and all settings/secret change history; it has no retention window at all.
-- Compliance packs **before** their own `retention_expires_at` (default ~7 years, set at generation time). The audit-class pass only removes packs whose own expiry has passed.
-- Anything in a project whose policy is disabled.
+**What is never purged:** `settings_audit_log` itself; compliance packs before their own `retention_expires_at` (default ~7 years); anything in a project whose policy is disabled.
 
-Notes: the purge is re-entrant — if a sweep is interrupted mid-way, the next run picks up the remainder (deletions across PostgreSQL/MongoDB/object storage are idempotent). Setting the raw-events window below 15 days will strip live-run event archives that the live-run recovery safety net could otherwise still replay. For a full, immediate wipe of a project use **Project Data** reset instead — retention is for steady-state aging, not resets.
+The purge is re-entrant — an interrupted sweep is completed by the next run. Setting the raw-events window below 15 days strips live-run event archives that the live-run recovery safety net could otherwise still replay. For a full, immediate wipe of a project use **Project data** instead — retention is for steady-state ageing, not resets.
 
 ## Backup, restore & upgrades
 
-Day-2 operations are one command each — the scripts live in `scripts/ops/` and drive everything through `docker compose exec/run`, so the host needs nothing beyond docker + bash (on Windows, run them through `make`, which already uses Git Bash). For how much machine and disk to plan for, see the [sizing & capacity guide](sizing.md).
+Day-2 operations on Docker Compose are one command each — the scripts live in `scripts/ops/` and drive everything through `docker compose exec/run`, so the host needs nothing beyond docker and bash (on Windows, run them through `make`, which uses Git Bash). For how much machine and disk to plan for, see [Sizing & capacity](sizing.md). On Kubernetes, see the backup component in [k8s/components/backup/README.md](../k8s/components/backup/README.md).
 
 ### Backup — `make backup`
 
-Produces **one timestamped archive** under `./backups/` (gitignored) containing a `pg_dump` of PostgreSQL, a `mongodump` of MongoDB, a tar of the MinIO data volume, and a `manifest.json` recording the app version, git SHA, and Alembic migration head. **Redis and ChromaDB are excluded by design** — Redis is the broker/cache (stale queue entries must not be replayed into a restored database) and ChromaDB is rebuilt from Postgres by the hourly reindex beat.
+Produces **one timestamped archive** under `./backups/` (gitignored) containing a `pg_dump` of PostgreSQL, a `mongodump` of MongoDB, a tar of the object-storage data volume (the `minio` service), and a `manifest.json` recording the app version, git SHA and Alembic migration head. **The cache/queue broker (Valkey) and ChromaDB are excluded by design** — the broker holds queue entries that must not be replayed into a restored database, and ChromaDB is rebuilt from PostgreSQL by the hourly reindex.
 
 ```bash
 make backup                      # → backups/testlookup-backup-<UTC>.tar.gz
@@ -373,7 +322,7 @@ QUIESCE=1 make backup            # stop the app layer during the backup (maximal
 BACKUP_DIR=/mnt/nas make backup  # custom destination
 ```
 
-The database dumps are transactionally consistent even while the stack is live. The MinIO volume tar is file-level — if CI is actively uploading attachments, prefer a quiet moment or `QUIESCE=1`. Copy the archives off-host on your own schedule (cron + rsync is plenty).
+The database dumps are transactionally consistent even while the stack is live. The object-storage tar is file-level — if CI is actively uploading attachments, prefer a quiet moment or `QUIESCE=1`. Copy the archives off-host on your own schedule.
 
 ### Restore — `make restore`
 
@@ -381,9 +330,9 @@ The database dumps are transactionally consistent even while the stack is live. 
 make restore FILE=backups/testlookup-backup-<ts>.tar.gz
 ```
 
-Restore stops the app containers, replaces the PostgreSQL/MongoDB/MinIO data, flushes Redis, restarts the stack (the backend applies any pending migrations on boot), waits for readiness, runs the smoke check, and prints a verdict plus a post-restore checklist (ChromaDB reindexes itself within the hour; the checklist includes the command to trigger it immediately).
+Restore stops the app containers, replaces the PostgreSQL, MongoDB and object-storage data, flushes the broker, restarts the stack (the backend applies any pending migrations on boot), waits for readiness, runs the smoke check, and prints a verdict plus a post-restore checklist (ChromaDB reindexes itself within the hour; the checklist includes the command to trigger it immediately).
 
-**The migration-safety gate:** restore *refuses to run* when the deployed code's migration head is **newer** than the backup's — that means you're rolling data back in time under code that has since migrated forward, which is usually an accident. It also refuses when the backup's head is unknown to the deployed code (backup from a *newer* version — upgrade first). Both refusals explain themselves and can be overridden with `FORCE=1` when the rollback is intentional:
+**The migration-safety gate:** restore *refuses to run* when the deployed code's migration head is **newer** than the backup's, and when the backup's head is unknown to the deployed code (a backup from a newer version — upgrade first). Both refusals explain themselves and can be overridden with `FORCE=1` when the rollback is intentional:
 
 ```bash
 make restore FILE=backups/<name>.tar.gz FORCE=1 CONFIRM=yes   # non-interactive override
@@ -397,15 +346,18 @@ make backup                 # your rollback path — do not skip this
 make upgrade TAG=v0.2.0     # pull, migrate, restart in dependency order, health-check, smoke-test
 ```
 
-`make upgrade` pulls the target images (`TAG=` applies to the release stack, `docker-compose.release.yml`; the dev stack rebuilds from source instead), runs `alembic upgrade head` *before* replacing the app containers so a migration failure is loud and early, recreates services in dependency order, and verifies health with the same smoke check as `make smoke`. On failure it prints step-by-step rollback instructions referencing your pre-upgrade backup. **There is deliberately no automatic rollback**: data migrations are not safely auto-reversible (downgrades can drop backfilled data or fail halfway), so the trustworthy rollback is the pre-upgrade backup restored onto the previous image tag — which is exactly what the printed instructions walk you through.
+`make upgrade` pulls the target images (`TAG=` applies to the release stack, `docker-compose.release.yml`; the dev stack rebuilds from source instead), runs `alembic upgrade head` *before* replacing the app containers so a migration failure is loud and early, recreates services in dependency order, and verifies health with the same smoke check as `make smoke`. On failure it prints step-by-step rollback instructions referencing your pre-upgrade backup. **There is deliberately no automatic rollback**: data migrations are not safely auto-reversible, so the trustworthy rollback is the pre-upgrade backup restored onto the previous image tag. Version-specific notes are in [UPGRADING.md](../UPGRADING.md).
 
 ## Admin checklists
 
 **New instance** (after [GETTING_STARTED](../GETTING_STARTED.md)):
-1. Create your project(s) and invite users with the right roles.
-2. Create API keys for CI and hand teams the [ingestion guide](getting-results-in.md).
-3. Configure suite owners / ownership rules so triage routes to people.
-4. Review the default release-gate policy (`/policies`) and adjust bands/rules.
-5. Leave `AI_OFFLINE_MODE` on until you deliberately need outbound integrations.
+1. Sign in as the first administrator and change the generated password.
+2. Decide on outbound access: leave `AI_OFFLINE_MODE` on until you deliberately need integrations or a hosted model.
+3. Create your project(s) (**Projects → New Project**) and add users with the right roles (**Users**, **Members & access**). Decide whether self-registration is acceptable on your network (see [People & projects](#people--projects)).
+4. Create API keys for CI (**Streaming API keys**, or a CI user's **My API keys**) and hand teams [Connecting CI and test frameworks](getting-results-in.md).
+5. Configure suite owners and ownership rules so triage routes to people ([Test catalog governance and ownership](test-management.md)).
+6. Review the default release-gate policy (**Releases → Gate policies**) and adjust bands and rules ([Gate policies and CI gating](release-gates.md)).
+7. Turn on the off-by-default workflows you want (quarantine, webhooks, budgets, GitHub/GitLab) under **Feature flags**.
+8. Set retention per project, and schedule `make backup` off-host.
 
-**Something isn't arriving?** Integration Health → Audit Dashboard → the [ingestion troubleshooting list](getting-results-in.md#troubleshooting), in that order.
+**Something isn't arriving?** Integration health → Audit dashboard → [Troubleshooting](troubleshooting.md#a-webhook-jira-issue-or-chat-notification-did-not-fire), in that order.

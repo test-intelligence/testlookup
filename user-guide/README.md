@@ -1,91 +1,53 @@
-# TestLookup User Guide
+# TestLookup operator and administrator guide
 
-Documentation for people **using** TestLookup — QA engineers, SDETs, team leads, and release managers. (Looking to install or operate the stack instead? Start with [GETTING_STARTED.md](../GETTING_STARTED.md); for internals, see [architecture/](../architecture/README.md).)
+This folder is for the people who **run** a TestLookup instance and **configure** it: platform administrators, QA leads who own projects and policies, and the engineers who wire CI into it.
 
-TestLookup ingests your test results (from CI or local runs), groups the failures that share a root cause, explains *why* tests failed, tracks which tests are flaky, and turns all of that into a release-readiness signal — fully offline, on your own infrastructure.
+> **Using TestLookup day to day?** The end-user guide is built into the app: open **? → Documentation** in the top bar, or go to `/docs` on your instance (for example `http://localhost:3000/docs`). Its source is [frontend/src/content/guide/](../frontend/src/content/guide/introduction.md) in this repository. It covers signing in, sending results, runs, the inbox, failures, flaky tests, dashboards, reports, releases, Ask AI and every settings page.
 
-## Guides
+Installing the stack is covered elsewhere: start with [GETTING_STARTED.md](../GETTING_STARTED.md), then the deployment guides under [docs/operations/](../docs/operations/deployment.md). Internals are in [architecture/](../architecture/README.md).
+
+## Guides in this folder
 
 | Guide | What it covers |
 |---|---|
-| [Getting results in](getting-results-in.md) | The four ways to feed TestLookup: dashboard upload, REST API, CLI, and live-streaming SDKs |
-| [Triaging failures](triaging-failures.md) | Failure Analysis, clusters, the My Failures inbox, resolution statuses, correcting the AI |
-| [Flaky tests & quarantine](flaky-tests.md) | The flaky verdict, the Flaky Coach, step-level flip detection, the quarantine review workflow |
-| [Release gates & policies](release-gates.md) | GO / CONDITIONAL_GO / NO_GO verdicts, how they're computed, the policy editor, overrides, gating CI |
-| [CLI, SDKs & MCP](cli-sdk-mcp.md) | `testlookup` CLI command groups, the shared SDK config, live-streaming reporters, the 58-tool MCP server |
-| [Agent cookbook](agent-cookbook.md) | Connecting Claude Code / Claude Desktop / Cursor to the MCP server, the write-tool safety model, and five worked triage recipes |
-| [Test management & ownership](test-management.md) | The test-case catalog, plans, reviews, suite owners, ownership rules, and the auto-assignment chain |
-| [AI features](ai-features.md) | Run Intelligence, Deep Investigation, the Agent Pipeline, Ask AI chat, and configuring the AI tier |
-| [Administration & settings](administration.md) | Projects, users, API keys, integrations & webhooks, flags, audit, storage, backup/restore & upgrades, and the admin checklists |
-| [Sizing & capacity](sizing.md) | Reference hardware profiles (small/medium/large), per-service CPU/RAM, and the disk-growth math for retention planning |
-| [Dashboards & analytics](dashboards.md) | Overview, Trends, Coverage, the Summary Report's aggregation modes, the shared chart frame (exports, Compare, Explorer, saved views, limits), Value Metrics, Search — and how their counts relate |
-| [Working with runs](working-with-runs.md) | The run list and detail pages, comparing runs, bisect-from-green, and a red-build routine |
-| [Defects & promotion](defects.md) | Promoting clusters to defects, auto-severity, issue-tracker auto-linking, duplicate detection |
-| [Compliance & governance](compliance.md) | Compliance packs — the exportable, reproducible evidence bundle behind a release decision — plus the SOC 2 / GDPR / HIPAA control-family mapping and its stated limits |
-| [Air-gapped install](air-gapped-install.md) | Building and importing the offline bundle (`make offline-bundle`) for Compose, Kubernetes, and OpenShift with zero internet |
-| [Offline model pack](offline-model-pack.md) | Side-loading the Ollama LLM and embedding models into an air-gapped deployment, and reading live model status |
-| [Knowledge base & test generation](knowledge-base.md) | Registering knowledge sources and generating grounded, cited test cases from your documents |
-| [Troubleshooting & FAQ](troubleshooting.md) | Symptom-first index: empty pages, mismatched counts, missing rows, integrations not firing, and more |
+| [Administration & settings](administration.md) | Who can open which settings page, projects and people, SSO and SCIM, MFA and lockout, integrations and notifications, GitHub and GitLab, AI agents, data and storage, retention, backup, restore and upgrades, and the admin checklists |
+| [Connecting CI and test frameworks](getting-results-in.md) | Supported report formats, the REST ingest calls, the CLI in a pipeline, live-streaming SDKs, CI context for pull requests, and commit ranges |
+| [CLI, SDKs & MCP](cli-sdk-mcp.md) | The `testlookup` CLI, the reporter SDKs and their shared configuration, and the MCP server |
+| [Agent cookbook](agent-cookbook.md) | Connecting an AI agent (Claude Code, Claude Desktop, Cursor) to the MCP server, the write-tool safety model, and worked triage recipes |
+| [AI configuration](ai-features.md) | Analysis modes and providers, the confidence gate, Ask AI server settings, the LLM cost budget, AI evaluation, the human review gate, and how the ML classifier learns |
+| [Quarantine policy and CI gating](flaky-tests.md) | Turning on quarantine proposals, the quarantine manifest, and failing CI only on real (non-quarantined) failures with `testlookup ci-verdict` |
+| [Gate policies and CI gating](release-gates.md) | Writing release-gate policies, overrides, release phase enforcement, and blocking a pipeline on the verdict |
+| [Issue trackers and defect automation](defects.md) | Jira one-click issues, recurrence de-duplication and status sync, the outbound-webhook fallback, and automatic defect promotion |
+| [Test catalog governance and ownership](test-management.md) | The authored test-case lifecycle and its flag, ownership rules, the auto-assignment chain, and the default QA lead |
+| [Knowledge base & test generation](knowledge-base.md) | Registering knowledge sources and generating grounded, cited test cases |
+| [Fixer](fixer.md) | The agent that proposes validated fixes for flaky tests as draft pull requests |
+| [Compliance & governance](compliance.md) | Compliance packs and the SOC 2 / GDPR / HIPAA control-family mapping, with its limits |
+| [Sizing & capacity](sizing.md) | Reference hardware profiles, per-service CPU and memory, and disk-growth math for retention planning |
+| [Air-gapped install](air-gapped-install.md) | Building and importing the offline bundle for Compose, Kubernetes and OpenShift |
+| [Offline model pack](offline-model-pack.md) | Side-loading the local LLM and embedding models into an air-gapped deployment |
+| [Troubleshooting](troubleshooting.md) | Operator-side symptoms: workers and queues, integrations that do not fire, AI features that are unavailable, stale bundles |
 
-## Core concepts
+Four older pages moved into the in-app guide and now only point there: [dashboards.md](dashboards.md), [working-with-runs.md](working-with-runs.md), [triaging-failures.md](triaging-failures.md) and [value-metrics.md](value-metrics.md).
 
-- **Project** — the top-level container everything is scoped to. The project selector in the top bar controls what every page shows; admins also get an "All Projects" view. Nothing renders until a project is selected.
-- **Run** — one execution of a test suite (a CI job, a local `pytest`, a TestNG session). Runs arrive by file upload, API ingest, or live streaming, and carry pass/fail/skip totals plus per-test rows.
-- **Test case** — a single test's result inside a run. TestLookup assigns each logical test a stable **fingerprint** across runs, which is what powers history, flakiness scoring, and "has this failed before?"
-- **Suite** — a named grouping of test cases (from your framework's suite concept). Pages that filter by suite consider both the per-test suite name and the run's primary suite.
-- **Failure cluster** — failures whose error signatures point at the same root cause are grouped so a 30-test outage reads as *one* problem, not thirty.
-- **Flaky test** — a test that changes verdict without a code change. TestLookup scores flaky confidence per fingerprint, down to individual test **steps**, and can recommend quarantine.
-- **Quarantine** — a holding state that keeps a known-flaky test from failing your release signal while it's being fixed.
-- **Release gate** — the readiness verdict for a run or release: **GO**, **CONDITIONAL_GO**, or **NO_GO**, computed from pass rates, failure clusters, flakiness, and the policies you configure.
-- **Ownership / My Failures** — failures are auto-assigned to suite owners and QA engineers; **My Failures** is each user's personal triage queue.
+## Feature flags you will meet first
 
-## Finding your way around
+Several workflows are switched by feature flags (**Settings → System → Feature flags**, administrators only). These ship **off** on a new install, so the pages behind them say so until you turn them on:
 
-The sidebar groups the app into these areas (paths are relative to the dashboard, default `http://localhost:3000`):
+| Flag | Turns on |
+|---|---|
+| `flaky_auto_quarantine` | Quarantine proposals and the review workflow on **Flaky tests** |
+| `outbound_webhooks` | Outbound webhook subscriptions (**Settings → Integrations → Outbound webhooks**) |
+| `llm_cost_budget` | Enforcement of the per-project LLM cost budget |
+| `release_phase_gate_enforcement` | Refusing to complete a release phase without a GO verdict |
+| `release_compliance_pack` | Compliance pack generation |
+| `github_checks` | GitHub check runs and pull-request comments |
+| `gitlab` | GitLab merge-request notes and commit statuses |
 
-**Daily work**
-- `/overview` — the landing dashboard: pass rate, verdict, trend, and what needs attention.
-- `/runs` — all runs; click one for per-test detail, or `/runs/compare` to diff two runs.
-- `/live` — runs currently streaming in from the SDKs, updating in real time.
-- `/my-failures` — your personal queue of assigned failures.
-- `/failures` — Failure Analysis: clusters, error signatures, AI root-cause explanations.
-
-**Test health**
-- `/suites` and `/coverage` — suite-level health, coverage, and drill-downs.
-- `/flaky-coach` — flaky-test triage with per-test history and step-level flip detail.
-- `/quarantine` — what's quarantined and what the detector recommends quarantining.
-- `/test-management` — test cases, plans, suites, review workflow, and defect decisions.
-- `/trends` — pass-rate and volume trends over time.
-
-**Release & intelligence**
-- `/release-gate` — the GO / CONDITIONAL_GO / NO_GO verdict and the evidence behind it.
-- `/releases` — release tracking with gate status per release.
-- `/policies` — the policy editor that configures how verdicts are computed.
-- `/intelligence`, `/deep-investigate`, `/agents`, `/chat` — the AI layer: run intelligence reports, deep investigations, agent pipelines, and a chat interface over your test data.
-- `/reports/summary` — the run/window summary report.
-- `/defects`, `/value-metrics`, `/search` — defect promotion, ROI metrics, global search.
-
-**Administration**
-- `/projects`, `/users`, `/ownership` — projects, people, and suite-ownership rules.
-- `/settings/*` — profile, API keys, integrations (GitHub, SSO, webhooks, digests), AI configuration, feature flags, audit, storage, and data management.
-
-> Time windows are shared: the window you pick on one page (7 days, 30 days, …) follows you across pages.
-
-## First run (`/getting-started`)
-
-A new instance opens on a setup checklist rather than an empty dashboard. It
-tracks the steps that make the rest of the product useful — create a project,
-get results in, connect an issue tracker, connect telemetry, add an API key,
-try live streaming — and marks each done as you actually complete it, not when
-you click through.
-
-Steps you don't want are **skippable**, and the page stops appearing once the
-essentials are done. If you land on an empty-looking dashboard on a fresh
-install, this is where to start: [Getting results in](getting-results-in.md)
-is the step that makes every other page show something.
+`manual_upload` (the **Upload** button on Runs) and `ask_ai_chat` (the Ask AI page) ship **on**. The full list, with what each flag gates and how flags are evaluated, is the [feature-flag reference](../docs/operations/feature-flags.md).
 
 ## Conventions in these guides
 
-- The dashboard runs at `http://localhost:3000` and the API at `http://localhost:8000` in a default self-host install — substitute your deployment's URLs.
-- API examples use `curl` with an API key created under **Settings → API Keys**.
-- Everything documented here works fully offline (`AI_OFFLINE_MODE=true`, the default); AI features that need a local LLM say so explicitly.
+- The dashboard runs at `http://localhost:3000` and the API at `http://localhost:8000` in a default Compose install. Substitute your own URLs, for example `https://testlookup.example.com`.
+- API examples use `curl` with an API key sent in the `X-API-Key` header. Create keys under **Settings → Project → Streaming API keys** (for CI) or **Settings → Account → My API keys** (your own). Examples use the placeholder `qai_your_api_key_here`.
+- `AI_OFFLINE_MODE=true` is the default. In that mode no outbound integration (Jira, Slack, Teams, webhooks, GitHub, GitLab, a hosted LLM) is called, whatever its own setting says. Guides that depend on outbound calls say so.
+- Roles, from least to most: `VIEWER`, `TESTER`, `QA_ENGINEER`, `QA_LEAD`, `ADMIN`. Each includes the abilities of the ones below it. "QA lead or above" means `QA_LEAD` and `ADMIN`.
