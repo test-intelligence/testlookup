@@ -120,7 +120,11 @@ def envelope_from_review(review: Any) -> ReviewEnvelope:
     review_id = str(review.id)
     messages = {
         "pending_review": (
-            f"AI-generated. Human review required before use. Review at /api/v1/reviews/{review_id}."
+            # No API path in the copy (it rendered as "Review at
+            # /api/v1/reviews/<id>" in every banner); the id is ``review_id``
+            # and the banner links the review queue itself.
+            "AI-generated. Human review required before use; a reviewer can "
+            "accept or reject it in the review queue."
         ),
         "accepted": "AI-generated. Reviewed and accepted by a human reviewer.",
         "rejected": "AI-generated. A human reviewer rejected this report; do not rely on it.",

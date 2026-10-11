@@ -571,6 +571,41 @@ async def get_current_user_or_api_key(
     )
 
 
+#: What a session on a temporary password may still reach: who am I, the
+#: password changes, and signing out. Everything else answers 403
+#: ``password_change_required`` until the password is changed.
+PASSWORD_CHANGE_PATHS = frozenset({
+    "/api/v1/auth/me",
+    "/api/v1/auth/first-time-reset",
+    "/api/v1/auth/change-password",
+    "/api/v1/auth/logout",
+})
+
+PASSWORD_CHANGE_REQUIRED = {
+    "code": "password_change_required",
+    "message": "This account is on a temporary password. Change it to continue.",
+}
+
+
+def refuse_until_password_changed(user: User, path: str | None) -> None:
+    """403 for a JWT session whose account must change its password.
+
+    ``must_change_password`` was only a prompt on the login response and a
+    redirect in the browser; the API served the token normally, so a user on
+    an initial or admin-reset password could skip the change by calling the
+    API (homelab sweep, 2026-10-10). API keys are not refused: they are
+    separate long-lived credentials for automation, and an admin resetting a
+    person's password must not silently break their pipelines.
+    """
+    if not getattr(user, "must_change_password", False):
+        return
+    if credential_kind(user) != CREDENTIAL_KIND_JWT:
+        return
+    if path is not None and path in PASSWORD_CHANGE_PATHS:
+        return
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=PASSWORD_CHANGE_REQUIRED)
+
+
 async def get_current_active_user(
     request: Request,
     current_user: User = Depends(get_current_user_or_api_key),
@@ -597,6 +632,7 @@ async def get_current_active_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Inactive user account",
         )
+    refuse_until_password_changed(current_user, request.url.path)
     if _is_write(request) and not _route_takes_scoped_key_writes(request):
         _refuse_scoped_key_without_write_scope(current_user)
     return current_user
@@ -721,6 +757,8 @@ async def get_api_key_context(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Inactive user account",
                 )
+            # Ingest and live runs are never on the password-change list.
+            refuse_until_password_changed(user, None)
             return user, None
 
     if x_api_key:
