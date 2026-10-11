@@ -24,6 +24,7 @@ import type { FlakyQuarantineRead } from '@/services/flakyQuarantineService'
 const state = vi.hoisted(() => ({
   projectId: 'p1' as string,
   canAccessManagement: true,
+  isQaEngineer: true,
   quarantineOn: true as boolean | undefined,
   coachError: null as unknown,
 }))
@@ -46,7 +47,7 @@ vi.mock('@/hooks/useFeatureFlags', () => ({
 }))
 
 vi.mock('@/hooks/usePermissions', () => ({
-  usePermissions: () => ({ canAccessManagement: state.canAccessManagement, isQaEngineer: true }),
+  usePermissions: () => ({ canAccessManagement: state.canAccessManagement, isQaEngineer: state.isQaEngineer }),
 }))
 
 vi.mock('@/store/projectStore', () => ({
@@ -154,6 +155,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   state.projectId = 'p1'
   state.canAccessManagement = true
+  state.isQaEngineer = true
   state.quarantineOn = true
   coachMock.getFlakyCoach.mockResolvedValue({
     project_id: 'p1',
@@ -171,6 +173,26 @@ beforeEach(() => {
 })
 
 const tab = (name: RegExp) => screen.getByRole('tab', { name })
+
+// Action sweep, homelab 2026-10-10: "Refresh" re-runs the analysis (QA engineer
+// and above) and was offered to viewers on /flaky, /flaky-coach and /quarantine,
+// who got a 403 and a toast blaming their role for clicking it.
+describe('FlakyTestsPage — Refresh is offered only to who can run it', () => {
+  it('a viewer or tester sees no Refresh', async () => {
+    state.isQaEngineer = false
+    renderPage()
+    await screen.findByRole('tab', { name: /Detected/ })
+    expect(screen.queryByRole('button', { name: /Refresh/ })).toBeNull()
+    expect(coachMock.refreshFlakyCoach).not.toHaveBeenCalled()
+  })
+
+  it('a QA engineer sees it and it re-runs the analysis', async () => {
+    coachMock.refreshFlakyCoach.mockResolvedValue({ flaky_tests_found: 2 })
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: /Refresh/ }))
+    await waitFor(() => expect(coachMock.refreshFlakyCoach).toHaveBeenCalledTimes(1))
+  })
+})
 
 describe('FlakyTestsPage — the page', () => {
   it('shows the project prompt in All Projects mode and asks for nothing', () => {

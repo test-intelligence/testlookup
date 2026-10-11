@@ -507,7 +507,11 @@ async def get_training_status(db: AsyncSession, settings) -> dict:
     from app.services.model_registry import ModelRegistry
 
     registry = await ModelRegistry.get_all_status()
-    # total + unexported in one aggregate query (was two separate COUNTs).
+    # total + unexported + labelled in one aggregate query (was two COUNTs).
+    # ``labelled`` was folded into get_feedback_stats' aggregate instead of
+    # this one when the ML activation gate was added (F-10), so this endpoint
+    # read a column it never selected and 500'd for every caller (route/API
+    # sweep, homelab 2026-10-10). The unit tests passed: their fake row had it.
     totals = (
         await db.execute(
             select(
@@ -515,6 +519,9 @@ async def get_training_status(db: AsyncSession, settings) -> dict:
                 func.count(AIFeedback.id)
                 .filter(AIFeedback.exported.is_(False))
                 .label("unexported"),
+                func.count(AIFeedback.id)
+                .filter(AIFeedback.corrected_category.isnot(None))
+                .label("labelled"),
             )
         )
     ).one()

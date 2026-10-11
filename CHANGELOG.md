@@ -1,5 +1,46 @@
 # Changelog
 
+## Unreleased - Error sweeps: every page, every action, every GET endpoint
+
+Owner request 2026-10-10: test every page navigation for 500s and every UI
+action for UI and backend errors, then fix what they find. Three new test
+types (see `architecture/testing/COVERAGE_IMPROVEMENT_ROADMAP.md`):
+
+- **CI, blocking:** `test_every_get_route_answers_without_500_postgres.py` calls
+  every `GET /api/v1` route of the real app as an admin and a viewer against
+  seeded Postgres/Mongo/Redis and fails on any 500, naming the route.
+- **Live route sweep** (`frontend/tests/sweeps/route-sweep.spec.ts`): every
+  route in App.tsx, every role in a fixtures file minted in the backend
+  container (`backend/scripts/sweep_fixtures.py`); fails on a 5xx, page error
+  or error screen. A vitest guard fails when App.tsx gains a route it lacks.
+- **Live action sweep** (`action-sweep.spec.ts`): each page's read-only
+  controls; fails on any 5xx, page error or error screen an action causes.
+
+First run on the homelab -- 444 page visits, 581 actions, 272 GET routes for 5
+roles -- found, each now fixed with a regression test:
+- **`GET /training/status` answered 500 for every role.** It read a `labelled`
+  count its query never selected (the count had been added to
+  `get_feedback_stats` instead); the unit tests passed because their fake row
+  carried it. The new test answers only the columns the query selects.
+- **Viewers were offered "Refresh" on Flaky tests** (and the old Flaky Coach and
+  Quarantine routes). It re-runs the analysis, which needs QA engineer, so it
+  answered 403 with a toast that blamed the role for every failure, a 500
+  included. Shown to QA engineer and above; the client's toast reports the real
+  reason.
+- **"Send test" showed each failure twice** (the page's toast and the API
+  client's). The request opts out of the client's toast.
+- **The AI review banner read "Review at /api/v1/reviews/<id>".** It now points
+  at the review queue the banner links; the id stays in `review_id`.
+
+Owner decision from the sweep:
+- **A temporary password is enforced by the API.** `must_change_password` was a
+  prompt on the login response and a browser redirect; every API call served the
+  token normally. A JWT session on a temporary password now gets 403
+  `password_change_required` everywhere except `/auth/me`, the two password
+  changes and logout (ingest included). API keys are not refused -- separate
+  credentials, so an admin reset cannot break a pipeline. The browser sends a
+  `password_change_required` 403 to the change form instead of a toast.
+
 ## Unreleased - One test case view in Test Management
 
 Owner review 2026-10-10 (as product manager): a click on a Test Management row

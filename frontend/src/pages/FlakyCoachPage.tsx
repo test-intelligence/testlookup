@@ -10,6 +10,7 @@ import EmptyState from '@/components/ui/EmptyState'
 import SidePanel from '@/components/ui/SidePanel'
 import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState'
 import { useFlakyCoach } from '@/hooks/useTestHealth'
+import { usePermissions } from '@/hooks/usePermissions'
 import { testHealthService, type FlakyCoachEntry } from '@/services/testHealthService'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import ChipFilter from './inbox/ChipFilter'
@@ -299,6 +300,7 @@ export default function FlakyCoachPage() {
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
   const projectId = isAllProjects ? null : activeProjectId
   const { coach, isLoading, refresh } = useFlakyCoach(projectId)
+  const { isQaEngineer: canRefresh } = usePermissions()
   const [refreshing, setRefreshing] = useState(false)
 
   const handleRefresh = async () => {
@@ -310,7 +312,7 @@ export default function FlakyCoachPage() {
       toast.success(`Found ${found} flaky test${found === 1 ? '' : 's'}`)
       await refresh()
     } catch {
-      toast.error('Refresh failed — QA Engineer role required')
+      // The API client already toasted the server's reason.
     } finally {
       setRefreshing(false)
     }
@@ -340,7 +342,7 @@ export default function FlakyCoachPage() {
       <PageHeader
         title="Flaky Coach"
         subtitle={flakySubtitle(coach)}
-        actions={
+        actions={canRefresh ? (
           <button
             onClick={handleRefresh}
             disabled={refreshing}
@@ -349,7 +351,7 @@ export default function FlakyCoachPage() {
             <RefreshCw className={clsx('h-4 w-4', refreshing && 'animate-spin')} />
             {refreshing ? 'Refreshing…' : 'Refresh'}
           </button>
-        }
+        ) : undefined}
       />
       <FlakyCoachBody entries={coach?.entries ?? []} />
     </div>

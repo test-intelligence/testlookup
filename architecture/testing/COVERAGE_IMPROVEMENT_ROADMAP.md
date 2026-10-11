@@ -15,6 +15,37 @@ Exit target: GAP-01 has blocking coverage for auth, review, release and defect
 paths (release/defect browser expansion remains); GAP-03's service-level proof
 is implemented, with deployed full-stack proof remaining.
 
+## Error sweeps — every page, every action (owner request 2026-10-10)
+
+Two test types that look for errors instead of asserting one behaviour:
+
+1. **No page or GET endpoint answers 500.**
+   - *CI, blocking:* `backend/tests/integration/test_every_get_route_answers_without_500_postgres.py`
+     calls every `GET /api/v1` route of the real app, as an admin and as a
+     viewer, against seeded PostgreSQL/Mongo/Redis; any 500 fails the build
+     with the route named. 502/503/504 (a dependency the job does not run) are
+     reported, not failed.
+   - *Live:* `frontend/tests/sweeps/route-sweep.spec.ts` visits every route in
+     `App.tsx` as every role in a fixtures file (`backend/scripts/sweep_fixtures.py`,
+     tokens minted in the backend container) and fails on a 5xx, an uncaught
+     page error or an error screen. `src/routing/sweepRoutes.test.ts` fails when
+     `App.tsx` gains a route the sweep lacks.
+2. **No UI action raises a UI or backend error.** `frontend/tests/sweeps/action-sweep.spec.ts`
+   exercises each page's read-only controls (tabs, filters, disclosure and sort
+   toggles, view/open buttons, one row per table) and fails on any 5xx, page
+   error or error screen an action causes. It never clicks anything that
+   writes, sends, runs, deletes or downloads.
+
+First run (homelab, 444 page visits, 581 actions, 272 GET routes x 5 roles):
+`GET /training/status` 500 for every role; viewers offered a QA-engineer-only
+"Refresh" (403 + toast); a raw `/api/v1/...` path in the review banner;
+duplicate error toasts; `must_change_password` enforced only in the browser.
+All fixed with regression tests.
+
+Next: run the live sweeps after every homelab deploy; add the remaining roles
+to the action sweep; extend the action sweep to write actions in a disposable
+project (create/edit/delete with cleanup), which the read-only allowlist skips.
+
 ## Next — risk-weighted expansion
 
 1. Raise frontend branch/function floors only after tests cover the lifecycle,
