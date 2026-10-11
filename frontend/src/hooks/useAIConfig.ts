@@ -60,7 +60,7 @@ export function activeTier(status: AIModelStatusRead | undefined): FallbackChain
 }
 
 /** True when the configured mode can invoke an LLM (llm or auto). */
-export function isLLMAvailable(config: AIModeRead | undefined): boolean {
+export function isLLMAvailable(config: Pick<AIModeRead, 'analysis_mode'> | undefined): boolean {
   if (!config) return true // safe default while loading: show everything
   return config.analysis_mode === 'llm' || config.analysis_mode === 'auto'
 }

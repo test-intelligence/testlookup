@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { ManagedTestCase } from '@/types/test-management'
-import { getTestManagementCaseDetailPath } from './testManagementCase'
+import { latestResultPath, runHistoryPath } from './testManagementCase'
 
 function testCase(overrides: Partial<ManagedTestCase> = {}): ManagedTestCase {
   return {
@@ -23,31 +23,36 @@ function testCase(overrides: Partial<ManagedTestCase> = {}): ManagedTestCase {
   }
 }
 
-describe('getTestManagementCaseDetailPath', () => {
-  it('routes automation rows to their complete latest execution detail', () => {
-    expect(getTestManagementCaseDetailPath(testCase({
+describe('latestResultPath', () => {
+  it('links an automation row to its latest execution', () => {
+    expect(latestResultPath(testCase({
       source: 'automation',
       latest_run_id: 'run-1',
       latest_test_case_id: 'test-1',
     }))).toBe('/runs/run-1/tests/test-1')
   })
 
-  it('keeps authored catalog cases in the Test Management side panel', () => {
-    expect(getTestManagementCaseDetailPath(testCase({
+  it('links an authored case linked to automation the same way', () => {
+    expect(latestResultPath(testCase({
       source: 'managed',
       latest_run_id: 'run-1',
-      latest_test_case_id: 'test-1',
-    }))).toBeNull()
+      latest_test_case_id: 'tc / 1',
+    }))).toBe('/runs/run-1/tests/tc%20%2F%201')
   })
 
-  it('falls back to canonical detail when the latest execution identity is absent', () => {
-    expect(getTestManagementCaseDetailPath(testCase({
-      source: 'automation',
-      canonical_test_case_id: 'canonical / 1',
-    }))).toBe('/canonical-test-cases/canonical%20%2F%201')
+  it('has no link without both execution ids', () => {
+    expect(latestResultPath(testCase({ source: 'automation', latest_run_id: 'run-1' }))).toBeNull()
+    expect(latestResultPath(testCase({ source: 'managed' }))).toBeNull()
+  })
+})
+
+describe('runHistoryPath', () => {
+  it('links to the test across runs', () => {
+    expect(runHistoryPath(testCase({ canonical_test_case_id: 'canonical / 1' })))
+      .toBe('/canonical-test-cases/canonical%20%2F%201')
   })
 
-  it('fails closed when an automation row has no stable identity', () => {
-    expect(getTestManagementCaseDetailPath(testCase({ source: 'automation' }))).toBeNull()
+  it('has no link without a canonical id', () => {
+    expect(runHistoryPath(testCase({ source: 'automation' }))).toBeNull()
   })
 })

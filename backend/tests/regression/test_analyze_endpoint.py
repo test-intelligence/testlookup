@@ -112,3 +112,43 @@ async def test_get_analysis_coerces_legacy_string_category_without_500():
         test_case_id=str(row.test_case_id), db=db, current_user=_authorized_admin()
     )
     assert result.failure_category == FailureCategory.UNKNOWN
+
+
+@pytest.mark.asyncio
+async def test_get_analysis_reads_evidence_without_a_reference_id():
+    """Homelab 2026-10-10: 372 of 406 stored analyses carried evidence entries
+    with only ``source`` + ``excerpt`` (the model's JSON, and seeded rows).
+    ``EvidenceReference.reference_id`` was required, so GET /analyze/{id} 500'd
+    and the test page offered "Analyse Root Cause" over a root cause on file."""
+    from app.routers.analyze import get_existing_analysis
+
+    row = SimpleNamespace(
+        test_case_id=uuid.uuid4(),
+        root_cause_summary="Session validation timed out against the auth service",
+        failure_category="INFRASTRUCTURE",
+        backend_error_found=True,
+        pod_issue_found=False,
+        is_flaky=False,
+        confidence_score=74,
+        recommended_actions=["Check the auth service latency"],
+        evidence_references=[
+            {"source": "splunk", "excerpt": "TimeoutException: Session validation timed out after 30s"},
+            {"source": "ocp_events", "excerpt": "auth-svc restarted 2m before test failure"},
+        ],
+        tools_used=[],
+        role_actions={},
+        llm_provider="openrouter",
+        llm_model="m",
+        requires_human_review=False,
+    )
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[_ownership_result(), _scalar_result(row)])
+
+    result = await get_existing_analysis(
+        test_case_id=str(row.test_case_id), db=db, current_user=_authorized_admin()
+    )
+
+    assert result.root_cause_summary.startswith("Session validation timed out")
+    assert [(e.source, e.reference_id) for e in result.evidence_references] == [
+        ("splunk", ""), ("ocp_events", ""),
+    ]

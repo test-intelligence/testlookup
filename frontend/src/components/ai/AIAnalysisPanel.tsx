@@ -7,6 +7,7 @@ import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
 import { aiService } from '@/services/aiService'
 import { usePermissions } from '@/hooks/usePermissions'
+import { useAIConfig } from '@/hooks/useAIConfig'
 import type { AnalysisResult, ConfidenceWhy, RoleActions } from '@/types/ai'
 import { confidenceColor } from '@/utils/formatters'
 import RoleActionCard from '@/components/ai/RoleActionCard'
@@ -197,6 +198,10 @@ export default function AIAnalysisPanel({
   // viewer is told so and asks nothing — the 403 toasted "Requires at least
   // QA_ENGINEER role" on every failed test they opened (browser E2E pass).
   const { canTriggerLlm } = usePermissions()
+  // Whether AI stays on this deployment. The line below used to read
+  // "Powered by Ollama (local) -- no data leaves your network" from a
+  // build-time default, also where failure context goes to a cloud model.
+  const { data: aiMode } = useAIConfig()
 
   // Auto-load any previously stored analysis so the user sees results immediately
   // without having to click "Analyse Root Cause" again.
@@ -284,7 +289,11 @@ export default function AIAnalysisPanel({
         <div className="text-center">
           <p className="font-semibold text-[var(--color-text)]">AI Root Cause Analysis</p>
           <p className="text-sm text-[var(--color-text-muted)] mt-1 max-w-xs">
-            Powered by {import.meta.env.VITE_LLM_PROVIDER || 'Ollama (local)'} — no data leaves your network
+            {aiMode?.ai_offline_mode === true
+              ? 'Runs on this deployment\'s local model — no data leaves your network'
+              : aiMode?.ai_offline_mode === false
+                ? 'Uses the AI provider configured for this deployment — the failure details are sent to it'
+                : 'Explains this failure from its error, logs and history'}
           </p>
         </div>
         <button className="btn-primary flex items-center gap-2" onClick={handleAnalyze}>

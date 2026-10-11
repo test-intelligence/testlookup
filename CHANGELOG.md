@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased - One test case view in Test Management
+
+Owner review 2026-10-10 (as product manager): a click on a Test Management row
+did one of four things depending on data the reader could not see. An authored
+case opened the side panel; an automation row left the page for ONE run's result
+(`/runs/<run>/tests/<id>`); an automation row with only a canonical id left for a
+third page; one with neither raised a toast. Leaving the page also lost the
+list's search, filters and page, and an authored, automated case showed "Last
+Executed --" with no way to its runs.
+
+- **Every row opens the same case panel, in place.** The panel says where the
+  case comes from (Authored / From automation) and carries a **Latest result**
+  block with **Open latest result** (the run detail) and **Run history** (the
+  test across runs) -- the rich pages are one deliberate click away.
+- **Automation rows** show what the result carries (suite, class, owner, last
+  executed) instead of catalog placeholders, and a **Promote** call to action;
+  the tabs that need a catalog record (lifecycle, history, reviews, comments, AI
+  review) appear once promoted. No more toast-only dead end.
+- **Authored cases linked to automation** (same project + fingerprint) now come
+  with their latest execution from `/cases` and `/cases/{id}` (one query per
+  page), so their panel links to their runs too.
+
+Found on the page those rows used to open:
+- **Stored AI analyses 500'd.** `GET /analyze/{test_case_id}` required
+  `reference_id` on every evidence entry; 372 of 406 stored analyses on the
+  homelab had entries with only `source` + `excerpt` (the model's JSON, seeded
+  rows), so the test page offered "Analyse Root Cause" over a root cause on file.
+- **The AI panel claimed "Powered by Ollama (local) -- no data leaves your
+  network"** from a build-time default, also on deployments that send the
+  failure to a cloud model. `GET /settings/ai/mode` now carries the effective
+  `ai_offline_mode`, and the line says so only when it is true.
+
 ## Unreleased - Jira and Slack tested against contract fakes
 
 Owner request 2026-10-10: the real Jira and Slack are not available, so test
