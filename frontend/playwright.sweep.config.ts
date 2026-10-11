@@ -16,7 +16,7 @@ export default defineConfig({
   fullyParallel: true,
   workers: Number(process.env.SWEEP_WORKERS ?? 1),
   retries: 0,
-  reporter: [['line'], ['json', { outputFile: 'test-results/sweeps/report.json' }]],
+  reporter: [['line'], ['json', { outputFile: 'sweep-results/report.json' }]],
   use: {
     channel: process.env.SWEEP_CHANNEL ?? undefined,
     headless: true,

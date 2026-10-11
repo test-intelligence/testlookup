@@ -3,7 +3,7 @@
  * tabs, filter dropdowns, disclosure and sort toggles, view/open/details
  * buttons, one row per table -- and FAIL on any 5xx, uncaught page error or
  * error screen an action causes. Unexpected 4xx, console errors and error
- * toasts are recorded to test-results/sweeps/action.jsonl (the 2026-10-10 run
+ * toasts are recorded to sweep-results/action.jsonl (the 2026-10-10 run
  * found viewers offered a QA-engineer-only "Refresh" this way).
  *
  * Never clicks anything that writes, sends, runs, deletes or downloads: an

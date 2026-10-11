@@ -35,7 +35,9 @@ export const ROLES = (process.env.SWEEP_ROLES ?? Object.keys(FIXTURES.tokens).jo
 export const IDS = FIXTURES.ids
 export const ROUTES = concreteRoutes(IDS)
 
-const OUT_DIR = resolve(process.env.SWEEP_OUT ?? 'test-results/sweeps')
+// Not under test-results/: Playwright empties that folder at the start of
+// every run, so a route sweep's findings vanished when the action sweep ran.
+const OUT_DIR = resolve(process.env.SWEEP_OUT ?? 'sweep-results')
 
 const users: Record<string, Record<string, unknown>> = {}
 

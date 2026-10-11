@@ -36,6 +36,9 @@ Two test types that look for errors instead of asserting one behaviour:
    error or error screen an action causes. It never clicks anything that
    writes, sends, runs, deletes or downloads.
 
+Run: `SWEEP_BASE_URL=... SWEEP_FIXTURES=... npx playwright test -c playwright.sweep.config.ts`
+(findings in `frontend/sweep-results/*.jsonl`).
+
 First run (homelab, 444 page visits, 581 actions, 272 GET routes x 5 roles):
 `GET /training/status` 500 for every role; viewers offered a QA-engineer-only
 "Refresh" (403 + toast); a raw `/api/v1/...` path in the review banner;

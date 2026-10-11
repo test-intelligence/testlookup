@@ -2,7 +2,7 @@
  * Route sweep: every page in App.tsx, as every role in the fixtures, against a
  * live deployment. FAILS on a 5xx, an uncaught page error, or an error screen;
  * records unexpected 4xx, console errors and error toasts to
- * test-results/sweeps/route.jsonl for triage. See common.ts for how to run.
+ * sweep-results/route.jsonl for triage. See common.ts for how to run.
  */
 import { expect, test } from '@playwright/test'
 

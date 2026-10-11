@@ -3570,7 +3570,7 @@ frontend/tests/probe-w3-failures.spec.ts,test,99,,@playwright/test; ./lib/rollou
 frontend/tests/probe-w3-suite-detail.spec.ts,test,78,,@playwright/test; ./lib/rollout,Page; ProbeEnv
 frontend/tests/probe-w3-trends-heatmap.spec.ts,test,90,,@playwright/test; ./lib/rollout,Page; ProbeEnv; Matrix
 frontend/tests/sweeps/action-sweep.spec.ts,test,122,,@playwright/test; ./common,Locator; Page; Candidate; nameOf; visible; candidates; act
-frontend/tests/sweeps/common.ts,test,143,,node:fs; node:path; @playwright/test; ./routes,Fixtures; userFor; signIn; Errors; watch; scrape; settle; hardFailures; record
+frontend/tests/sweeps/common.ts,test,145,,node:fs; node:path; @playwright/test; ./routes,Fixtures; userFor; signIn; Errors; watch; scrape; settle; hardFailures; record
 frontend/tests/sweeps/route-sweep.spec.ts,test,33,,@playwright/test; ./common,
 frontend/tests/sweeps/routes.ts,test,62,,,fill; concreteRoutes
 frontend/tests/visual/chart-gallery.visual.spec.ts,test,224,,@playwright/test; ../../src/pages/dev/chartGalleryFixtures,
