@@ -92,6 +92,12 @@ export default function LoginPage() {
       .catch(() => { /* unknown: offer sign-in only */ });
   }, []);
 
+  // A refused SSO sign-in comes back here as ?sso_error=1 (the reason stays in the server log).
+  const ssoErrorNotice = new URLSearchParams(location.search).has('sso_error')
+    ? 'Single sign-on did not complete. Try again, or ask your administrator.'
+    : null;
+  const notice = loginNotice ?? ssoErrorNotice;
+
   /** Shared tail of every successful sign-in — normal, post-challenge, or post-enrollment. */
   const completeSignIn = async (tokens: TokenResponse) => {
     const user = await fetchCurrentUser(tokens.access_token);
@@ -280,13 +286,13 @@ export default function LoginPage() {
         <div className="theme-bg-card py-8 px-4 shadow sm:rounded-lg sm:px-10 border theme-border">
 
           {/* ── Carry-over notice (lockout, expired challenge, SSO-required …) ── */}
-          {mode === 'login' && loginNotice && (
+          {mode === 'login' && notice && (
             <div
               role="alert"
               className="mb-5 flex items-start gap-2 rounded-md border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg-soft)] px-3 py-2 text-xs text-[var(--color-text)]"
             >
               <ShieldAlert className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-[var(--status-broken)]" />
-              <span>{loginNotice}</span>
+              <span>{notice}</span>
             </div>
           )}
 
@@ -405,7 +411,8 @@ export default function LoginPage() {
                     type="button"
                     onClick={async () => {
                       try {
-                        const { data } = await api.get('/api/v1/sso/login-url');
+                        // `next`: where to land after the identity provider (sent as the SAML RelayState).
+                        const { data } = await api.get('/api/v1/sso/login-url', { params: { next: from } });
                         if (!isSafeExternalUrl(data?.redirect_url)) {
                           toast.error('SSO login URL rejected');
                           return;

@@ -62,14 +62,16 @@ vi.mock('react-hot-toast', () => ({
   default: { success: vi.fn(), error: vi.fn() },
 }))
 
+const mockSSOStatus = vi.fn<() => Promise<unknown>>(() => Promise.reject(new Error('sso off')))
 vi.mock('../services/ssoService', () => ({
-  getSSOStatus: () => Promise.reject(new Error('sso off')),
+  getSSOStatus: () => mockSSOStatus(),
 }))
 
 // The real `api` instance is still imported by LoginPage (dev-login / SSO / register).
 const mockApiPost = vi.fn()
+const mockApiGet = vi.fn()
 vi.mock('../services/api', () => ({
-  api: { post: (...args: unknown[]) => mockApiPost(...args), get: vi.fn() },
+  api: { post: (...args: unknown[]) => mockApiPost(...args), get: (...args: unknown[]) => mockApiGet(...args) },
 }))
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -359,6 +361,35 @@ describe('LoginPage — self-registration follows the server', () => {
     expect(mockApiPost).toHaveBeenCalledWith('/api/v1/auth/register', expect.any(Object), { suppressToast: true })
     expect(screen.queryByRole('button', { name: /^register$/i })).toBeNull()
     expect(screen.getByRole('button', { name: /log in/i })).toBeInTheDocument()
+  })
+})
+
+describe('LoginPage — single sign-on', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('asks for a login URL that returns to the page the sign-in started from', async () => {
+    mockSSOStatus.mockResolvedValue({ sso_enabled: true, has_active_config: true, enforcement_mode: null })
+    mockApiGet.mockResolvedValue({ data: { redirect_url: 'https://idp.example/sso?SAMLRequest=x' } })
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/login', state: { from: { pathname: '/runs/r1', search: '?tab=analysis' } } }]}>
+        <LoginPage />
+      </MemoryRouter>,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: /sign in with sso/i }))
+    await waitFor(() =>
+      expect(mockApiGet).toHaveBeenCalledWith('/api/v1/sso/login-url', { params: { next: '/runs/r1?tab=analysis' } }),
+    )
+  })
+
+  it('a refused SSO sign-in comes back with a notice, not a blank form', async () => {
+    render(
+      <MemoryRouter initialEntries={['/login?sso_error=1']}>
+        <LoginPage />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByRole('alert')).toHaveTextContent(/single sign-on did not complete/i)
   })
 })
 

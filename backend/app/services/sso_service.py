@@ -1,9 +1,14 @@
 """SSO / SAML service — configuration management, assertion validation, JIT provisioning."""
+import base64
 import hashlib
+import json
 import logging
+import secrets
 import uuid
+import zlib
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Optional
+from urllib.parse import urlencode, urlsplit
 from xml.etree import ElementTree
 
 import defusedxml.ElementTree as SafeET
@@ -471,20 +476,137 @@ async def consume_saml_request(request_id: str) -> bool:
     from app.db.redis_client import get_redis
 
     redis = get_redis()
-    key = f"{_SAML_REQUEST_PREFIX}{request_id}"
+    deleted = await _getdel(redis, f"{_SAML_REQUEST_PREFIX}{request_id}")
+    return deleted is not None
+
+
+async def _getdel(redis, key: str):
+    """Read and delete ``key`` in one step, so two concurrent callers can never
+    both take the same single-use value."""
     try:
-        deleted = await redis.getdel(key)
+        return await redis.getdel(key)
     except AttributeError:
         # redis-py without GETDEL (< 4.0): do get+delete atomically server-side
-        # via EVAL (supported since Redis 2.6) so two concurrent ACS requests
-        # can't both observe the same pending id and bypass replay protection.
-        deleted = await redis.eval(
+        # via EVAL (supported since Redis 2.6).
+        return await redis.eval(
             "local v = redis.call('get', KEYS[1]); "
             "if v then redis.call('del', KEYS[1]) end; return v",
             1,
             key,
         )
-    return deleted is not None
+
+
+# ── SP-initiated login: the AuthnRequest (HTTP-Redirect binding) ─────────────
+#
+# /sso/login-url used to send the browser to the bare IdP SSO URL. With no
+# AuthnRequest the IdP's response carried no InResponseTo, so the ACS refused
+# it unless SAML_ALLOW_IDP_INITIATED was on, and the request id it minted was
+# never seen by the IdP.
+
+_SAMLP_NS = "urn:oasis:names:tc:SAML:2.0:protocol"
+_SAML_NS = "urn:oasis:names:tc:SAML:2.0:assertion"
+_HTTP_POST_BINDING = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+_NAMEID_EMAIL = "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
+_RELAY_STATE_MAX = 512
+ElementTree.register_namespace("samlp", _SAMLP_NS)
+ElementTree.register_namespace("saml", _SAML_NS)
+
+
+def build_authn_request(
+    *,
+    request_id: str,
+    destination: str,
+    acs_url: str,
+    sp_entity_id: str,
+    issue_instant: Optional[datetime] = None,
+) -> bytes:
+    """The SP's ``<samlp:AuthnRequest>``.
+
+    Its ``ID`` is the request id the ACS later consumes, so the IdP's
+    ``InResponseTo`` binds its response to this login; the IdP posts that
+    response to ``acs_url`` (HTTP-POST binding). Unsigned: IdPs that require
+    signed requests need an SP key, which this deployment does not hold.
+    """
+    instant = (issue_instant or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    root = ElementTree.Element(
+        f"{{{_SAMLP_NS}}}AuthnRequest",
+        {
+            "ID": request_id,
+            "Version": "2.0",
+            "IssueInstant": instant,
+            "Destination": destination,
+            "AssertionConsumerServiceURL": acs_url,
+            "ProtocolBinding": _HTTP_POST_BINDING,
+        },
+    )
+    ElementTree.SubElement(root, f"{{{_SAML_NS}}}Issuer").text = sp_entity_id
+    ElementTree.SubElement(
+        root, f"{{{_SAMLP_NS}}}NameIDPolicy", {"Format": _NAMEID_EMAIL, "AllowCreate": "true"}
+    )
+    return ElementTree.tostring(root)
+
+
+def encode_redirect_binding(xml: bytes) -> str:
+    """HTTP-Redirect binding: raw DEFLATE, then base64 (SAML Bindings 3.4.4.1)."""
+    compressor = zlib.compressobj(9, zlib.DEFLATED, -15)
+    return base64.b64encode(compressor.compress(xml) + compressor.flush()).decode("ascii")
+
+
+def safe_relay_state(raw: object) -> Optional[str]:
+    """Where the app lands after sign-in: an app-relative path, or nothing.
+
+    A RelayState round-trips through the IdP, so the ACS checks it again when it
+    comes back: never an absolute or protocol-relative URL (an open redirect).
+    """
+    if not isinstance(raw, str) or not raw or len(raw) > _RELAY_STATE_MAX:
+        return None
+    if not raw.startswith("/") or raw.startswith("//") or "\\" in raw:
+        return None
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in raw):
+        return None
+    return raw
+
+
+def saml_redirect_url(idp_sso_url: str, authn_request: bytes, relay_state: Optional[str] = None) -> str:
+    """The IdP SSO URL carrying the encoded AuthnRequest (and RelayState)."""
+    params = {"SAMLRequest": encode_redirect_binding(authn_request)}
+    if relay_state:
+        params["RelayState"] = relay_state
+    separator = "&" if urlsplit(idp_sso_url).query else ("" if idp_sso_url.endswith("?") else "?")
+    return f"{idp_sso_url}{separator}{urlencode(params)}"
+
+
+# ── The browser's way back into the app ──────────────────────────────────────
+#
+# The IdP form-POSTs its response to /sso/acs. That request comes from the
+# browser, so the ACS cannot answer it with JSON: the tokens are parked here
+# under a one-time code and the browser is sent to the SPA, which exchanges the
+# code (once, within a minute) for them. Tokens never ride in a URL.
+
+_SSO_HANDOFF_PREFIX = "sso:handoff:"
+_SSO_HANDOFF_TTL_SECONDS = 60
+_SSO_HANDOFF_CODE_MAX = 128
+
+
+async def stash_sso_login(payload: dict) -> str:
+    """Park a completed SSO sign-in under a new one-time code and return the code."""
+    from app.db.redis_client import get_redis
+
+    code = secrets.token_urlsafe(32)
+    await get_redis().set(
+        f"{_SSO_HANDOFF_PREFIX}{code}", json.dumps(payload), ex=_SSO_HANDOFF_TTL_SECONDS
+    )
+    return code
+
+
+async def claim_sso_login(code: str) -> Optional[dict]:
+    """The parked sign-in for ``code``, at most once; None when unknown, used or expired."""
+    if not code or len(code) > _SSO_HANDOFF_CODE_MAX:
+        return None
+    from app.db.redis_client import get_redis
+
+    raw = await _getdel(get_redis(), f"{_SSO_HANDOFF_PREFIX}{code}")
+    return json.loads(raw) if raw else None
 
 
 def _assertion_ttl_seconds(not_on_or_after: Optional[str]) -> int:

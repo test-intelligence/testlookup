@@ -117,6 +117,21 @@ export async function getSSOStatus(): Promise<SSOStatus> {
   return data;
 }
 
+/** Tokens the ACS parked for an SSO sign-in, for its one-time code (works once, for a minute). */
+export interface SSOExchangeResponse {
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+  expires_in: number;
+  is_new_user: boolean;
+}
+
+export async function exchangeSSOCode(code: string): Promise<SSOExchangeResponse> {
+  // The callback page reports a failure itself.
+  const { data } = await api.post<SSOExchangeResponse>('/api/v1/sso/exchange', { code }, { suppressToast: true });
+  return data;
+}
+
 export async function listSSOConfigs(): Promise<SSOConfig[]> {
   const { data } = await api.get<SSOConfig[]>('/api/v1/sso/configs');
   return data;

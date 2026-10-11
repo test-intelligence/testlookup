@@ -2,8 +2,11 @@
 import logging
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import RedirectResponse
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,13 +26,16 @@ from app.models.schemas import (
     SSOConfigCreate,
     SSOConfigResponse,
     SSOConfigUpdate,
+    SSOExchangeRequest,
     SSOLoginResponse,
     SSOTestConnectionResponse,
     UserResponse,
 )
 from app.services.sso_service import (
+    build_authn_request,
     certificate_expiration,
     certificate_fingerprint,
+    claim_sso_login,
     enforce_saml_security,
     get_active_sso_config,
     jit_provision_or_link,
@@ -37,6 +43,9 @@ from app.services.sso_service import (
     parse_saml_response,
     probe_idp_endpoint,
     remember_saml_request,
+    safe_relay_state,
+    saml_redirect_url,
+    stash_sso_login,
     validate_certificate_format,
     validate_saml_issuer,
 )
@@ -53,20 +62,24 @@ _MAX_SAML_RESPONSE_BYTES = 1_000_000
 
 @router.get("/metadata", response_model=dict)
 async def get_sp_metadata():
-    """Return SP metadata for configuring the IdP."""
+    """Return SP metadata for configuring the IdP.
+
+    No single-logout URL: there is no SLO handler, so advertising one sent IdPs
+    to a 404 (sign-out is local: the app revokes its own session).
+    """
     return {
         "entity_id": settings.SAML_SP_ENTITY_ID,
         "acs_url": f"{settings.SAML_BASE_URL}/api/v1/sso/acs",
-        "slo_url": f"{settings.SAML_BASE_URL}/api/v1/sso/slo",
         "name_id_format": "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
     }
 
 
 @router.get("/login-url", response_model=dict)
-async def get_sso_login_url(db: AsyncSession = Depends(get_db)):
+async def get_sso_login_url(next: Optional[str] = None, db: AsyncSession = Depends(get_db)):
     """
-    Get the SSO login redirect URL for SP-initiated login.
-    Returns the IdP SSO URL the frontend should redirect to.
+    The IdP URL that starts an SP-initiated login: the IdP SSO URL carrying a
+    SAML AuthnRequest (HTTP-Redirect binding) and, when ``next`` is an
+    app-relative path, a RelayState the browser returns to after sign-in.
     """
     if not settings.SSO_ENABLED:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SSO is not enabled")
@@ -83,13 +96,37 @@ async def get_sso_login_url(db: AsyncSession = Depends(get_db)):
     # request via InResponseTo and reject replays / unsolicited responses.
     request_id = "_" + uuid.uuid4().hex
     await remember_saml_request(request_id)
-    redirect_url = config.idp_sso_url
+    authn_request = build_authn_request(
+        request_id=request_id,
+        destination=config.idp_sso_url,
+        acs_url=config.sp_acs_url,
+        sp_entity_id=config.sp_entity_id,
+    )
+    redirect_url = saml_redirect_url(config.idp_sso_url, authn_request, safe_relay_state(next))
 
     return {
         "redirect_url": redirect_url,
         "request_id": request_id,
         "sp_entity_id": config.sp_entity_id,
     }
+
+
+def _wants_browser_redirect(request: Request) -> bool:
+    """The IdP's form POST comes from the user's browser (it asks for HTML); an
+    API client or test asks for JSON and keeps getting JSON."""
+    return "text/html" in (request.headers.get("accept") or "").lower()
+
+
+def _acs_failure(browser: bool, status_code: int, detail: str) -> HTTPException:
+    """A refusal: JSON for an API client; for a browser, back to the sign-in
+    page with a generic notice (the specific reason stays in the server log)."""
+    if browser:
+        return HTTPException(
+            status_code=status.HTTP_303_SEE_OTHER,
+            detail=detail,
+            headers={"Location": f"{settings.public_base_url}/login?sso_error=1"},
+        )
+    return HTTPException(status_code=status_code, detail=detail)
 
 
 @router.post("/acs", response_model=SSOLoginResponse)
@@ -103,25 +140,25 @@ async def saml_acs(
     This endpoint receives the base64-encoded SAMLResponse via form POST,
     validates the assertion, and either logs in an existing user or JIT-provisions
     a new one.
+
+    The POST comes from the browser. It answers with a 303 into the app
+    (``/sso/callback``) carrying a one-time code in the URL fragment, which the
+    app exchanges for the tokens (``POST /sso/exchange``); a refusal goes back
+    to ``/login``. A client that asks for JSON gets the tokens as before.
     """
+    browser = _wants_browser_redirect(request)
     if not settings.SSO_ENABLED:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SSO is not enabled")
 
     config = await get_active_sso_config(db)
     if config is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No active SSO configuration",
-        )
+        raise _acs_failure(browser, status.HTTP_400_BAD_REQUEST, "No active SSO configuration")
 
     # Parse form data (SAML POST binding)
     form = await request.form()
     saml_response_b64 = form.get("SAMLResponse")
     if not saml_response_b64:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Missing SAMLResponse in form data",
-        )
+        raise _acs_failure(browser, status.HTTP_400_BAD_REQUEST, "Missing SAMLResponse in form data")
     # Bound the untrusted payload before base64-decoding + XML parsing on this
     # public endpoint (cheap-DoS guard). Real assertions are a few KB; 1 MB is
     # generous headroom for large signed multi-attribute responses.
@@ -130,6 +167,9 @@ async def saml_acs(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="SAMLResponse too large",
         )
+    # Where the app lands afterwards. It came back through the IdP, so it is
+    # checked again: an app-relative path or nothing.
+    relay_state = safe_relay_state(form.get("RelayState"))
 
     client_ip = request.client.host if request.client else None
 
@@ -138,9 +178,8 @@ async def saml_acs(
     # unsigned parse.
     if not config.idp_certificate or not config.idp_certificate.strip():
         logger.error("SAML ACS rejected: active SSO config %s has no IdP certificate", config.id)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="SSO is misconfigured. Contact your administrator.",
+        raise _acs_failure(
+            browser, status.HTTP_400_BAD_REQUEST, "SSO is misconfigured. Contact your administrator."
         )
 
     try:
@@ -168,10 +207,7 @@ async def saml_acs(
         # Keep the specific reason server-side only; returning it to the
         # unauthenticated caller leaks signal that helps tune forged responses.
         logger.warning("SAML assertion validation failed: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="SAML assertion validation failed.",
-        )
+        raise _acs_failure(browser, status.HTTP_401_UNAUTHORIZED, "SAML assertion validation failed.")
 
     try:
         user, is_new = await jit_provision_or_link(
@@ -192,16 +228,10 @@ async def saml_acs(
             error_message=str(exc),
         )
         await db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        )
+        raise _acs_failure(browser, status.HTTP_400_BAD_REQUEST, str(exc))
 
     if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Account is deactivated",
-        )
+        raise _acs_failure(browser, status.HTTP_403_FORBIDDEN, "Account is deactivated")
 
     await db.execute(select(User.id).where(User.id == user.id).with_for_update())
     await db.refresh(user)
@@ -222,13 +252,43 @@ async def saml_acs(
 
     logger.info("SSO login successful for user: %s (new=%s)", user.username, is_new)
 
-    return SSOLoginResponse(
+    signed_in = SSOLoginResponse(
         access_token=access_token,
         refresh_token=refresh_token,
         expires_in=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         user=UserResponse.model_validate(user),
         is_new_user=is_new,
     )
+    if not browser:
+        return signed_in
+
+    # Into the app. The fragment never reaches a server log or a Referer.
+    code = await stash_sso_login(signed_in.model_dump(mode="json"))
+    fragment = f"code={quote(code)}"
+    if relay_state:
+        fragment += f"&next={quote(relay_state, safe='')}"
+    return RedirectResponse(
+        url=f"{settings.public_base_url}/sso/callback#{fragment}",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post("/exchange", response_model=SSOLoginResponse)
+async def exchange_sso_code(payload: SSOExchangeRequest):
+    """The tokens for an SSO sign-in the ACS completed, for its one-time code.
+
+    Public, like the ACS: the code is the credential. It works once, within a
+    minute of the IdP's response.
+    """
+    if not settings.SSO_ENABLED:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SSO is not enabled")
+    signed_in = await claim_sso_login(payload.code)
+    if signed_in is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This sign-in link has expired or was already used. Sign in again.",
+        )
+    return SSOLoginResponse(**signed_in)
 
 
 @router.get("/status", response_model=dict)
