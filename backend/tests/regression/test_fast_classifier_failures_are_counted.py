@@ -7,39 +7,33 @@ outcomes — a provider error, unparseable output, a low-confidence abstention,
 and success-with-no-result. The caller could not tell them apart, so nothing
 was ever recorded.
 
-That made it the last unmeasured LLM path in the pipeline. The baseline harness
-reported ``root_cause_analysis: 294 llm_calls, 0 parse_failures``, and the Mongo
-event log held **zero** ``schema_validation_failed`` events across 9,657 — not
-because there were none, but because no code path could emit one.
+That made it the last unmeasured LLM path in the pipeline: the Mongo event log
+held **zero** ``schema_validation_failed`` events across 9,657 — not because
+there were none, but because no code path could emit one.
 
 The distinction that matters
 ----------------------------
 ``low_confidence`` is **not a failure**. It is the classifier correctly handing
 a hard case to the ReAct loop. Counting it would inflate the exact metric this
 instrumentation exists to make trustworthy — so it is logged under a separate
-decision point and excluded from the harness's parse-failure count.
+decision point from parse failures.
 
 What is guarded
 ---------------
 * each outcome is reported distinctly rather than collapsing to ``None``;
-* a parse failure is counted; an abstention is not;
+* a parse failure is reported as one; an abstention is not;
 * the legacy ``classify()`` signature still returns just the verdict, so
   existing callers are unaffected.
 """
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
 
 pytest.importorskip("asyncpg")
 
-_BENCH = Path(__file__).resolve().parents[3] / "benchmarks" / "pipeline"
-sys.path.insert(0, str(_BENCH))
-
-from aggregate import _PARSE_FAILURE_POINTS  # noqa: E402
 from app.services.training.classifier import FastClassifier  # noqa: E402
 
 # The module object FastClassifier executes in (re-audit E2). A dotted-path
@@ -121,16 +115,6 @@ async def test_a_confident_answer_reports_classified(monkeypatch):
     assert outcome == "classified"
     assert result["failure_category"] == "INFRASTRUCTURE"
     assert result["classified_by"] == "fast_classifier"
-
-
-# ── The harness counts the right thing ───────────────────────────────────────
-
-
-def test_the_harness_counts_parse_failures_but_not_abstentions():
-    """An abstention is the classifier working; counting it would inflate the
-    rate this instrumentation exists to make trustworthy."""
-    assert "classifier_schema_validation" in _PARSE_FAILURE_POINTS
-    assert "classifier_call_outcome" not in _PARSE_FAILURE_POINTS
 
 
 # ── Backwards compatibility ──────────────────────────────────────────────────

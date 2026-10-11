@@ -2,7 +2,7 @@
 
 [Documentation home](../README.md)
 
-The machine-readable [source inventory](../reference/source-inventory.csv) records every tracked source/configuration/test file in supported source formats, line counts, Python module purpose, imports and top-level symbols. It includes legacy and test material; an entry is not proof that a module is on a live request path. [Reference counts](../reference/inventory-counts.json).
+The generated [endpoint index](../reference/api-index.md), [data dictionary](../reference/data-dictionary.md) and [worker task list](../reference/worker-operations.md) link each route, table and task to its source file.
 
 ## Repository map
 

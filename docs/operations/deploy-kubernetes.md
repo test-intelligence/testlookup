@@ -106,7 +106,7 @@ Each `k8s-deploy-*` target renders the overlay to find the backend image, then:
 
 ### Deploy with `scripts/deploy-k8s.sh`
 
-The script drives the `self-hosted` and cloud overlays and is what the cloud deploy workflows call:
+The script drives the `self-hosted` and cloud overlays:
 
 ```bash
 scripts/deploy-k8s.sh --cloud=self-hosted --registry=registry.example.com --image-tag=v0.1.0
@@ -117,7 +117,7 @@ scripts/deploy-k8s.sh --cloud=self-hosted --registry=registry.example.com --imag
 | `--cloud=<aws\|gcp\|azure\|self-hosted>` | Required. Selects `k8s/overlays/aws-eks`, `gcp-gke`, `azure-aks` or `self-hosted` (aliases: `aws-eks`; `gcp-gke`, `gke`; `azure-aks`, `aks`; `on-prem`, `k3s`, `generic`) |
 | `--image-tag=<tag>` | Image tag for all three images (default: the overlay's `0.0.1`) |
 | `--registry=<url>` | Registry prefix, producing `<url>/testlookup/<image>` |
-| `--release-manifest=<path>` | Deploy exactly the digests in a validated release manifest (used by the CI deploy workflows) |
+| `--release-manifest=<path>` | Deploy exactly the digests in a materialized release manifest ([deploy from CI](deploy-cloud.md#deploy-from-ci)) |
 | `--namespace=<ns>` | Target namespace (default `testlookup`; keep it equal to the overlay's namespace) |
 | `--dry-run` | Print the rendered manifests and exit |
 | `--skip-secrets-check` | Do not stop when `testlookup-secrets` is missing (not recommended) |

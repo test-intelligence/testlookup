@@ -75,9 +75,8 @@ COPY . .
 # ``COPY --from=builder /app/__client_sdks_staged ./client_sdks``.
 # That directory is populated by the caller's CI (``ci.yml`` job
 # ``build-images`` step "Stage client SDKs into backend context", and
-# ``homelabsetup/deploy-homelab.sh``). When a deploy pipeline skips
-# the staging step — e.g. ``deploy-{aks,gke,eks,staging,production}.yml``
-# building directly with ``docker build ./backend`` — the path is
+# ``homelabsetup/deploy-homelab.sh``). When a build skips the staging
+# step — e.g. a plain ``docker build ./backend`` — the path is
 # missing and BuildKit fails to compute a cache key for the COPY,
 # producing:
 #   failed to compute cache key: failed to calculate checksum of ref

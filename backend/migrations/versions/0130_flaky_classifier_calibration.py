@@ -1,7 +1,5 @@
 """Add flaky_classifier_calibration — measured per-project classifier quality.
 
-Phase 0 (P0-2) of ``architecture/TEST_INTELLIGENCE_PLAN.md``.
-
 The product classifies a failure as flaky partly by matching its error signature
 against previously-seen flaky failures. Published measurement of that exact
 technique (Alshammari et al., ICST 2024, 230,439 failures across 22 projects)
@@ -9,9 +7,10 @@ found specificity ranging from **100% on some projects to no better than random
 on others**, driven by whether a project's failures carry distinctive exception
 types. A single global matching strategy therefore cannot be trusted.
 
-This table stores the *measured* answer per project, so a later phase can gate
-behaviour on it instead of assuming the classifier transfers. It is written by a
-scheduled backtest and read by nobody yet — Phase 0 measures, it does not act.
+This table stores the *measured* answer per project, so behaviour can be gated
+on it instead of assuming the classifier transfers. It is written by a scheduled
+backtest that only measures; ``flaky_suppression_gate`` uses the measurement to
+decide whether a flaky verdict is shown as a conclusion or only as a hint.
 
 ``specificity`` is deliberately nullable: a project without enough labelled
 history must report as insufficient rather than as a number, which is why

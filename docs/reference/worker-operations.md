@@ -1,8 +1,8 @@
 # Worker tasks, queues and schedules
 
-[Documentation home](../README.md) · [Regeneration](../handoff/maintenance.md)
+[Documentation home](../README.md) · [Regeneration](../maintainers/maintenance.md)
 
-Generated from tracked source by `scripts/generate_handoff_reference.py`. Do not edit by hand. The baseline and validation limits are recorded in [verification](../handoff/verification.md).
+Generated from tracked source by `scripts/generate_reference.py`. Do not edit by hand. What the checks cover is recorded in [verification](../maintainers/verification.md).
 
 Static declarations, not observations of running consumers. Deployment profiles override shard count and subscriptions; see [deployment](../operations/deployment.md). Every task below includes its decorator options and arguments; side effects and error handling remain in the linked implementation.
 

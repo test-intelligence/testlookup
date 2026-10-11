@@ -1,6 +1,6 @@
-"""Phase 3: a cluster must be real, or absent.
+"""Systemic flake clusters: a cluster must be real, or absent.
 
-Roadmap Phase 3 (``architecture/TEST_INTELLIGENCE_PLAN.md``).
+Covers ``systemic_cluster_service``.
 
 The dominant failure mode here is the opposite of missing a pattern: it is
 *manufacturing* one. In the source study only 10 of 22 projects containing flaky

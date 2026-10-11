@@ -1,10 +1,10 @@
 # HTTP request and response schemas
 
-[Documentation home](../README.md) · [Regeneration](../handoff/maintenance.md)
+[Documentation home](../README.md) · [Regeneration](../maintainers/maintenance.md)
 
-Generated from tracked source by `scripts/generate_handoff_reference.py`. Do not edit by hand. The baseline and validation limits are recorded in [verification](../handoff/verification.md).
+Generated from tracked source by `scripts/generate_reference.py`. Do not edit by hand. What the checks cover is recorded in [verification](../maintainers/verification.md).
 
-These are the full generated JSON Schema definitions, including required fields, defaults, enums, nested references and declared constraints. Custom validators and cross-field checks remain in the [Python contract inventory](python-contracts.md); JSON Schema does not encode every service-level rule.
+These are the full generated JSON Schema definitions, including required fields, defaults, enums, nested references and declared constraints. Custom validators and cross-field checks live in the Pydantic models under `backend/app/models/`; JSON Schema does not encode every service-level rule.
 
 ## AIConfigRead
 

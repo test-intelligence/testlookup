@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
-"""Regenerate source-derived handoff references without starting application services.
+"""Regenerate the source-derived reference under docs/reference/.
 
-Run with the backend requirements installed: python scripts/generate_handoff_reference.py
-Use --check to detect drift without writing. No lifespan, DB queries or worker dispatch.
+It writes the API reference (OpenAPI JSON, the endpoint index, one page per
+API domain, the schema catalogue) and the operator references generated from
+source: settings, migrations, the PostgreSQL data dictionary and worker tasks.
+The application is imported without starting services: no lifespan, database
+queries or worker dispatch.
+
+Run with the backend requirements installed: python scripts/generate_reference.py
+Use --check to detect drift without writing.
 """
 
 from __future__ import annotations
 
 import ast
-import csv
 import difflib
 import inspect
-import io
 import json
 import os
 import re
@@ -82,16 +86,36 @@ def write(name: str, data: str) -> None:
         path.write_text(data, encoding="utf-8", newline="\n")
 
 
+def candidate_outputs() -> list[Path]:
+    """Files under the reference directory that Git sees: tracked, or untracked
+    and not ignored. An ignored file there (a retired output kept locally, for
+    example) is not part of the reference and is left alone."""
+    listed = subprocess.check_output(
+        [
+            "git",
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "--",
+            OUT.relative_to(ROOT).as_posix(),
+        ],
+        cwd=ROOT,
+    ).decode("utf-8")
+    return sorted({ROOT / name for name in listed.split("\0") if name})
+
+
 def reconcile_outputs() -> None:
     """Reject drift in the file set; prune only explicitly generator-owned files."""
-    for path in sorted(OUT.rglob("*")):
+    for path in candidate_outputs():
         if not path.is_file() or path.relative_to(OUT).as_posix() in GENERATED:
             continue
         if OUT.resolve() not in path.resolve().parents:
             ERRORS.append(f"Refusing output outside reference directory: {path}")
             continue
         owned = path.suffix == ".md" and (
-            "Generated from tracked source by `scripts/generate_handoff_reference.py`."
+            "Generated from tracked source by `scripts/generate_reference.py`."
             in path.read_text(encoding="utf-8", errors="replace")[:500]
         )
         if not CHECK and owned:
@@ -119,8 +143,8 @@ def verify_tracked_outputs() -> None:
 
 def api_domain_filename(group: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", group.lower()).strip("-")
-    # AGENTS.md is intentionally ignored at every depth. On case-insensitive
-    # Git checkouts that also ignores agents.md, leaving CI without the page.
+    # The root .gitignore ignores AGENTS.md at every depth. On a case-insensitive
+    # Git checkout that also ignores agents.md, which would leave CI without it.
     if slug == "agents":
         slug = "agent-operations"
     return f"api/{slug}.md"
@@ -136,7 +160,7 @@ def source(path: str, line: int | None = None) -> str:
 
 
 def header(title: str) -> str:
-    return f"# {title}\n\n[Documentation home](../README.md) · [Regeneration](../handoff/maintenance.md)\n\nGenerated from tracked source by `scripts/generate_handoff_reference.py`. Do not edit by hand. The baseline and validation limits are recorded in [verification](../handoff/verification.md).\n\n"
+    return f"# {title}\n\n[Documentation home](../README.md) · [Regeneration](../maintainers/maintenance.md)\n\nGenerated from tracked source by `scripts/generate_reference.py`. Do not edit by hand. What the checks cover is recorded in [verification](../maintainers/verification.md).\n\n"
 
 
 def code_json(value: object) -> str:
@@ -169,7 +193,7 @@ def dependency_names(dependant: object) -> list[str]:
 
 def generate_api() -> tuple[int, int, int]:
     from app.main import app
-    from fastapi.routing import APIRoute, APIWebSocketRoute
+    from fastapi.routing import APIRoute
 
     spec = app.openapi()
     write(
@@ -186,7 +210,6 @@ def generate_api() -> tuple[int, int, int]:
         for m in r.methods
     }
     operations = 0
-    incomplete = []
     for path, methods in sorted(spec["paths"].items()):
         for method, operation in sorted(methods.items()):
             if method not in {
@@ -255,7 +278,6 @@ def generate_api() -> tuple[int, int, int]:
                 for response in operation.get("responses", {}).values()
                 for media in response.get("content", {}).values()
             ):
-                incomplete.append(f"{method.upper()} {path}")
                 if route:
                     returns = [
                         ast.unparse(n.value)
@@ -282,33 +304,16 @@ def generate_api() -> tuple[int, int, int]:
                 + " API"
             )
             .replace("../README.md", "../../README.md")
-            .replace("../handoff/", "../../handoff/")
+            .replace("../maintainers/", "../../maintainers/")
             + "\n".join(sections),
         )
     index += f"\nTotal: **{operations} HTTP operations**, **{len(spec['paths'])} paths**, **{len(by_group)} domain pages**.\n"
     write("api-index.md", index)
     schemas = header("HTTP request and response schemas")
-    schemas += "These are the full generated JSON Schema definitions, including required fields, defaults, enums, nested references and declared constraints. Custom validators and cross-field checks remain in the [Python contract inventory](python-contracts.md); JSON Schema does not encode every service-level rule.\n\n"
+    schemas += "These are the full generated JSON Schema definitions, including required fields, defaults, enums, nested references and declared constraints. Custom validators and cross-field checks live in the Pydantic models under `backend/app/models/`; JSON Schema does not encode every service-level rule.\n\n"
     for name, schema in sorted(spec["components"]["schemas"].items()):
         schemas += f"## {name}\n\n" + code_json(schema) + "\n"
     write("schemas.md", schemas)
-    extra = header("Non-OpenAPI routes and contract gaps")
-    extra += "Swagger/ReDoc/schema routes are framework-generated. `/metrics` is installed only when `METRICS_ENABLED=true`; generation deliberately disables metrics and telemetry. WebSocket and excluded HTTP routes below need their handler-level auth even when outside `/api/v1`.\n\n| Kind | Path | Source |\n|---|---|---|\n"
-    for r in app.routes:
-        if isinstance(r, APIWebSocketRoute) or (
-            isinstance(r, APIRoute) and not r.include_in_schema
-        ):
-            fn = inspect.unwrap(r.endpoint)
-            rel = Path(inspect.getsourcefile(fn)).resolve().relative_to(ROOT).as_posix()
-            extra += f"| {'WebSocket' if isinstance(r, APIWebSocketRoute) else ', '.join(sorted(r.methods))} | `{r.path}` | {source(rel, inspect.getsourcelines(fn)[1])} |\n"
-    for r in app.routes:
-        if not isinstance(r, (APIRoute, APIWebSocketRoute)) and hasattr(r, "path"):
-            extra += f"| {', '.join(sorted(getattr(r, 'methods', [])))} | `{r.path}` | FastAPI framework-generated route |\n"
-    extra += (
-        "\n## Responses without complete structured declarations\n\nThis is a documentation/typing limitation observed in source, not evidence that these endpoints fail. Prefer a typed response model when extending them.\n\n"
-        + "\n".join("- `" + p + "`" for p in incomplete)
-    )
-    write("api-contract-gaps.md", extra)
     return operations, len(spec["paths"]), len(spec["components"]["schemas"])
 
 
@@ -409,206 +414,40 @@ def generate_static() -> dict:
         .decode()
         .split("\0")
     )
-    # Exclude the generated docs and this generator to keep --check stable after commit.
-    paths = [
-        p
-        for p in tracked
-        if p
-        and not p.startswith(("docs/reference/", "docs/reviews/"))
-        and p != "scripts/generate_handoff_reference.py"
-    ]
-    rows = []
-    contracts = header("Python data contracts and enumerations")
-    contracts += "Declared class fields and validators from all backend application modules, including inline router schemas, dataclasses, TypedDict state, enums and ORM models. Inherited fields are defined in linked base classes and public expanded schemas are in [HTTP schemas](schemas.md). Validator names are pointers to implementation, not an assertion that their logic is fully represented in JSON Schema.\n\n"
     config = header("Environment settings reference")
-    config += "Source declarations only; no `.env` or running secrets are read. Compose/Helm/Kustomize can override these defaults. `Field` aliases and constraints are retained. For production requirements and profiles see [deployment](../operations/deployment.md).\n\n| Setting | Type | Source default/constraints |\n|---|---|---|\n"
+    config += "Source declarations only; no `.env` or running secrets are read. Compose/Helm/Kustomize can override these defaults. `Field` aliases and constraints are retained. What each setting does is explained in the [configuration reference](../operations/configuration.md); production requirements are in [deployment](../operations/deployment.md).\n\n| Setting | Type | Source default/constraints |\n|---|---|---|\n"
+    for node in ast.walk(tree_for(ROOT / "backend/app/core/config.py")):
+        if isinstance(node, ast.ClassDef) and node.name == "Settings":
+            for n in node.body:
+                if isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name):
+                    config += f"| `{n.target.id}` | `{cell(ast.unparse(n.annotation))}` | `{cell(ast.unparse(n.value) if n.value else 'required')}` |\n"
+    write("configuration.md", config)
+
     migrations = header("Database migration inventory")
     migrations += "Alembic revisions extracted without executing migrations. An inventory is not evidence that a live database is upgraded. Run `alembic current` and `alembic heads` in the target deployment.\n\n| File | Revision | Down revision | Purpose |\n|---|---|---|---|\n"
-    module_count = 0
-    for rel in paths:
-        path = ROOT / rel
-        suffix = path.suffix.lower()
-        if suffix not in {
-            ".py",
-            ".ts",
-            ".tsx",
-            ".js",
-            ".mjs",
-            ".java",
-            ".go",
-            ".sh",
-            ".ps1",
-            ".yaml",
-            ".yml",
-            ".toml",
-            ".json",
-            ".conf",
-            ".sql",
-        } and path.name not in {"Makefile", "Dockerfile", "Jenkinsfile"}:
-            continue
-        raw = path.read_text(encoding="utf-8-sig", errors="replace")
-        role = (
-            "test"
-            if "/tests/" in rel
-            or "/test/" in rel
-            or re.search(r"(^|/)(test_|conftest)|\.(test|spec)\.", rel)
-            else "implementation/configuration"
-        )
-        imports, symbols, description = [], [], ""
-        if suffix == ".py":
-            tree = ast.parse(raw)
-            module_count += 1
-            description = (ast.get_docstring(tree) or "").split("\n")[0]
-            imports = sorted(
-                {
-                    (n.module or "") if isinstance(n, ast.ImportFrom) else a.name
-                    for n in ast.walk(tree)
-                    if isinstance(n, (ast.Import, ast.ImportFrom))
-                    for a in (n.names if isinstance(n, ast.Import) else [None])
-                }
-            )
-            symbols = [
-                n.name
-                for n in tree.body
-                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-            ]
-            if rel.startswith("backend/app/"):
-                for node in tree.body:
-                    if not isinstance(node, ast.ClassDef):
-                        continue
-                    fields = [
-                        ast.unparse(n)
-                        for n in node.body
-                        if isinstance(n, (ast.AnnAssign, ast.Assign))
-                    ]
-                    validators = [
-                        n
-                        for n in node.body
-                        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-                        and any(
-                            "validator" in ast.unparse(d)
-                            or "serializer" in ast.unparse(d)
-                            for d in n.decorator_list
-                        )
-                    ]
-                    if not fields:
-                        continue
-                    contracts += (
-                        f"## {rel} — {node.name}\n\n"
-                        + source(rel, node.lineno)
-                        + "\n\n"
-                    )
-                    contracts += f"Bases: `{cell(', '.join(ast.unparse(b) for b in node.bases))}`.\n\n"
-                    contracts += (
-                        (ast.get_docstring(node) or "")
-                        + "\n\n```python\n"
-                        + "\n".join(fields)
-                        + "\n```\n\n"
-                    )
-                    for v in validators:
-                        contracts += f"- Validator/serializer `{v.name}`: {source(rel, v.lineno)}. {ast.get_docstring(v) or 'Read source for the cross-field or conversion rule.'}\n"
-            if rel == "backend/app/core/config.py":
-                for node in ast.walk(tree):
-                    if isinstance(node, ast.ClassDef) and node.name == "Settings":
-                        for n in node.body:
-                            if isinstance(n, ast.AnnAssign) and isinstance(
-                                n.target, ast.Name
-                            ):
-                                config += f"| `{n.target.id}` | `{cell(ast.unparse(n.annotation))}` | `{cell(ast.unparse(n.value) if n.value else 'required')}` |\n"
-            if rel.startswith("backend/migrations/versions/"):
-                vals = {}
-                for n in tree.body:
-                    if isinstance(n, ast.Assign):
-                        for t in n.targets:
-                            if isinstance(t, ast.Name) and t.id in {
-                                "revision",
-                                "down_revision",
-                            }:
-                                vals[t.id] = ast.unparse(n.value)
-                    elif (
-                        isinstance(n, ast.AnnAssign)
-                        and isinstance(n.target, ast.Name)
-                        and n.target.id in {"revision", "down_revision"}
-                    ):
-                        vals[n.target.id] = ast.unparse(n.value)
-                migrations += f"| {source(rel)} | `{cell(vals.get('revision', ''))}` | `{cell(vals.get('down_revision', ''))}` | {cell(description)} |\n"
-        else:
-            imports = re.findall(r'(?:from\s+|import\s*)[\'"]([^\'\"]+)[\'\"]', raw)
-            symbols = re.findall(
-                r"(?:export\s+)?(?:async\s+)?(?:function|class|interface|type)\s+(\w+)",
-                raw,
-            )
-        rows.append(
-            [
-                rel,
-                role,
-                len(raw.splitlines()),
-                description,
-                "; ".join(imports),
-                "; ".join(symbols),
-            ]
-        )
-    buffer = io.StringIO(newline="")
-    writer = csv.writer(buffer, lineterminator="\n")
-    writer.writerow(
-        ["path", "role", "lines", "module_description", "imports", "top_level_symbols"]
+    migration_files = sorted(
+        p
+        for p in tracked
+        if p.startswith("backend/migrations/versions/") and p.endswith(".py")
     )
-    writer.writerows(rows)
-    write("source-inventory.csv", buffer.getvalue())
-    write("python-contracts.md", contracts)
-    write("configuration.md", config)
+    for rel in migration_files:
+        tree = tree_for(ROOT / rel)
+        description = (ast.get_docstring(tree) or "").split("\n")[0]
+        vals = {}
+        for n in tree.body:
+            if isinstance(n, ast.Assign):
+                for t in n.targets:
+                    if isinstance(t, ast.Name) and t.id in {"revision", "down_revision"}:
+                        vals[t.id] = ast.unparse(n.value)
+            elif (
+                isinstance(n, ast.AnnAssign)
+                and isinstance(n.target, ast.Name)
+                and n.target.id in {"revision", "down_revision"}
+            ):
+                vals[n.target.id] = ast.unparse(n.value)
+        migrations += f"| {source(rel)} | `{cell(vals.get('revision', ''))}` | `{cell(vals.get('down_revision', ''))}` | {cell(description)} |\n"
     write("migrations.md", migrations)
-    # MCP descriptors are functions registered with @mcp.tool/resource/prompt.
-    integrations = header("MCP, CLI and frontend surfaces")
-    integrations += "Static registration inventory. MCP/CLI commands call the REST API under the caller’s authority; their argument defaults do not bypass backend policy. See [integrations](../architecture/integrations.md).\n\n## MCP registrations\n\n| File / function | Kind | Arguments | Description |\n|---|---|---|---|\n"
-    mcp_counts = {"tool": 0, "resource": 0, "prompt": 0}
-    for rel in paths:
-        if not rel.startswith("mcp/") or not rel.endswith(".py") or "/tests/" in rel:
-            continue
-        for node in ast.walk(tree_for(ROOT / rel)):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            for d in node.decorator_list:
-                if (
-                    isinstance(d, ast.Call)
-                    and isinstance(d.func, ast.Attribute)
-                    and d.func.attr in mcp_counts
-                ):
-                    mcp_counts[d.func.attr] += 1
-                    integrations += f"| {source(rel, node.lineno)} `{node.name}` | `{cell(ast.unparse(d))}` | `{cell(ast.unparse(node.args))}` | {cell(ast.get_docstring(node) or '')} |\n"
-    integrations += "\n## CLI command registrations\n\n| File / function | Registration | Arguments | Description |\n|---|---|---|---|\n"
-    for rel in paths:
-        if not rel.startswith("cli/testlookup_cli/") or not rel.endswith(".py"):
-            continue
-        for node in ast.walk(tree_for(ROOT / rel)):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                for d in node.decorator_list:
-                    if (
-                        isinstance(d, ast.Call)
-                        and isinstance(d.func, ast.Attribute)
-                        and d.func.attr in {"command", "callback"}
-                    ):
-                        integrations += f"| {source(rel, node.lineno)} `{node.name}` | `{cell(ast.unparse(d))}` | `{cell(ast.unparse(node.args))}` | {cell(ast.get_docstring(node) or '')} |\n"
-    integrations += (
-        "\n## Frontend route declarations\n\nSource: "
-        + source("frontend/src/App.tsx")
-        + "\n\n```tsx\n"
-    )
-    raw = (ROOT / "frontend/src/App.tsx").read_text(encoding="utf-8")
-    integrations += (
-        "\n".join(
-            line.strip()
-            for line in raw.splitlines()
-            if re.search(r"path:|<Route .*path=", line)
-        )
-        + "\n```\n"
-    )
-    integrations += (
-        "\nMCP registration totals: "
-        + ", ".join(f"{n} {k}s" for k, n in mcp_counts.items())
-        + ".\n"
-    )
-    write("client-surfaces.md", integrations)
+
     worker = header("Worker tasks, queues and schedules")
     worker += "Static declarations, not observations of running consumers. Deployment profiles override shard count and subscriptions; see [deployment](../operations/deployment.md). Every task below includes its decorator options and arguments; side effects and error handling remain in the linked implementation.\n\n"
     celery_tree = tree_for(ROOT / "backend/app/worker/celery_app.py")
@@ -630,7 +469,8 @@ def generate_static() -> dict:
                     worker += (
                         f"## {kw.arg}\n\n```python\n{ast.unparse(kw.value)}\n```\n\n"
                     )
-    for rel in paths:
+    task_count = 0
+    for rel in tracked:
         if not rel.startswith("backend/app/worker/") or not rel.endswith(".py"):
             continue
         for node in ast.walk(tree_for(ROOT / rel)):
@@ -643,6 +483,7 @@ def generate_static() -> dict:
                     and d.func.attr == "task"
                 ]
                 if decorators:
+                    task_count += 1
                     worker += (
                         f"## {node.name}\n\n"
                         + source(rel, node.lineno)
@@ -657,11 +498,7 @@ def generate_static() -> dict:
                         + ")\n```\n\n"
                     )
     write("worker-operations.md", worker)
-    return {
-        "inventory_files": len(rows),
-        "python_modules_parsed": module_count,
-        "mcp": mcp_counts,
-    }
+    return {"migrations": len(migration_files), "worker_tasks": task_count}
 
 
 def main() -> None:
@@ -674,7 +511,6 @@ def main() -> None:
         openapi_schemas=schemas,
         sqlalchemy_tables=tables,
     )
-    write("inventory-counts.json", json.dumps(counts, indent=2, sort_keys=True))
     reconcile_outputs()
     if CHECK:
         verify_tracked_outputs()

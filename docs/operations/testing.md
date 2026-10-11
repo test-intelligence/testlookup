@@ -2,7 +2,7 @@
 
 [Documentation home](../README.md)
 
-The repository combines behavior tests, architecture/contract guards, mutation harnesses, browser tests, deployment checks and live evidence. A passing unit suite cannot establish deployed queue connectivity or model accuracy. The checks actually run for this documentation change are in [verification](../handoff/verification.md).
+The repository combines behavior tests, architecture/contract guards, browser tests and deployment checks. A passing unit suite cannot establish deployed queue connectivity or model accuracy. What the documentation checks cover is in [verification](../maintainers/verification.md).
 
 ## Test map
 
@@ -18,8 +18,8 @@ The repository combines behavior tests, architecture/contract guards, mutation h
 | MCP | `mcp/tests` | `python -m pytest mcp/tests` with MCP dependencies |
 | Architecture ratchets | `scripts/quality_gate.py`, baseline files and self-tests | `python scripts/quality_gate.py` |
 | Image/deployment | `scripts/release`, Compose/Kustomize contracts | `python scripts/release/check_image_drift.py` |
-| Documentation | Generated references, links, schemas and Mermaid | [maintenance commands](../handoff/maintenance.md) |
-| AI quality | Agent/decision eval suites, manifests, golden fixtures and benchmark scripts | Select the exact offline/mock/live evaluator; preserve provenance |
+| Documentation | Generated references, links, schemas and Mermaid | [maintenance commands](../maintainers/maintenance.md) |
+| AI quality | Agent/decision eval suites, manifests and golden fixtures | Select the exact offline/mock/live evaluator; preserve provenance |
 
 Backend pytest sets `TESTING=true`, disables OTel and supplies a non-routable placeholder DB URL when unset. This allows imports; it does not create a real database or prove every test is service-free. Integration/live markers are assigned by config/hooks. Inspect fixtures before running large suites against any external infrastructure. Separate SDK/MCP/CLI test runs can avoid Python import-path collisions.
 

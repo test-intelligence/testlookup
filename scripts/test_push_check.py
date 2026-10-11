@@ -35,7 +35,7 @@ spec.loader.exec_module(push_check)
 
 class TestChecksDoNotInheritTheHooksRepository:
     """Git exports GIT_DIR (and friends) to the hooks it runs. The pre-push hook
-    from a linked worktree failed test_handoff_docs.py, which builds its own
+    from a linked worktree failed test_reference_docs.py, which builds its own
     scratch repository, while the same gate run by hand passed."""
 
     def test_the_strip_list_covers_everything_git_calls_repository_local(self):
@@ -274,8 +274,8 @@ class TestTheAllowlistCannotHideARegression:
 class TestTheGateNeverHandsBackAnAlteredTree:
     """The most dangerous thing this script can do.
 
-    The backend suite contains mutation harnesses that patch real source files
-    and restore them only on a clean exit. The gate's first full run left 23
+    A test that patches real source files and restores them only on a clean
+    exit (a local mutation harness, for example) can crash mid-patch. One run left 23
     source files mutated -- ``llm_circuit_breaker`` reporting an open breaker as
     closed among them -- and the natural next step after a gate is a commit.
     Tested in a throwaway repository so the assertion does not depend on a
@@ -433,15 +433,15 @@ class TestTheMypyRatchetIsActuallyChecked:
 
 
 class TestStaleReferencesAreCaught:
-    """PR #147 failed CI on a stale ``source-inventory.csv`` that this gate
-    passed: its reference check only looked at the three skewed files."""
+    """PR #147 failed CI on a stale generated reference that this gate passed:
+    its reference check only looked at the three skewed files."""
 
     def _stub(self, monkeypatch, out, code=1):
         monkeypatch.setattr(push_check, "run", lambda *a, **k: (code, out))
 
     def test_it_is_registered_before_the_slow_suites(self):
         names = [c.name for c in push_check.build_checks()]
-        at = names.index("docs: handoff references current")
+        at = names.index("docs: references current")
         assert at < names.index("backend: full test suite")
 
     def test_only_the_known_skew_is_not_a_failure(self, monkeypatch):
@@ -454,15 +454,16 @@ class TestStaleReferencesAreCaught:
             "docs\\reference\\schemas.md\n"))
         assert push_check.check_stale_references()[0] is True
 
-    def test_a_stale_inventory_fails(self, monkeypatch):
-        # The exact CI failure.
+    def test_a_stale_reference_fails(self, monkeypatch):
+        # The shape of the CI failure: a non-skewed page is stale.
         self._stub(monkeypatch, (
             "Generated reference drift:\n"
             "docs\\reference\\openapi.json\n"
-            "docs\\reference\\source-inventory.csv\n"))
+            "docs\\reference\\migrations.md\n"))
         ok, msg = push_check.check_stale_references()
         assert ok is False
-        assert "docs/reference/source-inventory.csv" in msg
+        assert "docs/reference/migrations.md" in msg
+        assert "python scripts/generate_reference.py" in msg
         assert "openapi.json" not in msg.split("Stage")[0], (
             "the known skew must not be reported as staleness"
         )
@@ -668,3 +669,19 @@ class TestTheGateRunsCIsScriptSelfTests:
         assert "no:testlookup" in check.cmd, "the installed reporter plugin crashes without ci_context"
         assert not check.slow
         assert names.index("repo: gate self-tests") < names.index("backend: full test suite")
+
+
+class TestTheGeneratorNameFollowsTheCheckout:
+    """The reference generator was renamed; a base commit from before the
+    rename still has to regenerate with the script it carries."""
+
+    def test_the_renamed_generator_is_used_when_present(self, tmp_path):
+        (tmp_path / "scripts").mkdir()
+        (tmp_path / "scripts" / "generate_reference.py").write_text("")
+        assert push_check._generator_in(tmp_path) == "scripts/generate_reference.py"
+
+    def test_an_older_checkout_uses_its_own_name(self, tmp_path):
+        assert push_check._generator_in(tmp_path) == "scripts/generate_handoff_reference.py"
+
+    def test_this_checkout_has_the_renamed_generator(self):
+        assert push_check._generator_in(push_check.REPO) == push_check.REFERENCE_GENERATOR

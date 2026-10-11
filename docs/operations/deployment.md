@@ -22,9 +22,9 @@ The manifests in this repository describe supported topologies. They are not evi
 | OpenShift | `k8s/overlays/openshift` | Provided by you (Valkey/Redis must be durable) | OpenShift with Routes | [OpenShift](deploy-openshift.md#standard-openshift-overlay) |
 | OpenShift + Artifactory | `k8s/overlays/openshift-artifactory` + `openshiftsetup/` | In-cluster | Air-gapped OpenShift that pulls from one registry | [OpenShift](deploy-openshift.md#air-gapped-openshift-with-one-artifactory) |
 | Offline bundle | `make offline-bundle`, `scripts/release/import-bundle.sh` | Compose, Kubernetes or OpenShift | Sites with no egress at all | [Air-gapped install](../../user-guide/air-gapped-install.md) |
-| AWS EKS | `infra/aws/` (Terraform) + `k8s/overlays/aws-eks` + `deploy-eks.yml` | RDS, DocumentDB, ElastiCache, S3 | AWS with managed data services | [Managed clouds](deploy-cloud.md#aws-eks) |
-| Google GKE | `k8s/overlays/gcp-gke` + `deploy-gke.yml` | Provided by you | GKE with Google-managed certificates | [Managed clouds](deploy-cloud.md#google-gke) |
-| Azure AKS | `k8s/overlays/azure-aks` + `deploy-aks.yml` | Provided by you | AKS with NGINX ingress | [Managed clouds](deploy-cloud.md#azure-aks) |
+| AWS EKS | `infra/aws/` (Terraform) + `k8s/overlays/aws-eks` + `scripts/deploy-k8s.sh` | RDS, DocumentDB, ElastiCache, S3 | AWS with managed data services | [Managed clouds](deploy-cloud.md#aws-eks) |
+| Google GKE | `k8s/overlays/gcp-gke` + `scripts/deploy-k8s.sh` | Provided by you | GKE with Google-managed certificates | [Managed clouds](deploy-cloud.md#google-gke) |
+| Azure AKS | `k8s/overlays/azure-aks` + `scripts/deploy-k8s.sh` | Provided by you | AKS with NGINX ingress | [Managed clouds](deploy-cloud.md#azure-aks) |
 
 Rules of thumb:
 
@@ -63,7 +63,6 @@ The backend refuses to start with `APP_ENV=production` or `staging` when `APP_SE
 | Kubernetes, all overlays | Secret `testlookup-secrets` in the target namespace | `APP_SECRET_KEY`, `JWT_SECRET_KEY`, `DATABASE_URL`, `POSTGRES_PASSWORD`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MONGO_URI`, `WEBHOOK_SECRET`; optional provider and integration tokens. See [Kubernetes secrets](deploy-kubernetes.md#secret-testlookup-secrets) |
 | OpenShift + Artifactory | Created by `deploy-openshift-artifactory.sh` on first install | Generated; you supply only the Artifactory credentials in `artifactory.env` |
 | EKS via Terraform | AWS Secrets Manager (written by Terraform) | Synced into `testlookup-secrets` before deploy |
-| CI deploy workflows | GitHub environment `production` secrets | Cloud credentials per workflow, listed in [managed clouds](deploy-cloud.md) |
 
 Never commit `.env`, `openshiftsetup/artifactory.env` or a filled-in Secret manifest. Losing `APP_SECRET_KEY` makes saved encrypted credentials (integration tokens) unreadable even after a database restore, so back it up with your secrets store.
 

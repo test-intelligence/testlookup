@@ -126,7 +126,7 @@ also adds a line to the `[Unreleased]` section of [CHANGELOG.md](CHANGELOG.md).
 Running the tests is not the same as running what CI runs. CI also builds the
 production bundle, enforces a coverage ratchet, and runs several guards that
 live outside the test suites — `check:bundle`, `check:theme`,
-`prompt_eval_recordings --check`, `agent_api_docs --check`, the handoff
+`prompt_eval_recordings --check`, `agent_api_docs --check`, the generated
 reference checks and `scripts/quality_gate.py` (architecture rules, the
 local-only path list, private markers and the dependency license allowlist).
 
@@ -155,7 +155,7 @@ everything, as it does in CI. Pass `--full` to run the checks anyway.
 **Where local and CI legitimately differ.** Three checks cannot be made
 identical, and `scripts/push_check.py` documents how it handles each:
 
-- **Handoff references.** `generate_handoff_reference.py --check` can fail
+- **Generated references.** `generate_reference.py --check` can fail
   locally when the local FastAPI/Pydantic emits slightly different OpenAPI
   than CI's. The gate applies the equivalent test that *is* reliable: the
   committed references must differ from `origin/main` by **additions only**.

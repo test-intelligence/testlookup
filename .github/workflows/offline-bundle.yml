@@ -19,7 +19,7 @@ name: TestLookup — Offline bundle (air-gapped install)
 #
 # WHAT THIS DOES NOT PROVE: it is NOT a full-stack end-to-end run. Nothing
 # here boots Postgres/Mongo/Redis/MinIO or exercises the app against them —
-# that is `backend-test` + the deploy workflows' job. Do not read a green
+# that is the job of ci.yml's `backend-test`. Do not read a green
 # tick here as "the air-gapped deployment works", only as "the bundle is
 # intact and importable offline".
 #

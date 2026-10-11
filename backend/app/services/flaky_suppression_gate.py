@@ -1,7 +1,5 @@
 """Whether a flaky verdict may act, or may only advise.
 
-Phase 2 (P2-A) of ``architecture/TEST_INTELLIGENCE_PLAN.md``.
-
 ## The measurement this exists to respect
 
 The product classifies failures partly by matching error signatures. Published
@@ -11,16 +9,17 @@ than random on others**, driven by whether a project's failures carry
 distinctive exception types. A project drowning in bare ``AssertionError``
 cannot be classified the way one throwing ``UnknownHostException`` can.
 
-So "is our classifier trustworthy here?" has no global answer. Phase 0 measured
-it per project; this module is what consumes that measurement.
+So "is our classifier trustworthy here?" has no global answer.
+``flaky_classifier_calibration`` measures it per project; this module is what
+consumes that measurement.
 
-## Decision D2: advisory always
+## Advisory always
 
 The gate has two levers — whether a verdict may be *shown*, and whether it may
 *act* (suppress a failure, auto-close, hide from a gate). **Acting is disabled
 unconditionally**, not merely when specificity is low.
 
-That is a product decision recorded in the plan, and it rests on evidence:
+That is a deliberate product decision, and it rests on evidence:
 Google found that when a previously stable test turned flaky, roughly **1 in 6
 times the cause was a real production bug**. Suppression is the one
 irreversible mistake available here — a wrongly-shown verdict wastes a minute,
@@ -38,7 +37,7 @@ import structlog
 
 logger = structlog.get_logger("services.flaky_suppression_gate")
 
-# Decision D2. Nothing in the product may auto-suppress a failure on a flaky
+# Advisory always. Nothing in the product may auto-suppress a failure on a flaky
 # verdict. See the module docstring for why this is a constant and not config.
 ALLOW_SUPPRESSION = False
 
@@ -51,7 +50,7 @@ ADVISORY_SPECIFICITY_FLOOR = 0.90
 # Presentation modes, weakest first.
 MODE_HINT = "hint"            # weak or unmeasured classifier — suggest only
 MODE_ADVISORY = "advisory"    # strong classifier — state the verdict, never act
-MODE_ENFORCING = "enforcing"  # would allow acting; unreachable while D2 holds
+MODE_ENFORCING = "enforcing"  # would allow acting; unreachable while suppression is off
 
 
 @dataclass(frozen=True)
@@ -125,7 +124,7 @@ def decide(
         project_id=project_id,
         mode=decision_mode,
         # Belt and braces: even MODE_ENFORCING could not turn this True while
-        # D2 holds, and the constant is pinned by a test.
+        # ALLOW_SUPPRESSION is False, and the constant is pinned by a test.
         may_suppress=bool(ALLOW_SUPPRESSION) and decision_mode == MODE_ENFORCING,
         specificity=float(specificity) if specificity is not None else None,
         sample_count=count,

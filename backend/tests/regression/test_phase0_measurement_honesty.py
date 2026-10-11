@@ -1,9 +1,9 @@
-"""Phase 0 must measure honestly, or it is worse than not measuring.
+"""Flakiness measurement must be honest, or it is worse than not measuring.
 
-Roadmap Phase 0 (``architecture/TEST_INTELLIGENCE_PLAN.md``). Every test here
-pins an *honesty* property rather than a happy path, because the failure mode
-this phase exists to prevent is a confident-looking number computed from data
-that cannot support it.
+Covers ``run_environment``, ``flaky_classifier_calibration`` and
+``flaky_readiness_service``. Every test here pins an *honesty* property rather
+than a happy path, because the failure mode these measurements exist to prevent
+is a confident-looking number computed from data that cannot support it.
 
 Three classes of that failure are guarded:
 

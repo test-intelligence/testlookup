@@ -1,7 +1,5 @@
 """Resolve the environment a run executed against.
 
-Phase 0 (P0-1) of ``architecture/TEST_INTELLIGENCE_PLAN.md``.
-
 ``test_runs.environment`` (migration 0129) is populated from an optional
 ingestion field. Everything ingested before that migration — and every caller
 that never sends it — has NULL, so the read path needs an answer that is honest

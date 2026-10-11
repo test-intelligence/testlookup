@@ -3,9 +3,9 @@
 The release workflows used to build and deploy directly from a tag.  A tag can
 refer to a revision which has never completed CI, and rebuilding separately in
 each cloud makes "the release" three different artifact sets.  These tests
-make the new boundary executable: CI proves one source SHA, the release path
-promotes only its immutable image manifest, and cloud deploy workflows consume
-that manifest rather than rebuilding images.
+make the new boundary executable: CI proves one source SHA, and the release
+path promotes only its immutable image manifest rather than rebuilding images.
+A CI deploy workflow added later belongs in ``PROMOTION_WORKFLOWS``.
 
 The tests intentionally inspect workflow YAML.  GitHub Actions syntax is not
 executed during pytest, so this is the closest deterministic regression check
@@ -24,11 +24,8 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 VERIFIER = WORKFLOWS / "require-verified-sha.yml"
 RELEASE = WORKFLOWS / "release.yml"
 CI = WORKFLOWS / "ci.yml"
-CLOUD_DEPLOYS = tuple(
-    WORKFLOWS / name
-    for name in ("deploy-eks.yml", "deploy-gke.yml", "deploy-aks.yml")
-)
-ALL_PROMOTION_WORKFLOWS = (RELEASE, *CLOUD_DEPLOYS)
+# Every workflow that publishes or deploys a verified image set.
+PROMOTION_WORKFLOWS = (RELEASE,)
 COMPONENTS = ("backend", "frontend", "mcp")
 MANIFEST_ARTIFACT_PREFIX = "verified-images-"
 
@@ -118,8 +115,8 @@ def test_release_resolves_an_annotated_tag_to_its_commit_before_verifying():
     )
 
 
-@pytest.mark.parametrize("workflow_path", ALL_PROMOTION_WORKFLOWS)
-def test_release_and_cloud_deploys_do_not_rebuild_or_push_images(workflow_path: Path):
+@pytest.mark.parametrize("workflow_path", PROMOTION_WORKFLOWS)
+def test_promotion_workflows_do_not_rebuild_or_push_images(workflow_path: Path):
     text = _executable_steps(_yaml(workflow_path))
     forbidden = ("docker build", "docker push", "docker/build-push-action")
     found = [token for token in forbidden if token in text]
@@ -129,7 +126,7 @@ def test_release_and_cloud_deploys_do_not_rebuild_or_push_images(workflow_path: 
     )
 
 
-@pytest.mark.parametrize("workflow_path", ALL_PROMOTION_WORKFLOWS)
+@pytest.mark.parametrize("workflow_path", PROMOTION_WORKFLOWS)
 def test_each_promotion_consumer_uses_the_sha_named_verified_manifest(workflow_path: Path):
     workflow = _yaml(workflow_path)
     text = workflow_path.read_text(encoding="utf-8")
@@ -145,7 +142,7 @@ def test_each_promotion_consumer_uses_the_sha_named_verified_manifest(workflow_p
     )
 
 
-@pytest.mark.parametrize("workflow_path", ALL_PROMOTION_WORKFLOWS)
+@pytest.mark.parametrize("workflow_path", PROMOTION_WORKFLOWS)
 def test_promotion_consumers_pass_an_explicit_sha_to_the_verifier(workflow_path: Path):
     workflow = _yaml(workflow_path)
     jobs = _called_verifier_jobs(workflow)
@@ -154,7 +151,7 @@ def test_promotion_consumers_pass_an_explicit_sha_to_the_verifier(workflow_path:
     )
 
 
-@pytest.mark.parametrize("workflow_path", ALL_PROMOTION_WORKFLOWS)
+@pytest.mark.parametrize("workflow_path", PROMOTION_WORKFLOWS)
 def test_manifest_consumption_is_ordered_after_exact_sha_verification(workflow_path: Path):
     """A verifier job that is not a dependency is only a decorative gate."""
     workflow = _yaml(workflow_path)
@@ -227,14 +224,6 @@ def test_main_image_manifest_resolves_version_file_before_publishing_images():
     assert "GITHUB_REF_NAME" not in create_run
 
 
-@pytest.mark.parametrize("workflow_path", CLOUD_DEPLOYS)
-def test_cloud_deploys_invoke_the_non_executable_helper_through_bash(
-    workflow_path: Path,
-):
-    commands = _executable_steps(_yaml(workflow_path))
-    assert "bash scripts/deploy-k8s.sh" in commands
-
-
 def test_dev_migration_and_backend_rollout_use_the_same_immutable_digest():
     text = CI.read_text(encoding="utf-8")
     backend_ref = (
@@ -257,18 +246,3 @@ def test_airgap_override_routes_the_migration_service_to_the_private_registry():
     compose = _yaml(ROOT / "docker-compose.airgap.yml")
     services = compose["services"]
     assert services["db-migrate"]["image"] == services["backend"]["image"]
-
-
-def test_eks_materializes_into_the_component_registry_namespace():
-    workflow = (WORKFLOWS / "deploy-eks.yml").read_text(encoding="utf-8")
-    assert '--destination-prefix "ghcr.io/${GITHUB_REPOSITORY_OWNER}"' in workflow
-    assert '--destination-prefix "ghcr.io/${GITHUB_REPOSITORY}"' not in workflow
-
-
-def test_cloud_deploys_checkout_the_verified_source_sha():
-    for workflow_path in CLOUD_DEPLOYS:
-        workflow = workflow_path.read_text(encoding="utf-8")
-        checkout = workflow.index("uses: actions/checkout@")
-        ref = workflow.index("ref: ${{ needs.verify.outputs.source_sha }}", checkout)
-        download = workflow.index("gh run download", ref)
-        assert checkout < ref < download

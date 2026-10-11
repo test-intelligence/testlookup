@@ -49,6 +49,6 @@ Read `bootstrap.py`, locate `/api/v1/ingest` in the generated reference, follow 
 
 ## Extension checklist
 
-For a new API: add typed request/response, resource auth and role/key checks, service logic, audit/activity where required, meaningful negative-path tests, and a client wrapper. For persistence: add Alembic migration and update ORM/serializers. For worker work: verify queue subscription, bounded retries/idempotency, connection budget and status visibility. For a new agent/tool: register capability, contract, policy, budget and evaluation coverage. Regenerate docs and run quality guards. [Testing](testing.md), [maintenance](../handoff/maintenance.md).
+For a new API: add typed request/response, resource auth and role/key checks, service logic, audit/activity where required, meaningful negative-path tests, and a client wrapper. For persistence: add Alembic migration and update ORM/serializers. For worker work: verify queue subscription, bounded retries/idempotency, connection budget and status visibility. For a new agent/tool: register capability, contract, policy, budget and evaluation coverage. Regenerate docs and run quality guards. [Testing](testing.md), [maintenance](../maintainers/maintenance.md).
 
 Avoid `make clean` as routine shutdown; it deletes volumes and requires confirmation. Use `make stop` for ordinary teardown. For databases worth keeping, exercise [backup/restore](deployment.md) before upgrades.

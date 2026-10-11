@@ -1,7 +1,5 @@
 """Tier 2, and the measurement that keeps both tiers honest.
 
-Phase 6 of ``architecture/TEST_INTELLIGENCE_PLAN.md`` — the last phase.
-
 Tier 1 (``flaky_screening_service``) looks at the new and the directly-modified
 for fast feedback. Tier 2 is this: a continuous background pass over the whole
 corpus, which is where environment- and dependency-induced flakiness lands —
@@ -10,7 +8,7 @@ the tail that screening a diff cannot reach by construction.
 ## Why the cadence is time-based, not commit-based
 
 The source finding for tier 1 is usually paired with a ~150-commit re-run
-budget. That figure is unusable here, and not because it is wrong: the Phase 0
+budget. That figure is unusable here, and not because it is wrong: a readiness
 census measured **zero of four genuine projects on the reference deployment**
 clearing the thresholds a commit-count cadence assumes. Those projects carry
 12–15 test fingerprints with a median of 5–12 runs each, and most runs arrive

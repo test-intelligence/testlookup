@@ -1,12 +1,10 @@
 """Tier 1: screen the tests most likely to be newly flaky, first.
 
-Phase 6 of ``architecture/TEST_INTELLIGENCE_PLAN.md``.
-
 ## What justifies this, and what does not
 
-The plan originally leaned on "75% of flaky tests are already flaky at their
-introducing commit". That claim was **refuted 1–2** in the evidence review and
-is not used here.
+A widely repeated claim says "75% of flaky tests are already flaky at their
+introducing commit". Its evidence does not hold up — the claim is **refuted**
+— and it is not used here.
 
 What survives is weaker and heavily qualified: **85/15 among order- and
 implementation-dependent flaky tests in 55 Java OSS projects** — 85% were
@@ -27,7 +25,7 @@ dependency-induced flakiness this product actually sees would land.
 Nothing, on its own. TestLookup ingests results; it does not execute tests, so
 tier 1 cannot re-run a suspect ten times to see if it flips. A test observed
 once is a test about which the only defensible statement is *"not yet
-observable"* — and the whole point of Phase 6 is to say that promptly and
+observable"* — and the whole point of screening is to say that promptly and
 measurably, rather than to guess early.
 
 So screening produces a **population and a reason**, not a verdict. The verdict
@@ -209,7 +207,7 @@ async def screen_project(
     # Observations are counted as DISTINCT RUNS, not per-test rows. A retry
     # writes several rows for one execution, and counting those would inflate a
     # fingerprint past the evidence floor without any new evidence behind it —
-    # the exact fabricated-confidence failure this roadmap keeps refusing.
+    # the exact fabricated-confidence failure the flaky score exists to refuse.
     earliest_rows = (
         await db.execute(
             select(

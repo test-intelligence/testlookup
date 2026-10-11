@@ -98,10 +98,10 @@ LATENCY_BUDGETS: list[LatencyBudget] = [
         http_handler="/health/details",
     ),
 
-    # ── Visualization analytics reads (epic §5.5; Phase D L3) ─────────────
-    # Measured on the homelab, 1M test cases, one pod: see
-    # architecture/VIZ_PERFORMANCE_BASELINE.md. Only p95 is an epic figure;
-    # p50/p99 are derived (≈ p95/5 and 2 × p95) so the shape invariants hold.
+    # ── Visualization analytics reads ─────────────────────────────────────
+    # Measured on a reference deployment with 1M test cases and one API pod.
+    # Only p95 is a specified target; p50/p99 are derived (≈ p95/5 and
+    # 2 × p95) so the shape invariants hold.
     # The viz load harness (``load_test_concurrent.py bench --suite viz``)
     # holds each cold cell to these keys; a warm (cached) cell to
     # ``VIZ_CACHED_BUDGET_MS`` there.

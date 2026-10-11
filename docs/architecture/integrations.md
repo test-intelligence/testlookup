@@ -22,7 +22,7 @@
 
 The shared browser Axios client uses `VITE_API_BASE_URL` or same-origin, sends credentials only to the backend origin, serializes list queries as repeated bare keys, and coordinates refresh behavior. MFA/auth endpoints are excluded from normal refresh retry because their 401 can mean a rejected challenge rather than expired access. Prefer service wrappers to page-local HTTP code.
 
-The CLI registers 13 command groups plus `ci-verdict`. The generated [client surface inventory](../reference/client-surfaces.md) lists commands, arguments, MCP functions and UI routes. For this source snapshot it finds 67 MCP tools, 11 resources and 7 prompts; counts are generated from decorators, not the stale marketing count. MCP review tools expose review information; inspect which actions the server actually registers before assuming UI write parity.
+The CLI registers 13 command groups plus `ci-verdict` ([CLI reference](../../cli/README.md)). The [MCP server README](../../mcp/README.md) lists its tools, resources and prompts. MCP review tools expose review information; inspect which actions the server actually registers before assuming UI write parity.
 
 ```bash
 # From a development environment with Python 3.11+

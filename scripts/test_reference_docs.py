@@ -1,11 +1,10 @@
-"""Negative-path checks for handoff tooling; no application services are started."""
+"""Negative-path checks for the reference tooling; no application services are started."""
 
 from __future__ import annotations
 
 import ast
 import contextlib
 import difflib
-import importlib.util
 import io
 import re
 import runpy
@@ -34,7 +33,7 @@ class CheckerTests(unittest.TestCase):
         with patch.object(Path, "read_text", read), contextlib.redirect_stdout(output):
             try:
                 runpy.run_path(
-                    str(ROOT / "scripts/check_handoff_docs.py"), run_name="__main__"
+                    str(ROOT / "scripts/check_reference_docs.py"), run_name="__main__"
                 )
             except (ValueError, RuntimeError, OSError) as error:
                 return error, output.getvalue()
@@ -87,7 +86,7 @@ class CheckerTests(unittest.TestCase):
 class GenerationTests(unittest.TestCase):
     def test_generated_agents_page_survives_case_insensitive_git_checkout(self):
         tree = ast.parse(
-            (ROOT / "scripts/generate_handoff_reference.py").read_text(encoding="utf-8")
+            (ROOT / "scripts/generate_reference.py").read_text(encoding="utf-8")
         )
         functions = [
             n
@@ -153,7 +152,7 @@ class GenerationTests(unittest.TestCase):
 
     def test_drift_check_reports_difference_without_rewriting(self):
         tree = ast.parse(
-            (ROOT / "scripts/generate_handoff_reference.py").read_text(encoding="utf-8")
+            (ROOT / "scripts/generate_reference.py").read_text(encoding="utf-8")
         )
         function = next(
             n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "write"
@@ -188,51 +187,66 @@ class GenerationTests(unittest.TestCase):
             self.assertEqual(target.read_bytes(), original)
 
     def test_obsolete_and_unowned_outputs(self):
-        # Load the real reconciliation function without importing FastAPI or
-        # generating the entire reference. Exercise real temporary files.
+        # Load the real reconciliation functions without importing FastAPI or
+        # generating the entire reference. Exercise real temporary files in a
+        # real (scratch) Git repository, because the candidates come from Git.
         tree = ast.parse(
-            (ROOT / "scripts/generate_handoff_reference.py").read_text(encoding="utf-8")
+            (ROOT / "scripts/generate_reference.py").read_text(encoding="utf-8")
         )
-        function = next(
+        functions = [
             n
             for n in tree.body
-            if isinstance(n, ast.FunctionDef) and n.name == "reconcile_outputs"
-        )
+            if isinstance(n, ast.FunctionDef)
+            and n.name in {"candidate_outputs", "reconcile_outputs"}
+        ]
+        self.assertEqual(len(functions), 2)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            subprocess.run(
+                ["git", "init", "-q", str(root)], check=True, capture_output=True
+            )
+            (root / ".gitignore").write_text("/docs/reference/retired.md\n")
             out = root / "docs/reference"
             out.mkdir(parents=True)
             current = out / "current.md"
             current.write_text("Current output")
             obsolete = out / "obsolete.md"
             obsolete.write_text(
-                "Generated from tracked source by `scripts/generate_handoff_reference.py`."
+                "Generated from tracked source by `scripts/generate_reference.py`."
             )
             user_file = out / "unowned.md"
             user_file.write_text("Keep this manual content")
+            # A retired output the checkout ignores: neither reported nor pruned.
+            retired = out / "retired.md"
+            retired.write_text(
+                "Generated from tracked source by `scripts/generate_reference.py`."
+            )
             namespace = {
                 "OUT": out,
                 "ROOT": root,
                 "GENERATED": {"current.md"},
                 "CHECK": True,
                 "ERRORS": [],
+                "Path": Path,
+                "subprocess": subprocess,
             }
-            exec(  # noqa: S102 - trusted local function isolated from import side effects
+            exec(  # noqa: S102 - trusted local functions isolated from import side effects
                 compile(
-                    ast.Module(body=[function], type_ignores=[]), "reconcile", "exec"
+                    ast.Module(body=functions, type_ignores=[]), "reconcile", "exec"
                 ),
                 namespace,
             )
             namespace["reconcile_outputs"]()
-            self.assertEqual(len(namespace["ERRORS"]), 2)
+            self.assertEqual(len(namespace["ERRORS"]), 2, namespace["ERRORS"])
+            self.assertFalse(any("retired.md" in e for e in namespace["ERRORS"]))
             self.assertTrue(obsolete.exists())
             namespace.update(CHECK=False, ERRORS=[])
             namespace["reconcile_outputs"]()
             self.assertFalse(obsolete.exists())
             self.assertTrue(current.exists())
+            self.assertTrue(retired.exists())
             self.assertEqual(user_file.read_text(), "Keep this manual content")
             self.assertEqual(len(namespace["ERRORS"]), 1)
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -66,7 +66,7 @@ Overlays specialize it per target ([map of every overlay](../k8s/README.md)):
 |---|---|
 | `dev`, `staging`, `prod` | environment tiers (`make k8s-deploy-<env>`) |
 | `self-hosted` | generic on-prem cluster built on `prod` (`scripts/deploy-k8s.sh --cloud=self-hosted`) |
-| `gcp-gke`, `aws-eks`, `azure-aks` | managed-cloud variants built on `prod`, deployed by `deploy-gke/eks/aks.yml` ([guide](../docs/operations/deploy-cloud.md)) |
+| `gcp-gke`, `aws-eks`, `azure-aks` | managed-cloud variants built on `prod` (`scripts/deploy-k8s.sh --cloud=gcp\|aws\|azure`) ([guide](../docs/operations/deploy-cloud.md)) |
 | `homelab` | single-node K3s with in-cluster datastores and a local registry; the deploy script, the registry and the kustomization must agree on the registry port or locally built images fail with ImagePullBackOff ([guide](../docs/operations/deploy-k3s.md)) |
 | `openshift` / `openshift-artifactory` | OpenShift Routes with edge TLS; the `-artifactory` variant is fully **air-gapped** — its `images:` block re-points *every* image (app + infra) at one registry. Two ways in: registry-to-registry mirroring when the build host can reach both sides (`openshiftsetup/*.sh`), or the **offline bundle** when it cannot — [user-guide/air-gapped-install.md](../user-guide/air-gapped-install.md). The bundle renders this same overlay ([guide](../docs/operations/deploy-openshift.md)) |
 
@@ -91,14 +91,11 @@ add-ons.
   reachable from `main`: requires a verified CI run for that commit, scans the
   exact image digests with Trivy and keeps SBOM evidence, then promotes the
   verified digests to the `vX.Y.Z` tag without rebuilding.
-- **`deploy-eks.yml` / `deploy-gke.yml` / `deploy-aks.yml`** — manual deploys
-  of a verified commit's digests over the matching overlay
-  (`scripts/deploy-k8s.sh --release-manifest`); each needs its cloud
-  credentials as secrets of the `production` environment
-  ([list](../docs/operations/deploy-cloud.md#the-deploy-workflows)).
-- **`require-verified-sha.yml`** — the reusable gate the release and deploy
-  workflows call: exactly one successful `ci.yml` push run on `main` for the
-  commit, with its digest manifest.
+- **`require-verified-sha.yml`** — the reusable gate `release.yml` calls:
+  exactly one successful `ci.yml` push run on `main` for the commit, with its
+  digest manifest. No workflow deploys to a cloud; a CI deploy built on this
+  gate is sketched in
+  [deploy from CI](../docs/operations/deploy-cloud.md#deploy-from-ci).
 
 ## 4b. One image manifest behind every surface
 

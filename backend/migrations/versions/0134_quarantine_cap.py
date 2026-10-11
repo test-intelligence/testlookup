@@ -1,7 +1,5 @@
 """Add a quarantine population cap.
 
-Phase 5 (P5-B) of ``architecture/TEST_INTELLIGENCE_PLAN.md``.
-
 The quarantine lifecycle already carried an SLA, auto-defect creation and
 auto-promotion. What it had no notion of was **how big the pile is allowed to
 get**.

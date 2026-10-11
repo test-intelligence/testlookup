@@ -1,10 +1,10 @@
 # Environment settings reference
 
-[Documentation home](../README.md) · [Regeneration](../handoff/maintenance.md)
+[Documentation home](../README.md) · [Regeneration](../maintainers/maintenance.md)
 
-Generated from tracked source by `scripts/generate_handoff_reference.py`. Do not edit by hand. The baseline and validation limits are recorded in [verification](../handoff/verification.md).
+Generated from tracked source by `scripts/generate_reference.py`. Do not edit by hand. What the checks cover is recorded in [verification](../maintainers/verification.md).
 
-Source declarations only; no `.env` or running secrets are read. Compose/Helm/Kustomize can override these defaults. `Field` aliases and constraints are retained. For production requirements and profiles see [deployment](../operations/deployment.md).
+Source declarations only; no `.env` or running secrets are read. Compose/Helm/Kustomize can override these defaults. `Field` aliases and constraints are retained. What each setting does is explained in the [configuration reference](../operations/configuration.md); production requirements are in [deployment](../operations/deployment.md).
 
 | Setting | Type | Source default/constraints |
 |---|---|---|

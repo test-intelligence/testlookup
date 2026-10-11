@@ -1,7 +1,5 @@
 """Turn per-failure verdicts into the one line a PR reviewer reads.
 
-Phase 5 (P5-A) of ``architecture/TEST_INTELLIGENCE_PLAN.md``.
-
 ## Why the payload, not the plumbing
 
 The PR-comment and commit-status plumbing already existed. What it delivered was

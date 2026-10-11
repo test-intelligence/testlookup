@@ -16,14 +16,13 @@
 #   8. shellcheck                     these scripts
 #
 # Each tool is used from PATH when present, else from its official Docker image,
-# else SKIPPED with a notice (CI runs the full set on Linux runners). Exit code
-# is non-zero if any executed check fails.
+# else SKIPPED with a notice. Exit code is non-zero if any executed check fails.
 #
 # Flags:
 #   --tf-docker   Force terraform fmt/validate to run inside the hashicorp/
 #                 terraform image. Needed on dev hosts where a TLS-inspecting
 #                 antivirus or proxy intercepts loopback and breaks terraform's
-#                 plugin mTLS handshake. CI Linux runners don't need this.
+#                 plugin mTLS handshake.
 #   --no-docker   Never fall back to Docker; skip tools that aren't on PATH.
 ###############################################################################
 set -uo pipefail

@@ -39,13 +39,6 @@ def test_every_supported_kubernetes_apply_path_invokes_cutover():
         assert text.count("prepare-live-fanout-cutover.sh") >= minimum_count, relative_path
 
 
-def test_eks_delegates_cutover_and_migration_to_central_deploy_helper():
-    workflow = (REPO_ROOT / ".github/workflows/deploy-eks.yml").read_text(
-        encoding="utf-8"
-    )
-    assert "scripts/deploy-k8s.sh --cloud=aws --release-manifest=" in workflow
-
-
 def _find_bash() -> str | None:
     for candidate in (
         r"C:\Program Files\Git\bin\bash.exe",

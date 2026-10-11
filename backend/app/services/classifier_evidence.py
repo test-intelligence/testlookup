@@ -2,7 +2,7 @@
 
 The problem
 -----------
-``benchmarks/pipeline/collect.py`` measured, on the homelab 2026-08-22:
+AI-pipeline telemetry from a reference deployment, measured 2026-08-22:
 
     4,693 analyses, 3 carrying any evidence_references  (0.06%)
     rules 4,087 / llm 603

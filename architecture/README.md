@@ -16,14 +16,12 @@
 > - **[DEPLOYMENT.md](./DEPLOYMENT.md)** — the topologies: compose variants, the release-image path, k8s base + per-target overlays, CI/CD pipelines, environment gotchas. Step-by-step install guides per mode: [docs/operations/deployment.md](../docs/operations/deployment.md).
 > - **[FRONTEND.md](./FRONTEND.md)** — the SPA: pages→hooks→services→one-Axios layering, Zustand client-state model, the six-theme token system, and the enforcing ratchets.
 > - **[VISUALIZATION_ENGINES_ADR.md](./VISUALIZATION_ENGINES_ADR.md)** — why charts use Recharts + per-type ECharts + three.js: the CSP, bundle-budget and air-gap constraints, the measured spike, and the tooltip-XSS rule.
-> - **[VIZ_PERFORMANCE_BASELINE.md](./VIZ_PERFORMANCE_BASELINE.md)** — the homelab load test behind the visualization latency budgets: 1M-row dataset, single-user and concurrency results, the 429 burst, export timings, and the per-pod capacity conclusion.
 > - **[OBSERVABILITY.md](./OBSERVABILITY.md)** — metrics/traces/logs plus agent decision logs, the Grafana/alerting stack, and the health surfaces.
 > - **[KNOWLEDGE_RAG.md](./KNOWLEDGE_RAG.md)** — the optional RAG layer: indexing sources → chunks, grounded generation with citations, and the redaction/faithfulness/staleness guards.
 > - **[AI_EVALUATION.md](./AI_EVALUATION.md)** — model-ops: golden/feedback datasets, eval runs + drift, the model registry, and the pre-release gate that blocks regressing AI changes.
 > - **[AGENTIC_RUNTIME.md](./AGENTIC_RUNTIME.md)** — the agent runtime adapter: parent/child investigations, the dispatch outbox, typed claims and action proposals, report evaluation, the provider privacy boundary and memory provenance.
 > - **[AGENT_DECISION_REPORT.md](./AGENT_DECISION_REPORT.md)** — the signed decision report the deep pipeline publishes, and its critic.
 > - **[WORKFLOWS.md](./WORKFLOWS.md)** — versioned, user-defined agent workflows.
-> - **[TEST_INTELLIGENCE_PLAN.md](./TEST_INTELLIGENCE_PLAN.md)** — a roadmap proposal for further test-intelligence features (plan only).
 >
 > The root [`ARCHITECTURE.md`](../ARCHITECTURE.md) is the short overview; this
 > folder is the detailed engineering reference.
@@ -37,7 +35,7 @@ local-LLM), and emits release-risk signals (GO / CONDITIONAL_GO / NO_GO).
 On top of that base it runs an **agentic layer** (Investigator, Fixer) under
 explicit budgets and policies, attributes failures to commits and owners, gates
 releases, and reports engineer-hours saved. Everything is surfaced via a web UI,
-a REST API, a CLI and an MCP server ([generated inventory](../docs/reference/client-surfaces.md)) — and the whole system
+a REST API, a [CLI](../cli/README.md) and an [MCP server](../mcp/README.md) — and the whole system
 is able to run **fully offline**, including a fully air-gapped install.
 
 ---
@@ -324,7 +322,7 @@ Surfaces: `/agents` (activity), `/settings/ai-agents` (policy + budgets),
 
 ## 8. External surfaces
 
-- **MCP server** (`mcp/`) — tools, resources and prompts ([generated list](../docs/reference/client-surfaces.md)) over stdio (desktop AI clients) or SSE (:8002). In stdio mode it signs in with `TESTLOOKUP_USERNAME`/`PASSWORD` against `TESTLOOKUP_API_URL`, caches the JWT and refreshes on 401; over SSE every client sends its own bearer access token. Exposes projects, runs, run-intelligence, deep investigation, search, reports, metrics, and enterprise surfaces (decision trail, flaky quarantine, LLM budget, governance).
+- **MCP server** (`mcp/`) — tools, resources and prompts ([list](../mcp/README.md)) over stdio (desktop AI clients) or SSE (:8002). In stdio mode it signs in with `TESTLOOKUP_USERNAME`/`PASSWORD` against `TESTLOOKUP_API_URL`, caches the JWT and refreshes on 401; over SSE every client sends its own bearer access token. Exposes projects, runs, run-intelligence, deep investigation, search, reports, metrics, and enterprise surfaces (decision trail, flaky quarantine, LLM budget, governance).
 - **CLI** (`cli/`) — Typer app: `auth`, `projects`, `runs`, `tests`, `search`, `intelligence`, `deep`, `reports`, `keys`, `upload`. Talks to the REST API with auto-JWT refresh.
 - **Client SDKs** (`client/`) — Python (pytest plugin + async live SDK), Java (TestNG listener + JUnit5 extension), JS/TS (Jest reporter), Go. Shared wire contract: create session → stream events → close (triggers `persist_live_session`), or batch `POST /ingest`. The Python/Java SDKs emit a heartbeat to keep idle runs off the 5-minute reaper.
 

@@ -138,4 +138,4 @@ The same three images (backend, frontend, MCP) run under Docker Compose, Kuberne
 - [Design decisions and trade-offs](docs/architecture/design-decisions.md)
 - [Codebase map](docs/architecture/codebase-map.md)
 - [Developer guide](architecture/DEVELOPER_GUIDE.md): conventions, quality gates and recurring bug classes
-- [Configuration reference](docs/reference/configuration.md) and [client surfaces](docs/reference/client-surfaces.md), generated from the source
+- [Configuration reference](docs/operations/configuration.md), and the [API](docs/reference/api-index.md) and [settings](docs/reference/configuration.md) references generated from the source

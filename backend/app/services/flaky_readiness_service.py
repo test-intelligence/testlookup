@@ -1,11 +1,8 @@
 """Does this project have enough history for a windowed flakiness posterior?
 
-Phase 0 (P0-3) of ``architecture/TEST_INTELLIGENCE_PLAN.md``, and the gate on
-Phase 2.
-
 ## The question this answers
 
-Every quantitative datapoint behind the flakiness roadmap comes from hyperscale
+Every published quantitative datapoint on test flakiness comes from hyperscale
 monorepos — Google, Atlassian, GitHub, Meta — or from Java OSS corpora where
 academic per-test flake rates run about an order of magnitude lower. TestLookup
 is a local-first, self-hosted product whose users are frequently small teams.

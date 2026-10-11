@@ -53,20 +53,28 @@ frontend/probe-live.config.ts
 frontend/tests/probe-*.spec.ts
 backend/test_db.py
 scripts/export_handoff_wiki.py
-scripts/mutation_check_coverage_*.py
-scripts/mutation_check_e2_3.py
-scripts/mutation_check_e9_6.py
-scripts/mutation_check_e9_7.py
-scripts/mutation_check_e9_10.py
-scripts/mutation_check_exploratory_m01_*.py
-scripts/mutation_check_exploratory_m02_feature_flags.py
-scripts/mutation_check_exploratory_m09_consumers.py
-scripts/mutation_check_exploratory_m10_*.py
-scripts/mutation_check_exploratory_m12_invocation_contract.py
-scripts/mutation_check_exploratory_m13_workflow_governance.py
-scripts/mutation_check_exploratory_m16_test_management.py
-scripts/mutation_check_exploratory_m17_analytics_views.py
-scripts/mutation_check_exploratory_m26_provenance.py
-scripts/mutation_check_lease_and_scan_determinism.py
-scripts/mutation_check_t20.py
-scripts/mutation_check_t21.py
+
+# mutation scripts and the tests that run them (they rewrite source files)
+scripts/mutation_check_*.py
+backend/tests/*mutation_harness*.py
+
+# development plans, load-test write-ups and benchmark results
+architecture/TEST_INTELLIGENCE_PLAN.md
+architecture/VIZ_PERFORMANCE_BASELINE.md
+benchmarks/
+backend/tests/regression/test_benchmark_methodology_matches_the_code.py
+backend/tests/test_pipeline_baseline_aggregate.py
+backend/tests/regression/test_baseline_since_isolates_a_code_version.py
+
+# owner cloud deploy pipelines
+.github/workflows/deploy-aks.yml
+.github/workflows/deploy-eks.yml
+.github/workflows/deploy-gke.yml
+.github/workflows/aws-infra-validate.yml
+
+# generated source inventories (docs/reference keeps the API and operator references)
+docs/reference/source-inventory.csv
+docs/reference/inventory-counts.json
+docs/reference/python-contracts.md
+docs/reference/client-surfaces.md
+docs/reference/api-contract-gaps.md

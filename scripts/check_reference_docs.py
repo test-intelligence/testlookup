@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Check handoff links, generated coverage and representative API payloads."""
+"""Check documentation links, the generated API reference and representative API payloads."""
 
 from __future__ import annotations
 
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import unicodedata
@@ -42,7 +43,7 @@ for folder in (
     "pipelines",
     "api",
     "operations",
-    "handoff",
+    "maintainers",
     "reference",
 ):
     pages.extend((DOCS / folder).rglob("*.md"))
@@ -52,6 +53,20 @@ for readme in ("k8s/README.md", "cli/README.md", "mcp/README.md", "samples/READM
     if (ROOT / readme).is_file():
         pages.append(ROOT / readme)
 pages.extend((ROOT / "client").rglob("README.md"))
+
+
+def git_visible(paths: list[Path]) -> list[Path]:
+    """Only files Git sees (tracked, or untracked and not ignored). An ignored
+    file on a maintainer's disk is absent from every clean checkout."""
+    listed = subprocess.check_output(
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+        cwd=ROOT,
+    ).decode("utf-8")
+    visible = {(ROOT / name).resolve() for name in listed.split("\0") if name}
+    return [path for path in paths if path.resolve() in visible]
+
+
+pages = git_visible(pages)
 
 
 def prose_only(raw: str) -> str:
@@ -116,9 +131,6 @@ for page in sorted(set(pages)):
                 )
 
 spec = json.loads((DOCS / "reference/openapi.json").read_text(encoding="utf-8"))
-counts = json.loads(
-    (DOCS / "reference/inventory-counts.json").read_text(encoding="utf-8")
-)
 
 
 def refs(value: object) -> None:
@@ -155,7 +167,7 @@ documented = set(
     )
 )
 domain_operations = Counter()
-for domain in (DOCS / "reference/api").glob("*.md"):
+for domain in git_visible(list((DOCS / "reference/api").glob("*.md"))):
     domain_operations.update(
         re.findall(
             r"^## (GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE) `([^`]+)`",
@@ -163,24 +175,17 @@ for domain in (DOCS / "reference/api").glob("*.md"):
             re.MULTILINE,
         )
     )
+dictionary = (DOCS / "reference/data-dictionary.md").read_text(encoding="utf-8")
+table_sections = re.findall(r"^## (\S+)", dictionary, re.MULTILINE)
+table_index = re.findall(r"^\| \[([^\]]+)\]\(#", dictionary, re.MULTILINE)
+schemas_page = (DOCS / "reference/schemas.md").read_text(encoding="utf-8")
+schema_sections = set(re.findall(r"^## (\S+)", schemas_page, re.MULTILINE))
 for name, actual, expected in (
     ("endpoint index", documented, operations),
     ("domain operation coverage", set(domain_operations), operations),
     ("domain operation multiplicity", set(domain_operations.values()), {1}),
-    ("HTTP operation count", len(operations), counts["http_operations"]),
-    ("HTTP path count", len(spec["paths"]), counts["http_paths"]),
-    ("schema count", len(spec["components"]["schemas"]), counts["openapi_schemas"]),
-    (
-        "table count",
-        len(
-            re.findall(
-                r"^## ",
-                (DOCS / "reference/data-dictionary.md").read_text(encoding="utf-8"),
-                re.MULTILINE,
-            )
-        ),
-        counts["sqlalchemy_tables"],
-    ),
+    ("schema catalogue", schema_sections, set(spec["components"]["schemas"])),
+    ("data dictionary index", table_index, table_sections),
 ):
     if actual != expected:
         errors.append(f"{name} mismatch: {actual} != {expected}")
@@ -238,9 +243,9 @@ for method, path in [
         errors.append(f"Documented operation missing: {method} {path}")
 
 print(
-    f"Checked {len(set(pages))} Markdown pages, {links} local links, {len(operations)} operations, {counts['openapi_schemas']} schemas, {counts['sqlalchemy_tables']} tables, and ingestion examples."
+    f"Checked {len(set(pages))} Markdown pages, {links} local links, {len(operations)} operations, {len(spec['components']['schemas'])} schemas, {len(table_sections)} tables, and ingestion examples."
 )
 if errors:
     print("\n".join(errors))
     raise SystemExit(1)
-print("Handoff documentation checks passed.")
+print("Reference documentation checks passed.")

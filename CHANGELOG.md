@@ -113,6 +113,13 @@ locally by default.
   credentials the MongoDB container requires.
 - The run-history signature panel describes outlier builds from the data
   instead of a fixed sentence.
+- The reference tooling is `scripts/generate_reference.py`,
+  `scripts/check_reference_docs.py` and `scripts/test_reference_docs.py`
+  (were `*handoff*`), and the maintainer guide moved from `docs/handoff/` to
+  `docs/maintainers/`.
+- Shell scripts with a shebang are executable in Git, so
+  `scripts/deploy-k8s.sh`, `homelabsetup/deploy-homelab.sh` and the others run
+  as documented on Linux and macOS clones.
 - The frontend image installs its dependencies with `npm ci` (exactly
   `package-lock.json`). `npm install` could skip rolldown's optional
   linux-musl binary inside `node:alpine` (npm/cli#4828), and `vite build`
@@ -124,6 +131,22 @@ locally by default.
   live probes against a private deployment, owner-specific CI and deploy
   pipelines, and three superseded copies of the user and install guides) is no
   longer part of the repository.
+- Development-process material: the mutation scripts (`scripts/mutation_check_*.py`)
+  and the tests that ran them (they rewrote source files while running), the
+  test-intelligence roadmap, a load-test write-up and the `benchmarks/`
+  results, with the `make benchmark*` targets that ran them.
+- The owner-specific cloud deploy workflows (`deploy-eks.yml`,
+  `deploy-gke.yml`, `deploy-aks.yml`) and `aws-infra-validate.yml`. EKS, GKE
+  and AKS deploy with `scripts/deploy-k8s.sh --cloud=aws|gcp|azure`;
+  `infra/aws/scripts/validate.sh` runs locally;
+  [Deploy from CI](docs/operations/deploy-cloud.md#deploy-from-ci) describes a
+  deploy job built on `require-verified-sha.yml` and the verified digest
+  manifest.
+- The generated source inventories under `docs/reference/`
+  (`source-inventory.csv`, `inventory-counts.json`, `python-contracts.md`,
+  `client-surfaces.md`, `api-contract-gaps.md`). The reference keeps the API
+  documentation (OpenAPI, endpoint index, domain pages, schemas) and the
+  settings, migrations, data-dictionary and worker-task pages.
 - The `make k8s-stop-homelab` / `k8s-restart-homelab` targets, which called
   scripts that were never in the repository.
 - `scripts/setup-minio.sh` (`make setup-minio` now runs the Compose

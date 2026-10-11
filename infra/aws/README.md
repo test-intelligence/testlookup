@@ -34,9 +34,8 @@ infra/aws/
 ./infra/aws/scripts/validate.sh --tf-docker
 ```
 
-CI runs the same gate on Linux: `.github/workflows/aws-infra-validate.yml`
-(triggered by PRs touching `infra/aws/**` or the `aws-eks` overlay). No AWS
-credentials are configured in that workflow.
+No CI workflow runs this gate. Run it yourself after you change `infra/aws/**`
+or the `aws-eks` overlay.
 
 Minimal manual checks:
 

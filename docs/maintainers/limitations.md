@@ -8,7 +8,7 @@ These are observed contracts/operational constraints or explicitly identified fo
 
 - The summary report has a confirmed release-filter propagation defect: headline/suite/step metrics remain project-wide while top failures receive `release_id`. Its `unique_tests` basis label also does not describe every mode/fallback. See the exact [aggregation rules and examples](../pipelines/reporting.md). These are observed source behavior, not guarantees inferred from OpenAPI descriptions.
 
-- API contracts are not uniformly complete: some endpoints return plain dicts, streamed files or manually shaped responses. [Generated gap list](../reference/api-contract-gaps.md) makes this visible; use the linked handler/serializer until a response model is added.
+- API contracts are not uniformly complete: some endpoints return plain dicts, streamed files or manually shaped responses. Each such operation's generated domain page says so under "Contract limit"; use the linked handler/serializer until a response model is added.
 - Source import and schema generation do not prove live migration compatibility, database availability, queue delivery, model behavior or external integration credentials. Verify a specific installation with the checks in the [deployment guide](../operations/deployment.md#startup-and-upgrade-order).
 - Report review enforcement defaults off. The system can record would-refuse audit events without preventing distribution. Enable it intentionally after checking downstream consumers and existing reports.
 - Asynchronous paths are eventually consistent. Upload 202, Redis task status, durable run, pipeline completion, accepted review and successful delivery are separate observations. Redis file status expires after 24 hours.

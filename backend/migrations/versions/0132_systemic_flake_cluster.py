@@ -1,7 +1,5 @@
 """Add systemic_flake_cluster — tests that fail TOGETHER, across runs.
 
-Phase 3 of ``architecture/TEST_INTELLIGENCE_PLAN.md``.
-
 ## Why this is not ``failure_clusters``
 
 ``failure_clusters`` already exists, and reusing it would have been the obvious
@@ -29,8 +27,8 @@ cluster, and "these 14 tests flip together and it smells like an external
 dependency" is both more actionable and more verifiable than 14 separate flags.
 
 ``cause_family`` is nullable and ``unknown`` is a legitimate value. Naming a
-cause we cannot evidence would be the fabrication this whole roadmap is built
-to avoid.
+cause we cannot evidence would be exactly the fabricated confidence the
+flakiness signals are built to avoid.
 
 Revision ID: 0132
 Revises: 0131

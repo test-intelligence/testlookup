@@ -1,16 +1,16 @@
-"""Phase 2: a score must degrade honestly, and a verdict must never act alone.
+"""A flaky score must degrade honestly, and a verdict must never act alone.
 
-Roadmap Phase 2 (``architecture/TEST_INTELLIGENCE_PLAN.md``). Two properties are
+Covers ``flaky_score_service`` and ``flaky_suppression_gate``. Two properties are
 load-bearing and everything here pins one of them.
 
-**1. The score degrades honestly at low volume.** The Phase 0 census measured
+**1. The score degrades honestly at low volume.** A readiness census measured
 every genuine project on the reference deployment at 12–15 fingerprints with a
-median of 5–12 runs, which is why the Bayesian posterior was descoped: over that
-much data a posterior mostly reports its prior back. The replacement must not
+median of 5–12 runs, which is why the score is not a Bayesian posterior: over
+that much data a posterior mostly reports its prior back. The score must not
 repeat the sin in a different shape — so a thin history yields no score and a
 visible confidence band, never a confident-looking number.
 
-**2. Nothing auto-suppresses (decision D2).** Google found that when a
+**2. Nothing auto-suppresses.** Google found that when a
 previously stable test turned flaky, roughly 1 in 6 times the cause was a real
 production bug. A wrongly-shown verdict costs a minute; a wrongly-suppressed
 failure ships the bug.
@@ -43,9 +43,9 @@ from app.services.flaky_suppression_gate import (
 # ── 1. The score degrades honestly ───────────────────────────────────────────
 
 def test_thin_history_yields_no_score_at_all():
-    """THE Phase 2 guard. Below the evidence floor there is no number — not a
-    small number, not a hedged number. A score computed from 3 runs is the same
-    mistake as the posterior we descoped, wearing different clothes."""
+    """THE flaky-score guard. Below the evidence floor there is no number — not
+    a small number, not a hedged number. A score computed from 3 runs is the
+    same mistake as a prior-dominated posterior, wearing different clothes."""
     result = compute_score(
         test_fingerprint="fp",
         observation_count=MIN_OBSERVATIONS - 1,
@@ -180,10 +180,10 @@ def test_environment_signal_flags_a_test_that_only_fails_in_one_place():
     assert 0.0 <= split <= 1.0
 
 
-# ── 2. Decision D2: never auto-suppress ──────────────────────────────────────
+# ── 2. Never auto-suppress ───────────────────────────────────────────────────
 
 def test_suppression_is_disabled_unconditionally():
-    """Decision D2, pinned as a constant rather than config. Flipping this must
+    """Pinned as a constant rather than config. Flipping this must
     be a deliberate, reviewable act — not a toggle someone finds in settings."""
     assert ALLOW_SUPPRESSION is False
 

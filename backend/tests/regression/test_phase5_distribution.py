@@ -1,16 +1,14 @@
-"""Phase 5: deliver the verdict where people are, and stop the pile growing.
+"""Deliver the verdict where people are, and stop the quarantine pile growing.
 
-Roadmap Phase 5 (``architecture/TEST_INTELLIGENCE_PLAN.md``).
+**PR summary** (``attribution_summary``) — a bare failure count is mostly noise
+(roughly 84% of pass→fail transitions involve a flaky test), and the surveyed
+adoption gap says the verdict has to arrive *before* a human is paged. The PR
+comment says what the failures appear to be — **additively**, hiding nothing.
 
-**P5-A** — a bare failure count is mostly noise (roughly 84% of pass→fail
-transitions involve a flaky test), and the surveyed adoption gap says the
-verdict has to arrive *before* a human is paged. The PR comment now says what
-the failures appear to be — **additively**, hiding nothing.
-
-**P5-B** — quarantine already had an SLA, auto-defects and auto-promotion. What
-it lacked was anything stopping the pile growing quietly: a cap, an unmasking
-safeguard, and a visible population. Quarantine otherwise becomes "delay with
-documentation".
+**Quarantine health** (``quarantine_health_service``) — quarantine has an SLA,
+auto-defects and auto-promotion. What keeps the pile from growing quietly is a
+cap, an unmasking safeguard, and a visible population. Quarantine otherwise
+becomes "delay with documentation".
 """
 from __future__ import annotations
 
@@ -46,7 +44,7 @@ def _attr(verdict: AttributionVerdict, **inputs) -> Attribution:
     )
 
 
-# ── P5-A: the summary line ───────────────────────────────────────────────────
+# ── PR summary line ──────────────────────────────────────────────────────────
 
 def test_no_failures_produces_no_line_rather_than_an_empty_sentence():
     assert summarize([]) == ""
@@ -118,7 +116,7 @@ def test_every_verdict_has_a_label_for_the_summary_surface():
 def test_the_pr_comment_adds_the_line_without_hiding_anything():
     """Additive only: the failure sections must still render. A comment that
     marked itself green because the failures looked flaky would be the
-    suppression this roadmap refuses."""
+    suppression the attribution verdict refuses."""
     import app.services.github_pr_comment_service as module
 
     source = inspect.getsource(module._build_comment_body)
@@ -137,7 +135,7 @@ def test_a_failing_attribution_does_not_block_the_comment():
     assert "pr_comment_attribution_failed" in source
 
 
-# ── P5-B: the cap warns, never blocks ────────────────────────────────────────
+# ── Quarantine: the cap warns, never blocks──────────────────────────────────
 
 def test_under_the_cap_is_silent():
     assert evaluate_cap(active_count=3, max_active=8) is None
@@ -172,7 +170,7 @@ def test_the_cap_never_blocks_a_quarantine():
     assert "not enforced" in health.to_dict()["policy"]
 
 
-# ── P5-B: the unmasking safeguard ────────────────────────────────────────────
+# ── Quarantine: the unmasking safeguard──────────────────────────────────────
 
 def test_a_changed_failure_signature_is_flagged():
     """Quarantine can mask a real bug. A quarantined test failing a DIFFERENT
@@ -207,7 +205,7 @@ def test_missing_data_is_not_a_change():
     assert signature_changed("boom", None) is False
 
 
-# ── P5-B: the population is visible ──────────────────────────────────────────
+# ── Quarantine: the population is visible────────────────────────────────────
 
 def test_health_reports_the_population_and_the_limit_it_judged_against():
     health = summarize_health("p", active_count=5, max_active=8).to_dict()

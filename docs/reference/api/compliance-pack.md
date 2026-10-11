@@ -1,8 +1,8 @@
 # Compliance Pack API
 
-[Documentation home](../../README.md) · [Regeneration](../../handoff/maintenance.md)
+[Documentation home](../../README.md) · [Regeneration](../../maintainers/maintenance.md)
 
-Generated from tracked source by `scripts/generate_handoff_reference.py`. Do not edit by hand. The baseline and validation limits are recorded in [verification](../../handoff/verification.md).
+Generated from tracked source by `scripts/generate_reference.py`. Do not edit by hand. What the checks cover is recorded in [verification](../../maintainers/verification.md).
 
 ## DELETE `/api/v1/compliance-packs/{pack_id}`
 

@@ -8,14 +8,13 @@ identical array to every claim it emitted. Coverage therefore read *100% of
 claims have evidence* while **no claim cited evidence chosen for it**, and the
 claim-evidence drawer presented bundle-level provenance as claim-level.
 
-Measured on the homelab 2026-08-22, before this fix: **10 of 10** published
-reports had every claim sharing a byte-identical evidence list.
+Measured on a reference deployment 2026-08-22, before this fix: **10 of 10**
+published reports had every claim sharing a byte-identical evidence list.
 
 The subtlety that makes this worth a guard: the naive metric cannot see the
 bug. "Claims with evidence" was already 100% and stayed 100%. Only comparing
-claims *to each other* reveals it -- which is why
-``benchmarks/pipeline/aggregate.py`` reports ``shared_evidence_bundle_rate``
-separately from coverage.
+claims *to each other* reveals it -- which is why the share of claims sharing
+one evidence bundle has to be measured separately from coverage.
 
 What is guarded
 ---------------
@@ -86,7 +85,7 @@ def test_claims_no_longer_share_one_evidence_list():
 
 
 def test_coverage_alone_cannot_see_the_bug():
-    """Pins why the harness reports shared_evidence_bundle_rate separately.
+    """Pins why evidence sharing must be measured separately from coverage.
 
     'Claims with evidence' was 100% before the fix and is 100% after. A metric
     that only counted that would have shown this change doing nothing.

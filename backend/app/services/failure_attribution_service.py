@@ -1,8 +1,5 @@
 """Is this failure yours, flaky, or the environment's?
 
-Phase 4 of ``architecture/TEST_INTELLIGENCE_PLAN.md`` — the flagship, and the
-item the rest of the roadmap exists to reach.
-
 ## The problem
 
 At Google roughly **84% of pass→fail transitions involve a flaky test**. A raw
@@ -10,10 +7,11 @@ transition is therefore a weak signal of a real regression, and a product that
 presents every new red as "new failure" produces a false-positive flood that
 trains engineers to dismiss the real ones — the cockpit-alarm failure mode.
 
-Everything needed to do better already existed here and was never composed:
-flaky scores (Phase 2), systemic co-failure clusters (Phase 3), commit-range
-attribution, a last-green baseline, and measured per-project classifier
-calibration (Phase 0). This module is the composition.
+Everything needed to do better is computed elsewhere: flaky scores
+(``flaky_score_service``), systemic co-failure clusters
+(``systemic_cluster_service``), commit-range attribution, a last-green
+baseline, and measured per-project classifier calibration
+(``flaky_classifier_calibration``). This module is the composition.
 
 ## How the verdict is reached
 
@@ -118,7 +116,7 @@ FLAKY_SCORE_FLOOR = 0.5
 # Commit-range path overlap must clear this before it argues for the change.
 CHANGE_OVERLAP_FLOOR = 0.4
 
-# Confidence bands from Phase 2 that are too thin to vote on.
+# Flaky-score confidence bands that are too thin to vote on.
 WEAK_CONFIDENCES = {"none", "low"}
 
 
@@ -129,17 +127,17 @@ class AttributionInputs:
     # 1. Did this test just turn red, or was it already failing?
     is_new_failure: bool = False
     last_green_run_id: Optional[str] = None
-    # 2. Phase 2.
+    # 2. flaky_score_service.
     flaky_score: Optional[float] = None
     flaky_confidence: str = "none"
-    # 3. Phase 3.
+    # 3. systemic_cluster_service.
     cluster_key: Optional[str] = None
     cluster_cause_family: Optional[str] = None
     cluster_size: int = 0
     # 4. commit_attribution_service.
     change_overlap: Optional[float] = None
     changed_files: tuple[str, ...] = ()
-    # 5. Phase 0 calibration, via the suppression gate.
+    # 5. Classifier calibration, via the suppression gate.
     calibration_mode: str = "hint"
     calibration_specificity: Optional[float] = None
 
@@ -226,8 +224,8 @@ def compose(inputs: AttributionInputs) -> Attribution:
         votes[AttributionVerdict.LIKELY_YOUR_CHANGE.value] = STRENGTH_CHANGE_OVERLAP
 
     # 2. Flaky history — only when the score rests on enough observations.
-    # A thin-history score is exactly the fabricated confidence Phase 2 refuses
-    # to emit, and it must not sneak back in as a vote here.
+    # A thin-history score is exactly the fabricated confidence the flaky score
+    # refuses to emit, and it must not sneak back in as a vote here.
     score = _clamp(inputs.flaky_score) if inputs.flaky_score is not None else 0.0
     if score >= FLAKY_SCORE_FLOOR and inputs.flaky_confidence not in WEAK_CONFIDENCES:
         votes[AttributionVerdict.LIKELY_FLAKY.value] = STRENGTH_FLAKY
@@ -370,7 +368,7 @@ async def attribute_run(
 
     fingerprints = [tc.test_fingerprint for tc in failing if tc.test_fingerprint]
 
-    # 2. Flaky scores (Phase 2).
+    # 2. Flaky scores.
     scores = {
         row.test_fingerprint: row
         for row in (
@@ -383,7 +381,7 @@ async def attribute_run(
         ).scalars().all()
     }
 
-    # 3. Systemic cluster membership (Phase 3).
+    # 3. Systemic cluster membership.
     cluster_rows = (
         await db.execute(
             select(SystemicFlakeClusterMember, SystemicFlakeCluster)
@@ -399,7 +397,7 @@ async def attribute_run(
     ).all()
     clusters = {member.test_fingerprint: cluster for member, cluster in cluster_rows}
 
-    # 5. Calibration (Phase 0), one decision for the whole project.
+    # 5. Calibration, one decision for the whole project.
     calibration = (
         await db.execute(
             select(FlakyClassifierCalibration).where(
@@ -445,7 +443,7 @@ async def attribute_run(
     # ``run_commit_ranges.commits`` as ``[{sha, author, message, files}]``.
     # Reading a ``run.changed_files`` that does not exist would have made this
     # whole signal dead code that fails silently, which is exactly how the
-    # Phase 0 OpenShift branch broke.
+    # environment resolver's OpenShift branch once broke.
     #
     # An empty range means "no overlap evidence", which is different from
     # "evidence of no overlap": with no commits known, this signal simply does

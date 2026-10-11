@@ -1,7 +1,7 @@
 # ============================================================
 # TestLookup — Developer Makefile
 # ============================================================
-.PHONY: benchmark-pipeline help dev dev-llm dev-setup dev-lite dev-lite-stop dev-logs dev-logs-seed stop restart clean clean-scratch backup restore preflight upgrade verify-ops-scripts migrate migrate-create migrate-down migrate-status pull-llm pull-llm-large list-llm test-backend test-backend-cov test-frontend test-e2e test-agent lint format type-check build build-push offline-bundle offline-bundle-plan images-check images-check-test logs shell-backend shell-db simulate-upload seed-data seed-data-reset quickstart demo smoke benchmark setup-minio build-java-sdk build-java-sdk-docker mcp-install mcp-start mcp-sse mcp-sse-docker k8s-deploy-dev k8s-deploy-staging k8s-deploy-prod k8s-deploy-openshift k8s-deploy-openshift-artifactory k8s-deploy-openshift-artifactory-update k8s-migrate k8s-mirror-images-openshift k8s-status k8s-rollout-async k8s-rollout-async-dev k8s-rollout-async-staging k8s-rollout-async-prod k8s-status-async k8s-status-openshift k8s-scale-worker
+.PHONY: help dev dev-llm dev-setup dev-lite dev-lite-stop dev-logs dev-logs-seed stop restart clean clean-scratch backup restore preflight upgrade verify-ops-scripts migrate migrate-create migrate-down migrate-status pull-llm pull-llm-large list-llm test-backend test-backend-cov test-frontend test-e2e test-agent lint format type-check build build-push offline-bundle offline-bundle-plan images-check images-check-test logs shell-backend shell-db simulate-upload seed-data seed-data-reset quickstart demo smoke setup-minio build-java-sdk build-java-sdk-docker mcp-install mcp-start mcp-sse mcp-sse-docker k8s-deploy-dev k8s-deploy-staging k8s-deploy-prod k8s-deploy-openshift k8s-deploy-openshift-artifactory k8s-deploy-openshift-artifactory-update k8s-migrate k8s-mirror-images-openshift k8s-status k8s-rollout-async k8s-rollout-async-dev k8s-rollout-async-staging k8s-rollout-async-prod k8s-status-async k8s-status-openshift k8s-scale-worker
 
 # Force bash for recipe shells. On Windows, GNU make defaults to cmd.exe which
 # breaks bash builtins like `until`/`for f in glob`. Git Bash provides bash at
@@ -424,30 +424,6 @@ asyncio.run((lambda: httpx.AsyncClient(base_url='http://localhost:8000', timeout
 	@echo ""
 	@echo "    Default login: use the dev-login endpoint or register via the API."
 	@echo "    To stop: make stop"
-
-benchmark: ## Run classification + throughput benchmarks (stack must be running)
-	@echo "==> Running classification benchmark (rules mode, in-container)..."
-	$(DOCKER_COMPOSE) exec backend python /app/benchmarks/classification/evaluate.py \
-		--mode rules \
-		--output /app/benchmarks/results/classification_rules.json
-	@echo ""
-	@echo "==> Running throughput benchmark..."
-	$(DOCKER_COMPOSE) exec backend python /app/scripts/load_test_concurrent.py bench \
-		--base-url http://localhost:8000 \
-		--iterations 20 \
-		--concurrency 5 \
-		--check-budgets \
-		--output /app/benchmarks/results/throughput.json
-	@echo ""
-	@echo "==> Benchmarks complete. Results in benchmarks/results/"
-
-benchmark-pipeline: ## Baseline the AI pipeline from recorded telemetry (needs runs in the DB)
-	@echo "==> Aggregating AI pipeline baseline from agent_stage_results..."
-	$(DOCKER_COMPOSE) exec backend python /app/benchmarks/pipeline/collect.py \
-		--days $(or $(DAYS),30) \
-		--output /app/benchmarks/results/pipeline_baseline.json
-	@echo ""
-	@echo "==> Baseline written to benchmarks/results/pipeline_baseline.json"
 
 setup-minio: .env ## (Re)create the S3 buckets the backend uses — idempotent; backend/scripts/s3_setup.py in the backend image
 	$(DOCKER_COMPOSE) run --rm minio-setup

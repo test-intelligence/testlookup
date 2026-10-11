@@ -466,7 +466,7 @@
     },
     {
       "datasource": "Prometheus",
-      "description": "Current p95 for generic chart-data reads (budget 1.5s, the percentile-metric ceiling; count/rate reads are held to 500ms by the load harness only, since they share this route). Homelab baseline: architecture/VIZ_PERFORMANCE_BASELINE.md.",
+      "description": "Current p95 for generic chart-data reads (budget 1.5s, the percentile-metric ceiling; count/rate reads are held to 500ms by the load harness only, since they share this route). One user's cold 90-day read measures ~240ms server p95.",
       "fieldConfig": {
         "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1.5 }, { "color": "red", "value": 2.5 }] } },
         "overrides": []
@@ -506,7 +506,7 @@
     },
     {
       "datasource": "Prometheus",
-      "description": "Current p95 for chart drill-down rows (budget 300ms). Page 1 is ~10ms server-side on the homelab baseline; a breach is queueing behind heavy chart reads.",
+      "description": "Current p95 for chart drill-down rows (budget 300ms). A single-user page-1 read measures ~10ms server-side; a breach is queueing behind heavy chart reads.",
       "fieldConfig": {
         "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.3 }, { "color": "red", "value": 0.5 }] } },
         "overrides": []
