@@ -38,6 +38,7 @@ import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { releasesService } from '@/services/releasesService'
 import { useRuns } from '@/hooks/useRuns'
 import { useModalFocus } from '@/hooks/useModalFocus'
+import { usePermissions } from '@/hooks/usePermissions'
 import type { LinkedRun, Release, ReleasePhase } from '@/types/releases'
 import { deriveRelease, computeStageCounts } from '@/components/releases/mapping'
 import { ReleaseHealthBanner, ReleaseHealthDetails } from '@/components/releases/ReleaseHealth'
@@ -62,6 +63,13 @@ const PHASE_STATUS_COLOR: Record<string, string> = {
   completed:   'bg-[var(--status-passed-bg)]/20 text-[var(--status-passed)]',
   skipped:     'bg-[var(--color-bg-card)]/10 text-[var(--color-text-muted)]',
 }
+
+/**
+ * Deleting a release, removing a phase and unlinking a run are ADMIN on the
+ * API (`routers/releases.py`); the rest of this page is QA lead. A QA lead was
+ * offered all three and got a 403 from each.
+ */
+const ADMIN_REQUIRED = 'Admin role required'
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -369,6 +377,7 @@ function AddPhaseRow({ releaseId, existingPhaseNames, onSaved }: {
 function ReleaseDetailPanel({ releaseId }: { releaseId: string }) {
   const navigate = useNavigate()
   const { hash } = useLocation()
+  const { isAdmin } = usePermissions()
   const { data: detail, isLoading, mutate: refetch } = useRelease(releaseId)
   const [showLinkModal, setShowLinkModal] = useState(false)
   const [markingReleased, setMarkingReleased] = useState(false)
@@ -605,8 +614,10 @@ function ReleaseDetailPanel({ releaseId }: { releaseId: string }) {
                   onClick={() => {
                     if (confirm(`Remove phase "${phase.name}"?`)) deletePhase(phase.id)
                   }}
-                  className="text-[var(--color-text-faint)] hover:text-[var(--status-failed)] transition-colors p-0.5"
-                  title="Remove phase"
+                  disabled={!isAdmin}
+                  aria-label={`Remove phase ${phase.name}`}
+                  className="text-[var(--color-text-faint)] hover:text-[var(--status-failed)] transition-colors p-0.5 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-[var(--color-text-faint)]"
+                  title={isAdmin ? 'Remove phase' : ADMIN_REQUIRED}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
@@ -677,7 +688,13 @@ function ReleaseDetailPanel({ releaseId }: { releaseId: string }) {
                       {run.pass_rate != null ? `${Number(run.pass_rate).toFixed(1)}%` : '—'}
                     </td>
                     <td className="td text-right">
-                      <button onClick={() => unlinkRun(run.id)} className="text-[var(--color-text-muted)] hover:text-[var(--status-failed)] transition-colors">
+                      <button
+                        onClick={() => unlinkRun(run.id)}
+                        disabled={!isAdmin}
+                        aria-label={`Unlink run ${run.build_number ?? run.id.slice(0, 8)}`}
+                        title={isAdmin ? 'Unlink run' : ADMIN_REQUIRED}
+                        className="text-[var(--color-text-muted)] hover:text-[var(--status-failed)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-[var(--color-text-muted)]"
+                      >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     </td>
@@ -743,6 +760,7 @@ export default function ReleasesPage() {
     : (project?.name ?? 'this project')
 
   const navigate = useNavigate()
+  const { isAdmin } = usePermissions()
   const [showModal, setShowModal]     = useState(false)
   const [editRelease, setEditRelease] = useState<Release | undefined>()
   // UX redesign P5 item 5: on the list a release opens in a side panel (a
@@ -1009,7 +1027,9 @@ export default function ReleasesPage() {
                           </button>
                           <button
                             onClick={() => deleteRelease(r.id)}
-                            className="text-xs text-[var(--status-failed)]/70 hover:text-[var(--status-failed)] px-2 py-1 rounded hover:bg-[var(--status-failed-bg)]/10 transition-colors"
+                            disabled={!isAdmin}
+                            title={isAdmin ? undefined : ADMIN_REQUIRED}
+                            className="text-xs text-[var(--status-failed)]/70 hover:text-[var(--status-failed)] px-2 py-1 rounded hover:bg-[var(--status-failed-bg)]/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                           >
                             Delete
                           </button>
@@ -1061,7 +1081,9 @@ export default function ReleasesPage() {
             <button
               type="button"
               onClick={() => deleteRelease(panelRelease.id)}
-              className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-[var(--status-failed)] hover:bg-[var(--status-failed-bg)]/10"
+              disabled={!isAdmin}
+              title={isAdmin ? undefined : ADMIN_REQUIRED}
+              className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-[var(--status-failed)] hover:bg-[var(--status-failed-bg)]/10 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Trash2 className="h-3.5 w-3.5" aria-hidden="true" /> Delete
             </button>

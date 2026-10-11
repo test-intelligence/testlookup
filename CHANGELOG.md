@@ -26,6 +26,32 @@ listening, stayed green.
   and that a test leaving a request behind fails. Mutation-checked: an
   uninstalled guard, a missing check, and a guard that records but lets the
   request through each fail it.
+## Unreleased - UI role gates match the API; flags evaluated with their project
+
+Owner request 2026-10-11, from the open-source docs pass: align the UI's role
+gates with the API, and evaluate server-side feature flags for the project
+(and user) they are about.
+
+UI controls the API refused (each now disabled with the role it needs, or not
+drawn where nearby controls already hide; each pinned by a test):
+- **Release-gate policies** (`/policies`): create, save, publish, deactivate
+  and simulate are ADMIN on the API; a QA lead was offered all five. A QA lead
+  now reads the policies: New Policy and Simulate say "Admin role required",
+  the editor is read-only, Deactivate is not drawn.
+- **Releases**: Delete (side panel and the release's page), a phase's remove
+  and a linked run's unlink are ADMIN; they were offered to QA leads.
+- **Suites**: Delete is QA lead (like Make default); it was drawn for a QA
+  engineer.
+- **Audit dashboard**: Export CSV is ADMIN; the page is QA lead.
+- **Email (SMTP)**: saving is ADMIN; a QA lead now sees the stored config
+  read-only (Send test email, QA lead on the API, stays).
+- **Release gate**: Override decision is QA lead; every role was offered it.
+- **Failures**: Mute (a quarantine proposal) is QA lead and Jira (file a
+  defect) is QA engineer; neither was gated.
+
+Tests: `ReleaseGatePage.test.tsx` made a real `GET /settings/ai/mode`; a 401
+from whatever listened on the dev port logged the test user out mid-test, so a
+role set by a test did not survive the render. The read is mocked there now.
 
 ## Unreleased - Error sweeps: every page, every action, every GET endpoint
 

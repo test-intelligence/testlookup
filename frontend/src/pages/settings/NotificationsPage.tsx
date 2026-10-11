@@ -24,6 +24,7 @@ import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import { appSettingsService } from '@/services/appSettingsService'
+import { usePermissions } from '@/hooks/usePermissions'
 import type { IntegrationsConfigRead, SmtpConfigRead } from '@/services/appSettingsService'
 import { tlsMismatch, tlsModeForPort } from './smtpTls'
 
@@ -72,6 +73,10 @@ function SmtpLoadFailure({ error }: { error: unknown }) {
 }
 
 export function SmtpConfigCard() {
+  // Reading the config and sending a test are QA lead; saving it is ADMIN on
+  // the API (`PUT /settings/smtp`). A QA lead's Save answered 403, so for a
+  // QA lead the form is read-only and Save says which role it needs.
+  const { isAdmin: canSave } = usePermissions()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
@@ -194,10 +199,11 @@ export function SmtpConfigCard() {
               {/* A switch: named, and its state exposed (it had neither). */}
               <button
                 onClick={() => setEnabled(v => !v)}
+                disabled={!canSave}
                 role="switch"
                 aria-checked={enabled}
                 aria-label="Enable SMTP email delivery"
-                className={`relative w-11 h-6 rounded-full transition-colors ${
+                className={`relative w-11 h-6 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                   enabled ? 'bg-[var(--color-btn-primary-bg)]' : 'bg-[var(--color-bg-hover)]'
                 }`}
               >
@@ -226,6 +232,7 @@ export function SmtpConfigCard() {
                         value={host}
                         onChange={e => setHost(e.target.value)}
                         placeholder="smtp.example.com"
+                        disabled={!canSave}
                         className="input w-full text-sm"
                       />
                     )}
@@ -251,6 +258,7 @@ export function SmtpConfigCard() {
                         }}
                         min={1}
                         max={65535}
+                        disabled={!canSave}
                         className="input w-full text-sm"
                       />
                     )}
@@ -268,6 +276,7 @@ export function SmtpConfigCard() {
                       value={fromAddress}
                       onChange={e => setFromAddress(e.target.value)}
                       placeholder="noreply@testlookup.io"
+                      disabled={!canSave}
                       className="input w-full text-sm"
                     />
                   )}
@@ -288,6 +297,7 @@ export function SmtpConfigCard() {
                       value={user}
                       onChange={e => setUser(e.target.value)}
                       placeholder="smtp-user@example.com"
+                      disabled={!canSave}
                       className="input w-full text-sm"
                     />
                   )}
@@ -317,6 +327,7 @@ export function SmtpConfigCard() {
                           setClearPassword(false)
                         }}
                         placeholder={passwordSet && !clearPassword ? '••••••••' : 'Enter password'}
+                        disabled={!canSave}
                         className="input w-full text-sm pr-10"
                       />
                       <button
@@ -357,7 +368,8 @@ export function SmtpConfigCard() {
                         <button
                           type="button"
                           onClick={() => setClearPassword(true)}
-                          className="underline hover:text-[var(--color-text-secondary)] transition-colors"
+                          disabled={!canSave}
+                          className="underline hover:text-[var(--color-text-secondary)] transition-colors disabled:no-underline disabled:cursor-not-allowed"
                         >
                           Clear
                         </button>
@@ -389,7 +401,8 @@ export function SmtpConfigCard() {
                 type="button"
                 aria-label={implicitTls ? 'Use STARTTLS' : 'Use implicit TLS'}
                 onClick={() => setImplicitTls(v => !v)}
-                className={`relative w-11 h-6 rounded-full transition-colors ${
+                disabled={!canSave}
+                className={`relative w-11 h-6 rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                   implicitTls ? 'bg-[var(--color-btn-primary-bg)]' : 'bg-[var(--color-bg-hover)]'
                 }`}
               >
@@ -405,8 +418,9 @@ export function SmtpConfigCard() {
             <div className="flex items-center gap-2 pt-1">
               <button
                 onClick={handleSave}
-                disabled={saving}
-                className="btn-primary flex items-center gap-2 text-sm px-4 py-2"
+                disabled={saving || !canSave}
+                title={canSave ? undefined : 'Admin role required'}
+                className="btn-primary flex items-center gap-2 text-sm px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {saving ? <LoadingSpinner size="sm" /> : <CheckCircle className="w-4 h-4" />}
                 Save
