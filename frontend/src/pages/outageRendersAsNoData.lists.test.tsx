@@ -27,6 +27,12 @@ vi.mock('@/hooks/useReleases', () => ({
   useReleases: vi.fn(),
   useRelease: vi.fn(() => ({ data: undefined, isLoading: false, mutate: vi.fn() })),
 }))
+// The Runs page's manual-upload rollout flag, so no request leaves the test (src/test/networkGuard.ts).
+vi.mock('@/hooks/useFeatureFlags', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/hooks/useFeatureFlags')>(),
+  useFeatureEnabled: () => false,
+  useFeatureFlagStatus: () => false,
+}))
 vi.mock('@/hooks/useSuiteOptions', () => ({
   useSuiteOptions: () => ({ options: [], isLoading: false }),
 }))

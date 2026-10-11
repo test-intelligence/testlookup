@@ -24,6 +24,9 @@ vi.mock('@/hooks/useTestManagement', async (importOriginal) => ({
   useTestCases: vi.fn(),
 }))
 
+// The evidence-gap lists under the table have tests of their own; here they would only
+// make requests (src/test/networkGuard.ts).
+vi.mock('@/components/testManagement/EvidenceGapLists', () => ({ default: () => null }))
 vi.mock('@/hooks/useNow', () => ({
   useNow: () => Date.parse('2026-10-10T12:00:00Z'),
 }))

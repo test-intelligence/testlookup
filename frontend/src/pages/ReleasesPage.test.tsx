@@ -13,6 +13,10 @@ vi.mock('@/hooks/useReleases', () => ({
 vi.mock('@/hooks/useRuns', () => ({
   useRuns: vi.fn(),
 }))
+// Each release's compliance packs, so no request leaves the test (src/test/networkGuard.ts).
+vi.mock('@/hooks/useCompliancePacks', () => ({
+  useCompliancePacks: () => ({ packs: [], isLoading: false, isError: false, refresh: vi.fn() }),
+}))
 
 const projectStoreState = vi.hoisted(() => ({
   activeProjectId: 'proj-1' as string,
