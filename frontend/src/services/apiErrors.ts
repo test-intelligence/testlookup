@@ -36,6 +36,15 @@ export function shouldToastError(
 }
 
 /**
+ * Whether a 403 is the API refusing a session on a temporary password
+ * (``password_change_required``, enforced server-side since 2026-10-10).
+ */
+export function isPasswordChangeRequired(detail: unknown): boolean {
+  return !!detail && typeof detail === 'object'
+    && (detail as { code?: unknown }).code === 'password_change_required'
+}
+
+/**
  * Best-effort human-readable message from a FastAPI error ``detail``.
  *
  * ``detail`` may be a plain string (``HTTPException(detail="…")``) OR, for a 422,

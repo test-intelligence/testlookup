@@ -33,8 +33,10 @@ export const notificationService = {
   markAllRead: () =>
     postData('/api/v1/notifications/history/read-all'),
 
+  // The settings page toasts the outcome itself, so the client stays quiet
+  // (it showed every failure twice).
   sendTest: (channel: NotificationChannel, preferenceId?: string) =>
-    postData('/api/v1/notifications/test', { channel, preference_id: preferenceId ?? null }),
+    postData('/api/v1/notifications/test', { channel, preference_id: preferenceId ?? null }, { suppressToast: true }),
 }
 export type {
   NotificationChannel,

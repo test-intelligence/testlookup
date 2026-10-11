@@ -87,7 +87,7 @@ export default function FlakyTestsPage() {
 
 function FlakyTests({ projectId }: { projectId: string }) {
   const [tab, setTab] = useTabParam(FLAKY_TABS, 'detected')
-  const { canAccessManagement: canPropose } = usePermissions()
+  const { canAccessManagement: canPropose, isQaEngineer: canRefresh } = usePermissions()
   // Every quarantine endpoint answers 503 while this flag is off, so a
   // proposal is offered only when it can be made. It was offered on every row
   // and the dialog just stayed open on "Flaky auto-quarantine is disabled"
@@ -127,7 +127,8 @@ function FlakyTests({ projectId }: { projectId: string }) {
       toast.success(`Found ${found} flaky test${found === 1 ? '' : 's'}`)
       await refreshCoach()
     } catch {
-      toast.error('Refresh failed — QA Engineer role required')
+      // The API client already toasted the server's reason; the old text here
+      // blamed the role for every failure, a 500 included.
     } finally {
       setRefreshing(false)
     }
@@ -184,16 +185,18 @@ function FlakyTests({ projectId }: { projectId: string }) {
                 about a test (the endpoints take no release). */}
             <AllReleasesBadge reason="Flaky tests are analysed over the project's last 30 days, and a quarantine request is a standing decision about a test, not about one release's runs." />
             {tab !== 'detected' && <ExperimentalBadge />}
-            <button
-              type="button"
-              onClick={() => void handleRefresh()}
-              disabled={refreshing}
-              className="btn-secondary text-sm flex items-center gap-2"
-              title="Re-run the flaky-test analysis over the last 30 days"
-            >
-              <RefreshCw className={clsx('h-4 w-4', refreshing && 'animate-spin')} />
-              {refreshing ? 'Refreshing…' : 'Refresh'}
-            </button>
+            {canRefresh && (
+              <button
+                type="button"
+                onClick={() => void handleRefresh()}
+                disabled={refreshing}
+                className="btn-secondary text-sm flex items-center gap-2"
+                title="Re-run the flaky-test analysis over the last 30 days"
+              >
+                <RefreshCw className={clsx('h-4 w-4', refreshing && 'animate-spin')} />
+                {refreshing ? 'Refreshing…' : 'Refresh'}
+              </button>
+            )}
           </>
         }
         tabs={<Tabs ariaLabel="Flaky tests" items={tabs} value={tab} onChange={setTab} />}

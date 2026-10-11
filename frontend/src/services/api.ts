@@ -1,7 +1,7 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios'
 import toast from 'react-hot-toast'
 import { useAuthStore } from '../store/authStore'
-import { extractErrorMessage, shouldToastError } from './apiErrors'
+import { extractErrorMessage, isPasswordChangeRequired, shouldToastError } from './apiErrors'
 
 declare module 'axios' {
   interface AxiosRequestConfig {
@@ -189,6 +189,16 @@ api.interceptors.response.use(
       } finally {
         isRefreshing = false
       }
+    }
+
+    // A session on a temporary password: the API refuses it until the
+    // password is changed. Send the reader to the change form rather than
+    // toasting a refusal on every call the page makes.
+    if (error.response?.status === 403 && isPasswordChangeRequired(error.response?.data?.detail)) {
+      if (typeof window !== 'undefined' && window.location.pathname !== '/reset-password') {
+        window.location.assign('/reset-password')
+      }
+      return Promise.reject(error)
     }
 
     // For non-401 errors or exhausted retries, surface a toast. 422 is now

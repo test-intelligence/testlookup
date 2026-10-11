@@ -83,6 +83,15 @@ vi.mock('@/services/aiFeedbackService', () => ({
   },
 }))
 
+// The page probes Jira availability on mount. Unmocked, it was a real request to
+// jsdom's origin (localhost:3000): wherever something listens there (a container
+// published on :3000 answered 401), the client's refresh-then-logout path cleared
+// the QA engineer mid-test and the Classify/Correct actions vanished (2026-10-10).
+vi.mock('@/hooks/useJiraDefects', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/hooks/useJiraDefects')>(),
+  useJiraDefectMetadata: vi.fn(() => ({ metadata: undefined, isLoading: false, isError: false })),
+}))
+
 vi.mock('@/hooks/useAnalysisLookup', () => ({
   useAnalysisLookup: vi.fn(() => ({ lookup: undefined, isLoading: true, isError: false })),
 }))
@@ -638,10 +647,8 @@ describe('FailureAnalysisPage', () => {
     // The share is the KPI; the category card states it and offers the bulk Classify beside it.
     const kpis = screen.getByRole('region', { name: 'Failure metrics' })
     expect(within(kpis).getByText('100%')).toBeInTheDocument()
-    expect(await screen.findByText(/100% of failures are sitting in/i)).toBeInTheDocument()
-    // findBy, not getBy: the CTA renders after the category data settles, which
-    // under a loaded machine can land a tick after the heading (push gate flake).
-    fireEvent.click(await screen.findByRole('button', { name: /Classify them so owners can be auto-routed/i }))
+    expect(screen.getByText(/100% of failures are sitting in/i)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Classify them so owners can be auto-routed/i }))
     expect(await screen.findByRole('dialog', { name: 'Classify uncategorised failures' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     // …and the same dialog from the header's ⋯ (the verdict card's "Classify" issue row).
@@ -1026,7 +1033,7 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
     expect(screen.queryByText(/Recommended actions/i)).toBeNull()
     expect(screen.queryByText(/QA · clustering/i)).toBeNull()
     expect(screen.queryByRole('button', { name: /^Open$/i })).toBeNull()
-    fireEvent.click(await screen.findByRole('button', { name: /Correct the classification/i }))
+    fireEvent.click(screen.getByRole('button', { name: /Correct the classification/i }))
     expect(await screen.findByRole('dialog', { name: /Correct classification/i })).toBeInTheDocument()
   })
 
