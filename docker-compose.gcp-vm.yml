@@ -33,7 +33,7 @@ services:
       # sent.
       - TRUSTED_PROXY_IPS=${TRUSTED_PROXY_IPS:-172.16.0.0/12}
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      - MONGO_URI=mongodb://mongo:27017
+      - MONGO_URI=mongodb://${MONGO_USER:-testlookup}:${MONGO_PASSWORD}@mongo:27017/${MONGO_DB:-testlookup_logs}?authSource=admin
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/1
@@ -81,6 +81,12 @@ services:
       target: production
     volumes: []
 
+  # Bucket setup (scripts/s3_setup.py) runs from the same production image.
+  minio-setup:
+    image: gcr.io/${GCP_PROJECT_ID:?GCP_PROJECT_ID must be set}/testlookup-backend:${IMAGE_TAG:?IMAGE_TAG must be set}
+    build:
+      target: production
+
   mcp:
     image: gcr.io/${GCP_PROJECT_ID:?GCP_PROJECT_ID must be set}/testlookup-mcp:${IMAGE_TAG:?IMAGE_TAG must be set}
 
@@ -93,9 +99,8 @@ services:
   chromadb:
     profiles: ["ai"]
 
-  # Keep MinIO console internal by default.
-  # Uncomment if you need direct console access from internet:
+  # The S3 endpoint (the `minio` service, versitygw) publishes only its API
+  # port 9000; there is no web console. Keep it off the internet: firewall
+  # port 9000 on the VM, or remove the published port with an override like:
   # minio:
-  #   ports:
-  #     - "9000:9000"
-  #     - "9001:9001"
+  #   ports: !reset []

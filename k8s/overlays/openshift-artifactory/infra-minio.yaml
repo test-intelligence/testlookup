@@ -1,4 +1,11 @@
-# MinIO — S3-compatible object storage, in-cluster for the air-gapped deploy.
+# S3-compatible object storage, in-cluster for the air-gapped deploy:
+# versitygw (Apache-2.0), posix backend — buckets are directories and objects
+# plain files on the PVC. The testlookup-minio names, the minio-data PVC, the
+# /data mount, port 9000 and the MINIO_* secret keys are kept. Objects live in
+# /data/s3, not /data, so a PVC that still holds a MinIO/Silo data directory is
+# never read or modified (migration: UPGRADING.md, scripts/s3_setup.py).
+# The data volume must support user extended attributes (ext4/xfs/btrfs do);
+# for a filesystem without them set VGW_META_SIDECAR to a directory on the PVC.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -32,21 +39,29 @@ spec:
     spec:
       containers:
         - name: minio
-          image: pgsty/silo:RELEASE.2026-09-16T00-00-00Z
-          # PGSTY Silo (the maintained MinIO fork) ships the server as `silo`; no `minio` alias.
-          command: ["silo", "server", "/data", "--console-address", ":9001"]
+          image: ghcr.io/versity/versitygw:v1.8.0
+          # The posix backend refuses to start when its root directory is missing.
+          command: ["/bin/sh", "-c", 'mkdir -p "$VGW_BACKEND_ARG" && exec /usr/local/bin/docker-entrypoint.sh']
           ports:
             - containerPort: 9000
               name: api
-            - containerPort: 9001
-              name: console
           env:
-            - name: MINIO_ROOT_USER
+            - name: VGW_BACKEND
+              value: posix
+            - name: VGW_BACKEND_ARG
+              value: /data/s3
+            - name: VGW_PORT
+              value: ":9000"
+            - name: VGW_HEALTH
+              value: /health
+            - name: VGW_QUIET
+              value: "true"
+            - name: ROOT_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
                   name: testlookup-secrets
                   key: MINIO_ACCESS_KEY
-            - name: MINIO_ROOT_PASSWORD
+            - name: ROOT_SECRET_KEY
               valueFrom:
                 secretKeyRef:
                   name: testlookup-secrets
@@ -63,13 +78,13 @@ spec:
               memory: 1Gi
           readinessProbe:
             httpGet:
-              path: /minio/health/ready
+              path: /health
               port: 9000
             initialDelaySeconds: 10
             periodSeconds: 15
           livenessProbe:
             httpGet:
-              path: /minio/health/live
+              path: /health
               port: 9000
             initialDelaySeconds: 30
             periodSeconds: 30

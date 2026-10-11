@@ -16,7 +16,7 @@ SHELL := bash
 DOCKER_COMPOSE ?= docker compose
 BACKEND_CONTAINER = testlookup_backend
 OLLAMA_CONTAINER = ollama
-OLLAMA_SLM_MODEL ?= qwen2.5:3b-instruct-q5_K_M
+OLLAMA_SLM_MODEL ?= qwen2.5:7b-instruct
 OLLAMA_LLM_MODEL ?= qwen2.5:14b-instruct-q5_K_M
 OLLAMA_EMBEDDING_MODEL ?= nomic-embed-text:v1.5
 K8S_NAMESPACE ?= testlookup
@@ -53,7 +53,7 @@ dev: .env ## Start core stack without local LLM (Ollama/ChromaDB excluded)
 	@echo "Stack started (no local LLM — AI falls back to rules/ML engine)."
 	@echo "  Dashboard  -> http://localhost:3000"
 	@echo "  API Docs   -> http://localhost:8000/api-docs"
-	@echo "  MinIO      -> http://localhost:9001  (credentials from .env)"
+	@echo "  S3 (API)   -> http://localhost:9000  (MINIO_ACCESS_KEY / MINIO_SECRET_KEY from .env)"
 	@echo "  Flower     -> http://localhost:5555"
 	@echo ""
 	@echo "  To enable Ollama + ChromaDB: run 'make dev-llm' instead."
@@ -167,12 +167,12 @@ pull-llm: ## Pull pinned SLM, LLM, and embedding models (requires Ollama)
 	$(DOCKER_COMPOSE) --profile local-llm exec -T $(OLLAMA_CONTAINER) ollama pull $(OLLAMA_EMBEDDING_MODEL)
 	@echo "Pinned SLM/LLM pair and embedding model downloaded."
 
-pull-llm-large: ## Pull larger/more capable models — 16GB+ VRAM (requires: make dev-llm)
+pull-llm-large: ## Pull the 32B model (Apache-2.0, ~20 GB; needs 32GB+ RAM or a 24GB GPU) (requires: make dev-llm)
 	@$(DOCKER_COMPOSE) --profile local-llm ps --services --filter status=running | grep -q "^ollama$$" || \
 	  (echo "ERROR: Ollama is not running. Start it first with: make dev-llm" && exit 1)
-	$(DOCKER_COMPOSE) --profile local-llm exec $(OLLAMA_CONTAINER) ollama pull qwen2.5:14b
-	$(DOCKER_COMPOSE) --profile local-llm exec $(OLLAMA_CONTAINER) ollama pull llama3.2:8b
-	$(DOCKER_COMPOSE) --profile local-llm exec $(OLLAMA_CONTAINER) ollama pull deepseek-coder:6.7b
+	$(DOCKER_COMPOSE) --profile local-llm exec $(OLLAMA_CONTAINER) ollama pull qwen2.5:32b-instruct
+	@echo "Pulled qwen2.5:32b-instruct. Use it with LLM_MODEL=qwen2.5:32b-instruct."
+	@echo "Other model families have their own licences (e.g. Llama: Llama Community License; DeepSeek: DeepSeek License) — review before use."
 
 list-llm: ## List downloaded LLM models (requires: make dev-llm)
 	$(DOCKER_COMPOSE) --profile local-llm exec $(OLLAMA_CONTAINER) ollama list
@@ -310,19 +310,19 @@ else
   BASH_CMD := bash
 endif
 
-k8s-bootstrap-homelab: ## Bootstrap K3s on 3 homelab nodes via SSH (cluster only, no app)
+k8s-bootstrap-homelab: ## Bootstrap a K3s cluster over SSH (nodes from your site config, TESTLOOKUP_HOMELAB_ENV; cluster only, no app)
 	$(BASH_CMD) homelabsetup/bootstrap-homelab.sh $(ARGS)
 
-k8s-oneclick-homelab: ## One-click: bootstrap K3s + deploy TestLookup (HOMELAB_NODE{1,2,3}_PASS env or interactive)
+k8s-oneclick-homelab: ## One-click: bootstrap K3s + deploy TestLookup (HOMELAB_NODE<n>_PASS env or interactive)
 	$(BASH_CMD) homelabsetup/bootstrap-homelab.sh --deploy $(ARGS)
 
-k8s-teardown-homelab: ## Uninstall K3s from all 3 homelab nodes
+k8s-teardown-homelab: ## Uninstall K3s from every node in your site config
 	$(BASH_CMD) homelabsetup/bootstrap-homelab.sh --teardown $(ARGS)
 
-k8s-deploy-homelab: ## Deploy to K3s homelab cluster (pass extra flags via ARGS, e.g. make k8s-deploy-homelab ARGS="--skip-registry")
+k8s-deploy-homelab: ## Deploy to a K3s cluster, single node or more (docs/operations/deploy-k3s.md; flags via ARGS, e.g. ARGS="--skip-registry")
 	$(BASH_CMD) homelabsetup/deploy-homelab.sh $(ARGS)
 
-k8s-deploy-homelab-update: ## Rebuild images and redeploy to homelab (skip registry + models)
+k8s-deploy-homelab-update: ## Rebuild images and redeploy to the K3s cluster (skip registry + models)
 	$(BASH_CMD) homelabsetup/deploy-homelab.sh --skip-registry --skip-models $(ARGS)
 
 k8s-deploy-openshift-artifactory: ## Air-gapped OpenShift deploy over HTTPS, all images from one Artifactory (config: openshiftsetup/artifactory.env; flags via ARGS)
@@ -333,12 +333,6 @@ k8s-deploy-openshift-artifactory-update: ## Rebuild app images + redeploy to Ope
 
 k8s-mirror-images-openshift: ## Pre-seed the configured Artifactory with all third-party infra images (run on an internet-connected host)
 	$(BASH_CMD) openshiftsetup/mirror-images.sh $(ARGS)
-
-k8s-stop-homelab: ## Graceful pause: drain testlookup workloads + stop K3s on every node (PVCs preserved)
-	$(BASH_CMD) homelabsetup/stop-homelab.sh $(ARGS)
-
-k8s-restart-homelab: ## Resume from k8s-stop-homelab: start K3s + scale workloads back to their pre-shutdown replicas
-	$(BASH_CMD) homelabsetup/restart-homelab.sh $(ARGS)
 
 k8s-status: ## Show Kubernetes deployment status
 	kubectl get pods,svc,ing -n testlookup
@@ -455,17 +449,8 @@ benchmark-pipeline: ## Baseline the AI pipeline from recorded telemetry (needs r
 	@echo ""
 	@echo "==> Baseline written to benchmarks/results/pipeline_baseline.json"
 
-setup-minio: .env ## Manually configure MinIO bucket and webhook (runs inside Docker — no host deps)
-	# .env carries MINIO_ACCESS_KEY / MINIO_SECRET_KEY / WEBHOOK_SECRET, which the
-	# script requires (WEBHOOK_SECRET becomes MinIO's auth_token, re-audit R15).
-	docker run --rm \
-		--network testlookup_net \
-		--env-file "$(CURDIR)/.env" \
-		-v "$(CURDIR)/scripts/setup-minio.sh:/setup-minio.sh:ro" \
-		-e MINIO_ENDPOINT=http://minio:9000 \
-		-e BACKEND_URL=http://backend:8000 \
-		--entrypoint sh \
-		pgsty/mc:RELEASE.2026-09-16T00-00-00Z /setup-minio.sh
+setup-minio: .env ## (Re)create the S3 buckets the backend uses — idempotent; backend/scripts/s3_setup.py in the backend image
+	$(DOCKER_COMPOSE) run --rm minio-setup
 
 # ── Client SDKs ──────────────────────────────────────────────
 

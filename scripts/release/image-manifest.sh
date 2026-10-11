@@ -15,7 +15,7 @@
 #   manifest_refs <surface> <role> <bundle>
 #     surface  compose | k8s | any
 #     role     app | infra | any
-#     bundle   comma list (core,llm,excluded) | any
+#     bundle   comma list (core,llm,external,excluded) | any
 #
 # Set APP_TAG before calling to have `@APP_TAG` substituted in app refs.
 # Running this file directly prints the whole manifest (a quick sanity check).
@@ -56,7 +56,7 @@ manifest_refs() {
   ' "$IMAGE_MANIFEST_FILE"
 }
 
-# Strip the tag from a ref: pgsty/silo:RELEASE.x -> pgsty/silo
+# Strip the tag from a ref: valkey/valkey:8.1-alpine -> valkey/valkey
 manifest_ref_name() { printf '%s\n' "${1%:*}"; }
 
 # Turn a ref into a filesystem-safe basename for images/<name>.tar

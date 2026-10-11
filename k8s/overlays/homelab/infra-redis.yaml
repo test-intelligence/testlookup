@@ -1,9 +1,16 @@
-# Redis 7 — deployed inside the K3s cluster for homelab.
+# Valkey 8.1 (BSD-3-Clause, protocol-compatible with Redis) — deployed inside
+# the K3s cluster for homelab, under the original testlookup-redis names.
 #
-# Redis is the Celery broker, live-evidence authority, and cache. AOF plus a
+# It is the Celery broker, live-evidence authority, and cache. AOF plus a
 # local-path PVC keeps queued work and accepted evidence recoverable across a
 # pod restart. volatile-lru avoids silently evicting TTL-less broker/evidence
 # keys under cache pressure; ephemeral cache entries must carry a TTL.
+#
+# Only the image differs from the Redis 7 manifest: the Valkey image ships
+# `redis-server` / `redis-cli` as symlinks to valkey-server / valkey-cli, so
+# the command and probes below work with either image. Valkey cannot load a
+# Redis 7.4 AOF/RDB — an existing install either drains + empties the PVC or
+# pins the old image with a one-line patch (see UPGRADING.md).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -25,7 +32,7 @@ spec:
     spec:
       containers:
         - name: redis
-          image: redis:7-alpine
+          image: valkey/valkey:8.1-alpine
           command:
             - redis-server
             - --appendonly

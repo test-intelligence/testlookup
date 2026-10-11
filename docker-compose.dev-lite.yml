@@ -69,13 +69,14 @@ services:
     networks:
       - testlookup_lite_net
 
+  # Valkey under the `redis` service name — see docker-compose.yml.
   redis:
-    image: redis:7-alpine
+    image: valkey/valkey:8.1-alpine
     container_name: testlookup_lite_redis
     restart: unless-stopped
     # --requirepass is applied only when REDIS_PASSWORD is set (the container
     # shell evaluates ${...:+...}; $$ escapes compose interpolation).
-    command: sh -c 'redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru $${REDIS_PASSWORD:+--requirepass "$$REDIS_PASSWORD"}'
+    command: sh -c 'valkey-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru $${REDIS_PASSWORD:+--requirepass "$$REDIS_PASSWORD"}'
     environment:
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
     # Loopback-only publish — see the main docker-compose.yml redis service
@@ -85,7 +86,7 @@ services:
     volumes:
       - lite_redis_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli $${REDIS_PASSWORD:+-a \"$$REDIS_PASSWORD\"} ping | grep -q PONG"]
+      test: ["CMD-SHELL", "valkey-cli $${REDIS_PASSWORD:+-a \"$$REDIS_PASSWORD\"} ping | grep -q PONG"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -99,24 +100,30 @@ services:
     networks:
       - testlookup_lite_net
 
+  # versitygw (Apache-2.0) under the `minio` service name — see docker-compose.yml.
   minio:
     # Pinned to the same tag as docker-compose.yml — a floating :latest makes
     # the lite stack drift from the stack everyone else runs, and it can't be
     # carried in the offline bundle (deploy/images.manifest.txt).
-    image: pgsty/silo:RELEASE.2026-09-16T00-00-00Z
+    image: ghcr.io/versity/versitygw:v1.8.0
     container_name: testlookup_lite_minio
     restart: unless-stopped
-    command: server /data --console-address ":9001"
+    # The posix backend refuses to start when its root directory is missing.
+    entrypoint: ["/bin/sh", "-c", 'mkdir -p "$$VGW_BACKEND_ARG" && exec /usr/local/bin/docker-entrypoint.sh']
     environment:
-      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be set — copy .env.example to .env}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set — copy .env.example to .env}
+      VGW_BACKEND: posix
+      VGW_BACKEND_ARG: /data/s3
+      VGW_PORT: ":9000"
+      VGW_HEALTH: /health
+      VGW_QUIET: "true"
+      ROOT_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be set — copy .env.example to .env}
+      ROOT_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set — copy .env.example to .env}
     ports:
       - "9000:9000"
-      - "9001:9001"
     volumes:
       - lite_minio_data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9000/health"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -130,19 +137,26 @@ services:
     networks:
       - testlookup_lite_net
 
+  # Creates every bucket the backend writes to with scripts/s3_setup.py.
   minio-setup:
-    image: pgsty/mc:RELEASE.2026-09-16T00-00-00Z
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
     container_name: testlookup_lite_minio_setup
+    command: ["python", "scripts/s3_setup.py"]
+    restart: "no"
+    environment:
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_USE_SSL=false
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be set — copy .env.example to .env}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set — copy .env.example to .env}
+      - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME:-test-telemetry}
+      - KNOWLEDGE_DOCS_BUCKET=${KNOWLEDGE_DOCS_BUCKET:-knowledge-docs}
+      - FINETUNE_EXPORT_BUCKET=${FINETUNE_EXPORT_BUCKET:-training-data}
     depends_on:
       minio:
         condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 ${MINIO_ACCESS_KEY} ${MINIO_SECRET_KEY};
-      mc mb --ignore-existing local/${MINIO_BUCKET_NAME:-test-telemetry};
-      mc mb --ignore-existing local/testlookup-attachments;
-      echo 'MinIO setup complete';
-      "
     networks:
       - testlookup_lite_net
 

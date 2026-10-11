@@ -47,7 +47,8 @@ _SECRET_PLACEHOLDER_MARKERS: tuple[str, ...] = (
 
 #: The templates also write a placeholder as ONE angle-bracketed token --
 #: ``<base64-encoded-strong-random-secret>``, ``<set-a-strong-password>``,
-#: ``<pw>``, and in deploymentsteps.md ``<your generated key from Step 9.3>``.
+#: ``<pw>``, and in docs/operations/deploy-single-vm.md
+#: ``<your generated key from step 3>``.
 #: A bare ``"<"`` used to stand for that, which refused a real secret that
 #: merely contains the symbol (QA of re-audit N12). A token found ANYWHERE in
 #: the value then still refused about one random 32-character password in 157
@@ -137,7 +138,7 @@ class Settings(BaseSettings):
     # Externally-reachable base URL for the dashboard. Used to build links
     # rendered in Jira tickets, Slack/Teams notifications, and emails. Should
     # match the ingress hostname users actually open in their browser
-    # (e.g. https://testlookup.example.com or http://testlookup.local).
+    # (e.g. https://testlookup.example.com or http://testlookup.localhost).
     # When unset, falls back to the first CORS_ORIGINS entry, or localhost in
     # development.
     PUBLIC_BASE_URL: str = ""
@@ -369,7 +370,7 @@ class Settings(BaseSettings):
         "ollama", "lmstudio", "localai", "vllm",
         "openai", "gemini", "anthropic", "openrouter",
     ] = "ollama"
-    LLM_MODEL: str = "qwen2.5:3b-instruct-q5_K_M"
+    LLM_MODEL: str = "qwen2.5:7b-instruct"
     LLM_TEMPERATURE: float = 0.1
     LLM_MAX_TOKENS: int = 4096
     OLLAMA_BASE_URL: str = "http://localhost:11434"
@@ -395,7 +396,7 @@ class Settings(BaseSettings):
     # OpenRouter attributes traffic by these two headers and shows them on its
     # dashboard. Optional to the API, but without them the bill is one
     # anonymous lump with no way to tell which app produced it.
-    OPENROUTER_SITE_URL: str = "https://github.com/anandtopu/testlookup"
+    OPENROUTER_SITE_URL: str = "https://github.com/test-intelligence/testlookup"
     OPENROUTER_APP_NAME: str = "TestLookup"
 
     # Per-deployment token rates, overriding the built-in table in

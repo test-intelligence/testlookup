@@ -8,11 +8,11 @@ name: testlookup
 # Container Registry instead of building from source.
 #
 # Fastest path — the remote one-liner does everything for you:
-#   curl -fsSL https://raw.githubusercontent.com/anandtopu/testlookup/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/test-intelligence/testlookup/main/install.sh | bash
 #
 # Or by hand (download this file + the env tooling, generate .env, then up):
 #   mkdir testlookup && cd testlookup && mkdir scripts
-#   base=https://raw.githubusercontent.com/anandtopu/testlookup/main
+#   base=https://raw.githubusercontent.com/test-intelligence/testlookup/main
 #   curl -fsSLO $base/docker-compose.release.yml
 #   curl -fsSLo .env.example          $base/.env.example
 #   curl -fsSLo scripts/gen-dev-env.sh $base/scripts/gen-dev-env.sh
@@ -21,7 +21,7 @@ name: testlookup
 #   docker compose -f docker-compose.release.yml up -d
 #
 # Image selection (override via the environment / .env):
-#   TESTLOOKUP_IMAGE    registry + namespace   (default ghcr.io/anandtopu/testlookup)
+#   TESTLOOKUP_IMAGE    registry + namespace   (default ghcr.io/test-intelligence/testlookup)
 #   TESTLOOKUP_VERSION  image tag              (default latest — tracks main)
 # For a reproducible deploy, pin TESTLOOKUP_VERSION to a published commit SHA
 # or release tag instead of the moving `latest`, e.g.:
@@ -32,14 +32,15 @@ name: testlookup
 #
 # Optional local LLM (Ollama + ChromaDB — adds ~4GB download):
 #   docker compose -f docker-compose.release.yml --profile local-llm up -d
-#   docker compose -f docker-compose.release.yml exec ollama ollama pull qwen2.5:7b
+#   docker compose -f docker-compose.release.yml exec ollama ollama pull qwen2.5:7b-instruct
+#   docker compose -f docker-compose.release.yml exec ollama ollama pull nomic-embed-text:v1.5
 #
 # This stack still reads secrets from .env — generate one with
 # scripts/gen-dev-env.sh (local/demo) or supply your own for production.
 # ============================================================
 
 x-app-image: &app-backend-image
-  image: ${TESTLOOKUP_IMAGE:-ghcr.io/anandtopu/testlookup}/backend:${TESTLOOKUP_VERSION:-latest}
+  image: ${TESTLOOKUP_IMAGE:-ghcr.io/test-intelligence/testlookup}/backend:${TESTLOOKUP_VERSION:-latest}
 
 services:
 
@@ -109,14 +110,17 @@ services:
     networks:
       - testlookup_net
 
+  # Valkey 8.1 (BSD-3-Clause) under the `redis` service name: same protocol,
+  # every redis:// URL and REDIS_* setting unchanged. Upgrading from Redis
+  # 7.4: Valkey cannot load its data files — see UPGRADING.md.
   redis:
-    image: redis:7-alpine
+    image: valkey/valkey:8.1-alpine
     container_name: testlookup_redis
     restart: unless-stopped
     # --requirepass is applied only when REDIS_PASSWORD is set (the container
     # shell evaluates ${...:+...}; $$ escapes compose interpolation). Empty
     # password → no auth, backward-compatible for a purely-internal Redis.
-    command: sh -c 'redis-server --appendonly yes --appendfsync everysec --maxmemory 512mb --maxmemory-policy volatile-lru $${REDIS_PASSWORD:+--requirepass "$$REDIS_PASSWORD"}'
+    command: sh -c 'valkey-server --appendonly yes --appendfsync everysec --maxmemory 512mb --maxmemory-policy volatile-lru $${REDIS_PASSWORD:+--requirepass "$$REDIS_PASSWORD"}'
     environment:
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
     # Bind to loopback only: Redis is the Celery broker (task injection = code
@@ -128,7 +132,7 @@ services:
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli $${REDIS_PASSWORD:+-a \"$$REDIS_PASSWORD\"} ping | grep -q PONG"]
+      test: ["CMD-SHELL", "valkey-cli $${REDIS_PASSWORD:+-a \"$$REDIS_PASSWORD\"} ping | grep -q PONG"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -138,41 +142,56 @@ services:
   # ──────────────────────────────────────────────────────────
   # OBJECT STORAGE
   # ──────────────────────────────────────────────────────────
+  # versitygw (Apache-2.0), posix backend: buckets are directories and objects
+  # plain files under /data/s3 on the minio_data volume. The `minio` service
+  # name and the MINIO_* settings are kept; they name "the S3 endpoint".
+  # Objects live in /data/s3, not /data, so a volume that still holds an old
+  # MinIO/Silo data directory is never read or modified. Upgrading from
+  # MinIO/Silo: see UPGRADING.md (scripts/s3_setup.py --copy-from-endpoint).
   minio:
-    image: pgsty/silo:RELEASE.2026-09-16T00-00-00Z
+    image: ghcr.io/versity/versitygw:v1.8.0
     container_name: testlookup_minio
     restart: unless-stopped
-    command: server /data --console-address ":9001"
+    # The posix backend refuses to start when its root directory is missing.
+    entrypoint: ["/bin/sh", "-c", 'mkdir -p "$$VGW_BACKEND_ARG" && exec /usr/local/bin/docker-entrypoint.sh']
     environment:
-      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be set — generate a .env with scripts/gen-dev-env.sh}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set — generate a .env with scripts/gen-dev-env.sh}
+      VGW_BACKEND: posix
+      VGW_BACKEND_ARG: /data/s3
+      VGW_PORT: ":9000"
+      VGW_HEALTH: /health
+      VGW_QUIET: "true"
+      ROOT_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be set — generate a .env with scripts/gen-dev-env.sh}
+      ROOT_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set — generate a .env with scripts/gen-dev-env.sh}
     ports:
       - "9000:9000"
-      - "9001:9001"
     volumes:
       - minio_data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9000/health"]
       interval: 15s
       timeout: 5s
       retries: 5
     networks:
       - testlookup_net
 
+  # Creates every bucket the backend writes to (idempotent) with the backend
+  # image's /app/scripts/s3_setup.py (boto3) — no separate client image.
   minio-setup:
-    image: pgsty/mc:RELEASE.2026-09-16T00-00-00Z
+    <<: *app-backend-image
     container_name: testlookup_minio_setup
+    command: ["python", "scripts/s3_setup.py"]
+    restart: "no"
+    environment:
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_USE_SSL=false
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be set — generate a .env with scripts/gen-dev-env.sh}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set — generate a .env with scripts/gen-dev-env.sh}
+      - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME:-test-telemetry}
+      - KNOWLEDGE_DOCS_BUCKET=${KNOWLEDGE_DOCS_BUCKET:-knowledge-docs}
+      - FINETUNE_EXPORT_BUCKET=${FINETUNE_EXPORT_BUCKET:-training-data}
     depends_on:
       minio:
         condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 ${MINIO_ACCESS_KEY} ${MINIO_SECRET_KEY};
-      mc mb --ignore-existing local/${MINIO_BUCKET_NAME:-test-telemetry};
-      mc mb --ignore-existing local/testlookup-attachments;
-      mc anonymous set download local/testlookup-attachments;
-      echo 'MinIO setup complete';
-      "
     networks:
       - testlookup_net
 
@@ -224,11 +243,16 @@ services:
   # ──────────────────────────────────────────────────────────
   db-migrate:
     <<: *app-backend-image
-    command: ["alembic", "upgrade", "head"]
+    # Migrate, then create the first admin on a NEW database only (an existing
+    # admin is never modified). The password is INITIAL_ADMIN_PASSWORD from
+    # .env; when empty, a random one is printed once in this service's logs.
+    command: ["sh", "-c", "alembic upgrade head && python /app/scripts/create_admin.py"]
     restart: "no"
     env_file:
       - .env
     environment:
+      - ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD:-}
+      - ADMIN_PASSWORD_GENERATED=true
       - PG_PROCESS_ROLE=operation
       - PG_PROCESSES_PER_POD=1
       - PG_POOL_SIZE=1
@@ -406,7 +430,7 @@ services:
       - testlookup_net
 
   frontend:
-    image: ${TESTLOOKUP_IMAGE:-ghcr.io/anandtopu/testlookup}/frontend:${TESTLOOKUP_VERSION:-latest}
+    image: ${TESTLOOKUP_IMAGE:-ghcr.io/test-intelligence/testlookup}/frontend:${TESTLOOKUP_VERSION:-latest}
     container_name: testlookup_frontend
     restart: unless-stopped
     # Production image is nginx serving the built SPA on :80 and proxying /api
@@ -445,7 +469,7 @@ services:
   # MCP SERVER — AI assistant integration (SSE transport)
   # ──────────────────────────────────────────────────────────
   mcp:
-    image: ${TESTLOOKUP_IMAGE:-ghcr.io/anandtopu/testlookup}/mcp:${TESTLOOKUP_VERSION:-latest}
+    image: ${TESTLOOKUP_IMAGE:-ghcr.io/test-intelligence/testlookup}/mcp:${TESTLOOKUP_VERSION:-latest}
     container_name: testlookup_mcp
     restart: unless-stopped
     ports:

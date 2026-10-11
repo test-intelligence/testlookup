@@ -5,6 +5,9 @@ metadata:
   namespace: testlookup
 data:
   APP_ENV: "production"
+  # The settings default is true for local development; production refuses to
+  # start with it on, so every overlay inherits an explicit off.
+  DEV_AUTO_LOGIN_ENABLED: "false"
   APP_VERSION: "0.0.1"
   LOG_LEVEL: "INFO"
   LOG_FORMAT: "json"
@@ -34,7 +37,9 @@ data:
   CHROMA_HOST: "testlookup-chromadb"
   CHROMA_PORT: "8001"
   LLM_PROVIDER: "ollama"
-  LLM_MODEL: "qwen2.5:7b"
+  # Same tag as the code default (backend/app/core/config.py): Apache-2.0.
+  # Model status matches the EXACT Ollama tag, so pull this name.
+  LLM_MODEL: "qwen2.5:7b-instruct"
   AI_OFFLINE_MODE: "true"
   # Off-box hosts the deployment's own Slack/Teams webhooks and SMTP relay may
   # still reach while offline (comma-separated host names; .example.com matches

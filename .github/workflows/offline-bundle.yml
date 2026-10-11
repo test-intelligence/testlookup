@@ -267,6 +267,39 @@ jobs:
           print(f"MANIFEST.json OK — {len(m['images'])} images, sbom_mode={m['sbom_mode']}")
           PY
 
+      # Licence boundary of the bundle: MongoDB (SSPL-1.0) is an external
+      # prerequisite and must NOT be redistributed; Valkey (BSD-3-Clause) and
+      # versitygw (Apache-2.0) replaced Redis 7.4 (RSALv2/SSPLv1) and PGSTY
+      # Silo/mc (AGPL-3.0) and must be present.
+      - name: Bundle carries no SSPL/AGPL/RSAL images and lists Mongo as external
+        run: |
+          set -euo pipefail
+          cd "testlookup-offline-${BUNDLE_VERSION}"
+          python3 - <<'PY'
+          import json
+
+          refs = {line.split("\t")[1].strip() for line in open("images.list") if line.strip()}
+          names = {ref.rsplit(":", 1)[0] for ref in refs}
+          errors = []
+          for banned in ("mongo", "redis", "pgsty/silo", "pgsty/mc", "minio/minio", "minio/mc"):
+              if banned in names or f"docker.io/library/{banned}" in names:
+                  errors.append(f"bundle redistributes {banned}")
+          for required in ("valkey/valkey", "ghcr.io/versity/versitygw"):
+              if required not in names:
+                  errors.append(f"bundle is missing {required}")
+          manifest = json.load(open("MANIFEST.json"))
+          if "mongo:7" not in manifest.get("external_prerequisites", []):
+              errors.append("MANIFEST.json does not list mongo:7 under external_prerequisites")
+          for f in ("LICENSE",):
+              try:
+                  open(f).close()
+              except OSError:
+                  errors.append(f"bundle ships no {f}")
+          if errors:
+              raise SystemExit("bundle licence boundary violated:\n  - " + "\n  - ".join(errors))
+          print(f"bundle images OK: {sorted(refs)}; external: {manifest['external_prerequisites']}")
+          PY
+
       - name: Verdict
         run: |
           {

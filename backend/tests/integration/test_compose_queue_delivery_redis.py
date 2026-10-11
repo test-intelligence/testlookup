@@ -25,6 +25,9 @@ TOPOLOGIES = (
     ("gcp-vm", ("docker-compose.yml", "docker-compose.gcp-vm.yml")),
     ("airgap", ("docker-compose.release.yml", "docker-compose.airgap.yml")),
 )
+# The broker every Compose stack ships (Valkey), pulled from ECR Public rather
+# than Docker Hub: CI runners share Docker Hub's anonymous pull limit.
+BROKER_IMAGE = "public.ecr.aws/valkey/valkey:8.1-alpine"
 
 
 def _proof_requested() -> bool:
@@ -63,8 +66,8 @@ def _write_override(
     evidence = EVIDENCE_DIR.resolve().as_posix()
     document = f"""services:
   redis:
-    image: redis:7-alpine
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    image: {BROKER_IMAGE}
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
     ports: !reset []
   worker:
     image: {image}
@@ -161,7 +164,7 @@ def test_supported_compose_topology_delivers_one_task_per_queue(
         )
         document = json.loads(rendered.stdout)
         assert {"redis", "worker", "worker-children"} <= set(document["services"])
-        assert document["services"]["redis"]["image"] == "redis:7-alpine"
+        assert document["services"]["redis"]["image"] == BROKER_IMAGE
         assert document["services"]["worker"]["image"] == h07_backend_image
         assert document["services"]["worker-children"]["image"] == h07_backend_image
 

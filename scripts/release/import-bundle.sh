@@ -215,11 +215,36 @@ else
   fi
 fi
 
+# ── External prerequisites (deliberately not in the bundle) ─────────────────
+# images.manifest.txt rows of bundle class `external` (today MongoDB, which is
+# SSPL-1.0 and therefore not redistributed). The stack needs them, so the
+# operator mirrors them into the same registry, under the same naming contract.
+EXTERNAL_REFS=""
+if [ -f "$BUNDLE_DIR/images.manifest.txt" ]; then
+  EXTERNAL_REFS="$(awk '/^[[:space:]]*#/ {next} NF == 4 && $4 == "external" {print $1}' "$BUNDLE_DIR/images.manifest.txt")"
+fi
+EXTERNAL_STEPS="  (none)"
+if [ -n "$EXTERNAL_REFS" ]; then
+  EXTERNAL_STEPS=""
+  for ref in $EXTERNAL_REFS; do
+    warn "Not in this bundle: $ref — mirror it to ${REGISTRY}/${ref} yourself (see next steps)."
+    EXTERNAL_STEPS="${EXTERNAL_STEPS}  ${ref}  (on a connected host, after reviewing its licence):
+      docker pull ${ref} && docker save -o external.tar ${ref}
+    then here:
+      docker load -i external.tar && docker tag ${ref} ${REGISTRY}/${ref} && docker push ${REGISTRY}/${ref}
+"
+  done
+fi
+
 # ── Step 6 — Next steps ─────────────────────────────────────────────────────
 header "Next steps"
 cat <<NEXT
 
-The images now live under ${REGISTRY}. Pick your target:
+The bundled images now live under ${REGISTRY}.
+
+── External prerequisites (NOT in this bundle — mirror them first) ───────
+${EXTERNAL_STEPS}
+Pick your target:
 
 ── Docker Compose ─────────────────────────────────────────────────────────
   cd compose

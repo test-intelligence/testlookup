@@ -8,16 +8,20 @@
 # What it does:
 #   1. Builds the 3 app images locally (backend / frontend / mcp) and pushes
 #      them to Artifactory under one immutable build tag.
-#   2. Mirrors every third-party infra image (postgres, redis, mongo, minio,
-#      chromadb, ollama, busybox) into the SAME Artifactory, so the cluster
-#      pulls 100% of its images from that one registry.
+#   2. Mirrors every third-party infra image (postgres, valkey, mongo,
+#      versitygw, chromadb, ollama, busybox — the list comes from
+#      deploy/images.manifest.txt) into the SAME Artifactory, so the cluster
+#      pulls 100% of its images from that one registry. MongoDB is SSPL-1.0:
+#      it is pulled from its upstream registry here, on your host.
 #   3. Creates the project, an Artifactory image-pull secret, app secrets, and
 #      (optionally) grants the anyuid SCC for the stock infra images.
 #   4. Renders k8s/overlays/openshift-artifactory with the registry / tag /
 #      storage-class / route-host substituted in, and applies it.
 #   5. Exposes the app over HTTPS via OpenShift Routes (edge TLS + forced
-#      http->https redirect), waits for rollout, seeds MinIO buckets, and
-#      creates the initial admin user.
+#      http->https redirect), waits for rollout, creates the S3 buckets
+#      (scripts/s3_setup.py in the backend pod), and creates the initial admin
+#      user — with a generated password unless ADMIN_PASSWORD is set; a
+#      generated one is printed ONCE in the final summary.
 #
 # This is the OpenShift/Artifactory sibling of homelabsetup/deploy-homelab.sh.
 #
@@ -96,16 +100,23 @@ ARTIFACTORY_EMAIL="${ARTIFACTORY_EMAIL:-noreply@example.com}"
 GRANT_ANYUID="${GRANT_ANYUID:-true}"
 STORAGE_CLASS="${STORAGE_CLASS:-}"
 ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-Admin@2026!}"
+# No default password, ever: when ADMIN_PASSWORD is unset, Step 13 generates a
+# random one (same recipe as the other secrets) and the final summary prints it
+# ONCE — and only if that run actually created the admin.
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
+ADMIN_PASSWORD_GENERATED=false
+ADMIN_CREATED=false
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@example.com}"
 ADMIN_FULL_NAME="${ADMIN_FULL_NAME:-TestLookup Admin}"
 # Derived from deploy/images.manifest.txt — see mirror-images.sh for the
 # rationale (a hardcoded copy here is how the list drifted from k8s before).
+# `external` rows (MongoDB, SSPL-1.0) are mirrored too: this host pulls them
+# from upstream; only the offline bundle leaves them out.
 # shellcheck source=../scripts/release/image-manifest.sh
 . "$REPO_ROOT/scripts/release/image-manifest.sh"
-INFRA_IMAGES="${INFRA_IMAGES:-$(manifest_refs k8s infra core,llm | tr '\n' ' ')}"
+INFRA_IMAGES="${INFRA_IMAGES:-$(manifest_refs k8s infra core,llm,external | tr '\n' ' ')}"
 PULL_OLLAMA_MODELS="${PULL_OLLAMA_MODELS:-false}"
-OLLAMA_MODELS="${OLLAMA_MODELS:-qwen2.5:7b nomic-embed-text}"
+OLLAMA_MODELS="${OLLAMA_MODELS:-qwen2.5:7b-instruct nomic-embed-text:v1.5}"
 PULL_SECRET_NAME="artifactory-pull"
 APP_IMAGES=(backend frontend mcp)
 
@@ -459,35 +470,47 @@ if [ -n "$LEGACY_MCP_USER" ]; then
   fi
 fi
 
-# ── Step 12 — MinIO buckets ─────────────────────────────────────────────────
-header "Step 12 — MinIO buckets"
-MINIO_POD="$("$KCLI" -n "$NAMESPACE" get pod -l app=testlookup-minio -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")"
-if [ -n "$MINIO_POD" ]; then
-  MA="$("$KCLI" -n "$NAMESPACE" get secret testlookup-secrets -o jsonpath='{.data.MINIO_ACCESS_KEY}' | base64 -d 2>/dev/null || echo "")"
-  MS="$("$KCLI" -n "$NAMESPACE" get secret testlookup-secrets -o jsonpath='{.data.MINIO_SECRET_KEY}' | base64 -d 2>/dev/null || echo "")"
-  # The minio server image ships the `mc` client. Configure an alias against
-  # the pod's own endpoint and create the buckets in-cluster (no internet).
-  "$KCLI" -n "$NAMESPACE" exec "$MINIO_POD" -- sh -c "
-    mc alias set local http://localhost:9000 '$MA' '$MS' >/dev/null 2>&1 &&
-    mc mb --ignore-existing local/test-telemetry &&
-    mc mb --ignore-existing local/knowledge-docs
-  " && log "Buckets ready: test-telemetry, knowledge-docs" \
-    || warn "Could not create buckets via mc. The backend will attempt creation on first use."
+# ── Step 12 — S3 buckets ────────────────────────────────────────────────────
+# scripts/s3_setup.py ships in the backend image (/app/scripts) and reads the
+# pod's own MINIO_* settings: it waits for testlookup-minio and creates every
+# bucket the backend writes to (idempotent; no client image, no internet).
+header "Step 12 — S3 buckets"
+S3_SETUP_HINT="$KCLI -n $NAMESPACE exec deploy/testlookup-backend -- python /app/scripts/s3_setup.py"
+BACKEND_POD="$("$KCLI" -n "$NAMESPACE" get pod -l app=testlookup-backend --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")"
+if [ -n "$BACKEND_POD" ]; then
+  "$KCLI" -n "$NAMESPACE" exec "$BACKEND_POD" -- python /app/scripts/s3_setup.py \
+    && log "S3 buckets ready." \
+    || warn "Bucket setup failed — fix the cause, then re-run: $S3_SETUP_HINT"
 else
-  warn "MinIO pod not found yet — buckets will be created by the backend on first use."
+  warn "No running backend pod yet — create the buckets later with: $S3_SETUP_HINT"
 fi
 
 # ── Step 13 — Admin user ────────────────────────────────────────────────────
 if [ "$SKIP_ADMIN" = false ]; then
   header "Step 13 — Initial admin user"
+  if [ -z "$ADMIN_PASSWORD" ]; then
+    ADMIN_PASSWORD="$(openssl rand -base64 18 | tr -d '=/+' | head -c 20)"
+    ADMIN_PASSWORD_GENERATED=true
+  fi
   BACKEND_POD="$("$KCLI" -n "$NAMESPACE" get pod -l app=testlookup-backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")"
   if [ -n "$BACKEND_POD" ]; then
-    "$KCLI" -n "$NAMESPACE" exec -i "$BACKEND_POD" -- env \
-        ADMIN_USERNAME="$ADMIN_USERNAME" ADMIN_PASSWORD="$ADMIN_PASSWORD" \
-        ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_FULL_NAME="$ADMIN_FULL_NAME" \
-        python < "$REPO_ROOT/scripts/createAdmin.py" \
-      && log "Admin user ensured ($ADMIN_USERNAME)" \
-      || warn "createAdmin.py failed — run it manually once the backend is healthy."
+    # createAdmin.py is idempotent (an existing admin is left untouched). Its
+    # output is filtered so the password is shown once, in the summary below.
+    if ADMIN_OUT="$("$KCLI" -n "$NAMESPACE" exec -i "$BACKEND_POD" -- env \
+          ADMIN_USERNAME="$ADMIN_USERNAME" ADMIN_PASSWORD="$ADMIN_PASSWORD" \
+          ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_FULL_NAME="$ADMIN_FULL_NAME" \
+          python < "$REPO_ROOT/scripts/createAdmin.py" 2>&1)"; then
+      printf '%s\n' "$ADMIN_OUT" | grep -iv 'password:' || true
+      if printf '%s\n' "$ADMIN_OUT" | grep -q 'admin user created'; then
+        ADMIN_CREATED=true
+        log "Admin user created ($ADMIN_USERNAME)"
+      else
+        log "Admin user already exists ($ADMIN_USERNAME) — its password was NOT changed."
+      fi
+    else
+      printf '%s\n' "$ADMIN_OUT" | grep -iv 'password:' || true
+      warn "createAdmin.py failed — run it manually once the backend is healthy."
+    fi
   else
     warn "Backend pod not found — create the admin user later with scripts/createAdmin.py."
   fi
@@ -514,7 +537,15 @@ echo ""
 echo "  Dashboard:  https://${ROUTE_HOST_FRONTEND}"
 echo "  API:        https://${ROUTE_HOST_API}/docs"
 echo "  MCP (SSE):  https://${ROUTE_HOST_MCP}/sse"
-echo "  Admin:      ${ADMIN_USERNAME} / (see ${CREDS_FILE} or your config)"
+if [ "$ADMIN_CREATED" = true ] && [ "$ADMIN_PASSWORD_GENERATED" = true ]; then
+  echo "  Admin:      ${ADMIN_USERNAME}"
+  echo "  Password:   ${ADMIN_PASSWORD}"
+  echo -e "  ${YELLOW}Generated for this install and shown only once — store it in your password manager now.${NC}"
+elif [ "$ADMIN_CREATED" = true ]; then
+  echo "  Admin:      ${ADMIN_USERNAME} (password: the ADMIN_PASSWORD you supplied)"
+else
+  echo "  Admin:      ${ADMIN_USERNAME} (unchanged; reset a lost password with scripts/getUser.py)"
+fi
 echo ""
 echo "  Routes:   $KCLI -n $NAMESPACE get route"
 echo "  Pods:     $KCLI -n $NAMESPACE get pods"

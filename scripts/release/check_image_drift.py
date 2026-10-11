@@ -80,7 +80,7 @@ class Row:
 def load_manifest(path: Path) -> list[Row]:
     rows: list[Row] = []
     valid_roles = {"app", "infra"}
-    valid_bundles = {"core", "llm", "excluded"}
+    valid_bundles = {"core", "llm", "external", "excluded"}
     valid_surfaces = {"compose", "k8s"}
     for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         line = raw.split("#", 1)[0].strip()
@@ -123,7 +123,7 @@ def compose_image_refs(path: Path) -> list[tuple[int, str]]:
 
 
 def strip_registry_prefix(ref: str) -> str:
-    """``${VAR:?msg}/pgsty/silo:TAG`` -> ``pgsty/silo:TAG``."""
+    """``${VAR:?msg}/valkey/valkey:TAG`` -> ``valkey/valkey:TAG``."""
     stripped = INTERPOLATION.sub("", ref, count=1)
     return stripped.lstrip("/")
 

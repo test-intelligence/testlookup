@@ -41,17 +41,21 @@ services:
   postgres:
     image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/postgres:16-alpine
 
+  # MongoDB (SSPL-1.0) is NOT in the offline bundle: it is an external
+  # prerequisite. Mirror mongo:7 into the same registry yourself (same naming
+  # contract) before `up` — see user-guide/air-gapped-install.md.
   mongo:
     image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/mongo:7
 
   redis:
-    image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/redis:7-alpine
+    image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/valkey/valkey:8.1-alpine
 
   minio:
-    image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/pgsty/silo:RELEASE.2026-09-16T00-00-00Z
+    image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/ghcr.io/versity/versitygw:v1.8.0
 
+  # Bucket setup runs the backend image's scripts/s3_setup.py.
   minio-setup:
-    image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/pgsty/mc:RELEASE.2026-09-16T00-00-00Z
+    <<: *airgap-backend-image
 
   # Optional local-LLM profile. These images are only in the bundle when it was
   # built with `--with-llm`; the services stay behind the `local-llm` profile

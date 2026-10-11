@@ -1,4 +1,7 @@
-# Redis 7 — durable broker and live-evidence store for air-gapped OpenShift.
+# Valkey 8.1 (BSD-3-Clause, protocol-compatible with Redis) — durable broker
+# and live-evidence store for air-gapped OpenShift, under the original
+# testlookup-redis names. Valkey cannot load a Redis 7.4 AOF/RDB: see
+# UPGRADING.md before replacing a running Redis.
 #
 # The live evidence Streams and Celery broker state are accepted work, not a
 # disposable cache. AOF plus a PVC survives pod replacement; volatile-lru
@@ -25,9 +28,9 @@ spec:
     spec:
       containers:
         - name: redis
-          image: redis:7-alpine
+          image: valkey/valkey:8.1-alpine
           command:
-            - redis-server
+            - valkey-server
             - --appendonly
             - "yes"
             - --appendfsync
@@ -47,12 +50,12 @@ spec:
               memory: 768Mi
           readinessProbe:
             exec:
-              command: ["redis-cli", "ping"]
+              command: ["valkey-cli", "ping"]
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
             exec:
-              command: ["redis-cli", "ping"]
+              command: ["valkey-cli", "ping"]
             initialDelaySeconds: 15
             periodSeconds: 30
           volumeMounts:

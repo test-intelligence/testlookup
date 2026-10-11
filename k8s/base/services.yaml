@@ -137,13 +137,11 @@ metadata:
 spec:
   selector:
     app: testlookup-minio
+  # S3 API only: the bundled store (versitygw) has no web console port.
   ports:
     - name: api
       port: 9000
       targetPort: 9000
-    - name: console
-      port: 9001
-      targetPort: 9001
   type: ClusterIP
 ---
 apiVersion: v1

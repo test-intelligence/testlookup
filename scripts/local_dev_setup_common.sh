@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PLATFORM_NAME="${PLATFORM_NAME:-Unix}"
-OLLAMA_SLM_MODEL="${OLLAMA_SLM_MODEL:-qwen2.5:3b-instruct-q5_K_M}"
+OLLAMA_SLM_MODEL="${OLLAMA_SLM_MODEL:-qwen2.5:7b-instruct}"
 OLLAMA_LLM_MODEL="${OLLAMA_LLM_MODEL:-qwen2.5:14b-instruct-q5_K_M}"
 OLLAMA_EMBEDDING_MODEL="${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text:v1.5}"
 
@@ -199,7 +199,7 @@ Useful URLs:
   - API Docs:       http://localhost:8000/api-docs
   - Health:         http://localhost:8000/health/details
   - Flower:         http://localhost:5555
-  - MinIO Console:  http://localhost:9001
+  - S3 API:         http://localhost:9000  (no web console)
   - MCP SSE:        http://localhost:8002/sse
 
 Helpful follow-up commands:

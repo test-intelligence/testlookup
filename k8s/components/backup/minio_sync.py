@@ -35,15 +35,23 @@ def client():
     )
 
 
+#: Unauthenticated liveness routes, tried in order: versitygw (the bundled S3
+#: store, started with VGW_HEALTH=/health), then MinIO / PGSTY Silo (legacy).
+HEALTH_PATHS = ("/health", "/minio/health/live")
+
+
 def minio_ready() -> bool:
-    """MinIO's liveness endpoint, on the endpoint the export will use."""
+    """The object store's liveness endpoint, on the endpoint the export will use."""
     scheme = "https" if os.environ.get("MINIO_USE_SSL", "false").lower() == "true" else "http"
-    url = f"{scheme}://{os.environ['MINIO_ENDPOINT']}/minio/health/live"
-    try:
-        with urllib.request.urlopen(url, timeout=2) as response:
-            return response.status == 200
-    except OSError:
-        return False
+    for path in HEALTH_PATHS:
+        url = f"{scheme}://{os.environ['MINIO_ENDPOINT']}{path}"
+        try:
+            with urllib.request.urlopen(url, timeout=2) as response:
+                if response.status == 200:
+                    return True
+        except OSError:
+            continue
+    return False
 
 
 def wait_for(store: str, probe, limit: float | None = None, interval: float | None = None) -> None:
