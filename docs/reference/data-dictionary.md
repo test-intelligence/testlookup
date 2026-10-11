@@ -349,7 +349,7 @@ Constraints and indexes:
 
 [backend/app/models/postgres.py:1665](../../backend/app/models/postgres.py#L1665)
 
-One Investigator run against a test run (Agentic plan AI-1, shadow).
+One Investigator run against a test run (shadow mode).
 
 Persists the full InvestigationDetail wire shape served by
 ``GET /api/v1/investigations/{id}``: lifecycle status, mode, trigger,
@@ -558,7 +558,7 @@ stages: Mapped[list['AgentStageResult']] = relationship('AgentStageResult', back
 
 [backend/app/models/postgres.py:1875](../../backend/app/models/postgres.py#L1875)
 
-Agent activity ledger (Agentic plan AI-3): one row per agent
+Agent activity ledger: one row per agent
 execution — what ran, why, what it proposed, what it actually did
 (always nothing in shadow/suggest), and what it cost.
 
@@ -1837,7 +1837,7 @@ Constraints and indexes:
 
 [backend/app/models/postgres.py:1913](../../backend/app/models/postgres.py#L1913)
 
-One (fixer run, candidate test, attempt) of the Fixer (Agentic plan AI-2).
+One (fixer run, candidate test, attempt) of the Fixer.
 
 The Fixer selects flaky/quarantined tests, generates a test-code-only
 candidate fix, validates it by rerunning the test in a sandbox, and — in

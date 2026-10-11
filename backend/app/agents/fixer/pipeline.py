@@ -1,4 +1,4 @@
-"""Fixer pipeline stages (Agentic plan AI-2).
+"""Fixer pipeline stages.
 
 Pure-ish stage helpers used by ``workflow.run_fixer_run``: candidate
 selection, diagnosis recall, fix generation (registry prompt / offline),

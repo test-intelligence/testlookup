@@ -1,4 +1,4 @@
-"""Synthesis node of the Investigator (Agentic plan AI-1).
+"""Synthesis node of the Investigator.
 
 Turns the five hypothesis results into ONE verdict using documented,
 deterministic precedence rules; the narrative is the only LLM-touchable

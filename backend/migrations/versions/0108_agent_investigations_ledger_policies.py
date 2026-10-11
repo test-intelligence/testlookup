@@ -4,8 +4,8 @@ Revision ID: 0108
 Revises: 0107
 Create Date: 2026-07-15
 
-Agentic plan Wave B — AI-1 (hypothesis-loop Investigator, shadow mode) and
-the AI-3 data core (agent governance ledger + per-project agent policies).
+The hypothesis-loop Investigator (shadow mode) and the agent-governance data
+core (the agent activity ledger + per-project agent policies).
 Three tables:
 
 * ``agent_investigations`` — one row per Investigator run against a test

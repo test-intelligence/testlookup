@@ -1663,7 +1663,7 @@ class TeamNotificationChannel(Base):
 
 
 class AgentInvestigation(Base):
-    """One Investigator run against a test run (Agentic plan AI-1, shadow).
+    """One Investigator run against a test run (shadow mode).
 
     Persists the full InvestigationDetail wire shape served by
     ``GET /api/v1/investigations/{id}``: lifecycle status, mode, trigger,
@@ -1873,7 +1873,7 @@ class AgentChildDispatchOutbox(Base):
 
 
 class AgentRun(Base):
-    """Agent activity ledger (Agentic plan AI-3): one row per agent
+    """Agent activity ledger: one row per agent
     execution — what ran, why, what it proposed, what it actually did
     (always nothing in shadow/suggest), and what it cost.
 
@@ -1911,7 +1911,7 @@ class AgentRun(Base):
 
 
 class FixAttempt(Base):
-    """One (fixer run, candidate test, attempt) of the Fixer (Agentic plan AI-2).
+    """One (fixer run, candidate test, attempt) of the Fixer.
 
     The Fixer selects flaky/quarantined tests, generates a test-code-only
     candidate fix, validates it by rerunning the test in a sandbox, and — in

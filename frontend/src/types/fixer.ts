@@ -1,5 +1,5 @@
 /**
- * Types for the Fixer agent (Agentic plan AI-2 — Wave D).
+ * Types for the Fixer agent.
  *
  * These mirror the pinned Wave-D API contract verbatim — the backend
  * implements the same shapes. Do not extend without reconciling with

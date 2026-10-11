@@ -1,4 +1,4 @@
-"""MCP tools for the Investigator agent (Agentic plan AI-5, over AI-1's API).
+"""MCP tools for the Investigator agent, over the Investigator API.
 
 Wraps the Investigator REST contract (#383) so any MCP-capable agent can run
 the hypothesis-loop Investigator end-to-end:

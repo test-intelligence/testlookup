@@ -387,7 +387,7 @@ def register(mcp) -> None:  # noqa: ANN001
     @mcp.prompt()
     def fix_this_flaky_test(project_id: str, fingerprint: str) -> str:
         """
-        Packaged fix-this-flaky workflow (Agentic plan AI-5): gather flip
+        Packaged fix-this-flaky workflow: gather flip
         evidence + Investigator verdict, recall quarantine/defect history,
         contain via a quarantine proposal, guide a real local fix, then
         close the learning loop with record_fix_outcome once merged.

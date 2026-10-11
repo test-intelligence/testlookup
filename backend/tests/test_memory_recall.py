@@ -1,4 +1,4 @@
-"""Memory recall in the reasoning path (Agentic plan AI-F3).
+"""Memory recall in the reasoning path.
 
 Pins the acceptance criteria:
   * a fingerprint with a prior HUMAN CORRECTION must surface that correction

@@ -12,7 +12,7 @@ quarantine debt, and gate-verdict changes. Absolute totals stay as a
 secondary line. A window with no changes renders as a one-liner (or is
 skipped entirely, per the subscription's ``send_when_unchanged``).
 
-Agentic plan AI-7 (proactive narratives): the delta additionally carries
+Proactive narratives: the delta additionally carries
 ``investigations`` — completed Investigator verdicts in the window (count +
 top ≤2 by confidence) — rendered as ONE clearly AI-labeled line; windows
 with zero completed investigations add nothing (not even an empty line),

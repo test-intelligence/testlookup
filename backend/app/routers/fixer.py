@@ -1,4 +1,4 @@
-"""Fixer API (Agentic plan AI-2 — the Fixer).
+"""Fixer API.
 
 Pinned wire contract the frontend is built against verbatim — do not rename
 keys:

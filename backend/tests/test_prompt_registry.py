@@ -1,4 +1,4 @@
-"""Prompt registry + enforced manifest gate (Agentic plan AI-F2).
+"""Prompt registry + enforced manifest gate.
 
 Pins the whole contract:
   * byte-identity — every prompt moved into the registry hashes to the SAME

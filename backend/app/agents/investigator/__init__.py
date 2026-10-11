@@ -1,4 +1,4 @@
-"""Hypothesis-loop Investigator (Agentic plan AI-1, shadow mode).
+"""Hypothesis-loop Investigator (shadow mode).
 
 Public entry point: :func:`app.agents.investigator.workflow.run_investigation`
 (dispatched by the ``run_agent_investigation`` Celery task on the

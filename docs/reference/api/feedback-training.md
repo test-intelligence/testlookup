@@ -428,7 +428,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 
 Record Fix Outcome
 
-Record a fix outcome for a fingerprint (Agentic plan AI-5).
+Record a fix outcome for a fingerprint.
 
 Writes an ``ai_feedback`` row with ``source="fix_outcome"`` against the
 latest analysis for the (project, fingerprint) pair — the AI-F1 label

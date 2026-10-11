@@ -1,4 +1,4 @@
-"""Weekly flaky-debt review draft (Agentic plan AI-7).
+"""Weekly flaky-debt review draft.
 
 Builds a per-team, TEXT-ONLY review of the project's flaky-test debt on the
 weekly digest cadence:

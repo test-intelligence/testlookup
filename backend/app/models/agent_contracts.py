@@ -690,7 +690,7 @@ class InvestigatorVerdictV1(BaseModel):
 
 
 class InvestigatorHypothesisOutput(ContractedAgentOutput):
-    """One hypothesis sub-agent's verdict (Agentic plan AI-1).
+    """One hypothesis sub-agent's verdict.
 
     ``hypothesis`` carries the pinned wire shape persisted onto
     ``AgentInvestigation.hypotheses`` (id/title/status/confidence/
@@ -703,7 +703,7 @@ class InvestigatorHypothesisOutput(ContractedAgentOutput):
 
 
 class InvestigatorSynthesisOutput(ContractedAgentOutput):
-    """The Investigator's synthesized verdict (Agentic plan AI-1)."""
+    """The Investigator's synthesized verdict."""
 
     model_config = ConfigDict(extra="ignore")
 

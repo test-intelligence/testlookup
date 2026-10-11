@@ -1,4 +1,4 @@
-"""Investigator + agent-governance API (Agentic plan AI-1 / AI-3).
+"""Investigator + agent-governance API.
 
 Endpoints (all shapes are the PINNED wire contract the frontend is built
 against verbatim — do not rename keys):

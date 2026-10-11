@@ -1,4 +1,4 @@
-"""Value types + constants for the Fixer (Agentic plan AI-2).
+"""Value types + constants for the Fixer.
 
 Support module (no agent implementation here): the dataclasses that cross the
 ``ValidationRunner`` boundary and the fixed vocab shared by the pipeline, the

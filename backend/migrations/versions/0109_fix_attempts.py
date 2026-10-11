@@ -1,10 +1,10 @@
-"""fix attempts table (Agentic plan AI-2 — the Fixer)
+"""fix attempts table (the Fixer)
 
 Revision ID: 0109
 Revises: 0108
 Create Date: 2026-07-15
 
-Agentic plan Wave D — AI-2 (the Fixer): a scheduled, budgeted agent that
+The Fixer: a scheduled, budgeted agent that
 selects flaky/quarantined tests, generates test-code-only candidate fixes,
 validates them by rerunning the test in a sandbox, and (suggest mode only)
 opens a DRAFT PR. One table:

@@ -249,7 +249,7 @@ async def latest_analysis_for_fingerprint(
     }
 
 
-# ── Fix outcomes (Agentic plan AI-5) ─────────────────────────────────────────
+# ── Fix outcomes ─────────────────────────────────────────────────────────────
 
 # Outcome vocabulary for record_fix_outcome. "fixed" = a fix informed by the
 # diagnosis merged and verified green; "not_fixed" = the attempted fix did not

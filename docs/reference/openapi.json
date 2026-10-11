@@ -9405,7 +9405,7 @@
         "type": "object"
       },
       "FixOutcomeRequest": {
-        "description": "AI-5: outcome of a fix informed by TestLookup's diagnosis.\n\n``outcome`` is a closed vocabulary validated here (the values map onto\nFeedbackRating in the service); ``fingerprint`` is the stable test\nidentity (sha256(class::test)[:16]) the analytics surface uses.",
+        "description": "Outcome of a fix informed by TestLookup's diagnosis.\n\n``outcome`` is a closed vocabulary validated here (the values map onto\nFeedbackRating in the service); ``fingerprint`` is the stable test\nidentity (sha256(class::test)[:16]) the analytics surface uses.",
         "properties": {
           "comment": {
             "anyOf": [
@@ -50761,7 +50761,7 @@
     },
     "/api/v1/projects/{project_id}/fix-outcomes": {
       "post": {
-        "description": "Record a fix outcome for a fingerprint (Agentic plan AI-5).\n\nWrites an ``ai_feedback`` row with ``source=\"fix_outcome\"`` against the\nlatest analysis for the (project, fingerprint) pair — the AI-F1 label\nsystem maps that source into the ``human_indirect`` provenance bucket.\n404 when the fingerprint has never been analysed (nothing to grade).\nProject-scoped via ``require_project_access`` (authorization ratchet);\nany active project member may record an outcome, matching the feedback\nendpoints above.",
+        "description": "Record a fix outcome for a fingerprint.\n\nWrites an ``ai_feedback`` row with ``source=\"fix_outcome\"`` against the\nlatest analysis for the (project, fingerprint) pair — the AI-F1 label\nsystem maps that source into the ``human_indirect`` provenance bucket.\n404 when the fingerprint has never been analysed (nothing to grade).\nProject-scoped via ``require_project_access`` (authorization ratchet);\nany active project member may record an outcome, matching the feedback\nendpoints above.",
         "operationId": "record_fix_outcome_api_v1_projects__project_id__fix_outcomes_post",
         "parameters": [
           {

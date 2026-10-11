@@ -4450,8 +4450,8 @@ def dispatch_scheduled_digests(self):
 )
 def dispatch_weekly_flaky_debt_reviews(self):
     """Weekly beat (Mondays 07:10 UTC): send each channel-mapped team its
-    flaky-debt review draft through the US-7.3 team channels (Agentic plan
-    AI-7). Teams WITHOUT a channel are deliberately not handled here — their
+    flaky-debt review draft through its team notification channel. Teams
+    WITHOUT a channel are deliberately not handled here — their
     drafts fold into the project's weekly digest as a section instead
     (``digest_content_service.generate_digest``).
 

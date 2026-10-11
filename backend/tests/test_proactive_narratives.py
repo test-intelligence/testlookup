@@ -1,4 +1,4 @@
-"""Proactive narrative intelligence (Agentic plan AI-7).
+"""Proactive narrative intelligence.
 
 Covers the three surfaces that carry the Investigator's persisted verdicts
 to humans, plus the honesty guarantees:

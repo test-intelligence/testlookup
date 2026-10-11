@@ -116,7 +116,7 @@ Alembic revisions extracted without executing migrations. An inventory is not ev
 | [backend/migrations/versions/0106_notify_routing_delta_digests.py](../../backend/migrations/versions/0106_notify_routing_delta_digests.py) | `'0106'` | `'0105'` | ownership-routed notifications + delta digests |
 | [backend/migrations/versions/0107_digest_report_attachment.py](../../backend/migrations/versions/0107_digest_report_attachment.py) | `'0107'` | `'0106'` | digest report attachment opt-in |
 | [backend/migrations/versions/0108_agent_investigations_ledger_policies.py](../../backend/migrations/versions/0108_agent_investigations_ledger_policies.py) | `'0108'` | `'0107'` | agent investigations + policies + agent-runs ledger |
-| [backend/migrations/versions/0109_fix_attempts.py](../../backend/migrations/versions/0109_fix_attempts.py) | `'0109'` | `'0108'` | fix attempts table (Agentic plan AI-2 — the Fixer) |
+| [backend/migrations/versions/0109_fix_attempts.py](../../backend/migrations/versions/0109_fix_attempts.py) | `'0109'` | `'0108'` | fix attempts table (the Fixer) |
 | [backend/migrations/versions/0110_run_commit_ranges.py](../../backend/migrations/versions/0110_run_commit_ranges.py) | `'0110'` | `'0109'` | run commit ranges — commit attribution (Epic 8 US-8.1/US-8.2) |
 | [backend/migrations/versions/0111_gitlab_integrations.py](../../backend/migrations/versions/0111_gitlab_integrations.py) | `'0111'` | `'0110'` | gitlab_integrations + gitlab feature flag |
 | [backend/migrations/versions/0112_value_metric_assumptions.py](../../backend/migrations/versions/0112_value_metric_assumptions.py) | `'0112'` | `'0111'` | value_metric_assumptions — per-project hours-saved tunables |

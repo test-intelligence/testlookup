@@ -1,5 +1,5 @@
 /**
- * Settings → AI Agents (Agentic plan AI-3 — governance).
+ * Settings → AI Agents (agent governance).
  *
  * Per-agent policy cards (only "Investigator" ships in Wave B): enabled
  * toggle, trust-ladder mode selector (shadow → suggest → act; act is disabled

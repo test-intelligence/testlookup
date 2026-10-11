@@ -10108,7 +10108,7 @@ These are the full generated JSON Schema definitions, including required fields,
 
 ```json
 {
-  "description": "AI-5: outcome of a fix informed by TestLookup's diagnosis.\n\n``outcome`` is a closed vocabulary validated here (the values map onto\nFeedbackRating in the service); ``fingerprint`` is the stable test\nidentity (sha256(class::test)[:16]) the analytics surface uses.",
+  "description": "Outcome of a fix informed by TestLookup's diagnosis.\n\n``outcome`` is a closed vocabulary validated here (the values map onto\nFeedbackRating in the service); ``fingerprint`` is the stable test\nidentity (sha256(class::test)[:16]) the analytics surface uses.",
   "properties": {
     "comment": {
       "anyOf": [

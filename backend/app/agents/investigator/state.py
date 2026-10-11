@@ -1,4 +1,4 @@
-"""LangGraph state for the hypothesis-loop Investigator (Agentic plan AI-1).
+"""LangGraph state for the hypothesis-loop Investigator.
 
 The graph is: plan → parallel fan-out to five hypothesis nodes → synthesis.
 Parallel nodes write to non-overlapping scalar keys plus three Annotated
