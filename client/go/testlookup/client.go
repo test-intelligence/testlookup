@@ -28,7 +28,7 @@
 //
 // # Login helper
 //
-//	token, err := testlookup.Login(ctx, "http://localhost:8000", "admin", "secret")
+//	token, err := testlookup.Login(ctx, "http://localhost:8000", "<username>", "<password>")
 //
 // # Environment variable fallback
 //
@@ -293,7 +293,7 @@ func (r *Reporter) CloseSession(ctx context.Context, sessionID string) error {
 
 // Login obtains a JWT access token via username/password.
 //
-//	token, err := testlookup.Login(ctx, "http://localhost:8000", "admin", "secret")
+//	token, err := testlookup.Login(ctx, "http://localhost:8000", "<username>", "<password>")
 func Login(ctx context.Context, baseURL, username, password string) (string, error) {
 	form := url.Values{"username": {username}, "password": {password}}
 	req, err := http.NewRequestWithContext(

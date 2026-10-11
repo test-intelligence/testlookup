@@ -29,9 +29,7 @@ EXPECTED_ORDER = ["VIEWER", "TESTER", "QA_ENGINEER", "QA_LEAD", "ADMIN"]
 # for. ``user-guide/compliance.md`` is the SOC-2 control mapping.
 DOCS_THAT_ENUMERATE_THE_HIERARCHY = [
     "README.md",
-    "README_FULL.md",
     "THREAT_MODEL.md",
-    "UserGuides/TESTLOOKUP_USER_GUIDE.md",
     "user-guide/compliance.md",
 ]
 

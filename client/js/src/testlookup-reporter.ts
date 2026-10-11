@@ -25,7 +25,7 @@
  * Login helper (obtain JWT)
  * -------------------------
  *   const token = await TestLookupReporter.login(
- *     'http://localhost:8000', 'admin', 'secret'
+ *     'http://localhost:8000', '<username>', '<password>'
  *   )
  */
 
@@ -256,7 +256,7 @@ export class TestLookupReporter {
   /**
    * Convenience: obtain a JWT access token via username/password login.
    *
-   *   const token = await TestLookupReporter.login(url, 'admin', 'secret')
+   *   const token = await TestLookupReporter.login(url, '<username>', '<password>')
    */
   static async login(baseUrl: string, username: string, password: string): Promise<string> {
     const url  = baseUrl.replace(/\/$/, '') + '/api/v1/auth/login'

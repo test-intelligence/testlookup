@@ -25,7 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN groupadd -r -g 1000 testlookup && useradd -r -u 1000 -g testlookup testlookup
 
 # ── TLS-interception CA support (homelab builds behind an HTTPS-inspecting
-#    middlebox: Norton/NordVPN SSL scanning, corporate proxy) ─────────────
+#    middlebox: a corporate proxy or endpoint-security TLS scanning) ──
 # When the host re-signs TLS with a private root CA, in-container pip can't
 # verify pypi.org against the public roots and dies with
 #   "unable to get local issuer certificate".

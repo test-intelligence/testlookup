@@ -138,8 +138,9 @@ def test_every_angle_bracket_placeholder_the_repo_ships_is_caught():
 
 
 def test_every_documented_value_for_a_checked_secret_is_caught():
-    """The docs tell operators what to paste. deploymentsteps.md shows
-    ``APP_SECRET_KEY=<your generated key from Step 9.3>``, which has spaces; the
+    """The docs tell operators what to paste. The single-VM guide
+    (docs/operations/deploy-single-vm.md) shows
+    ``APP_SECRET_KEY=<your generated key from step 3>``, which has spaces; the
     token rule before this accepted it as a real secret (QA of Q7)."""
     import re
     import subprocess
@@ -163,7 +164,7 @@ def test_every_documented_value_for_a_checked_secret_is_caught():
         for line in text.splitlines():
             for _key, token in pattern.findall(line):
                 documented[token] = rel
-    assert "deploymentsteps.md" in documented.values(), (
+    assert "docs/operations/deploy-single-vm.md" in documented.values(), (
         f"the scan no longer sees the deployment guide's placeholder: {documented}"
     )
     missed = sorted(

@@ -178,10 +178,10 @@ class ConfigLoader:
     Discovers and merges declarative TestLookup config from a properties file
     or YAML file, plus environment variables.
 
-    Discovery order (first file found wins):
+    Discovery order (first file found wins; only that one file is read):
       1. ./testlookup.properties      (preferred, ReportPortal-compatible)
-      2. ./testlookup.yaml
-      3. ./.testlookup/testlookup.properties
+      2. ./.testlookup/testlookup.properties
+      3. ./testlookup.yaml            (needs PyYAML; skipped without it)
       4. ./.testlookup/config.yaml
       5. ~/.testlookup/testlookup.properties
       6. ~/.testlookup/config.yaml

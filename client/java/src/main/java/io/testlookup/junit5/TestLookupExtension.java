@@ -23,7 +23,7 @@ import java.util.logging.Logger;
  *
  * <h3>Global registration (src/test/resources/META-INF/services)</h3>
  * Add a file {@code org.junit.jupiter.api.extension.Extension} containing:
- * <pre>ai.testlookup.junit5.TestLookupExtension</pre>
+ * <pre>io.testlookup.junit5.TestLookupExtension</pre>
  *
  * <h3>Configuration via environment variables</h3>
  * <pre>

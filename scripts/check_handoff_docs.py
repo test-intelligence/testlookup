@@ -22,11 +22,19 @@ pages = [
     ROOT / name
     for name in (
         "README.md",
-        "README_FULL.md",
         "GETTING_STARTED.md",
         "ARCHITECTURE.md",
+        "CONTRIBUTING.md",
+        "SECURITY.md",
+        "SUPPORT.md",
+        "GOVERNANCE.md",
+        "MAINTAINERS.md",
+        "UPGRADING.md",
+        "RELEASING.md",
+        "THIRD_PARTY_NOTICES.md",
         "docs/README.md",
     )
+    if (ROOT / name).is_file()
 ]
 for folder in (
     "product",
@@ -36,10 +44,14 @@ for folder in (
     "operations",
     "handoff",
     "reference",
-    "wiki",
 ):
     pages.extend((DOCS / folder).rglob("*.md"))
-pages.extend((DOCS / "reviews").glob("*.md"))
+# The operator guide and the component READMEs ship too.
+pages.extend((ROOT / "user-guide").glob("*.md"))
+for readme in ("k8s/README.md", "cli/README.md", "mcp/README.md", "samples/README.md"):
+    if (ROOT / readme).is_file():
+        pages.append(ROOT / readme)
+pages.extend((ROOT / "client").rglob("README.md"))
 
 
 def prose_only(raw: str) -> str:

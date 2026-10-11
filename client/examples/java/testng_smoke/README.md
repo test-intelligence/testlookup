@@ -17,12 +17,19 @@ testng_smoke/
 
 ## Run it
 
-1. **Generate an API key.** TestLookup → *Settings → API Keys →
-   Generate streaming key*. Copy the `testlookup.properties` content from the
-   modal and replace the placeholder file at
+1. **Install the reporter** into your local Maven repository (it is not on
+   Maven Central). From the repository root:
+
+   ```bash
+   mvn -f client/java/pom.xml install -DskipTests
+   ```
+
+2. **Generate an API key.** As an ADMIN, TestLookup → *Settings → Streaming
+   API keys*. Copy the `testlookup.properties` content from the dialog that
+   shows the new key and replace the placeholder file at
    `src/test/resources/testlookup.properties`.
 
-2. **Build and test:**
+3. **Build and test:**
 
    ```bash
    mvn test
@@ -34,8 +41,10 @@ testng_smoke/
 
 ## What you'll see
 
-- **TestLookup → Live Execution** — the run appears immediately under the
-  launch label `Smoke suite` (from `testlookup.launch`). Counters tick up
+- **TestLookup → Runs → Live** — the run appears immediately, with the
+  suite name `Smoke suite` (the listener uses `testlookup.launch` from the
+  properties file as the run's suite; a launch label comes only from
+  `-Dtestlookup.launch` or `TESTLOOKUP_LAUNCH`, see below). Counters tick up
   live as the data-provider rows stream in.
 - **Runs / Overview / Coverage / Failures / Trends** — once the suite
   finishes, the listener's `onFinish(ISuite)` closes the session and the
@@ -56,7 +65,8 @@ mvn test \
 
 You can also use environment variables (`TESTLOOKUP_BUILD`, `TESTLOOKUP_BRANCH`,
 `TESTLOOKUP_COMMIT`, `TESTLOOKUP_LAUNCH`) — same effect, lower precedence than
-JVM props. See `docs/integration/testng.md` for the full chain.
+JVM props. The full configuration chain is in
+[client/java/README.md](../../../java/README.md#configuration-chain).
 
 ## JUnit 5 alternative
 

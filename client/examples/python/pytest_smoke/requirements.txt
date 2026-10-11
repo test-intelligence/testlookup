@@ -1,5 +1,4 @@
 pytest>=7.0
-# Local dev install — points at client/pyproject.toml at the repo root.
-# Once the package is published to PyPI, replace with:
-#   testlookup-reporter>=1.1
+# Installs the reporter from this repository (client/pyproject.toml); it is
+# not published to a package registry.
 -e ../../..

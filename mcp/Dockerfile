@@ -8,7 +8,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
 # ── TLS-interception CA support (homelab builds behind an HTTPS-inspecting
-#    middlebox: Norton/NordVPN SSL scanning, corporate proxy) ─────────────
+#    middlebox: a corporate proxy or endpoint-security TLS scanning) ──
 # ca-certificates supplies the OS trust bundle + update-ca-certificates so a
 # staged interception root CA can be merged, letting pip reach pypi.org
 # through the middlebox. deploy-homelab.sh drops the CA into mcp/certs/*.crt

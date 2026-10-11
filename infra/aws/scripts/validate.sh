@@ -22,7 +22,7 @@
 # Flags:
 #   --tf-docker   Force terraform fmt/validate to run inside the hashicorp/
 #                 terraform image. Needed on dev hosts where a TLS-inspecting
-#                 AV (e.g. Norton) intercepts loopback and breaks terraform's
+#                 antivirus or proxy intercepts loopback and breaks terraform's
 #                 plugin mTLS handshake. CI Linux runners don't need this.
 #   --no-docker   Never fall back to Docker; skip tools that aren't on PATH.
 ###############################################################################
@@ -71,12 +71,12 @@ run_tf_native() {
   ) 2>&1
 }
 run_tf_docker() {
-  local tmp norton rc
+  local tmp mitm_ca rc
   tmp="$(mktemp -d)"
   cp -r "$TF_DIR/." "$tmp/" && rm -rf "$tmp/.terraform" "$tmp/.terraform.lock.hcl"
-  norton="$AWS_DIR/../../backend/certs/mitm-ca.crt"
+  mitm_ca="$AWS_DIR/../../backend/certs/mitm-ca.crt"
   local caenv=()
-  [ -f "$norton" ] && caenv=(-v "$(winpath "$norton")":/norton.crt:ro -e SSL_CERT_FILE=/norton.crt)
+  [ -f "$mitm_ca" ] && caenv=(-v "$(winpath "$mitm_ca")":/mitm-ca.crt:ro -e SSL_CERT_FILE=/mitm-ca.crt)
   MSYS_NO_PATHCONV=1 docker run --rm -v "$(winpath "$tmp")":/work -w /work "${caenv[@]}" \
     --entrypoint sh "$TF_IMAGE" \
     -c "terraform fmt -check -recursive && terraform init -backend=false -input=false >/dev/null && terraform validate" 2>&1

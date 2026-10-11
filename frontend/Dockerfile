@@ -2,7 +2,7 @@ FROM node:20-alpine AS base
 WORKDIR /app
 
 # ── TLS-interception CA support (homelab builds behind an HTTPS-inspecting
-#    middlebox: Norton/NordVPN SSL scanning, corporate proxy) ─────────────
+#    middlebox: a corporate proxy or endpoint-security TLS scanning) ──
 # Without this, `npm install` can't verify registry.npmjs.org against the
 # public roots and fails with "unable to get local issuer certificate".
 # NODE_EXTRA_CA_CERTS *appends* the staged root CA to Node's built-in roots
@@ -33,7 +33,7 @@ CMD ["npm", "run", "dev"]
 # Build stage — Vite handles TypeScript compilation internally via esbuild
 FROM base AS builder
 # Default to empty so the bundle uses same-origin relative URLs (works behind
-# any ingress, e.g. testlookup.local in k8s). Deployments that need an absolute
+# any ingress, e.g. testlookup.localhost on K3s). Deployments that need an absolute
 # URL (gcp-vm, cloudrun) override this via --build-arg.
 ARG VITE_API_BASE_URL=""
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}

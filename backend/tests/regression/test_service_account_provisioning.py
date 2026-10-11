@@ -48,9 +48,8 @@ def test_network_deploys_do_not_publish_or_provision_shared_mcp_credentials():
         assert "createServiceAccount.py" not in source, path
 
     docs = (
-        REPO / "installation.md",
-        REPO / "deploymentsteps.md",
-        REPO / "homelabsetup" / "DEPLOY_TESTLOOKUP.md",
+        REPO / "docs" / "operations" / "deploy-single-vm.md",
+        REPO / "docs" / "operations" / "deploy-k3s.md",
         REPO / "infra" / "cloudrun" / "mcp.env.example",
     )
     for path in docs:

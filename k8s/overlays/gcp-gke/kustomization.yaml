@@ -9,7 +9,7 @@ kind: Kustomization
 #   - For production, prefer Cloud SQL (Postgres) / MongoDB Atlas / Memorystore
 #     (Redis) / GCS-compatible MinIO. The base manifests don't deploy those —
 #     wire DSNs into the testlookup-secrets Secret created out-of-band (see
-#     docs/deployment/gcp-gke.md).
+#     docs/operations/deploy-cloud.md).
 
 resources:
   - ../prod

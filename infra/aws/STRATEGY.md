@@ -150,7 +150,7 @@ Every check is static / dry-run / render:
 
 `scripts/validate.sh` runs them locally (tool-or-Docker, auto-skip if absent);
 the CI workflow runs the full set on Linux. **Dev-host note:** a TLS-inspecting
-AV (Norton/NordVPN) intercepts terraform's loopback plugin mTLS, so native
+antivirus or proxy can intercept terraform's loopback plugin mTLS, so native
 `terraform validate` fails locally with *“plugin did not respond”*. Use
 `./scripts/validate.sh --tf-docker` (runs terraform in a container, where
 loopback isn't intercepted). CI Linux runners are unaffected.

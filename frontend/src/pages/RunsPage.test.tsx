@@ -329,6 +329,21 @@ describe('SignatureClusters — the side panel splits the failed builds by signa
     expect(screen.getByText(/8 pass \/ 2 fail \/ 10 total/)).toBeInTheDocument()
   })
 
+  it('describes the outliers from the data, never with an invented cause', () => {
+    // The panel used to print a fixed sentence blaming "an older Jenkinsfile"
+    // for every outlier, whatever the data said (OSS-release audit E2).
+    const { container } = renderClusters(
+      newestFirst([
+        run(1, { status: 'FAILED', passed_tests: 8, failed_tests: 2 }),
+        run(2, { status: 'FAILED', passed_tests: 8, failed_tests: 2 }),
+        run(3, { status: 'FAILED', passed_tests: 6, failed_tests: 4 }),
+        run(4),
+      ]),
+    )
+    expect(screen.getByText(/1 failed build carries a different signature/)).toBeInTheDocument()
+    expect(container.textContent ?? '').not.toMatch(/Jenkinsfile/)
+  })
+
   it('draws no split when nothing failed', () => {
     renderClusters([run(1), run(2)])
     expect(screen.queryByRole('meter')).toBeNull()

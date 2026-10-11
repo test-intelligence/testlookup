@@ -74,7 +74,7 @@ import java.util.logging.Logger;
  *
  * <h3>Login helper</h3>
  * <pre>{@code
- * String token = TestLookupReporter.login("http://localhost:8000", "admin", "secret");
+ * String token = TestLookupReporter.login("http://localhost:8000", "<username>", "<password>");
  * }</pre>
  */
 public class TestLookupReporter {
@@ -309,7 +309,7 @@ public class TestLookupReporter {
      * Obtain a JWT access token via username/password login.
      *
      * <pre>{@code
-     * String token = TestLookupReporter.login("http://localhost:8000", "admin", "secret");
+     * String token = TestLookupReporter.login("http://localhost:8000", "<username>", "<password>");
      * }</pre>
      */
     public static String login(String baseUrl, String username, String password)

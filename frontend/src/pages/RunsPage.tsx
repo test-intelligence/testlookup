@@ -817,7 +817,7 @@ export function SignatureClusters({
       </div>
       {outlierCount > 0 && (
         <p className="text-[11.5px] m-0 italic" style={{ color: 'var(--color-text-muted)', lineHeight: 1.5 }}>
-          The outlier ran a different test count, with the same single failure pattern. Likely an older Jenkinsfile that included a smoke-test suite later removed. Same failing test underneath — treat it as part of the cluster.
+          {outlierCount} failed build{outlierCount === 1 ? '' : 's'} carr{outlierCount === 1 ? 'ies' : 'y'} a different signature. Open {outlierCount === 1 ? 'it' : 'them'} to check whether the same test fails underneath before counting {outlierCount === 1 ? 'it' : 'them'} as a separate incident.
         </p>
       )}
       {/* Renders nothing at one page, so small clusters look exactly as before. */}

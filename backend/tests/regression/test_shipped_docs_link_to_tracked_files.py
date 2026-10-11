@@ -17,7 +17,7 @@ Eight distinct links were dead on GitHub:
   ``docs/MULTI_CLOUD_DEPLOYMENT_STRATEGY.md``,
   ``docs/TESTLOOKUP_USER_GUIDE_TIER_0_2.md``
 * ``CLAUDE.md`` -- an agent-instruction file, gitignored, linked from
-  ``README.md``, ``README_FULL.md`` and ``ARCHITECTURE.md``
+  ``README.md`` and ``ARCHITECTURE.md``
 
 This test asks git what is tracked rather than the filesystem what exists,
 because the filesystem is exactly what made the bug invisible.
@@ -36,15 +36,19 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 #: someone who has only ever cloned the repo.
 SHIPPED_DOCS = [
     "README.md",
-    "README_FULL.md",
     "GETTING_STARTED.md",
     "CONTRIBUTING.md",
     "ARCHITECTURE.md",
-    "installation.md",
-    "deploymentsteps.md",
     "SECURITY.md",
     "CODE_OF_CONDUCT.md",
     "THREAT_MODEL.md",
+    "SUPPORT.md",
+    "GOVERNANCE.md",
+    "MAINTAINERS.md",
+    "UPGRADING.md",
+    "RELEASING.md",
+    "CHANGELOG.md",
+    "THIRD_PARTY_NOTICES.md",
 ]
 
 #: ``[text](target)`` -- markdown inline links.

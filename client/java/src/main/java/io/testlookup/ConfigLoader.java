@@ -17,15 +17,20 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * Discovers and loads testlookup.yaml configuration, overlaying environment
- * variables and JVM system properties.
+ * Discovers and loads TestLookup configuration from a properties or YAML
+ * file, overlaying environment variables and JVM system properties.
  *
- * <p>Discovery order (first file found wins):
+ * <p>Sources, lowest precedence first: a {@code testlookup.properties} on the
+ * classpath; then the first file found of
  * <ol>
+ *   <li>{@code ./testlookup.properties}</li>
+ *   <li>{@code ./.testlookup/testlookup.properties}</li>
  *   <li>{@code ./testlookup.yaml}</li>
  *   <li>{@code ./.testlookup/config.yaml}</li>
+ *   <li>{@code ~/.testlookup/testlookup.properties}</li>
  *   <li>{@code ~/.testlookup/config.yaml}</li>
  * </ol>
+ * then environment variables, then JVM system properties.
  *
  * <p>Precedence (highest wins):
  * Builder args &gt; JVM system props &gt; Environment vars &gt; Config file &gt; Defaults

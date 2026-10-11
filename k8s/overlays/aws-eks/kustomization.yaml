@@ -4,7 +4,7 @@ kind: Kustomization
 # AWS EKS overlay — production-grade defaults assuming:
 #   - AWS Load Balancer Controller installed (ingressClassName: alb)
 #   - EBS CSI driver installed (StorageClass: gp3 — created by storageclass.yaml)
-#   - cert-manager + ACM (or Let's Encrypt) for TLS — see docs/deployment/aws-eks.md
+#   - cert-manager + ACM (or Let's Encrypt) for TLS — see docs/operations/deploy-cloud.md
 #   - Stateful workloads (postgres/mongo/redis) MAY run in-cluster with EBS, but
 #     for production we recommend RDS / DocumentDB / ElastiCache. The base
 #     manifests don't deploy those data stores; you wire ConnectionStrings via

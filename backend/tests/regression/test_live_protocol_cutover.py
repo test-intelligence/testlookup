@@ -504,32 +504,21 @@ def test_standard_openshift_declares_external_durable_redis_contract():
     kustomization = (
         ROOT / "k8s/overlays/openshift/kustomization.yaml"
     ).read_text(encoding="utf-8")
-    runbook = (
-        ROOT / "deploy/H02_H03_STABLE_LIVE_CUTOVER.md"
+    # The one-time H02/H03 cutover runbook served pre-release installs and is
+    # no longer shipped; the durable-broker contract an operator must meet is
+    # stated in the OpenShift deployment guide.
+    guide = (
+        ROOT / "docs/operations/deploy-openshift.md"
     ).read_text(encoding="utf-8")
     assert "does not deploy Redis" in kustomization
     for requirement in (
-        "authenticated, TLS-protected Redis",
+        "authenticated, TLS-protected",
         "append-only persistence",
         "backups",
         "point-in-time recovery",
         "cannot evict TTL-less evidence/broker keys",
     ):
-        assert requirement in runbook
-
-
-def test_cutover_runbook_orders_consumers_migration_drain_cleanup_producers():
-    runbook = (
-        ROOT / "deploy/H02_H03_STABLE_LIVE_CUTOVER.md"
-    ).read_text(encoding="utf-8")
-    positions = [
-        runbook.index("Apply the new consumer/drainer image first"),
-        runbook.index("migrate all frozen legacy LISTs"),
-        runbook.index("Start only the new persistence consumers"),
-        runbook.index("Remove the legacy LISTs"),
-        runbook.index("Deploy and resume the new producers"),
-    ]
-    assert positions == sorted(positions)
+        assert requirement in guide
 
 
 @pytest.mark.asyncio

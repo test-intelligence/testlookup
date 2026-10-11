@@ -10,7 +10,7 @@ provider "aws" {
       Project     = var.project_name
       Environment = var.environment
       ManagedBy   = "terraform"
-      Repo        = "anandtopu/testlookup"
+      Repo        = "test-intelligence/testlookup"
     }
   }
 }
