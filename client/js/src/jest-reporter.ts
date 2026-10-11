@@ -33,7 +33,7 @@
  *   framework     TESTLOOKUP_FRAMEWORK                   testlookup.framework (default jest)
  */
 
-import { loadConfig } from './config-loader'
+import { loadConfig, resolveCredentials } from './config-loader'
 import { TestLookupReporter, LiveSession, type TestStatus } from './testlookup-reporter'
 
 // ── Types (subset of @jest/reporters to avoid hard dependency) ─────────────────
@@ -108,12 +108,13 @@ export default class TestLookupJestReporter {
 
   constructor(_globalConfig: JestConfig, options: TestLookupJestReporterOptions = {}) {
     const cfg = loadConfig()
+    const credentials = resolveCredentials({ apiKey: options.apiKey, token: options.token })
     const launchName = options.launchName ?? cfg.launchName
     this.opts = {
       ...options,
       baseUrl:     options.baseUrl     ?? cfg.baseUrl,
-      apiKey:      options.apiKey      ?? cfg.apiKey,
-      token:       options.token       ?? cfg.token,
+      apiKey:      credentials.apiKey,
+      token:       credentials.token,
       projectId:   options.projectId   ?? cfg.projectId,
       buildNumber: options.buildNumber ?? cfg.buildNumber ?? `jest-${Date.now()}`,
       branch:      options.branch      ?? cfg.branch,

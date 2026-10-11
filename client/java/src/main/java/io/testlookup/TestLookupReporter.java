@@ -192,8 +192,15 @@ public class TestLookupReporter {
         public TestLookupReporter build() {
             Map<String, Object> cfg = ConfigLoader.load();
             if (this.baseUrl == null)    this.baseUrl    = ConfigLoader.getString(cfg, "server.url", null);
-            if (this.token == null)      this.token      = ConfigLoader.getString(cfg, "auth.token", null);
-            if (this.apiKey == null)     this.apiKey     = ConfigLoader.getString(cfg, "auth.api_key", null);
+            // Credentials resolve as a pair: an explicit token or key beats any
+            // configured one, and configured ones go layer by layer (see
+            // ConfigLoader.credentials) — never a token from one source paired
+            // with a key from another.
+            if (this.token == null && this.apiKey == null) {
+                String[] configured = ConfigLoader.credentials();
+                this.token  = configured[0];
+                this.apiKey = configured[1];
+            }
             if (this.projectId == null)  this.projectId  = ConfigLoader.getString(cfg, "project.id", null);
             if (this.clientName == null) this.clientName  = ConfigLoader.getString(cfg, "reporting.client_name", null);
             if (this.framework == null)  this.framework   = ConfigLoader.getString(cfg, "reporting.framework", null);
@@ -421,10 +428,22 @@ public class TestLookupReporter {
         }
     }
 
-    /** Apply the correct auth header: X-API-Key if apiKey is set, else Authorization Bearer. */
+    /**
+     * Every key minted by Settings → API Keys starts with this. The server
+     * reads API keys only from X-API-Key; sent as a Bearer token a key is
+     * decoded as a JWT and refused with 401.
+     */
+    static final String API_KEY_PREFIX = "qai_";
+
+    /**
+     * Apply the auth header: X-API-Key for an API key — including one passed
+     * as a token — else Authorization Bearer.
+     */
     private void applyAuth(HttpRequest.Builder rb) {
         if (apiKey != null) {
             rb.header("X-API-Key", apiKey);
+        } else if (token != null && token.startsWith(API_KEY_PREFIX)) {
+            rb.header("X-API-Key", token);
         } else if (token != null) {
             rb.header("Authorization", "Bearer " + token);
         }

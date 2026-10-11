@@ -41,7 +41,7 @@
  * ``default`` export.
  */
 
-import { loadConfig } from './config-loader'
+import { loadConfig, resolveCredentials } from './config-loader'
 import { TestLookupReporter, LiveSession, type TestStatus } from './testlookup-reporter'
 
 // ── Minimal Mocha type stubs (avoid hard dep on @types/mocha) ─────────────────
@@ -107,10 +107,11 @@ class TestLookupMochaReporter {
   constructor(runner: MochaRunner, options: MochaOptions = {}) {
     const ro = options.reporterOptions ?? {}
     const cfg = loadConfig()
+    const credentials = resolveCredentials({ apiKey: ro.testlookupApiKey, token: ro.testlookupToken })
 
     this.baseUrl     = ro.testlookupUrl     ?? cfg.baseUrl
-    this.apiKey      = ro.testlookupApiKey  ?? cfg.apiKey
-    this.token       = ro.testlookupToken   ?? cfg.token
+    this.apiKey      = credentials.apiKey
+    this.token       = credentials.token
     this.projectId   = ro.testlookupProject ?? cfg.projectId
     this.buildNumber = ro.testlookupBuild   ?? cfg.buildNumber ?? `mocha-${Date.now()}`
     this.branch      = ro.testlookupBranch  ?? cfg.branch

@@ -436,10 +436,17 @@ def _resolve_credentials(
 ) -> tuple[Optional[str], Optional[str]]:
     """Return ``(token, api_key)`` with at most one of them set.
 
-    Explicit arguments beat config (file + env). Within one layer an API key
-    beats a token, as in the Java and JS SDKs. A "token" that carries the
-    ``qai_`` prefix is an API key whichever option it came through.
+    Credentials resolve as a pair, layer by layer: explicit arguments, then
+    environment variables, then the config file -- the first layer holding
+    either one wins. Merging the layers first would let a stale API key in
+    testlookup.properties beat a TESTLOOKUP_TOKEN set for this run. Within a
+    layer an API key beats a token (same rule in the Java and JS SDKs), and a
+    "token" carrying the ``qai_`` prefix is an API key whichever option it
+    came through.
     """
+    if not (token or api_key):
+        token = os.environ.get("TESTLOOKUP_TOKEN") or None
+        api_key = os.environ.get("TESTLOOKUP_API_KEY") or None
     if not (token or api_key):
         token = ConfigLoader.get(cfg, "auth.token")
         api_key = ConfigLoader.get(cfg, "auth.api_key")

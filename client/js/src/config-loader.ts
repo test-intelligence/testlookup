@@ -171,29 +171,50 @@ function parseYaml(content: string): ResolvedConfig {
   return out
 }
 
-/**
- * Resolve TestLookup config: file → env var overlay. Caller-provided values
- * take final precedence; merge what's returned here with any explicit
- * constructor args.
- */
-export function loadConfig(): ResolvedConfig {
-  let cfg: ResolvedConfig = {}
+/** The config file layer alone (see the discovery order above). */
+export function loadFileConfig(): ResolvedConfig {
   const found = findFile()
-  if (found) {
-    try {
-      const content = fs.readFileSync(found.path, 'utf8')
-      cfg = found.kind === 'properties' ? parseProperties(content) : parseYaml(content)
-    } catch (err) {
-      console.warn('[TestLookup] Failed to load config file', found.path, err)
-    }
+  if (!found) return {}
+  try {
+    const content = fs.readFileSync(found.path, 'utf8')
+    return found.kind === 'properties' ? parseProperties(content) : parseYaml(content)
+  } catch (err) {
+    console.warn('[TestLookup] Failed to load config file', found.path, err)
+    return {}
   }
+}
 
+/** The TESTLOOKUP_* environment layer alone. */
+export function loadEnvConfig(): ResolvedConfig {
+  const cfg: ResolvedConfig = {}
   for (const [envName, field] of Object.entries(ENV_KEYS)) {
     const val = process.env[envName]
     if (val) (cfg as Record<string, string>)[field] = val
   }
-
   return cfg
+}
+
+/**
+ * Resolve TestLookup config: file → env var overlay. Caller-provided values
+ * take final precedence; merge what's returned here with any explicit
+ * constructor args. Credentials come from resolveCredentials instead.
+ */
+export function loadConfig(): ResolvedConfig {
+  return { ...loadFileConfig(), ...loadEnvConfig() }
+}
+
+/**
+ * The API key / token pair, layer by layer: explicit values, then the
+ * environment, then the config file — the first layer holding either wins.
+ * Merging the layers first would let a stale API key in testlookup.properties
+ * beat a TESTLOOKUP_TOKEN set for this run, or an explicit token. Within a
+ * layer authHeaders() sends the API key (same rule in every SDK).
+ */
+export function resolveCredentials(explicit: { apiKey?: string; token?: string }): { apiKey?: string; token?: string } {
+  for (const layer of [explicit, loadEnvConfig(), loadFileConfig()]) {
+    if (layer.apiKey || layer.token) return { apiKey: layer.apiKey, token: layer.token }
+  }
+  return {}
 }
 
 /** Return true if any TestLookup config source is present. */

@@ -10,6 +10,16 @@ fails on the old code. The JS findings were reproduced with real Jest 29.7 and
 Mocha 10.8 against a packed build before fixing, and checked the same way
 after.
 
+**One credential rule in all three SDKs.** The token and the API key resolve
+as a pair: an explicit one (constructor, builder, CLI flag, reporter option,
+testng.xml parameter) beats any configured one; configured ones go layer by
+layer -- JVM property, then environment variable, then config file -- and the
+first layer holding either wins; within a layer the API key wins; a `qai_`
+value is an API key whichever option carried it. In Java the token and the
+key used to be filled independently from the merged config, so an explicit
+`.token(...)`, `-Dtestlookup.token` or testng.xml `testlookup.token` lost to
+any API key in `testlookup.properties`.
+
 **Python (`client/testlookup_reporter.py`)**
 - **The pytest plugin could not use an API key.** It handed every credential
   to `TestLookupReporter` as `token=`, which went out as `Authorization:
@@ -19,8 +29,7 @@ after.
   first test -- `client/examples/python/pytest_smoke` failed as shipped. A
   `qai_` credential is now always sent as `X-API-Key`, whichever option it came
   through; `TestLookupReporter(api_key=...)` and `--testlookup-api-key` are new.
-  A JWT still goes as Bearer. When both are configured the API key wins, as in
-  the Java SDK.
+  A JWT still goes as Bearer.
 - **`testlookup.suite` and `testlookup.release` never reached a pytest run.**
   The defaults were applied in `session()`, and the plugin opens its session
   through `_create_session()`. Defaults are now applied there.

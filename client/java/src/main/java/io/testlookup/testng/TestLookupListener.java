@@ -90,12 +90,16 @@ public class TestLookupListener implements ISuiteListener, ITestListener {
         // (ConfigLoader layers the last three).
         Map<String, Object> cfg = ConfigLoader.load();
         String url       = resolve(suite, "testlookup.url",       cfg, "server.url",   null);
-        String apiKey    = resolve(suite, "testlookup.apiKey",    cfg, "auth.api_key", null);
-        String token     = resolve(suite, "testlookup.token",     cfg, "auth.token",   null);
         String projectId = resolve(suite, "testlookup.projectId", cfg, "project.id",   null);
+        // Credentials only from testng.xml here; otherwise the Builder resolves
+        // the pair layer by layer, so a key from one source is never paired
+        // with a token from another.
+        String apiKey    = resolve(suite, "testlookup.apiKey",    null, null, null);
+        String token     = resolve(suite, "testlookup.token",     null, null, null);
 
         // Skip silently if essential config is missing
-        boolean hasAuth = apiKey != null || token != null;
+        String[] configured = ConfigLoader.credentials();
+        boolean hasAuth = apiKey != null || token != null || configured[0] != null || configured[1] != null;
         if (url == null || !hasAuth || projectId == null) {
             if (!ConfigLoader.isConfigured()) {
                 LOG.fine("TestLookupListener: no configuration found — skipping");
@@ -263,6 +267,6 @@ public class TestLookupListener implements ISuiteListener, ITestListener {
                                   Map<String, Object> cfg, String cfgPath, String defaultVal) {
         String v = suite.getParameter(paramName);
         if (v != null && !v.isEmpty()) return v;
-        return ConfigLoader.getString(cfg, cfgPath, defaultVal);
+        return cfg == null ? defaultVal : ConfigLoader.getString(cfg, cfgPath, defaultVal);
     }
 }

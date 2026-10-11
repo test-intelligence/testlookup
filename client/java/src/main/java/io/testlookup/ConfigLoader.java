@@ -140,6 +140,53 @@ public final class ConfigLoader {
 
     /** {@link #load()} with the environment and system properties injected (tests). */
     static Map<String, Object> load(Map<String, String> env, Properties sysProps) {
+        Map<String, Object> config = loadFiles();
+        overlay(config, ENV_MAP, env::get);
+        // JVM system properties have higher precedence than env vars.
+        overlay(config, SYSPROP_MAP, sysProps::getProperty);
+        return config;
+    }
+
+    /**
+     * The token / API-key pair, layer by layer: JVM system properties, then
+     * environment variables, then the config files — the first layer that
+     * holds either one wins. Merging the layers first (as {@link #load()}
+     * does) would let a stale API key in testlookup.properties beat a
+     * {@code TESTLOOKUP_TOKEN} set for this run. Within a layer the reporter
+     * sends the API key (same rule in every SDK).
+     *
+     * @return {@code {token, apiKey}}; either or both may be null
+     */
+    public static String[] credentials() {
+        return credentials(System.getenv(), System.getProperties());
+    }
+
+    /** {@link #credentials()} with the environment and system properties injected (tests). */
+    static String[] credentials(Map<String, String> env, Properties sysProps) {
+        Map<String, Object> sysLayer = new HashMap<>();
+        overlay(sysLayer, SYSPROP_MAP, sysProps::getProperty);
+        Map<String, Object> envLayer = new HashMap<>();
+        overlay(envLayer, ENV_MAP, env::get);
+        for (Map<String, Object> layer : java.util.List.of(sysLayer, envLayer, loadFiles())) {
+            String token = getString(layer, "auth.token", null);
+            String apiKey = getString(layer, "auth.api_key", null);
+            if (token != null || apiKey != null) return new String[] { token, apiKey };
+        }
+        return new String[] { null, null };
+    }
+
+    private static void overlay(Map<String, Object> config, String[][] mappings,
+                                java.util.function.Function<String, String> source) {
+        for (String[] mapping : mappings) {
+            String val = source.apply(mapping[0]);
+            if (val != null && !val.isEmpty()) {
+                setNested(config, mapping[1], val);
+            }
+        }
+    }
+
+    /** The config files alone: classpath testlookup.properties, then the filesystem file. */
+    private static Map<String, Object> loadFiles() {
         Map<String, Object> config = new HashMap<>();
 
         // 1a. Try classpath testlookup.properties (Java convention:
@@ -159,23 +206,6 @@ public final class ConfigLoader {
                 : parseYaml(configFile);
             mergeInto(config, fileCfg);
         }
-
-        // 2. Overlay environment variables
-        for (String[] mapping : ENV_MAP) {
-            String val = env.get(mapping[0]);
-            if (val != null && !val.isEmpty()) {
-                setNested(config, mapping[1], val);
-            }
-        }
-
-        // 3. Overlay JVM system properties (higher precedence than env vars)
-        for (String[] mapping : SYSPROP_MAP) {
-            String val = sysProps.getProperty(mapping[0]);
-            if (val != null && !val.isEmpty()) {
-                setNested(config, mapping[1], val);
-            }
-        }
-
         return config;
     }
 

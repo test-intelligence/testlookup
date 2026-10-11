@@ -111,6 +111,20 @@ def test_an_api_key_wins_over_a_token_in_the_same_config(wire):
     assert wire.told()["auth"] == ("X-API-Key", FAKE_KEY)
 
 
+def test_a_token_in_the_environment_beats_an_api_key_in_the_file(wire, monkeypatch):
+    """Env outranks the file for credentials too: a stale (or placeholder) key
+    left in testlookup.properties must not override TESTLOOKUP_TOKEN."""
+    write_properties(
+        Path("testlookup.properties"),
+        endpoint="http://testlookup.test", api_key="qai_REPLACE_ME", project="EverGreen",
+    )
+    monkeypatch.setenv("TESTLOOKUP_TOKEN", FAKE_JWT)
+
+    run_pytest_plugin()
+
+    assert wire.told()["auth"] == ("Bearer", FAKE_JWT)
+
+
 def test_reporter_api_key_argument_is_sent_as_x_api_key(wire):
     async def go() -> None:
         reporter = tr.TestLookupReporter(

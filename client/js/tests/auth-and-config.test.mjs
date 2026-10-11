@@ -159,6 +159,35 @@ for (const [name, sessionCreate] of [['Jest', jestSessionCreate], ['Mocha', moch
   })
 }
 
+test('a token in the environment beats an API key left in the file', async () => {
+  const restore = inProjectDir(PROPERTIES.replace(FAKE_KEY, 'qai_REPLACE_ME'))
+  try {
+    process.env.TESTLOOKUP_TOKEN = 'eyJhbGciOiJIUzI1NiJ9.e30.env'
+    const create = await jestSessionCreate()
+    assert.equal(create.headers.Authorization, 'Bearer eyJhbGciOiJIUzI1NiJ9.e30.env')
+    assert.equal(create.headers['X-API-Key'], undefined)
+  } finally {
+    restore()
+  }
+})
+
+test('an explicit token option beats an API key from the environment', async () => {
+  const restore = inProjectDir(PROPERTIES)
+  const server = installFakeServer()
+  try {
+    process.env.TESTLOOKUP_API_KEY = FAKE_KEY
+    const handlers = {}
+    const runner = { on(event, fn) { handlers[event] = fn; return this } }
+    const reporter = new MochaReporter(runner, { reporterOptions: { testlookupToken: 'eyJhbGciOiJIUzI1NiJ9.e30.opt' } })
+    handlers.start()
+    await new Promise((resolve) => reporter.done(0, resolve))
+    assert.equal(server.sessionCreate().headers.Authorization, 'Bearer eyJhbGciOiJIUzI1NiJ9.e30.opt')
+  } finally {
+    server.restore()
+    restore()
+  }
+})
+
 test('Mocha: a result that finishes before the session opens is kept', async () => {
   const restore = inProjectDir(PROPERTIES)
   const server = installFakeServer()
