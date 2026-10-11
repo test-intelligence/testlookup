@@ -81,6 +81,9 @@ venv/
 # install. Both are machine-specific; the scripts themselves are tracked.
 homelabsetup/.render/
 homelabsetup/*.env
+# OpenShift + Artifactory site configuration (holds passwords); the template is
+# openshiftsetup/artifactory.env.example.
+openshiftsetup/artifactory.env
 
 # Node
 node_modules/

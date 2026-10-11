@@ -15,9 +15,9 @@
     "type-check": "tsc --noEmit",
     "test": "npm run build && node --test tests/*.test.mjs"
   },
-  "files": ["dist", "src"],
+  "files": ["dist", "src", "LICENSE"],
   "keywords": ["testlookup", "test-reporting", "live-streaming", "jest", "mocha"],
-  "license": "MIT",
+  "license": "Apache-2.0",
   "engines": { "node": ">=18.0.0" },
   "devDependencies": {
     "@types/node":        "^20.0.0",

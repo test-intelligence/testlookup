@@ -3637,6 +3637,267 @@ def _agents_log_decision_present() -> list[Violation]:
     return violations
 
 
+# ── OSS release guards (2026-10) ────────────────────────────────────────────
+#
+# The public repository is a squashed snapshot of a private working repo. Three
+# classes of content must never come back: the maintainers' local-only files
+# (run evidence, agent handovers, live probes against a private deployment),
+# private markers (a private host name, a Windows profile path, a home-network
+# address, a real-looking API key), and dependencies under licenses the project
+# cannot ship. Each guard below reads only `git ls-files` and small text files,
+# so the whole set runs in a few seconds.
+
+_LOCAL_ONLY_LIST_REL = "scripts/local-only-paths.txt"
+
+
+def _local_only_patterns() -> list[str]:
+    path = REPO_ROOT / _LOCAL_ONLY_LIST_REL
+    if not path.exists():
+        return []
+    return [
+        line.strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+
+def _matches_local_only(path: str, patterns: Iterable[str]) -> bool:
+    for pattern in patterns:
+        if pattern.endswith("/"):
+            if path.startswith(pattern):
+                return True
+        elif fnmatch.fnmatchcase(path, pattern):
+            return True
+    return False
+
+
+def _git_ls_files() -> list[str]:
+    proc = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=REPO_ROOT, capture_output=True,
+    )
+    if proc.returncode != 0:
+        return []
+    return [p for p in proc.stdout.decode("utf-8", "replace").split("\0") if p]
+
+
+def _repo_no_local_only_paths() -> list[Violation]:
+    patterns = _local_only_patterns()
+    if len(patterns) < 10:
+        return [Violation(
+            REPO_ROOT / _LOCAL_ONLY_LIST_REL, 0,
+            f"the local-only list has {len(patterns)} patterns; the guard cannot "
+            "have read it, so a pass here would be meaningless",
+        )]
+    tracked = _git_ls_files()
+    if len(tracked) < 100:
+        return [Violation(REPO_ROOT / ".gitignore", 0,
+                          "git ls-files returned too little to check")]
+    violations = [
+        Violation(REPO_ROOT / path, 0,
+                  "tracked path matches the local-only list "
+                  f"({_LOCAL_ONLY_LIST_REL}); it must stay on maintainers' disks")
+        for path in tracked if _matches_local_only(path, patterns)
+    ]
+    ignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+    ignored = {line.strip() for line in ignore}
+    for pattern in patterns:
+        if "/" + pattern not in ignored:
+            violations.append(Violation(
+                REPO_ROOT / ".gitignore", 0,
+                f".gitignore does not ignore local-only pattern '/{pattern}' "
+                f"(keep it in step with {_LOCAL_ONLY_LIST_REL})",
+            ))
+    return violations
+
+
+# The private markers. The host is matched exactly (``*.localhost`` and the
+# synthetic ``qa-lead.testlookup.local`` account domain are different names).
+_PRIVATE_HOST_RE = re.compile(r"(?<![\w.-])testlookup\.local(?![\w.-])")
+_WINDOWS_PROFILE_RE = re.compile(r"\b[A-Za-z]:[\\/]{1,2}[Uu]sers[\\/]{1,2}[A-Za-z0-9]")
+# A CIDR (192.168.0.0/16) is a range in a config default, not a site address.
+_HOME_LAN_RE = re.compile(r"(?<![\d.])192\.168\.\d{1,3}\.\d{1,3}(?!\d|/\d)")
+_API_KEY_RE = re.compile(r"qai_[A-Za-z0-9_-]{40,}")
+_PLACEHOLDER_WORDS = ("your", "replace", "example", "placeholder", "dummy",
+                      "fake", "test", "secret", "wrong", "invalid", "not_a")
+# Files that NAME the markers to detect them.
+_PRIVATE_MARKER_EXEMPT = {
+    "scripts/quality_gate.py",
+    "scripts/test_quality_gate.py",
+}
+_TEXT_SUFFIX_SKIP = {
+    ".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".zip", ".gz", ".jar",
+    ".woff", ".woff2", ".ttf", ".eot", ".webp", ".svgz", ".bin",
+}
+
+
+def _is_test_path(path: str) -> bool:
+    name = path.rsplit("/", 1)[-1]
+    return (
+        "/tests/" in f"/{path}" or name.startswith("test_") or ".test." in name
+        or ".spec." in name or name == "conftest.py"
+    )
+
+
+def _looks_like_real_key(token: str) -> bool:
+    body = token[4:]
+    lowered = body.lower()
+    if any(word in lowered for word in _PLACEHOLDER_WORDS):
+        return False
+    return (any(c.isupper() for c in body) and any(c.islower() for c in body)
+            and any(c.isdigit() for c in body))
+
+
+def _repo_no_private_markers() -> list[Violation]:
+    violations: list[Violation] = []
+    files = _git_ls_files()
+    if len(files) < 100:
+        return [Violation(REPO_ROOT / ".gitignore", 0,
+                          "git ls-files returned too little to check")]
+    for rel in files:
+        if rel in _PRIVATE_MARKER_EXEMPT or Path(rel).suffix.lower() in _TEXT_SUFFIX_SKIP:
+            continue
+        path = REPO_ROOT / rel
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if not any(marker in text for marker in ("testlookup.local", "sers", "192.168.", "qai_")):
+            continue
+        test_file = _is_test_path(rel)
+        for lineno, line in enumerate(text.splitlines(), 1):
+            if _PRIVATE_HOST_RE.search(line):
+                violations.append(Violation(
+                    path, lineno, "names the private host testlookup.local — use "
+                    "testlookup.localhost, localhost or testlookup.example.com"))
+            if _WINDOWS_PROFILE_RE.search(line):
+                violations.append(Violation(
+                    path, lineno, "contains a Windows user-profile path"))
+            if not test_file and _HOME_LAN_RE.search(line):
+                violations.append(Violation(
+                    path, lineno, "contains a private 192.168.x.y address — "
+                    "site addresses belong in local site configuration"))
+            for token in _API_KEY_RE.findall(line):
+                if _looks_like_real_key(token):
+                    violations.append(Violation(
+                        path, lineno, "contains a real-looking qai_ API key — "
+                        "use qai_your_api_key_here"))
+    return violations
+
+
+# ── licenses.shipped-allowlist ─────────────────────────────────────────────
+
+_LICENSE_ALLOWLIST_REL = "scripts/license-allowlist.json"
+# Refused whatever the allowlist says: copyleft, source-available, non-commercial.
+_FORBIDDEN_LICENSE_RE = re.compile(
+    r"\b(?:A?GPL|LGPL|SSPL|BUSL|BSL-1\.1|Commons[- ]Clause|Elastic|"
+    r"non[- ]?commercial|CC-BY-NC|Research[- ]License|RSAL|PolyForm)",
+    re.IGNORECASE,
+)
+
+
+def _license_allowed(expression: str, allowed: set[str]) -> bool:
+    expression = expression.strip()
+    if not expression or _FORBIDDEN_LICENSE_RE.search(expression):
+        return False
+    expression = expression.replace("(", " ").replace(")", " ")
+    alternatives = [part.strip() for part in re.split(r"\s+OR\s+", expression)]
+    for alternative in alternatives:
+        terms = [term.strip() for term in re.split(r"\s+AND\s+", alternative)]
+        if terms and all(term in allowed for term in terms):
+            return True
+    return False
+
+
+def _canonical_dist(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _python_manifest_names(rel: str) -> list[tuple[str, int]]:
+    path = REPO_ROOT / rel
+    if not path.exists():
+        return []
+    text = path.read_text(encoding="utf-8")
+    out: list[tuple[str, int]] = []
+    if rel.endswith(".toml"):
+        import tomllib  # noqa: PLC0415 - stdlib, only needed here
+
+        data = tomllib.loads(text)
+        project = data.get("project", {})
+        deps = list(project.get("dependencies", []))
+        for extra in project.get("optional-dependencies", {}).values():
+            deps.extend(extra)
+        for dep in deps:
+            match = re.match(r"[A-Za-z0-9_.\-]+", dep)
+            if match:
+                out.append((_canonical_dist(match.group(0)), 0))
+        return out
+    for lineno, line in enumerate(text.splitlines(), 1):
+        line = line.split("#", 1)[0].strip()
+        if not line or line.startswith("-"):
+            continue
+        match = re.match(r"[A-Za-z0-9_.\-]+", line)
+        if match:
+            out.append((_canonical_dist(match.group(0)), lineno))
+    return out
+
+
+def _licenses_shipped_allowlist() -> list[Violation]:
+    config_path = REPO_ROOT / _LICENSE_ALLOWLIST_REL
+    if not config_path.exists():
+        return [Violation(config_path, 0, "license allowlist is missing")]
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    allowed = set(config.get("allowed", []))
+    violations: list[Violation] = []
+    checked = 0
+
+    overrides = config.get("npm_overrides", {})
+    for rel in config.get("npm_lockfiles", []):
+        lock_path = REPO_ROOT / rel
+        if not lock_path.exists():
+            violations.append(Violation(lock_path, 0, "listed lockfile is missing"))
+            continue
+        packages = json.loads(lock_path.read_text(encoding="utf-8")).get("packages", {})
+        for key, meta in packages.items():
+            if not key or meta.get("dev") or meta.get("link"):
+                continue  # the root project, dev-only tools, workspace links
+            name = key.rsplit("node_modules/", 1)[-1]
+            license_expr = meta.get("license") or overrides.get(name, "")
+            if isinstance(license_expr, dict):
+                license_expr = license_expr.get("type", "")
+            checked += 1
+            if not _license_allowed(str(license_expr), allowed):
+                violations.append(Violation(
+                    lock_path, 0,
+                    f"shipped npm package {name}@{meta.get('version')} has license "
+                    f"{license_expr or 'UNKNOWN'!r}, which is not on the allowlist",
+                ))
+
+    python = {_canonical_dist(k): v for k, v in config.get("python", {}).items()}
+    for rel in config.get("python_manifests", []):
+        for name, lineno in _python_manifest_names(rel):
+            checked += 1
+            license_expr = python.get(name)
+            if license_expr is None:
+                violations.append(Violation(
+                    REPO_ROOT / rel, lineno,
+                    f"Python dependency {name!r} has no license entry in "
+                    f"{_LICENSE_ALLOWLIST_REL} — add its SPDX license there",
+                ))
+            elif not _license_allowed(license_expr, allowed):
+                violations.append(Violation(
+                    REPO_ROOT / rel, lineno,
+                    f"Python dependency {name!r} is {license_expr!r}, which is not "
+                    "on the allowlist",
+                ))
+    if checked < 50:
+        violations.append(Violation(
+            config_path, 0,
+            f"only {checked} shipped dependencies were checked; the guard cannot "
+            "have read the lockfiles, so a pass here would be meaningless",
+        ))
+    return violations
+
+
 # ── Homelab guards ───────────────────────────────────────────────────────────
 
 _HOMELAB_OVERLAY_REL = "k8s/overlays/homelab/kustomization.yaml"
@@ -3676,9 +3937,10 @@ _HOMELAB_NEW_TAG_RE = re.compile(
 def _homelab_build_tag_placeholder() -> list[Violation]:
     """The homelab overlay's ``newTag:`` for every locally-built image
     must equal ``BUILD_TAG_PLACEHOLDER`` at rest. ``deploy-homelab.sh``
-    substitutes it in-place per-deploy and ``trap``s a restore on exit,
-    but a hard kill (SIGKILL, runner OOM, power loss between the sed
-    and the restore) can leave a real timestamp committed by mistake.
+    maps the images onto a real tag in its own per-deploy render
+    (homelabsetup/.render), and older versions substituted the tag
+    in-place, so a hand edit or an interrupted old deploy could still
+    leave a real timestamp committed by mistake.
 
     The existing ``k8s-image-pin-check`` CI guard already rejects the
     word ``latest``; this guard closes the matching hole for any other
@@ -4495,7 +4757,14 @@ def _git_tracked(paths: Iterable[str]) -> set[str]:
 
 
 def _repo_no_gitignored_source() -> list[Violation]:
-    candidates = _source_candidates()
+    # Local-only files (scripts/local-only-paths.txt) are ignored ON PURPOSE:
+    # maintainers keep them on disk, out of git. They are not "source that git
+    # add would silently drop".
+    local_only = _local_only_patterns()
+    candidates = [
+        path for path in _source_candidates()
+        if not _matches_local_only(path, local_only)
+    ]
 
     # Fail-open check. If the scan finds nothing, "no violations" would mean
     # "the walk broke", not "the tree is clean" — the same shape as a check
@@ -4829,9 +5098,9 @@ _PATHLIKE_TOKEN = re.compile(r"(/|\.(py|mjs|cjs|js|ts|tsx)$)")
 # unit path. Keep this list short and every entry justified.
 _SUITES_NOT_RUN_IN_CI: dict[str, str] = {
     "frontend/tests": (
-        "Playwright e2e against a LIVE deployment (`make test-e2e`, "
-        "frontend/probe-live.config.ts); needs a running stack and "
-        "credentials. The docs-diagram subset runs in docs-diagram-render."
+        "Playwright e2e against a LIVE deployment (`make test-e2e`); "
+        "needs a running stack and credentials. The ci-e2e subset runs in "
+        "CI, and the docs-diagram subset runs in docs-diagram-render."
     ),
     "client/examples/": (
         "sample projects users copy; their tests exercise a published SDK "
@@ -6545,6 +6814,49 @@ GUARDS: list[Guard] = [
             "Add `- package-ecosystem: <eco>` with `directory: /<dir>` to "
             ".github/dependabot.yml. Sample projects go in _DEPENDABOT_EXEMPT "
             "with the reason."
+        ),
+    ),
+    Guard(
+        name="repo.no-local-only-paths",
+        description=(
+            "No tracked path matches scripts/local-only-paths.txt (run evidence, "
+            "handovers, live probes, owner tooling), and .gitignore ignores each."
+        ),
+        check=_repo_no_local_only_paths,
+        fix_hint=(
+            "Keep the file on disk but out of git: `git rm --cached <path>` and add "
+            "it to .gitignore. If it should be public after all, remove its "
+            "pattern from scripts/local-only-paths.txt and .gitignore together."
+        ),
+    ),
+    Guard(
+        name="repo.no-private-markers",
+        description=(
+            "No tracked file names the private host testlookup.local, a Windows "
+            "user-profile path, a 192.168.x.y address outside tests, or a "
+            "real-looking qai_ API key."
+        ),
+        check=_repo_no_private_markers,
+        fix_hint=(
+            "Use testlookup.localhost / localhost / testlookup.example.com, "
+            "repo-relative paths, a documented placeholder (qai_your_api_key_here), "
+            "and put site addresses in local site configuration "
+            "(TESTLOOKUP_HOMELAB_ENV)."
+        ),
+    ),
+    Guard(
+        name="licenses.shipped-allowlist",
+        description=(
+            "Every shipped npm package and Python dependency is under a license on "
+            "scripts/license-allowlist.json; GPL/AGPL/LGPL/SSPL/BUSL/non-commercial "
+            "are refused outright."
+        ),
+        check=_licenses_shipped_allowlist,
+        fix_hint=(
+            "Pick a dependency under a permissive license. A new Python dependency "
+            "needs its SPDX license in scripts/license-allowlist.json; an npm "
+            "package without a license field needs an npm_overrides entry after "
+            "you have checked its LICENSE file."
         ),
     ),
     Guard(

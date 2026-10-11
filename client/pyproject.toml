@@ -8,13 +8,13 @@ version = "1.1.0"
 description = "Python client SDK for streaming test execution events to TestLookup"
 readme = "README.md"
 requires-python = ">=3.9"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 authors = [{ name = "TestLookup" }]
 keywords = ["testing", "test-reporting", "live-streaming", "ci-cd"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Topic :: Software Development :: Testing",
 ]
 dependencies = [

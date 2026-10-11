@@ -12,6 +12,15 @@
 
     <name>TestLookup Reporter</name>
     <description>Java client SDK for streaming test results to TestLookup in real-time</description>
+    <url>https://github.com/test-intelligence/testlookup</url>
+
+    <licenses>
+        <license>
+            <name>Apache-2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
 
     <properties>
         <java.version>11</java.version>
@@ -76,6 +85,20 @@
     </dependencies>
 
     <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <!-- Ship the license and notice inside every jar (Apache-2.0 4(a), 4(d)). -->
+            <resource>
+                <directory>${project.basedir}</directory>
+                <targetPath>META-INF</targetPath>
+                <includes>
+                    <include>LICENSE</include>
+                    <include>NOTICE</include>
+                </includes>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -129,6 +152,16 @@
                                     <shadedPattern>ai.testlookup.shaded.jackson</shadedPattern>
                                 </relocation>
                             </relocations>
+                            <!-- Jackson and SnakeYAML are Apache-2.0: keep one
+                                 LICENSE and merge every bundled META-INF/NOTICE
+                                 (Jackson ships one) into the -all jar's NOTICE,
+                                 as Apache-2.0 section 4(d) requires. -->
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ApacheLicenseResourceTransformer"/>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ApacheNoticeResourceTransformer">
+                                    <addHeader>false</addHeader>
+                                </transformer>
+                            </transformers>
                         </configuration>
                     </execution>
                 </executions>

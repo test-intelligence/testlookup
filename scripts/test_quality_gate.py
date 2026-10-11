@@ -3052,18 +3052,21 @@ def test_mode_writer_guard_on_the_real_repo_has_no_exceptions() -> None:
     assert qg._agents_agent_mode_single_writer() == []
 
 
-def test_codacy_workflow_does_not_reference_secrets_in_step_condition() -> None:
-    """GitHub rejects workflows that read ``secrets`` directly from ``if``."""
-    workflow = (
-        Path(__file__).resolve().parents[1] / ".github/workflows/codacy.yml"
-    ).read_text(encoding="utf-8")
+def test_no_workflow_references_secrets_in_a_step_condition() -> None:
+    """GitHub rejects workflows that read ``secrets`` directly from ``if``.
 
-    assert "CODACY_TOKEN_AVAILABLE: ${{ secrets.CODACY_PROJECT_TOKEN != '' }}" in workflow
-    assert "if: env.CODACY_TOKEN_AVAILABLE == 'true'" in workflow
-    assert not any(
-        line.lstrip().startswith("if:") and "secrets." in line
-        for line in workflow.splitlines()
+    (Pinned on the Codacy workflow until it left the public repo; the rule
+    holds for every workflow.)"""
+    workflows = sorted(
+        (Path(__file__).resolve().parents[1] / ".github/workflows").glob("*.yml")
     )
+    assert len(workflows) >= 5
+    for path in workflows:
+        workflow = path.read_text(encoding="utf-8")
+        assert not any(
+            line.lstrip().startswith("if:") and "secrets." in line
+            for line in workflow.splitlines()
+        ), path.name
 
 
 def test_prompt_attestation_watched_paths_are_pinned(tmp_path: Path) -> None:
@@ -4093,3 +4096,112 @@ def test_epoch_bump_accepts_a_cluster_sweep_that_bumps_after_commit(
             return run(_run())
     """)
     assert _epoch_messages() == []
+
+
+# ── OSS release guards ──────────────────────────────────────────────────────
+
+
+def _fake_tracked(monkeypatch: pytest.MonkeyPatch, files: list[str]) -> None:
+    monkeypatch.setattr(qg, "_git_ls_files", lambda: list(files))
+
+
+_FILLER = [f"backend/app/m{i}.py" for i in range(120)]
+
+
+def test_the_local_only_list_is_real_and_matches_the_gitignore() -> None:
+    patterns = qg._local_only_patterns()
+    assert len(patterns) >= 30
+    assert "qa/" in patterns and "frontend/tests/probe-*.spec.ts" in patterns
+    assert qg._repo_no_local_only_paths() == []
+
+
+def test_a_tracked_local_only_path_fails_the_gate(monkeypatch, tmp_path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    patterns = [f"dir{i}/" for i in range(10)] + ["qa/", "frontend/tests/probe-*.spec.ts"]
+    _write(tmp_path / qg._LOCAL_ONLY_LIST_REL, "\n".join(patterns) + "\n")
+    _write(tmp_path / ".gitignore", "\n".join("/" + p for p in patterns) + "\n")
+    _fake_tracked(monkeypatch, _FILLER + ["qa/run/ledger.jsonl", "frontend/tests/probe-x.spec.ts",
+                                          "frontend/tests/e2e/ok.spec.ts"])
+    flagged = sorted(v.relpath for v in qg._repo_no_local_only_paths())
+    assert flagged == ["frontend/tests/probe-x.spec.ts", "qa/run/ledger.jsonl"]
+
+
+def test_a_local_only_pattern_missing_from_gitignore_fails(monkeypatch, tmp_path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    patterns = [f"dir{i}/" for i in range(11)]
+    _write(tmp_path / qg._LOCAL_ONLY_LIST_REL, "\n".join(patterns) + "\n")
+    _write(tmp_path / ".gitignore", "\n".join("/" + p for p in patterns[:-1]) + "\n")
+    _fake_tracked(monkeypatch, _FILLER)
+    messages = [v.message for v in qg._repo_no_local_only_paths()]
+    assert len(messages) == 1 and "/dir10/" in messages[0]
+
+
+def test_private_markers_are_found_and_the_lookalikes_are_not(monkeypatch, tmp_path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    real_key = "qai_" + "Ab3" * 15
+    _write(tmp_path / "docs/a.md", f"""
+        open http://testlookup.local/runs
+        fine: http://testlookup.localhost and qa-lead.testlookup.local accounts
+        path C:\\Users\\someone\\x and C:/Users/... generic
+        node 192.168.0.101 and range 192.168.0.0/16
+        key {real_key} and qai_your_api_key_here
+    """)
+    _write(tmp_path / "backend/tests/test_ssrf.py", "URL = 'http://192.168.1.10/hook'\n")
+    _fake_tracked(monkeypatch, _FILLER + ["docs/a.md", "backend/tests/test_ssrf.py"])
+    found = sorted((v.relpath, v.line, v.message.split(" ")[0]) for v in qg._repo_no_private_markers())
+    assert found == [
+        ("docs/a.md", 1, "names"),
+        ("docs/a.md", 3, "contains"),
+        ("docs/a.md", 4, "contains"),
+        ("docs/a.md", 5, "contains"),
+    ]
+
+
+def test_the_license_rules() -> None:
+    allowed = {"MIT", "Apache-2.0", "BSD-3-Clause", "MPL-2.0"}
+    assert qg._license_allowed("MIT", allowed)
+    assert qg._license_allowed("(MPL-2.0 OR Apache-2.0)", allowed)
+    assert qg._license_allowed("Apache-2.0 AND MIT", allowed)
+    assert not qg._license_allowed("MIT AND ISC", allowed)
+    assert not qg._license_allowed("", allowed)
+    for bad in ("GPL-3.0", "AGPL-3.0-only", "LGPL-2.1", "SSPL-1.0", "BUSL-1.1",
+                "MIT OR GPL-2.0", "CC-BY-NC-4.0", "Qwen Research License"):
+        assert not qg._license_allowed(bad, allowed | {bad}), bad
+
+
+def test_the_license_guard_passes_on_the_real_repo() -> None:
+    assert qg._licenses_shipped_allowlist() == []
+
+
+def test_a_shipped_copyleft_or_unlisted_dependency_fails(monkeypatch, tmp_path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    import json
+
+    packages = {"": {"name": "app"}}
+    for i in range(60):
+        packages[f"node_modules/ok{i}"] = {"version": "1.0.0", "license": "MIT"}
+    packages["node_modules/bad"] = {"version": "2.0.0", "license": "AGPL-3.0"}
+    packages["node_modules/devonly"] = {"version": "1.0.0", "license": "GPL-3.0", "dev": True}
+    _write(tmp_path / "frontend/package-lock.json", json.dumps({"packages": packages}))
+    _write(tmp_path / "backend/requirements.txt", "fastapi==1.0\nmystery-lib==0.1\n")
+    _write(tmp_path / qg._LICENSE_ALLOWLIST_REL, json.dumps({
+        "allowed": ["MIT"],
+        "npm_lockfiles": ["frontend/package-lock.json"],
+        "python_manifests": ["backend/requirements.txt"],
+        "python": {"fastapi": "MIT"},
+    }))
+    messages = sorted(v.message for v in qg._licenses_shipped_allowlist())
+    assert len(messages) == 2
+    assert "bad@2.0.0" in messages[1] and "AGPL-3.0" in messages[1]
+    assert "mystery-lib" in messages[0] and "no license entry" in messages[0]
+
+
+def test_local_only_files_on_disk_are_not_reported_as_ignored_source(monkeypatch) -> None:
+    """Maintainers keep the local-only files on disk; the gitignored-source
+    guard must not report them as code `git add` would silently drop."""
+    probe = "frontend/tests/probe-anything.spec.ts"
+    assert qg._matches_local_only(probe, qg._local_only_patterns())
+    candidates = qg._source_candidates()
+    real = {p for p in candidates if qg._matches_local_only(p, qg._local_only_patterns())}
+    reported = {v.relpath for v in qg._repo_no_gitignored_source()}
+    assert not (real & reported)
