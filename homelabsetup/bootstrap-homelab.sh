@@ -1,22 +1,26 @@
 #!/usr/bin/env bash
 # ============================================================
-# bootstrap-homelab.sh — One-shot K3s cluster bootstrap
+# bootstrap-homelab.sh — One-shot K3s cluster bootstrap over SSH
 # ============================================================
-# Goes from "fresh Linux nodes with SSH access" to "kubectl-ready
-# 3-node K3s cluster with MetalLB + cert-manager," then hands off
-# to deploy-homelab.sh for the application install.
+# Goes from "fresh Linux nodes with SSH access" to "kubectl-ready K3s
+# cluster with MetalLB + cert-manager," then (with --deploy) hands off to
+# deploy-homelab.sh for the application install. One node is enough: the
+# first node runs the K3s server (control plane + workloads), any further
+# nodes join as agents. Guide: docs/operations/deploy-k3s.md.
 #
-# Targets the standard TestLookup homelab layout:
-#   k8s-node1  192.168.0.101  control-plane + worker
-#   k8s-node2  192.168.0.102  worker
-#   k8s-node3  192.168.0.103  worker
-#   SSH user:  labadmin
+# Site configuration (required; NOT part of the repository) — read from the
+# env file named by TESTLOOKUP_HOMELAB_ENV (see homelabsetup/homelab.env.example):
+#   K3S_NODES       "name=ip [name=ip ...]"   first entry = the K3s server
+#   K3S_NODE_USER   SSH user with sudo on every node
+#   K3S_LB_RANGE    MetalLB address range, e.g. 10.0.0.240-10.0.0.250
+#                   (not needed with --skip-prereqs)
 #
 # Credentials (NEVER hardcoded):
 #   - First, the script tries SSH key auth (idempotent — re-runs are free).
 #   - If key auth fails, it falls back to password auth via sshpass.
-#   - Passwords are read from env vars HOMELAB_NODE{1,2,3}_PASS, or
-#     prompted interactively (read -s) if unset. Never written to disk.
+#   - Passwords are read from env vars HOMELAB_NODE<n>_PASS (n = 1, 2, ...
+#     in K3S_NODES order), or prompted interactively (read -s) if unset.
+#     Never written to disk.
 #
 # Usage:
 #   ./homelabsetup/bootstrap-homelab.sh                 # bootstrap only
@@ -29,21 +33,43 @@ set -euo pipefail
 
 # ── Configuration ───────────────────────────────────────────
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-NODE_USER="labadmin"
-NODE1_IP="192.168.0.101"
-NODE2_IP="192.168.0.102"
-NODE3_IP="192.168.0.103"
-NODE1_NAME="k8s-node1"
-NODE2_NAME="k8s-node2"
-NODE3_NAME="k8s-node3"
-NODES_IP=("$NODE1_IP" "$NODE2_IP" "$NODE3_IP")
-NODES_NAME=("$NODE1_NAME" "$NODE2_NAME" "$NODE3_NAME")
+SITE_CONFIG_FILE=""
+# shellcheck source=homelabsetup/lib-site-config.sh
+. "$REPO_ROOT/homelabsetup/lib-site-config.sh"
+load_site_config
 
-METALLB_RANGE="192.168.0.200-192.168.0.220"
+# Parse "name=ip name=ip ..." into parallel arrays (first = K3s server).
+parse_nodes() {
+  local entry
+  NODES_NAME=()
+  NODES_IP=()
+  for entry in $1; do
+    case "$entry" in
+      *=*) NODES_NAME+=("${entry%%=*}"); NODES_IP+=("${entry#*=}") ;;
+      *)   echo "[x] K3S_NODES entry '$entry' is not name=ip" >&2; return 1 ;;
+    esac
+  done
+  [ "${#NODES_IP[@]}" -gt 0 ] || { echo "[x] K3S_NODES lists no node" >&2; return 1; }
+}
+
+NODE_USER="${K3S_NODE_USER:-}"
+NODES_NAME=()
+NODES_IP=()
+if [ -n "${K3S_NODES:-}" ]; then
+  parse_nodes "$K3S_NODES" || exit 1
+fi
+NODE1_IP="${NODES_IP[0]:-}"
+NODE1_NAME="${NODES_NAME[0]:-}"
+# Indexes of the agent nodes (everything after the server).
+AGENT_IDX=()
+for ((_i = 1; _i < ${#NODES_IP[@]}; _i++)); do AGENT_IDX+=("$_i"); done
+
+METALLB_RANGE="${K3S_LB_RANGE:-}"
+METALLB_POOL="${K3S_LB_POOL_NAME:-homelab-pool}"
 METALLB_VERSION="v0.14.8"
 CERT_MANAGER_VERSION="v1.16.1"
 
-REGISTRY_HOST="registry.local"
+REGISTRY_HOST="${K3S_REGISTRY_HOST:-registry.local}"
 REGISTRY_NODEPORT="30500"
 
 # Pinned K3s version so re-running bootstrap against an existing cluster
@@ -57,7 +83,8 @@ K3S_VERSION="${K3S_VERSION:-v1.34.6+k3s1}"
 REGISTRY_IMAGES=("testlookup/backend" "testlookup/frontend" "testlookup/mcp")
 REGISTRY_TAG="latest"
 
-LOCAL_KUBECONFIG="$HOME/.kube/config-testlookup-homelab"
+LOCAL_KUBECONFIG="${K3S_KUBECONFIG_OUT:-$HOME/.kube/config-testlookup-k3s}"
+case "$LOCAL_KUBECONFIG" in "~/"*) LOCAL_KUBECONFIG="$HOME/${LOCAL_KUBECONFIG#\~/}" ;; esac
 SSH_KEY="$HOME/.ssh/id_ed25519"
 
 # Colors
@@ -81,7 +108,7 @@ for arg in "$@"; do
     --teardown)        TEARDOWN=true ;;
     --configure-sudo)  CONFIGURE_SUDO=true ;;
     -h|--help)
-      sed -n '2,28p' "$0"; exit 0 ;;
+      sed -n '2,30p' "$0"; exit 0 ;;
     *) echo -e "${RED}Unknown flag: $arg${NC}"; exit 1 ;;
   esac
 done
@@ -171,8 +198,30 @@ nscp() {
 }
 
 # ── Preflight ───────────────────────────────────────────────
+# The cluster layout comes only from the site configuration: no node address,
+# user or address range is built into this script.
+require_site_layout() {
+  local missing=()
+  [ "${#NODES_IP[@]}" -gt 0 ] || missing+=("K3S_NODES (\"name=ip [name=ip ...]\")")
+  [ -n "$NODE_USER" ] || missing+=("K3S_NODE_USER")
+  if ! $SKIP_PREREQS && ! $TEARDOWN && [ -z "$METALLB_RANGE" ]; then
+    missing+=("K3S_LB_RANGE (or pass --skip-prereqs)")
+  fi
+  if [ "${#missing[@]}" -gt 0 ]; then
+    echo -e "${RED}[x]${NC} Missing site configuration: ${missing[*]}" >&2
+    echo "    Set them in the env file named by TESTLOOKUP_HOMELAB_ENV" >&2
+    echo "    (template: homelabsetup/homelab.env.example)." >&2
+    return 1
+  fi
+}
+
 preflight() {
   header "Preflight"
+  require_site_layout || exit 1
+  if [ -n "$SITE_CONFIG_FILE" ]; then
+    log "Site configuration: ${SITE_CONFIG_FILE}"
+  fi
+  log "Nodes: $(for i in "${!NODES_IP[@]}"; do printf '%s(%s) ' "${NODES_NAME[$i]}" "${NODES_IP[$i]}"; done)"
   require_cmd ssh
   require_cmd scp
   require_cmd kubectl
@@ -190,7 +239,7 @@ preflight() {
   # When every node already accepts the key, no password helper is needed
   # at all — including for ``--skip-prereqs`` quick re-runs.
   local need_password_auth=false
-  for i in 0 1 2; do
+  for i in "${!NODES_IP[@]}"; do
     if ! ssh -o BatchMode=yes -o ConnectTimeout=5 \
             "${NODE_USER}@${NODES_IP[$i]}" "true" 2>/dev/null; then
       need_password_auth=true
@@ -218,7 +267,7 @@ distribute_keys() {
   header "Distributing SSH keys"
   local pub_key; pub_key="$(cat "${SSH_KEY}.pub")"
 
-  for i in 0 1 2; do
+  for i in "${!NODES_IP[@]}"; do
     local ip="${NODES_IP[$i]}"
     if ssh -o BatchMode=yes -o ConnectTimeout=5 \
            "${NODE_USER}@${ip}" "true" 2>/dev/null; then
@@ -265,7 +314,7 @@ ensure_passwordless_sudo() {
   header "Verifying passwordless sudo on each node"
 
   local missing=()
-  for i in 0 1 2; do
+  for i in "${!NODES_IP[@]}"; do
     if nssh "$i" "sudo -n true" 2>/dev/null; then
       log "${NODES_NAME[$i]} (${NODES_IP[$i]}): passwordless sudo ✓"
     else
@@ -366,7 +415,7 @@ k3s_install_agents() {
   token="$(nssh 0 "sudo cat /var/lib/rancher/k3s/server/node-token")"
   [[ -n "$token" ]] || error "Could not read K3s join token from ${NODE1_NAME}"
 
-  for i in 1 2; do
+  for i in ${AGENT_IDX[@]+"${AGENT_IDX[@]}"}; do
     local ip="${NODES_IP[$i]}"
     local name="${NODES_NAME[$i]}"
     if nssh "$i" "command -v k3s >/dev/null 2>&1 && sudo systemctl is-active --quiet k3s-agent"; then
@@ -426,17 +475,17 @@ install_metallb() {
   #      earlier deploy under a different name), warn + bail so the
   #      user can clean it up explicitly rather than silently masking it.
   local pool_exists
-  pool_exists=$(kubectl -n metallb-system get ipaddresspool homelab-pool -o name 2>/dev/null || true)
+  pool_exists=$(kubectl -n metallb-system get ipaddresspool "$METALLB_POOL" -o name 2>/dev/null || true)
 
   if [ -n "$pool_exists" ]; then
     local current
-    current=$(kubectl -n metallb-system get ipaddresspool homelab-pool \
+    current=$(kubectl -n metallb-system get ipaddresspool "$METALLB_POOL" \
                 -o jsonpath='{.spec.addresses[0]}' 2>/dev/null || echo "")
     if [ "$current" = "$METALLB_RANGE" ]; then
-      log "IPAddressPool 'homelab-pool' already configured with ${METALLB_RANGE}"
+      log "IPAddressPool '${METALLB_POOL}' already configured with ${METALLB_RANGE}"
     else
-      log "Patching IPAddressPool 'homelab-pool' (${current} → ${METALLB_RANGE})"
-      kubectl -n metallb-system patch ipaddresspool homelab-pool \
+      log "Patching IPAddressPool '${METALLB_POOL}' (${current} → ${METALLB_RANGE})"
+      kubectl -n metallb-system patch ipaddresspool "$METALLB_POOL" \
         --type=merge -p "{\"spec\":{\"addresses\":[\"${METALLB_RANGE}\"]}}"
     fi
   else
@@ -447,7 +496,7 @@ install_metallb() {
     local conflicting
     conflicting=$(kubectl -n metallb-system get ipaddresspool \
                     -o jsonpath="{range .items[?(@.spec.addresses[0]=='${METALLB_RANGE}')]}{.metadata.name}{'\n'}{end}" \
-                    2>/dev/null | grep -v '^homelab-pool$' || true)
+                    2>/dev/null | grep -vxF "$METALLB_POOL" || true)
     if [ -n "$conflicting" ]; then
       cat >&2 <<EOF
 [!] Another MetalLB IPAddressPool already claims ${METALLB_RANGE}:
@@ -457,16 +506,16 @@ $(echo "$conflicting" | sed 's/^/       - /')
     Resolve before continuing. Either:
       * Delete the conflicting pool(s):
           kubectl -n metallb-system delete ipaddresspool <name>
-      * Or change METALLB_RANGE at the top of bootstrap-homelab.sh.
+      * Or change K3S_LB_RANGE in your site configuration.
 EOF
       exit 1
     fi
-    log "Creating IPAddressPool 'homelab-pool' (${METALLB_RANGE})"
+    log "Creating IPAddressPool '${METALLB_POOL}' (${METALLB_RANGE})"
     kubectl apply -f - <<EOF
 apiVersion: metallb.io/v1beta1
 kind: IPAddressPool
 metadata:
-  name: homelab-pool
+  name: ${METALLB_POOL}
   namespace: metallb-system
 spec:
   addresses:
@@ -485,7 +534,7 @@ metadata:
   namespace: metallb-system
 spec:
   ipAddressPools:
-    - homelab-pool
+    - ${METALLB_POOL}
 EOF
 }
 
@@ -594,7 +643,7 @@ EOF
   # exits with a non-zero code ("Job for k3s-agent.service failed").
   local server_restarted=false
   local agents_to_restart=()
-  for i in 0 1 2; do
+  for i in "${!NODES_IP[@]}"; do
     local name="${NODES_NAME[$i]}"
     local current
     current=$(nssh "$i" "sudo cat /etc/rancher/k3s/registries.yaml 2>/dev/null || true")
@@ -731,7 +780,7 @@ install_cert_manager() {
 teardown() {
   header "Tearing down K3s on all nodes"
   warn "This uninstalls K3s but leaves the OS untouched."
-  for i in 1 2; do
+  for i in ${AGENT_IDX[@]+"${AGENT_IDX[@]}"}; do
     log "Uninstalling agent on ${NODES_NAME[$i]}"
     nssh "$i" "if [[ -x /usr/local/bin/k3s-agent-uninstall.sh ]]; then sudo /usr/local/bin/k3s-agent-uninstall.sh; fi" || true
   done

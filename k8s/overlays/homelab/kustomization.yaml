@@ -1,3 +1,9 @@
+# Single-node K3s ("homelab") overlay: the in-cluster datastores, a Traefik
+# ingress on plain HTTP, single replicas and local-path storage. Deploy it with
+# homelabsetup/deploy-homelab.sh, which renders a per-deploy overlay on top of
+# this one (your host name, registry, image tag and site patches) — see
+# docs/operations/deploy-k3s.md. Applying this directory directly fails at
+# image pull on purpose (BUILD_TAG_PLACEHOLDER below).
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -33,8 +39,8 @@ patches:
       kind: Ingress
       name: testlookup-ingress
 
-  # MCP bearer tokens stay off the homelab's HTTP-only Traefik listener. Use a
-  # local kubectl port-forward instead of publishing MCP on the LAN.
+  # MCP bearer tokens stay off the HTTP-only Traefik listener. Use a local
+  # kubectl port-forward instead of publishing MCP on the network.
   - patch: |-
       $patch: delete
       apiVersion: networking.k8s.io/v1
@@ -62,7 +68,7 @@ patches:
       kind: Deployment
       name: testlookup-mcp
 
-  # ── Remove the base template Secret (homelab creates real secrets via kubectl) ──
+  # ── Remove the base template Secret (the deploy script creates real secrets) ──
   - patch: |-
       $patch: delete
       apiVersion: v1
@@ -248,6 +254,12 @@ patches:
       name: testlookup-beat
 
   # ── Environment configuration ─────────────────────────────────────────────
+  # The AI posture stays the base default: AI_OFFLINE_MODE=true with the
+  # in-cluster Ollama. A site that wants a hosted provider sets it with a site
+  # patch (K3S_PATCHES_DIR), never with a live `kubectl patch`: the deploy
+  # re-applies this manifest every run, so a patched value silently reverts.
+  # CORS_ORIGINS / PUBLIC_BASE_URL below are the defaults for the default host;
+  # the deploy script replaces them with http://<K3S_HOST>.
   - patch: |-
       apiVersion: v1
       kind: ConfigMap
@@ -256,42 +268,17 @@ patches:
       data:
         APP_ENV: "production"
         LOG_LEVEL: "INFO"
-        # This deployment cannot host a model — its Ollama has no models and
-        # the host cannot reach registry.ollama.ai — so the AI paths are
-        # exercised through OpenRouter instead. Enabling a hosted provider is a
-        # deliberate posture change for THIS deployment; base/configmap.yaml
-        # keeps AI_OFFLINE_MODE=true so every other install stays offline by
-        # default.
-        #
-        # These belong in the overlay, not a live `kubectl patch`: the deploy
-        # re-applies this manifest every run, so a patched value silently
-        # reverts on the next deploy and the integration stops working with no
-        # error to point at. (Observed 2026-08-16.)
-        AI_OFFLINE_MODE: "false"
-        LLM_PROVIDER: "openrouter"
-        LLM_MODEL: "mistralai/mistral-nemo"
-        # Ask AI only (the pipeline keeps LLM_MODEL). Measured 2026-10-09/10:
-        # mistral-nemo skipped tools, answered about the wrong test, and wrote
-        # "[ADDRESS]" for "200ms"; claude-haiku-5.5 resolved every reference
-        # and flagged inconsistent data, at about $0.001 a turn. Priced in
-        # app/services/llm_pricing.py; the step up is claude-sonnet-5.5.
-        CHAT_LLM_MODEL: "anthropic/claude-haiku-5.5"
-        # ollama stays permitted so the local path remains available and
-        # reverting is a single LLM_PROVIDER change, not another allowlist edit.
-        AI_LLM_PROVIDER_ALLOWLIST: "ollama,openrouter"
-        AI_LLM_ALLOWED_BASE_URLS: "http://testlookup-ollama:11434,https://openrouter.ai"
-        # Re-audit H2. This cluster's users are ON the LAN (192.168.0.0/24),
-        # so the base value's private ranges would trust the clients as well
-        # as the proxy -- and uvicorn's reverse walk would then run past a
-        # caller's real address and return the spoofed leftmost
-        # X-Forwarded-For entry. Pin the k3s pod CIDR: Traefik and the
-        # frontend nginx are the only hops, and both live inside it.
-        # Measured from the live cluster (kubectl get nodes -o
-        # jsonpath='{.items[*].spec.podCIDR}'): 10.42.0.0/24, 10.42.1.0/24,
-        # 10.42.2.0/24 -- one /16 covers the three nodes and any node added.
+        # Re-audit H2. Users usually sit on a private network too, so the
+        # base value's private ranges would trust the clients as well as the
+        # proxy -- and uvicorn's reverse walk would then run past a caller's
+        # real address and return the spoofed leftmost X-Forwarded-For entry.
+        # Pin the K3s pod CIDR (default 10.42.0.0/16, one /24 per node):
+        # Traefik and the frontend nginx are the only hops, and both live in
+        # it. A cluster installed with a custom --cluster-cidr overrides this
+        # with a site patch.
         TRUSTED_PROXY_IPS: "10.42.0.0/16"
-        CORS_ORIGINS: "http://testlookup.local"
-        PUBLIC_BASE_URL: "http://testlookup.local"
+        CORS_ORIGINS: "http://testlookup.localhost"
+        PUBLIC_BASE_URL: "http://testlookup.localhost"
         STORAGE_BACKEND: "minio"
         ANALYSIS_MODE: "auto"
         DEEP_INVESTIGATION_ENABLED: "true"
@@ -301,21 +288,18 @@ patches:
       name: testlookup-config
 
 images:
-  # newTag is overwritten in-place by homelabsetup/deploy-homelab.sh to an
-  # immutable build tag (build-YYYYMMDD-HHMMSS) so we never deploy a floating
-  # :latest. The placeholder below intentionally won't resolve in any registry —
-  # running ``kubectl apply -k`` directly (bypassing the deploy script) is
-  # expected to fail at ImagePull, which prevents accidental :latest deploys.
+  # homelabsetup/deploy-homelab.sh maps these names onto the configured
+  # registry (K3S_REGISTRY) and an immutable build tag (build-YYYYMMDD-HHMMSS)
+  # in its per-deploy overlay, so nothing ever runs a floating :latest and this
+  # file is never edited. The placeholder intentionally won't resolve in any
+  # registry — running ``kubectl apply -k`` here directly (bypassing the deploy
+  # script) fails at ImagePull, which prevents accidental :latest deploys.
   #
-  # **Port 30500, not 5000.** This is the NodePort the registry pod is
-  # exposed on (``REGISTRY_NODEPORT`` in bootstrap-homelab.sh, mirrored
-  # via ``/etc/rancher/k3s/registries.yaml`` on every K3s node). An
-  # earlier revision pointed at ``:5000`` (the registry's pod-internal
-  # port), which the K3s containerd mirror config did NOT cover, so
-  # pulls failed at the imagePull step with "connection refused" on
-  # every worker node while pushes (which use the NodePort directly)
-  # kept succeeding. Keep this in sync with bootstrap-homelab.sh:47 +
-  # deploy-homelab.sh:28.
+  # **Port 30500, not 5000.** This is the NodePort the registry pod is exposed
+  # on (``REGISTRY_NODEPORT`` in bootstrap-homelab.sh, mirrored via
+  # ``/etc/rancher/k3s/registries.yaml`` on every K3s node). The registry's
+  # pod-internal port (5000) is not covered by the containerd mirror config, so
+  # pulls would fail with "connection refused" while pushes kept succeeding.
   - name: testlookup/backend
     newName: registry.local:30500/testlookup/backend
     newTag: BUILD_TAG_PLACEHOLDER
