@@ -88,9 +88,12 @@ passes).
   `retention_activation_nudge` (seeded ON by migration 0145, read by nothing):
   off, the prompt is not shown.
 
-Tests: `ReleaseGatePage.test.tsx` made a real `GET /settings/ai/mode`; a 401
-from whatever listened on the dev port logged the test user out mid-test, so a
-role set by a test did not survive the render. The read is mocked there now.
+Tests: `ReleaseGatePage.test.tsx` made real requests (`GET /settings/ai/mode`,
+`GET /scoring-model`); a 401 from whatever listened on the dev port logged the
+test user out mid-test, so a role set by a test did not reliably survive the
+render. Both reads are mocked there now, as are the retention nudge and the
+storage panel in `RetentionPage.test.tsx` (each has its own tests); a request
+recorder over every touched test file now records none.
 
 ## Unreleased - Error sweeps: every page, every action, every GET endpoint
 
