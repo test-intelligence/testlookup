@@ -3312,7 +3312,7 @@ frontend/src/store/timeWindowStore.test.ts,test,91,,vitest; ./timeWindowStore,mi
 frontend/src/store/timeWindowStore.ts,implementation/configuration,120,,zustand; zustand/middleware; never chose,TimeWindowStore; snapToAllowed
 frontend/src/test/chartTokens.test.ts,test,220,,vitest; @/store/themeStore; ./readSourceFile,themeTokens; luminance; contrast; oklab; deltaE
 frontend/src/test/expectTemplateHeader.ts,test,24,,@testing-library/react; vitest; @/components/help/helpTopics,expectTemplateHeader
-frontend/src/test/networkGuard.test.ts,test,120,,axios; vitest; @/services/api; ./networkGuard,LoopbackServer; NodeHttp; listening
+frontend/src/test/networkGuard.test.ts,test,121,,axios; vitest; @/services/api; ./networkGuard,LoopbackServer; NodeHttp; listening
 frontend/src/test/networkGuard.ts,test,166,,vitest,NetworkViolation; currentTest; resolve; leavesTheProcess; record; drainNetworkViolations; describeNetworkViolations; assertNoNetworkRequests; BlockedWebSocket; installNetworkGuard; guardXhr; const; open; send; guardFetch; fetch
 frontend/src/test/readSourceFile.ts,test,25,,node:fs,NodeFs; readSourceFile
 frontend/src/test/setup.ts,test,59,,@testing-library/jest-dom; vitest; @testing-library/react; ./networkGuard,ResizeObserverMock

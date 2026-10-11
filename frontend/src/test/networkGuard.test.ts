@@ -55,9 +55,10 @@ describe('the network guard', () => {
     expect(failure).toBeInstanceOf(AxiosError)
     expect((failure as AxiosError).message).toBe('Network Error')
     expect((failure as AxiosError).response).toBeUndefined()
-    expect(drainNetworkViolations()).toEqual([
-      { method: 'GET', url: 'http://localhost:3000/api/v1/runs?limit=1', test: THIS_TEST() },
-    ])
+    // Wherever the client points: jsdom's origin when VITE_API_BASE_URL is unset
+    // (localhost:3000), CI's http://localhost:8000 when it is set.
+    const expected = new URL(`${api.defaults.baseURL ?? ''}/api/v1/runs?limit=1`, window.location.href).href
+    expect(drainNetworkViolations()).toEqual([{ method: 'GET', url: expected, test: THIS_TEST() }])
   })
 
   it('refuses fetch to any http(s) origin, and lets a data: URL through', async () => {
