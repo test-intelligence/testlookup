@@ -281,7 +281,7 @@ type = 'workflow_dispatch'
 
 ## backend/app/agents/fixer/runners.py — FakeRunner
 
-[backend/app/agents/fixer/runners.py:553](../../backend/app/agents/fixer/runners.py#L553)
+[backend/app/agents/fixer/runners.py:555](../../backend/app/agents/fixer/runners.py#L555)
 
 Bases: `ValidationRunner`.
 
@@ -977,6 +977,7 @@ AI_LLM_PROVIDER_ALLOWLIST: str = ''
 AI_LLM_ALLOWED_BASE_URLS: str = ''
 OFFLINE_NOTIFICATION_ALLOWED_HOSTS: str = ''
 OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS: str = ''
+WEBHOOK_PRIVATE_ALLOWED_HOSTS: str = ''
 AGENT_MEMORY_RETENTION_DAYS: int = 365
 AI_CONFIDENCE_THRESHOLD: int = 80
 AIQ_GAP_REFINEMENT_ENABLED: bool = False
@@ -1124,8 +1125,8 @@ LOG_FORMAT: Literal['json', 'text'] = 'json'
 model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', case_sensitive=True, extra='ignore', env_ignore_empty=True, populate_by_name=True)
 ```
 
-- Validator/serializer `_validate_llm_cluster_slot_lease`: [backend/app/core/config.py:632](../../backend/app/core/config.py#L632). Read source for the cross-field or conversion rule.
-- Validator/serializer `_validate_sso_max_provisioned_role`: [backend/app/core/config.py:647](../../backend/app/core/config.py#L647). Read source for the cross-field or conversion rule.
+- Validator/serializer `_validate_llm_cluster_slot_lease`: [backend/app/core/config.py:640](../../backend/app/core/config.py#L640). Read source for the cross-field or conversion rule.
+- Validator/serializer `_validate_sso_max_provisioned_role`: [backend/app/core/config.py:655](../../backend/app/core/config.py#L655). Read source for the cross-field or conversion rule.
 ## backend/app/core/deps.py — AuthorizedTestCaseContext
 
 [backend/app/core/deps.py:45](../../backend/app/core/deps.py#L45)
@@ -18270,7 +18271,7 @@ size: int
 
 ## backend/app/services/codeowners_service.py — CodeownersEntry
 
-[backend/app/services/codeowners_service.py:100](../../backend/app/services/codeowners_service.py#L100)
+[backend/app/services/codeowners_service.py:101](../../backend/app/services/codeowners_service.py#L101)
 
 Bases: ``.
 
@@ -18284,7 +18285,7 @@ owners: list[str] = field(default_factory=list)
 
 ## backend/app/services/commit_attribution_service.py — _ConnectorTarget
 
-[backend/app/services/commit_attribution_service.py:531](../../backend/app/services/commit_attribution_service.py#L531)
+[backend/app/services/commit_attribution_service.py:532](../../backend/app/services/commit_attribution_service.py#L532)
 
 Bases: ``.
 
@@ -19001,7 +19002,7 @@ reason: str
 
 ## backend/app/services/github_checks_service.py — _CheckEnrichment
 
-[backend/app/services/github_checks_service.py:470](../../backend/app/services/github_checks_service.py#L470)
+[backend/app/services/github_checks_service.py:471](../../backend/app/services/github_checks_service.py#L471)
 
 Bases: ``.
 
@@ -19022,7 +19023,7 @@ kind_labels: dict[str, str] = field(default_factory=dict)
 
 ## backend/app/services/github_pr_comment_service.py — _Partition
 
-[backend/app/services/github_pr_comment_service.py:177](../../backend/app/services/github_pr_comment_service.py#L177)
+[backend/app/services/github_pr_comment_service.py:178](../../backend/app/services/github_pr_comment_service.py#L178)
 
 Bases: ``.
 
@@ -19039,7 +19040,7 @@ has_baseline: bool = False
 
 ## backend/app/services/github_pr_comment_service.py — _PRCommentContext
 
-[backend/app/services/github_pr_comment_service.py:491](../../backend/app/services/github_pr_comment_service.py#L491)
+[backend/app/services/github_pr_comment_service.py:492](../../backend/app/services/github_pr_comment_service.py#L492)
 
 Bases: ``.
 
@@ -19060,7 +19061,7 @@ has_fixed: bool
 
 ## backend/app/services/gitlab_integration_service.py — _MRNoteContext
 
-[backend/app/services/gitlab_integration_service.py:426](../../backend/app/services/gitlab_integration_service.py#L426)
+[backend/app/services/gitlab_integration_service.py:427](../../backend/app/services/gitlab_integration_service.py#L427)
 
 Bases: ``.
 
@@ -19072,7 +19073,7 @@ __slots__ = ('integration_id', 'api_root', 'project_ref', 'mr_iid', 'pat', 'mode
 
 ## backend/app/services/gitlab_integration_service.py — _CommitStatusContext
 
-[backend/app/services/gitlab_integration_service.py:759](../../backend/app/services/gitlab_integration_service.py#L759)
+[backend/app/services/gitlab_integration_service.py:760](../../backend/app/services/gitlab_integration_service.py#L760)
 
 Bases: ``.
 

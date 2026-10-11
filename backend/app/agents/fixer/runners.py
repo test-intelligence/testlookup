@@ -416,6 +416,7 @@ class WorkflowDispatchRunner(ValidationRunner):
                 status=RESULT_ERROR, runs=[], error="workflow_ref not configured",
             )
         import httpx
+        from app.core.http_client import http_verify
 
         from app.services.github_checks_service import _ssrf_block_reason
 
@@ -446,7 +447,7 @@ class WorkflowDispatchRunner(ValidationRunner):
         # see runs older than our dispatch.
         dispatched_at = datetime.now(timezone.utc)
         try:
-            async with httpx.AsyncClient(timeout=20.0) as client:
+            async with httpx.AsyncClient(verify=http_verify(), timeout=20.0) as client:
                 resp = await client.post(
                     dispatch_url, headers=headers,
                     json={"ref": spec.ref, "inputs": inputs},
@@ -511,6 +512,7 @@ class WorkflowDispatchRunner(ValidationRunner):
         completed before the deadline; last_note carries the most recent
         error/status so the timeout message is diagnosable."""
         import httpx
+        from app.core.http_client import http_verify
 
         runs_url = (
             f"{self._api_base_url}/repos/{self._repo_owner}/{self._repo_name}"
@@ -526,7 +528,7 @@ class WorkflowDispatchRunner(ValidationRunner):
         while time.monotonic() < deadline:
             await asyncio.sleep(10)
             try:
-                async with httpx.AsyncClient(timeout=20.0) as client:
+                async with httpx.AsyncClient(verify=http_verify(), timeout=20.0) as client:
                     resp = await client.get(runs_url, headers=headers, params=params)
                 if resp.status_code != 200:
                     last_note = f"poll HTTP {resp.status_code}"

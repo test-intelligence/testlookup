@@ -4,7 +4,7 @@ from __future__ import annotations
 import base64
 import re
 import time
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 import structlog
@@ -27,18 +27,37 @@ class JiraKnowledgeConnector(KnowledgeConnectorBase):
 
     connector_type = "jira_issue"
 
+    def __init__(self, config: Optional[dict[str, Any]] = None) -> None:
+        # ``None``: the environment settings (the registry's shared instance).
+        # A dict: the deployment's resolved Jira config -- see ``with_config``.
+        self._cfg = config
+
+    def with_config(self, config: dict[str, Any]) -> "JiraKnowledgeConnector":
+        """This connector bound to the deployment's resolved Jira config.
+
+        A Jira set up under Settings -> Integrations stores its domain and email
+        in an AppSetting and its token in the secret service; none of that is
+        in ``settings``. Reading ``settings`` alone, knowledge sources reported
+        "JIRA_DOMAIN is not configured" on a Jira that filed defects fine (the
+        bug ``jira_release_sync`` documents for its own credential).
+        """
+        return JiraKnowledgeConnector(config)
+
+    def _value(self, key: str, env_value: Optional[str]) -> Optional[str]:
+        return self._cfg.get(key) if self._cfg is not None else env_value
+
     def _base_url(self) -> str:
-        domain = settings.JIRA_DOMAIN
+        domain = self._value("domain", settings.JIRA_DOMAIN)
         if not domain:
-            raise ConnectorFetchError("JIRA_DOMAIN is not configured")
+            raise ConnectorFetchError("Jira is not configured: no domain (Settings -> Integrations)")
         return f"https://{domain}"
 
     def _auth_header(self) -> str:
-        email = settings.JIRA_EMAIL
-        token = settings.JIRA_API_TOKEN
+        email = self._value("email", settings.JIRA_EMAIL)
+        token = self._value("api_token", settings.JIRA_API_TOKEN)
         if not email or not token:
             raise ConnectorFetchError(
-                "Jira credentials not configured (JIRA_EMAIL / JIRA_API_TOKEN)"
+                "Jira credentials not configured (email and API token, Settings -> Integrations)"
             )
         raw = f"{email}:{token}"
         return f"Basic {base64.b64encode(raw.encode()).decode()}"
@@ -67,12 +86,16 @@ class JiraKnowledgeConnector(KnowledgeConnectorBase):
     async def test_connection(self) -> dict:
         t_start = time.monotonic()
         try:
-            if not settings.JIRA_DOMAIN or not settings.JIRA_EMAIL or not settings.JIRA_API_TOKEN:
+            if not (
+                self._value("domain", settings.JIRA_DOMAIN)
+                and self._value("email", settings.JIRA_EMAIL)
+                and self._value("api_token", settings.JIRA_API_TOKEN)
+            ):
                 return {
                     "success": False,
                     "latency_ms": 0,
                     "error": "Jira credentials not configured",
-                    "detail": "Set JIRA_DOMAIN, JIRA_EMAIL, and JIRA_API_TOKEN",
+                    "detail": "Set the Jira domain, email and API token under Settings -> Integrations",
                 }
             url = f"{self._base_url()}/rest/api/3/myself"
             client = get_http_client()
@@ -239,7 +262,10 @@ class JiraKnowledgeConnector(KnowledgeConnectorBase):
     async def _fetch_epic_children(self, epic_key: str) -> str:
         """Fetch child issues of an epic via JQL search."""
         try:
-            url = f"{self._base_url()}/rest/api/3/search"
+            # /rest/api/3/search answers 410 Gone on Jira Cloud (Atlassian
+            # CHANGE-2046); its replacement takes the same jql/fields/maxResults
+            # and answers with the same "issues" list.
+            url = f"{self._base_url()}/rest/api/3/search/jql"
             jql = f'"Epic Link" = {epic_key} OR parent = {epic_key}'
             params = {
                 "jql": jql,

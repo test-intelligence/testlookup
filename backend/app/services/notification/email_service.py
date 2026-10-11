@@ -64,7 +64,11 @@ async def _get_smtp_cfg() -> dict[str, Any]:
     except Exception as exc:
         logger.debug("Could not load SMTP config from DB, falling back to env: %s", exc)
 
-    # Env-var fallback
+    return _env_smtp_cfg()
+
+
+def _env_smtp_cfg() -> dict[str, Any]:
+    """The SMTP configuration the environment gives, when nothing is stored."""
     return {
         "enabled": settings.SMTP_ENABLED,
         "host": settings.SMTP_HOST,

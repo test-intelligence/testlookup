@@ -334,7 +334,8 @@ async def _probe_ollama_model_async() -> bool | None:
         return None
     try:
         import httpx
-        async with httpx.AsyncClient(timeout=3.0) as client:
+        from app.core.http_client import http_verify
+        async with httpx.AsyncClient(verify=http_verify(), timeout=3.0) as client:
             resp = await client.get(f"{settings.OLLAMA_BASE_URL}/api/tags")
         if resp.status_code != 200:
             return None

@@ -54,6 +54,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.http_client import http_verify
 from app.core.config import settings
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import GitLabIntegration, Project, TestRun, User
@@ -240,7 +241,7 @@ async def _request(
     json_body: Optional[dict[str, Any]] = None,
     params: Optional[dict[str, Any]] = None,
 ) -> httpx.Response:
-    async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+    async with httpx.AsyncClient(verify=http_verify(), timeout=_HTTP_TIMEOUT) as client:
         return await client.request(
             method, url, headers=headers, json=json_body, params=params,
         )

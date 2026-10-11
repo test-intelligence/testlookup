@@ -273,12 +273,22 @@ async def probe_teams(config: dict | None = None) -> ProbeResult:
 
 
 async def probe_smtp() -> ProbeResult:
-    """Probe SMTP: attempt connection and auth."""
+    """Probe SMTP: attempt connection and auth, with the configuration the
+    sender uses -- Settings -> Notifications (``smtp_config``), else the
+    environment. Reading the environment alone, the probe reported
+    "SMTP_ENABLED=false" for a relay configured in the UI that was delivering
+    mail (homelab, 2026-10-10)."""
     from app.core.config import settings
+    from app.services.notification import email_service
 
-    if not settings.SMTP_ENABLED:
-        return ProbeResult("smtp", "skipped", message="SMTP_ENABLED=false")
-    refused = await _offline_refusal("SMTP", settings.SMTP_HOST)
+    try:
+        cfg = await email_service._get_smtp_cfg()
+    except Exception as exc:  # noqa: BLE001 -- a probe reports, it does not raise
+        return ProbeResult("smtp", "down", 0, f"SMTP configuration unavailable: {type(exc).__name__}")
+    if not cfg.get("enabled"):
+        return ProbeResult("smtp", "skipped", message="SMTP is not enabled (Settings -> Notifications or SMTP_ENABLED)")
+    host = email_service.smtp_host(cfg)
+    refused = await _offline_refusal("SMTP", host)
     if refused:
         return refused
 
@@ -286,10 +296,15 @@ async def probe_smtp() -> ProbeResult:
     try:
         import aiosmtplib
 
-        smtp = aiosmtplib.SMTP(hostname=settings.SMTP_HOST, port=settings.SMTP_PORT, use_tls=settings.SMTP_TLS)
+        # The sender's TLS rule: implicit TLS, else STARTTLS (port 587).
+        use_tls = bool(cfg.get("tls", True))
+        smtp = aiosmtplib.SMTP(
+            hostname=host, port=int(cfg.get("port") or settings.SMTP_PORT),
+            use_tls=use_tls, start_tls=not use_tls,
+        )
         await smtp.connect()
-        if settings.SMTP_USER and settings.SMTP_PASSWORD:
-            await smtp.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+        if cfg.get("user") and cfg.get("password"):
+            await smtp.login(cfg["user"], cfg["password"])
             auth_valid = True
         else:
             auth_valid = None

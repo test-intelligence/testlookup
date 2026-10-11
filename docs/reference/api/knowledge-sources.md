@@ -344,7 +344,7 @@ Get Domain Allowlist
 
 
 
-Source: [backend/app/routers/knowledge_sources.py:203](../../../backend/app/routers/knowledge_sources.py#L203).
+Source: [backend/app/routers/knowledge_sources.py:204](../../../backend/app/routers/knowledge_sources.py#L204).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -421,7 +421,7 @@ Update Domain Allowlist
 
 
 
-Source: [backend/app/routers/knowledge_sources.py:213](../../../backend/app/routers/knowledge_sources.py#L213).
+Source: [backend/app/routers/knowledge_sources.py:214](../../../backend/app/routers/knowledge_sources.py#L214).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 

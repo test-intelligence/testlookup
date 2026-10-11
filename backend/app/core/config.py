@@ -450,6 +450,14 @@ class Settings(BaseSettings):
     # relay may deliver (its own MTA policy governs onward routing); an
     # off-box relay admitted by OFFLINE_NOTIFICATION_ALLOWED_HOSTS is refused.
     OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS: str = ""
+    # Private-network hosts a Slack or Teams webhook may reach while online
+    # (comma-separated, EXACT host names, no wildcards). Online, webhooks go
+    # through the public-only client, which refuses private addresses (SSRF);
+    # a host named here -- an on-prem Slack-compatible server such as
+    # Mattermost, or a test double -- is reached through the shared client
+    # instead. Any webhook may then target it (user, team or global), so name
+    # a chat server only, never an internal API. Empty: none.
+    WEBHOOK_PRIVATE_ALLOWED_HOSTS: str = ""
     AGENT_MEMORY_RETENTION_DAYS: int = 365
     AI_CONFIDENCE_THRESHOLD: int = 80
     AIQ_GAP_REFINEMENT_ENABLED: bool = False         # AIQ-P4: gap_detection + report_refinement deep stages (default off)
