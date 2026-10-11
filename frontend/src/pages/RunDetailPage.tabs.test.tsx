@@ -14,7 +14,7 @@
  *    (`/runs/:id/intelligence`, `/deep-investigate/:id`, `/agents/run/:id`)
  *    anywhere on the page.
  */
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { useEffect } from 'react'
 import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -391,7 +391,9 @@ describe('Run page — one header', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Deep investigation' }))
     await screen.findByRole('region', { name: 'Deep investigation' })
     expect(trigger).toHaveBeenCalledWith('run-1')
-    expect(location).toBe('/runs/run-1?tab=analysis')
+    // The probe records the URL in a passive effect, which can run after the
+    // region is in the DOM: under a loaded full suite the bare read saw the old URL.
+    await waitFor(() => expect(location).toBe('/runs/run-1?tab=analysis'))
     trigger.mockRestore()
   })
 
