@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """TestLookup quality gates — single entry point.
 
-Each guard codifies one cross-cutting invariant from CLAUDE.md so future
-changes cannot silently degrade code quality. Run locally with::
+Each guard codifies one cross-cutting invariant of the codebase (the full
+list is in architecture/DEVELOPER_GUIDE.md §1) so future changes cannot
+silently degrade code quality. Run locally with::
 
     make quality-gate
 
@@ -2227,8 +2228,8 @@ def _frontend_ai_output_hedging() -> list[Violation]:
 
 _ALL_PROJECTS_LITERAL_RE = re.compile(
     # Look for "'all'" / '"all"' being assigned to a project_id-shaped
-    # variable / param. Coarse but matches the failure mode from
-    # CLAUDE.md pitfall #1.
+    # variable / param. Coarse but matches the failure mode: the
+    # frontend-only 'all' project sentinel sent to the API as a UUID.
     r"project_?[Ii]d\s*[:=]\s*['\"]all['\"]"
 )
 
@@ -3641,7 +3642,7 @@ def _agents_log_decision_present() -> list[Violation]:
 #
 # The public repository is a squashed snapshot of a private working repo. Three
 # classes of content must never come back: the maintainers' local-only files
-# (run evidence, agent handovers, live probes against a private deployment),
+# (run evidence, working notes, live probes against a private deployment),
 # private markers (a private host name, a Windows profile path, a home-network
 # address, a real-looking API key), and dependencies under licenses the project
 # cannot ship. Each guard below reads only `git ls-files` and small text files,
@@ -6820,7 +6821,7 @@ GUARDS: list[Guard] = [
         name="repo.no-local-only-paths",
         description=(
             "No tracked path matches scripts/local-only-paths.txt (run evidence, "
-            "handovers, live probes, owner tooling), and .gitignore ignores each."
+            "working notes, live probes, owner tooling), and .gitignore ignores each."
         ),
         check=_repo_no_local_only_paths,
         fix_hint=(

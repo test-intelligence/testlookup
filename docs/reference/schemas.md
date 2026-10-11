@@ -3768,7 +3768,7 @@ These are the full generated JSON Schema definitions, including required fields,
 
 ```json
 {
-  "description": "US-2.4: latest AI analysis for a (project, fingerprint) pair.\n\nAll fields are ``None`` when the test has never been analysed — the UI\nrenders a \"no AI analysis recorded yet\" empty state instead of a 404\n(which axios would surface as a scary error toast).\n\n``failure_category`` is a plain string, NOT the ``FailureCategory``\nenum: the backing column is ``String(30)`` and a strict enum here would\nsilently 422 the response if a stored value ever drifts out of vocab\n(Axios suppresses 422 toasts, so the page just goes empty).",
+  "description": "US-2.4: latest AI analysis for a (project, fingerprint) pair.\n\nAll fields are ``None`` when the test has never been analysed — the UI\nrenders a \"no AI analysis recorded yet\" empty state instead of a 404\n(which axios would surface as a scary error toast).\n\n``failure_category`` is a plain string, NOT the ``FailureCategory``\nenum: the backing column is ``String(30)`` and a strict enum here would\n422 the whole response if a stored value ever drifts out of vocab.",
   "properties": {
     "analysis_id": {
       "anyOf": [

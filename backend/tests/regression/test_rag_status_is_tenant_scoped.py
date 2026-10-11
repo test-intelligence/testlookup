@@ -18,9 +18,9 @@ on every call — this endpoint is polled by ``KnowledgeGenerationTab``, which
 (worth noting) only ever reads ``enabled``; the counts are declared in the TS
 type and rendered nowhere.
 
-``backend/CLAUDE.md`` states the invariant this broke: "``test_fingerprint``
-queries need project scope; ChromaDB collections are per-project;
-content-addressable caches are tenant-scoped."
+The invariant this broke is the tenant-scoping rule (``architecture/DEVELOPER_GUIDE.md``
+§2, "Query scoping"): ``test_fingerprint`` queries need project scope, ChromaDB
+collections are per-project, and content-addressable caches are tenant-scoped.
 
 The empty-set trap
 ------------------

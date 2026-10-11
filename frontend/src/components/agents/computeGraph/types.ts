@@ -1,8 +1,8 @@
 /**
- * Shared types for the /agents Direction-C compute graph.
+ * Shared types for the /agents compute graph.
  *
- * These mirror the data shape the design handoff specifies (`design/shared.jsx`
- * in the handoff). The mapping from the codebase's existing
+ * These are the canvas's own view model, independent of the API. The mapping
+ * from the codebase's existing
  * ``pipelineStages``/``AgentStageResult`` shape lives in
  * ``mapPipelineToComputeGraph`` so the renderer below never has to know what
  * the backend originally returned.

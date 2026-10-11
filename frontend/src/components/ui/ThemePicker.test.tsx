@@ -1,5 +1,6 @@
 /**
- * Multi-theme picker + store (design_handoff_theming).
+ * Multi-theme picker + store: six named themes, each a `data-theme` block of
+ * CSS tokens in src/index.css.
  *
  * Locks in: the registry has the six themes, the picker lists them all and
  * switching applies `data-theme` on <html> (which is what swaps every CSS

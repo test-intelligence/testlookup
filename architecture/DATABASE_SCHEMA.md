@@ -24,7 +24,7 @@ See [`architecture/README.md`](./README.md) for which services write to each sto
 
 ## Relational schema conventions
 
-These conventions are enforced by the `add-migration` skill and the quality
+These conventions are enforced in review and by the quality
 gates; follow them for every new table or column (see the
 [Developer Guide](./DEVELOPER_GUIDE.md#4-migrations)):
 

@@ -1,6 +1,6 @@
 /**
- * Deep Investigation — verdict-led redesign per
- * design_handoff_deep_investigation/README.md.
+ * Deep Investigation — verdict-led layout: the page opens on what an
+ * analysis would cover and cost, then the clusters and evidence behind it.
  *
  * Layout (1320 px max-width, 14 px section gaps):
  *   Header  → the template's `PageHeader` (UX redesign P6: compact, **?** =

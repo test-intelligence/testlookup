@@ -16,7 +16,7 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   Multi-theme system — see design_handoff_theming.
+   Multi-theme system — six named themes, switched by `data-theme` on <html>.
 
    RULE: a theme block defines every BASE token it wants to look different on
    (surfaces, text, accent, the five status hues, two graph hues, fonts,
@@ -255,7 +255,7 @@
     --kind-infra:     var(--status-broken);
     --kind-unknown:   var(--color-text-muted);
 
-    /* Compute-graph (/agents Direction-C) surfaces + graph hues */
+    /* Compute-graph (/agents) surfaces + graph hues */
     --bg-3:          var(--color-bg-hover);
     --border-strong: var(--color-border-light);
     --fg-faint:      var(--color-text-faint);

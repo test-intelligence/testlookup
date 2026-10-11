@@ -16,8 +16,8 @@ Eight distinct links were dead on GitHub:
   ``docs/cloud-run-cloud-sql.md``, ``docs/JENKINS_PIPELINE.md``,
   ``docs/MULTI_CLOUD_DEPLOYMENT_STRATEGY.md``,
   ``docs/TESTLOOKUP_USER_GUIDE_TIER_0_2.md``
-* ``CLAUDE.md`` -- an agent-instruction file, gitignored, linked from
-  ``README.md`` and ``ARCHITECTURE.md``
+* a gitignored local notes file at the repo root, linked from ``README.md``
+  and ``ARCHITECTURE.md``
 
 This test asks git what is tracked rather than the filesystem what exists,
 because the filesystem is exactly what made the bug invisible.

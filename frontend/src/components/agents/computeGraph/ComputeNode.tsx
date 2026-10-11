@@ -164,7 +164,7 @@ export default function ComputeNode({ stage, selected, onSelect }: ComputeNodePr
   // impure Date.now() during render (react-hooks/purity).
   const now = useNow(500)
 
-  // Confidence tone — handoff: ok when > 80%.
+  // Confidence tone: ok when > 80%.
   const confValue = stage.metrics.confidence
   const confTone: MetricCellProps['tone'] = (() => {
     if (confValue == null) return 'neutral'
@@ -172,7 +172,7 @@ export default function ComputeNode({ stage, selected, onSelect }: ComputeNodePr
     if (!Number.isFinite(n)) return 'neutral'
     return n > 80 ? 'ok' : 'neutral'
   })()
-  // Cost tone — handoff: warn when parsed > $0.50.
+  // Cost tone: warn when parsed > $0.50.
   const costStr = stage.metrics.cost
   const costTone: MetricCellProps['tone'] = (() => {
     if (!costStr) return 'neutral'

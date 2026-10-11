@@ -4785,8 +4785,6 @@ def flag_orphan_test_suites(self, min_age_minutes: int = 60) -> dict:
     Prometheus counter. The suite row is NOT deleted automatically — an
     operator decides whether to reassign / delete / wait for the next
     ingest to repopulate it.
-
-    See docs/DATABASE_AUDIT_2026-05-16.md (P2-3).
     """
     from datetime import datetime, timezone, timedelta
     from sqlalchemy import exists, select, and_

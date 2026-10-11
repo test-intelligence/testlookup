@@ -50,8 +50,9 @@ async def test_register_creates_qa_engineer_with_must_change_password(
     client, override_db, fake_db
 ):
     """
-    Self-registration always creates a QA_ENGINEER with must_change_password=True.
-    See backend/CLAUDE.md "self-registration flow".
+    Self-registration always creates a QA_ENGINEER with must_change_password=True,
+    so a self-registered user never gets a higher role and must set a permanent
+    password on first login (see ``routers/auth.register``).
     """
     # First db.execute: lookup of existing user (None → not registered)
     fake_db.set_execute_results([

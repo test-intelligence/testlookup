@@ -218,8 +218,8 @@ export const DOC_PAGES: DocPage[] = [
     keywords: ['decision', 'confidence', 'evidence', 'override', 'audit', 'policy'],
   },
   {
-    // NOT 'agents': `.gitignore` ignores AGENTS.md at every depth (coding-agent
-    // instruction files), and a case-insensitive checkout matches `agents.md`,
+    // NOT 'agents': `.gitignore` ignores AGENTS.md at every depth (local-only
+    // files), and a case-insensitive checkout matches `agents.md`,
     // so the file was silently never committed and CI checked out 18 of 19.
     id: 'ai-agents',
     label: 'AI agents and the pipeline',

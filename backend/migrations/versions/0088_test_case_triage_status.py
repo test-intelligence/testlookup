@@ -15,7 +15,7 @@ Adds the columns the new triage workflow needs:
 * ``triage_updated_at``     — when the most recent status change landed.
 * ``triage_updated_by_user_id`` — who changed the status. ``SET NULL`` on
   user deletion so the audit trail outlives account deactivation
-  (matches the rubric in ``backend/CLAUDE.md`` § Foreign-key ondelete).
+  (deleting a user must not cascade into the triage history).
 
 Composite index ``(assigned_to_user_id, triage_status)`` so the
 ``/my-failures`` inbox stays a single index scan instead of a full

@@ -1286,8 +1286,8 @@ class TestCaseHistory(Base):
         # (_count_flaky_tests): partition/order by (test_fingerprint, created_at)
         # then filter status — including status makes that scan index-only.
         Index("ix_history_fingerprint_date_status", "test_fingerprint", "created_at", "status"),
-        # FK indexes added in migration 0082 — see
-        # docs/DATABASE_AUDIT_2026-05-16.md (P1-4).
+        # FK indexes added in migration 0082: PostgreSQL does not index a
+        # foreign key by itself, and these columns are joined on hot paths.
         Index("ix_history_test_case_id", "test_case_id"),
         Index("ix_history_test_run_id",  "test_run_id"),
     )
@@ -1351,8 +1351,8 @@ class Defect(Base):
             unique=True,
             postgresql_where=text("resolution_status = 'OPEN' AND test_case_id IS NOT NULL"),
         ),
-        # FK index added in migration 0082 — see
-        # docs/DATABASE_AUDIT_2026-05-16.md (P1-4).
+        # FK index added in migration 0082: PostgreSQL does not index a
+        # foreign key by itself, and defects are listed per project.
         Index("ix_defects_project_id", "project_id"),
         # Composite for the release-gate open-CRITICAL count (migration 0098):
         # count_open_critical_defects filters (project_id, resolution_status,
@@ -1489,8 +1489,8 @@ class DefectCandidate(Base):
 class QualityGate(Base):
     """Quality gate rule configuration per project."""
     __tablename__ = "quality_gates"
-    # FK index added in migration 0082 — see
-    # docs/DATABASE_AUDIT_2026-05-16.md (P1-4).
+    # FK index added in migration 0082: PostgreSQL does not index a
+    # foreign key by itself, and gates are read per project.
     __table_args__ = (
         Index("ix_quality_gates_project", "project_id"),
     )
@@ -3986,8 +3986,8 @@ class RunDiff(Base):
     __tablename__ = "run_diffs"
     __table_args__ = (
         Index("ix_run_diffs_run_id", "run_id", unique=True),
-        # FK index added in migration 0085 — see
-        # docs/DATABASE_AUDIT_2026-05-16.md (P3-4). Used by "show every
+        # FK index added in migration 0085 (PostgreSQL does not index a
+        # foreign key by itself). Used by "show every
         # run diffed against baseline X" queries. RunBaseline.baseline_run_id
         # already has a matching index (``ix_run_baselines_baseline``).
         Index("ix_run_diffs_baseline_run_id", "baseline_run_id"),

@@ -154,8 +154,9 @@ jobs:
 
   # ─────────────────────────────────────────────────────────────
   # JOB 0b: Cross-cutting invariant guards
-  # Runs scripts/quality_gate.py which codifies the rules from
-  # CLAUDE.md as a ratchet: existing violations are baselined in
+  # Runs scripts/quality_gate.py, which codifies the repo's
+  # cross-cutting invariants (architecture/DEVELOPER_GUIDE.md §1)
+  # as a ratchet: existing violations are baselined in
   # scripts/quality-gate-baselines/, only NEW violations fail.
   # No backend / frontend / DB deps required — file IO plus `git
   # check-ignore` / `git ls-files` for the repo.no-gitignored-source

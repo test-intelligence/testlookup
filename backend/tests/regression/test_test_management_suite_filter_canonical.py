@@ -20,8 +20,9 @@ spelling; this one silently returned nothing. The UI populates its filter from
 the data so it happens to send the exact case, but the API is public — a CLI,
 SDK or MCP caller passing ``"API"`` got an empty list and no error.
 
-The second half of the fix is the effective-suite rule that ``backend/CLAUDE.md``
-states as a hard convention: for a ``live_stream`` run the SDK sends the suite
+The second half of the fix is the effective-suite rule
+(``architecture/DEVELOPER_GUIDE.md`` §2, "Effective suite"), a hard convention:
+for a ``live_stream`` run the SDK sends the suite
 once at session-create, so it lands on ``TestRun.primary_suite_name`` while
 per-event ``TestCase.suite_name`` stays NULL, and a bare per-row filter returns
 nothing for those runs. The run-level arm is restricted to ``live_stream``

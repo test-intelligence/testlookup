@@ -33,8 +33,8 @@ make test-backend / test-frontend / test-e2e
 the make command only for deliberate local experiments; agent configuration
 must name the same installed exact tags.
 
-There are **scaffolding skills** that encode the exact file patterns — prefer
-them over hand-rolling: `add-endpoint`, `add-agent`, `add-page`, `add-migration`.
+Section 3 lists, step by step, the files to touch for the common changes: an
+API endpoint, a pipeline agent, a UI page and a migration.
 
 ---
 
@@ -148,7 +148,7 @@ fails if a *second* deleter appears.
 |---|---|---|
 | `repo.no-gitignored-source` | a source file matched by `.gitignore` | Narrow the offending pattern. The security globs (`*credentials*`, `*secrets*`, `*api_key*`) match at **every depth** and have twice silently excluded real code from a commit |
 | `repo.dockerignore-covers-pytest-scratch` † | a build context whose `.dockerignore` misses any pytest scratch-directory spelling | Widen the pattern to the whole class (`.pytest*/` and `**/.pytest*/`), never add a fourth exact spelling. pytest creates `--basetemp` roots owner-only on Windows, so one leftover fails the image build's context walk with `getting extended attributes ...: permission denied`. Three earlier patterns were each written after a build had already broken, and `.pytest_cache_t0` still slipped past all three (mcp image, 2026-09-18). The guard also folds in whatever spellings are on disk right now, so a new one trips the gate instead of the next build |
-| `repo.no-local-only-paths` † | a tracked path matching `scripts/local-only-paths.txt` (run evidence, agent handovers, live probes against a private deployment, owner tooling), or a pattern there that `.gitignore` does not ignore | Keep the file on disk and out of git: `git rm --cached <path>` and add it to `.gitignore`. Making a listed path public again means removing its pattern from both files in the same change |
+| `repo.no-local-only-paths` † | a tracked path matching `scripts/local-only-paths.txt` (run evidence, working notes, live probes against a private deployment, owner tooling), or a pattern there that `.gitignore` does not ignore | Keep the file on disk and out of git: `git rm --cached <path>` and add it to `.gitignore`. Making a listed path public again means removing its pattern from both files in the same change |
 | `repo.no-private-markers` † | a tracked file naming the former private homelab host (`testlookup` under the `.local` domain), a Windows user-profile path, a `192.168.x.y` address outside tests, or a real-looking `qai_` API key | Use `testlookup.localhost` / `localhost` / `testlookup.example.com`, repo-relative paths and `qai_your_api_key_here`; site addresses belong in local site configuration (`TESTLOOKUP_HOMELAB_ENV`) |
 | `licenses.shipped-allowlist` † | a shipped npm package (non-dev, in `frontend/` or `client/js/` lockfiles) or a declared Python dependency whose license is not on `scripts/license-allowlist.json`; GPL, AGPL, LGPL, SSPL, BUSL and non-commercial licenses are refused outright | Choose a permissively licensed dependency. A new Python dependency needs its SPDX license in the allowlist's `python` map; an npm package without a `license` field needs an `npm_overrides` entry after you have read its LICENSE file |
 | `repo.no-repo-relative-basetemp` † | a tracked command that passes `--basetemp` a path inside the repo | Delete the argument. pytest's own default lives under the system temp, is unique per run — so concurrent suites cannot clobber each other, which is all the unique suffixes on the old paths were doing — and is rotated down to the last three runs. An in-repo root is created owner-only on Windows, so it hides from `git status` entirely and breaks the image build's context walk; 186 of them had accumulated at the repo root by 2026-09-20 and `require_clean_build_inputs` refused to deploy from that tree. Prose that documents the history (`qa/`, `CHANGELOG.md`, this guide) is out of scope or exempt. If a run truly needs its scratch elsewhere, pass an **absolute** path outside the repository |
@@ -233,9 +233,9 @@ predicate). In the query layer:
 
 ---
 
-## 3. How to add code (the skill patterns)
+## 3. How to add code
 
-### Add an API endpoint (`add-endpoint`)
+### Add an API endpoint
 
 1. Pydantic request/response schemas in `models/schemas.py` (`ConfigDict(from_attributes=True)`).
 2. ORM model in `models/postgres.py` if a new table is needed (UUID pk, tz timestamps).
@@ -246,7 +246,7 @@ predicate). In the query layer:
 7. Pytest with mocked DB (`conftest.py` `FakeExecuteResult` / `FakeRedis`).
 8. `ruff check` + `ruff format` the changed files.
 
-### Add an agent (`add-agent`)
+### Add a pipeline agent
 
 1. New class in `agents/` subclassing `BaseAgent`; set `stage_name`; implement `async def run(self, state)`; `mark_stage_running()` → work → `mark_stage_done(result_data=… | error=…)`. Call `self.log_decision(...)` for every routing/fallback/skip.
 2. Add the stage to the `WorkflowState` TypedDict in `agents/state.py`.
@@ -254,7 +254,7 @@ predicate). In the query layer:
 4. **Pure helpers go in `services/`, not `agents/`** — a ratchet keeps agents to orchestration only.
 5. Tests mocking the LLM + DB; `ruff` the changed files.
 
-### Add a UI page (`add-page`)
+### Add a UI page
 
 1. Types in `frontend/src/types/`.
 2. Service in `frontend/src/services/` using `getData`/`postData` from `services/http.ts`.
@@ -263,7 +263,7 @@ predicate). In the query layer:
 5. Lazy route in `App.tsx` (**verify the route mapping** — pages get renamed) + sidebar entry.
 6. `npm run lint` + `npm run type-check`.
 
-### Add a migration (`add-migration`) — §4
+### Add a migration — §4
 
 ---
 
@@ -303,7 +303,7 @@ Rules:
 
 1. **`activeProjectId` lock / `'all'` sentinel** — nothing renders until a project resolves; stale localStorage can wedge it.
 2. **Time-window store** collapsed to an empty range.
-3. **Backend 422 from a strict Pydantic enum over a `String(N)` column** — Axios *suppresses 422 toasts*, so a drifted enum value fails silently. This is the #1 silent-failure cause; run a live probe (`frontend/probe-live.config.ts`) before re-editing.
+3. **Backend 422 from a strict Pydantic enum over a `String(N)` column** — a drifted stored value fails the whole response. The client now toasts a 422 (`services/apiErrors.ts`), but a page that renders its own error state can still look empty; check the network tab before re-editing.
 
 Also: when a change seems "missing" in the running app, inspect the built bundle
 for a marker string before blaming deploy.
@@ -381,7 +381,7 @@ A field guide — most production incidents here are one of these:
 
 ## 8. Debugging workflow
 
-1. **Reproduce against the running app**, not just unit tests (`frontend/probe-live.config.ts`, the `verify`/`run` skills). Many bugs are env/scope/offline-gate issues invisible to unit tests.
+1. **Reproduce against the running app**, not just unit tests: start it with `make dev` (or `make demo` for seeded data), check it with `python scripts/smoke.py`, then drive the page in a browser. Many bugs are env/scope/offline-gate issues invisible to unit tests.
 2. **Empty UI?** Walk the silent-failure checklist (§5). Check the network tab for a suppressed 422.
 3. **500 on a request?** Look for structlog positional args, a service `rollback()` on the request session, a missing `expanding=True`, or `MissingGreenlet`.
 4. **Data present in one view, missing in another?** Suspect effective-suite or fingerprint/project scoping (§2).

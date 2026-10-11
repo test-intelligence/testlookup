@@ -1,7 +1,7 @@
 /**
  * Map the codebase's existing AgentStageResult shape (returned by
- * ``usePipelineStages``) into the handoff's ComputeStage shape used by the
- * compute graph renderer.
+ * ``usePipelineStages``) into the ComputeStage shape used by the compute
+ * graph renderer.
  *
  * Stage IDs are normalised to the 9 we render on the canvas. Any stage from
  * the backend that doesn't map to one of those is silently dropped — the
@@ -81,7 +81,7 @@ function defaultStage(id: ComputeStageId): ComputeStage {
   }
 }
 
-/** Map backend StageStatus into handoff's StageStatus (``completed`` → ``done``). */
+/** Map backend StageStatus into the canvas StageStatus (``completed`` → ``done``). */
 function mapStatus(s: AgentStageResult['status']): StageStatus {
   if (s === 'completed') return 'done'
   return s as StageStatus

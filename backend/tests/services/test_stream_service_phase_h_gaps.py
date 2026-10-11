@@ -1,5 +1,4 @@
-"""Phase H carry-over backend test gaps for ``stream_service`` (the two
-items listed in `docs/BACKLOG.md` § "Phase H follow-ups — Test gaps").
+"""Two ``stream_service`` behaviours that had no test of their own.
 
 1. ``LiveSessionCreate.suite_name`` round-trips into
    ``TestRun.primary_suite_name`` via ``upsert_test_run``. The mapping
@@ -12,7 +11,8 @@ items listed in `docs/BACKLOG.md` § "Phase H follow-ups — Test gaps").
    project, the call returns 403 *before* mutating session state.
    Regression coverage for the May 2026 bug where X-API-Key callers
    were getting a spurious 401 because the auth happened at the route
-   level instead of inside the service (CLAUDE.md pitfall #2).
+   level instead of inside the service (the API-key project binding must
+   be checked where the session is loaded).
 
 These tests stub the DB session and Redis just deeply enough to reach
 the assertions. The wider create/persist flow is covered elsewhere.

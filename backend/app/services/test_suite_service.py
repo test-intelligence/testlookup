@@ -577,8 +577,9 @@ async def list_test_suites(
 
     Auto-backfills missing ``TestSuite`` rows for suites whose runs landed
     aggregates on ``test_runs.primary_suite_name`` but never triggered
-    ``ingestion_pipeline.finalize_run`` (the live-stream gap from
-    CLAUDE.md pitfall #15). Without the backfill these suites are
+    ``ingestion_pipeline.finalize_run`` (the live-stream gap: that path
+    never calls ``finalize_run``, so its suites were never created or
+    linked). Without the backfill these suites are
     invisible on /suites even though they're visible on /runs, /coverage
     and /test-management. The backfill creates a regular non-default
     ``TestSuite`` row so the navigate-to-id flow keeps working.
@@ -642,9 +643,9 @@ async def list_test_suites(
         except Exception as exc:
             # Degrade: a backfill probe failure shouldn't 500 /suites,
             # AND must not roll back the caller's transaction (this is
-            # an injected session — caller owns commit/rollback per
-            # backend/CLAUDE.md "Commit responsibility (single-owner
-            # rule)"). Swallow + log + continue with whatever suites
+            # an injected session — the caller owns commit/rollback:
+            # services flush, routers commit). Swallow + log + continue
+            # with whatever suites
             # we already fetched.
             logger.warning(
                 "test_suites backfill probe failed, skipping",

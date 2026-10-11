@@ -1,7 +1,8 @@
 """TestSuite entity + CanonicalTestCase junction.
 
-Phase 1 of the test-case ↔ test-suite linking feature. See CLAUDE.md
-"Adding New Features" for the multi-phase plan.
+Phase 1 of the multi-phase test-case ↔ test-suite linking feature: this
+migration adds the tables; later phases move the ingestion writes onto them
+(see the end of this docstring).
 
 What this migration does:
   1. ``test_suites``: first-class suite entity (project-scoped, ``is_default``

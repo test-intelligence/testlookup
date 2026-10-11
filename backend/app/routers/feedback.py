@@ -239,8 +239,7 @@ class AnalysisLookupResponse(BaseModel):
 
     ``failure_category`` is a plain string, NOT the ``FailureCategory``
     enum: the backing column is ``String(30)`` and a strict enum here would
-    silently 422 the response if a stored value ever drifts out of vocab
-    (backend/CLAUDE.md pitfall).
+    422 the whole response if a stored value ever drifts out of vocab.
     """
     analysis_id: Optional[uuid.UUID] = None
     failure_category: Optional[str] = None

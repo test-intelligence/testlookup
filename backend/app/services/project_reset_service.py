@@ -137,7 +137,7 @@ async def reset_project(
     # response with no audit-trail signal that nothing happened. With
     # the row lock the second call blocks here until the first commits,
     # then proceeds with counts=0 — the audit log row records the
-    # no-op explicitly. See docs/DATABASE_AUDIT_2026-05-16.md (P2-5).
+    # no-op explicitly.
     project = (
         await db.execute(
             select(Project)

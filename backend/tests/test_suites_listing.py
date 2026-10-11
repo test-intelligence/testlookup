@@ -167,7 +167,8 @@ async def test_list_test_suites_backfills_missing_suites_from_test_runs():
     """Regression: a suite name present on ``test_runs.primary_suite_name``
     but missing from the ``test_suites`` table must be auto-created and
     appear in the response. Without this fix the /suites page hides any
-    suite stuck in the live-stream finalize_run gap (CLAUDE.md pitfall #15).
+    suite stuck in the live-stream finalize_run gap (the live-stream path
+    skips ``ingestion_pipeline.finalize_run``, so its suites were never linked).
     """
     from app.services.test_suite_service import list_test_suites
 

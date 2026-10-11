@@ -203,7 +203,8 @@ jobs:
           # `import app.main` needs a parseable DATABASE_URL even though nothing
           # here connects to anything (the network is off). These values are
           # syntactically valid and point nowhere on purpose — same contract the
-          # backend test suite runs under (see backend/CLAUDE.md).
+          # backend test suite runs under (backend/tests/conftest.py defaults
+          # DATABASE_URL to a host that never resolves).
           docker run --rm --network none --pull=never \
             -e APP_ENV=production -e AI_OFFLINE_MODE=true \
             -e DATABASE_URL="postgresql+asyncpg://offline:offline@127.0.0.1:5432/offline" \

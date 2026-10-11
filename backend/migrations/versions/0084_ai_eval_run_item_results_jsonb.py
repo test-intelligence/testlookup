@@ -4,8 +4,7 @@ Revision ID: 0084
 Revises: 0083
 Create Date: 2026-05-16
 
-Database audit 2026-05-16 (docs/DATABASE_AUDIT_2026-05-16.md, finding P3-2)
-flagged this column as inconsistent with its sibling
+A database audit (2026-05-16) flagged this column as inconsistent with its sibling
 ``ai_eval_gate_runs.manifest`` / ``.gate_results`` / ``.blocking_gates`` /
 ``.version_changes`` — all of which use JSONB. Both tables hold related
 eval-run data and the column types should match so future eval-drift

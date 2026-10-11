@@ -30,8 +30,8 @@ os.environ.setdefault(
 def _make_celery_fail_fast_without_a_broker() -> None:
     """A missing Redis must fail the dispatch, not retry it forever.
 
-    ``backend/CLAUDE.md`` says the local suite does not need live services,
-    and every call site that dispatches a Celery task wraps it in
+    The local suite must run with no live services (no Redis, no database;
+    ``architecture/DEVELOPER_GUIDE.md`` §6), and every call site that dispatches a Celery task wraps it in
     ``try/except`` on that basis. Celery's Redis **result backend** breaks
     the assumption: ``apply_async`` calls ``ResultConsumer.on_task_call``,
     which enters ``kombu.utils.functional.retry_over_time`` and reconnects
