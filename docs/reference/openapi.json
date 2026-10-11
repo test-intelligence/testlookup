@@ -4752,7 +4752,7 @@
             "type": "string"
           },
           "file": {
-            "contentMediaType": "application/octet-stream",
+            "format": "binary",
             "title": "File",
             "type": "string"
           },
@@ -4816,13 +4816,12 @@
                 "type": "null"
               }
             ],
-            "format": "password",
             "title": "Client Secret"
           },
           "grant_type": {
             "anyOf": [
               {
-                "pattern": "^password$",
+                "pattern": "password",
                 "type": "string"
               },
               {
@@ -4832,7 +4831,6 @@
             "title": "Grant Type"
           },
           "password": {
-            "format": "password",
             "title": "Password",
             "type": "string"
           },
@@ -30372,13 +30370,6 @@
       },
       "ValidationError": {
         "properties": {
-          "ctx": {
-            "title": "Context",
-            "type": "object"
-          },
-          "input": {
-            "title": "Input"
-          },
           "loc": {
             "items": {
               "anyOf": [
@@ -38920,6 +38911,9 @@
           }
         },
         "security": [
+          {
+            "JWT": []
+          },
           {
             "JWT": []
           }

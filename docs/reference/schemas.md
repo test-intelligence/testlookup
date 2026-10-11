@@ -5055,7 +5055,7 @@ These are the full generated JSON Schema definitions, including required fields,
       "type": "string"
     },
     "file": {
-      "contentMediaType": "application/octet-stream",
+      "format": "binary",
       "title": "File",
       "type": "string"
     },
@@ -5124,13 +5124,12 @@ These are the full generated JSON Schema definitions, including required fields,
           "type": "null"
         }
       ],
-      "format": "password",
       "title": "Client Secret"
     },
     "grant_type": {
       "anyOf": [
         {
-          "pattern": "^password$",
+          "pattern": "password",
           "type": "string"
         },
         {
@@ -5140,7 +5139,6 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Grant Type"
     },
     "password": {
-      "format": "password",
       "title": "Password",
       "type": "string"
     },
@@ -32625,13 +32623,6 @@ These are the full generated JSON Schema definitions, including required fields,
 ```json
 {
   "properties": {
-    "ctx": {
-      "title": "Context",
-      "type": "object"
-    },
-    "input": {
-      "title": "Input"
-    },
     "loc": {
       "items": {
         "anyOf": [
