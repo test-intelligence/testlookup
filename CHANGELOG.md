@@ -49,6 +49,15 @@ drawn where nearby controls already hide; each pinned by a test):
 - **Failures**: Mute (a quarantine proposal) is QA lead and Jira (file a
   defect) is QA engineer; neither was gated.
 
+And one the other way round, where the API now does what the UI offers:
+- **An ADMIN revokes any user's API key** (incident response: a leaked CI key
+  minted by someone else). The Streaming API keys page lists every key bound
+  to the project for an admin and offers Revoke on each; the guard let the
+  admin through and the handler then looked the key up by the caller's own
+  `user_id`, answering 404. Everyone else still revokes only their own keys
+  (403). Every revocation now writes an `API_KEY_REVOKED` identity event
+  naming the actor (`actor_id`) and the key's owner (`user_id`).
+
 Tests: `ReleaseGatePage.test.tsx` made a real `GET /settings/ai/mode`; a 401
 from whatever listened on the dev port logged the test user out mid-test, so a
 role set by a test did not survive the render. The read is mocked there now.
