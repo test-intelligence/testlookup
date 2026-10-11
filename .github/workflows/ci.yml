@@ -717,6 +717,7 @@ jobs:
           tests/integration/test_run_email_report_postgres.py
           tests/integration/test_jira_fake_contract_postgres.py
           tests/integration/test_case_latest_execution_postgres.py
+          tests/integration/test_every_get_route_answers_without_500_postgres.py
           tests/integration/test_key_mint_revoke_race_postgres.py
           tests/integration/test_migration_index_leftovers_postgres.py
           tests/integration/test_migration_singleton_lock_postgres.py

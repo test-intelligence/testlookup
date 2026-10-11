@@ -1174,7 +1174,7 @@ project_id: uuid.UUID | None
 
 ## backend/app/core/deps.py — StreamingApiKeyContext
 
-[backend/app/core/deps.py:606](../../backend/app/core/deps.py#L606)
+[backend/app/core/deps.py:642](../../backend/app/core/deps.py#L642)
 
 Bases: ``.
 

@@ -159,6 +159,7 @@ AGENTS.md
 Product_Plan
 frontend/playwright-report/
 frontend/test-results
+frontend/sweep-results
 LintFailures
 # Keep local scratch docs ignored; publish the maintained handoff suite.
 /docs/*
