@@ -49,6 +49,14 @@ def test_dev_auto_login_defaults_to_false():
     assert _env()["DEV_AUTO_LOGIN_ENABLED"] == "false"
 
 
+def test_self_registration_defaults_to_off():
+    """An open sign-up lets anyone who can reach the server make an account."""
+    from app.core.config import Settings
+
+    assert _env()["REGISTRATION_ENABLED"] == "false"
+    assert Settings.model_fields["REGISTRATION_ENABLED"].default is False
+
+
 def test_app_debug_defaults_to_false():
     assert _env()["APP_DEBUG"] == "false"
 
