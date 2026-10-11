@@ -26,6 +26,37 @@ listening, stayed green.
   and that a test leaving a request behind fails. Mutation-checked: an
   uninstalled guard, a missing check, and a guard that records but lets the
   request through each fail it.
+## Unreleased - Self-registration closed by default; SAML sign-in works end to end
+
+Owner request 2026-10-11, from the open-source docs pass.
+
+Self-registration:
+- **Off by default** (`REGISTRATION_ENABLED=false`). `POST /api/v1/auth/register`
+  was always open (rate-limited only), so anyone who could reach the server
+  could make an account. While off it answers 403 `registration_disabled` and
+  writes nothing; admins add people under Settings > Users.
+- **A sign-up is a Viewer**, as the form always said. It was QA_ENGINEER,
+  which can create API keys.
+- `GET /api/v1/auth/options` (public) tells the sign-in page whether to offer
+  "Register"; it is hidden while off, and withdrawn if a sign-up is refused.
+- `seed_data.py` creates its users through the ORM: it registered them, which
+  now fails, and left `must_change_password` set, which the API has enforced
+  since the error-sweep release -- so the seed's own later calls were refused.
+
+SAML SP-initiated sign-in:
+- **`/sso/login-url` sends a real AuthnRequest** (HTTP-Redirect binding) whose
+  ID is the request id the ACS consumes. It sent the bare IdP URL, so the IdP's
+  response had no `InResponseTo` and was refused unless IdP-initiated SSO was
+  allowed. The page to return to rides as the RelayState: an app-relative path
+  only, checked again when it comes back.
+- **The IdP's browser POST lands in the app.** `/sso/acs` answered it with JSON
+  tokens. A browser now gets a 303 to `/sso/callback` with a one-time code in
+  the URL fragment; the new page exchanges it once, within a minute
+  (`POST /sso/exchange`), and returns to the page the sign-in started from.
+  Tokens never ride in a URL. A refusal returns to `/login` with a notice; API
+  clients still get JSON.
+- The SP metadata no longer advertises `/sso/slo`, which has no handler.
+
 ## Unreleased - UI role gates match the API; flags evaluated with their project
 
 Owner request 2026-10-11, from the open-source docs pass: align the UI's role
