@@ -127,8 +127,14 @@ def _legacy_env_fallback(key: str) -> Optional[bool]:
 
 
 def _rollout_bucket(key: str, bucket_input: str) -> int:
-    """Deterministic 0-99 bucket for rollout_percent gating."""
-    digest = hashlib.sha1(f"{key}:{bucket_input}".encode()).hexdigest()
+    """Deterministic 0-99 bucket for rollout_percent gating.
+
+    SHA-256, not SHA-1: the hash only spreads ids evenly (nothing here is a
+    secret), but a user or project id flowing into SHA-1 is flagged as weak
+    hashing of sensitive data, and SHA-256 spreads them as well. Changing the
+    hash moved partial rollouts' buckets once (2026-10-11).
+    """
+    digest = hashlib.sha256(f"{key}:{bucket_input}".encode()).hexdigest()
     return int(digest[:8], 16) % 100
 
 

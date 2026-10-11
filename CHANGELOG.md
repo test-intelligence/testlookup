@@ -126,6 +126,11 @@ render. Both reads are mocked there now, as are the retention nudge and the
 storage panel in `RetentionPage.test.tsx` (each has its own tests); a request
 recorder over every touched test file now records none.
 
+Rollout buckets hash with SHA-256 (was SHA-1). The hash only spreads ids
+evenly, but CodeQL flagged a user id flowing into SHA-1 once the flags were
+asked with their user. A flag at a partial rollout (1-99%) re-buckets its
+users once.
+
 ## Unreleased - Error sweeps: every page, every action, every GET endpoint
 
 Owner request 2026-10-10: test every page navigation for 500s and every UI
