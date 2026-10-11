@@ -475,8 +475,14 @@ class AIModelStatusRead(BaseModel):
 
 
 class AIModeRead(BaseModel):
-    """The analysis mode alone: what every role's screens branch on."""
+    """What every role's screens branch on: the analysis mode, and whether AI
+    stays on this deployment."""
     analysis_mode: str
+    # The effective offline ceiling (env OR stored override). The AI panel told
+    # every reader "Powered by Ollama (local) -- no data leaves your network"
+    # from a build-time default, also on deployments that send failure context
+    # to a cloud model; the claim is now made only when it is true.
+    ai_offline_mode: bool
 
 
 @router.get("/ai/mode", response_model=AIModeRead)
@@ -494,7 +500,10 @@ async def get_ai_mode(
     else of the config — providers, models, which keys are set — is here.
     """
     cfg = await _load_ai_config(db)
-    return AIModeRead(analysis_mode=cfg.get("analysis_mode", "auto"))
+    return AIModeRead(
+        analysis_mode=cfg.get("analysis_mode", "auto"),
+        ai_offline_mode=bool(cfg.get("ai_offline_mode")),
+    )
 
 
 @router.get("/ai/model-status", response_model=AIModelStatusRead)

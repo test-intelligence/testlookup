@@ -1119,15 +1119,20 @@ These are the full generated JSON Schema definitions, including required fields,
 
 ```json
 {
-  "description": "The analysis mode alone: what every role's screens branch on.",
+  "description": "What every role's screens branch on: the analysis mode, and whether AI\nstays on this deployment.",
   "properties": {
+    "ai_offline_mode": {
+      "title": "Ai Offline Mode",
+      "type": "boolean"
+    },
     "analysis_mode": {
       "title": "Analysis Mode",
       "type": "string"
     }
   },
   "required": [
-    "analysis_mode"
+    "analysis_mode",
+    "ai_offline_mode"
   ],
   "title": "AIModeRead",
   "type": "object"
@@ -9705,10 +9710,12 @@ These are the full generated JSON Schema definitions, including required fields,
 {
   "properties": {
     "excerpt": {
+      "default": "",
       "title": "Excerpt",
       "type": "string"
     },
     "reference_id": {
+      "default": "",
       "title": "Reference Id",
       "type": "string"
     },
@@ -9718,9 +9725,7 @@ These are the full generated JSON Schema definitions, including required fields,
     }
   },
   "required": [
-    "source",
-    "reference_id",
-    "excerpt"
+    "source"
   ],
   "title": "EvidenceReference",
   "type": "object"

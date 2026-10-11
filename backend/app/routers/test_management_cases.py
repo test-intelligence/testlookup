@@ -86,6 +86,55 @@ async def _owner_names(
     }
 
 
+async def _attach_latest_executions(
+    db: AsyncSession,
+    pairs: list[tuple[ManagedTestCase, ManagedTestCaseResponse]],
+) -> None:
+    """The latest automation result of each authored case linked to automation.
+
+    An authored case is the automation test with the same project and
+    fingerprint (the rule /cases already uses to hide that test's AUTO row).
+    Without these ids the case panel could not offer "Open latest result" or
+    "Run history" for an authored, automated case, and its Last run read "--"
+    while the test ran every build (owner review of the test case view,
+    2026-10-10). One query for the page: the latest row per (project,
+    fingerprint).
+    """
+    from app.models.postgres import TestCase, TestRun  # noqa: PLC0415
+
+    linked = [(case, resp) for case, resp in pairs if case.test_fingerprint]
+    if not linked:
+        return
+    projects = {case.project_id for case, _ in linked}
+    fingerprints = {case.test_fingerprint for case, _ in linked}
+    rows = await db.execute(
+        select(
+            TestRun.project_id, TestCase.test_fingerprint, TestCase.id, TestRun.id,
+            TestCase.canonical_test_case_id, TestRun.created_at, TestCase.status,
+        )
+        .join(TestRun, TestCase.test_run_id == TestRun.id)
+        .where(TestRun.project_id.in_(projects), TestCase.test_fingerprint.in_(fingerprints))
+        .distinct(TestRun.project_id, TestCase.test_fingerprint)
+        .order_by(
+            TestRun.project_id, TestCase.test_fingerprint,
+            TestRun.created_at.desc(), TestCase.id.asc(),
+        )
+    )
+    latest = {(pid, fp): rest for pid, fp, *rest in rows.all()}
+    for case, resp in linked:
+        hit = latest.get((case.project_id, case.test_fingerprint))
+        if hit is None:
+            continue
+        tc_id, run_id, canonical_id, ran_at, run_status = hit
+        resp.latest_run_id = run_id
+        resp.latest_test_case_id = tc_id
+        resp.canonical_test_case_id = canonical_id
+        # A manual execution newer than the automation run keeps its own result.
+        if ran_at is not None and (resp.last_executed_at is None or ran_at > resp.last_executed_at):
+            resp.last_executed_at = ran_at
+            resp.last_execution_status = str(getattr(run_status, "value", run_status))
+
+
 async def _case_response(
     db: AsyncSession,
     test_case: ManagedTestCase,
@@ -174,8 +223,10 @@ async def list_test_cases(
             suite_name=suite_name,
         )
         names = await _owner_names(db, list(items))
+        responses = [await _case_response(db, item, current_user, names) for item in items]
+        await _attach_latest_executions(db, list(zip(items, responses)))
         return {
-            "items": [await _case_response(db, item, current_user, names) for item in items],
+            "items": responses,
             "total": total,
             "page": page,
             "size": size,
@@ -211,11 +262,12 @@ async def list_test_cases(
         case_ids=automation_ids,
     )
     names = await _owner_names(db, managed_rows)
+    managed_responses = [
+        (item, await _case_response(db, item, current_user, names)) for item in managed_rows
+    ]
+    await _attach_latest_executions(db, managed_responses)
     by_identity = {
-        **{
-            ("managed", item.id): await _case_response(db, item, current_user, names)
-            for item in managed_rows
-        },
+        **{("managed", item.id): response for item, response in managed_responses},
         **{("automation", item["id"]): item for item in automation_rows},
     }
     page_items = [by_identity[identity] for identity in identities if identity in by_identity]
@@ -280,9 +332,10 @@ async def get_test_case(
     current_user: User = Depends(get_current_active_user),
     _case=Depends(require_case_access),
 ):
-    return await _case_response(
-        db, await get_test_case_or_404(db, case_id), current_user
-    )
+    test_case = await get_test_case_or_404(db, case_id)
+    response = await _case_response(db, test_case, current_user)
+    await _attach_latest_executions(db, [(test_case, response)])
+    return response
 
 
 @router.patch("/cases/{case_id}", response_model=ManagedTestCaseResponse)

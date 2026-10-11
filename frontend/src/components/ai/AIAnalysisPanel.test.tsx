@@ -43,6 +43,12 @@ vi.mock('react-hot-toast', () => ({
 const permissions = vi.hoisted(() => ({ canTriggerLlm: true }))
 vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => permissions }))
 
+// The deployment's AI mode: whether AI stays on this deployment.
+const aiMode = vi.hoisted(() => ({
+  data: undefined as undefined | { analysis_mode: string; ai_offline_mode: boolean },
+}))
+vi.mock('@/hooks/useAIConfig', () => ({ useAIConfig: () => ({ data: aiMode.data }) }))
+
 const MOCK_ANALYSIS = {
   test_case_id: 'tc-1',
   root_cause_summary: 'Database connection pool exhausted at test execution time.',
@@ -85,6 +91,30 @@ describe('AIAnalysisPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     permissions.canTriggerLlm = true
+    aiMode.data = undefined
+  })
+
+  // Owner review 2026-10-10: the idle panel said "Powered by Ollama (local) --
+  // no data leaves your network" from a build-time default, also on a
+  // deployment that sends the failure to a cloud model.
+  it('claims nothing leaves the network only when AI is offline', async () => {
+    aiMode.data = { analysis_mode: 'llm', ai_offline_mode: true }
+    render(<AIAnalysisPanel {...DEFAULT_PROPS} />)
+    expect(await screen.findByText(/no data leaves your network/)).toBeInTheDocument()
+  })
+
+  it('says the failure goes to the configured provider when AI is online', async () => {
+    aiMode.data = { analysis_mode: 'llm', ai_offline_mode: false }
+    render(<AIAnalysisPanel {...DEFAULT_PROPS} />)
+    expect(await screen.findByText(/the failure details are sent to it/)).toBeInTheDocument()
+    expect(screen.queryByText(/no data leaves your network/)).toBeNull()
+    expect(screen.queryByText(/Ollama/)).toBeNull()
+  })
+
+  it('makes no claim either way before the mode is known', async () => {
+    render(<AIAnalysisPanel {...DEFAULT_PROPS} />)
+    expect(await screen.findByText(/Explains this failure/)).toBeInTheDocument()
+    expect(screen.queryByText(/no data leaves your network/)).toBeNull()
   })
 
   it('a tester or viewer: told who it is for, and the QA-engineer-only analysis never asked for', async () => {

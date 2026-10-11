@@ -3,7 +3,7 @@ import useSWR from 'swr'
 import { useDataFreshness } from '@/hooks/useDataFreshness'
 import { useNow } from '@/hooks/useNow'
 import { shortAgo } from '@/utils/formatters'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   ClipboardList, Plus, Sparkles, ChevronDown,
   User, CheckCircle2, AlertCircle,
@@ -40,7 +40,7 @@ import {
 } from '@/services/testManagementService'
 import type { UserSummary, SuiteReviewItem, SuiteReviewState } from '@/services/testManagementService'
 import { deriveTestManagementTotals, describeStatBasis } from '@/utils/testManagementTotals'
-import { getTestManagementCaseDetailPath } from '@/utils/testManagementCase'
+import { latestResultPath, runHistoryPath } from '@/utils/testManagementCase'
 import KnowledgeGenerationTab from '@/pages/test-management/KnowledgeGenerationTab'
 import AIGenerateModal from '@/pages/test-management/AIGenerateModal'
 import ApprovalsTab from '@/pages/test-management/ApprovalsTab'
@@ -281,6 +281,41 @@ function CreateCaseModal({ projectId, onClose, onCreated }: CreateCaseModalProps
 
 // ── Case Detail Panel ─────────────────────────────────────────────────────────
 
+/** The case's latest automation result and the two rich pages behind it:
+ *  one run's detail, and the test across runs. Shown for automation rows and
+ *  for authored cases linked to automation; absent for a purely manual case. */
+function LatestResultBlock({ caseItem }: { caseItem: ManagedTestCase }) {
+  const resultPath = latestResultPath(caseItem)
+  const historyPath = runHistoryPath(caseItem)
+  if (!resultPath && !historyPath) {
+    if (caseItem.source !== 'automation') return null
+    return (
+      <p data-testid="tm-case-no-result" className="text-xs text-[var(--color-text-muted)]">
+        No execution detail is stored for this result yet.
+      </p>
+    )
+  }
+  return (
+    <div
+      data-testid="tm-case-latest-result"
+      className="flex items-center justify-between gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3"
+    >
+      <div>
+        <p className="text-xs text-[var(--color-text-muted)] uppercase tracking-wider mb-0.5">Latest result</p>
+        <LastRunCell status={caseItem.last_execution_status ?? undefined} at={caseItem.last_executed_at ?? undefined} />
+      </div>
+      <div className="flex flex-wrap justify-end gap-2">
+        {resultPath && (
+          <Link to={resultPath} className="btn-secondary text-xs">Open latest result →</Link>
+        )}
+        {historyPath && (
+          <Link to={historyPath} className="btn-secondary text-xs">Run history →</Link>
+        )}
+      </div>
+    </div>
+  )
+}
+
 type DetailTab = 'details' | 'lifecycle' | 'history' | 'reviews' | 'comments' | 'ai_review'
 
 interface CaseDetailPanelProps {
@@ -298,6 +333,9 @@ function CaseDetailPanel({ caseItem, onClose, onRefresh, onCaseChanged, lifecycl
   const [runningAiReview, setRunningAiReview] = useState(false)
   const [aiResult, setAiResult] = useState<AIReviewResult | null>(caseItem.ai_review_notes ?? null)
   const [requestingReview, setRequestingReview] = useState(false)
+  // An automation row has no catalog record yet: lifecycle, history, reviews,
+  // comments and AI review all need one, so its panel is Details + Promote.
+  const isAutomation = caseItem.source === 'automation'
 
   const { data: history, isLoading: histLoading } = useTestCaseHistory(activeTab === 'history' ? caseItem.id : undefined)
   const { data: reviews, isLoading: revLoading, mutate: mutateReviews } = useTestCaseReviews(activeTab === 'reviews' ? caseItem.id : undefined)
@@ -305,7 +343,9 @@ function CaseDetailPanel({ caseItem, onClose, onRefresh, onCaseChanged, lifecycl
     activeTab === 'comments' ? caseItem.id : undefined
   )
 
-  const DETAIL_TABS: { id: DetailTab; label: string; icon: React.ReactNode }[] = [
+  const DETAIL_TABS: { id: DetailTab; label: string; icon: React.ReactNode }[] = isAutomation ? [
+    { id: 'details',   label: 'Details',    icon: <FileText className="h-3.5 w-3.5" /> },
+  ] : [
     { id: 'details',   label: 'Details',    icon: <FileText className="h-3.5 w-3.5" /> },
     ...(lifecycleV2 ? [{ id: 'lifecycle' as const, label: 'Lifecycle', icon: <RotateCcw className="h-3.5 w-3.5" /> }] : []),
     { id: 'history',   label: 'History',    icon: <History className="h-3.5 w-3.5" /> },
@@ -369,6 +409,12 @@ function CaseDetailPanel({ caseItem, onClose, onRefresh, onCaseChanged, lifecycl
                 <StatusPill status={caseItem.status} map={STATUS_COLORS} />
                 <StatusPill status={caseItem.priority} map={PRIORITY_COLORS} />
                 <span className="text-xs text-[var(--color-text-muted)]">{caseItem.test_type}</span>
+                <span
+                  data-testid="tm-case-source"
+                  className="text-[10.5px] font-semibold uppercase tracking-wider text-[var(--color-accent)]"
+                >
+                  {isAutomation ? 'From automation' : 'Authored'}
+                </span>
                 {caseItem.ai_generated && (
                   <span className="text-xs text-[var(--color-purple)] flex items-center gap-0.5"><Sparkles className="h-3 w-3" /> AI</span>
                 )}
@@ -401,6 +447,22 @@ function CaseDetailPanel({ caseItem, onClose, onRefresh, onCaseChanged, lifecycl
           {/* Details tab */}
           {activeTab === 'details' && (
             <div className="space-y-4">
+              <LatestResultBlock caseItem={caseItem} />
+              {isAutomation && (
+                <div
+                  data-testid="tm-case-promote"
+                  className="flex items-center justify-between gap-3 rounded-lg border border-[var(--color-border)] p-3"
+                >
+                  <p className="text-xs text-[var(--color-text-muted)]">
+                    Discovered from automation, not yet in the catalog. Promote it to add steps,
+                    an owner, reviews, comments and lifecycle.
+                  </p>
+                  <PromotionAction
+                    canonicalId={caseItem.canonical_test_case_id}
+                    onPromoted={() => { onRefresh(); onClose() }}
+                  />
+                </div>
+              )}
               {caseItem.objective && (
                 <div>
                   <p className="text-xs text-[var(--color-text-muted)] uppercase tracking-wider mb-1">Objective</p>
@@ -450,17 +512,24 @@ function CaseDetailPanel({ caseItem, onClose, onRefresh, onCaseChanged, lifecycl
                 </div>
               )}
               <div className="grid grid-cols-2 gap-3 text-sm">
-                {[
+                {(isAutomation ? [
+                  // What an automation result actually carries; severity,
+                  // version and duration are placeholders until it is promoted.
+                  ['Suite', caseItem.suite_name ?? '—'],
+                  ['Class', caseItem.feature_area ?? '—'],
+                  ['Owner', caseItem.owner ?? 'Unassigned'],
+                  ['Last Executed', fmtDate(caseItem.last_executed_at)],
+                ] : [
                   ['Feature Area', caseItem.feature_area ?? '—'],
                   ['Severity', caseItem.severity],
                   ['Version', String(caseItem.version)],
                   ['Automation', caseItem.automation_status.replace(/_/g, ' ')],
                   ['Est. Duration', caseItem.estimated_duration_minutes ? `${caseItem.estimated_duration_minutes} min` : '—'],
                   ['Last Executed', fmtDate(caseItem.last_executed_at)],
-                ].map(([label, value]) => (
+                ]).map(([label, value]) => (
                   <div key={label} className="bg-[var(--color-bg-secondary)] rounded-lg p-3">
                     <p className="text-xs text-[var(--color-text-muted)] mb-0.5">{label}</p>
-                    <p className="text-[var(--color-text-secondary)] capitalize">{value}</p>
+                    <p className={clsx('text-[var(--color-text-secondary)] break-words', !isAutomation && 'capitalize')}>{value}</p>
                   </div>
                 ))}
               </div>
@@ -476,7 +545,7 @@ function CaseDetailPanel({ caseItem, onClose, onRefresh, onCaseChanged, lifecycl
                   </div>
                 </div>
               )}
-              {!lifecycleV2 && caseItem.status !== 'review_requested' && caseItem.status !== 'under_review' && (
+              {!isAutomation && !lifecycleV2 && caseItem.status !== 'review_requested' && caseItem.status !== 'under_review' && (
                 <div className="pt-2">
                   <button
                     type="button"
@@ -763,7 +832,6 @@ function CreatePlanModal({ projectId, onClose, onCreated }: CreatePlanModalProps
 interface TestCasesTabProps { projectId: string | null; lifecycleV2: boolean }
 
 export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
-  const navigate = useNavigate()
   const now = useNow()  // captured at mount — avoids impure Date.now() in render
   // ── Filter state ────────────────────────────────────────────────────
   // Single-select chips (README §6's multi-select popover is not built).
@@ -783,18 +851,12 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
   const [pendingDeprecation, setPendingDeprecation] = useState<ManagedTestCase | null>(null)
   const [deprecating, setDeprecating] = useState(false)
 
+  // One interaction for every row: the case panel, in place, so the list keeps
+  // its search, filters and page. Automation rows used to leave the page for
+  // one run's result (or a toast); the panel links there instead.
   const openCase = useCallback((caseItem: ManagedTestCase) => {
-    const executionPath = getTestManagementCaseDetailPath(caseItem)
-    if (executionPath) {
-      navigate(executionPath)
-      return
-    }
-    if (caseItem.source === 'automation') {
-      toast.error('This automation result has no execution detail yet. Promote it from the row to manage its lifecycle.')
-      return
-    }
     setSelectedCase(caseItem)
-  }, [navigate])
+  }, [])
   // Default ON so users land on a populated list — the managed_test_cases
   // table is often empty in fresh deployments, and the "Test Cases tab
   // shows nothing while runs are full of tests" surprise was the top

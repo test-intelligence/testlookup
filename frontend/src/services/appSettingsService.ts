@@ -35,6 +35,8 @@ export type AnalysisMode = 'llm' | 'ml' | 'rules' | 'auto'
 /** `GET /settings/ai/mode`: what every role's screens branch on, and nothing else of the config. */
 export interface AIModeRead {
   analysis_mode: AnalysisMode
+  /** Effective offline ceiling: true when AI stays on this deployment. */
+  ai_offline_mode: boolean
 }
 
 export interface AIConfigRead {

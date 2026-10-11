@@ -7,7 +7,9 @@ viewer got "Requires at least QA_LEAD role" toasts on every page and never saw
 Ask AI (the UX redesign's browser E2E pass, 2026-10-07).
 
 Pinned here: the route asks only for a signed-in user (no role), and it answers
-the mode and nothing else of the config — no provider, model or key flag.
+the mode and the effective offline flag and nothing else of the config — no
+provider, model or key flag. The offline flag (2026-10-10) is what lets the AI
+panel say "no data leaves your network" only on a deployment where that is true.
 """
 from __future__ import annotations
 
@@ -46,15 +48,29 @@ def test_the_full_config_route_stays_qa_lead_and_above():
 
 
 @pytest.mark.asyncio
-async def test_answers_the_mode_and_nothing_else(monkeypatch):
+async def test_answers_the_mode_and_the_offline_flag_and_nothing_else(monkeypatch):
     from app.routers import app_settings
 
     async def _config(_db):
-        return {"analysis_mode": "rules", "llm_provider": "openai", "openai_api_key": "sk-not-for-viewers"}
+        return {"analysis_mode": "rules", "ai_offline_mode": False, "llm_provider": "openai",
+                "openai_api_key": "sk-not-for-viewers"}
 
     monkeypatch.setattr(app_settings, "_load_ai_config", _config)
     result = await app_settings.get_ai_mode(_=SimpleNamespace(id="viewer"), db=SimpleNamespace())
-    assert result.model_dump() == {"analysis_mode": "rules"}
+    assert result.model_dump() == {"analysis_mode": "rules", "ai_offline_mode": False}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("offline", [True, False])
+async def test_the_offline_flag_is_the_effective_one(monkeypatch, offline):
+    from app.routers import app_settings
+
+    async def _config(_db):
+        return {"analysis_mode": "llm", "ai_offline_mode": offline}
+
+    monkeypatch.setattr(app_settings, "_load_ai_config", _config)
+    result = await app_settings.get_ai_mode(_=SimpleNamespace(id="viewer"), db=SimpleNamespace())
+    assert result.ai_offline_mode is offline
 
 
 @pytest.mark.asyncio

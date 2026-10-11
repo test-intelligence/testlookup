@@ -1274,8 +1274,12 @@ class AnalyzeRequest(BaseModel):
 
 class EvidenceReference(BaseModel):
     source: str  # "splunk" | "stacktrace" | "ocp_events" | "flakiness"
-    reference_id: str
-    excerpt: str
+    # Defaults, not required: a stored analysis is read back through this model,
+    # and the model's own JSON (and older rows) often carry only source + excerpt.
+    # Required, they 500'd GET /analyze/{id} for 372 of 406 stored analyses on
+    # the homelab, so the test page never showed a stored root cause.
+    reference_id: str = ""
+    excerpt: str = ""
 
 
 class RoleActions(BaseModel):
@@ -2282,11 +2286,12 @@ class ManagedTestCaseResponse(BaseModel):
     # The frontend uses this to render an "Automation-ingested" badge and
     # disable edit affordances on automation rows.
     source: str = "managed"
-    # Automation-backed rows carry execution metadata from their latest run.
-    # These fields let Test Management show the same source owner as the run
-    # detail and open the complete rich-detail page instead of a lossy catalog
-    # side panel. The run fields remain null for authored managed_test_cases
-    # rows; their ``owner`` is the display name of the assignee, else the author.
+    # Automation-backed rows carry execution metadata from their latest run, and
+    # so does an authored case linked to automation (same project + fingerprint).
+    # Every case opens the same Test Management panel; these ids are its "Open
+    # latest result" (run detail) and "Run history" (canonical page) links. They
+    # stay null for an authored case with no automation behind it. An authored
+    # case's ``owner`` is the display name of the assignee, else the author.
     owner: Optional[str] = None
     latest_run_id: Optional[uuid.UUID] = None
     latest_test_case_id: Optional[uuid.UUID] = None
