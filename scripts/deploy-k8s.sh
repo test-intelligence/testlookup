@@ -15,7 +15,7 @@
 #   --dry-run              Print rendered manifests without applying.
 #   --skip-secrets-check   Don't fail if testlookup-secrets is missing.
 #
-# Prerequisites (per cloud — see docs/deployment/*.md for full setup):
+# Prerequisites (per cloud — see docs/operations/deploy-cloud.md for full setup):
 #   - kubectl + cluster context already configured
 #   - testlookup-secrets Secret created in the target namespace, with keys:
 #         APP_SECRET_KEY JWT_SECRET_KEY DATABASE_URL POSTGRES_PASSWORD
@@ -100,7 +100,7 @@ if ! kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; then
 fi
 
 # Secret check — testlookup-secrets must exist; the deploy will fail at pod
-# startup otherwise. See docs/deployment/<cloud>.md for the kubectl-create
+# startup otherwise. See docs/operations/deploy-cloud.md for the kubectl-create
 # command tailored to each cloud's secret manager integration.
 if [[ $SKIP_SECRETS_CHECK -eq 0 && $DRY_RUN -eq 0 ]]; then
   if ! kubectl -n "$NAMESPACE" get secret testlookup-secrets >/dev/null 2>&1; then
@@ -120,7 +120,7 @@ ERROR: Secret testlookup-secrets is missing in namespace '$NAMESPACE'.
            --from-literal=WEBHOOK_SECRET=\$(openssl rand -hex 32)
 
        For cloud-native secret stores (AWS Secrets Manager, GCP Secret Manager,
-       Azure Key Vault), see docs/deployment/<cloud>.md.
+       Azure Key Vault), see docs/operations/deploy-cloud.md.
 
        Pass --skip-secrets-check to bypass this check (NOT recommended).
 EOF
@@ -265,19 +265,26 @@ echo "==> Waiting for frontend rollout..."
 kubectl -n "$NAMESPACE" rollout status deployment/testlookup-frontend --timeout=180s
 
 # ── Create initial admin user ────────────────────────────────────────────────
-# Internal/private deployment: bake in a known default admin so operators can
-# log in immediately after a fresh deploy without a separate manual step. The
-# password is rotatable from the UI (Settings → Users) or via getUser.py.
+# Created ONCE, on a fresh install. There is no default password: ADMIN_PASSWORD
+# when you set one, otherwise a random one generated here. A generated password
+# is stored in the Secret testlookup-initial-admin (never printed into CI logs;
+# shown on the terminal only for an interactive run) and must be changed at
+# first sign-in. An existing admin is never modified.
 # Override with env vars: ADMIN_USERNAME, ADMIN_PASSWORD, ADMIN_EMAIL.
 ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-Admin@2026!}"
-ADMIN_EMAIL="${ADMIN_EMAIL:-admin@testlookup.local}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-admin@example.com}"
 ADMIN_FULL_NAME="${ADMIN_FULL_NAME:-TestLookup Admin}"
+ADMIN_PASSWORD_GENERATED=false
+if [[ -z "${ADMIN_PASSWORD:-}" ]]; then
+  ADMIN_PASSWORD="$(openssl rand -base64 24 | tr -d '=/+' | head -c 20)"
+  ADMIN_PASSWORD_GENERATED=true
+fi
 
 echo "==> Creating initial admin user (idempotent)..."
-BACKEND_POD=$(kubectl -n "$NAMESPACE" get pod -l app=testlookup-backend \
+BACKEND_POD=$(kubectl -n "$NAMESPACE" get pod -l app=testlookup-backend,app.kubernetes.io/component=api \
   -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
 ADMIN_RAN=0
+ADMIN_OUTPUT=""
 if [[ -n "$BACKEND_POD" ]]; then
   ADMIN_OUTPUT=$(kubectl -n "$NAMESPACE" exec -i "$BACKEND_POD" -- \
     env \
@@ -285,35 +292,49 @@ if [[ -n "$BACKEND_POD" ]]; then
       ADMIN_PASSWORD="$ADMIN_PASSWORD" \
       ADMIN_EMAIL="$ADMIN_EMAIL" \
       ADMIN_FULL_NAME="$ADMIN_FULL_NAME" \
+      ADMIN_PASSWORD_GENERATED="$ADMIN_PASSWORD_GENERATED" \
       python < scripts/createAdmin.py 2>&1) && ADMIN_RAN=1 || true
   echo "$ADMIN_OUTPUT"
   if [[ $ADMIN_RAN -ne 1 ]]; then
-    echo "WARN: createAdmin.py failed. Run manually once the backend is ready:" >&2
-    echo "      kubectl -n $NAMESPACE exec -i deployment/testlookup-backend -- \\" >&2
-    echo "        env ADMIN_PASSWORD='$ADMIN_PASSWORD' python < scripts/createAdmin.py" >&2
+    echo "WARN: createAdmin.py failed. Run it manually once the backend is ready" >&2
+    echo "      (it generates and prints a password when ADMIN_PASSWORD is unset):" >&2
+    echo "      kubectl -n $NAMESPACE exec -i deployment/testlookup-backend -- python < scripts/createAdmin.py" >&2
   fi
 else
   echo "WARN: backend pod not found — skipping admin user creation." >&2
 fi
 
-if [[ $ADMIN_RAN -eq 1 ]]; then
+if [[ $ADMIN_RAN -eq 1 ]] && grep -q "^admin user created" <<<"$ADMIN_OUTPUT"; then
+  if [[ "$ADMIN_PASSWORD_GENERATED" == true ]]; then
+    kubectl -n "$NAMESPACE" create secret generic testlookup-initial-admin \
+      --from-literal=username="$ADMIN_USERNAME" \
+      --from-literal=password="$ADMIN_PASSWORD" \
+      --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  fi
   cat <<BANNER
 
 ╔══════════════════════════════════════════════════════╗
 ║  ADMIN LOGIN — TestLookup ($CLOUD)
 ╠══════════════════════════════════════════════════════╣
   Username: $ADMIN_USERNAME
-  Password: $ADMIN_PASSWORD
   Email:    $ADMIN_EMAIL
 ╚══════════════════════════════════════════════════════╝
-
-  Rotate the password after first login:
-    Settings → Users → admin → Reset password
-  Or from the CLI:
-    kubectl -n $NAMESPACE exec -i deployment/testlookup-backend -- \\
-      env ADMIN_PASSWORD='<new>' python < scripts/getUser.py
-
 BANNER
+  if [[ "$ADMIN_PASSWORD_GENERATED" == true ]]; then
+    if [[ -t 1 ]]; then
+      echo "  Password: $ADMIN_PASSWORD   (generated; shown once)"
+    fi
+    echo "  The generated password is stored in the Secret testlookup-initial-admin:"
+    echo "    kubectl -n $NAMESPACE get secret testlookup-initial-admin -o jsonpath='{.data.password}' | base64 -d"
+    echo "  You must change it at first sign-in; then delete that Secret."
+  else
+    echo "  Password: the ADMIN_PASSWORD you supplied."
+  fi
+  echo ""
+elif grep -q "already exists" <<<"$ADMIN_OUTPUT"; then
+  echo "==> An admin account already exists — left unchanged. To reset its password:"
+  echo "    kubectl -n $NAMESPACE exec -i deployment/testlookup-backend -- \\"
+  echo "      env ADMIN_PASSWORD='<new>' python < scripts/getUser.py"
 fi
 
 echo ""

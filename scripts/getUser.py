@@ -3,22 +3,25 @@
 Designed for kubectl stdin piping:
 
     kubectl -n testlookup exec -i deployment/testlookup-backend -- \
-        python < ./scripts/getUser.py
+        env ADMIN_PASSWORD='<new password>' python < ./scripts/getUser.py
 
 Behavior:
   - If an admin user (username='admin' OR role=ADMIN) exists, prints its
-    details and resets the password to a known value so the operator can
-    log back in after a rebuild.
-  - If no admin exists, creates one with the same known credentials.
+    details and RESETS its password (and re-activates it) so the operator can
+    sign in again.
+  - If no admin exists, creates one.
 
-Override defaults via env vars on the pod (or pass with `kubectl exec --env`):
-    ADMIN_EMAIL       default: admin@testlookup.local
+There is no default password. Environment variables:
     ADMIN_USERNAME    default: admin
-    ADMIN_PASSWORD    default: Admin@2026!
+    ADMIN_EMAIL       default: admin@example.com
     ADMIN_FULL_NAME   default: TestLookup Admin
+    ADMIN_PASSWORD    the password to set. When unset or empty, a random one is
+                      generated, printed ONCE, and must be changed at the next
+                      sign-in.
 """
 import asyncio
 import os
+import secrets
 import sys
 
 sys.path.insert(0, '/app')
@@ -31,10 +34,13 @@ from app.models.postgres import User, UserRole
 
 
 async def main() -> None:
-    email = os.environ.get('ADMIN_EMAIL', 'admin@testlookup.local')
+    email = os.environ.get('ADMIN_EMAIL', 'admin@example.com')
     username = os.environ.get('ADMIN_USERNAME', 'admin')
     full_name = os.environ.get('ADMIN_FULL_NAME', 'TestLookup Admin')
-    password = os.environ.get('ADMIN_PASSWORD', 'Admin@2026!')
+    password = os.environ.get('ADMIN_PASSWORD', '')
+    generated = not password
+    if generated:
+        password = secrets.token_urlsafe(18)
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(
@@ -56,7 +62,7 @@ async def main() -> None:
                 hashed_password=get_password_hash(password),
                 role=UserRole.ADMIN.value,
                 is_active=True,
-                must_change_password=False,
+                must_change_password=generated,
             )
             db.add(admin)
             await db.commit()
@@ -66,7 +72,7 @@ async def main() -> None:
             admin.hashed_password = get_password_hash(password)
             admin.role = UserRole.ADMIN.value
             admin.is_active = True
-            admin.must_change_password = False
+            admin.must_change_password = generated
             await db.commit()
             await db.refresh(admin)
             action = 'reset'
@@ -76,7 +82,11 @@ async def main() -> None:
         print(f'  email:    {admin.email}')
         print(f'  role:     {admin.role}')
         print(f'  active:   {admin.is_active}')
-        print(f'  password: {password}')
+        if generated:
+            print(f'  password: {password}')
+            print('  ** generated and shown only once: save it now; it must be changed at the next sign-in **')
+        else:
+            print('  password: (the ADMIN_PASSWORD you supplied)')
 
 
 asyncio.run(main())

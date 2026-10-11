@@ -26,6 +26,7 @@ import hashlib
 import json
 import os
 import random
+import secrets
 import sys
 import time
 import uuid
@@ -55,11 +56,19 @@ DATABASE_URL     = os.getenv("DATABASE_URL", "")
 RESET = "--reset" in sys.argv
 
 # ── Seed users ──────────────────────────────────────────────────────────────
+# Demo accounts. There are no built-in passwords: each comes from
+# SEED_<USERNAME>_PASSWORD (e.g. SEED_ADMIN_PASSWORD) or is generated per run and
+# printed once in the summary at the end. Demo data only — never point this
+# script at a deployment you care about (it RESETS these accounts' passwords).
+def _seed_password(username: str) -> str:
+    return os.getenv(f"SEED_{username.upper()}_PASSWORD") or secrets.token_urlsafe(12)
+
+
 USERS = [
-    {"email": "admin@testlookup.example.com",   "username": "admin",    "full_name": "Admin User",      "password": "Admin@2026!",  "role": "ADMIN"},
-    {"email": "lead@testlookup.example.com",    "username": "qa_lead",  "full_name": "QA Lead",          "password": "Lead@2026!",   "role": "QA_LEAD"},
-    {"email": "sara@testlookup.example.com",    "username": "eng_sara", "full_name": "Sara Engineer",    "password": "Sara@2026!",   "role": "QA_ENGINEER"},
-    {"email": "viewer@testlookup.example.com",  "username": "viewer",   "full_name": "Viewer Read-only", "password": "View@2026!",   "role": "VIEWER"},
+    {"email": "admin@testlookup.example.com",   "username": "admin",    "full_name": "Admin User",      "password": _seed_password("admin"),    "role": "ADMIN"},
+    {"email": "lead@testlookup.example.com",    "username": "qa_lead",  "full_name": "QA Lead",          "password": _seed_password("qa_lead"),  "role": "QA_LEAD"},
+    {"email": "sara@testlookup.example.com",    "username": "eng_sara", "full_name": "Sara Engineer",    "password": _seed_password("eng_sara"), "role": "QA_ENGINEER"},
+    {"email": "viewer@testlookup.example.com",  "username": "viewer",   "full_name": "Viewer Read-only", "password": _seed_password("viewer"),   "role": "VIEWER"},
 ]
 
 # ── Projects ────────────────────────────────────────────────────────────────

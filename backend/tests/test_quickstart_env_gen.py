@@ -125,7 +125,7 @@ def generated_env(tmp_path: Path) -> dict[str, str]:
     return _parse_env(out.read_text(encoding="utf-8"))
 
 
-def _run_generator(workdir: Path) -> None:
+def _run_generator(workdir: Path, *args: str) -> None:
     """Stage the script + example into ``workdir`` and run it there. The script
     is invoked with a RELATIVE path (cwd=workdir) so its ``dirname "$0"`` logic
     works regardless of OS path style."""
@@ -143,7 +143,7 @@ def _run_generator(workdir: Path) -> None:
     # push gate twice pushed it past the old 60 s (2026-10-05). A real hang
     # still fails, at _GEN_TIMEOUT_S.
     res = subprocess.run(
-        [_BASH, "scripts/gen-dev-env.sh"],
+        [_BASH, "scripts/gen-dev-env.sh", *args],
         cwd=workdir, capture_output=True, text=True, timeout=_GEN_TIMEOUT_S,
         env=env,
     )
@@ -198,3 +198,42 @@ def test_idempotent_when_env_exists(tmp_path: Path):
     subprocess.run([_BASH, "scripts/gen-dev-env.sh"], cwd=tmp_path, check=True,
                    capture_output=True, timeout=_GEN_TIMEOUT_S, env=env)
     assert (tmp_path / ".env").read_text(encoding="utf-8") == first, "second run mutated existing .env"
+
+
+# ── The first admin and the release install (OSS release) ───────────────────
+
+
+def test_every_generated_env_carries_a_random_first_admin_password(generated_env):
+    """There is no default admin password: the generator fills the one the
+    release stack's db-migrate gives the first admin (INITIAL_ADMIN_PASSWORD)."""
+    value = generated_env.get("INITIAL_ADMIN_PASSWORD", "")
+    assert len(value) >= 16 and not _is_placeholder(value)
+
+
+def test_the_release_env_keeps_the_secure_defaults(tmp_path: Path):
+    """install.sh runs the generator with --release: random secrets, but no
+    passwordless dev-login and APP_ENV stays production."""
+    _require_bash()
+    _run_generator(tmp_path, "--release")
+    env = _parse_env((tmp_path / ".env").read_text(encoding="utf-8"))
+
+    def value(key: str) -> str:  # .env.example annotates some keys inline
+        return env[key].split(" #", 1)[0].strip()
+
+    assert value("APP_ENV") == "production"
+    assert value("DEV_AUTO_LOGIN_ENABLED") == "false"
+    assert len(env["INITIAL_ADMIN_PASSWORD"]) >= 16
+    bad = [k for k in _REQUIRED if k not in env or _is_placeholder(env[k])]
+    assert not bad, f"missing/placeholder secrets: {bad}"
+
+
+def test_the_release_stack_creates_the_first_admin_once():
+    compose = (_REPO / "docker-compose.release.yml").read_text(encoding="utf-8")
+    migrate = compose[compose.index("  db-migrate:"):]
+    migrate = migrate[: migrate.index("\n  backend:")] if "\n  backend:" in migrate else migrate[:1500]
+    assert "alembic upgrade head && python /app/scripts/create_admin.py" in migrate
+    assert "ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD:-}" in migrate
+    install = (_REPO / "install.sh").read_text(encoding="utf-8")
+    assert "gen-dev-env.sh --release" in install
+    assert "INITIAL_ADMIN_PASSWORD" in install
+
