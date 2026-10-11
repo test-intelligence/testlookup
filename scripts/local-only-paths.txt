@@ -5,11 +5,11 @@
 # `scripts/quality_gate.py` (guard repo.no-local-only-paths) fails the gate if
 # any tracked path matches one of these patterns.
 #
-# Why each group is local-only: run evidence, agent handovers, owner-specific
+# Why each group is local-only: run evidence, working notes, owner-specific
 # deploy tooling and live probes against a private deployment, review
 # registers, and stale duplicates of the maintained guides.
 
-# coding-agent tooling and trackers
+# local tooling and trackers
 .agents/
 HANDOVER_ACTIVITY.md
 LIVE_APP_BUG_TRACKER.md
@@ -29,7 +29,7 @@ jenkins/
 .codacy.yaml
 .github/workflows/codacy.yml
 
-# dated reviews, handovers, QA run evidence and research caches
+# dated reviews, working notes, QA run evidence and research caches
 architecture/AGENTIC_HANDOVER_2026-09-13.md
 architecture/AGENTIC_OPENAPI_ARCHITECTURE.md
 architecture/AGENTIC_OPENAPI_ARCHITECTURE.review-log.md
@@ -61,6 +61,7 @@ backend/tests/*mutation_harness*.py
 # development plans, load-test write-ups and benchmark results
 architecture/TEST_INTELLIGENCE_PLAN.md
 architecture/VIZ_PERFORMANCE_BASELINE.md
+docs/SCALABLE_INGESTION_DESIGN.md
 benchmarks/
 backend/tests/regression/test_benchmark_methodology_matches_the_code.py
 backend/tests/test_pipeline_baseline_aggregate.py

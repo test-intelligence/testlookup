@@ -7,7 +7,7 @@
  *
  * The scroller's `scrollHeight` is printed (FOLD line) so the page's height
  * before / after the template can be compared: measured on the unchanged page
- * first (P3 agent C's report, `docs/viz-work/p3-agent-C.md`).
+ * first.
  *
  * Harness: `tests/lib/rollout.ts` (fail closed, pinned clock, the fixtures of
  * the rollout specs).

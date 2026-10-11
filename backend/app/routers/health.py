@@ -359,10 +359,9 @@ async def health_ingestion() -> dict:
     """Surface the load + backpressure signals used by the live-stream
     admission gates.
 
-    The output is consumed by the future Grafana panel (Phase 1 of the
-    scalable-ingestion plan in ``docs/SCALABLE_INGESTION_DESIGN.md``)
-    and by support / on-call humans when a customer reports "my runs
-    are slow / 429ing". A single GET answers:
+    The output is for dashboards and for support / on-call humans when a
+    customer reports "my runs are slow / 429ing" (the admission gates are
+    described in ``architecture/INGESTION_SCALE.md``). A single GET answers:
 
     * Is Redis approaching the memory threshold that triggers 503?
     * What's the per-minute ingest vs reject rate?

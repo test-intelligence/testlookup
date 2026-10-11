@@ -8,8 +8,7 @@
  * A card's sub-line is JSX, never an HTML string: it used to be built as
  * `<strong>N</strong> …` and rendered with `dangerouslySetInnerHTML`. The
  * strings held only counts, but an HTML sink one edit away from a release
- * name is how an injection ships (docs/viz-work/RULES.md, owner decision
- * OD-11). The card's `sparkline` prop and its `MiniSparkline` went with it:
+ * name is how an injection ships. The card's `sparkline` prop and its `MiniSparkline` went with it:
  * no caller ever passed one (a release list has no history), so the only
  * trend line this strip could draw was an invented one.
  */

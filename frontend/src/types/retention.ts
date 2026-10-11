@@ -1,9 +1,8 @@
 /**
- * Types for the Retention & Purge admin settings (PMF backlog US-11.4 — UI).
+ * Types for the Retention & Purge admin settings.
  *
- * These mirror the pinned retention contract verbatim — the backend
- * implements the same shapes on a parallel branch. Do not extend without
- * reconciling with `backend` (see docs/PMF_BACKLOG.md, US-11.4).
+ * These mirror the backend's retention contract verbatim. Do not extend one
+ * side without the other.
  *
  * Contract endpoints (all project-scoped, ADMIN for writes):
  *   GET  /api/v1/projects/{project_id}/retention-policy          → RetentionPolicy

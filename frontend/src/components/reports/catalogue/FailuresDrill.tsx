@@ -69,9 +69,7 @@ const ROOT_LEVEL = { kind: 'suites' } as const
 export const DRILL_HEIGHT = 280
 /**
  * The lazy placeholder's height: what the ladder DRAWS (frame, breadcrumb, the
- * first level's plot and footer), measured at 1280 (R2-B
- * F-15, `docs/viz-work/w3/r2b/diag-failures.jsonl` and X3's `x3/groups-win.jsonl`:
- * 372 px). The old estimate (the plot + 200 = 480) shrank by 108 px inside the
+ * first level's plot and footer), measured at 1280 px wide: 372 px. The old estimate (the plot + 200 = 480) shrank by 108 px inside the
  * viewport as the section mounted, moving everything below it.
  */
 export const DRILL_SECTION_MIN_HEIGHT = 372

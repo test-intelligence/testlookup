@@ -149,9 +149,8 @@ infra/aws/*
 !infra/aws/README.md
 !infra/aws/STRATEGY.md
 
-# Coding-agent instruction files — keep on local disk only, NEVER commit to any
-# branch. Untracked 2026-06-06; they still drive Claude Code / agents locally.
-# (Pattern without a leading slash matches at every depth: root + backend/ + frontend/.)
+# Personal editor/assistant instruction files are kept out of the repository.
+# (Pattern without a leading slash matches at every depth.)
 CLAUDE.md
 AGENTS.md
 
@@ -161,7 +160,7 @@ AGENTS.md
 /opensource.md
 /deployment_and_testing_strategy.md
 
-# Claude Code — keep local, never push to remote
+# Local assistant/editor state
 .claude/
 Product_Plan
 frontend/playwright-report/
@@ -178,7 +177,6 @@ LintFailures
 !/docs/operations/
 !/docs/maintainers/
 !/docs/reference/
-!/docs/SCALABLE_INGESTION_DESIGN.md
 BuildFailures/
 CSS_Samples/
 backend/celerybeat-schedule
@@ -262,6 +260,7 @@ client/java/dependency-reduced-pom.xml
 /backend/tests/*mutation_harness*.py
 /architecture/TEST_INTELLIGENCE_PLAN.md
 /architecture/VIZ_PERFORMANCE_BASELINE.md
+/docs/SCALABLE_INGESTION_DESIGN.md
 /benchmarks/
 /backend/tests/regression/test_benchmark_methodology_matches_the_code.py
 /backend/tests/test_pipeline_baseline_aggregate.py

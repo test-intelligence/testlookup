@@ -16,9 +16,6 @@ These tests don't try to exercise the rest of the create-path — they
 mock just enough to reach the guard and verify it fires. Service-
 specific behaviour stays covered by the other test files; this one
 defends the contract at the boundary.
-
-Phase OS-Deploy follow-up (`docs/BACKLOG.md` § "Project-existence
-guard on remaining entity-create services").
 """
 from __future__ import annotations
 

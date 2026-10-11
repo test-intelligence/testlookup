@@ -1,9 +1,8 @@
 /**
- * Types for the GitLab integration (PMF backlog Epic 3 — UI).
+ * Types for the GitLab integration settings.
  *
- * These mirror the pinned Epic-3 config contract verbatim — the backend
- * implements the same shapes on a parallel branch. Do not extend without
- * reconciling with `backend` (see docs/PMF_BACKLOG.md, Epic 3).
+ * These mirror the backend's GitLab config contract verbatim. Do not extend
+ * one side without the other.
  *
  * Contract endpoints:
  *   GET/PUT /api/v1/projects/{project_id}/integrations/gitlab      → GitLabConfig

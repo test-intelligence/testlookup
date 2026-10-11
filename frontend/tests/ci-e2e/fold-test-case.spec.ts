@@ -14,7 +14,7 @@
  *    the parser.
  *
  * The scroller's `scrollHeight` is printed (FOLD line) so the page's height
- * before / after can be compared (`docs/viz-work/p4-agent-E.md`).
+ * before / after can be compared.
  *
  * Harness: `tests/lib/rollout.ts` (fail closed, pinned clock). The fixtures
  * are this page's own (`TEST_CASE` in `fixtures-pages.ts`, shared with the

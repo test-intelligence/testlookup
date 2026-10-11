@@ -124,8 +124,8 @@ class TestCachedTokensAreBilledOnce:
         fresh = estimate_cost("anthropic", "claude-sonnet-4-5", input_tokens=100_000)
         cached = estimate_cost("anthropic", "claude-sonnet-4-5", cached_input_tokens=100_000)
         assert cached.cost_usd < fresh.cost_usd, (
-            "cache reads must be discounted — this is the lever the PRD ranks "
-            "above batching for the interactive path"
+            "cache reads must be discounted — on the interactive path they "
+            "save more than batching does"
         )
 
 

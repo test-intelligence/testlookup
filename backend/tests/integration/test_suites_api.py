@@ -8,8 +8,6 @@ Service-level happy-paths and SQL behaviour are already pinned by
 ``test_test_suite_service.py``. This file deliberately stubs the service
 layer so failures here point at router wiring, schema validation, or
 auth — not at SQL semantics.
-
-Phase I follow-up (`docs/BACKLOG.md` Phase I #4).
 """
 from __future__ import annotations
 

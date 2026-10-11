@@ -1,4 +1,4 @@
-"""Regression: Redis-backed upload status (PRD MRU-5/6).
+"""Regression: Redis-backed upload status.
 
 Pins the status record the upload task writes and the /ingest/uploads/{task_id}
 endpoint reads, so async parse/ingest outcomes surface to the UI instead of a

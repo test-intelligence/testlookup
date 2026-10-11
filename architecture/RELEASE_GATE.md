@@ -114,7 +114,7 @@ CONDITIONAL_GO band.
 > This changes ship/no-ship advice, so it was made as an explicit product
 > decision rather than folded in as a bug fix.
 
-## 4b. Failure-kind weighting (opt-in, US-9.3 + AI-4)
+## 4b. Failure-kind weighting (opt-in)
 
 `policy_evaluator_service` can excuse failures the team has decided shouldn't
 block a release — typically infrastructure. It is **off unless a policy

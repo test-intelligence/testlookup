@@ -1,7 +1,7 @@
 """Unit tests for the per-project live-stream ingest rate limit.
 
-The limiter is the first of two admission gates (Phase 1 of
-``docs/SCALABLE_INGESTION_DESIGN.md``). These tests pin:
+The limiter is the first of two admission gates (see
+``architecture/INGESTION_SCALE.md``). These tests pin:
 
   1. Under-budget calls pass silently (no raise).
   2. Over-budget calls raise 429 with ``Retry-After`` set.

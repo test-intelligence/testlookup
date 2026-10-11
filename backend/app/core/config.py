@@ -231,8 +231,8 @@ class Settings(BaseSettings):
     WS_MAX_TOTAL_CONNECTIONS: int = 5000
     WS_BROADCAST_TIMEOUT: float = 5.0           # seconds before dropping a dead connection
 
-    # ── Live-stream ingestion gate (Phase 1, 2026-05-16) ──────
-    # See docs/SCALABLE_INGESTION_DESIGN.md. Both limits operate per
+    # ── Live-stream ingestion gate ──────
+    # See architecture/INGESTION_SCALE.md. Both limits operate per
     # project, per minute. Set to 0 to disable.
     INGEST_RATE_LIMIT_PER_MINUTE: int = 200       # batches per project per minute
     # Re-audit M4/M3. POST /ws/events takes ONE event per call, so it cannot

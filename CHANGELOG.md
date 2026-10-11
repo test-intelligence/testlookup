@@ -127,13 +127,14 @@ locally by default.
 
 ### Removed
 
-- Internal working material (run evidence, agent handovers, review registers,
+- Internal working material (run evidence, working notes, review registers,
   live probes against a private deployment, owner-specific CI and deploy
   pipelines, and three superseded copies of the user and install guides) is no
   longer part of the repository.
 - Development-process material: the mutation scripts (`scripts/mutation_check_*.py`)
   and the tests that ran them (they rewrote source files while running), the
-  test-intelligence roadmap, a load-test write-up and the `benchmarks/`
+  test-intelligence roadmap, the phased ingestion design plan (the maintained
+  page is `architecture/INGESTION_SCALE.md`), a load-test write-up and the `benchmarks/`
   results, with the `make benchmark*` targets that ran them.
 - The owner-specific cloud deploy workflows (`deploy-eks.yml`,
   `deploy-gke.yml`, `deploy-aks.yml`) and `aws-infra-validate.yml`. EKS, GKE

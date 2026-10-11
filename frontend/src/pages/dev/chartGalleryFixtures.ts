@@ -438,7 +438,7 @@ export const GALLERY_COVERAGE_MAP_PLOT_HEIGHT = 360
 export const GALLERY_SCATTER_PLOT_HEIGHT = 320
 export const GALLERY_FAILURE_GROUPS_PLOT_HEIGHT = 360
 
-// The boxes, MEASURED at 640 px wide in Chromium (docs/viz-work/w3/i-g, `measure.spec.ts`), twice: with
+// The boxes, MEASURED at 640 px wide in Chromium, twice: with
 // the machine's fonts and with every text forced to a DejaVu-wide face (Verdana stands in on Windows; it
 // reproduces the Linux 432 px of the Wave 2.6 heatmap frame). The box is the wide-font height plus room
 // for one more wrapped line (a footer sentence or a long title), so CI's fonts never spill into the next

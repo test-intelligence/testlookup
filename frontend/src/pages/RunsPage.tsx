@@ -1387,7 +1387,7 @@ export default function RunsPage() {
   // `manual_upload` feature flag.
   const uploadEnabled = useFeatureEnabled('manual_upload')
 
-  // Manual report upload (PRD MRU-4). Opens from the header's primary button
+  // Manual report upload. Opens from the header's primary button
   // or via the deep-link ``/runs?upload=1`` (bookmarks, docs). The modal asks
   // for the project itself, so All Projects does not block it.
   const [searchParams, setSearchParams] = useSearchParams()

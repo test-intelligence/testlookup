@@ -158,7 +158,7 @@ flowchart TB
     BUDGET --> PIPE["analysis pipeline<br/>(mode possibly downgraded)"]
 ```
 
-## 8. The live stream runs inside the API processes (re-audit N4)
+## 8. The live stream runs inside the API processes
 
 `app/main.py`'s lifespan starts two background tasks in **every** API worker
 process, gunicorn workers times replicas:

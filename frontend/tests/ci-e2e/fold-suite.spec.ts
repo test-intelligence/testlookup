@@ -8,8 +8,8 @@
  * catalog, the recent runs, the run history) starts at most 300 px below the
  * top of `#main-content`. The scroller's `scrollHeight` is printed (FOLD line)
  * so the height before / after can be compared: measured on the unchanged
- * pages first (`docs/viz-work/p4-agent-B.md`: `/suites/:id` 844, its table at
- * 130; `/suites` 844, its table at 99).
+ * pages first (`/suites/:id` 844, its table at 130; `/suites` 844, its table
+ * at 99).
  *
  * Also held here, in a browser: the Tests tab is the catalog joined with the
  * window's analytics (a test that did not run reads "—"); the Charts tab loads

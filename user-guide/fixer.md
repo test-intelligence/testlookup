@@ -1,4 +1,4 @@
-# The Fixer — validated flaky-test fixes (AI-2)
+# The Fixer — validated flaky-test fixes
 
 The Fixer is a scheduled, budgeted agent that picks your flakiest quarantined
 tests, generates a **test-code-only** candidate fix, **validates it by rerunning

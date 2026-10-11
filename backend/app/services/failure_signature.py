@@ -180,7 +180,7 @@ def _noise_pattern(word: str, digit: str) -> str:
 #: classes, each sent ONCE (about 6 kB of binds in all). Sent whole (27 kB with
 #: escapes), every statement's bind message passed 16 kB, and on the measured
 #: host any message that size costs a flat ~44 ms round trip whatever the query
-#: does (a TCP delayed-ACK stall; ``docs/viz-work/w3/BE3.md``).
+#: does (a TCP delayed-ACK stall).
 NOISE_PATTERN = _noise_pattern(_WORD, _DIGIT)
 _WORD_MARK, _DIGIT_MARK = "@W@", "@D@"
 #: :data:`NOISE_PATTERN` with the classes left as marks.
@@ -194,7 +194,7 @@ if NOISE_TEMPLATE.replace(_WORD_MARK, _WORD).replace(_DIGIT_MARK, _DIGIT) != NOI
 #: call, sized by the character classes of the pattern, so the 700-range Unicode
 #: word class costs microseconds a row even on a short line (measured: 30k
 #: seed-shaped rows, ~340 ms with the Unicode pattern alone, ~200 ms with the
-#: ASCII fast path, `docs/viz-work/w3/BE3.md`).
+#: ASCII fast path).
 NOISE_PATTERN_ASCII = _noise_pattern("0-9A-Za-z_", "0-9")
 #: Everything before the first line boundary.
 FIRST_LINE_PATTERN = "^[^" + _bracket_body([(ord(c), ord(c)) for c in LINE_BOUNDARIES]) + "]*"
