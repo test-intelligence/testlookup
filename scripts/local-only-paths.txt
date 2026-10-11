@@ -1,0 +1,72 @@
+# LOCAL-ONLY paths: maintainers may keep these on disk, but they must never be
+# tracked in the public repository (OSS release, 2026-10). Each line is a
+# repo-relative pattern: a trailing "/" means "everything under this
+# directory"; "*" is a glob. `.gitignore` carries the same list, and
+# `scripts/quality_gate.py` (guard repo.no-local-only-paths) fails the gate if
+# any tracked path matches one of these patterns.
+#
+# Why each group is local-only: run evidence, agent handovers, owner-specific
+# deploy tooling and live probes against a private deployment, review
+# registers, and stale duplicates of the maintained guides.
+
+# coding-agent tooling and trackers
+.agents/
+HANDOVER_ACTIVITY.md
+LIVE_APP_BUG_TRACKER.md
+LIVE_LOOP_RUNLOG.md
+SECURITY_UPDATES.md
+
+# superseded duplicates of the maintained guides (merged into docs/ and user-guide/)
+README_FULL.md
+UserGuides/
+deploymentsteps.md
+installation.md
+
+# owner CI / deploy pipelines for a private environment
+Jenkinsfile
+jenkins/
+.github/workflows/deploy-staging.yml
+.codacy.yaml
+.github/workflows/codacy.yml
+
+# dated reviews, handovers, QA run evidence and research caches
+architecture/AGENTIC_HANDOVER_2026-09-13.md
+architecture/AGENTIC_OPENAPI_ARCHITECTURE.md
+architecture/AGENTIC_OPENAPI_ARCHITECTURE.review-log.md
+architecture/PHASE3_*.md
+architecture/RICH_TEST_CASE_DETAIL_DESIGN.md
+architecture/reviews/
+architecture/testing/
+architecture/verification/
+design_handoff_ui_improvements/
+docs/DevOps/
+docs/reviews/
+docs/wiki/
+qa/
+research/
+deploy/H02_H03_STABLE_LIVE_CUTOVER.md
+deploy/M11_LIVE_SANITIZATION_CUTOVER.md
+postman/
+
+# live probes against a private deployment, and one-off scripts
+frontend/probe-live.config.ts
+frontend/tests/probe-*.spec.ts
+backend/test_db.py
+scripts/export_handoff_wiki.py
+scripts/mutation_check_coverage_*.py
+scripts/mutation_check_e2_3.py
+scripts/mutation_check_e9_6.py
+scripts/mutation_check_e9_7.py
+scripts/mutation_check_e9_10.py
+scripts/mutation_check_exploratory_m01_*.py
+scripts/mutation_check_exploratory_m02_feature_flags.py
+scripts/mutation_check_exploratory_m09_consumers.py
+scripts/mutation_check_exploratory_m10_*.py
+scripts/mutation_check_exploratory_m12_invocation_contract.py
+scripts/mutation_check_exploratory_m13_workflow_governance.py
+scripts/mutation_check_exploratory_m16_test_management.py
+scripts/mutation_check_exploratory_m17_analytics_views.py
+scripts/mutation_check_exploratory_m26_provenance.py
+scripts/mutation_check_lease_and_scan_determinism.py
+scripts/mutation_check_t20.py
+scripts/mutation_check_t21.py
