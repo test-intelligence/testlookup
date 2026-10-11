@@ -10977,7 +10977,8 @@
           "MFA_BREAKGLASS_RESET",
           "MFA_POLICY_UPDATED",
           "ACCOUNT_LOCKED",
-          "ACCOUNT_UNLOCKED"
+          "ACCOUNT_UNLOCKED",
+          "API_KEY_REVOKED"
         ],
         "title": "IdentityEventType",
         "type": "string"
@@ -23725,6 +23726,22 @@
         ],
         "title": "SSOEnforcementMode",
         "type": "string"
+      },
+      "SSOExchangeRequest": {
+        "description": "The one-time code the ACS hands the browser after an SSO sign-in.",
+        "properties": {
+          "code": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "SSOExchangeRequest",
+        "type": "object"
       },
       "SSOLoginResponse": {
         "description": "Token response after successful SSO authentication.",
@@ -39464,6 +39481,30 @@
         ]
       }
     },
+    "/api/v1/auth/options": {
+      "get": {
+        "description": "What the sign-in page may offer. Public: it is read before anyone signs in.",
+        "operationId": "auth_options_api_v1_auth_options_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Auth Options Api V1 Auth Options Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Auth Options",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
     "/api/v1/auth/refresh": {
       "post": {
         "description": "Exchange a valid refresh token for a new access + refresh token pair (rotation).\nThe old refresh token is not reusable after this call.",
@@ -39508,7 +39549,7 @@
     },
     "/api/v1/auth/register": {
       "post": {
-        "description": "Self-service registration.\n\nNew accounts are created with the QA_ENGINEER role and\nmust_change_password=True so the user is prompted to set a permanent\npassword on their first login.",
+        "description": "Self-service registration, when the deployment allows it.\n\nOff unless ``REGISTRATION_ENABLED`` (an open sign-up lets anyone who can\nreach the server make an account). A new account is a VIEWER -- what the\nsign-up form promises -- with no project membership and\nmust_change_password=True. It used to be QA_ENGINEER, which can create\nAPI keys.",
         "operationId": "register_api_v1_auth_register_post",
         "requestBody": {
           "content": {
@@ -44225,7 +44266,7 @@
     },
     "/api/v1/keys/{key_id}": {
       "delete": {
-        "description": "Revoke (soft-delete) an API key. Only the owner can revoke their own keys.\n\nA caller authenticated with a project-bound key may revoke only keys bound\nto that project; ``require_api_key_owner`` refuses the rest (re-audit N20).",
+        "description": "Revoke (soft-delete) an API key: your own, or -- as an ADMIN -- anyone's.\n\nAn ADMIN revokes another user's key for incident response: a leaked CI key\nhas to stop working now, whoever minted it. The Streaming API keys page\nlists every key bound to the project for an admin and offers Revoke on\neach, and ``require_api_key_owner`` already let an admin through; this\nquery then looked the key up by ``user_id == current_user.id`` and answered\n404 for every key the admin did not own. Everyone else revokes only their\nown keys (``require_api_key_owner`` refuses the rest with 403, and the\nquery below would not find them either).\n\nA caller authenticated with a project-bound key may revoke only keys bound\nto that project; ``require_api_key_owner`` refuses the rest (re-audit N20).\n\nEvery revocation is written to the identity trail naming the actor and the\nkey's owner, so \"who killed this key\" has an answer when they differ.",
         "operationId": "revoke_api_key_api_v1_keys__key_id__delete",
         "parameters": [
           {
@@ -64808,7 +64849,7 @@
     },
     "/api/v1/sso/acs": {
       "post": {
-        "description": "SAML Assertion Consumer Service — processes the SAML Response from the IdP.\n\nThis endpoint receives the base64-encoded SAMLResponse via form POST,\nvalidates the assertion, and either logs in an existing user or JIT-provisions\na new one.",
+        "description": "SAML Assertion Consumer Service — processes the SAML Response from the IdP.\n\nThis endpoint receives the base64-encoded SAMLResponse via form POST,\nvalidates the assertion, and either logs in an existing user or JIT-provisions\na new one.\n\nThe POST comes from the browser. It answers with a 303 into the app\n(``/sso/callback``) carrying a one-time code in the URL fragment, which the\napp exchanges for the tokens (``POST /sso/exchange``); a refusal goes back\nto ``/login``. A client that asks for JSON gets the tokens as before.",
         "operationId": "saml_acs_api_v1_sso_acs_post",
         "responses": {
           "200": {
@@ -65209,10 +65250,70 @@
         ]
       }
     },
+    "/api/v1/sso/exchange": {
+      "post": {
+        "description": "The tokens for an SSO sign-in the ACS completed, for its one-time code.\n\nPublic, like the ACS: the code is the credential. It works once, within a\nminute of the IdP's response.",
+        "operationId": "exchange_sso_code_api_v1_sso_exchange_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SSOExchangeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SSOLoginResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Exchange Sso Code",
+        "tags": [
+          "SSO / SAML"
+        ]
+      }
+    },
     "/api/v1/sso/login-url": {
       "get": {
-        "description": "Get the SSO login redirect URL for SP-initiated login.\nReturns the IdP SSO URL the frontend should redirect to.",
+        "description": "The IdP URL that starts an SP-initiated login: the IdP SSO URL carrying a\nSAML AuthnRequest (HTTP-Redirect binding) and, when ``next`` is an\napp-relative path, a RelayState the browser returns to after sign-in.",
         "operationId": "get_sso_login_url_api_v1_sso_login_url_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "next",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Next"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -65225,6 +65326,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Get Sso Login Url",
@@ -65235,7 +65346,7 @@
     },
     "/api/v1/sso/metadata": {
       "get": {
-        "description": "Return SP metadata for configuring the IdP.",
+        "description": "Return SP metadata for configuring the IdP.\n\nNo single-logout URL: there is no SLO handler, so advertising one sent IdPs\nto a 404 (sign-out is local: the app revokes its own session).",
         "operationId": "get_sp_metadata_api_v1_sso_metadata_get",
         "responses": {
           "200": {
@@ -69809,9 +69920,28 @@
     },
     "/api/v1/test-management/rag/status": {
       "get": {
-        "description": "RAG feature status plus adoption counts **for the caller's projects**.\n\nThe counts were previously unscoped ``COUNT(*)`` across every tenant, on an\nendpoint with no role or project guard, so any authenticated user could\nread the whole install's totals. ``get_accessible_project_ids`` returns\n``None`` for an ADMIN (sees everything) and a membership set otherwise.",
+        "description": "RAG feature status plus adoption counts **for the caller's projects**.\n\nThe counts were previously unscoped ``COUNT(*)`` across every tenant, on an\nendpoint with no role or project guard, so any authenticated user could\nread the whole install's totals. ``get_accessible_project_ids`` returns\n``None`` for an ADMIN (sees everything) and a membership set otherwise.\n\n``project_id`` scopes ``enabled`` only (the generate tab passes its\nproject, so it says \"not enabled\" exactly when generation would 503); a\nnon-member is refused before anything is read.",
         "operationId": "rag_status_api_v1_test_management_rag_status_get",
         "parameters": [
+          {
+            "description": "The project the page is about: `enabled` is then that project's answer for the caller (project and role allow-lists applied).",
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The project the page is about: `enabled` is then that project's answer for the caller (project and role allow-lists applied).",
+              "title": "Project Id"
+            }
+          },
           {
             "in": "header",
             "name": "X-API-Key",

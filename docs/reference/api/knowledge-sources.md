@@ -263,7 +263,7 @@ Test Connector
 
 
 
-Source: [backend/app/routers/knowledge_sources.py:180](../../../backend/app/routers/knowledge_sources.py#L180).
+Source: [backend/app/routers/knowledge_sources.py:182](../../../backend/app/routers/knowledge_sources.py#L182).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -344,7 +344,7 @@ Get Domain Allowlist
 
 
 
-Source: [backend/app/routers/knowledge_sources.py:204](../../../backend/app/routers/knowledge_sources.py#L204).
+Source: [backend/app/routers/knowledge_sources.py:209](../../../backend/app/routers/knowledge_sources.py#L209).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -421,7 +421,7 @@ Update Domain Allowlist
 
 
 
-Source: [backend/app/routers/knowledge_sources.py:214](../../../backend/app/routers/knowledge_sources.py#L214).
+Source: [backend/app/routers/knowledge_sources.py:221](../../../backend/app/routers/knowledge_sources.py#L221).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -754,7 +754,7 @@ Get Freshness
 
 
 
-Source: [backend/app/routers/knowledge_sources.py:164](../../../backend/app/routers/knowledge_sources.py#L164).
+Source: [backend/app/routers/knowledge_sources.py:165](../../../backend/app/routers/knowledge_sources.py#L165).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_knowledge_source_access.<locals>._check`.
 
