@@ -110,6 +110,32 @@ complete (`live_consumer._on_run_complete`), which the DELETE's close covers
 too -- so the session reporters already finalize runs, and adding the event
 would change nothing. Unchanged here; the docs that say every SDK sends
 `run_complete` are wrong.
+## Unreleased - Frontend unit tests never reach the network
+
+A page test failed only on one machine: an unmocked hook made a real request to
+jsdom's origin (localhost:3000), a container answered 401 there, and the client's
+refresh-then-logout path signed the test user out mid-test. CI, with nothing
+listening, stayed green.
+
+- **The vitest setup now blocks every real request** (`src/test/networkGuard.ts`):
+  XMLHttpRequest (axios), fetch and WebSocket, to any http(s)/ws(s) URL. The
+  request fails at once, as an unreachable server would, and the test that made
+  it fails naming the method, the URL and the test. data: and blob: URLs pass.
+- **16 test files made real requests** (115 tests). Each now mocks the hook or
+  service at its seam: the app shell's AI mode, Ask AI flag, live count and health
+  poll; the release and project pickers; the scoring model; compliance packs; step
+  flips and the decision trail; evidence-gap lists; storage and UI dismissals; the
+  review state; a rollout flag; and the error reporter's telemetry POST.
+- **A stale mock**: `AIEvalDashboardPage.test.tsx` mocked `listReportCycles` and
+  `getReportReadiness`, names the service no longer has, so the page fetched
+  for real. It mocks the current names.
+- **`RunDetailPage.tabs.test.tsx` raced its location probe** (a passive effect)
+  under a loaded full suite; it waits for the URL.
+- `src/test/networkGuard.test.ts` drives the real API client, fetch and
+  WebSocket at a loopback server that IS listening and asserts nothing arrives,
+  and that a test leaving a request behind fails. Mutation-checked: an
+  uninstalled guard, a missing check, and a guard that records but lets the
+  request through each fail it.
 
 ## Unreleased - Error sweeps: every page, every action, every GET endpoint
 

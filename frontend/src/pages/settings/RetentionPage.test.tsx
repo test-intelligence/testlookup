@@ -43,6 +43,17 @@ vi.mock('@/services/retentionService', () => ({
   },
 }))
 
+// The storage panel and the activation nudge read their own endpoints (each has
+// its own tests); answered here so no request leaves the test (src/test/networkGuard.ts).
+vi.mock('@/hooks/useStorage', () => ({
+  useProjectStorage: () => ({ data: undefined, error: undefined, isLoading: false, mutate: vi.fn() }),
+  useDeletedProjectStorage: () => ({ data: undefined, mutate: vi.fn() }),
+}))
+vi.mock('@/hooks/useUIDismissals', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/hooks/useUIDismissals')>(),
+  useUIDismissals: () => ({ data: undefined, mutate: vi.fn() }),
+}))
+
 let mockIsAdmin = true
 vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => ({ isAdmin: mockIsAdmin }),

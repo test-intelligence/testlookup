@@ -15,6 +15,8 @@ import type { RowsPanelProps } from './RowsPanel.model'
 
 vi.mock('./LazySection', () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }))
 vi.mock('./useEverHadRun', () => ({ useEverHadRun: () => true }))
+// The release markers' list, so no request leaves the test (src/test/networkGuard.ts).
+vi.mock('@/hooks/useReleases', () => ({ useReleases: () => ({ data: undefined }) }))
 vi.mock('./catalogueScope', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./catalogueScope')>()),
   useCatalogueParams: (days: number, _suiteFilter: unknown, extra?: Record<string, unknown>) => ({

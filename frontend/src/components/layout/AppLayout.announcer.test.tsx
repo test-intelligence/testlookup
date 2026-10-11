@@ -20,6 +20,20 @@ import { ANNOUNCE_DEBOUNCE_MS, useChartAnnouncer } from '@/components/charts/Cha
 vi.mock('./TopBar', () => ({
   default: () => <div>TopBar Stub</div>,
 }))
+// The shell's own data hooks, so no request leaves the test (src/test/networkGuard.ts).
+vi.mock('@/hooks/useAIConfig', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/hooks/useAIConfig')>(),
+  useAIConfig: () => ({ data: undefined }),
+}))
+vi.mock('@/hooks/useFeatureFlags', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/hooks/useFeatureFlags')>(),
+  useFeatureEnabled: () => false,
+  useFeatureFlagStatus: () => false,
+}))
+vi.mock('@/hooks/useLiveRunningCount', () => ({ NAV_LIVE_POLL_MS: 30_000, useLiveRunningCount: () => 0 }))
+vi.mock('@/hooks/useSystemHealth', () => ({
+  useSystemHealth: () => ({ data: null, unavailable: [], criticalUnavailable: [], isDegraded: false, isUnreachable: false }),
+}))
 
 afterEach(() => vi.useRealTimers())
 

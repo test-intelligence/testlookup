@@ -1,6 +1,8 @@
 import '@testing-library/jest-dom'
-import { afterEach } from 'vitest'
+import { afterAll, afterEach } from 'vitest'
 import { cleanup, configure } from '@testing-library/react'
+
+import { assertNoNetworkRequests, installNetworkGuard } from './networkGuard'
 
 /**
  * `findBy*` / `waitFor` wait 5 s, not Testing Library's 1 s default.
@@ -29,6 +31,19 @@ configure({ asyncUtilTimeout: 5_000 })
  */
 afterEach(() => {
   cleanup()
+})
+
+/**
+ * No test reaches the network (see `networkGuard.ts`): a real request is
+ * blocked, and the test that made it fails here naming the method and URL. The
+ * file-level check catches one that lands after the last test.
+ */
+installNetworkGuard()
+afterEach(() => {
+  assertNoNetworkRequests()
+})
+afterAll(() => {
+  assertNoNetworkRequests()
 })
 
 class ResizeObserverMock {
