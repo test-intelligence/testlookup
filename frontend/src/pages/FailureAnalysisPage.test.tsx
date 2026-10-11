@@ -83,6 +83,15 @@ vi.mock('@/services/aiFeedbackService', () => ({
   },
 }))
 
+// The page probes Jira availability on mount. Unmocked, it was a real request to
+// jsdom's origin (localhost:3000): wherever something listens there (a container
+// published on :3000 answered 401), the client's refresh-then-logout path cleared
+// the QA engineer mid-test and the Classify/Correct actions vanished (2026-10-10).
+vi.mock('@/hooks/useJiraDefects', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/hooks/useJiraDefects')>(),
+  useJiraDefectMetadata: vi.fn(() => ({ metadata: undefined, isLoading: false, isError: false })),
+}))
+
 vi.mock('@/hooks/useAnalysisLookup', () => ({
   useAnalysisLookup: vi.fn(() => ({ lookup: undefined, isLoading: true, isError: false })),
 }))

@@ -41,6 +41,14 @@ Owner decision from the sweep:
   credentials, so an admin reset cannot break a pipeline. The browser sends a
   `password_change_required` 403 to the change form instead of a toast.
 
+Found while pushing:
+- **`FailureAnalysisPage.test.tsx` failed 1-2 tests on any machine with a
+  listener on localhost:3000.** The page's Jira availability probe was the one
+  data hook the file left unmocked, so it made a real request to jsdom's origin;
+  a 401 there (a container published on :3000) ran the client's
+  refresh-then-logout path and cleared the QA engineer mid-test, hiding Classify
+  and Correct. CI has no such listener. The probe is now mocked.
+
 ## Unreleased - One test case view in Test Management
 
 Owner review 2026-10-10 (as product manager): a click on a Test Management row
