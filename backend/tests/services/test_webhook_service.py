@@ -157,17 +157,19 @@ async def test_emit_event_returns_zero_when_disabled():
 async def test_durable_emit_retries_transient_feature_flag_lookup_failure(monkeypatch):
     gate = AsyncMock(side_effect=svc.WebhookGateLookupError("lookup failed"))
     monkeypatch.setattr(svc, "_post_allowed", gate)
+    project_id = uuid.uuid4()
 
     with pytest.raises(svc.WebhookGateLookupError, match="lookup failed"):
         await svc.emit_event(
             "run.completed",
-            project_id=uuid.uuid4(),
+            project_id=project_id,
             payload={"run_id": str(uuid.uuid4())},
             delivery_scope="run-completed:stable:v1",
             raise_on_persistence_error=True,
         )
 
-    gate.assert_awaited_once_with(raise_on_lookup_error=True)
+    # Asked for the event's project (its subscriptions are the ones at stake).
+    gate.assert_awaited_once_with(raise_on_lookup_error=True, project_id=project_id)
 
 
 @pytest.mark.asyncio
@@ -714,6 +716,7 @@ async def test_processing_transition_uses_token_compare_and_set():
 async def test_delivery_retries_when_feature_flag_store_is_unavailable(monkeypatch):
     subscription = SimpleNamespace(
         id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
         enabled=True,
     )
     delivery = SimpleNamespace(

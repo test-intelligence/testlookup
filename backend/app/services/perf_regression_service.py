@@ -94,10 +94,25 @@ async def _save_refresh_cursor(db: AsyncSession, value: datetime) -> None:
 # ── Feature flag gate ─────────────────────────────────────────────────────
 
 
-async def _feature_enabled(db: Optional[AsyncSession] = None) -> bool:
+async def _feature_enabled(
+    db: Optional[AsyncSession] = None,
+    *,
+    project_id: Optional[uuid.UUID] = None,
+    any_scope: bool = False,
+) -> bool:
+    """``perf_regression_detection`` for the project whose baselines these are.
+
+    Baselines and spikes are per project. Asked without the project, a project
+    allow-list turned detection off everywhere. The nightly refresh spans every
+    project: it exits early with ``any_scope=True`` and then records only the
+    rows whose project has the flag on.
+    """
     try:
         from app.services.feature_flags import is_enabled
-        return await is_enabled("perf_regression_detection", db=db)
+        return await is_enabled(
+            "perf_regression_detection", db=db, project_id=project_id,
+            any_scope=any_scope,
+        )
     except Exception as exc:
         logger.debug("perf_regression flag check failed", error=str(exc))
         return False
@@ -226,7 +241,7 @@ async def refresh_baselines() -> dict[str, int]:
     """
     from app.core.metrics import perf_baseline_refresh_runs_total
 
-    if not await _feature_enabled():
+    if not await _feature_enabled(any_scope=True):
         perf_baseline_refresh_runs_total.labels(status="skipped").inc()
         return {"observed": 0, "baselines": 0, "skipped": 1}
 
@@ -270,6 +285,9 @@ async def refresh_baselines() -> dict[str, int]:
             ).scalars().all()
             by_pair = {(b.project_id, b.test_fingerprint): b for b in existing_rows}
 
+        # The flag is per project: a row of a project with the flag off is
+        # swept past (the watermark still advances) but never observed.
+        project_on: dict[uuid.UUID, bool] = {}
         max_created: Optional[datetime] = None
         for tc in rows:
             # Advance the watermark for every swept row, even ones we skip
@@ -277,6 +295,12 @@ async def refresh_baselines() -> dict[str, int]:
             if tc.created_at and (max_created is None or tc.created_at > max_created):
                 max_created = tc.created_at
             if not tc.test_fingerprint:
+                continue
+            if tc.project_id not in project_on:
+                project_on[tc.project_id] = await _feature_enabled(
+                    db, project_id=tc.project_id,
+                )
+            if not project_on[tc.project_id]:
                 continue
             pair = (tc.project_id, tc.test_fingerprint)
             baseline = await record_observation(
@@ -324,7 +348,7 @@ async def detect_spikes_for_run(
     enough metadata for the release gate UI to render a "top perf
     regressions" section.
     """
-    if not await _feature_enabled(db):
+    if not await _feature_enabled(db, any_scope=True):
         return []
 
     # Find the run's project so we can limit the baseline lookup.
@@ -333,6 +357,8 @@ async def detect_spikes_for_run(
     )
     project_id = run_row.scalar_one_or_none()
     if project_id is None:
+        return []
+    if not await _feature_enabled(db, project_id=project_id):
         return []
 
     # Pull all durations for this run in one shot.

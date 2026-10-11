@@ -181,7 +181,7 @@ async def accept_case(
     # the threshold — so this is a no-op for deployments that have not opted in.
     from app.services.rag_faithfulness_service import check_accept  # noqa: PLC0415
 
-    decision = await check_accept(case, db=db)
+    decision = await check_accept(case, db=db, user=user)
     if not decision.get("allow"):
         logger.info(
             "case_accept_blocked_by_faithfulness",

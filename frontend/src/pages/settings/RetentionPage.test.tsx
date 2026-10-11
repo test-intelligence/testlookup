@@ -102,6 +102,9 @@ vi.mock('@/components/ui/EmptyState', () => ({
 vi.mock('react-router-dom', () => ({
   Link: ({ children }: { children: React.ReactNode }) => createElement('a', null, children),
 }))
+// The activation nudge has its own tests (RetentionActivationNudge.test.tsx).
+// Real here, it read the user's dismissals and its kill-switch flag over HTTP.
+vi.mock('@/components/retention/RetentionActivationNudge', () => ({ default: () => null }))
 
 /** Contract defaults for an unconfigured project. */
 function basePolicy(overrides: Partial<RetentionPolicy> = {}): RetentionPolicy {

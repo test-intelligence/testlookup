@@ -687,21 +687,25 @@ async def add_phase(db: AsyncSession, release_id: str, body) -> ReleasePhase:
 GATE_BYPASSING_STATUSES = ("completed", "skipped")
 
 
-async def _enforcement_enabled() -> bool:
-    """Whether phase-gate enforcement is on for this deployment.
+async def _enforcement_enabled(
+    *, project_id=None, user=None, any_scope: bool = False,
+) -> bool:
+    """Whether phase-gate enforcement is on for this release's project.
 
-    Deployment-wide, not per project, and resolved WITHOUT a project id — the
-    same shape ``compliance_pack_service`` uses for ``release_compliance_pack``.
-    That is deliberate on both counts: this flag exists to roll out a breaking
-    behaviour change (an endpoint that starts refusing), which is an operator's
-    decision rather than a per-team feature, and resolving it project-scoped
-    would force a release lookup on EVERY phase update just to discover the flag
-    is off.
+    Asked twice by ``_enforce_phase_gate``. First with ``any_scope=True`` --
+    "is it on for anyone?" -- BEFORE the release lookup, so a deployment that
+    has not opted in pays no query at all: the ``all_done`` performance pin
+    (``db.execute.await_count == 1``) caught two earlier versions that resolved
+    the project first. Then, only when it may be on, with the release's project
+    (which the enforcement path looks up anyway) and the person completing the
+    phase.
 
-    That cost is not hypothetical: the first version of this resolved the
-    project first and doubled the queries on this endpoint, and a second
-    version spent one on the flag lookup itself — the ``all_done`` performance
-    pin (``db.execute.await_count == 1``) caught both.
+    It used to be asked once, WITHOUT a project, as a deployment-wide switch.
+    The flag store takes project and role allow-lists, and rolling a breaking
+    change (an endpoint that starts refusing) out one team at a time is exactly
+    what an allow-list is for -- but asked without a project, an allow-listed
+    flag read as off for every project, so enforcement could only ever be all
+    or nothing, and the flag's status for the allow-listed project said on.
 
     Defaults to OFF and fails to OFF. An enforcement gate that starts refusing
     because Redis blinked would block releases for a reason nobody can see, and
@@ -714,7 +718,10 @@ async def _enforcement_enabled() -> bool:
         # only opens a short-lived session on a cache miss, so the common path
         # touches no database at all — and the flag lookup stays outside the
         # caller's unit of work, which it is not part of.
-        return await is_enabled("release_phase_gate_enforcement")
+        return await is_enabled(
+            "release_phase_gate_enforcement",
+            project_id=project_id, user=user, any_scope=any_scope,
+        )
     except Exception as exc:  # pragma: no cover - flag store optional in tests
         logger.debug("phase_gate_flag_check_failed", error=str(exc))
         return False
@@ -748,12 +755,15 @@ async def _enforce_phase_gate(
     if new_status == phase.status:
         return  # not a transition; re-submitting the same status is not an act
 
-    if not await _enforcement_enabled():
+    if not await _enforcement_enabled(any_scope=True):
         # The default path. No project lookup, no gate evaluation, no extra
         # query at all — a deployment that has not opted in pays nothing.
         return
 
     project_id = await _project_of_release(db, release_id)
+    if not await _enforcement_enabled(project_id=project_id, user=actor):
+        # On for other projects (or roles), not this release's.
+        return
 
     if new_status == "skipped":
         if not (updates.get("skip_reason") or "").strip():

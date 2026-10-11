@@ -58,6 +58,36 @@ And one the other way round, where the API now does what the UI offers:
   (403). Every revocation now writes an `API_KEY_REVOKED` identity event
   naming the actor (`actor_id`) and the key's owner (`user_id`).
 
+Server-side flags are evaluated for the project (and user) they are about.
+`feature_flags.is_enabled` applies a flag's project allow-list, role
+allow-list and rollout, but eleven server call sites asked it with no project
+and no user, so a flag allow-listed to one project was OFF for every project on
+the server while the UI (which asks with the active project and user) showed
+it ON. Each call site now passes the project it acts on, and the user where a
+request has one: `llm_cost_budget` (cap, reservation, meter),
+`flaky_auto_quarantine` (ingest tagging, manifest, manual proposal, the four
+nightly sweeps per row's project, stability), `release_compliance_pack`,
+`github_checks` (check runs, PR comments, CODEOWNERS, commit attribution),
+`gitlab` (MR notes, commit status), `outbound_webhooks` (emission, delivery,
+replay, the Jira webhook fallback), `perf_regression_detection` (spikes, the
+nightly baseline refresh per row's project), `rag_faithfulness_gate`,
+`weekly_retro_digest`, `release_phase_gate_enforcement` (per release project;
+still no query when it is off for everyone) and `knowledge_rag` (sources,
+retrieval, generation, `/rag/status?project_id=`, which the generate tab now
+passes).
+- `is_enabled(..., any_scope=True)` is the deliberate deployment-wide
+  question: on when the kill switch is on and rollout is above zero, without
+  applying allow-lists. A sweep uses it to exit early before asking per row;
+  the RAG connector test and domain allow-list use it (one per deployment);
+  and `GET/PUT /settings/ai` report the RAG switch with it -- asked unscoped,
+  a project allow-list rendered the switch as off and saving the page wrote it
+  off for the allow-listed projects.
+- A background job has no user, so a ROLE allow-list still turns its work off
+  (the meter, sweeps, posts after ingest); the flag's own docstring now says so.
+- The retention activation prompt honours its kill switch,
+  `retention_activation_nudge` (seeded ON by migration 0145, read by nothing):
+  off, the prompt is not shown.
+
 Tests: `ReleaseGatePage.test.tsx` made a real `GET /settings/ai/mode`; a 401
 from whatever listened on the dev port logged the test user out mid-test, so a
 role set by a test did not survive the render. The read is mocked there now.

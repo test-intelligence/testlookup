@@ -49,11 +49,11 @@ router = APIRouter(prefix="/api/v1/projects", tags=["Defects"])
 async def jira_defect_metadata(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_project_access()),
+    current_user: User = Depends(require_project_access()),
 ):
     """Jira projects + issue types for the create dialog. Never 5xxs for a
     broken Jira — returns ``available=false`` + ``reason`` instead."""
-    return await svc.get_metadata(db, str(project_id))
+    return await svc.get_metadata(db, str(project_id), user=current_user)
 
 
 @router.get(

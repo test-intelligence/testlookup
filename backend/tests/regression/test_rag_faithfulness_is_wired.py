@@ -129,8 +129,9 @@ def test_the_literal_route_is_registered_before_the_uuid_one():
 
 def _case(**kw):
     base = dict(
-        id=uuid.uuid4(), faithfulness_score=None, faithfulness_evaluator=None,
-        faithfulness_evaluated_at=None, needs_review_reason=None,
+        id=uuid.uuid4(), project_id=uuid.uuid4(), faithfulness_score=None,
+        faithfulness_evaluator=None, faithfulness_evaluated_at=None,
+        needs_review_reason=None,
     )
     base.update(kw)
     return SimpleNamespace(**base)

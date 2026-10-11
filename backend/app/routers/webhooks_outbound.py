@@ -274,7 +274,7 @@ async def replay_webhook_delivery(
             ),
         )
 
-    new_id = await svc.replay_delivery(delivery_id)
+    new_id = await svc.replay_delivery(delivery_id, actor=current_user)
     if new_id is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

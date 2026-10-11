@@ -44,7 +44,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.postgres import AsyncSessionLocal
-from app.models.postgres import ManagedTestCase
+from app.models.postgres import ManagedTestCase, User
 
 logger = structlog.get_logger("services.rag_faithfulness")
 
@@ -58,10 +58,25 @@ DEFAULT_THRESHOLD = 0.70
 # ── Feature flag gate ─────────────────────────────────────────────────────
 
 
-async def _feature_enabled(db: Optional[AsyncSession] = None) -> bool:
+async def _feature_enabled(
+    db: Optional[AsyncSession] = None,
+    *,
+    project_id: Any = None,
+    user: Optional[User] = None,
+    any_scope: bool = False,
+) -> bool:
+    """``rag_faithfulness_gate`` for the case's project and the person acting.
+
+    Scoring happens at generation and the gate at accept, both for one
+    project's case by one person. Asked without them, a project or role
+    allow-list on the flag turned the gate off everywhere.
+    """
     try:
         from app.services.feature_flags import is_enabled
-        return await is_enabled("rag_faithfulness_gate", db=db)
+        return await is_enabled(
+            "rag_faithfulness_gate", db=db, project_id=project_id, user=user,
+            any_scope=any_scope,
+        )
     except Exception as exc:
         logger.debug("rag_faithfulness_gate check failed", error=str(exc))
         return False
@@ -236,6 +251,7 @@ async def evaluate(
     *,
     db: Optional[AsyncSession] = None,
     project_id: Any = None,
+    user: Optional[User] = None,
 ) -> Optional[dict[str, Any]]:
     """Score a single generated case for faithfulness.
 
@@ -248,7 +264,7 @@ async def evaluate(
     returns a dict with ``score``, ``evaluator``, ``reason`` so the
     caller can persist it on the ``managed_test_cases`` row.
     """
-    if not await _feature_enabled(db):
+    if not await _feature_enabled(db, project_id=project_id, user=user):
         return None
 
     # Redact before any LLM sees the content — the privacy invariant requires
@@ -323,14 +339,16 @@ async def check_accept(
     *,
     threshold: float = DEFAULT_THRESHOLD,
     db: Optional[AsyncSession] = None,
+    user: Optional[User] = None,
 ) -> dict[str, Any]:
     """Decide whether an already-loaded case may be accepted. Stages only.
 
     In-request counterpart to :func:`gate_accept`. Mutates
     ``needs_review_reason`` on the passed row when it blocks, and leaves the
-    commit to the router handler that owns the transaction.
+    commit to the router handler that owns the transaction. The flag is asked
+    for the case's project and the ``user`` accepting it.
     """
-    if not await _feature_enabled(db):
+    if not await _feature_enabled(db, project_id=case.project_id, user=user):
         return {"allow": True, "reason": "faithfulness gate disabled"}
 
     if case.faithfulness_score is None:
@@ -367,7 +385,9 @@ async def gate_accept(
     under threshold so the caller can leave the case in ``needs_review``
     state with the reason attached.
     """
-    if not await _feature_enabled():
+    # Off for everyone: skip the session. ``check_accept`` asks again for the
+    # case's own project once the row is loaded.
+    if not await _feature_enabled(any_scope=True):
         return {"allow": True, "reason": "faithfulness gate disabled"}
 
     async with AsyncSessionLocal() as db:

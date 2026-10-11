@@ -184,13 +184,49 @@ async def upsert_lifecycle_policy(
 # ── Feature-flag gate ───────────────────────────────────────────────────────
 
 
-async def _feature_enabled(db: Optional[AsyncSession] = None) -> bool:
+async def _feature_enabled(
+    db: Optional[AsyncSession] = None,
+    *,
+    project_id: Optional[uuid.UUID] = None,
+    user: Optional[User] = None,
+    any_scope: bool = False,
+) -> bool:
+    """``flaky_auto_quarantine`` for the project a quarantine belongs to.
+
+    Every quarantine row is one project's, so each decision passes that
+    project (and the person proposing, when there is one). Asked without them
+    -- as it was everywhere -- a project allow-list read as off: the Failures
+    page offered Mute for an allow-listed project (the UI asks with the active
+    project) and the API answered 503. The nightly sweeps cover every project:
+    they exit early with ``any_scope=True`` and then keep only the rows whose
+    own project has the flag on (:func:`_rows_with_flag_on`).
+    """
     try:
         from app.services.feature_flags import is_enabled
-        return await is_enabled("flaky_auto_quarantine", db=db)
+        return await is_enabled(
+            "flaky_auto_quarantine", db=db, project_id=project_id, user=user,
+            any_scope=any_scope,
+        )
     except Exception as exc:
         logger.debug("flaky_auto_quarantine flag check failed", error=str(exc))
         return False
+
+
+async def _rows_with_flag_on(
+    db: Optional[AsyncSession], rows: Sequence[FlakyQuarantineRequest],
+) -> list[FlakyQuarantineRequest]:
+    """The rows of a cross-project sweep whose project has the flag on.
+
+    One evaluation per distinct project, not per row.
+    """
+    on: dict[uuid.UUID, bool] = {}
+    kept: list[FlakyQuarantineRequest] = []
+    for row in rows:
+        if row.project_id not in on:
+            on[row.project_id] = await _feature_enabled(db, project_id=row.project_id)
+        if on[row.project_id]:
+            kept.append(row)
+    return kept
 
 
 # ── Audit ───────────────────────────────────────────────────────────────────
@@ -651,7 +687,7 @@ async def active_quarantines_for_project(
     The query is bounded and index-backed via ``ix_fqr_project_status`` +
     the partial live-state unique index.
     """
-    if not await _feature_enabled(db):
+    if not await _feature_enabled(db, project_id=project_id):
         return set()
     result = await db.execute(
         select(FlakyQuarantineRequest.test_fingerprint).where(
@@ -687,7 +723,7 @@ async def active_quarantine_entries(
     anywhere (ingestion tagging, release gate), so the manifest is empty —
     CI then treats every failure as real, which fails toward strictness.
     """
-    if not await _feature_enabled(db):
+    if not await _feature_enabled(db, project_id=project_id):
         return []
     from sqlalchemy import and_ as _and
 
@@ -762,7 +798,7 @@ async def propose_quarantine(
     """
     from app.core.metrics import quarantine_proposals_total
 
-    if not await _feature_enabled():
+    if not await _feature_enabled(project_id=project_id, user=actor):
         return None
 
     # "auto" source = detection method didn't originate from an explicit
@@ -1096,7 +1132,7 @@ async def expire_stale_proposals() -> int:
     Runs from the nightly beat schedule. Returns the count of rows
     expired for telemetry.
     """
-    if not await _feature_enabled():
+    if not await _feature_enabled(any_scope=True):
         return 0
     cutoff = datetime.now(timezone.utc) - timedelta(days=_PROPOSAL_TTL_DAYS)
     expired = 0
@@ -1107,7 +1143,7 @@ async def expire_stale_proposals() -> int:
                 FlakyQuarantineRequest.proposed_at <= cutoff,
             )
         )
-        rows = list(result.scalars().all())
+        rows = await _rows_with_flag_on(db, list(result.scalars().all()))
         now = datetime.now(timezone.utc)
         pending_audits: list[tuple[uuid.UUID, uuid.UUID, dict[str, Any], dict[str, Any]]] = []
         for row in rows:
@@ -1166,7 +1202,7 @@ async def schedule_pending_rechecks() -> int:
     Covers both ``QUARANTINED`` (first window) and ``RE_QUARANTINED`` (every
     window after that) — see ``_RECHECKABLE_STATES``.
     """
-    if not await _feature_enabled():
+    if not await _feature_enabled(any_scope=True):
         return 0
     now = datetime.now(timezone.utc)
     moved = 0
@@ -1178,7 +1214,7 @@ async def schedule_pending_rechecks() -> int:
                 FlakyQuarantineRequest.recheck_at <= now,
             )
         )
-        rows = list(result.scalars().all())
+        rows = await _rows_with_flag_on(db, list(result.scalars().all()))
         for row in rows:
             row.status = FlakyQuarantineStatus.RECHECK_SCHEDULED.value
             row.updated_at = now
@@ -1202,7 +1238,7 @@ async def run_recheck_cycle() -> dict[str, int]:
 
     Returns a dict with per-action counts for telemetry.
     """
-    if not await _feature_enabled():
+    if not await _feature_enabled(any_scope=True):
         return {"released": 0, "re_quarantined": 0, "insufficient_data": 0}
     released = re_quarantined = insufficient = 0
     released_rows: list[dict[str, Any]] = []
@@ -1215,7 +1251,7 @@ async def run_recheck_cycle() -> dict[str, int]:
                 FlakyQuarantineRequest.status == FlakyQuarantineStatus.RECHECK_SCHEDULED.value,
             )
         )
-        rows = list(result.scalars().all())
+        rows = await _rows_with_flag_on(db, list(result.scalars().all()))
         now = datetime.now(timezone.utc)
 
         # Batch the per-row flip-rate counts into ONE grouped query (was one
@@ -1376,7 +1412,7 @@ async def mark_stale_quarantines() -> int:
     next night) never re-notifies the same entry. Returns the number of
     entries flagged this pass.
     """
-    if not await _feature_enabled():
+    if not await _feature_enabled(any_scope=True):
         return 0
     now = datetime.now(timezone.utc)
     flagged: list[dict[str, Any]] = []
@@ -1389,7 +1425,7 @@ async def mark_stale_quarantines() -> int:
                 FlakyQuarantineRequest.stale_notified_at == None,  # noqa: E711
             )
         )
-        rows = list(result.scalars().all())
+        rows = await _rows_with_flag_on(db, list(result.scalars().all()))
         for row in rows:
             row.stale_notified_at = now
             row.updated_at = now
@@ -1470,7 +1506,9 @@ async def update_quarantine_stability(run_id: uuid.UUID) -> dict[str, int]:
       a failure resets the streak).
     """
     empty = {"tracked": 0, "auto_released": 0, "ready": 0}
-    if not await _feature_enabled():
+    # Cheap exit when the flag is off for everyone; the run's own project is
+    # asked below, once the run says which project that is.
+    if not await _feature_enabled(any_scope=True):
         return empty
 
     from app.models.postgres import TestCase, TestRun
@@ -1487,6 +1525,8 @@ async def update_quarantine_stability(run_id: uuid.UUID) -> dict[str, int]:
         if run is None:
             return empty
         project_id = run.project_id
+        if not await _feature_enabled(db, project_id=project_id):
+            return empty
 
         result = await db.execute(
             select(FlakyQuarantineRequest).where(
