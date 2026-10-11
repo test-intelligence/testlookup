@@ -55,9 +55,10 @@ after.
   `types` + `default`.
 - **The Mocha reporter crashed the run** ("this._reporter is not a
   constructor"): it was `exports.default`, which Mocha does not unwrap. It is
-  now `module.exports`, waits for the session through Mocha's `done()` hook,
-  and queues results that finish before the session opens instead of dropping
-  them.
+  now `module.exports` (its `.default` still points at the class, so a shim
+  written for the old export keeps working), waits for the session through
+  Mocha's `done()` hook, and queues results that finish before the session
+  opens instead of dropping them.
 - **API keys:** `apiKey` (and `TESTLOOKUP_API_KEY`, `testlookup.api.key`) is
   sent as `X-API-Key`; auth was always Bearer.
 - **`config-loader.ts` was never imported.** The Jest and Mocha reporters now

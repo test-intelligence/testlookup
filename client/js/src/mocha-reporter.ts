@@ -81,6 +81,12 @@ interface MochaOptions {
 // ── Reporter ───────────────────────────────────────────────────────────────────
 
 class TestLookupMochaReporter {
+  /**
+   * The class itself, so `require('…/mocha-reporter').default` — what a shim
+   * written for the old `exports.default` reads — still finds it.
+   */
+  static readonly default = TestLookupMochaReporter
+
   private reporter: TestLookupReporter | null = null
   /** Resolves to the open session, or null when it could not be opened. */
   private sessionReady: Promise<LiveSession | null> | null = null

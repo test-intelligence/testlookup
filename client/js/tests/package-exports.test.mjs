@@ -40,6 +40,12 @@ test('Mocha can construct the reporter it requires', () => {
   assert.equal(typeof reporter.done, 'function', 'Mocha waits on done() before exiting')
 })
 
+test('a shim written for the old default export still gets the class', () => {
+  // e.g. module.exports = require('.../dist/mocha-reporter.js').default
+  const Reporter = require('testlookup-reporter/mocha-reporter')
+  assert.equal(Reporter.default, Reporter)
+})
+
 test('the Jest reporter is reachable as Jest unwraps it (module.default)', () => {
   const mod = require('testlookup-reporter/jest-reporter')
   assert.equal(typeof (mod.default ?? mod), 'function')
