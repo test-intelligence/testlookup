@@ -21,7 +21,7 @@ Some pages show a button to a QA lead that the API then refuses (for example **S
 - **Projects** (`/projects`) — create, edit and archive. Each project is the tenancy boundary: its own runs, owners, policies, API keys and caches. Creating a project makes the creator a member and auto-provisions the project's default QA-lead user (see [Test catalog governance and ownership](test-management.md#the-default-qa-lead)). **Archive** is a soft delete that also revokes the project's credentials; there is no un-archive in the app.
 - **Users** (`/users`) — QA leads see the list; administrators **Add User** (a temporary password, shown once, that must be changed at first sign-in), change roles inline, edit, and activate or deactivate accounts. Roles gate what pages show: only administrators get **All Projects**, and only QA leads and administrators get the team scope in the Inbox.
 - **Members & access** (`/users?tab=project-members`) — per-project membership and roles, and the project's default QA lead. Administrators add, change and remove members; QA leads can reset the default QA lead's password.
-- **Self-registration.** The sign-in page always offers **Register**, and `POST /api/v1/auth/register` is open (rate-limited to 5 a minute). A self-registered account belongs to no project, must change its password at first sign-in, and is created with the `QA_ENGINEER` role. Nothing in the app turns registration off; if your instance is reachable by people who should not have accounts, restrict access to the sign-in page at your proxy, and deactivate unexpected accounts under **Users**.
+- **Self-registration** is off by default (`REGISTRATION_ENABLED=false`): the sign-in page hides **Register** and `POST /api/v1/auth/register` answers 403. Turn it on only if everyone who can reach the instance may have an account. A self-registered account is a `VIEWER` in no project and must change its password at first sign-in; it sees no data until you add it to a project. The endpoint is rate-limited to 5 a minute.
 - **Invitations.** **Invite User** records an invitation, but there is not yet a page that accepts it; create accounts with **Add User** instead.
 - **Development quick login.** The sign-in page's passwordless "quick login" panel exists only in development frontend builds, and the backend honours it only with `APP_ENV=development` and `DEV_AUTO_LOGIN_ENABLED`. A production build never shows it.
 
@@ -35,6 +35,7 @@ TestLookup supports **SAML 2.0** single sign-on (no OIDC or LDAP) and **SCIM 2.0
 | `SCIM_ENABLED` | `false` | Turns the SCIM 2.0 API (`/api/v1/scim/v2`) on |
 | `SAML_SP_ENTITY_ID` | a placeholder URL | TestLookup's entity ID as the service provider; set it to your own URL |
 | `SAML_BASE_URL` | `http://localhost:8000` | The public base URL used to build the ACS URL; set it to your instance's public URL |
+| `PUBLIC_BASE_URL` | first `CORS_ORIGINS` entry | The URL users open; after the identity provider signs someone in, the browser returns to `<PUBLIC_BASE_URL>/sso/callback` |
 | `SAML_ALLOW_IDP_INITIATED` | `false` | Accept identity-provider-initiated sign-ins (weaker replay protection) |
 | `SAML_CLOCK_SKEW_SECONDS` | `60` | Allowed clock drift |
 | `SSO_ADMIN_FALLBACK_ENABLED` | `true` | Administrators may still use password sign-in when SSO is required |
@@ -49,6 +50,8 @@ Then, in **Settings → Security & access → SSO & identity** (administrators):
 2. **Test Connection** checks the certificate and reaches the identity provider's SSO URL.
 3. **Activate**. Activating an **SSO Required** configuration asks for confirmation, because password sign-in then works only for administrators (and only while `SSO_ADMIN_FALLBACK_ENABLED` is on).
 4. For provisioning, **SCIM Tokens → Generate Token** (shown once) and give it to the identity provider with the SCIM base URL `<your API URL>/api/v1/scim/v2`.
+
+Sign-in is started by TestLookup: **Sign in with SSO** sends a SAML request to the identity provider and returns the user to the page they started from. TestLookup's requests are unsigned, so an identity provider that insists on signed requests will refuse them. There is no single logout: signing out of TestLookup does not sign the user out of the identity provider.
 
 **Identity Events** shows sign-ins, provisioning and role changes for the last 30 days; **Sync Status** shows federated users, the last SSO sign-in and SCIM sync, and recent failures. SSO-managed accounts are exempt from the MFA requirement below.
 
@@ -353,7 +356,7 @@ make upgrade TAG=v0.2.0     # pull, migrate, restart in dependency order, health
 **New instance** (after [GETTING_STARTED](../GETTING_STARTED.md)):
 1. Sign in as the first administrator and change the generated password.
 2. Decide on outbound access: leave `AI_OFFLINE_MODE` on until you deliberately need integrations or a hosted model.
-3. Create your project(s) (**Projects → New Project**) and add users with the right roles (**Users**, **Members & access**). Decide whether self-registration is acceptable on your network (see [People & projects](#people--projects)).
+3. Create your project(s) (**Projects → New Project**) and add users with the right roles (**Users**, **Members & access**). Self-registration stays off unless you set `REGISTRATION_ENABLED=true` (see [People & projects](#people--projects)).
 4. Create API keys for CI (**Streaming API keys**, or a CI user's **My API keys**) and hand teams [Connecting CI and test frameworks](getting-results-in.md).
 5. Configure suite owners and ownership rules so triage routes to people ([Test catalog governance and ownership](test-management.md)).
 6. Review the default release-gate policy (**Releases → Gate policies**) and adjust bands and rules ([Gate policies and CI gating](release-gates.md)).

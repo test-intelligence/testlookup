@@ -101,7 +101,7 @@ TestLookup supports **SAML 2.0** only; there is no OIDC or LDAP login. SSO is co
 
 **Service-provider values for your IdP**
 
-- `GET /api/v1/sso/metadata` (public) returns the entity ID (`SAML_SP_ENTITY_ID`), the ACS URL (`<SAML_BASE_URL>/api/v1/sso/acs`) and the NameID format (`emailAddress`). Set `SAML_BASE_URL` to the public URL that reaches the backend and `SAML_SP_ENTITY_ID` to an identifier you control (for example `https://testlookup.example.com/saml/metadata`). The metadata also lists an SLO URL, but no single-logout endpoint is implemented.
+- `GET /api/v1/sso/metadata` (public) returns the entity ID (`SAML_SP_ENTITY_ID`), the ACS URL (`<SAML_BASE_URL>/api/v1/sso/acs`) and the NameID format (`emailAddress`). Set `SAML_BASE_URL` to the public URL that reaches the backend and `SAML_SP_ENTITY_ID` to an identifier you control (for example `https://testlookup.example.com/saml/metadata`). Single logout is not supported: the metadata lists no SLO endpoint, and signing out of TestLookup ends only the TestLookup session, not the IdP's.
 - The IdP must sign assertions; TestLookup verifies the signature against the configured IdP certificate and refuses everything if none is configured.
 - Send the user's email as NameID or as an `email` / `mail` attribute, an optional display name (`displayName`, `name` or `cn`), and group memberships in an attribute you name in the configuration.
 
@@ -109,7 +109,7 @@ TestLookup supports **SAML 2.0** only; there is no OIDC or LDAP login. SSO is co
 
 | Field | Meaning |
 |---|---|
-| `idp_entity_id`, `idp_sso_url`, `idp_certificate` (PEM), `idp_slo_url` | From the IdP's metadata. |
+| `idp_entity_id`, `idp_sso_url`, `idp_certificate` (PEM) | From the IdP's metadata. `idp_slo_url` is accepted but unused (no single logout). |
 | `sp_entity_id`, `sp_acs_url` | Must equal what the IdP sends: the assertion's audience must match `audience` (or the SP entity ID) and its recipient must match `sp_acs_url`. |
 | `group_attribute`, `role_mapping`, `default_role` | Group-to-role mapping, for example `{"qa-leads": "QA_LEAD", "engineers": "QA_ENGINEER"}`. A user gets the highest mapped role, else `default_role` (default `VIEWER`). Roles are re-evaluated on every login. `SSO_MAX_PROVISIONED_ROLE` caps the result. |
 | `enforcement_mode` | `OPTIONAL` (password login still works) or `SSO_REQUIRED` (non-admin users must use SSO; admins keep password login while `SSO_ADMIN_FALLBACK_ENABLED=true`). |
@@ -118,7 +118,13 @@ TestLookup supports **SAML 2.0** only; there is no OIDC or LDAP login. SSO is co
 
 **Security settings:** responses must answer a login request minted by `GET /api/v1/sso/login-url` (`InResponseTo`) unless `SAML_ALLOW_IDP_INITIATED=true`; each assertion ID is accepted once; `SAML_CLOCK_SKEW_SECONDS` sets the tolerated clock drift.
 
-**Known limitation.** The browser flow is incomplete in this release. `GET /api/v1/sso/login-url` returns the IdP's SSO URL and records a request ID, but TestLookup does not send a SAML `AuthnRequest`, so the IdP's response carries no `InResponseTo` and is refused while `SAML_ALLOW_IDP_INITIATED=false`. The ACS endpoint returns the session tokens as JSON instead of redirecting into the UI. Test SSO end to end with your IdP before you set `SSO_REQUIRED`, and keep the admin fallback on.
+**The browser flow (SP-initiated).**
+
+1. **Sign in with SSO** calls `GET /api/v1/sso/login-url?next=<app path>`. It returns a redirect to the IdP carrying a SAML `AuthnRequest` (HTTP-Redirect binding). The request ID is recorded and must come back as `InResponseTo`; `RelayState` carries `next`, which must be an app-relative path.
+2. The IdP posts its response to `POST /api/v1/sso/acs`. A browser (`Accept: text/html`) gets a 303 redirect to `<PUBLIC_BASE_URL>/sso/callback`, with a one-time code and `next` in the URL fragment. API clients that post without `Accept: text/html` still receive the session tokens as JSON.
+3. The app exchanges the code for a session with `POST /api/v1/sso/exchange`. The code is single-use and expires after 60 seconds. A failed sign-in lands on `/login?sso_error=1`.
+
+`PUBLIC_BASE_URL` must be the URL users open, because it is the redirect target. The `AuthnRequest` is not signed, so an IdP that requires signed AuthnRequests is not supported. Test SSO end to end with your IdP before you set `SSO_REQUIRED`, and keep the admin fallback on.
 
 MFA: SSO users authenticate at the IdP. Workspace MFA policy, enrolment, lockout and the breakglass procedure for password users are covered in the "Multi-factor authentication & account lockout" section of [user-guide/administration.md](../../user-guide/administration.md).
 

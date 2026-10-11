@@ -8,10 +8,10 @@ The shortest path from an empty account to a run you can explore. About ten minu
 
 Open your TestLookup URL and sign in with the username and password you were given. On success you land on **Home** (the page is titled **Dashboard**).
 
-- **First sign-in with a temporary password.** An account an administrator created for you (and a self-registered one) must set its own password first: the **Set your password** page asks for a new password (at least 8 characters), then sends you back to sign in with it.
+- **First sign-in with a temporary password.** An account an administrator created for you (or a self-registered one, where registration is enabled) must set its own password first: the **Set your password** page asks for a new password (at least 8 characters), then sends you back to sign in with it.
 - **Two-factor authentication.** If your account uses it, a second step (**One more step**) asks for the code from your authenticator app, or **Use a recovery code instead**. If your organisation requires two-factor sign-in and you have not set it up, you are asked to **Set up two-factor authentication** before you can continue. You can turn it on yourself any time under **My profile**.
 - **Single sign-on.** When your organisation uses SSO, the sign-in page shows **Sign in with SSO**. If SSO is required, password sign-in is only available to administrator accounts.
-- **No account?** **Register** on the sign-in page creates one. A new account belongs to no project, so it sees no data until an administrator adds it to a project and sets its role.
+- **No account?** Ask an administrator to create one under **Users**. If your organisation has turned self-registration on, the sign-in page also shows **Register**; such an account starts as a Viewer in no project, so it sees no data until an administrator adds it to a project and sets its role.
 
 After 10 failed attempts in a row (the default), an account is locked for 15 minutes. If sign-in fails, check with your administrator that the account is active — see [Troubleshooting](/docs/troubleshooting#permission-and-access-problems).
 

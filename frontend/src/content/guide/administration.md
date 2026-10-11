@@ -73,7 +73,7 @@ Users see only projects they are a member of. Project membership, not role alone
 
 **Members & access** (`/users?tab=project-members`): pick a project to see its members and its **Default QA Lead**. Administrators add and remove members, set each member's project role, and change the default QA lead; **Reset QA Lead password** is available to QA leads.
 
-People can also create their own account with **Register** on the sign-in page. Such an account belongs to no project until someone adds it here.
+Self-registration is off unless the deployment turns it on (`REGISTRATION_ENABLED`). When it is on, the sign-in page offers **Register**; such an account is a Viewer in no project until someone adds it here.
 
 ### Ownership
 
@@ -204,7 +204,7 @@ Saving a policy needs `QA_LEAD`. **Agent activity** (`/settings/agent-activity`)
 - **Identity Events** — sign-ins, provisioning and role changes from the last 30 days.
 - **Sync Status** — federated users, last SSO sign-in, last SCIM sync and recent failures.
 
-SSO also has to be enabled in the deployment's configuration; the operator guide covers it.
+SSO also has to be enabled in the deployment's configuration; the operator guide covers it. **Sign in with SSO** sends people to the identity provider and brings them back to the page they started from. There is no single logout: signing out of TestLookup leaves the identity-provider session alone.
 
 ### MFA and lockout
 
