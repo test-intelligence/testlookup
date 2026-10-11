@@ -113,6 +113,10 @@ locally by default.
   credentials the MongoDB container requires.
 - The run-history signature panel describes outlier builds from the data
   instead of a fixed sentence.
+- The frontend image installs its dependencies with `npm ci` (exactly
+  `package-lock.json`). `npm install` could skip rolldown's optional
+  linux-musl binary inside `node:alpine` (npm/cli#4828), and `vite build`
+  then failed.
 
 ### Removed
 

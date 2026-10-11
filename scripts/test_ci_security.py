@@ -8,6 +8,7 @@ PR in silence, which is the state M23 found (no PR scanning at all).
 from __future__ import annotations
 
 import datetime as dt
+import json
 import re
 import shlex
 import subprocess
@@ -236,3 +237,44 @@ def test_the_nginx_stage_trusts_the_staged_ca_before_apk_goes_online() -> None:
     assert not any(s.startswith("RUN ") and "apk " in s for s in steps[:at]), (
         "apk goes online before the CA step"
     )
+
+
+def _first_stage(dockerfile: str) -> list[str]:
+    lines = (ROOT / dockerfile).read_text(encoding="utf-8").splitlines()
+    froms = [i for i, line in enumerate(lines) if line.startswith("FROM ")]
+    return lines[froms[0]:froms[1]]
+
+
+def test_the_frontend_image_installs_exactly_the_lockfile() -> None:
+    """``npm install`` skipped rolldown's optional linux-musl binding inside
+    node:alpine (npm/cli#4828) although package-lock.json lists it, and
+    ``vite build`` then failed in Build & Push Images. ``npm ci`` installs what
+    the lockfile records, platform binaries included, and refuses a lockfile
+    that disagrees with package.json instead of quietly re-resolving."""
+    steps = _joined(_first_stage("frontend/Dockerfile"))
+    installs = [s for s in steps if s.startswith("RUN ") and re.search(r"\bnpm (ci|install|i)\b", s)]
+    assert len(installs) == 1, installs
+    [run] = installs
+    assert "npm ci --include=dev" in run
+    assert not re.search(r"\bnpm (install|i)\b", run), "a fallback `npm install` re-resolves the tree"
+    at = steps.index(run)
+    assert steps.index("COPY package*.json ./") < at
+    # The interception-CA trust still comes first, inside the same step.
+    assert run.index("NODE_EXTRA_CA_CERTS") < run.index("npm ci")
+
+
+def test_the_frontend_lockfile_matches_package_json() -> None:
+    """``npm ci`` fails the image build when the two disagree, so catch it here."""
+    package = json.loads((ROOT / "frontend" / "package.json").read_text(encoding="utf-8"))
+    lock = json.loads((ROOT / "frontend" / "package-lock.json").read_text(encoding="utf-8"))
+    assert lock["lockfileVersion"] >= 2
+    root = lock["packages"][""]
+    assert root.get("name") == package.get("name")
+    for field in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
+        assert root.get(field, {}) == package.get(field, {}), f"package-lock.json {field} is stale"
+    # Every declared dependency is actually resolved in the lockfile.
+    for name in {**package.get("dependencies", {}), **package.get("devDependencies", {})}:
+        assert f"node_modules/{name}" in lock["packages"], f"{name} is not in package-lock.json"
+    # The musl binding the node:alpine build stage needs is recorded.
+    if "node_modules/rolldown" in lock["packages"]:
+        assert "node_modules/@rolldown/binding-linux-x64-musl" in lock["packages"]
