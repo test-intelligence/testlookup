@@ -90,6 +90,14 @@ locally by default.
 
 ### Changed
 
+- **A test case opens beside the list, not over it** (Test Management > Cases).
+  The case view was a modal pinned to the top-right corner over a backdrop, so
+  reading the next case meant closing this one first. It now docks beside the
+  list (master-detail): the list stays visible with the open row marked, a
+  click on another row swaps the case in place, previous / next step through
+  the page ("3 of 25"), Expand gives the case the full width, and Esc or the
+  open row's second click closes it. The open case is in the URL
+  (`?case=<id>`), so a refresh or a shared link reopens it.
 - **Default local model is `qwen2.5:7b-instruct`** (Apache-2.0), replacing
   `qwen2.5:3b-instruct`, whose Qwen Research License forbids commercial use.
 - **Redis is replaced by Valkey 8** (BSD-3-Clause) in Compose, Kubernetes, the

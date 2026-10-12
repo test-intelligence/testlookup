@@ -10,6 +10,7 @@ import {
   RotateCcw, MessageSquare, History, Shield, FileText,
   ChevronUp, Trash2, BookOpen,
   Download, FileSpreadsheet, Layers,
+  ChevronLeft, ChevronRight, Maximize2, Minimize2, X,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
@@ -324,9 +325,33 @@ interface CaseDetailPanelProps {
   onRefresh: () => void
   onCaseChanged: (updated: ManagedTestCase) => void
   lifecycleV2: boolean
+  /** Where the case sits in the visible page of the list ("3 of 25"); absent when it is not on it. */
+  position?: { index: number; total: number }
+  /** Step through the list without leaving the panel; absent at either end. */
+  onPrev?: () => void
+  onNext?: () => void
+  /** The case takes the full width (the list folds away) for long steps and history. */
+  expanded: boolean
+  onToggleExpand: () => void
 }
 
-function CaseDetailPanel({ caseItem, onClose, onRefresh, onCaseChanged, lifecycleV2 }: CaseDetailPanelProps) {
+const PANEL_ICON_BUTTON =
+  'inline-flex h-7 w-7 items-center justify-center rounded-md text-[var(--color-text-muted)] ' +
+  'hover:text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] transition-colors ' +
+  'disabled:opacity-40 disabled:pointer-events-none'
+
+/**
+ * The selected case, docked beside the list (master-detail).
+ *
+ * It was a modal pinned to the top-right corner: a backdrop covered the list,
+ * so reading the next case meant closing this one first. Docked, the list
+ * stays visible and clickable, a click on another row swaps the case in place,
+ * previous / next step through the page, and Expand gives it the full width.
+ */
+function CaseDetailPanel({
+  caseItem, onClose, onRefresh, onCaseChanged, lifecycleV2,
+  position, onPrev, onNext, expanded, onToggleExpand,
+}: CaseDetailPanelProps) {
   const [activeTab, setActiveTab] = useState<DetailTab>('details')
   const [comment, setComment] = useState('')
   const [addingComment, setAddingComment] = useState(false)
@@ -398,10 +423,22 @@ function CaseDetailPanel({ caseItem, onClose, onRefresh, onCaseChanged, lifecycl
   }
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="tm-case-detail-title" className="fixed inset-0 bg-[var(--color-bg)]/60 z-50 flex items-start justify-end">
-      <div className="bg-[var(--color-bg-card)] border-l border-[var(--color-border)] h-full w-full max-w-2xl flex flex-col shadow-2xl">
+    <aside
+      aria-labelledby="tm-case-detail-title"
+      data-case-panel=""
+      data-expanded={expanded ? 'true' : 'false'}
+      className="sticky top-3 flex flex-col rounded-xl overflow-hidden"
+      style={{
+        background: 'var(--color-bg-card)',
+        border: '1px solid var(--color-border)',
+        // The list scrolls under it; the panel keeps the case in view and
+        // scrolls its own tab content.
+        maxHeight: 'calc(100vh - 96px)',
+      }}
+    >
+      <div className="flex flex-col min-h-0 flex-1">
         {/* Header */}
-        <div className="px-6 py-4 border-b border-[var(--color-border)] flex-shrink-0">
+        <div className="px-5 py-3.5 border-b border-[var(--color-border)] flex-shrink-0">
           <div className="flex items-start justify-between gap-3">
             <div className="flex-1 min-w-0">
               <h2 id="tm-case-detail-title" className="text-base font-semibold text-[var(--color-text)] leading-snug">{caseItem.title}</h2>
@@ -420,7 +457,34 @@ function CaseDetailPanel({ caseItem, onClose, onRefresh, onCaseChanged, lifecycl
                 )}
               </div>
             </div>
-            <button onClick={onClose} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-xl leading-none flex-shrink-0">&times;</button>
+            <div className="flex items-center gap-0.5 flex-shrink-0" data-testid="tm-case-panel-actions">
+              {position && position.total > 1 && (
+                <>
+                  <button type="button" aria-label="Previous case" title="Previous case" onClick={onPrev} disabled={!onPrev} className={PANEL_ICON_BUTTON}>
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  <span data-testid="tm-case-position" className="px-1 text-[11px] tabular-nums text-[var(--color-text-muted)] whitespace-nowrap">
+                    {position.index} of {position.total}
+                  </span>
+                  <button type="button" aria-label="Next case" title="Next case" onClick={onNext} disabled={!onNext} className={PANEL_ICON_BUTTON}>
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                  <span aria-hidden="true" className="mx-1 h-4 w-px bg-[var(--color-border)]" />
+                </>
+              )}
+              <button
+                type="button"
+                aria-label={expanded ? 'Show the list beside the case' : 'Expand the case to full width'}
+                title={expanded ? 'Show the list' : 'Expand'}
+                onClick={onToggleExpand}
+                className={PANEL_ICON_BUTTON}
+              >
+                {expanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+              </button>
+              <button type="button" aria-label="Close case" title="Close (Esc)" onClick={onClose} className={PANEL_ICON_BUTTON}>
+                <X className="h-4 w-4" />
+              </button>
+            </div>
           </div>
         </div>
 
@@ -745,7 +809,7 @@ function CaseDetailPanel({ caseItem, onClose, onRefresh, onCaseChanged, lifecycl
           )}
         </div>
       </div>
-    </div>
+    </aside>
   )
 }
 
@@ -854,9 +918,28 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
   // One interaction for every row: the case panel, in place, so the list keeps
   // its search, filters and page. Automation rows used to leave the page for
   // one run's result (or a toast); the panel links there instead.
+  // The panel docks beside the list (master-detail) and the open case rides
+  // the URL (?case=<id>), so a refresh or a shared link reopens it.
+  const [caseExpanded, setCaseExpanded] = useState(false)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const caseParam = searchParams.get('case')
+  const setCaseParam = useCallback((id: string | null) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      if (id) next.set('case', id)
+      else next.delete('case')
+      return next
+    }, { replace: true })
+  }, [setSearchParams])
   const openCase = useCallback((caseItem: ManagedTestCase) => {
     setSelectedCase(caseItem)
-  }, [])
+    setCaseParam(caseItem.id)
+  }, [setCaseParam])
+  const closeCase = useCallback(() => {
+    setSelectedCase(null)
+    setCaseExpanded(false)
+    setCaseParam(null)
+  }, [setCaseParam])
   // Default ON so users land on a populated list — the managed_test_cases
   // table is often empty in fresh deployments, and the "Test Cases tab
   // shows nothing while runs are full of tests" surprise was the top
@@ -948,6 +1031,59 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
 
   const casesRaw = data?.items ?? []
   const { sorted: cases } = useTableSort(casesRaw, 'updated_at', 'desc')
+
+  // ── The open case ───────────────────────────────────────────────────
+  // The row clicked; or, arriving with ?case=<id>, that row on this page;
+  // or the case fetched by id when the link names one the page does not show.
+  const [fetchedCase, setFetchedCase] = useState<ManagedTestCase | null>(null)
+  const caseOnPage = !selectedCase && caseParam ? cases.find((c) => c.id === caseParam) : undefined
+  const activeCase: ManagedTestCase | null =
+    selectedCase ?? caseOnPage ?? (caseParam && fetchedCase?.id === caseParam ? fetchedCase : null)
+  const needsCaseFetch = Boolean(caseParam) && !activeCase && !isLoading
+  useEffect(() => {
+    if (!needsCaseFetch || !caseParam) return
+    let cancelled = false
+    testManagementService.getCase(caseParam).then(
+      (found) => { if (!cancelled) setFetchedCase(found) },
+      // Gone, or not this user's: drop the stale link rather than show an empty panel.
+      () => { if (!cancelled) setCaseParam(null) },
+    )
+    return () => { cancelled = true }
+  }, [needsCaseFetch, caseParam, setCaseParam])
+
+  // A click on the open case's own row folds the panel; any other row swaps it in.
+  const toggleCase = useCallback((caseItem: ManagedTestCase) => {
+    if (activeCase?.id === caseItem.id) closeCase()
+    else openCase(caseItem)
+  }, [activeCase?.id, closeCase, openCase])
+
+  // "3 of 25" and previous / next, within the page the list shows.
+  const activeIndex = activeCase ? cases.findIndex((c) => c.id === activeCase.id) : -1
+  const casePosition = activeIndex >= 0 ? { index: activeIndex + 1, total: cases.length } : undefined
+  const prevCase = activeIndex > 0 ? cases[activeIndex - 1] : undefined
+  const nextCase = activeIndex >= 0 && activeIndex < cases.length - 1 ? cases[activeIndex + 1] : undefined
+
+  // Esc closes the case, unless a field is being edited or a dialog above it owns the key.
+  useEffect(() => {
+    if (!activeCase) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      const target = e.target as HTMLElement | null
+      if (target?.closest?.('input, textarea, select, [contenteditable="true"]')) return
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
+      closeCase()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [activeCase, closeCase])
+
+  // Stepping through cases keeps the matching row in view in the list.
+  useEffect(() => {
+    if (!activeCase?.id) return
+    const row = Array.from(document.querySelectorAll<HTMLElement>('[data-case-row]'))
+      .find((el) => el.dataset.caseRow === activeCase.id)
+    if (row && typeof row.scrollIntoView === 'function') row.scrollIntoView({ block: 'nearest' })
+  }, [activeCase?.id])
 
   async function handleExportExcel() {
     try {
@@ -1179,8 +1315,15 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
       )}
 
       {/* The cases table, the page's primary content, at full width (the
-          right rail it shared the row with is the Insights drawer). */}
-          <div data-primary="" className="rounded-xl overflow-hidden" style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}>
+          right rail it shared the row with is the Insights drawer). With a case
+          open it shares the row with the case panel (master-detail); expanded,
+          the panel takes the row and the list folds away. */}
+      <div
+        data-cases-layout={activeCase ? (caseExpanded ? 'expanded' : 'split') : 'list'}
+        className={clsx(activeCase && !caseExpanded && 'grid gap-4 items-start')}
+        style={activeCase && !caseExpanded ? { gridTemplateColumns: 'minmax(0, 1fr) minmax(440px, 46%)' } : undefined}
+      >
+          <div data-primary="" hidden={Boolean(activeCase && caseExpanded)} className="rounded-xl overflow-hidden min-w-0" style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}>
             <div
               className="flex items-center justify-between gap-2 px-4 py-3"
               style={{ borderBottom: '1px solid var(--color-border)' }}
@@ -1191,22 +1334,26 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
                 </h3>
                 <SavedViewChips savedView={savedView} savedViews={SAVED_VIEWS} onSavedView={(v) => applySavedView(v.id)} />
               </div>
-              <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-2 flex-shrink-0">
                 <button
                   onClick={handleExportExcel}
                   className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors"
                   style={{ borderColor: 'var(--color-border)' }}
                   title="Export to Excel"
+                  aria-label="Export"
                 >
-                  <FileSpreadsheet className="h-3.5 w-3.5" /> Export
+                  {/* Beside the case panel the list header is narrower: icons, the names in tooltips. */}
+                  <FileSpreadsheet className="h-3.5 w-3.5" />{!activeCase && ' Export'}
                 </button>                {projectId && (
                   <>
                     <button
                       onClick={() => setShowAiGen(true)}
+                      aria-label="AI Generate"
+                      title="AI Generate"
                       className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] rounded-md border transition-colors"
                       style={{ color: 'var(--status-flaky)', borderColor: 'color-mix(in srgb, var(--status-flaky) 30%, transparent)', background: 'color-mix(in srgb, var(--status-flaky) 6%, transparent)' }}
                     >
-                      <Sparkles className="h-3.5 w-3.5" /> AI Generate
+                      <Sparkles className="h-3.5 w-3.5" />{!activeCase && ' AI Generate'}
                     </button>
                     <button
                       aria-label="New test case from catalog toolbar"
@@ -1237,10 +1384,12 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
             ) : (
               <CasesTableBody
                 cases={cases}
-                onRowClick={openCase}
+                onRowClick={toggleCase}
                 onDeprecate={handleDeprecate}
                 onPromoted={handleRefresh}
                 lifecycleV2={lifecycleV2}
+                selectedId={activeCase?.id ?? null}
+                compact={Boolean(activeCase)}
               />
             )}
 
@@ -1254,6 +1403,23 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
               />
             )}
           </div>
+
+        {activeCase && (
+          <CaseDetailPanel
+            key={activeCase.id}
+            caseItem={activeCase}
+            onClose={closeCase}
+            onRefresh={handleRefresh}
+            onCaseChanged={setSelectedCase}
+            lifecycleV2={lifecycleV2}
+            position={casePosition}
+            onPrev={prevCase ? () => openCase(prevCase) : undefined}
+            onNext={nextCase ? () => openCase(nextCase) : undefined}
+            expanded={caseExpanded}
+            onToggleExpand={() => setCaseExpanded((v) => !v)}
+          />
+        )}
+      </div>
 
       <EvidenceGapLists projectId={projectId} />
 
@@ -1301,15 +1467,6 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
         <AIGenerateModal
           projectId={projectId}
           onClose={() => setShowAiGen(false)}
-        />
-      )}
-      {selectedCase && (
-        <CaseDetailPanel
-          caseItem={selectedCase}
-          onClose={() => setSelectedCase(null)}
-          onRefresh={handleRefresh}
-          onCaseChanged={setSelectedCase}
-          lifecycleV2={lifecycleV2}
         />
       )}
       {pendingDeprecation && (
@@ -1544,13 +1701,17 @@ function SelectChip({
 // ── Cases table body + footer ─────────────────────────────────────────
 // Exported for isolated column-structure tests (same precedent as OwnerCell).
 export function CasesTableBody({
-  cases, onRowClick, onDeprecate, onPromoted, lifecycleV2,
+  cases, onRowClick, onDeprecate, onPromoted, lifecycleV2, selectedId = null, compact = false,
 }: {
   cases: ManagedTestCase[]
   onRowClick: (c: ManagedTestCase) => void
   onDeprecate: (caseItem: ManagedTestCase, e: React.MouseEvent) => void
   onPromoted: () => void
   lifecycleV2: boolean
+  /** The case open in the panel: its row is marked. */
+  selectedId?: string | null
+  /** Beside the case panel the list is narrower: Owner gives its width to the title (the panel shows it). */
+  compact?: boolean
 }) {
   return (
     <div className="overflow-x-auto">
@@ -1563,7 +1724,7 @@ export function CasesTableBody({
                 a few characters and Last run + actions scrolled out of view. */}
             <Th label="Test case" flex />
             <Th label="Status"     width={100} />
-            <Th label="Owner"      width={122} />
+            {!compact && <Th label="Owner" width={122} />}
             <Th label="Last run"   width={110} align="right" />
             <Th label="" align="right" width={40} />
           </tr>
@@ -1577,6 +1738,8 @@ export function CasesTableBody({
               onDeprecate={onDeprecate}
               onPromoted={onPromoted}
               lifecycleV2={lifecycleV2}
+              selected={tc.id === selectedId}
+              compact={compact}
             />
           ))}
         </tbody>
@@ -1610,6 +1773,7 @@ function Th({ label, width, align, flex }: {
         letterSpacing: 'var(--tracking-wider)',
         width: flex ? '100%' : width,
         maxWidth: flex ? 0 : undefined,
+        whiteSpace: 'nowrap',
       }}
     >
       {label}
@@ -1623,12 +1787,16 @@ function CaseRow({
   onDeprecate,
   onPromoted,
   lifecycleV2,
+  selected = false,
+  compact = false,
 }: {
   tc: ManagedTestCase
   onRowClick: (c: ManagedTestCase) => void
   onDeprecate: (caseItem: ManagedTestCase, e: React.MouseEvent) => void
   onPromoted: () => void
   lifecycleV2: boolean
+  selected?: boolean
+  compact?: boolean
 }) {
   const deprecateAllowed = lifecycleV2 ? tc.allowed_actions?.includes('deprecate') === true : true
   // Only emit the type/suite/tags tail when there is something in it — otherwise
@@ -1638,8 +1806,17 @@ function CaseRow({
   )
   return (
     <tr
-      style={{ borderBottom: '1px solid var(--color-border)', cursor: 'pointer' }}
-      className="transition-colors hover:bg-[var(--color-bg-hover)]"
+      data-case-row={tc.id}
+      data-selected={selected ? 'true' : undefined}
+      aria-current={selected ? 'true' : undefined}
+      style={{
+        borderBottom: '1px solid var(--color-border)',
+        cursor: 'pointer',
+        // The open case: a tinted row with an accent edge, so the list says which case the panel shows.
+        background: selected ? 'color-mix(in srgb, var(--color-accent) 9%, transparent)' : undefined,
+        boxShadow: selected ? 'inset 3px 0 0 var(--color-accent)' : undefined,
+      }}
+      className={clsx('transition-colors', !selected && 'hover:bg-[var(--color-bg-hover)]')}
       onClick={() => onRowClick(tc)}
     >
       <td style={{ padding: '9px 12px', width: '100%', maxWidth: 0 }}>
@@ -1683,12 +1860,12 @@ function CaseRow({
           )}
         </div>
       </td>
-      <td style={{ padding: '10px 12px' }}>
+      <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
         <CaseStatusPill status={tc.status} />
       </td>
-      <td style={{ padding: '9px 12px' }} className="min-w-0">
+      {!compact && <td style={{ padding: '9px 12px' }} className="min-w-0">
         <OwnerCell owner={tc.owner ?? null} userId={tc.assignee_id ?? tc.author_id ?? null} />
-      </td>
+      </td>}
       <td
         style={{ padding: '9px 12px', textAlign: 'right' }}
         title={tc.last_executed_at ? new Date(tc.last_executed_at).toISOString() : undefined}

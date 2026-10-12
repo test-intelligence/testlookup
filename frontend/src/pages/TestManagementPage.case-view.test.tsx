@@ -9,13 +9,14 @@
  * filters and page. Every row now opens the same panel in place; the rich
  * pages are explicit links in it -- for authored cases linked to automation too.
  */
-import { fireEvent, render, screen, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import toast from 'react-hot-toast'
 
 import { useAuditLog, useTestCases } from '@/hooks/useTestManagement'
 import type { ManagedTestCase, PaginatedResponse } from '@/types/test-management'
+import { testManagementService } from '@/services/testManagementService'
 import { TestCasesTab } from './TestManagementPage'
 
 vi.mock('@/hooks/useTestManagement', async (importOriginal) => ({
@@ -83,11 +84,16 @@ function page(items: ManagedTestCase[]): PaginatedResponse<ManagedTestCase> {
   return { items, total: items.length, page: 1, size: 25, pages: 1 }
 }
 
-function renderTab() {
+/** The router's query string, for the ?case= tests. */
+function Location() {
+  return <output data-testid="location">{useLocation().search}</output>
+}
+
+function renderTab(entry = '/test-management') {
   return render(
-    <MemoryRouter initialEntries={['/test-management']}>
+    <MemoryRouter initialEntries={[entry]}>
       <Routes>
-        <Route path="/test-management" element={<TestCasesTab projectId="project-1" lifecycleV2 />} />
+        <Route path="/test-management" element={<><TestCasesTab projectId="project-1" lifecycleV2 /><Location /></>} />
         <Route path="/runs/:runId/tests/:testId" element={<p>RUN RESULT PAGE</p>} />
         <Route path="/canonical-test-cases/:id" element={<p>RUN HISTORY PAGE</p>} />
       </Routes>
@@ -95,9 +101,10 @@ function renderTab() {
   )
 }
 
+/** Click a row in the list; the case panel docks beside it, named by the case. */
 function openRow(title: string) {
-  fireEvent.click(screen.getByText(title))
-  return screen.getByRole('dialog')
+  fireEvent.click(within(screen.getByRole('table')).getByText(title))
+  return screen.getByRole('complementary', { name: title })
 }
 
 describe('Test Management: one case view for every row', () => {
@@ -168,5 +175,115 @@ describe('Test Management: one case view for every row', () => {
     fireEvent.click(within(panel).getByRole('link', { name: 'Open latest result →' }))
 
     expect(screen.getByText('RUN RESULT PAGE')).toBeInTheDocument()
+  })
+})
+
+describe('Test Management: the case panel docks beside the list (master-detail)', () => {
+  // It was a modal pinned to the top-right corner over a backdrop: reading the
+  // next case meant closing this one first (owner review, 2026-10-12).
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+    vi.mocked(useAuditLog).mockReturnValue({ data: undefined } as ReturnType<typeof useAuditLog>)
+    vi.mocked(useTestCases).mockImplementation(() => ({
+      data: page([AUTHORED_MANUAL, AUTHORED_LINKED, AUTOMATION, AUTOMATION_BARE]),
+      error: undefined,
+      isLoading: false,
+      isValidating: false,
+      mutate: vi.fn(),
+    } as unknown as ReturnType<typeof useTestCases>))
+  })
+
+  const layout = () => document.querySelector('[data-cases-layout]')?.getAttribute('data-cases-layout')
+  const rowOf = (title: string) => within(screen.getByRole('table')).getByText(title).closest('tr') as HTMLElement
+
+  it('opens beside the list: no dialog, no backdrop, the list still there and the open row marked', () => {
+    renderTab()
+    openRow('Verify refund email')
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(layout()).toBe('split')
+    expect(screen.getByRole('table')).toBeVisible()
+    expect(rowOf('Verify refund email')).toHaveAttribute('aria-current', 'true')
+    expect(rowOf('Verify checkout with card')).not.toHaveAttribute('aria-current')
+    // Beside the panel the list drops Owner (the panel shows it) to keep titles readable.
+    expect(within(screen.getByRole('table')).queryByText('Owner')).toBeNull()
+  })
+
+  it('a click on another row swaps the case in place; a click on the open row folds it', () => {
+    renderTab()
+    openRow('Verify refund email')
+    fireEvent.click(within(screen.getByRole('table')).getByText('Verify checkout with card'))
+    expect(screen.getAllByRole('complementary')).toHaveLength(1)
+    expect(screen.getByRole('complementary', { name: 'Verify checkout with card' })).toBeInTheDocument()
+
+    fireEvent.click(within(screen.getByRole('table')).getByText('Verify checkout with card'))
+    expect(screen.queryByRole('complementary')).toBeNull()
+    expect(layout()).toBe('list')
+    expect(within(screen.getByRole('table')).getByText('Owner')).toBeInTheDocument()
+  })
+
+  it('previous / next step through the page without going back to the list', () => {
+    renderTab()
+    const first = openRow('Verify refund email')
+    expect(within(first).getByTestId('tm-case-position')).toHaveTextContent('1 of 4')
+    expect(within(first).getByRole('button', { name: 'Previous case' })).toBeDisabled()
+
+    fireEvent.click(within(first).getByRole('button', { name: 'Next case' }))
+    const second = screen.getByRole('complementary', { name: 'Verify checkout with card' })
+    expect(within(second).getByTestId('tm-case-position')).toHaveTextContent('2 of 4')
+    expect(rowOf('Verify checkout with card')).toHaveAttribute('aria-current', 'true')
+
+    fireEvent.click(within(second).getByRole('button', { name: 'Previous case' }))
+    expect(screen.getByRole('complementary', { name: 'Verify refund email' })).toBeInTheDocument()
+  })
+
+  it('Esc closes the case, but not while the reader types in a field', () => {
+    renderTab()
+    openRow('Verify refund email')
+    fireEvent.keyDown(screen.getByPlaceholderText(/Search by ID, title/), { key: 'Escape' })
+    expect(screen.getByRole('complementary', { name: 'Verify refund email' })).toBeInTheDocument()
+
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    expect(screen.queryByRole('complementary')).toBeNull()
+  })
+
+  it('Expand gives the case the whole row; the list comes back beside it', () => {
+    renderTab()
+    const panel = openRow('Verify checkout with card')
+    fireEvent.click(within(panel).getByRole('button', { name: 'Expand the case to full width' }))
+    expect(layout()).toBe('expanded')
+    expect(document.querySelector('[data-primary]')).not.toBeVisible()
+
+    fireEvent.click(within(panel).getByRole('button', { name: 'Show the list beside the case' }))
+    expect(layout()).toBe('split')
+    expect(document.querySelector('[data-primary]')).toBeVisible()
+  })
+
+  it('the open case rides the URL, and a link with ?case= reopens it', () => {
+    const { unmount } = renderTab()
+    openRow('Verify checkout with card')
+    expect(screen.getByTestId('location')).toHaveTextContent('case=m-2')
+    fireEvent.click(within(screen.getByRole('complementary')).getByRole('button', { name: 'Close case' }))
+    expect(screen.getByTestId('location')).not.toHaveTextContent('case=')
+    unmount()
+
+    renderTab('/test-management?case=tc-9')
+    expect(screen.getByRole('complementary', { name: 'testAuthenticationCase04' })).toBeInTheDocument()
+    expect(rowOf('testAuthenticationCase04')).toHaveAttribute('aria-current', 'true')
+  })
+
+  it('a link to a case the page does not show is fetched; a stale one is dropped', async () => {
+    const far = base({ id: 'far-1', title: 'Verify archive export', source: 'managed' })
+    const getCase = vi.spyOn(testManagementService, 'getCase').mockResolvedValueOnce(far)
+    const { unmount } = renderTab('/test-management?case=far-1')
+    expect(await screen.findByRole('complementary', { name: 'Verify archive export' })).toBeInTheDocument()
+    expect(getCase).toHaveBeenCalledWith('far-1')
+    unmount()
+
+    getCase.mockRejectedValueOnce(new Error('404'))
+    renderTab('/test-management?case=gone-1')
+    await waitFor(() => expect(screen.getByTestId('location')).not.toHaveTextContent('case='))
+    expect(screen.queryByRole('complementary')).toBeNull()
+    getCase.mockRestore()
   })
 })
