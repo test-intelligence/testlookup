@@ -2,7 +2,7 @@
 
 [Documentation home](../README.md)
 
-The [generated data dictionary](../reference/data-dictionary.md) lists all 139 SQLAlchemy tables, every column/type/nullability/default, FK/delete rule, indexes, constraints and ORM relationship declarations. [Public schemas](../reference/schemas.md) and [Python contract declarations](../reference/python-contracts.md) cover wire and internal structures. [Migration inventory](../reference/migrations.md) is the schema-history map.
+The [generated data dictionary](../reference/data-dictionary.md) lists all 139 SQLAlchemy tables, every column/type/nullability/default, FK/delete rule, indexes, constraints and ORM relationship declarations. [Public schemas](../reference/schemas.md) cover the wire structures. [Migration inventory](../reference/migrations.md) is the schema-history map.
 
 ## Storage ownership
 

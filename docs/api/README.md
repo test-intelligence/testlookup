@@ -2,7 +2,7 @@
 
 [Documentation home](../README.md)
 
-The declared HTTP contract is indexed by the [endpoint index](../reference/api-index.md), its 81 domain pages, [schemas](../reference/schemas.md), and [OpenAPI JSON](../reference/openapi.json); the counts (564 HTTP operations across 473 paths when this page was written) are kept current in [inventory-counts.json](../reference/inventory-counts.json). Swagger is `/api-docs`, ReDoc `/api-docs/redoc`, and the runtime schema `/api-docs/openapi.json`. `/docs` belongs to the frontend user guide.
+The declared HTTP contract is indexed by the [endpoint index](../reference/api-index.md), its 81 domain pages, [schemas](../reference/schemas.md), and [OpenAPI JSON](../reference/openapi.json) (564 HTTP operations across 473 paths when this page was written). Swagger is `/api-docs`, ReDoc `/api-docs/redoc`, and the runtime schema `/api-docs/openapi.json`. `/docs` belongs to the frontend user guide.
 
 Source annotations can overstate implemented behavior: the [summary-report release filter and basis limitations](../pipelines/reporting.md#aggregation-and-evidence) are confirmed examples. Generated descriptions are preserved declarations, not a runtime certification.
 
@@ -101,12 +101,12 @@ Use the [Reports domain](../reference/api/reports.md) for PDF/evidence/share req
 | 429 | Rate/lockout limit; honor `Retry-After` |
 | 503 | Admission/storage/provider availability or feature-disabled operation |
 
-FastAPI errors commonly use `{"detail": ...}`; `detail` may be a string, object or validation list. SCIM uses its own error format and binary/SSE responses have different bodies. The domain pages include direct handler `HTTPException` branches, but service/dependency/middleware errors can add outcomes. [Unstructured contract inventory](../reference/api-contract-gaps.md) marks endpoints where OpenAPI cannot fully document emitted fields.
+FastAPI errors commonly use `{"detail": ...}`; `detail` may be a string, object or validation list. SCIM uses its own error format and binary/SSE responses have different bodies. The domain pages include direct handler `HTTPException` branches, but service/dependency/middleware errors can add outcomes. Endpoints that return unstructured dicts have response fields OpenAPI cannot fully document.
 
 Pagination/filter names and maximum limits are endpoint-specific; read their parameter schemas. Repeated query arrays use `?field=a&field=b`, not Axios-style brackets. Time ranges, release filters and environment semantics affect denominators. Retrying an arbitrary POST is unsafe unless the endpoint supplies an idempotency contract; ingestion identity is not a global API idempotency key.
 
 ## Streaming and operational routes
 
-`/ws/live/{project_id}` expects the first client frame `{"type":"auth","token":"<JWT>"}`. Optional `last_event_id` uses Redis stream ID syntax (`digits-digits`). Malformed authentication closes with 4400; timeout/failed authentication can close with 4401, and membership validation applies. Live-session SSE at `/api/v1/stream/sse/{project_id}` uses a `token` query parameter and optional `Last-Event-ID` header; it is distinct from the invocation ticket protocol. `/ws/events/{run_id}` is an authenticated producer POST despite the prefix. Stream APIs handle sessions/events and SSE. Invocation SSE requires a ticket created with normal authorization; tickets are short-lived and single-use, so reconnect flows need fresh authority. [Non-OpenAPI routes](../reference/api-contract-gaps.md).
+`/ws/live/{project_id}` expects the first client frame `{"type":"auth","token":"<JWT>"}`. Optional `last_event_id` uses Redis stream ID syntax (`digits-digits`). Malformed authentication closes with 4400; timeout/failed authentication can close with 4401, and membership validation applies. Live-session SSE at `/api/v1/stream/sse/{project_id}` uses a `token` query parameter and optional `Last-Event-ID` header; it is distinct from the invocation ticket protocol. `/ws/events/{run_id}` is an authenticated producer POST despite the prefix. Stream APIs handle sessions/events and SSE. Invocation SSE requires a ticket created with normal authorization; tickets are short-lived and single-use, so reconnect flows need fresh authority. These WebSocket and SSE routes are not in the OpenAPI document.
 
 `/health/live` checks the process, `/health/ready` checks critical dependencies, `/health/version` reports build identity, and `/health/details` reports dependency details while potentially returning 200 degraded. `/metrics` is conditional on metrics configuration and excluded from the exported OpenAPI. Health success alone does not prove worker delivery, correct model installation or migration compatibility.

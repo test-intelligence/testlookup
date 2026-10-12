@@ -59,4 +59,4 @@ HTTP handlers depend on core guards, schemas, ORM and services. Services use sto
 
 Runtime dependencies are pinned/listed in [backend requirements](../../backend/requirements.txt), [frontend package/lock](../../frontend/package.json), [CLI package](../../cli/pyproject.toml), [client package](../../client/pyproject.toml) and [MCP requirements](../../mcp/requirements.txt). The frontend includes React Router, Axios, SWR, Zustand, Tailwind/Radix, charts and Markdown rendering. Backend services use FastAPI/Pydantic/SQLAlchemy, Celery/Redis, Motor, object-storage clients, LangChain/LangGraph, optional Chroma and export libraries. Read the files rather than copying version claims from old badges.
 
-For a change: locate the route → input schema → service → model/migration → worker or external side effect → serializer → frontend/client consumer → behavioral tests. The [integration audit](../reviews/2026-09-18-integration-checks.md) follows this method for the principal flows.
+For a change: locate the route → input schema → service → model/migration → worker or external side effect → serializer → frontend/client consumer → behavioral tests.
