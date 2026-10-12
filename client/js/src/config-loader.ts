@@ -3,16 +3,20 @@
  *
  * Reads a declarative ``testlookup.properties`` file (preferred — matches the
  * ReportPortal convention) or a legacy ``testlookup.yaml`` from the cwd /
- * ``.testlookup`` / home directory, then overlays environment variables.
+ * ``.testlookup`` / home directory, then overlays environment variables. The
+ * Jest and Mocha reporters resolve every setting they are not given through
+ * here: reporter option > environment variable > config file.
  *
- * Discovery order (first match wins per file kind):
+ * Discovery order (first file found wins; only that one file is read) — the
+ * same order as the Python and Java SDKs:
  *   1. ./testlookup.properties
- *   2. ./testlookup.yaml
- *   3. ./.testlookup/testlookup.properties
+ *   2. ./.testlookup/testlookup.properties
+ *   3. ./testlookup.yaml
  *   4. ./.testlookup/config.yaml
  *   5. ~/.testlookup/testlookup.properties
  *   6. ~/.testlookup/config.yaml
  *
+ * YAML needs the optional ``yaml`` package; without it a YAML file is skipped.
  * Canonical key prefix is ``testlookup.*`` — matches the dotted convention
  * used across all four SDKs.
  */
@@ -63,6 +67,9 @@ const PROPERTIES_KEYS: Record<string, keyof ResolvedConfig> = {
   'testlookup.framework': 'framework',
 }
 
+// Later entries win when both are set: TESTLOOKUP_ENDPOINT over
+// TESTLOOKUP_URL, TESTLOOKUP_PROJECT over TESTLOOKUP_PROJECT_ID — the same
+// rule as the Python SDK.
 const ENV_KEYS: Record<string, keyof ResolvedConfig> = {
   TESTLOOKUP_URL:        'baseUrl',
   TESTLOOKUP_ENDPOINT:   'baseUrl',
@@ -95,10 +102,10 @@ const YAML_PATHS: Array<{ section: string[]; key: string; field: keyof ResolvedC
 
 function findFile(): { path: string; kind: 'properties' | 'yaml' } | null {
   const candidates: Array<{ rel: string; kind: 'properties' | 'yaml' }> = [
-    { rel: 'testlookup.properties',                    kind: 'properties' },
-    { rel: 'testlookup.yaml',                          kind: 'yaml' },
+    { rel: 'testlookup.properties',                           kind: 'properties' },
     { rel: path.join('.testlookup', 'testlookup.properties'), kind: 'properties' },
-    { rel: path.join('.testlookup', 'config.yaml'),    kind: 'yaml' },
+    { rel: 'testlookup.yaml',                                 kind: 'yaml' },
+    { rel: path.join('.testlookup', 'config.yaml'),           kind: 'yaml' },
   ]
   for (const c of candidates) {
     if (fs.existsSync(c.rel)) return { path: c.rel, kind: c.kind }
@@ -164,29 +171,50 @@ function parseYaml(content: string): ResolvedConfig {
   return out
 }
 
-/**
- * Resolve TestLookup config: file → env var overlay. Caller-provided values
- * take final precedence; merge what's returned here with any explicit
- * constructor args.
- */
-export function loadConfig(): ResolvedConfig {
-  let cfg: ResolvedConfig = {}
+/** The config file layer alone (see the discovery order above). */
+export function loadFileConfig(): ResolvedConfig {
   const found = findFile()
-  if (found) {
-    try {
-      const content = fs.readFileSync(found.path, 'utf8')
-      cfg = found.kind === 'properties' ? parseProperties(content) : parseYaml(content)
-    } catch (err) {
-      console.warn('[TestLookup] Failed to load config file', found.path, err)
-    }
+  if (!found) return {}
+  try {
+    const content = fs.readFileSync(found.path, 'utf8')
+    return found.kind === 'properties' ? parseProperties(content) : parseYaml(content)
+  } catch (err) {
+    console.warn('[TestLookup] Failed to load config file', found.path, err)
+    return {}
   }
+}
 
+/** The TESTLOOKUP_* environment layer alone. */
+export function loadEnvConfig(): ResolvedConfig {
+  const cfg: ResolvedConfig = {}
   for (const [envName, field] of Object.entries(ENV_KEYS)) {
     const val = process.env[envName]
     if (val) (cfg as Record<string, string>)[field] = val
   }
-
   return cfg
+}
+
+/**
+ * Resolve TestLookup config: file → env var overlay. Caller-provided values
+ * take final precedence; merge what's returned here with any explicit
+ * constructor args. Credentials come from resolveCredentials instead.
+ */
+export function loadConfig(): ResolvedConfig {
+  return { ...loadFileConfig(), ...loadEnvConfig() }
+}
+
+/**
+ * The API key / token pair, layer by layer: explicit values, then the
+ * environment, then the config file — the first layer holding either wins.
+ * Merging the layers first would let a stale API key in testlookup.properties
+ * beat a TESTLOOKUP_TOKEN set for this run, or an explicit token. Within a
+ * layer authHeaders() sends the API key (same rule in every SDK).
+ */
+export function resolveCredentials(explicit: { apiKey?: string; token?: string }): { apiKey?: string; token?: string } {
+  for (const layer of [explicit, loadEnvConfig(), loadFileConfig()]) {
+    if (layer.apiKey || layer.token) return { apiKey: layer.apiKey, token: layer.token }
+  }
+  return {}
 }
 
 /** Return true if any TestLookup config source is present. */

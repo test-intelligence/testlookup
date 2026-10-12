@@ -6,6 +6,7 @@ import io.testlookup.TestLookupReporter.*;
 
 import org.testng.*;
 
+import java.util.Map;
 import java.util.logging.Logger;
 
 /**
@@ -40,7 +41,12 @@ import java.util.logging.Logger;
  * </pre>
  *
  * <h3>Configuration precedence</h3>
- * Suite parameters &gt; JVM system properties &gt; Environment variables &gt; testlookup.yaml
+ * Suite parameters &gt; JVM system properties &gt; Environment variables &gt;
+ * {@code testlookup.properties} / {@code testlookup.yaml} (filesystem, then classpath).
+ * The file keys are the canonical ones: {@code testlookup.build},
+ * {@code testlookup.branch}, {@code testlookup.commit}, {@code testlookup.launch},
+ * {@code testlookup.suite}, {@code testlookup.release}, {@code testlookup.ca_cert_path},
+ * {@code testlookup.insecure}.
  *
  * <h3>Environment variable fallbacks</h3>
  * <pre>
@@ -51,6 +57,11 @@ import java.util.logging.Logger;
  *   TESTLOOKUP_BUILD        CI build number
  *   TESTLOOKUP_BRANCH       Git branch name
  *   TESTLOOKUP_COMMIT       Git commit SHA
+ *   TESTLOOKUP_LAUNCH       Launch label
+ *   TESTLOOKUP_SUITE        Run-level suite (default: launch, then the &lt;suite name&gt;)
+ *   TESTLOOKUP_RELEASE      Release name
+ *   TESTLOOKUP_CA_CERT      PEM CA bundle to trust (self-signed servers)
+ *   TESTLOOKUP_INSECURE     true skips TLS verification (dev only)
  * </pre>
  *
  * <h3>JVM system properties (takes precedence over env vars)</h3>
@@ -75,14 +86,20 @@ public class TestLookupListener implements ISuiteListener, ITestListener {
 
     @Override
     public void onStart(ISuite suite) {
-        // Resolve config: suite params > system props > env vars > testlookup.yaml
-        String url       = resolve(suite, "testlookup.url",       "TESTLOOKUP_URL",        null);
-        String apiKey    = resolve(suite, "testlookup.apiKey",    "TESTLOOKUP_API_KEY",    null);
-        String token     = resolve(suite, "testlookup.token",     "TESTLOOKUP_TOKEN",      null);
-        String projectId = resolve(suite, "testlookup.projectId", "TESTLOOKUP_PROJECT_ID", null);
+        // Resolve config: suite params > system props > env vars > config file
+        // (ConfigLoader layers the last three).
+        Map<String, Object> cfg = ConfigLoader.load();
+        String url       = resolve(suite, "testlookup.url",       cfg, "server.url",   null);
+        String projectId = resolve(suite, "testlookup.projectId", cfg, "project.id",   null);
+        // Credentials only from testng.xml here; otherwise the Builder resolves
+        // the pair layer by layer, so a key from one source is never paired
+        // with a token from another.
+        String apiKey    = resolve(suite, "testlookup.apiKey",    null, null, null);
+        String token     = resolve(suite, "testlookup.token",     null, null, null);
 
         // Skip silently if essential config is missing
-        boolean hasAuth = apiKey != null || token != null;
+        String[] configured = ConfigLoader.credentials();
+        boolean hasAuth = apiKey != null || token != null || configured[0] != null || configured[1] != null;
         if (url == null || !hasAuth || projectId == null) {
             if (!ConfigLoader.isConfigured()) {
                 LOG.fine("TestLookupListener: no configuration found — skipping");
@@ -92,7 +109,7 @@ public class TestLookupListener implements ISuiteListener, ITestListener {
 
         try {
             TestLookupReporter.Builder builder = new TestLookupReporter.Builder()
-                .framework("testng");
+                .framework(ConfigLoader.getString(cfg, "reporting.framework", "testng"));
 
             // Apply suite-level overrides (Builder values take precedence over ConfigLoader)
             if (url != null)       builder.baseUrl(url);
@@ -113,9 +130,10 @@ public class TestLookupListener implements ISuiteListener, ITestListener {
             // session-level default downstream; this listener-level fallback
             // closes the gap for runs where testlookup.properties doesn't
             // configure a suite at all.)
-            String configuredSuiteLocal = resolve(suite, "testlookup.suite",  "TESTLOOKUP_SUITE",  null);
+            String launch = resolve(suite, "testlookup.launch", cfg, "reporting.launch_name", null);
+            String configuredSuiteLocal = resolve(suite, "testlookup.suite", cfg, "reporting.suite_name", null);
             if (configuredSuiteLocal == null) {
-                configuredSuiteLocal = resolve(suite, "testlookup.launch", "TESTLOOKUP_LAUNCH", null);
+                configuredSuiteLocal = launch;
             }
             if (configuredSuiteLocal == null) {
                 String testngSuiteName = suite.getName();
@@ -126,13 +144,15 @@ public class TestLookupListener implements ISuiteListener, ITestListener {
             }
             this.configuredSuite = configuredSuiteLocal;
 
+            // build / branch / commit / launch from testlookup.properties used to
+            // be dropped here: only suite params, -D and env were consulted.
             session = reporter.startSession(
                 SessionOptions.builder()
-                    .buildNumber(resolve(suite, "testlookup.build",  "TESTLOOKUP_BUILD",
+                    .buildNumber(resolve(suite, "testlookup.build",  cfg, "ci.build_number",
                                     "testng-" + System.currentTimeMillis()))
-                    .branch(     resolve(suite, "testlookup.branch", "TESTLOOKUP_BRANCH", null))
-                    .commitHash( resolve(suite, "testlookup.commit", "TESTLOOKUP_COMMIT", null))
-                    .launchName( resolve(suite, "testlookup.launch", "TESTLOOKUP_LAUNCH", null))
+                    .branch(     resolve(suite, "testlookup.branch", cfg, "ci.branch",      null))
+                    .commitHash( resolve(suite, "testlookup.commit", cfg, "ci.commit_hash", null))
+                    .launchName( launch)
                     .suiteName(  configuredSuiteLocal)
                     .build()
             );
@@ -239,24 +259,14 @@ public class TestLookupListener implements ISuiteListener, ITestListener {
     }
 
     /**
-     * Resolve a config value with precedence:
-     * suite parameter > JVM system property > environment variable > default.
+     * Resolve a config value with precedence: testng.xml suite parameter >
+     * {@link ConfigLoader} (JVM system property > environment variable >
+     * config file) > default.
      */
-    private static String resolve(ISuite suite, String paramName, String envVar, String defaultVal) {
-        // 1. Suite parameter (highest precedence for testng.xml config)
+    private static String resolve(ISuite suite, String paramName,
+                                  Map<String, Object> cfg, String cfgPath, String defaultVal) {
         String v = suite.getParameter(paramName);
         if (v != null && !v.isEmpty()) return v;
-
-        // 2. JVM system property
-        v = System.getProperty(paramName);
-        if (v != null && !v.isEmpty()) return v;
-
-        // 3. Environment variable
-        if (envVar != null) {
-            v = System.getenv(envVar);
-            if (v != null && !v.isEmpty()) return v;
-        }
-
-        return defaultVal;
+        return cfg == null ? defaultVal : ConfigLoader.getString(cfg, cfgPath, defaultVal);
     }
 }
