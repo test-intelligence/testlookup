@@ -91,9 +91,14 @@ async def test_a_new_install_starts_with_upload_on():
         async with engine.connect() as conn:
             tx = await conn.begin()
             try:
-                # Make this transaction look like a never-used database: the
-                # rows go away only inside the transaction, which is rolled back.
-                await conn.execute(text("TRUNCATE users, projects CASCADE"))
+                # Make this transaction look like a never-used database. Empty
+                # temporary tables named users and projects shadow the real ones
+                # (a session's temp schema is searched first), so the migration's
+                # NOT EXISTS checks see no user and no project. Not TRUNCATE ...
+                # CASCADE: feature_flags.updated_by references users, so the
+                # cascade emptied feature_flags too and the flag row was gone.
+                await conn.execute(text("CREATE TEMP TABLE users (id uuid)"))
+                await conn.execute(text("CREATE TEMP TABLE projects (id uuid)"))
                 await conn.execute(
                     text("UPDATE feature_flags SET enabled_global = false WHERE key = 'manual_upload'")
                 )
