@@ -25,6 +25,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import AuditDashboardPage from './AuditDashboardPage'
 import { expectTemplateHeader } from '@/test/expectTemplateHeader'
 import { ALL_PROJECTS_ID } from '../../store/projectStore'
+import { useAuthStore } from '@/store/authStore'
+import { exportAuditCSV } from '../../services/auditDashboardService'
 
 const mockUseAuditEvents = vi.fn()
 const mockUseProjectObservability = vi.fn()
@@ -177,5 +179,29 @@ describe('the settings page template (UX redesign P5)', () => {
     renderPage()
     expectTemplateHeader('Audit Dashboard', '/settings/audit')
     expect(screen.getByRole('button', { name: 'Export CSV' }).closest('[data-page-header]')).not.toBeNull()
+  })
+})
+
+describe('Export CSV is ADMIN on the API (GET /audit-dashboard/export)', () => {
+  // The page is QA lead; a QA lead's Export answered 403.
+  const signInAs = (role: string) => useAuthStore.setState({ user: { id: role, role } as never })
+
+  it('is disabled for a QA lead, naming the role it needs', () => {
+    signInAs('QA_LEAD')
+    renderPage()
+    const exportButton = screen.getByRole('button', { name: 'Export CSV' })
+    expect(exportButton).toBeDisabled()
+    expect(exportButton).toHaveAttribute('title', 'Admin role required')
+    fireEvent.click(exportButton)
+    expect(exportAuditCSV).not.toHaveBeenCalled()
+  })
+
+  it('exports for an admin', () => {
+    signInAs('ADMIN')
+    renderPage()
+    const exportButton = screen.getByRole('button', { name: 'Export CSV' })
+    expect(exportButton).toBeEnabled()
+    fireEvent.click(exportButton)
+    expect(exportAuditCSV).toHaveBeenCalledTimes(1)
   })
 })

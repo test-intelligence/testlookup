@@ -40,3 +40,13 @@ export function fetchCurrentUser(accessToken?: string): Promise<User> {
     accessToken ? { headers: { Authorization: `Bearer ${accessToken}` } } : undefined,
   )
 }
+
+/** What the sign-in page may offer. Public (`GET /api/v1/auth/options`): read before anyone signs in. */
+export interface AuthOptions {
+  registration_enabled: boolean
+}
+
+/** Quiet on failure: the page then offers sign-in only, which is the safe default. */
+export function getAuthOptions(): Promise<AuthOptions> {
+  return getData<AuthOptions>('/api/v1/auth/options', { suppressToast: true })
+}

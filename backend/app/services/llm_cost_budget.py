@@ -76,12 +76,21 @@ def current_period_bounds(now: Optional[datetime] = None) -> tuple[datetime, dat
 # ── Feature flag check ─────────────────────────────────────────────────────
 
 
-async def _feature_enabled(db: Optional[AsyncSession] = None) -> bool:
+async def _feature_enabled(
+    db: Optional[AsyncSession] = None, *, project_id: Optional[uuid.UUID] = None,
+) -> bool:
     """Short-circuit check: both entry points are no-ops unless the
-    ``llm_cost_budget`` flag is enabled. Never raises."""
+    ``llm_cost_budget`` flag is enabled. Never raises.
+
+    Asked for the project being metered or capped. The budget is per project
+    (``project_llm_quotas``), so a project allow-list on the flag means "meter
+    these projects"; asked without the project, every allow-listed project
+    read the flag as off and was neither metered nor capped. No user: the
+    meter runs inside the pipeline, on nobody's behalf.
+    """
     try:
         from app.services.feature_flags import is_enabled
-        return await is_enabled("llm_cost_budget", db=db)
+        return await is_enabled("llm_cost_budget", db=db, project_id=project_id)
     except Exception as exc:
         logger.debug("llm_cost_budget flag check failed", error=str(exc))
         return False
@@ -113,7 +122,7 @@ async def record_usage(
     except (TypeError, ValueError):
         return
 
-    if not await _feature_enabled():
+    if not await _feature_enabled(project_id=pid):
         return
 
     period_start, period_end = current_period_bounds()
@@ -239,7 +248,7 @@ async def check_and_apply_cap(
     except (TypeError, ValueError):
         return _NOOP_DECISION
 
-    if not await _feature_enabled():
+    if not await _feature_enabled(project_id=pid):
         return _NOOP_DECISION
 
     try:

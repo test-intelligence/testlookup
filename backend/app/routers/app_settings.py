@@ -398,9 +398,13 @@ async def get_ai_config(
 
     ml = await _ml_status()
     # Same resolver the gate uses, so this page cannot show "Active" for a
-    # feature that answers 503.
+    # feature that answers 503 everywhere. Deployment-wide on purpose
+    # (``any_scope``): this checkbox IS the flag's kill switch (PUT writes
+    # ``enabled_global``), and the page has no project to apply an allow-list
+    # to. Asked without a scope, a project allow-list rendered the switch as
+    # off, and saving the form then wrote it off for the allow-listed projects.
     from app.services.feature_flags import is_enabled
-    cfg["knowledge_rag_enabled"] = await is_enabled("knowledge_rag", db=db)
+    cfg["knowledge_rag_enabled"] = await is_enabled("knowledge_rag", db=db, any_scope=True)
 
     return AIConfigRead(
         llm_provider=cfg["llm_provider"],
@@ -652,8 +656,9 @@ async def update_ai_config(
     from app.services.feature_flags import invalidate_flag_cache, is_enabled
     if rag_requested is not None:
         await invalidate_flag_cache("knowledge_rag")
-    # Re-resolve rather than echo: report the flag as it now stands.
-    rag_enabled_after = await is_enabled("knowledge_rag", db=db)
+    # Re-resolve rather than echo: report the flag as it now stands -- the
+    # switch, deployment-wide, as GET /settings/ai reports it.
+    rag_enabled_after = await is_enabled("knowledge_rag", db=db, any_scope=True)
 
     # Re-resolve rather than echo the request: the response must report what
     # is actually in force after the ceiling, not what was asked for.

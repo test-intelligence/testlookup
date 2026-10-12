@@ -88,7 +88,7 @@ def _actor():
 
 
 def _patch(mp, *, enabled: bool, verdict: str = "GO", reasons=None):
-    async def _flag():
+    async def _flag(**_kw):
         return enabled
 
     async def _evaluate(db, release_id, phase_id, record=True, created_by_id=None):
@@ -136,7 +136,7 @@ async def test_a_flag_lookup_failure_does_not_block_a_release():
     A gate that starts refusing because the flag store is unreachable blocks
     shipping for a reason nobody can see or fix from the UI.
     """
-    async def _boom():
+    async def _boom(*_args, **_kw):
         raise RuntimeError("redis down")
 
     db = _Session()

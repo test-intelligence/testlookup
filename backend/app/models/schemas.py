@@ -3913,6 +3913,11 @@ class SSOLoginResponse(BaseModel):
     is_new_user: bool = False
 
 
+class SSOExchangeRequest(BaseModel):
+    """The one-time code the ACS hands the browser after an SSO sign-in."""
+    code: str = Field(..., min_length=1, max_length=128)
+
+
 # ── SCIM 2.0 Schemas ──────────────────────────────────────────
 
 SCIM_USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User"

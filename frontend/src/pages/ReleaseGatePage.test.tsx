@@ -8,6 +8,7 @@ import { releaseCouncilService, type ReleaseCouncilDecision } from '@/services/r
 import type { Release } from '@/types/releases'
 
 import ReleaseGatePage from './ReleaseGatePage'
+import { useAuthStore } from '@/store/authStore'
 
 const { mockProjectState } = vi.hoisted(() => ({
   mockProjectState: {
@@ -78,7 +79,7 @@ vi.mock('@/hooks/useRunIntelligence', async (importOriginal) => ({
 }))
 vi.mock('@/hooks/useAIConfig', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/hooks/useAIConfig')>(),
-  useAIConfig: () => ({ data: undefined }),
+  useAIConfig: () => ({ data: undefined, error: undefined, isLoading: false }),
 }))
 vi.mock('@/utils/errorReporting', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/utils/errorReporting')>(),
@@ -940,6 +941,8 @@ describe('ReleaseGatePage — verdict first (P4 item 6)', () => {
   })
 
   it('Override opens in the card and applies through the service', async () => {
+    // QA lead on the API (POST /release-readiness/{run}/override).
+    useAuthStore.setState({ user: { id: 'lead', role: 'QA_LEAD' } as never })
     const override = vi.spyOn(releaseCouncilService, 'override').mockResolvedValue(flooredDecision())
     const refresh = vi.fn().mockResolvedValue(undefined)
     await renderAt('/release-gate/run-1', flooredDecision(), refresh)
@@ -952,6 +955,23 @@ describe('ReleaseGatePage — verdict first (P4 item 6)', () => {
     await waitFor(() => expect(refresh).toHaveBeenCalled())
     override.mockRestore()
   })
+
+  it.each(['VIEWER', 'TESTER', 'QA_ENGINEER'])(
+    'Override is disabled for a %s, naming the role the API requires',
+    async (role) => {
+      // Every role was offered Override; below QA lead the API answered 403.
+      useAuthStore.setState({ user: { id: role, role } as never })
+      const override = vi.spyOn(releaseCouncilService, 'override')
+      await renderAt('/release-gate/run-1', flooredDecision())
+      const button = within(primary()).getByRole('button', { name: 'Override decision' })
+      expect(button).toBeDisabled()
+      expect(button).toHaveAttribute('title', 'QA Lead role required')
+      fireEvent.click(button)
+      expect(within(primary()).queryByRole('heading', { name: 'QA Lead Override' })).toBeNull()
+      expect(override).not.toHaveBeenCalled()
+      override.mockRestore()
+    },
+  )
 
   it.each([
     ['why', 'Why', () => screen.getByRole('heading', { name: /^(Decision Rationale|AI Reasoning)$/ })],

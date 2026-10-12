@@ -368,7 +368,7 @@ async def test_the_faithfulness_judge_runs_inside_the_cases_project_scope(monkey
     project_id = str(uuid.uuid4())
     seen: list = []
 
-    async def enabled(db=None):
+    async def enabled(db=None, **_kw):
         return True
 
     async def single_prompt():
@@ -393,7 +393,7 @@ async def test_the_retro_narrative_runs_inside_its_projects_scope(monkeypatch):
     project_id = uuid.uuid4()
     seen: list = []
 
-    async def enabled(db=None):
+    async def enabled(db=None, **_kw):
         return True
 
     async def digest(db, **kwargs):

@@ -14,13 +14,17 @@
  *    same person on a second machine to enable a destructive job they had
  *    already declined.
  *
- * Renders nothing once the policy is enabled or the prompt is dismissed.
+ * Renders nothing once the policy is enabled or the prompt is dismissed --
+ * and nothing while the `retention_activation_nudge` flag is off for this
+ * project and user. Migration 0145 seeds that flag ON as the prompt's kill
+ * switch, but nothing read it: turning it off left the prompt up.
  */
 import { useState } from 'react'
 import { Loader2, ShieldQuestion, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { previewRetentionPurge, updateRetentionPolicy } from '@/hooks/useRetentionPolicy'
 import { dismissUIPrompt, useUIDismissals } from '@/hooks/useUIDismissals'
+import { useFeatureFlagStatus } from '@/hooks/useFeatureFlags'
 import { RETENTION_ACTIVATION_NUDGE } from '@/services/uiDismissalService'
 import type { RetentionPolicy, RetentionPreview } from '@/types/retention'
 
@@ -39,15 +43,18 @@ export default function RetentionActivationNudge({
   onEnabled,
 }: Props) {
   const { data: dismissals, mutate: mutateDismissals } = useUIDismissals()
+  // The flag key is the prompt's own key. `undefined` while it loads: render
+  // nothing rather than flash a prompt the kill switch may be holding off.
+  const nudgeEnabled = useFeatureFlagStatus(RETENTION_ACTIVATION_NUDGE)
   const [preview, setPreview] = useState<RetentionPreview | null>(null)
   const [busy, setBusy] = useState(false)
 
   const dismissed = dismissals?.dismissed.includes(RETENTION_ACTIVATION_NUDGE) ?? false
 
-  // Nothing to ask if retention already runs, or if they already said no.
-  // While dismissals are still loading we render nothing rather than flashing
-  // a prompt the user has already dismissed.
-  if (policy.enabled || dismissed || !dismissals) return null
+  // Nothing to ask if retention already runs, if they already said no, or if
+  // the kill switch is off. While dismissals or the flag are still loading we
+  // render nothing rather than flashing a prompt that may not apply.
+  if (policy.enabled || dismissed || !dismissals || nudgeEnabled !== true) return null
 
   const handleReview = async () => {
     setBusy(true)

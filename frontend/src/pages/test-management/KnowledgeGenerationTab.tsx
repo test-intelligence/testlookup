@@ -18,7 +18,7 @@ export default function KnowledgeGenerationTab() {
 }
 
 function KnowledgeGenerationProject({ projectId }: { projectId: string | null }) {
-  const { data: ragStatus } = useRagStatus()
+  const { data: ragStatus } = useRagStatus(projectId)
   const { data: sourcesData, isLoading: sourcesLoading } = useKnowledgeSources(projectId)
 
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([])

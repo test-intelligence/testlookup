@@ -59,15 +59,34 @@ def _dummy_password_hash() -> str:
     return get_password_hash(_secrets.token_urlsafe(16))
 
 
+#: The 403 a closed sign-up answers; the login page reads the same switch from
+#: ``GET /auth/options`` and does not offer "Register" at all.
+REGISTRATION_DISABLED = {
+    "code": "registration_disabled",
+    "message": "Self-registration is turned off. Ask an administrator to create your account.",
+}
+
+
+@router.get("/options")
+async def auth_options() -> dict:
+    """What the sign-in page may offer. Public: it is read before anyone signs in."""
+    return {"registration_enabled": settings.REGISTRATION_ENABLED}
+
+
 @router.post("/register", response_model=UserResponse, status_code=201)
 async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
     """
-    Self-service registration.
+    Self-service registration, when the deployment allows it.
 
-    New accounts are created with the QA_ENGINEER role and
-    must_change_password=True so the user is prompted to set a permanent
-    password on their first login.
+    Off unless ``REGISTRATION_ENABLED`` (an open sign-up lets anyone who can
+    reach the server make an account). A new account is a VIEWER -- what the
+    sign-up form promises -- with no project membership and
+    must_change_password=True. It used to be QA_ENGINEER, which can create
+    API keys.
     """
+    if not settings.REGISTRATION_ENABLED:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=REGISTRATION_DISABLED)
+
     existing = await db.execute(
         select(User).where(
             (User.email == payload.email) | (User.username == payload.username)
@@ -84,13 +103,13 @@ async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
         username=payload.username,
         full_name=payload.full_name,
         hashed_password=get_password_hash(payload.password),
-        role=UserRole.QA_ENGINEER,
+        role=UserRole.VIEWER,
         must_change_password=True,
     )
     db.add(user)
     await db.commit()
     await db.refresh(user)
-    logger.info("New user self-registered: user_id=%s (role=QA_ENGINEER, must_change_password=True)", user.id)
+    logger.info("New user self-registered: user_id=%s (role=VIEWER, must_change_password=True)", user.id)
     return user
 
 

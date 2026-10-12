@@ -113,7 +113,7 @@ Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_curren
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: uuid.UUID, db: AsyncSession=Depends(get_db), _: User=Depends(require_project_access())
+project_id: uuid.UUID, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_project_access())
 ```
 
 ### Declared wire contract

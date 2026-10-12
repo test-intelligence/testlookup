@@ -818,7 +818,7 @@ async def resolve_commit_range(db: AsyncSession, run_id: uuid.UUID) -> dict[str,
                     return {"skipped": "cooldown", "source": existing.source}
 
             head = run.commit_hash
-            if head and await _post_allowed(read_db):
+            if head and await _post_allowed(read_db, project_id=run.project_id):
                 base_run, base_source = await resolve_base_anchor(read_db, run)
                 if base_run is not None:
                     base_commit = base_run.commit_hash

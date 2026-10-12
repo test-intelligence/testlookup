@@ -41,10 +41,19 @@ from app.services.digest_content_service import generate_digest
 logger = logging.getLogger("services.retro_digest")
 
 
-async def _feature_enabled(db: Optional[AsyncSession] = None) -> bool:
+async def _feature_enabled(
+    db: Optional[AsyncSession] = None, *, project_id: Optional[uuid.UUID] = None,
+) -> bool:
+    """``weekly_retro_digest`` for the project the retro is about.
+
+    Each retro is one project's, built by the digest dispatcher on nobody's
+    behalf (no user). Asked without the project, a project allow-list turned
+    every retro off while Settings > Digests (which asks with the active
+    project) offered the retro subscription as available.
+    """
     try:
         from app.services.feature_flags import is_enabled
-        return await is_enabled("weekly_retro_digest", db=db)
+        return await is_enabled("weekly_retro_digest", db=db, project_id=project_id)
     except Exception:
         return False
 
@@ -177,7 +186,7 @@ async def generate_weekly_retro(
     """
     from app.core.metrics import retro_digest_dispatch_total
 
-    if not await _feature_enabled(db):
+    if not await _feature_enabled(db, project_id=project_id):
         retro_digest_dispatch_total.labels(status="skipped").inc()
         return None
 

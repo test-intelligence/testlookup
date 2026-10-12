@@ -136,6 +136,110 @@ listening, stayed green.
   and that a test leaving a request behind fails. Mutation-checked: an
   uninstalled guard, a missing check, and a guard that records but lets the
   request through each fail it.
+## Unreleased - Self-registration closed by default; SAML sign-in works end to end
+
+Owner request 2026-10-11, from the open-source docs pass.
+
+Self-registration:
+- **Off by default** (`REGISTRATION_ENABLED=false`). `POST /api/v1/auth/register`
+  was always open (rate-limited only), so anyone who could reach the server
+  could make an account. While off it answers 403 `registration_disabled` and
+  writes nothing; admins add people under Settings > Users.
+- **A sign-up is a Viewer**, as the form always said. It was QA_ENGINEER,
+  which can create API keys.
+- `GET /api/v1/auth/options` (public) tells the sign-in page whether to offer
+  "Register"; it is hidden while off, and withdrawn if a sign-up is refused.
+- `seed_data.py` creates its users through the ORM: it registered them, which
+  now fails, and left `must_change_password` set, which the API has enforced
+  since the error-sweep release -- so the seed's own later calls were refused.
+
+SAML SP-initiated sign-in:
+- **`/sso/login-url` sends a real AuthnRequest** (HTTP-Redirect binding) whose
+  ID is the request id the ACS consumes. It sent the bare IdP URL, so the IdP's
+  response had no `InResponseTo` and was refused unless IdP-initiated SSO was
+  allowed. The page to return to rides as the RelayState: an app-relative path
+  only, checked again when it comes back.
+- **The IdP's browser POST lands in the app.** `/sso/acs` answered it with JSON
+  tokens. A browser now gets a 303 to `/sso/callback` with a one-time code in
+  the URL fragment; the new page exchanges it once, within a minute
+  (`POST /sso/exchange`), and returns to the page the sign-in started from.
+  Tokens never ride in a URL. A refusal returns to `/login` with a notice; API
+  clients still get JSON.
+- The SP metadata no longer advertises `/sso/slo`, which has no handler.
+
+## Unreleased - UI role gates match the API; flags evaluated with their project
+
+Owner request 2026-10-11, from the open-source docs pass: align the UI's role
+gates with the API, and evaluate server-side feature flags for the project
+(and user) they are about.
+
+UI controls the API refused (each now disabled with the role it needs, or not
+drawn where nearby controls already hide; each pinned by a test):
+- **Release-gate policies** (`/policies`): create, save, publish, deactivate
+  and simulate are ADMIN on the API; a QA lead was offered all five. A QA lead
+  now reads the policies: New Policy and Simulate say "Admin role required",
+  the editor is read-only, Deactivate is not drawn.
+- **Releases**: Delete (side panel and the release's page), a phase's remove
+  and a linked run's unlink are ADMIN; they were offered to QA leads.
+- **Suites**: Delete is QA lead (like Make default); it was drawn for a QA
+  engineer.
+- **Audit dashboard**: Export CSV is ADMIN; the page is QA lead.
+- **Email (SMTP)**: saving is ADMIN; a QA lead now sees the stored config
+  read-only (Send test email, QA lead on the API, stays).
+- **Release gate**: Override decision is QA lead; every role was offered it.
+- **Failures**: Mute (a quarantine proposal) is QA lead and Jira (file a
+  defect) is QA engineer; neither was gated.
+
+And one the other way round, where the API now does what the UI offers:
+- **An ADMIN revokes any user's API key** (incident response: a leaked CI key
+  minted by someone else). The Streaming API keys page lists every key bound
+  to the project for an admin and offers Revoke on each; the guard let the
+  admin through and the handler then looked the key up by the caller's own
+  `user_id`, answering 404. Everyone else still revokes only their own keys
+  (403). Every revocation now writes an `API_KEY_REVOKED` identity event
+  naming the actor (`actor_id`) and the key's owner (`user_id`).
+
+Server-side flags are evaluated for the project (and user) they are about.
+`feature_flags.is_enabled` applies a flag's project allow-list, role
+allow-list and rollout, but eleven server call sites asked it with no project
+and no user, so a flag allow-listed to one project was OFF for every project on
+the server while the UI (which asks with the active project and user) showed
+it ON. Each call site now passes the project it acts on, and the user where a
+request has one: `llm_cost_budget` (cap, reservation, meter),
+`flaky_auto_quarantine` (ingest tagging, manifest, manual proposal, the four
+nightly sweeps per row's project, stability), `release_compliance_pack`,
+`github_checks` (check runs, PR comments, CODEOWNERS, commit attribution),
+`gitlab` (MR notes, commit status), `outbound_webhooks` (emission, delivery,
+replay, the Jira webhook fallback), `perf_regression_detection` (spikes, the
+nightly baseline refresh per row's project), `rag_faithfulness_gate`,
+`weekly_retro_digest`, `release_phase_gate_enforcement` (per release project;
+still no query when it is off for everyone) and `knowledge_rag` (sources,
+retrieval, generation, `/rag/status?project_id=`, which the generate tab now
+passes).
+- `is_enabled(..., any_scope=True)` is the deliberate deployment-wide
+  question: on when the kill switch is on and rollout is above zero, without
+  applying allow-lists. A sweep uses it to exit early before asking per row;
+  the RAG connector test and domain allow-list use it (one per deployment);
+  and `GET/PUT /settings/ai` report the RAG switch with it -- asked unscoped,
+  a project allow-list rendered the switch as off and saving the page wrote it
+  off for the allow-listed projects.
+- A background job has no user, so a ROLE allow-list still turns its work off
+  (the meter, sweeps, posts after ingest); the flag's own docstring now says so.
+- The retention activation prompt honours its kill switch,
+  `retention_activation_nudge` (seeded ON by migration 0145, read by nothing):
+  off, the prompt is not shown.
+
+Tests: `ReleaseGatePage.test.tsx` made real requests (`GET /settings/ai/mode`,
+`GET /scoring-model`); a 401 from whatever listened on the dev port logged the
+test user out mid-test, so a role set by a test did not reliably survive the
+render. Both reads are mocked there now, as are the retention nudge and the
+storage panel in `RetentionPage.test.tsx` (each has its own tests); a request
+recorder over every touched test file now records none.
+
+Rollout buckets hash with SHA-256 (was SHA-1). The hash only spreads ids
+evenly, but CodeQL flagged a user id flowing into SHA-1 once the flags were
+asked with their user. A flag at a partial rollout (1-99%) re-buckets its
+users once.
 
 ## Unreleased - Error sweeps: every page, every action, every GET endpoint
 

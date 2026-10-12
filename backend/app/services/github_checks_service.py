@@ -121,19 +121,34 @@ class GitHubChecksDisabledError(RuntimeError):
 # ── Feature-flag + offline gate ────────────────────────────────────────────
 
 
-async def _post_allowed(db: Optional[AsyncSession] = None) -> bool:
+async def _post_allowed(
+    db: Optional[AsyncSession] = None,
+    *,
+    project_id: Optional[uuid.UUID] = None,
+    user: Optional[User] = None,
+    any_scope: bool = False,
+) -> bool:
     """Compound gate: feature flag ON and offline-mode OFF.
 
     ``AI_OFFLINE_MODE`` is the hard kill switch for every outbound
     integration — we respect it regardless of feature flag state so
     air-gapped customers don't accidentally egress traffic when an
     admin toggles ``github_checks`` on.
+
+    The flag is asked for the project whose GitHub integration would be
+    called (and the user, on a request). Asked without it, a project
+    allow-list on ``github_checks`` turned every post off. A caller that has
+    only a run id exits early with ``any_scope=True`` (off for everyone) and
+    asks again with the run's project once it has loaded the run.
     """
     if settings.AI_OFFLINE_MODE:
         return False
     try:
         from app.services.feature_flags import is_enabled
-        return await is_enabled("github_checks", db=db)
+        return await is_enabled(
+            "github_checks", db=db, project_id=project_id, user=user,
+            any_scope=any_scope,
+        )
     except Exception as exc:
         logger.debug("github_checks flag check failed", error=str(exc))
         return False
@@ -802,7 +817,7 @@ async def post_check_run_for_run(run_id: uuid.UUID) -> Optional[dict[str, Any]]:
     The caller (ingestion_pipeline.finalize_run) treats every non-None
     return value as informational and never fails the pipeline on it.
     """
-    if not await _post_allowed():
+    if not await _post_allowed(any_scope=True):
         return {"skipped": "feature_flag_off_or_offline_mode"}
 
     async with AsyncSessionLocal() as db:
@@ -810,6 +825,8 @@ async def post_check_run_for_run(run_id: uuid.UUID) -> Optional[dict[str, Any]]:
         run = run_result.scalar_one_or_none()
         if run is None:
             return {"skipped": "run_not_found"}
+        if not await _post_allowed(db, project_id=run.project_id):
+            return {"skipped": "feature_flag_off_or_offline_mode"}
         if not run.commit_hash or not _SHA_RE.match(run.commit_hash):
             return {"skipped": "no_full_commit_sha"}
 

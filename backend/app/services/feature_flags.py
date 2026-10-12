@@ -127,8 +127,14 @@ def _legacy_env_fallback(key: str) -> Optional[bool]:
 
 
 def _rollout_bucket(key: str, bucket_input: str) -> int:
-    """Deterministic 0-99 bucket for rollout_percent gating."""
-    digest = hashlib.sha1(f"{key}:{bucket_input}".encode()).hexdigest()
+    """Deterministic 0-99 bucket for rollout_percent gating.
+
+    SHA-256, not SHA-1: the hash only spreads ids evenly (nothing here is a
+    secret), but a user or project id flowing into SHA-1 is flagged as weak
+    hashing of sensitive data, and SHA-256 spreads them as well. Changing the
+    hash moved partial rollouts' buckets once (2026-10-11).
+    """
+    digest = hashlib.sha256(f"{key}:{bucket_input}".encode()).hexdigest()
     return int(digest[:8], 16) % 100
 
 
@@ -137,10 +143,19 @@ def _evaluate(
     *,
     project_id: Optional[uuid.UUID],
     user: Optional[User],
+    any_scope: bool = False,
 ) -> bool:
-    """Pure evaluation — no I/O. Returns the gated enabled state."""
+    """Pure evaluation — no I/O. Returns the gated enabled state.
+
+    ``any_scope`` answers "is this on for at least one possible caller": the
+    kill switch is on and the rollout is above zero. The allow-lists are not
+    applied because some project or role may pass them (see ``is_enabled``).
+    """
     if not flag.get("enabled_global"):
         return False
+
+    if any_scope:
+        return int(flag.get("rollout_percent", 100) or 0) > 0
 
     # Project allow-list
     enabled_projects = flag.get("enabled_projects") or []
@@ -200,14 +215,29 @@ async def is_enabled(
     project_id: Optional[uuid.UUID] = None,
     user: Optional[User] = None,
     fresh: bool = False,
+    any_scope: bool = False,
 ) -> bool:
     """Resolve a feature flag — the single public entry point.
+
+    **Pass the project the operation is about, and the user when there is
+    one.** A flag with a project or role allow-list is OFF for a call that
+    names neither: ``is_enabled("x")`` answers for "no project, no user", which
+    no allow-list contains. The UI asks with the active project and the signed
+    in user (``GET /feature-flags/{key}/status``), so a server call site that
+    leaves them out shows a feature as on in the UI and runs it as off.
 
     Args:
         key: The flag key (snake_case, e.g. ``"cypress_ingest"``).
         db: Optional session. If omitted, opens a short-lived session.
-        project_id: Current request's project scope, if any.
-        user: Current user, if any.
+        project_id: The project the operation belongs to, if any.
+        user: The user performing it, if any (a background job has none, so a
+            role allow-list turns a userless operation off).
+        any_scope: Answer whether the flag is on for at least one possible
+            caller -- the kill switch is on and the rollout is above zero --
+            without applying the project or role allow-lists. For a question
+            about the deployment, never one project: a sweep's early exit
+            before it asks again per row's project, or a settings page showing
+            the switch. Never use it to decide work done for one project.
     """
     # Redis is deliberately the only cache tier. A process-local cache cannot
     # be invalidated reliably across API replicas and prefork Celery workers;
@@ -220,7 +250,8 @@ async def is_enabled(
             value = bool(fallback) if fallback is not None else False
             return _counted(key, value, "default")
         return _counted(
-            key, _evaluate(redis_flag, project_id=project_id, user=user)
+            key,
+            _evaluate(redis_flag, project_id=project_id, user=user, any_scope=any_scope),
         )
 
     # Postgres is authoritative on a shared-cache miss.
@@ -246,7 +277,9 @@ async def is_enabled(
             return _counted(key, fallback, "default")
         return _counted(key, False, "default")
 
-    return _counted(key, _evaluate(flag_dict, project_id=project_id, user=user))
+    return _counted(
+        key, _evaluate(flag_dict, project_id=project_id, user=user, any_scope=any_scope)
+    )
 
 
 async def invalidate_flag_cache(key: str) -> None:

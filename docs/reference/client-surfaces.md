@@ -212,6 +212,7 @@ path: string
 { path: 'policies/:policyId', component: PolicyEditorPage },
 { path: 'ownership', component: OwnershipEditorPage },
 <Route path="/login" element={<LoginPage />} />
+<Route path="/sso/callback" element={<SSOCallbackPage />} />
 <Route path="/__charts" element={renderLazyRoute(ChartGalleryPage)} />
 <Route path="/__primitives" element={renderLazyRoute(PrimitivesPage)} />
 <Route path="/__ux-primitives" element={renderLazyRoute(UxPrimitivesPage)} />

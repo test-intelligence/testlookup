@@ -19,6 +19,7 @@ import Disclosure from '@/components/ui/Disclosure'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import { useReleaseCouncil } from '@/hooks/useReleaseCouncil'
 import { useAIConfig, isLLMAvailable } from '@/hooks/useAIConfig'
+import { usePermissions } from '@/hooks/usePermissions'
 import { releaseCouncilService } from '@/services/releaseCouncilService'
 import type { OverrideAuditEntry, ReleaseCouncilDecision } from '@/services/releaseCouncilService'
 import { useRuns } from '@/hooks/useRuns'
@@ -144,6 +145,9 @@ export default function ReleaseGatePage() {
   const { data: aiConfig } = useAIConfig()
   const llmMode = isLLMAvailable(aiConfig)
   const [tab, setTab] = useTabParam<GateTab>(GATE_TABS, 'why')
+  // Overriding the decision is QA lead on the API
+  // (`POST /release-readiness/{run}/override`); every role was offered it.
+  const { isQaLead: canOverride } = usePermissions()
   const [overrideMode, setOverrideMode] = useState(false)
   const [overrideRec, setOverrideRec] = useState<Recommendation>('GO')
   const [overrideReason, setOverrideReason] = useState('')
@@ -512,14 +516,16 @@ export default function ReleaseGatePage() {
             <button
               type="button"
               onClick={() => setOverrideMode(true)}
-              className="btn-secondary ml-auto text-xs"
+              disabled={!canOverride}
+              title={canOverride ? undefined : 'QA Lead role required'}
+              className="btn-secondary ml-auto text-xs disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Override decision
             </button>
           )}
         </div>
 
-        {overrideMode && (
+        {overrideMode && canOverride && (
           <div className="mt-3 space-y-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)] p-3">
             <h3 className="flex items-center gap-2 text-sm font-semibold text-[var(--color-text)]">
               <Shield className="w-4 h-4 text-[var(--color-text-muted)]" />

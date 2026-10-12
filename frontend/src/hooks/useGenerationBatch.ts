@@ -35,10 +35,18 @@ export function useKnowledgeSources(projectId: string | null, params?: Record<st
   )
 }
 
-export function useRagStatus() {
+/**
+ * Whether Knowledge RAG is on for `projectId` (and the signed-in user).
+ *
+ * Keyed per project: the `knowledge_rag` flag can be allow-listed to some
+ * projects, and an unscoped status said "not enabled" for every one of them
+ * while their generate calls would have worked (or, the other way round,
+ * showed the form to a project the gate refuses).
+ */
+export function useRagStatus(projectId: string | null) {
   return useSWR(
-    'rag-status',
-    () => ragService.getStatus(),
+    ['rag-status', projectId],
+    () => ragService.getStatus(projectId),
     { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
   )
 }

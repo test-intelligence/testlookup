@@ -973,7 +973,7 @@ async def _emit_create_requested(
     outbound-webhook subsystem instead of calling Jira."""
     from app.services.webhook_service import _post_allowed, emit_event
 
-    if not await _post_allowed():
+    if not await _post_allowed(project_id=project_id, user=actor):
         raise HTTPException(
             status_code=503,
             detail=(
@@ -1056,12 +1056,19 @@ def _metadata_cache_clear() -> None:
     _metadata_cache["data"] = None
 
 
-async def _webhook_target_available(db: AsyncSession, project_id: _uuid.UUID) -> bool:
-    """True when the webhook fallback would actually deliver something."""
+async def _webhook_target_available(
+    db: AsyncSession, project_id: _uuid.UUID, *, user: Optional[User] = None,
+) -> bool:
+    """True when the webhook fallback would actually deliver something.
+
+    Asks ``outbound_webhooks`` exactly as ``_emit_create_requested`` will: for
+    this project and this user, so the dialog cannot offer a target the
+    submit then refuses.
+    """
     from app.models.postgres import WebhookSubscription
     from app.services.webhook_service import _post_allowed
 
-    if not await _post_allowed():
+    if not await _post_allowed(project_id=project_id, user=user):
         return False
     result = await db.execute(
         select(WebhookSubscription).where(
@@ -1075,7 +1082,9 @@ async def _webhook_target_available(db: AsyncSession, project_id: _uuid.UUID) ->
     return False
 
 
-async def get_metadata(db: AsyncSession, project_id: str) -> dict[str, Any]:
+async def get_metadata(
+    db: AsyncSession, project_id: str, *, user: Optional[User] = None,
+) -> dict[str, Any]:
     """Available Jira projects + issue types for the dialog pickers.
 
     Graceful — never raises for an unreachable/unconfigured Jira; the
@@ -1086,7 +1095,7 @@ async def get_metadata(db: AsyncSession, project_id: str) -> dict[str, Any]:
     pid = _uuid.UUID(str(project_id))
     cfg = await resolve_jira_config(db)
     reason = availability_reason(cfg)
-    webhook_available = await _webhook_target_available(db, pid)
+    webhook_available = await _webhook_target_available(db, pid, user=user)
 
     base = {
         "available": False,

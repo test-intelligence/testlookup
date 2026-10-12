@@ -866,6 +866,35 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
     expect(suspects).toHaveAttribute('title', expect.stringMatching(/No failed run in this window/))
   })
 
+  // Docs pass 2026-10-11: Mute proposes a quarantine (POST /quarantine, QA
+  // lead) and Jira files a defect (POST /projects/{id}/defects/jira, QA
+  // engineer). Both were offered to every role and answered 403 below them.
+  it.each([
+    ['VIEWER', 'QA Lead role required', 'QA Engineer role required'],
+    ['TESTER', 'QA Lead role required', 'QA Engineer role required'],
+    ['QA_ENGINEER', 'QA Lead role required', null],
+    ['QA_LEAD', null, null],
+  ] as const)('a %s gets Mute and Jira only where the API lets them', async (role, muteReason, jiraReason) => {
+    useAuthStore.setState({ user: { id: role, role } as never })
+    await seedFailingScenario()
+    renderPage()
+
+    const mute = await screen.findByRole('button', { name: 'Mute test checkout_flow' })
+    const jira = screen.getByRole('button', { name: 'Create Jira issue for checkout_flow' })
+    if (muteReason) {
+      expect(mute).toBeDisabled()
+      expect(mute).toHaveAttribute('title', muteReason)
+    } else {
+      expect(mute).toBeEnabled()
+    }
+    if (jiraReason) {
+      expect(jira).toBeDisabled()
+      expect(jira).toHaveAttribute('title', jiraReason)
+    } else {
+      expect(jira).toBeEnabled()
+    }
+  })
+
   it('Suspects opens the ranked suspect commits in a side panel beside the table, and closes it', async () => {
     await seedFailingScenario()
     const { useRuns } = await import('@/hooks/useRuns')
@@ -896,6 +925,7 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
   // Browser E2E pass (2026-10-08): every quarantine endpoint answers 503 while
   // the flag is off; Mute opened a dialog that could only fail.
   it('with quarantine off, Mute is disabled and says how to turn it on', async () => {
+    useAuthStore.setState({ user: { id: 'lead', role: 'QA_LEAD' } as never })  // Mute is QA lead on the API
     flags.quarantineOn = false
     try {
       await seedFailingScenario()
@@ -912,6 +942,7 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
   })
 
   it('opens the mute modal and posts a quarantine proposal with the typed reason', async () => {
+    useAuthStore.setState({ user: { id: 'lead', role: 'QA_LEAD' } as never })  // Mute is QA lead on the API
     const { flakyQuarantineService } = await import('@/services/flakyQuarantineService')
     ;(flakyQuarantineService.propose as ReturnType<typeof vi.fn>).mockResolvedValue({ status: 'PROPOSED' })
 
@@ -946,6 +977,7 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
   })
 
   it('disables "Mute test" with a tooltip when the top failing test has no fingerprint', async () => {
+    useAuthStore.setState({ user: { id: 'lead', role: 'QA_LEAD' } as never })  // Mute is QA lead on the API
     await seedFailingScenario({
       topFailingItem: { test_name: 'no_fp_test', fail_count: 3 } as never,
     })

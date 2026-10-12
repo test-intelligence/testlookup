@@ -46,12 +46,43 @@ async def test_me_rejects_inactive_user(client, auth_as):
 # ── /register ───────────────────────────────────────────────────────────────
 
 
-async def test_register_creates_qa_engineer_with_must_change_password(
-    client, override_db, fake_db
+@pytest.fixture
+def registration_open(monkeypatch):
+    """Self-registration is off by default; these tests open it explicitly."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "REGISTRATION_ENABLED", True)
+
+
+async def test_register_is_refused_while_registration_is_off(client, override_db, fake_db):
+    """The default: an open sign-up let anyone who could reach the server make an
+    account (as QA_ENGINEER, which can create API keys). Nothing is read or written."""
+    payload = {"email": "newuser@example.com", "username": "newuser", "full_name": "N", "password": "ValidPass123!"}
+    resp = await client.post("/api/v1/auth/register", json=payload)
+
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["code"] == "registration_disabled"
+    assert fake_db.committed == 0
+    assert fake_db.added == []
+
+
+async def test_auth_options_tell_the_sign_in_page_whether_to_offer_register(client, monkeypatch):
+    from app.core.config import settings
+
+    resp = await client.get("/api/v1/auth/options")  # public: no token
+    assert resp.status_code == 200
+    assert resp.json() == {"registration_enabled": False}
+
+    monkeypatch.setattr(settings, "REGISTRATION_ENABLED", True)
+    assert (await client.get("/api/v1/auth/options")).json() == {"registration_enabled": True}
+
+
+async def test_register_creates_a_viewer_with_must_change_password(
+    client, override_db, fake_db, registration_open
 ):
     """
-    Self-registration always creates a QA_ENGINEER with must_change_password=True.
-    See backend/CLAUDE.md "self-registration flow".
+    When the deployment allows sign-up, a new account is a VIEWER -- what the form
+    promises -- with must_change_password=True. It was QA_ENGINEER.
     """
     # First db.execute: lookup of existing user (None → not registered)
     fake_db.set_execute_results([
@@ -73,12 +104,12 @@ async def test_register_creates_qa_engineer_with_must_change_password(
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert body["email"] == "newuser@example.com"
-    assert body["role"] in {"QA_ENGINEER", UserRole.QA_ENGINEER.value}
+    assert body["role"] in {"VIEWER", UserRole.VIEWER.value}
     assert body["must_change_password"] is True
     assert fake_db.committed >= 1  # the new User was committed
 
 
-async def test_register_rejects_duplicate_email(client, override_db, fake_db):
+async def test_register_rejects_duplicate_email(client, override_db, fake_db, registration_open):
     """If a user already exists with the same email/username, return 409."""
     existing = make_user()
     fake_db.set_execute_results([fake_execute_result(scalar=existing)])

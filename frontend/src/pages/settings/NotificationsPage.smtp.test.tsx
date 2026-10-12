@@ -17,6 +17,10 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
 import { SmtpConfigCard } from './NotificationsPage'
+import { useAuthStore } from '@/store/authStore'
+
+// Saving SMTP is ADMIN on the API; these tests edit the form as an admin.
+const signInAs = (role: string) => useAuthStore.setState({ user: { id: role, role } as never })
 
 vi.mock('@/services/appSettingsService', () => ({
   appSettingsService: {
@@ -37,7 +41,10 @@ const CONFIG = {
 }
 
 describe('SmtpConfigCard when its config cannot be read', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    signInAs('ADMIN')
+  })
 
   it('hides the form and offers no Save when the GET fails', async () => {
     const { appSettingsService } = await import('@/services/appSettingsService')
@@ -112,7 +119,10 @@ describe('SmtpConfigCard when its config cannot be read', () => {
 })
 
 describe('SmtpConfigCard: a saved password reads as saved, and the TLS mode matches the port (owner report 2026-10-10)', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    signInAs('ADMIN')
+  })
 
   it('says the password is saved, with Clear as a quiet action, not a red link that reads as an error', async () => {
     // "Unable to save the SMTP password, it returns clear password error": the
@@ -148,5 +158,45 @@ describe('SmtpConfigCard: a saved password reads as saved, and the TLS mode matc
     fireEvent.change(port, { target: { value: '587' } })
     expect(screen.getByTestId('smtp-tls-mode')).toHaveTextContent('STARTTLS')
     expect(screen.queryByTestId('smtp-tls-mismatch')).toBeNull()
+  })
+})
+
+describe('SmtpConfigCard for a QA lead: Save is ADMIN on the API (PUT /settings/smtp)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    signInAs('QA_LEAD')
+  })
+
+  it('shows the stored config read-only, Save disabled with the role it needs, and keeps Send test email', async () => {
+    // A QA lead reads the config and may send a test (both QA lead on the
+    // API); their Save answered 403.
+    const { appSettingsService } = await import('@/services/appSettingsService')
+    ;(appSettingsService.getSmtpConfig as ReturnType<typeof vi.fn>).mockResolvedValue(CONFIG)
+
+    render(<SmtpConfigCard />)
+
+    const host = await screen.findByDisplayValue('smtp.corp.example.com')
+    expect(host).toBeDisabled()
+    expect(screen.getByDisplayValue('465')).toBeDisabled()
+    expect(screen.getByRole('switch', { name: 'Enable SMTP email delivery' })).toBeDisabled()
+    const save = screen.getByRole('button', { name: /^save$/i })
+    expect(save).toBeDisabled()
+    expect(save).toHaveAttribute('title', 'Admin role required')
+    expect(screen.getByRole('button', { name: /send test email/i })).toBeEnabled()
+    fireEvent.click(save)
+    expect(appSettingsService.updateSmtpConfig).not.toHaveBeenCalled()
+  })
+
+  it('an admin gets the same form editable (the control)', async () => {
+    signInAs('ADMIN')
+    const { appSettingsService } = await import('@/services/appSettingsService')
+    ;(appSettingsService.getSmtpConfig as ReturnType<typeof vi.fn>).mockResolvedValue(CONFIG)
+
+    render(<SmtpConfigCard />)
+
+    expect(await screen.findByDisplayValue('smtp.corp.example.com')).toBeEnabled()
+    const save = screen.getByRole('button', { name: /^save$/i })
+    expect(save).toBeEnabled()
+    expect(save).not.toHaveAttribute('title')
   })
 })

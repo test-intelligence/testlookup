@@ -24,9 +24,12 @@ import type {
 // ── Mocks ────────────────────────────────────────────────────────────────────
 const mockLogin = vi.fn<(u: string, p: string) => Promise<LoginResponse>>()
 const mockFetchUser = vi.fn()
+// GET /auth/options: self-registration is off unless the server says otherwise.
+const mockAuthOptions = vi.fn(async () => ({ registration_enabled: false }))
 vi.mock('@/services/authService', () => ({
   loginWithPassword: (u: string, p: string) => mockLogin(u, p),
   fetchCurrentUser: (t?: string) => mockFetchUser(t),
+  getAuthOptions: () => mockAuthOptions(),
 }))
 
 const mockEnrollStart = vi.fn<(t?: string) => Promise<MfaEnrollStartResponse>>()
@@ -59,13 +62,16 @@ vi.mock('react-hot-toast', () => ({
   default: { success: vi.fn(), error: vi.fn() },
 }))
 
+const mockSSOStatus = vi.fn<() => Promise<unknown>>(() => Promise.reject(new Error('sso off')))
 vi.mock('../services/ssoService', () => ({
-  getSSOStatus: () => Promise.reject(new Error('sso off')),
+  getSSOStatus: () => mockSSOStatus(),
 }))
 
-// The real `api` instance is still imported by LoginPage (dev-login / SSO).
+// The real `api` instance is still imported by LoginPage (dev-login / SSO / register).
+const mockApiPost = vi.fn()
+const mockApiGet = vi.fn()
 vi.mock('../services/api', () => ({
-  api: { post: vi.fn(), get: vi.fn() },
+  api: { post: (...args: unknown[]) => mockApiPost(...args), get: (...args: unknown[]) => mockApiGet(...args) },
 }))
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -317,18 +323,89 @@ describe('LoginPage — challenge step behaviour', () => {
   })
 })
 
-describe('LoginPage — register password confirmation', () => {
+describe('LoginPage — self-registration follows the server', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
-  function openRegister() {
+  it('offers no Register while the server has it off (the default)', async () => {
+    mockAuthOptions.mockResolvedValue({ registration_enabled: false })
     renderPage()
-    fireEvent.click(screen.getByRole('button', { name: /^register$/i }))
+    await waitFor(() => expect(mockAuthOptions).toHaveBeenCalled())
+    await Promise.resolve()
+    expect(screen.queryByRole('button', { name: /^register$/i })).toBeNull()
+    expect(screen.queryByText(/don't have an account/i)).toBeNull()
+  })
+
+  it('offers Register when the server allows sign-up', async () => {
+    mockAuthOptions.mockResolvedValue({ registration_enabled: true })
+    renderPage()
+    expect(await screen.findByRole('button', { name: /^register$/i })).toBeInTheDocument()
+  })
+
+  it('a sign-up refused because registration was turned off says so once and stops offering it', async () => {
+    const toast = (await import('react-hot-toast')).default
+    mockAuthOptions.mockResolvedValue({ registration_enabled: true })
+    mockApiPost.mockRejectedValue({
+      response: { status: 403, data: { detail: { code: 'registration_disabled', message: 'Self-registration is turned off. Ask an administrator.' } } },
+    })
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: /^register$/i }))
+    setValue(screen.getByLabelText(/^email/i), 'new@example.com')
+    setValue(screen.getByLabelText(/^username/i), 'newbie')
+    setValue(screen.getByLabelText(/^password \*/i), 'hunter22!')
+    setValue(screen.getByLabelText(/confirm password/i), 'hunter22!')
+    fireEvent.click(screen.getByRole('button', { name: /create account/i }))
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Self-registration is turned off. Ask an administrator.'))
+    expect(mockApiPost).toHaveBeenCalledWith('/api/v1/auth/register', expect.any(Object), { suppressToast: true })
+    expect(screen.queryByRole('button', { name: /^register$/i })).toBeNull()
+    expect(screen.getByRole('button', { name: /log in/i })).toBeInTheDocument()
+  })
+})
+
+describe('LoginPage — single sign-on', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('asks for a login URL that returns to the page the sign-in started from', async () => {
+    mockSSOStatus.mockResolvedValue({ sso_enabled: true, has_active_config: true, enforcement_mode: null })
+    mockApiGet.mockResolvedValue({ data: { redirect_url: 'https://idp.example/sso?SAMLRequest=x' } })
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/login', state: { from: { pathname: '/runs/r1', search: '?tab=analysis' } } }]}>
+        <LoginPage />
+      </MemoryRouter>,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: /sign in with sso/i }))
+    await waitFor(() =>
+      expect(mockApiGet).toHaveBeenCalledWith('/api/v1/sso/login-url', { params: { next: '/runs/r1?tab=analysis' } }),
+    )
+  })
+
+  it('a refused SSO sign-in comes back with a notice, not a blank form', async () => {
+    render(
+      <MemoryRouter initialEntries={['/login?sso_error=1']}>
+        <LoginPage />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByRole('alert')).toHaveTextContent(/single sign-on did not complete/i)
+  })
+})
+
+describe('LoginPage — register password confirmation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockAuthOptions.mockResolvedValue({ registration_enabled: true })
+  })
+
+  async function openRegister() {
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: /^register$/i }))
   }
 
-  it('flags a confirm-password mismatch inline and ties the error to the field', () => {
-    openRegister()
+  it('flags a confirm-password mismatch inline and ties the error to the field', async () => {
+    await openRegister()
 
     const confirm = screen.getByLabelText(/confirm password/i)
     // No error before the user has typed a confirmation.
@@ -346,8 +423,8 @@ describe('LoginPage — register password confirmation', () => {
     expect(confirm).toHaveAttribute('aria-describedby', 'reg-confirm-error')
   })
 
-  it('clears the mismatch error once the two passwords agree', () => {
-    openRegister()
+  it('clears the mismatch error once the two passwords agree', async () => {
+    await openRegister()
 
     const confirm = screen.getByLabelText(/confirm password/i)
     setValue(screen.getByLabelText(/^password \*/i), 'hunter22')

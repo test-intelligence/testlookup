@@ -29,3 +29,21 @@ export function returnPathFrom(from: SavedLocation | null | undefined): string {
   const hash = typeof from?.hash === 'string' && from.hash.startsWith('#') ? from.hash : ''
   return `${pathname}${search}${hash}`
 }
+
+/**
+ * The same rule for a path that arrives as a string: the SSO callback's `next`,
+ * which round-tripped through the identity provider as the SAML RelayState.
+ * The server already drops anything that is not app-relative; this is the
+ * browser's own check before it navigates.
+ */
+export function returnPathFromString(raw: string | null | undefined): string {
+  if (typeof raw !== 'string' || !raw.startsWith('/')) return DEFAULT_RETURN_PATH
+  try {
+    const base = 'https://app.invalid'
+    const url = new URL(raw, base)
+    if (url.origin !== base) return DEFAULT_RETURN_PATH
+    return returnPathFrom({ pathname: url.pathname, search: url.search, hash: url.hash })
+  } catch {
+    return DEFAULT_RETURN_PATH
+  }
+}

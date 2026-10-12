@@ -10,7 +10,7 @@ test.describe('First-time password reset — live revocation contract', () => {
     if (!adminPassword) throw new Error('E2E_ADMIN_PASSWORD is required')
 
     const marker = `exp-m01-${Date.now().toString().slice(-10)}`
-    const initialPassword = 'Tmp-M01-Start-9!'
+    let initialPassword: string
     const permanentPassword = 'Tmp-M01-Permanent-9!'
     let adminToken = ''
     let userId = ''
@@ -23,14 +23,16 @@ test.describe('First-time password reset — live revocation contract', () => {
       expect(adminLogin.status()).toBe(200)
       adminToken = (await adminLogin.json()).access_token
 
-      const registration = await request.post(`${BACKEND_URL}/api/v1/auth/register`, {
-        data: {
-          email: `${marker}@example.com`, username: marker,
-          full_name: 'M01 Synthetic User', password: initialPassword,
-        },
+      // An admin creates the account (self-registration is off by default);
+      // its one-time temporary password is the first sign-in's.
+      const created = await request.post(`${BACKEND_URL}/api/v1/users`, {
+        headers: { Authorization: `Bearer ${adminToken}` },
+        data: { email: `${marker}@example.com`, username: marker, full_name: 'M01 Synthetic User', role: 'QA_ENGINEER' },
       })
-      expect(registration.status()).toBe(201)
-      userId = (await registration.json()).id
+      expect(created.status()).toBe(201)
+      const createdBody = await created.json()
+      userId = createdBody.id
+      initialPassword = createdBody.temp_password
 
       const project = await request.post(`${BACKEND_URL}/api/v1/projects`, {
         headers: { Authorization: `Bearer ${adminToken}` },

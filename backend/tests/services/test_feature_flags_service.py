@@ -130,6 +130,16 @@ def test_rollout_bucket_is_deterministic():
     assert 0 <= a < 100
 
 
+def test_rollout_bucket_hashes_with_sha256_not_sha1():
+    """The bucket is SHA-256 of "key:input" (CodeQL flagged a user id hashed with SHA-1)."""
+    import hashlib
+
+    expected = int(hashlib.sha256(b"cypress_ingest:user-123").hexdigest()[:8], 16) % 100
+    assert ff._rollout_bucket("cypress_ingest", "user-123") == expected
+    legacy = int(hashlib.sha1(b"cypress_ingest:user-123").hexdigest()[:8], 16) % 100
+    assert expected != legacy  # the pin would not pass on the old hash
+
+
 def test_rollout_bucket_varies_by_key():
     a = ff._rollout_bucket("cypress_ingest", "user-123")
     b = ff._rollout_bucket("playwright_ingest", "user-123")

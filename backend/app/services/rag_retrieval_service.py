@@ -10,7 +10,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.postgres import KnowledgeChunk, KnowledgeSource
+from app.models.postgres import KnowledgeChunk, KnowledgeSource, User
 from app.services.knowledge_chunking_service import _get_or_create_knowledge_collection
 
 logger = structlog.get_logger(__name__)
@@ -36,13 +36,16 @@ async def retrieve_chunks(
     source_ids: Optional[list[uuid.UUID]] = None,
     top_k: int = 10,
     min_score: float = 0.0,
+    user: Optional[User] = None,
 ) -> list[RetrievedChunk]:
     """
     Query ChromaDB knowledge_chunks collection and return ranked results
     with citation metadata. Filters by project scope and optionally by source_ids.
     """
     from app.services.feature_flags import is_enabled
-    if not await is_enabled("knowledge_rag"):
+    # The chunks are this project's, retrieved for ``user``: ask for both, so
+    # a project or role allow-list on knowledge_rag means what it says.
+    if not await is_enabled("knowledge_rag", project_id=project_id, user=user):
         return []
 
     try:

@@ -14,7 +14,12 @@ This endpoint receives the base64-encoded SAMLResponse via form POST,
 validates the assertion, and either logs in an existing user or JIT-provisions
 a new one.
 
-Source: [backend/app/routers/sso.py:95](../../../backend/app/routers/sso.py#L95).
+The POST comes from the browser. It answers with a 303 into the app
+(``/sso/callback``) carrying a one-time code in the URL fragment, which the
+app exchanges for the tokens (``POST /sso/exchange``); a refusal goes back
+to ``/login``. A client that asks for JSON gets the tokens as before.
+
+Source: [backend/app/routers/sso.py:132](../../../backend/app/routers/sso.py#L132).
 
 Dependency chain: `get_db`.
 
@@ -27,12 +32,6 @@ request: Request, db: AsyncSession=Depends(get_db)
 Direct handler error branches (dependency/service errors can add others):
 
 ```python
-HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Missing SAMLResponse in form data')
-HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='No active SSO configuration')
-HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='SSO is misconfigured. Contact your administrator.')
-HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='SAML assertion validation failed.')
-HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Account is deactivated')
 HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='SSO is not enabled')
 HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail='SAMLResponse too large')
 ```
@@ -65,7 +64,7 @@ List Sso Configs
 
 List all SSO configurations (ADMIN only).
 
-Source: [backend/app/routers/sso.py:251](../../../backend/app/routers/sso.py#L251).
+Source: [backend/app/routers/sso.py:311](../../../backend/app/routers/sso.py#L311).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -140,7 +139,7 @@ Create Sso Config
 
 Create a new SSO configuration (ADMIN only).
 
-Source: [backend/app/routers/sso.py:280](../../../backend/app/routers/sso.py#L280).
+Source: [backend/app/routers/sso.py:340](../../../backend/app/routers/sso.py#L340).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -228,7 +227,7 @@ Delete Sso Config
 
 Delete an SSO configuration (ADMIN only).
 
-Source: [backend/app/routers/sso.py:431](../../../backend/app/routers/sso.py#L431).
+Source: [backend/app/routers/sso.py:491](../../../backend/app/routers/sso.py#L491).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -308,7 +307,7 @@ Get Sso Config
 
 Get a specific SSO configuration (ADMIN only).
 
-Source: [backend/app/routers/sso.py:264](../../../backend/app/routers/sso.py#L264).
+Source: [backend/app/routers/sso.py:324](../../../backend/app/routers/sso.py#L324).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -395,7 +394,7 @@ Update Sso Config
 
 Update an SSO configuration (ADMIN only).
 
-Source: [backend/app/routers/sso.py:341](../../../backend/app/routers/sso.py#L341).
+Source: [backend/app/routers/sso.py:401](../../../backend/app/routers/sso.py#L401).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -495,7 +494,7 @@ Test Sso Connection
 
 Test an SSO configuration by validating the certificate and IdP metadata (ADMIN only).
 
-Source: [backend/app/routers/sso.py:463](../../../backend/app/routers/sso.py#L463).
+Source: [backend/app/routers/sso.py:523](../../../backend/app/routers/sso.py#L523).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -576,21 +575,90 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 }
 ```
 
+## POST `/api/v1/sso/exchange`
+
+Exchange Sso Code
+
+The tokens for an SSO sign-in the ACS completed, for its one-time code.
+
+Public, like the ACS: the code is the credential. It works once, within a
+minute of the IdP's response.
+
+Source: [backend/app/routers/sso.py:276](../../../backend/app/routers/sso.py#L276).
+
+Dependency chain: .
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+payload: SSOExchangeRequest
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='This sign-in link has expired or was already used. Sign in again.')
+HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='SSO is not enabled')
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "exchange_sso_code_api_v1_sso_exchange_post",
+  "requestBody": {
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "#/components/schemas/SSOExchangeRequest"
+        }
+      }
+    },
+    "required": true
+  },
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/SSOLoginResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  }
+}
+```
+
 ## GET `/api/v1/sso/login-url`
 
 Get Sso Login Url
 
-Get the SSO login redirect URL for SP-initiated login.
-Returns the IdP SSO URL the frontend should redirect to.
+The IdP URL that starts an SP-initiated login: the IdP SSO URL carrying a
+SAML AuthnRequest (HTTP-Redirect binding) and, when ``next`` is an
+app-relative path, a RelayState the browser returns to after sign-in.
 
-Source: [backend/app/routers/sso.py:65](../../../backend/app/routers/sso.py#L65).
+Source: [backend/app/routers/sso.py:77](../../../backend/app/routers/sso.py#L77).
 
 Dependency chain: `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-db: AsyncSession=Depends(get_db)
+next: Optional[str]=None, db: AsyncSession=Depends(get_db)
 ```
 
 Direct handler error branches (dependency/service errors can add others):
@@ -607,6 +675,24 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 ```json
 {
   "operationId": "get_sso_login_url_api_v1_sso_login_url_get",
+  "parameters": [
+    {
+      "in": "query",
+      "name": "next",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Next"
+      }
+    }
+  ],
   "responses": {
     "200": {
       "content": {
@@ -619,6 +705,16 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
         }
       },
       "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
     }
   }
 }
@@ -630,7 +726,10 @@ Get Sp Metadata
 
 Return SP metadata for configuring the IdP.
 
-Source: [backend/app/routers/sso.py:54](../../../backend/app/routers/sso.py#L54).
+No single-logout URL: there is no SLO handler, so advertising one sent IdPs
+to a 404 (sign-out is local: the app revokes its own session).
+
+Source: [backend/app/routers/sso.py:63](../../../backend/app/routers/sso.py#L63).
 
 Dependency chain: .
 
@@ -670,7 +769,7 @@ Get Sso Status
 
 Public endpoint to check if SSO is enabled and available.
 
-Source: [backend/app/routers/sso.py:234](../../../backend/app/routers/sso.py#L234).
+Source: [backend/app/routers/sso.py:294](../../../backend/app/routers/sso.py#L294).
 
 Dependency chain: `get_db`.
 
