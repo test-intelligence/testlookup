@@ -85,6 +85,7 @@ from app.services.github_checks_service import (
     get_integration,
 )
 from app.services.run_compare_service import _status_bucket
+from app.services.github_urls import github_html_root
 
 logger = structlog.get_logger("services.commit_attribution")
 
@@ -392,16 +393,9 @@ def _commit_html_url(ci_repo: Optional[str], api_base: Optional[str], sha: str) 
     if not ci_repo or not sha:
         return None
     repo = ci_repo.strip().strip("/")
-    base = (api_base or "").rstrip("/")
-    if not base or "api.github.com" in base:
-        return f"https://github.com/{repo}/commit/{sha}"
-    # GitHub Enterprise: api base is ``https://host/api/v3`` → html root is host.
-    host = base
-    for suffix in ("/api/v3", "/api"):
-        if host.endswith(suffix):
-            host = host[: -len(suffix)]
-            break
-    return f"{host.rstrip('/')}/{repo}/commit/{sha}"
+    # github.com for the public API (by hostname); GitHub Enterprise's
+    # ``https://host/api/v3`` links to ``https://host``.
+    return f"{github_html_root(api_base)}/{repo}/commit/{sha}"
 
 
 # ── Baseline / connector fetch ───────────────────────────────────────────────

@@ -52,6 +52,7 @@ from app.agents.fixer.state import (
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import FixAttempt
 from app.services import fixer_service
+from app.services.github_urls import github_html_root
 from app.services.llm_cost_reservation import cost_budget_scope
 
 logger = structlog.get_logger("agents.fixer.workflow")
@@ -130,18 +131,10 @@ async def _kill_switch_tripped(project_id: uuid.UUID, db=None) -> bool:
 
 
 def _clone_host(api_base_url: Optional[str]) -> str:
-    """HTML/clone host for the integration's API base (mirrors
-    commit_attribution_service._commit_html_url): github.com only when the
-    API base IS api.github.com; GitHub Enterprise strips the /api/v3 suffix."""
-    base = (api_base_url or "").rstrip("/")
-    if not base or "api.github.com" in base:
-        return "https://github.com"
-    host = base
-    for suffix in ("/api/v3", "/api"):
-        if host.endswith(suffix):
-            host = host[: -len(suffix)]
-            break
-    return host.rstrip("/")
+    """HTML/clone host for the integration's API base: github.com only when the
+    API base's hostname IS api.github.com; GitHub Enterprise strips the /api/v3
+    suffix (``github_urls.github_html_root``, shared with commit links)."""
+    return github_html_root(api_base_url)
 
 
 async def _github_ctx(project_id: uuid.UUID) -> Optional[dict[str, Any]]:
