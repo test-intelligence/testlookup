@@ -26,9 +26,14 @@ logger = logging.getLogger(__name__)
 
 SCIM_MAX_PAGE_SIZE = 200
 
+# The value must START with a non-space. With ``(.+)`` both `` +`` and the
+# value could take the spaces after ``eq``, so a long run of spaces followed by
+# a non-match (a newline) backtracked quadratically: 8,000 spaces took ~110 ms
+# per request (CodeQL py/polynomial-redos). Valid filters match exactly as
+# before -- `` +`` is greedy, so the value never began with a space anyway.
 _SCIM_EQUALITY_FILTER = re.compile(
     r"^(?:urn:ietf:params:scim:schemas:core:2\.0:User:)?"
-    r"(userName|email|emails\.value|externalId) +eq +(.+)$",
+    r"(userName|email|emails\.value|externalId) +eq +(\S.*)$",
     re.IGNORECASE,
 )
 

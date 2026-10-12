@@ -35,7 +35,8 @@ test.describe('Settings pages', () => {
   for (const route of settingsRoutes) {
     test(`renders ${route.name}`, async ({ page }) => {
       await page.goto(route.path);
-      await expect(page).toHaveURL(new RegExp(route.path.replace(/\//g, '\\/')));
+      // Escape every regex metacharacter, not just "/" (CodeQL js/incomplete-sanitization).
+      await expect(page).toHaveURL(new RegExp(route.path.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')));
 
       // Sidebar must remain present (i.e. we are still inside the auth shell)
       await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible({ timeout: 10000 });

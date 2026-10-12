@@ -247,6 +247,16 @@ locally by default.
   `testlookup.example.com`).
 - Security reports go through GitHub private vulnerability reporting
   ([SECURITY.md](SECURITY.md)).
+- **SCIM user filters can no longer stall a request.** The `userName eq ...`
+  parser backtracked quadratically on a long run of spaces (8,000 took
+  ~110 ms); it is linear now and accepts exactly the same filters.
+- The theme-token check (`npm run check:theme`) reads `--token : value` and
+  no longer lets `--status-passeds` answer for `--status-passed`: a `\s` in a
+  template literal had silently become the letter `s`.
+- Triaged the open CodeQL high alerts: the SCIM and theme-token fixes above,
+  an e2e spec's URL regex that now escapes every metacharacter, and the GitHub
+  hostname fix below; the rest are false positives or test-only code, with
+  dismissal reasons in the pull request.
 - Public GitHub is recognised by the API base URL's hostname. The Fixer's clone
   host and commit links matched the substring `api.github.com`, so a base such
   as `https://api.github.com.example.net` was taken for github.com (CodeQL
