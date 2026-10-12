@@ -50,8 +50,10 @@ vi.mock('../../services/aiEvalService', async () => {
     ...actual,
     getDashboard: () => mockGetDashboard(),
     listDatasets: () => Promise.resolve([]),
-    listReportCycles: () => Promise.resolve([]),
-    getReportReadiness: () => Promise.resolve(null),
+    // The service's names: the old listReportCycles / getReportReadiness keys mocked
+    // nothing once the functions were renamed, and the page made a real request.
+    listReportEvalCycles: () => Promise.resolve([]),
+    getReportEvalReadiness: () => Promise.resolve(null),
     listBaselines: () => Promise.resolve([]),
     generateDataset: vi.fn(),
   }

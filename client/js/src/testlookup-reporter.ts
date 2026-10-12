@@ -10,8 +10,8 @@
  *
  *   const reporter = new TestLookupReporter({
  *     baseUrl: 'http://localhost:8000',
- *     token: '<jwt>',
- *     projectId: '<uuid>',
+ *     apiKey: 'qai_...',          // or token: '<jwt>'
+ *     projectId: '<uuid or name>',
  *   })
  *
  *   const session = await reporter.startSession({ buildNumber: 'build-42' })
@@ -49,9 +49,17 @@ export type LogLevel   = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR'
 export interface ReporterConfig {
   /** TestLookup server URL, e.g. "http://localhost:8000" */
   baseUrl: string
-  /** JWT access token (from /api/v1/auth/login) */
-  token: string
-  /** Target project UUID */
+  /**
+   * JWT access token (from /api/v1/auth/login), sent as `Authorization:
+   * Bearer`. A value with the `qai_` API-key prefix is sent as an API key.
+   */
+  token?: string
+  /**
+   * API key from Settings → API Keys, sent as `X-API-Key`. Wins over `token`
+   * when both are set. One of the two is required.
+   */
+  apiKey?: string
+  /** Target project UUID or name */
   projectId: string
   /** Human-readable label for this machine (default: os.hostname()) */
   clientName?: string
@@ -72,8 +80,28 @@ export interface ReporterConfig {
   batchSize?: number
   batchIntervalMs?: number
   timeoutMs?: number
-  /** Set false to skip TLS certificate validation (dev only) */
+  /**
+   * @deprecated Has no effect: Node's built-in fetch has no per-request TLS
+   * switch. Start Node with `NODE_EXTRA_CA_CERTS=/path/ca.pem` to trust a
+   * self-signed server (preferred), or `NODE_TLS_REJECT_UNAUTHORIZED=0` to
+   * skip verification. Passing `false` logs a warning saying so.
+   */
   verifySsl?: boolean
+}
+
+/**
+ * Every key minted by Settings → API Keys starts with this. The server reads
+ * API keys only from `X-API-Key`; sent as `Authorization: Bearer` a key is
+ * decoded as a JWT and refused with 401.
+ */
+export const API_KEY_PREFIX = 'qai_'
+
+/** The auth header for a credential pair: API key first, as in every SDK. */
+export function authHeaders(token?: string, apiKey?: string): Record<string, string> {
+  if (apiKey) return { 'X-API-Key': apiKey }
+  if (token?.startsWith(API_KEY_PREFIX)) return { 'X-API-Key': token }
+  if (token) return { Authorization: `Bearer ${token}` }
+  return {}
 }
 
 export interface SessionOptions {
@@ -168,7 +196,7 @@ function newProtocolId(): string {
  */
 export class TestLookupReporter {
   private readonly baseUrl: string
-  private readonly token: string
+  private readonly authHeaders: Record<string, string>
   private readonly projectId: string
   private readonly clientName: string
   private readonly framework: string
@@ -179,8 +207,17 @@ export class TestLookupReporter {
   private readonly timeoutMs: number
 
   constructor(config: ReporterConfig) {
+    if (!config.token && !config.apiKey) {
+      throw new Error('TestLookupReporter needs an apiKey or a token')
+    }
+    if (config.verifySsl === false) {
+      console.warn(
+        '[TestLookup] verifySsl: false has no effect — Node\'s fetch has no per-request TLS switch. ' +
+          'Start Node with NODE_EXTRA_CA_CERTS=/path/ca.pem (preferred) or NODE_TLS_REJECT_UNAUTHORIZED=0.',
+      )
+    }
     this.baseUrl        = config.baseUrl.replace(/\/$/, '')
-    this.token          = config.token
+    this.authHeaders    = authHeaders(config.token, config.apiKey)
     this.projectId      = config.projectId
     this.clientName     = config.clientName ?? os.hostname()
     this.framework      = config.framework  ?? 'javascript'
@@ -284,7 +321,7 @@ export class TestLookupReporter {
       const resp = await fetch(this.baseUrl + path, {
         method,
         headers: {
-          Authorization:  `Bearer ${this.token}`,
+          ...this.authHeaders,
           'Content-Type': 'application/json',
         },
         body:   body != null ? JSON.stringify(body) : undefined,

@@ -69,6 +69,22 @@ vi.mock('react-hot-toast', () => ({
   },
 }))
 
+// No request leaves the test (src/test/networkGuard.ts): the dimension
+// descriptions, the AI mode, and the telemetry an error boundary sends when a
+// test makes a group throw.
+vi.mock('@/hooks/useRunIntelligence', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/hooks/useRunIntelligence')>(),
+  useScoringModel: () => ({ scoringModel: undefined, isLoading: false, isError: false, getDescription: () => '' }),
+}))
+vi.mock('@/hooks/useAIConfig', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/hooks/useAIConfig')>(),
+  useAIConfig: () => ({ data: undefined }),
+}))
+vi.mock('@/utils/errorReporting', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/utils/errorReporting')>(),
+  reportBoundaryError: vi.fn(),
+}))
+
 describe('ReleaseGatePage', () => {
   it('renders the release workflow strip and decision summary', async () => {
     const { useReleaseCouncil } = await import('@/hooks/useReleaseCouncil')

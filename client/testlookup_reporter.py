@@ -35,12 +35,13 @@ Install:
     pip install testlookup-reporter
 
 Run:
-    pytest --testlookup-url http://localhost:8000 \\
-           --testlookup-token <jwt> \\
-           --testlookup-project <uuid> \\
+    pytest --testlookup-url     http://localhost:8000 \\
+           --testlookup-api-key <qai_ API key> \\
+           --testlookup-project <uuid or name> \\
            --testlookup-build   build-42
 
-The plugin auto-collects results and streams them during the test run.
+``--testlookup-token <jwt>`` works in place of the API key. The plugin
+auto-collects results and streams them during the test run.
 """
 
 from __future__ import annotations
@@ -49,6 +50,7 @@ import asyncio
 import logging
 import os
 import socket
+import ssl
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -65,7 +67,8 @@ from ci_context import resolve_ci_context
 # git problem yields None and the field is simply omitted.
 from commit_range import resolve_commit_range
 
-__version__ = "1.0.0"
+# Keep in step with ``version`` in pyproject.toml (pinned by a test).
+__version__ = "1.1.0"
 __all__ = ["TestLookupReporter", "LiveSession", "LiveStream"]
 
 logger = logging.getLogger("testlookup_reporter")
@@ -95,6 +98,12 @@ READ_TIMEOUT       = 30.0
 # would be falsely closed mid-flight. 30s is well under the reaper threshold
 # so genuinely-dead clients still get reaped promptly.
 HEARTBEAT_INTERVAL = 30.0      # seconds
+# Every key minted by Settings → API Keys starts with this (the server builds
+# it as ``qai_`` + a random suffix). The server reads API keys only from the
+# ``X-API-Key`` header — a key sent as ``Authorization: Bearer`` is parsed as
+# a JWT and refused with 401 — so a credential carrying this prefix always
+# travels as ``X-API-Key``, whichever option it arrived through.
+API_KEY_PREFIX = "qai_"
 
 
 def _new_protocol_id() -> str:
@@ -240,6 +249,10 @@ class ConfigLoader:
         "testlookup.insecure":     ("auth", "insecure"),
     }
 
+    # Every variable here must change what TestLookupReporter, the pytest
+    # plugin AND LiveStream send (tests/test_env_vars_every_path.py checks
+    # each one on each path). TESTLOOKUP_UPLOAD_MODE was mapped for years and
+    # read by nothing, so it is gone rather than documented.
     ENV_MAP: dict[str, tuple[str, str]] = {
         # Legacy names — kept working forever for backwards compatibility.
         "TESTLOOKUP_URL":         ("server", "url"),
@@ -249,7 +262,6 @@ class ConfigLoader:
         "TESTLOOKUP_BUILD":       ("ci", "build_number"),
         "TESTLOOKUP_BRANCH":      ("ci", "branch"),
         "TESTLOOKUP_COMMIT":      ("ci", "commit_hash"),
-        "TESTLOOKUP_UPLOAD_MODE": ("upload", "mode"),
         # Canonical names matching the ReportPortal rp.* convention.
         "TESTLOOKUP_ENDPOINT":    ("server", "url"),
         "TESTLOOKUP_PROJECT":     ("project", "id"),
@@ -417,6 +429,74 @@ def _commit_range_overrides_from_config(cfg: dict) -> dict:
     }
 
 
+# ── Credentials and TLS ───────────────────────────────────────────────────────
+
+def _resolve_credentials(
+    cfg: dict, token: Optional[str], api_key: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
+    """Return ``(token, api_key)`` with at most one of them set.
+
+    Credentials resolve as a pair, layer by layer: explicit arguments, then
+    environment variables, then the config file -- the first layer holding
+    either one wins. Merging the layers first would let a stale API key in
+    testlookup.properties beat a TESTLOOKUP_TOKEN set for this run. Within a
+    layer an API key beats a token (same rule in the Java and JS SDKs), and a
+    "token" carrying the ``qai_`` prefix is an API key whichever option it
+    came through.
+    """
+    if not (token or api_key):
+        token = os.environ.get("TESTLOOKUP_TOKEN") or None
+        api_key = os.environ.get("TESTLOOKUP_API_KEY") or None
+    if not (token or api_key):
+        token = ConfigLoader.get(cfg, "auth.token")
+        api_key = ConfigLoader.get(cfg, "auth.api_key")
+    if api_key:
+        return None, api_key
+    if token and token.startswith(API_KEY_PREFIX):
+        return None, token
+    return token, None
+
+
+def _auth_headers(token: Optional[str], api_key: Optional[str]) -> dict[str, str]:
+    if api_key:
+        return {"X-API-Key": api_key}
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _resolve_verify(cfg: dict, verify_ssl: Any) -> Any:
+    """The httpx ``verify`` value for a client.
+
+    Precedence: the constructor's ``verify_ssl`` > testlookup.ca_cert_path /
+    TESTLOOKUP_CA_CERT (trust only that bundle) > testlookup.insecure /
+    TESTLOOKUP_INSECURE (no verification) > the system trust store. The
+    insecure flag arrives as a string from properties files and env vars, so
+    "true", "1", "yes" and "on" all count.
+
+    A CA path becomes an ``ssl.SSLContext`` here: httpx 0.28 deprecates
+    ``verify=<str>``, and that DeprecationWarning would fail a pytest run
+    configured with ``-W error`` before the first test.
+    """
+    if verify_ssl is None:
+        ca_path = ConfigLoader.get(cfg, "auth.ca_cert_path")
+        insecure_raw = ConfigLoader.get(cfg, "auth.insecure")
+        insecure = insecure_raw is True or (
+            isinstance(insecure_raw, str)
+            and insecure_raw.strip().lower() in ("1", "true", "yes", "on")
+        )
+        if ca_path:
+            verify_ssl = str(ca_path)
+        elif insecure:
+            verify_ssl = False
+        else:
+            verify_ssl = True
+    if isinstance(verify_ssl, (str, os.PathLike)):
+        path = os.fspath(verify_ssl)
+        if os.path.isdir(path):
+            return ssl.create_default_context(capath=path)
+        return ssl.create_default_context(cafile=path)
+    return verify_ssl
+
+
 # ── Reporter ──────────────────────────────────────────────────────────────────
 
 class TestLookupReporter:
@@ -426,16 +506,27 @@ class TestLookupReporter:
     Parameters
     ----------
     base_url    : TestLookup server URL (e.g. "http://localhost:8000")
-    token       : JWT access token obtained via /api/v1/auth/login
-    project_id  : UUID of the target project
+    token       : JWT access token obtained via /api/v1/auth/login. A value
+                  with the ``qai_`` API-key prefix is sent as an API key.
+    project_id  : UUID or name of the target project
+    api_key     : API key from Settings → API Keys, sent as ``X-API-Key``.
+                  Wins over ``token`` when both are given.
     client_name : Human-readable label for this machine (default: hostname)
-    framework   : Test framework name (default: "python")
+    framework   : Test framework name (default: testlookup.framework /
+                  TESTLOOKUP_FRAMEWORK, else "python")
     batch_size  : Events per flush (default: 50)
     batch_interval_ms : Max ms between flushes (default: 100)
+    verify_ssl  : True, False or a CA bundle path. Default: testlookup.ca_cert_path
+                  / TESTLOOKUP_CA_CERT, else testlookup.insecure /
+                  TESTLOOKUP_INSECURE, else the system trust store.
     commit_range_base : Base ref/SHA for local-git commit collection (US-8.1).
                   Overrides CI detection and the merge-base fallback.
     collect_commit_range : False disables commit collection entirely
                   (same as TESTLOOKUP_COMMIT_RANGE=0 / testlookup.commit_range=false).
+
+    Every session() and the pytest plugin take build, branch, commit, launch,
+    suite and release from config (testlookup.* keys / TESTLOOKUP_* env vars)
+    unless the call passes its own value.
     """
 
     def __init__(
@@ -444,45 +535,47 @@ class TestLookupReporter:
         token: Optional[str] = None,
         project_id: Optional[str] = None,
         *,
+        api_key: Optional[str] = None,
         client_name: Optional[str] = None,
-        framework: str = "python",
+        framework: Optional[str] = None,
         batch_size: int = BATCH_SIZE,
         batch_interval_ms: int = BATCH_INTERVAL_MS,
-        verify_ssl: bool = True,
+        verify_ssl: Any = None,
         commit_range_base: Optional[str] = None,
         collect_commit_range: Optional[bool] = None,
     ) -> None:
         # Resolve config from file + env vars, then overlay constructor args
         cfg = ConfigLoader.load()
         resolved_url = base_url or ConfigLoader.get(cfg, "server.url")
-        resolved_token = token or ConfigLoader.get(cfg, "auth.token") or ConfigLoader.get(cfg, "auth.api_key")
+        resolved_token, resolved_api_key = _resolve_credentials(cfg, token, api_key)
         resolved_project = project_id or ConfigLoader.get(cfg, "project.id")
 
-        if not resolved_url or not resolved_token or not resolved_project:
+        if not resolved_url or not (resolved_token or resolved_api_key) or not resolved_project:
             raise ValueError(
-                "base_url, token/api_key, and project_id are required. "
-                "Provide them as constructor args, in testlookup.yaml, "
-                "or via TESTLOOKUP_URL / TESTLOOKUP_TOKEN / TESTLOOKUP_PROJECT_ID env vars."
+                "base_url, an api_key or token, and project_id are required. "
+                "Provide them as constructor args, in testlookup.properties, "
+                "or via TESTLOOKUP_ENDPOINT / TESTLOOKUP_API_KEY (or TESTLOOKUP_TOKEN) "
+                "/ TESTLOOKUP_PROJECT env vars."
             )
 
         self._base_url = resolved_url.rstrip("/")
-        self._token = resolved_token
         self._project_id = resolved_project
         self._client_name = client_name or ConfigLoader.get(cfg, "reporting.client_name") or socket.gethostname()
-        self._framework = framework
-        # Resolved suite name applied as the default on every record() that
-        # doesn't pass one explicitly. testlookup.suite wins, with
-        # testlookup.launch as the documented fallback so users who only set
-        # the launch label still get a meaningful run-level suite.
-        self._suite_name = (
-            ConfigLoader.get(cfg, "reporting.suite_name")
-            or ConfigLoader.get(cfg, "reporting.launch_name")
-        )
-        # testlookup.release / TESTLOOKUP_RELEASE — applied as the default
-        # release_name on every session() that doesn't pass one explicitly.
-        # The server falls back to the project's default release when this
-        # is left blank.
-        self._release_name = ConfigLoader.get(cfg, "reporting.release_name")
+        self._framework = framework or ConfigLoader.get(cfg, "reporting.framework") or "python"
+        # Session-level defaults: every session — session() and the pytest
+        # plugin alike — gets these unless the caller passes its own value
+        # (see _create_session). suite falls back to the launch label so users
+        # who only set testlookup.launch still get a run-level suite; a blank
+        # release lets the server use the project's default release.
+        launch_name = ConfigLoader.get(cfg, "reporting.launch_name")
+        self._session_defaults: dict[str, Any] = {
+            "build_number": ConfigLoader.get(cfg, "ci.build_number"),
+            "branch":       ConfigLoader.get(cfg, "ci.branch"),
+            "commit_hash":  ConfigLoader.get(cfg, "ci.commit_hash"),
+            "launch_name":  launch_name,
+            "suite_name":   ConfigLoader.get(cfg, "reporting.suite_name") or launch_name,
+            "release_name": ConfigLoader.get(cfg, "reporting.release_name"),
+        }
         # CI context (US-4.3b): auto-detected from standard CI env vars, with
         # testlookup.ci_* config / TESTLOOKUP_CI_* env values winning. Merged
         # into every session-create payload; per-session args win over this.
@@ -502,18 +595,16 @@ class TestLookupReporter:
         )
         batch_ms = batch_interval_ms if batch_interval_ms != BATCH_INTERVAL_MS else int(ConfigLoader.get(cfg, "reporting.batch_interval_ms", BATCH_INTERVAL_MS))
         self._batch_interval = batch_ms / 1_000.0
-        self._verify_ssl = verify_ssl
-
-        # Determine auth header: API key vs JWT
-        api_key = ConfigLoader.get(cfg, "auth.api_key")
-        if api_key and (not token) and api_key == self._token:
-            auth_headers = {"X-API-Key": self._token}
-        else:
-            auth_headers = {"Authorization": f"Bearer {self._token}"}
+        self._verify_ssl = _resolve_verify(cfg, verify_ssl)
+        if self._verify_ssl is False:
+            logger.warning(
+                "TestLookupReporter: TLS verification disabled "
+                "(testlookup.insecure / TESTLOOKUP_INSECURE / verify_ssl=False)."
+            )
 
         self._http = httpx.AsyncClient(
             base_url=self._base_url,
-            headers=auth_headers,
+            headers=_auth_headers(resolved_token, resolved_api_key),
             timeout=httpx.Timeout(connect=CONNECT_TIMEOUT, read=READ_TIMEOUT, write=10.0, pool=5.0),
             verify=self._verify_ssl,
         )
@@ -545,14 +636,10 @@ class TestLookupReporter:
         ``commit_range`` overrides the reporter-level local-git collection
         (US-8.1) for this session only; leave it None to use what the
         reporter walked at construction.
+
+        Any of build_number, branch, commit_hash, launch_name, suite_name and
+        release_name left as None takes the configured default.
         """
-        # Per-session suite overrides the reporter-level default; otherwise
-        # inherit testlookup.suite > testlookup.launch resolved in __init__.
-        resolved_suite = suite_name if suite_name is not None else self._suite_name
-        # Same inheritance rule for release_name — explicit arg wins, otherwise
-        # testlookup.release config / TESTLOOKUP_RELEASE env. Server falls
-        # back to the project's default release when blank.
-        resolved_release = release_name if release_name is not None else self._release_name
         live = await self._create_session(
             build_number=build_number,
             branch=branch,
@@ -560,8 +647,8 @@ class TestLookupReporter:
             total_tests=total_tests,
             machine_id=machine_id,
             launch_name=launch_name,
-            suite_name=resolved_suite,
-            release_name=resolved_release,
+            suite_name=suite_name,
+            release_name=release_name,
             ci_provider=ci_provider,
             ci_repo=ci_repo,
             pr_number=pr_number,
@@ -577,6 +664,14 @@ class TestLookupReporter:
 
     async def _create_session(self, **kwargs) -> "LiveSession":
         """Register a new session with the server and return a LiveSession."""
+        # Configured defaults (testlookup.* / TESTLOOKUP_*) fill whatever the
+        # caller left as None. They are applied here, not in session(),
+        # because the pytest plugin enters through this method: applied one
+        # level up, testlookup.suite and testlookup.release never reached a
+        # pytest run.
+        for field, default in self._session_defaults.items():
+            if kwargs.get(field) is None:
+                kwargs[field] = default
         # The session's resolved suite is consumed both as a payload field
         # (server stamps LiveSession.suite_name / TestRun.primary_suite_name)
         # and as the LiveSession default for record() calls. Pop early so we
@@ -938,7 +1033,7 @@ class LiveStream:
 
     Quick start
     -----------
-        async with LiveStream(api_key="tlk_...", run_id="ci-build-42") as s:
+        async with LiveStream(api_key="qai_...", run_id="ci-build-42") as s:
             await s.record("test_login", "PASSED", 120)
             await s.record("test_logout", "FAILED", 340, error="...")
 
@@ -1001,28 +1096,13 @@ class LiveStream:
         resolved_framework = framework if framework != "python" else (
             ConfigLoader.get(cfg, "reporting.framework") or framework
         )
+        # testlookup.release / TESTLOOKUP_RELEASE, as for TestLookupReporter.
+        # The server falls back to the project's default release when blank.
+        resolved_release = release_name or ConfigLoader.get(cfg, "reporting.release_name")
 
-        # TLS resolution. Three states map to httpx's `verify` argument:
-        #   True              → use system trust store (default, prod-correct)
-        #   False             → skip verification (homelab / self-signed)
-        #   "/path/to/ca.pem" → trust this CA bundle (best for homelab)
-        # Precedence: constructor verify_ssl > testlookup.ca_cert_path
-        # > testlookup.insecure > default True. The `auth.insecure` value
-        # comes through as a string from properties files, so a truthy
-        # string ("true", "1", "yes") flips verification off.
-        if verify_ssl is None:
-            ca_path = ConfigLoader.get(cfg, "auth.ca_cert_path")
-            insecure_raw = ConfigLoader.get(cfg, "auth.insecure")
-            insecure = isinstance(insecure_raw, str) and insecure_raw.strip().lower() in ("1", "true", "yes", "on")
-            insecure = insecure or insecure_raw is True
-            if ca_path:
-                resolved_verify: Any = str(ca_path)
-            elif insecure:
-                resolved_verify = False
-            else:
-                resolved_verify = True
-        else:
-            resolved_verify = verify_ssl
+        # TLS: verify_ssl > testlookup.ca_cert_path > testlookup.insecure >
+        # system trust store — the same resolution TestLookupReporter uses.
+        resolved_verify = _resolve_verify(cfg, verify_ssl)
         if not resolved_url:
             raise ValueError(
                 "endpoint is required — set testlookup.endpoint in testlookup.properties, "
@@ -1052,7 +1132,7 @@ class LiveStream:
         if resolved_framework is not None: self._meta["framework"] = resolved_framework
         if total_tests is not None:        self._meta["total_tests"] = total_tests
         if machine_id is not None:         self._meta["machine_id"] = machine_id
-        if release_name is not None:       self._meta["release_name"] = release_name
+        if resolved_release is not None:   self._meta["release_name"] = resolved_release
         if resolved_launch is not None:    self._meta["launch_name"] = resolved_launch
         if resolved_suite is not None:     self._meta["suite_name"] = resolved_suite
         if metadata is not None:           self._meta["metadata"] = metadata
@@ -1400,14 +1480,20 @@ class LiveStream:
 #   pytest_plugins = ["testlookup_reporter"]
 
 def pytest_addoption(parser):  # noqa: D401
-    """Add TestLookup CLI options to pytest."""
+    """Add TestLookup CLI options to pytest.
+
+    The flags default to empty: environment variables reach the plugin
+    through ConfigLoader like every other path, so TESTLOOKUP_ENDPOINT beats
+    TESTLOOKUP_URL here exactly as it does for LiveStream.
+    """
     group = parser.getgroup("testlookup", "TestLookup live reporting")
-    group.addoption("--testlookup-url",     default=os.environ.get("TESTLOOKUP_URL", ""))
-    group.addoption("--testlookup-token",   default=os.environ.get("TESTLOOKUP_TOKEN", ""))
-    group.addoption("--testlookup-project", default=os.environ.get("TESTLOOKUP_PROJECT_ID", ""))
-    group.addoption("--testlookup-build",   default=os.environ.get("TESTLOOKUP_BUILD", ""))
-    group.addoption("--testlookup-branch",  default=os.environ.get("TESTLOOKUP_BRANCH", ""))
-    group.addoption("--testlookup-launch",  default=os.environ.get("TESTLOOKUP_LAUNCH", ""))
+    group.addoption("--testlookup-url",     default="", help="Server URL (TESTLOOKUP_ENDPOINT / TESTLOOKUP_URL)")
+    group.addoption("--testlookup-api-key", default="", help="API key, sent as X-API-Key (TESTLOOKUP_API_KEY)")
+    group.addoption("--testlookup-token",   default="", help="JWT access token (TESTLOOKUP_TOKEN)")
+    group.addoption("--testlookup-project", default="", help="Project UUID or name (TESTLOOKUP_PROJECT / TESTLOOKUP_PROJECT_ID)")
+    group.addoption("--testlookup-build",   default="", help="Build number (TESTLOOKUP_BUILD)")
+    group.addoption("--testlookup-branch",  default="", help="Git branch (TESTLOOKUP_BRANCH)")
+    group.addoption("--testlookup-launch",  default="", help="Launch label (TESTLOOKUP_LAUNCH)")
 
 
 def pytest_configure(config):  # noqa: D401
@@ -1417,31 +1503,24 @@ def pytest_configure(config):  # noqa: D401
     If a config file or env vars are present, the plugin activates without any
     CLI flags — matches ReportPortal's auto-discovery behaviour.
     """
-    url     = config.getoption("--testlookup-url",     default="")
+    cfg = ConfigLoader.load()
+    url     = config.getoption("--testlookup-url",     default="") or ConfigLoader.get(cfg, "server.url", "")
+    api_key = config.getoption("--testlookup-api-key", default="")
     token   = config.getoption("--testlookup-token",   default="")
-    project = config.getoption("--testlookup-project", default="")
-    build   = config.getoption("--testlookup-build",   default="")
-    branch  = config.getoption("--testlookup-branch",  default="")
-    launch  = config.getoption("--testlookup-launch",  default="")
+    project = config.getoption("--testlookup-project", default="") or ConfigLoader.get(cfg, "project.id", "")
+    # Credentials from config apply only when no flag supplied one; the
+    # reporter resolves them itself, so here they only decide activation.
+    has_credential = bool(api_key or token) or any(_resolve_credentials(cfg, None, None))
 
-    # If CLI flags are incomplete, try ConfigLoader (file + env vars)
-    if not (url and token and project):
-        cfg = ConfigLoader.load()
-        url     = url     or ConfigLoader.get(cfg, "server.url", "")
-        token   = token   or ConfigLoader.get(cfg, "auth.token", "") or ConfigLoader.get(cfg, "auth.api_key", "")
-        project = project or ConfigLoader.get(cfg, "project.id", "")
-        build   = build   or ConfigLoader.get(cfg, "ci.build_number", "")
-        branch  = branch  or ConfigLoader.get(cfg, "ci.branch", "")
-        launch  = launch  or ConfigLoader.get(cfg, "reporting.launch_name", "")
-
-    if url and token and project:
+    if url and has_credential and project:
         plugin = _TestLookupPytestPlugin(
             base_url=url,
-            token=token,
+            token=token or None,
             project_id=project,
-            build_number=build,
-            branch=branch,
-            launch_name=launch,
+            build_number=config.getoption("--testlookup-build", default=""),
+            branch=config.getoption("--testlookup-branch", default=""),
+            launch_name=config.getoption("--testlookup-launch", default=""),
+            api_key=api_key or None,
         )
         config.pluginmanager.register(plugin, "testlookup_live")
 
@@ -1452,19 +1531,30 @@ class _TestLookupPytestPlugin:
     def __init__(
         self,
         base_url: str,
-        token: str,
-        project_id: str,
+        token: Optional[str] = None,
+        project_id: Optional[str] = None,
         build_number: str = "",
         branch: str = "",
         launch_name: str = "",
+        *,
+        api_key: Optional[str] = None,
     ) -> None:
         self._reporter = TestLookupReporter(
             base_url=base_url,
             token=token,
+            api_key=api_key,
             project_id=project_id,
-            framework="pytest",
+            # "pytest" is this plugin's default, not the user's choice, so
+            # testlookup.framework / TESTLOOKUP_FRAMEWORK still wins.
+            framework=ConfigLoader.get(ConfigLoader.load(), "reporting.framework") or "pytest",
         )
-        self._build_number = build_number or f"pytest-{int(time.time())}"
+        # Branch, commit, launch, suite and release fall back to config inside
+        # _create_session; the build needs a value either way.
+        self._build_number = (
+            build_number
+            or self._reporter._session_defaults["build_number"]
+            or f"pytest-{int(time.time())}"
+        )
         self._branch = branch
         self._launch_name = launch_name
         self._live: Optional[LiveSession] = None

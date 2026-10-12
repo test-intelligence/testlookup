@@ -74,6 +74,9 @@ locally by default.
   non-commercial licenses for anything shipped).
 - `backend/scripts/s3_setup.py` creates the object-store buckets with boto3
   and can copy every object from a previous S3 endpoint.
+- Frontend unit tests block every real network request (`src/test/networkGuard.ts`:
+  XMLHttpRequest, fetch and WebSocket); a test that makes one fails, naming the
+  method, the URL and the test.
 
 ### Changed
 
@@ -125,6 +128,13 @@ locally by default.
   linux-musl binary inside `node:alpine` (npm/cli#4828), and `vite build`
   then failed.
 
+### Deprecated
+
+- `verifySsl` in the JavaScript reporter. Node's built-in fetch has no
+  per-request TLS switch, so it never had an effect; `verifySsl: false` now
+  warns. Start Node with `NODE_EXTRA_CA_CERTS=/path/ca.pem` to trust a private
+  CA, or `NODE_TLS_REJECT_UNAUTHORIZED=0` to skip verification.
+
 ### Removed
 
 - Internal working material (run evidence, working notes, review registers,
@@ -153,6 +163,47 @@ locally by default.
 - `scripts/setup-minio.sh` (`make setup-minio` now runs the Compose
   `minio-setup` service), and the MinIO bucket-notification wiring it set up:
   the default ingest path never needed it.
+- `TESTLOOKUP_UPLOAD_MODE` in the Python and Java reporters: it was read but
+  changed nothing.
+
+### Fixed
+
+- **The pytest plugin authenticates with an API key.** It sent every
+  credential as `Authorization: Bearer`, and the server reads API keys only from
+  `X-API-Key`, so a `qai_` key was refused with 401 before the first test. A
+  `qai_` credential is now sent as `X-API-Key` whichever option carries it;
+  `--testlookup-api-key` and `TestLookupReporter(api_key=...)` are new.
+- **The pytest plugin applies the configured suite and release**
+  (`testlookup.suite`, `testlookup.release` and their variables).
+- **Every `TESTLOOKUP_*` variable the Python reporter maps works the same in
+  `TestLookupReporter`, the pytest plugin and `LiveStream`.** The TLS settings
+  (`TESTLOOKUP_CA_CERT`, `TESTLOOKUP_INSECURE`), commit and framework applied
+  only to `LiveStream`; build, branch and launch not to `session()`; release
+  not to `LiveStream`. `__version__` now matches the package (1.1.0).
+- **The Jest reporter records each test once.** Jest 27.4 and later call both
+  of its hooks, and most tests were recorded twice.
+- **The JavaScript package loads with `require()`.** Its exports offered only
+  an `import` condition for a CommonJS build, so Jest and Mocha could not load
+  `testlookup-reporter/jest-reporter` or `.../mocha-reporter`; the Mocha
+  reporter, a `default` export, also crashed the run ("not a constructor").
+  Both now load by package name; the Mocha module's `.default` still works.
+- **The JavaScript reporters accept an API key** (`apiKey`,
+  `TESTLOOKUP_API_KEY`) and read `testlookup.properties` / `testlookup.yaml`
+  and the canonical `TESTLOOKUP_*` variables.
+- **The JUnit 5 extension records results.** On JUnit 5.11 it recorded none
+  (its result callbacks read a store JUnit had already closed); it also opened
+  one session per test class and reported every duration as 0. It now uses one
+  session per test run and measures each test.
+- **The TestNG listener and the JUnit 5 extension read build, branch, commit and
+  launch from `testlookup.properties`**, not only from JVM properties and
+  environment variables.
+- **The Java reporter trusts a private CA or skips verification** with
+  `TESTLOOKUP_CA_CERT` / `TESTLOOKUP_INSECURE` (or `testlookup.ca_cert_path` /
+  `testlookup.insecure`, `Builder.caCertPath()` / `insecure()`).
+- **Credentials resolve the same way in every reporter**: an explicit token or
+  key wins, then a JVM property, an environment variable, the config file; an
+  API key beats a token from the same source. The Java reporter let any API key
+  in `testlookup.properties` override an explicitly passed token.
 
 ### Security
 

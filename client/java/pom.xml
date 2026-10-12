@@ -33,6 +33,8 @@
              2.18.11: CVE-2026-89407/89425 (core), CVE-2026-91776/91777 (databind; Trivy fs HIGH, 2026-10-01). -->
         <jackson.version>2.18.11</jackson.version>
         <junit5.version>5.11.0</junit5.version>
+        <!-- The platform release that ships with Jupiter 5.11.0. -->
+        <junit-platform.version>1.11.0</junit-platform.version>
         <testng.version>7.10.2</testng.version>
     </properties>
 
@@ -80,6 +82,16 @@
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-engine</artifactId>
             <version>${junit5.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- Runs sample classes through a real Jupiter engine, so the JUnit 5
+             extension is tested the way JUnit drives it (one run, many
+             classes). The launcher, not junit-platform-testkit: the testkit
+             drags in assertj-core, which nothing here uses. -->
+        <dependency>
+            <groupId>org.junit.platform</groupId>
+            <artifactId>junit-platform-launcher</artifactId>
+            <version>${junit-platform.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

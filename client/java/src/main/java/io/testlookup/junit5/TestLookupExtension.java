@@ -6,11 +6,16 @@ import io.testlookup.TestLookupReporter.*;
 
 import org.junit.jupiter.api.extension.*;
 
+import java.util.Map;
 import java.util.Optional;
 import java.util.logging.Logger;
 
 /**
  * JUnit 5 Extension — streams test results to TestLookup in real-time.
+ *
+ * <p>One live session covers the whole test run, however many classes use the
+ * extension: it opens before the first class and closes when JUnit finishes
+ * the run. Each result carries the test method's measured duration.
  *
  * <h3>Usage (class-level annotation)</h3>
  * <pre>{@code
@@ -21,42 +26,66 @@ import java.util.logging.Logger;
  * }
  * }</pre>
  *
- * <h3>Global registration (src/test/resources/META-INF/services)</h3>
- * Add a file {@code org.junit.jupiter.api.extension.Extension} containing:
- * <pre>io.testlookup.junit5.TestLookupExtension</pre>
+ * <h3>Global registration</h3>
+ * The jar ships {@code META-INF/services/org.junit.jupiter.api.extension.Extension}
+ * naming {@code io.testlookup.junit5.TestLookupExtension}; enable JUnit's
+ * auto-detection with {@code -Djunit.jupiter.extensions.autodetection.enabled=true}.
  *
- * <h3>Configuration via environment variables</h3>
+ * <h3>Configuration</h3>
+ * Everything resolves through {@link ConfigLoader}: JVM system properties &gt;
+ * environment variables &gt; {@code testlookup.properties} / {@code testlookup.yaml}
+ * (filesystem, then classpath).
  * <pre>
- *   TESTLOOKUP_URL          Server base URL     (required)
- *   TESTLOOKUP_API_KEY      API key             (required — or use TESTLOOKUP_TOKEN)
- *   TESTLOOKUP_TOKEN        JWT access token    (alternative to API key)
- *   TESTLOOKUP_PROJECT_ID   Target project UUID (required)
- *   TESTLOOKUP_BUILD        CI build number     (optional)
- *   TESTLOOKUP_BRANCH       Git branch name     (optional)
- *   TESTLOOKUP_COMMIT       Git commit SHA      (optional)
- * </pre>
- *
- * <h3>Configuration via JVM system properties (takes precedence)</h3>
- * <pre>
- *   -Dtestlookup.url=...
- *   -Dtestlookup.apiKey=...   (or -Dtestlookup.token=...)
- *   -Dtestlookup.projectId=...
- *   -Dtestlookup.build=...
- *   -Dtestlookup.branch=...
+ *   -Dtestlookup.url        TESTLOOKUP_URL / _ENDPOINT   testlookup.endpoint   (required)
+ *   -Dtestlookup.apiKey     TESTLOOKUP_API_KEY           testlookup.api.key    (or a token)
+ *   -Dtestlookup.token      TESTLOOKUP_TOKEN             testlookup.token
+ *   -Dtestlookup.projectId  TESTLOOKUP_PROJECT(_ID)      testlookup.project    (required)
+ *   -Dtestlookup.build      TESTLOOKUP_BUILD             testlookup.build      (default junit5-&lt;ms&gt;)
+ *   -Dtestlookup.branch     TESTLOOKUP_BRANCH            testlookup.branch
+ *   -Dtestlookup.commit     TESTLOOKUP_COMMIT            testlookup.commit
+ *   -Dtestlookup.launch     TESTLOOKUP_LAUNCH            testlookup.launch
+ *   -Dtestlookup.suite      TESTLOOKUP_SUITE             testlookup.suite      (default: launch)
+ *   -Dtestlookup.release    TESTLOOKUP_RELEASE           testlookup.release
+ *   -Dtestlookup.ca_cert_path TESTLOOKUP_CA_CERT         testlookup.ca_cert_path
+ *   -Dtestlookup.insecure   TESTLOOKUP_INSECURE          testlookup.insecure
  * </pre>
  */
 public class TestLookupExtension
-        implements BeforeAllCallback, AfterAllCallback, TestWatcher {
+        implements BeforeAllCallback, BeforeTestExecutionCallback, AfterTestExecutionCallback, TestWatcher {
 
     private static final Logger LOG = Logger.getLogger(TestLookupExtension.class.getName());
-    private static final String NS  = "ai.testlookup";
+    private static final String NS  = "io.testlookup";
 
-    // One session per top-level test class (stored in JUnit's ExtensionContext store)
     private static final ExtensionContext.Namespace NAMESPACE =
         ExtensionContext.Namespace.create(NS);
 
-    private static final String KEY_SESSION  = "session";
-    private static final String KEY_REPORTER = "reporter";
+    private static final String KEY_RUN      = "run";
+    private static final String KEY_STARTED  = "startedNanos";
+
+    /**
+     * The run's session, kept in the ROOT context's store: JUnit closes that
+     * store once, after the last test of the run. A per-class store (as
+     * before) opened and closed one session per test class, so a suite of 40
+     * classes became 40 runs in TestLookup.
+     */
+    static final class RunSession implements ExtensionContext.Store.CloseableResource {
+        /** null when the session could not be opened — the run continues unreported. */
+        final LiveSession session;
+        /**
+         * Measured duration per test (unique id). Kept here, not in the test's
+         * own store: JUnit may close that store before TestWatcher callbacks.
+         */
+        final Map<String, Long> durationsMs = new java.util.concurrent.ConcurrentHashMap<>();
+
+        RunSession(LiveSession session) { this.session = session; }
+
+        @Override
+        public void close() {
+            if (session == null) return;
+            session.close();
+            LOG.info("TestLookupExtension: session closed: " + session.getSessionId());
+        }
+    }
 
     // ── BeforeAllCallback ─────────────────────────────────────────────────────
 
@@ -67,45 +96,52 @@ public class TestLookupExtension
             LOG.fine("TestLookupExtension: no configuration found — skipping");
             return;
         }
+        ctx.getRoot().getStore(NAMESPACE)
+            .getOrComputeIfAbsent(KEY_RUN, k -> openRun(), RunSession.class);
+    }
 
+    private static RunSession openRun() {
         try {
-            // Builder.build() resolves config from testlookup.yaml / env / system props
+            Map<String, Object> cfg = ConfigLoader.load();
+            // Builder.build() resolves url / auth / project / suite / release /
+            // TLS from the same sources.
             TestLookupReporter reporter = new TestLookupReporter.Builder()
-                .framework("junit5")
+                .framework(ConfigLoader.getString(cfg, "reporting.framework", "junit5"))
                 .build();
 
-            // testlookup.suite preferred, testlookup.launch as fallback.
-            String suiteId = nullable("testlookup.suite", "TESTLOOKUP_SUITE");
-            if (suiteId == null) suiteId = nullable("testlookup.launch", "TESTLOOKUP_LAUNCH");
-
+            String launch = ConfigLoader.getString(cfg, "reporting.launch_name", null);
             LiveSession session = reporter.startSession(
                 SessionOptions.builder()
-                    .buildNumber(prop("testlookup.build",  "TESTLOOKUP_BUILD",
+                    .buildNumber(ConfigLoader.getString(cfg, "ci.build_number",
                                     "junit5-" + System.currentTimeMillis()))
-                    .branch(     nullable("testlookup.branch", "TESTLOOKUP_BRANCH"))
-                    .commitHash( nullable("testlookup.commit", "TESTLOOKUP_COMMIT"))
-                    .launchName( nullable("testlookup.launch", "TESTLOOKUP_LAUNCH"))
-                    .suiteName(  suiteId)
+                    .branch(     ConfigLoader.getString(cfg, "ci.branch", null))
+                    .commitHash( ConfigLoader.getString(cfg, "ci.commit_hash", null))
+                    .launchName( launch)
+                    .suiteName(  ConfigLoader.getString(cfg, "reporting.suite_name", launch))
                     .build()
             );
-
-            var store = ctx.getStore(NAMESPACE);
-            store.put(KEY_REPORTER, reporter);
-            store.put(KEY_SESSION,  session);
             LOG.info("TestLookupExtension: session started: " + session.getSessionId());
+            return new RunSession(session);
         } catch (Exception e) {
             LOG.warning("TestLookupExtension: disabled — " + e.getMessage());
+            return new RunSession(null);
         }
     }
 
-    // ── AfterAllCallback ──────────────────────────────────────────────────────
+    // ── Timing ────────────────────────────────────────────────────────────────
 
     @Override
-    public void afterAll(ExtensionContext ctx) {
-        LiveSession session = getSession(ctx);
-        if (session == null) return;
-        session.close();
-        LOG.info("TestLookupExtension: session closed: " + session.getSessionId());
+    public void beforeTestExecution(ExtensionContext ctx) {
+        ctx.getStore(NAMESPACE).put(KEY_STARTED, System.nanoTime());
+    }
+
+    @Override
+    public void afterTestExecution(ExtensionContext ctx) {
+        Long started = ctx.getStore(NAMESPACE).remove(KEY_STARTED, Long.class);
+        RunSession run = run(ctx);
+        if (started != null && run != null) {
+            run.durationsMs.put(ctx.getUniqueId(), (System.nanoTime() - started) / 1_000_000L);
+        }
     }
 
     // ── TestWatcher ───────────────────────────────────────────────────────────
@@ -136,11 +172,13 @@ public class TestLookupExtension
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private void record(ExtensionContext ctx, TestStatus status, String error, String stack) {
-        LiveSession session = getSession(ctx);
-        if (session == null) return;
+        RunSession run = run(ctx);
+        if (run == null || run.session == null) return;
 
         String testName  = ctx.getDisplayName();
         String suiteName = ctx.getParent().map(ExtensionContext::getDisplayName).orElse(null);
+        // A disabled test never executes, so it has no duration.
+        Long durationMs = run.durationsMs.remove(ctx.getUniqueId());
 
         RecordOptions opts = RecordOptions.builder()
             .suiteName(suiteName)
@@ -149,35 +187,11 @@ public class TestLookupExtension
             .stackTrace(stack)
             .build();
 
-        session.record(testName, status, 0L, opts);
+        run.session.record(testName, status, durationMs != null ? durationMs : 0L, opts);
     }
 
-    private LiveSession getSession(ExtensionContext ctx) {
-        // Walk up to root to find the session (set in beforeAll of outermost class)
-        ExtensionContext current = ctx;
-        while (current != null) {
-            LiveSession s = (LiveSession) current.getStore(NAMESPACE).get(KEY_SESSION);
-            if (s != null) return s;
-            current = current.getParent().orElse(null);
-        }
-        return null;
-    }
-
-    private static String prop(String sysProp, String envVar) {
-        String v = System.getProperty(sysProp);
-        if (v != null && !v.isEmpty()) return v;
-        v = System.getenv(envVar);
-        return v != null ? v : "";
-    }
-
-    private static String prop(String sysProp, String envVar, String defaultVal) {
-        String v = prop(sysProp, envVar);
-        return v.isEmpty() ? defaultVal : v;
-    }
-
-    private static String nullable(String sysProp, String envVar) {
-        String v = prop(sysProp, envVar);
-        return v.isEmpty() ? null : v;
+    private static RunSession run(ExtensionContext ctx) {
+        return ctx.getRoot().getStore(NAMESPACE).get(KEY_RUN, RunSession.class);
     }
 
     private static String stackTraceToString(Throwable t) {

@@ -5,9 +5,10 @@
   "main": "dist/testlookup-reporter.js",
   "types": "dist/testlookup-reporter.d.ts",
   "exports": {
-    ".":                  { "import": "./dist/testlookup-reporter.js", "types": "./dist/testlookup-reporter.d.ts" },
-    "./jest-reporter":    { "import": "./dist/jest-reporter.js",      "types": "./dist/jest-reporter.d.ts" },
-    "./mocha-reporter":   { "import": "./dist/mocha-reporter.js",     "types": "./dist/mocha-reporter.d.ts" }
+    ".":                { "types": "./dist/testlookup-reporter.d.ts", "default": "./dist/testlookup-reporter.js" },
+    "./jest-reporter":  { "types": "./dist/jest-reporter.d.ts",       "default": "./dist/jest-reporter.js" },
+    "./mocha-reporter": { "types": "./dist/mocha-reporter.d.ts",      "default": "./dist/mocha-reporter.js" },
+    "./package.json":   "./package.json"
   },
   "scripts": {
     "build":    "tsc",

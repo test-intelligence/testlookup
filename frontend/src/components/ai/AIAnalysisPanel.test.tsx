@@ -40,6 +40,17 @@ vi.mock('react-hot-toast', () => ({
   },
 }))
 
+// A human-review result shows the review control, which reads the case's review
+// state; answered here (not reviewed yet) so no request leaves the test
+// (src/test/networkGuard.ts).
+vi.mock('@/services/testExecutionReviewService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/services/testExecutionReviewService')>()
+  return {
+    ...actual,
+    testExecutionReviewService: { get: vi.fn(async () => null), upsert: vi.fn(), clear: vi.fn() },
+  }
+})
+
 const permissions = vi.hoisted(() => ({ canTriggerLlm: true }))
 vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => permissions }))
 

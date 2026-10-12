@@ -23,6 +23,12 @@ vi.mock('@/hooks/useNotifications', () => ({
 vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => ({ isAdmin: false }),
 }))
+// The project and release pickers' lists, so no request leaves the test (src/test/networkGuard.ts).
+vi.mock('@/services/projectsService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/services/projectsService')>()
+  return { ...actual, projectsService: { ...actual.projectsService, list: vi.fn(async () => []) } }
+})
+vi.mock('@/hooks/useReleases', () => ({ useReleases: () => ({ data: [], isLoading: false, isValidating: false }) }))
 
 import TopBar from './TopBar'
 

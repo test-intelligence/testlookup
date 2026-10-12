@@ -54,6 +54,16 @@ vi.mock('@/store/projectStore', () => ({
     selector(mockProjectState)),
 }))
 
+// The lazily fetched step flips and decision trail, so no request leaves the
+// test (src/test/networkGuard.ts).
+vi.mock('@/hooks/useRuns', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/hooks/useRuns')>(),
+  useRunStepFlips: () => ({ data: undefined, isLoading: false }),
+}))
+vi.mock('@/hooks/useDecisionTrail', () => ({
+  useDecisionTrail: () => ({ data: undefined, error: undefined, isLoading: false }),
+}))
+
 const { mockCompleteStep } = vi.hoisted(() => ({ mockCompleteStep: vi.fn() }))
 
 vi.mock('@/services/onboardingService', () => ({
