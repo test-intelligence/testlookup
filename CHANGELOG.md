@@ -241,3 +241,7 @@ locally by default.
   `testlookup.example.com`).
 - Security reports go through GitHub private vulnerability reporting
   ([SECURITY.md](SECURITY.md)).
+- Public GitHub is recognised by the API base URL's hostname. The Fixer's clone
+  host and commit links matched the substring `api.github.com`, so a base such
+  as `https://api.github.com.example.net` was taken for github.com (CodeQL
+  incomplete URL substring sanitization).
