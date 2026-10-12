@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { Zap, UserPlus, LogIn, Fingerprint, ShieldAlert } from 'lucide-react';
@@ -12,7 +12,7 @@ import { fetchCurrentUser, getAuthOptions, loginWithPassword } from '@/services/
 import { extractErrorMessage } from '@/services/apiErrors';
 import { startMfaEnrollment } from '@/hooks/useMfaStatus';
 import MfaChallengePanel from '@/components/mfa/MfaChallengePanel';
-import MfaEnrollPanel from '@/components/mfa/MfaEnrollPanel';
+import { lazyWithRetry } from '@/utils/lazyWithRetry';
 import {
   isMfaChallenge,
   isMfaEnrollmentRequired,
@@ -23,6 +23,11 @@ import {
 } from '@/types/mfa';
 import { describeMfaError, formatRetryAfter } from '@/utils/mfaErrors';
 import { returnPathFrom } from '@/utils/returnPath';
+
+// Only an account that must set up two-factor authentication ever sees this
+// panel, and it carries the QR-code library: loaded when enrolment starts, it
+// stays off the bundle every route downloads (scripts/check-bundle-budget.mjs).
+const MfaEnrollPanel = lazyWithRetry(() => import('@/components/mfa/MfaEnrollPanel'));
 
 const DEV_ROLES = [
   { label: 'Admin',       value: 'admin',       colour: 'text-[var(--status-failed)]' },
@@ -326,6 +331,7 @@ export default function LoginPage() {
                 )}
               </div>
 
+              <Suspense fallback={<div className="flex justify-center py-6"><LoadingSpinner size="sm" /></div>}>
               <MfaEnrollPanel
                 enrollment={enrollment}
                 enrollmentToken={enrollHandoff.enrollment_token}
@@ -350,6 +356,7 @@ export default function LoginPage() {
                   }
                 }}
               />
+              </Suspense>
             </div>
           )}
 

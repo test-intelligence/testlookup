@@ -147,6 +147,12 @@ locally by default.
   deployment-wide question.
 - Rollout buckets hash with SHA-256 (were SHA-1): a flag at a partial rollout
   re-buckets its users once.
+- **Every page loads about 14 kB (gzip) less JavaScript before it renders**
+  (eager bundle 179,330 -> 165,363; the budget is 180,000). The MFA enrolment
+  panel and its QR-code library load when enrolment starts; the reset-password
+  and SSO-callback pages load when visited; the top bar's timestamps no longer
+  pull in date-fns. `npm run check:bundle` now also fails if date-fns or
+  qrcode.react reach the eager bundle again.
 
 ### Deprecated
 

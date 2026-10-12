@@ -18,14 +18,18 @@ import { usePermissions } from '@/hooks/usePermissions'
 import { DocumentTitleRouteKeyContext, useRouteDocumentTitle } from '@/hooks/useDocumentTitle'
 import LoginPage from '@/pages/LoginPage'
 import { CHUNK_RELOAD_FLAG, lazyWithRetry } from '@/utils/lazyWithRetry'
-import ResetPasswordPage from '@/pages/ResetPasswordPage'
-import SSOCallbackPage from '@/pages/SSOCallbackPage'
 
 // ``lazyWithRetry`` (a stale-chunk failure reloads the page once) lives in
 // ``utils/lazyWithRetry`` so the report pages' lazy sections share it.
 // Aliased to the original name so the existing ``lazy(() => import(...))``
 // call sites below pick up the retry behaviour without per-site edits.
 const lazy = lazyWithRetry as typeof reactLazy
+
+// /login stays eager: it is the first paint for a signed-out user. These two
+// are visited once (a forced password change, the SSO return), so they load
+// on demand rather than with every route (scripts/check-bundle-budget.mjs).
+const ResetPasswordPage = lazy(() => import('@/pages/ResetPasswordPage'))
+const SSOCallbackPage = lazy(() => import('@/pages/SSOCallbackPage'))
 
 // Lazy: it fetches the suites (the other redirects are eager and dependency-free).
 const SuiteByNameRedirect = lazy(() => import('@/routing/SuiteByNameRedirect'))
@@ -313,7 +317,7 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       {/* Public: the browser arrives from the identity provider before it has a session. */}
-      <Route path="/sso/callback" element={<SSOCallbackPage />} />
+      <Route path="/sso/callback" element={renderLazyRoute(SSOCallbackPage)} />
       {import.meta.env.DEV && ChartGalleryPage && (
         <Route path="/__charts" element={renderLazyRoute(ChartGalleryPage)} />
       )}
@@ -324,7 +328,7 @@ export default function App() {
         <Route path="/__ux-primitives" element={renderLazyRoute(UxPrimitivesPage)} />
       )}
       <Route element={<ProtectedRoute />}>
-        <Route path="/reset-password" element={<ResetPasswordPage />} />
+        <Route path="/reset-password" element={renderLazyRoute(ResetPasswordPage)} />
         <Route path="/*" element={<AppLayout />}>
           <Route index element={<Navigate to="/overview" replace />} />
           {appRoutes.map(({ path, component }) => (

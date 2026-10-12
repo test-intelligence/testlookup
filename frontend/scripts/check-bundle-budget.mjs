@@ -44,7 +44,7 @@ const EAGER_GZIP_BUDGET = 180_000
 
 // Heavy libraries that must never sit on the critical path. Matched against
 // chunk *contents*, not filenames — the defect renamed nothing.
-const MUST_BE_LAZY = ['recharts', 'echarts', 'zrender', 'three']
+const MUST_BE_LAZY = ['recharts', 'echarts', 'zrender', 'three', 'date-fns', 'qrcode.react']
 
 // The substrings each library leaves in minified code — string LITERALS from
 // its core, because identifiers are mangled and the package name itself is not
@@ -75,10 +75,24 @@ const MUST_BE_LAZY = ['recharts', 'echarts', 'zrender', 'three']
 // failed that build ("three is in an eagerly-preloaded chunk"; eager gzip
 // 309,125). Reverted; the real build carries both markers only in the lazy
 // `scatter3d-*.js` chunk (~138 kB gzip).
+// date-fns and qrcode.react joined 2026-10-12, when the eager total had crept to
+// 179,330 of 180,000. date-fns' `format` (its whole token engine, ~19 kB raw)
+// was eager for one fixed 'MMM d, HH:mm' stamp in the TopBar; qrcode.react
+// (~16 kB raw) for the MFA enrolment QR on the login page, which only an
+// account setting up two-factor authentication sees. Both moved off the
+// critical path (eager 179,330 -> 165,363 gzip with the two auth routes made
+// lazy). Markers, each an error message from the library's own code:
+//   date-fns      `Format string contains an unescaped latin alphabet character` — format()
+//   qrcode.react  `String contains unencodable characters in alphanumeric mode` — its qrcodegen
+// VERIFIED 2026-10-12 (vite 8 / rolldown): the real build carries them only in
+// the lazy `formatters-*.js` and `MfaEnrollPanel-*.js` chunks, and a build with
+// the old eager imports restored failed here naming each library.
 const SIGNATURES = {
   echarts: ['_echarts_instance_'],
   zrender: ['__zr_normal__'],
   three: ['__THREE__', 'WebGLRenderer: Context Lost.'],
+  'date-fns': ['Format string contains an unescaped latin alphabet character'],
+  'qrcode.react': ['String contains unencodable characters in alphanumeric mode'],
 }
 const signaturesOf = (lib) => SIGNATURES[lib] ?? [lib]
 
