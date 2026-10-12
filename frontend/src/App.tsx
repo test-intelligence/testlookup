@@ -19,6 +19,7 @@ import { DocumentTitleRouteKeyContext, useRouteDocumentTitle } from '@/hooks/use
 import LoginPage from '@/pages/LoginPage'
 import { CHUNK_RELOAD_FLAG, lazyWithRetry } from '@/utils/lazyWithRetry'
 import ResetPasswordPage from '@/pages/ResetPasswordPage'
+import SSOCallbackPage from '@/pages/SSOCallbackPage'
 
 // ``lazyWithRetry`` (a stale-chunk failure reloads the page once) lives in
 // ``utils/lazyWithRetry`` so the report pages' lazy sections share it.
@@ -311,6 +312,8 @@ export default function App() {
     <DocumentTitleRouteKeyContext.Provider value={documentTitleRouteKey}>
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      {/* Public: the browser arrives from the identity provider before it has a session. */}
+      <Route path="/sso/callback" element={<SSOCallbackPage />} />
       {import.meta.env.DEV && ChartGalleryPage && (
         <Route path="/__charts" element={renderLazyRoute(ChartGalleryPage)} />
       )}

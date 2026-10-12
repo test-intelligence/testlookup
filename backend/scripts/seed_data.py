@@ -315,17 +315,6 @@ def ensure_bucket(s3):
 
 # ── Phase 1: API bootstrap (users + projects) ────────────────────────────────
 
-def api_register(client: httpx.Client, user: dict) -> Optional[dict]:
-    r = client.post("/api/v1/auth/register", json={
-        "email": user["email"], "username": user["username"],
-        "full_name": user["full_name"], "password": user["password"],
-    })
-    if r.status_code == 409:
-        return None  # already exists
-    r.raise_for_status()
-    return r.json()
-
-
 def api_login(client: httpx.Client, username: str, password: str) -> str:
     r = client.post("/api/v1/auth/login", data={"username": username, "password": password})
     r.raise_for_status()
@@ -1176,29 +1165,36 @@ def main():
 
     # ── Phase 1: Users ────────────────────────────────────────────────────────
     print("\n[1/4] Creating users…")
-    with httpx.Client(base_url=BACKEND_URL, timeout=15) as client:
-        for u in USERS:
-            result = api_register(client, u)
-            if result:
-                print(f"   ✓ Created  {u['username']} ({u['email']})")
-            else:
-                print(f"   ↩ Exists   {u['username']}")
 
-    # Promote roles + reset passwords directly in DB
-    print("\n   Setting roles and passwords via DB…")
-
-    async def promote_roles():
+    # Directly, not through POST /auth/register: self-registration is off by
+    # default (REGISTRATION_ENABLED), and a registered account carried
+    # must_change_password=True, so the API refused the seed's own later calls.
+    async def upsert_users():
         import bcrypt
+        from sqlalchemy import select
+        from app.models.postgres import User, UserRole
+
         engine = create_async_engine(DATABASE_URL, echo=False)
-        async with engine.begin() as conn:
+        Session = async_sessionmaker(engine, expire_on_commit=False)
+        async with Session() as db:
             for u in USERS:
                 hashed = bcrypt.hashpw(u["password"].encode(), bcrypt.gensalt()).decode()
-                await conn.execute(text(
-                    "UPDATE users SET role = :role, hashed_password = :pw WHERE username = :uname"
-                ), {"role": u["role"], "uname": u["username"], "pw": hashed})
+                user = (await db.execute(select(User).where(User.username == u["username"]))).scalar_one_or_none()
+                if user is None:
+                    db.add(User(
+                        email=u["email"], username=u["username"], full_name=u["full_name"],
+                        hashed_password=hashed, role=UserRole(u["role"]), must_change_password=False,
+                    ))
+                    print(f"   ✓ Created  {u['username']} ({u['email']})")
+                else:
+                    user.role = UserRole(u["role"])
+                    user.hashed_password = hashed
+                    user.must_change_password = False
+                    print(f"   ↩ Exists   {u['username']} (role and password reset)")
+            await db.commit()
         await engine.dispose()
 
-    asyncio.run(promote_roles())
+    asyncio.run(upsert_users())
     print("   ✓ Roles assigned")
 
     # ── Phase 2: Projects ─────────────────────────────────────────────────────

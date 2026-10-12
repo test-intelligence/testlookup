@@ -77,6 +77,16 @@ locally by default.
 - Frontend unit tests block every real network request (`src/test/networkGuard.ts`:
   XMLHttpRequest, fetch and WebSocket); a test that makes one fails, naming the
   method, the URL and the test.
+- **SAML sign-in works from the sign-in page.** `/sso/login-url` sends a real
+  AuthnRequest (HTTP-Redirect binding), so the IdP's response carries
+  `InResponseTo`; the IdP's browser POST to `/sso/acs` lands in the app through
+  `/sso/callback` with a one-time code exchanged once (`POST /sso/exchange`),
+  and returns to the page the sign-in started from. Tokens never ride in a URL.
+- `GET /api/v1/auth/options` (public) tells the sign-in page whether to offer
+  Register.
+- An ADMIN can revoke any user's API key bound to the project (Streaming API
+  keys page); every revocation writes an `API_KEY_REVOKED` identity event
+  naming the actor and the key's owner.
 
 ### Changed
 
@@ -127,6 +137,16 @@ locally by default.
   `package-lock.json`). `npm install` could skip rolldown's optional
   linux-musl binary inside `node:alpine` (npm/cli#4828), and `vite build`
   then failed.
+- **Self-registration is off by default** (`REGISTRATION_ENABLED=false`): while
+  off, `POST /api/v1/auth/register` answers 403 `registration_disabled` and admins
+  add people under Settings → Users. When it is on, a sign-up is a **Viewer**
+  (it was QA engineer, which can create API keys).
+- Server-side feature flags are evaluated for the project (and user) they are
+  about, so a flag allow-listed to one project is on for that project on the
+  server as in the UI; `is_enabled(..., any_scope=True)` is the explicit
+  deployment-wide question.
+- Rollout buckets hash with SHA-256 (were SHA-1): a flag at a partial rollout
+  re-buckets its users once.
 
 ### Deprecated
 
@@ -204,6 +224,14 @@ locally by default.
   key wins, then a JVM property, an environment variable, the config file; an
   API key beats a token from the same source. The Java reporter let any API key
   in `testlookup.properties` override an explicitly passed token.
+- **UI controls match the API's role checks**: release-gate policies, deleting
+  releases (and removing phases or unlinking runs) and the audit CSV export are
+  ADMIN; saving SMTP is ADMIN (QA leads see it read-only); deleting a suite,
+  overriding a release-gate decision and muting a failure are QA lead; filing
+  Jira from Failures is QA engineer. Each was offered to roles the API refused.
+- The SAML SP metadata no longer advertises `/sso/slo`, which has no handler.
+- The retention activation prompt honours its kill switch,
+  `retention_activation_nudge`.
 
 ### Security
 

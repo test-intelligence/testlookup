@@ -11785,7 +11785,8 @@ These are the full generated JSON Schema definitions, including required fields,
     "MFA_BREAKGLASS_RESET",
     "MFA_POLICY_UPDATED",
     "ACCOUNT_LOCKED",
-    "ACCOUNT_UNLOCKED"
+    "ACCOUNT_UNLOCKED",
+    "API_KEY_REVOKED"
   ],
   "title": "IdentityEventType",
   "type": "string"
@@ -25453,6 +25454,27 @@ These are the full generated JSON Schema definitions, including required fields,
   ],
   "title": "SSOEnforcementMode",
   "type": "string"
+}
+```
+
+## SSOExchangeRequest
+
+```json
+{
+  "description": "The one-time code the ACS hands the browser after an SSO sign-in.",
+  "properties": {
+    "code": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Code",
+      "type": "string"
+    }
+  },
+  "required": [
+    "code"
+  ],
+  "title": "SSOExchangeRequest",
+  "type": "object"
 }
 ```
 

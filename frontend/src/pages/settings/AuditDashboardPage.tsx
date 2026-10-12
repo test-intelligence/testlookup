@@ -15,6 +15,7 @@ import { useProjectStore, ALL_PROJECTS_ID } from '../../store/projectStore';
 import { snapToAllowed, useTimeWindowStore } from '../../store/timeWindowStore';
 import { formatCompactDateTime } from '@/utils/formatters'
 import { helpTopicParam } from '@/components/help/helpTopics'
+import { usePermissions } from '@/hooks/usePermissions'
 
 const HELP_TOPIC = helpTopicParam('/settings/audit')
 
@@ -32,6 +33,9 @@ const SOURCE_COLORS: Record<string, string> = {
 
 export default function AuditDashboardPage() {
   const [tab, setTab] = useState<Tab>('events');
+  // The page is QA lead; the CSV export is ADMIN on the API
+  // (`GET /audit-dashboard/export`), so a QA lead's click answered 403.
+  const { isAdmin: canExport } = usePermissions();
   const activeProjectId = useProjectStore(s => s.activeProjectId);
   const projectId: string | undefined = activeProjectId === ALL_PROJECTS_ID ? undefined : (activeProjectId ?? undefined);
 
@@ -76,7 +80,12 @@ export default function AuditDashboardPage() {
         subtitle="Unified view of security actions, configuration changes, and tenant metrics."
         helpTopic={HELP_TOPIC}
         actions={
-          <button onClick={handleExport} className="px-4 py-2 bg-[var(--color-bg-card)] text-[var(--color-text)] rounded-lg hover:bg-[var(--color-bg-hover)] text-sm">
+          <button
+            onClick={handleExport}
+            disabled={!canExport}
+            title={canExport ? undefined : 'Admin role required'}
+            className="px-4 py-2 bg-[var(--color-bg-card)] text-[var(--color-text)] rounded-lg hover:bg-[var(--color-bg-hover)] text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+          >
             Export CSV
           </button>
         }

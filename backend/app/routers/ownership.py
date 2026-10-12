@@ -213,7 +213,9 @@ async def import_codeowners(
                 detail="source='text' requires a non-empty CODEOWNERS body",
             )
     else:  # github
-        text, detail = await codeowners_service.fetch_codeowners_text(db, project_id)
+        text, detail = await codeowners_service.fetch_codeowners_text(
+            db, project_id, user=current_user,
+        )
         if text is None:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

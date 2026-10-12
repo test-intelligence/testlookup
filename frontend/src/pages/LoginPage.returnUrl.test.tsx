@@ -58,6 +58,7 @@ vi.mock('@/services/authService', () => ({
     must_change_password: false,
   })),
   fetchCurrentUser: vi.fn(async () => ({ id: 'u1', username: 'alice', role: 'ADMIN', must_change_password: false })),
+  getAuthOptions: vi.fn(async () => ({ registration_enabled: false })),
 }))
 vi.mock('@/hooks/useMfaStatus', () => ({
   startMfaEnrollment: vi.fn(),

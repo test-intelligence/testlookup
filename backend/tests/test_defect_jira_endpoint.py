@@ -361,7 +361,7 @@ async def test_metadata_unconfigured_is_graceful_not_5xx(monkeypatch):
     async def _cfg(db):
         return {**_ONLINE_CFG, "domain": None}
 
-    async def _wh(db, project_id):
+    async def _wh(db, project_id, **_kw):
         return False
 
     monkeypatch.setattr(svc, "resolve_jira_config", _cfg)
@@ -381,7 +381,7 @@ async def test_metadata_caches_jira_fetches_for_ttl(monkeypatch):
     async def _cfg(db):
         return dict(_ONLINE_CFG)
 
-    async def _wh(db, project_id):
+    async def _wh(db, project_id, **_kw):
         return True
 
     calls: list[str] = []
@@ -425,7 +425,7 @@ async def test_metadata_unreachable_jira_reports_reason(monkeypatch):
     async def _cfg(db):
         return dict(_ONLINE_CFG)
 
-    async def _wh(db, project_id):
+    async def _wh(db, project_id, **_kw):
         return False
 
     async def _get(cfg, path, params=None):
@@ -456,7 +456,7 @@ async def test_webhook_target_emits_registered_event_with_prefill(online, monkey
 
     emitted: list[tuple] = []
 
-    async def _allowed():
+    async def _allowed(**_kw):
         return True
 
     async def _emit(event_type, *, project_id, payload):
@@ -492,7 +492,7 @@ async def test_webhook_target_emits_registered_event_with_prefill(online, monkey
 async def test_webhook_target_blocked_when_subsystem_gated(online, monkeypatch):
     from app.services import webhook_service
 
-    async def _blocked():
+    async def _blocked(**_kw):
         return False
 
     monkeypatch.setattr(webhook_service, "_post_allowed", _blocked)

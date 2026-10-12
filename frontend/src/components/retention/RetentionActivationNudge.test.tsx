@@ -24,9 +24,15 @@ vi.mock('@/hooks/useUIDismissals', () => ({
 vi.mock('react-hot-toast', () => ({
   default: { success: vi.fn(), error: vi.fn() },
 }))
+// The prompt's kill switch (`retention_activation_nudge`, seeded ON by
+// migration 0145). Resolved per project and user; ON unless a test says not.
+vi.mock('@/hooks/useFeatureFlags', () => ({
+  useFeatureFlagStatus: vi.fn(),
+}))
 
 import { previewRetentionPurge, updateRetentionPolicy } from '@/hooks/useRetentionPolicy'
 import { dismissUIPrompt, useUIDismissals } from '@/hooks/useUIDismissals'
+import { useFeatureFlagStatus } from '@/hooks/useFeatureFlags'
 
 const POLICY = (enabled: boolean): RetentionPolicy =>
   ({
@@ -86,6 +92,7 @@ describe('RetentionActivationNudge', () => {
     vi.mocked(dismissUIPrompt).mockResolvedValue({
       dismissed: ['retention_activation_nudge'],
     })
+    vi.mocked(useFeatureFlagStatus).mockReturnValue(true)
   })
 
   it('prompts when retention is configured but switched off', () => {
@@ -160,5 +167,27 @@ describe('RetentionActivationNudge', () => {
       expect(dismissUIPrompt).toHaveBeenCalledWith('retention_activation_nudge'),
     )
     expect(updateRetentionPolicy).not.toHaveBeenCalled()
+  })
+
+  // The flag was seeded as a kill switch and never read: switching it off
+  // left the prompt up for everyone.
+  it('asks its own kill-switch flag, by its own key', () => {
+    mockDismissals([])
+    renderNudge(POLICY(false))
+    expect(useFeatureFlagStatus).toHaveBeenCalledWith('retention_activation_nudge')
+  })
+
+  it('stays silent while the retention_activation_nudge flag is off', () => {
+    vi.mocked(useFeatureFlagStatus).mockReturnValue(false)
+    mockDismissals([])
+    renderNudge(POLICY(false))
+    expect(screen.queryByTestId('retention-activation-nudge')).not.toBeInTheDocument()
+  })
+
+  it('does not flash the prompt while the flag is still loading', () => {
+    vi.mocked(useFeatureFlagStatus).mockReturnValue(undefined)
+    mockDismissals([])
+    renderNudge(POLICY(false))
+    expect(screen.queryByTestId('retention-activation-nudge')).not.toBeInTheDocument()
   })
 })

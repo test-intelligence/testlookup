@@ -510,6 +510,12 @@ async def _gather_context(run_id: uuid.UUID) -> Optional[_PRCommentContext]:
         if run is None:
             logger.debug("pr_comment skipped: run not found", run_id=str(run_id))
             return None
+        if not await _post_allowed(db, project_id=run.project_id):
+            logger.debug(
+                "pr_comment skipped: github_checks off for the run's project",
+                run_id=str(run_id),
+            )
+            return None
         if not run.pr_number or not run.ci_repo:
             logger.debug(
                 "pr_comment skipped: no PR context on run", run_id=str(run_id),
@@ -679,7 +685,9 @@ async def post_pr_summary_for_run(run_id: uuid.UUID) -> Optional[dict[str, Any]]
     integration row for Integration Health).
     """
     try:
-        if not await _post_allowed():
+        # Off for everyone: skip without a session. The run's own project is
+        # asked in ``_gather_context`` as soon as the run is loaded.
+        if not await _post_allowed(any_scope=True):
             logger.debug(
                 "pr_comment skipped: offline mode or feature flag off",
                 run_id=str(run_id),

@@ -38,6 +38,15 @@ import {
   updatePolicy,
 } from '../services/policyService';
 import { usePolicies, usePolicy } from '@/hooks/usePolicyEditor';
+import { usePermissions } from '@/hooks/usePermissions';
+
+/**
+ * Every write here -- create, save, publish, deactivate, and the simulator --
+ * is ADMIN on the API (`routers/release_gate_policies.py`). The page itself is
+ * a management route, open to QA leads, who read the policies but were
+ * offered every control and got a 403 from each.
+ */
+const ADMIN_REQUIRED = 'Admin role required';
 
 const RULE_TYPES = [
   { type: 'flaky_recurrence', label: 'Flaky Recurrence Limit', defaultParams: { max_flaky_tests: 10, action: 'BLOCK' } },
@@ -93,7 +102,7 @@ const recommendationTone = (recommendation: string) => ({
  * "What would this policy have said about run X?" — the document as edited
  * (saved or not) against a past run, beside the form at >= 1280 px.
  */
-function PolicySimulator({ doc }: { doc: PolicyDocument }) {
+function PolicySimulator({ doc, canSimulate }: { doc: PolicyDocument; canSimulate: boolean }) {
   const [simRunId, setSimRunId] = useState('');
   const [simResult, setSimResult] = useState<SimulateResponse | null>(null);
   const [simulating, setSimulating] = useState(false);
@@ -124,7 +133,8 @@ function PolicySimulator({ doc }: { doc: PolicyDocument }) {
         <div className="mt-1 flex gap-2">
           <input id="policy-sim-run" placeholder="Run ID" value={simRunId} onChange={e => setSimRunId(e.target.value)}
             className="input min-w-0 flex-1" />
-          <button onClick={handleSimulate} disabled={simulating}
+          <button onClick={handleSimulate} disabled={simulating || !canSimulate}
+            title={canSimulate ? undefined : ADMIN_REQUIRED}
             className="shrink-0 px-4 py-2 bg-[var(--status-flaky-bg)] text-[var(--color-text)] rounded-lg hover:bg-[var(--status-flaky-bg)] text-sm disabled:opacity-50">
             {simulating ? 'Simulating...' : 'Simulate'}
           </button>
@@ -167,6 +177,7 @@ export default function PolicyEditorPage() {
   const { policyId } = useParams<{ policyId: string }>();
   const navigate = useNavigate();
   const projects = useProjectStore((state) => state.projects);
+  const { isAdmin } = usePermissions();
   /**
    * Name the project a policy governs, not its id.
    *
@@ -191,6 +202,8 @@ export default function PolicyEditorPage() {
   const [projectId, setProjectId] = useState<string | null>(null);
   const [doc, setDoc] = useState<PolicyDocument>(emptyDocument());
   const [isDraft, setIsDraft] = useState(true);
+  // A draft is editable by an ADMIN only (every write route is ADMIN).
+  const editable = isDraft && isAdmin;
   const [saving, setSaving] = useState(false);
   // Tracks which policy id the editable form fields below were seeded from, so
   // the "adjust state during render" seeding (below) runs once per loaded
@@ -333,7 +346,12 @@ export default function PolicyEditorPage() {
           subtitle="Define per-project release gate thresholds, rules, and override constraints."
           helpTopic={helpTopicParam('/policies')}
           actions={
-            <button onClick={() => navigate('/policies/new')} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded-md hover:bg-[var(--color-btn-primary-hover)] text-sm font-medium">
+            <button
+              onClick={() => navigate('/policies/new')}
+              disabled={!isAdmin}
+              title={isAdmin ? undefined : ADMIN_REQUIRED}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded-md hover:bg-[var(--color-btn-primary-hover)] text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+            >
               <Plus className="h-4 w-4" /> New Policy
             </button>
           }
@@ -370,9 +388,9 @@ export default function PolicyEditorPage() {
                 </div>
                 <div className="flex gap-2">
                   <button onClick={() => navigate(`/policies/${p.id}`)} className="px-3 py-1 text-xs bg-[var(--color-bg-secondary)] rounded hover:bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)]">
-                    {p.is_draft ? 'Edit' : 'View'}
+                    {p.is_draft && isAdmin ? 'Edit' : 'View'}
                   </button>
-                  {p.is_active && (
+                  {p.is_active && isAdmin && (
                     <button onClick={() => handleDeactivate(p.id)} className="px-3 py-1 text-xs bg-[var(--status-failed-bg)]/50 rounded hover:bg-[var(--status-failed-bg)] text-[var(--status-failed)]">
                       Deactivate
                     </button>
@@ -403,11 +421,11 @@ export default function PolicyEditorPage() {
     <div className="space-y-4">
       <PageHeader
         compact
-        title={isNew ? 'New Policy' : `Edit: ${name}`}
+        title={isNew ? 'New Policy' : `${editable ? 'Edit' : 'View'}: ${name}`}
         subtitle={`${state}${version} · ${scope}`}
         helpTopic={helpTopicParam('/policies')}
         overflow={[{ label: 'Back to policies', href: '/policies', icon: <ArrowLeft className="h-4 w-4" /> }]}
-        actions={isDraft ? (
+        actions={editable ? (
           <>
             <button onClick={handleSave} disabled={saving} className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded-lg hover:bg-[var(--color-btn-primary-hover)] text-sm disabled:opacity-50">
               {saving ? 'Saving...' : 'Save Draft'}
@@ -423,6 +441,12 @@ export default function PolicyEditorPage() {
 
       {displayError && <div className="bg-[var(--status-failed-bg)]/30 border border-[var(--status-failed-bd)] rounded-lg p-3 text-[var(--status-failed)] text-sm">{displayError}</div>}
 
+      {!isAdmin && (
+        <p data-policy-read-only="" className="text-xs text-[var(--color-text-muted)]">
+          Read-only: an Administrator creates, edits, publishes and simulates release gate policies.
+        </p>
+      )}
+
       <div data-policy-layout="" className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px] xl:items-start">
         <div data-primary="" data-policy-form="" className="min-w-0 space-y-4">
           {/* Metadata — a label/field grid: name and project side by side, the description full width. */}
@@ -432,7 +456,7 @@ export default function PolicyEditorPage() {
               <div>
                 <label htmlFor="policy-name" className={LABEL}>Name</label>
                 <input id="policy-name" placeholder="Policy Name *" value={name} onChange={e => setName(e.target.value)}
-                  className={FIELD} disabled={!isDraft} />
+                  className={FIELD} disabled={!editable} />
               </div>
               <div>
                 {/* A project picker: it was a free-text "Project ID" a person
@@ -441,7 +465,7 @@ export default function PolicyEditorPage() {
                 <label htmlFor="policy-project" className={LABEL}>Project</label>
                 <select id="policy-project" value={projectId || ''}
                   onChange={e => setProjectId(e.target.value || null)}
-                  className={FIELD} disabled={!isDraft}>
+                  className={FIELD} disabled={!editable}>
                   <option value="">System default (every project)</option>
                   {projectId && !projects.some(project => project.id === projectId) && (
                     <option value={projectId}>{projectLabel(projectId)}</option>
@@ -456,7 +480,7 @@ export default function PolicyEditorPage() {
             <div>
               <label htmlFor="policy-description" className={LABEL}>Description</label>
               <textarea id="policy-description" placeholder="Description" value={description} onChange={e => setDescription(e.target.value)}
-                className={clsx(FIELD, 'h-16 resize-y')} disabled={!isDraft} />
+                className={clsx(FIELD, 'h-16 resize-y')} disabled={!editable} />
             </div>
           </section>
 
@@ -475,7 +499,7 @@ export default function PolicyEditorPage() {
                   <input id={`policy-threshold-${key}`} type="number" step="0.1"
                     value={doc.thresholds[key as keyof typeof doc.thresholds]}
                     onChange={e => setDoc(d => ({ ...d, thresholds: { ...d.thresholds, [key]: parseFloat(e.target.value) || 0 } }))}
-                    className={FIELD} disabled={!isDraft} />
+                    className={FIELD} disabled={!editable} />
                   <p className={HINT}>{hint}</p>
                 </div>
               ))}
@@ -512,7 +536,7 @@ export default function PolicyEditorPage() {
                       },
                     }))}
                     className={FIELD}
-                    disabled={!isDraft} />
+                    disabled={!editable} />
                   <p className={HINT}>{hint}</p>
                 </div>
               ))}
@@ -523,7 +547,7 @@ export default function PolicyEditorPage() {
           <section className={SECTION}>
             <div className="flex justify-between items-center">
               <h2 className={SECTION_TITLE}>Rules</h2>
-              {isDraft && (
+              {editable && (
                 <select aria-label="Add rule" onChange={e => { if (e.target.value) { addRule(e.target.value); e.target.value = ''; } }}
                   className="input w-auto px-3 py-1.5 text-xs" defaultValue="">
                   <option value="" disabled>+ Add Rule</option>
@@ -539,12 +563,12 @@ export default function PolicyEditorPage() {
                 <div className="flex justify-between items-center">
                   <div className="flex items-center gap-2">
                     <input type="checkbox" aria-label={`${rule.name} enabled`} checked={rule.enabled}
-                      onChange={e => updateRule(idx, { enabled: e.target.checked })} disabled={!isDraft} />
+                      onChange={e => updateRule(idx, { enabled: e.target.checked })} disabled={!editable} />
                     <input aria-label="Rule name" value={rule.name} onChange={e => updateRule(idx, { name: e.target.value })}
-                      className="bg-transparent text-[var(--color-text)] text-sm font-medium border-none outline-none" disabled={!isDraft} />
+                      className="bg-transparent text-[var(--color-text)] text-sm font-medium border-none outline-none" disabled={!editable} />
                     <span className="text-xs text-[var(--color-text-muted)] font-mono">{rule.type}</span>
                   </div>
-                  {isDraft && (
+                  {editable && (
                     <button onClick={() => removeRule(idx)} className="text-xs text-[var(--status-failed)] hover:text-[var(--status-failed)]">Remove</button>
                   )}
                 </div>
@@ -555,13 +579,13 @@ export default function PolicyEditorPage() {
                         <label htmlFor={`policy-rule-${idx}-max-flaky`} className={LABEL_SM}>Max Flaky Tests</label>
                         <input id={`policy-rule-${idx}-max-flaky`} type="number" value={rule.params.max_flaky_tests as number ?? 10}
                           onChange={e => updateRuleParam(idx, 'max_flaky_tests', parseInt(e.target.value) || 0)}
-                          className={FIELD_SM} disabled={!isDraft} />
+                          className={FIELD_SM} disabled={!editable} />
                       </div>
                       <div>
                         <label htmlFor={`policy-rule-${idx}-action`} className={LABEL_SM}>Action</label>
                         <select id={`policy-rule-${idx}-action`} value={rule.params.action as string ?? 'BLOCK'}
                           onChange={e => updateRuleParam(idx, 'action', e.target.value)}
-                          className={FIELD_SM} disabled={!isDraft}>
+                          className={FIELD_SM} disabled={!editable}>
                           <option value="BLOCK">BLOCK</option>
                           <option value="WARN">WARN</option>
                           <option value="INFO">INFO</option>
@@ -575,13 +599,13 @@ export default function PolicyEditorPage() {
                         <label htmlFor={`policy-rule-${idx}-max-defects`} className={LABEL_SM}>Max Open Defects</label>
                         <input id={`policy-rule-${idx}-max-defects`} type="number" value={rule.params.max_open_defects as number ?? 5}
                           onChange={e => updateRuleParam(idx, 'max_open_defects', parseInt(e.target.value) || 0)}
-                          className={FIELD_SM} disabled={!isDraft} />
+                          className={FIELD_SM} disabled={!editable} />
                       </div>
                       <div>
                         <label htmlFor={`policy-rule-${idx}-action`} className={LABEL_SM}>Action</label>
                         <select id={`policy-rule-${idx}-action`} value={rule.params.action as string ?? 'BLOCK'}
                           onChange={e => updateRuleParam(idx, 'action', e.target.value)}
-                          className={FIELD_SM} disabled={!isDraft}>
+                          className={FIELD_SM} disabled={!editable}>
                           <option value="BLOCK">BLOCK</option>
                           <option value="WARN">WARN</option>
                           <option value="INFO">INFO</option>
@@ -595,7 +619,7 @@ export default function PolicyEditorPage() {
                         <label htmlFor={`policy-rule-${idx}-dimension`} className={LABEL_SM}>Dimension</label>
                         <select id={`policy-rule-${idx}-dimension`} value={rule.params.dimension as string ?? 'regression_likely'}
                           onChange={e => updateRuleParam(idx, 'dimension', e.target.value)}
-                          className={FIELD_SM} disabled={!isDraft}>
+                          className={FIELD_SM} disabled={!editable}>
                           {DIMENSIONS.map(d => <option key={d.key} value={d.key}>{d.label}</option>)}
                         </select>
                       </div>
@@ -603,13 +627,13 @@ export default function PolicyEditorPage() {
                         <label htmlFor={`policy-rule-${idx}-max-score`} className={LABEL_SM}>Max Score</label>
                         <input id={`policy-rule-${idx}-max-score`} type="number" value={rule.params.max_score as number ?? 70}
                           onChange={e => updateRuleParam(idx, 'max_score', parseFloat(e.target.value) || 0)}
-                          className={FIELD_SM} disabled={!isDraft} />
+                          className={FIELD_SM} disabled={!editable} />
                       </div>
                       <div>
                         <label htmlFor={`policy-rule-${idx}-action`} className={LABEL_SM}>Action</label>
                         <select id={`policy-rule-${idx}-action`} value={rule.params.action as string ?? 'BLOCK'}
                           onChange={e => updateRuleParam(idx, 'action', e.target.value)}
-                          className={FIELD_SM} disabled={!isDraft}>
+                          className={FIELD_SM} disabled={!editable}>
                           <option value="BLOCK">BLOCK</option>
                           <option value="WARN">WARN</option>
                         </select>
@@ -620,14 +644,14 @@ export default function PolicyEditorPage() {
                     <>
                       <div className="flex items-center gap-2">
                         <input id={`policy-rule-${idx}-allow-override`} type="checkbox" checked={rule.params.allow_override_to_go_from_no_go as boolean ?? true}
-                          onChange={e => updateRuleParam(idx, 'allow_override_to_go_from_no_go', e.target.checked)} disabled={!isDraft} />
+                          onChange={e => updateRuleParam(idx, 'allow_override_to_go_from_no_go', e.target.checked)} disabled={!editable} />
                         <label htmlFor={`policy-rule-${idx}-allow-override`} className={LABEL_SM}>Allow NO_GO → GO override</label>
                       </div>
                       <div>
                         <label htmlFor={`policy-rule-${idx}-min-reason`} className={LABEL_SM}>Min Reason Length</label>
                         <input id={`policy-rule-${idx}-min-reason`} type="number" value={rule.params.require_reason_min_length as number ?? 0}
                           onChange={e => updateRuleParam(idx, 'require_reason_min_length', parseInt(e.target.value) || 0)}
-                          className={FIELD_SM} disabled={!isDraft} />
+                          className={FIELD_SM} disabled={!editable} />
                       </div>
                     </>
                   )}
@@ -667,7 +691,7 @@ export default function PolicyEditorPage() {
                         },
                       }))}
                       className={FIELD}
-                      disabled={!isDraft} />
+                      disabled={!editable} />
                     <p className={HINT}>{hint}</p>
                   </div>
                 ))}
@@ -691,7 +715,7 @@ export default function PolicyEditorPage() {
                     ...d,
                     kind_rules: { ...(d.kind_rules ?? DEFAULT_KIND_RULES), enabled: e.target.checked },
                   }))}
-                  disabled={!isDraft}
+                  disabled={!editable}
                 />
                 Enabled (opt-in)
               </label>
@@ -719,7 +743,7 @@ export default function PolicyEditorPage() {
                             aria-label={`${label} budget`}
                             checked={budget != null}
                             onChange={e => setBudget(e.target.checked ? { max_failures: 5, downgrade_to: 'CONDITIONAL_GO' } : null)}
-                            disabled={!isDraft}
+                            disabled={!editable}
                           />
                           <span className="text-sm text-[var(--color-text)] font-medium">{label} budget</span>
                         </div>
@@ -730,13 +754,13 @@ export default function PolicyEditorPage() {
                               <label htmlFor={`kind-max-${key}`} className={LABEL_SM}>Max failures excused</label>
                               <input id={`kind-max-${key}`} type="number" step="1" min={0} value={budget.max_failures}
                                 onChange={e => setBudget({ ...budget, max_failures: Math.max(0, parseInt(e.target.value, 10) || 0) })}
-                                className={FIELD_SM} disabled={!isDraft} />
+                                className={FIELD_SM} disabled={!editable} />
                             </div>
                             <div>
                               <label htmlFor={`kind-downgrade-${key}`} className={LABEL_SM}>Downgrade NO-GO to</label>
                               <select id={`kind-downgrade-${key}`} value={budget.downgrade_to}
                                 onChange={() => setBudget({ ...budget, downgrade_to: 'CONDITIONAL_GO' })}
-                                className={FIELD_SM} disabled={!isDraft}>
+                                className={FIELD_SM} disabled={!editable}>
                                 <option value="CONDITIONAL_GO">CONDITIONAL_GO</option>
                               </select>
                               <p className={HINT}>Never GO — hard rule.</p>
@@ -759,7 +783,7 @@ export default function PolicyEditorPage() {
                                       : Math.max(0, Math.min(100, parseInt(raw, 10) || 0)),
                                   });
                                 }}
-                                className={FIELD_SM} disabled={!isDraft} />
+                                className={FIELD_SM} disabled={!editable} />
                               <p className={HINT}>
                                 Only failures whose AI kind confidence meets the floor are excusable;
                                 below-floor failures count as product. Empty = no floor (behavior unchanged).
@@ -793,14 +817,14 @@ export default function PolicyEditorPage() {
                     onChange={e => setDoc(d => ({
                       ...d, dimension_weights: { ...d.dimension_weights, [key]: parseFloat(e.target.value) || 0 },
                     }))}
-                    className={FIELD} disabled={!isDraft} />
+                    className={FIELD} disabled={!editable} />
                 </div>
               ))}
             </div>
           </Disclosure>
         </div>
 
-        <PolicySimulator doc={doc} />
+        <PolicySimulator doc={doc} canSimulate={isAdmin} />
       </div>
     </div>
   );

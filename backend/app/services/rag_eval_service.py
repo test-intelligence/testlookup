@@ -12,6 +12,7 @@ from app.models.postgres import (
     GenerationCaseSource,
     KnowledgeChunk,
     KnowledgeSource,
+    User,
 )
 
 logger = structlog.get_logger(__name__)
@@ -20,6 +21,9 @@ logger = structlog.get_logger(__name__)
 async def get_rag_status(
     db: AsyncSession,
     accessible_project_ids: set[uuid.UUID] | None = None,
+    *,
+    project_id: uuid.UUID | None = None,
+    user: User | None = None,
 ) -> dict:
     """Return overall RAG feature status and adoption metrics.
 
@@ -29,10 +33,19 @@ async def get_rag_status(
     not — it read a Redis key and an AppSetting that the gate never consulted,
     which is how a workspace ended up displaying "Active" for a feature that
     was off everywhere that mattered.
+
+    With ``project_id`` (the page's active project) ``enabled`` is that
+    project's answer for ``user``, exactly what the generate and retrieve
+    gates will say. Without one it answers for the deployment: on when RAG is
+    on for any project (``any_scope``), since no allow-list can be applied to
+    "no project".
     """
     from app.services.feature_flags import is_enabled
 
-    enabled = await is_enabled("knowledge_rag", db=db)
+    if project_id is not None:
+        enabled = await is_enabled("knowledge_rag", db=db, project_id=project_id, user=user)
+    else:
+        enabled = await is_enabled("knowledge_rag", db=db, any_scope=True)
 
     # The three counts used to be unscoped ``COUNT(*)`` over every tenant, so
     # any authenticated user — the endpoint carries no role or project guard —

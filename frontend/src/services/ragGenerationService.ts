@@ -108,8 +108,15 @@ export const ragService = {
 
   // ── Status (RAG-14) ───────────────────────────────────────────────────────
 
-  getStatus: () =>
-    getData<RagStatus>('/api/v1/test-management/rag/status'),
+  /**
+   * With `projectId`, `enabled` is that project's answer for the caller (the
+   * `knowledge_rag` flag's project and role allow-lists applied), i.e. what
+   * retrieve and generate will say. Without one: on while RAG is on anywhere.
+   */
+  getStatus: (projectId?: string | null) =>
+    getData<RagStatus>('/api/v1/test-management/rag/status', {
+      params: projectId ? { project_id: projectId } : undefined,
+    }),
 
   getBatchEval: (batchId: string) =>
     getData<Record<string, unknown>>(`/api/v1/test-management/batches/${batchId}/eval`),

@@ -207,9 +207,11 @@ async def emit_release_decided(
         raise ValueError(f"unknown release.decided trigger: {trigger}")
     try:
         run_uuid = run_id if isinstance(run_id, uuid.UUID) else uuid.UUID(str(run_id))
-        # Skip building the council view when webhooks are off, the default
-        # (offline) install; emit_event would drop the event anyway.
-        if not await webhook_service._post_allowed():
+        # Skip building the council view when webhooks are off for everyone,
+        # the default (offline) install; emit_event would drop the event
+        # anyway. ``any_scope``: the run's project is not known yet, and
+        # emit_event asks again for that project before anything is staged.
+        if not await webhook_service._post_allowed(any_scope=True):
             return 0
         async with AsyncSessionLocal() as db:
             found = (

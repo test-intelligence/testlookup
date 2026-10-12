@@ -403,6 +403,20 @@ KNOWN_MYPY_SKEW: dict[str, tuple[int, str]] = {
         "'add_middleware ... type[ProxyHeadersMiddleware]' [arg-type]; the local "
         "install does not. Seen on PR #153 run 35683876813: CI 2, local 1."
     )),
+    # Main @ 419e072e passed CI's ratchet (run 38155525673) with sso.py 1,
+    # sso_service.py 3, rag_faithfulness_service.py 5; the local ratchet on
+    # those unchanged files reads 0, 2 and 7 (local ragas/redis/lxml typing).
+    # Found when the auth/SAML branch touched them (2026-10-11).
+    "app/routers/sso.py": (1, (
+        "CI 1, local 0 on main's unchanged file (run 38155525673 vs local ratchet)."
+    )),
+    "app/services/sso_service.py": (1, (
+        "CI 3, local 2 on main's unchanged file (run 38155525673 vs local ratchet)."
+    )),
+    "app/services/rag_faithfulness_service.py": (-2, (
+        "CI 5, local 7 on main's unchanged file: the local ragas types add two "
+        "union-attr errors on EvaluationResult | Executor (run 38155525673)."
+    )),
 }
 
 

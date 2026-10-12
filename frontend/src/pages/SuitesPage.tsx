@@ -250,7 +250,11 @@ export default function SuitesPage() {
   const accessibleProjects = useProjectStore((s) => s.projects)
   const { canAccessManagement, hasRole } = usePermissions()
   const canEdit = canAccessManagement || hasRole('QA_ENGINEER')
+  // Make default and Delete are QA lead on the API (`routers/suites.py`);
+  // creating a suite is QA engineer. Delete was offered to a QA engineer and
+  // answered 403.
   const canSetDefault = hasRole('QA_LEAD')
+  const canDelete = hasRole('QA_LEAD')
 
   const { data, isLoading, error } = useSuites()
   // The run columns join by suite name, which is only unambiguous inside one
@@ -401,7 +405,7 @@ export default function SuitesPage() {
                             <Star className="h-4 w-4" />
                           </button>
                         )}
-                        {canEdit && !s.is_default && (
+                        {canDelete && !s.is_default && (
                           <button
                             onClick={() => handleDelete(s)}
                             className="rounded p-1 text-[var(--color-text-muted)] hover:bg-[var(--status-failed-bg)]/10 hover:text-[var(--status-failed)]"

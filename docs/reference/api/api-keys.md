@@ -235,10 +235,22 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 
 Revoke Api Key
 
-Revoke (soft-delete) an API key. Only the owner can revoke their own keys.
+Revoke (soft-delete) an API key: your own, or -- as an ADMIN -- anyone's.
+
+An ADMIN revokes another user's key for incident response: a leaked CI key
+has to stop working now, whoever minted it. The Streaming API keys page
+lists every key bound to the project for an admin and offers Revoke on
+each, and ``require_api_key_owner`` already let an admin through; this
+query then looked the key up by ``user_id == current_user.id`` and answered
+404 for every key the admin did not own. Everyone else revokes only their
+own keys (``require_api_key_owner`` refuses the rest with 403, and the
+query below would not find them either).
 
 A caller authenticated with a project-bound key may revoke only keys bound
 to that project; ``require_api_key_owner`` refuses the rest (re-audit N20).
+
+Every revocation is written to the identity trail naming the actor and the
+key's owner, so "who killed this key" has an answer when they differ.
 
 Source: [backend/app/routers/api_keys.py:317](../../../backend/app/routers/api_keys.py#L317).
 

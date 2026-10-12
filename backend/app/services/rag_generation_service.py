@@ -78,7 +78,7 @@ async def grounded_generate(
     5. If persist, create ManagedTestCase + GenerationCaseSource rows
     6. Run coverage mapping
     """
-    await require_rag_enabled_async(db)
+    await require_rag_enabled_async(db, project_id=project_id, user=current_user)
 
     from app.services.rag_redaction_service import redact_prompt
 
@@ -118,6 +118,7 @@ async def grounded_generate(
                 db, project_id, query_text,
                 source_ids=source_ids,
                 top_k=generation_config.get("top_k", 15) if generation_config else 15,
+                user=current_user,
             )
             if not retrieved:
                 raise RagEvidenceUnavailable(
@@ -451,7 +452,7 @@ async def _persist_cases(
             ]
             evaluation = await evaluate(
                 _case_text_for_faithfulness(case_data), citation_texts, db=db,
-                project_id=project_id,
+                project_id=project_id, user=user,
             )
             if evaluation is not None:
                 apply_evaluation(case, evaluation)

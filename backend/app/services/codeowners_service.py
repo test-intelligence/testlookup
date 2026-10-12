@@ -314,7 +314,7 @@ async def import_codeowners_rules(
 
 
 async def fetch_codeowners_text(
-    db: AsyncSession, project_id: uuid.UUID,
+    db: AsyncSession, project_id: uuid.UUID, *, user: Optional[User] = None,
 ) -> tuple[Optional[str], str]:
     """Fetch the repo's CODEOWNERS file. Returns ``(text | None, detail)``.
 
@@ -326,7 +326,7 @@ async def fetch_codeowners_text(
     """
     from app.services import github_checks_service as gh
 
-    if not await gh._post_allowed(db):
+    if not await gh._post_allowed(db, project_id=project_id, user=user):
         return None, "offline_or_flag_off"
 
     integration = await gh.get_integration(db, project_id)

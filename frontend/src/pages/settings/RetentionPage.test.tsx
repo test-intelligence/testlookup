@@ -102,6 +102,11 @@ vi.mock('@/components/ui/EmptyState', () => ({
 vi.mock('react-router-dom', () => ({
   Link: ({ children }: { children: React.ReactNode }) => createElement('a', null, children),
 }))
+// The activation nudge and the storage footprint have their own tests. Real
+// here, they read the user's dismissals, the nudge's kill-switch flag and the
+// project's storage over HTTP (a real request from a unit test).
+vi.mock('@/components/retention/RetentionActivationNudge', () => ({ default: () => null }))
+vi.mock('@/components/retention/StoragePanel', () => ({ default: () => null }))
 
 /** Contract defaults for an unconfigured project. */
 function basePolicy(overrides: Partial<RetentionPolicy> = {}): RetentionPolicy {

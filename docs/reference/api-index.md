@@ -106,6 +106,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/auth/mfa/recovery-codes` | Reissue Recovery Codes | [Authentication](api/authentication.md) |
 | GET | `/api/v1/auth/mfa/status` | Mfa Status | [Authentication](api/authentication.md) |
 | POST | `/api/v1/auth/mfa/verify` | Verify Mfa | [Authentication](api/authentication.md) |
+| GET | `/api/v1/auth/options` | Auth Options | [Authentication](api/authentication.md) |
 | POST | `/api/v1/auth/refresh` | Refresh Tokens | [Authentication](api/authentication.md) |
 | POST | `/api/v1/auth/register` | Register | [Authentication](api/authentication.md) |
 | GET | `/api/v1/auth/users` | List Users | [Authentication](api/authentication.md) |
@@ -455,6 +456,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/sso/configs/{config_id}` | Get Sso Config | [SSO / SAML](api/sso-saml.md) |
 | PATCH | `/api/v1/sso/configs/{config_id}` | Update Sso Config | [SSO / SAML](api/sso-saml.md) |
 | POST | `/api/v1/sso/configs/{config_id}/test` | Test Sso Connection | [SSO / SAML](api/sso-saml.md) |
+| POST | `/api/v1/sso/exchange` | Exchange Sso Code | [SSO / SAML](api/sso-saml.md) |
 | GET | `/api/v1/sso/login-url` | Get Sso Login Url | [SSO / SAML](api/sso-saml.md) |
 | GET | `/api/v1/sso/metadata` | Get Sp Metadata | [SSO / SAML](api/sso-saml.md) |
 | GET | `/api/v1/sso/status` | Get Sso Status | [SSO / SAML](api/sso-saml.md) |
@@ -573,4 +575,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **564 HTTP operations**, **473 paths**, **81 domain pages**.
+Total: **566 HTTP operations**, **475 paths**, **81 domain pages**.

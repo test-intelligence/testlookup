@@ -8,7 +8,8 @@ import AppLogo from '@/components/ui/AppLogo';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import { type SSOStatus, getSSOStatus } from '../services/ssoService';
 import { isSafeExternalUrl } from '@/utils/safeUrl';
-import { fetchCurrentUser, loginWithPassword } from '@/services/authService';
+import { fetchCurrentUser, getAuthOptions, loginWithPassword } from '@/services/authService';
+import { extractErrorMessage } from '@/services/apiErrors';
 import { startMfaEnrollment } from '@/hooks/useMfaStatus';
 import MfaChallengePanel from '@/components/mfa/MfaChallengePanel';
 import MfaEnrollPanel from '@/components/mfa/MfaEnrollPanel';
@@ -64,6 +65,8 @@ export default function LoginPage() {
 
   // SSO status
   const [ssoStatus, setSsoStatus] = useState<SSOStatus | null>(null);
+  // Self-registration is off unless the server says otherwise (REGISTRATION_ENABLED).
+  const [registrationEnabled, setRegistrationEnabled] = useState(false);
 
   const setAuth = useAuthStore((state) => state.setAuth);
   const navigate = useNavigate();
@@ -84,7 +87,16 @@ export default function LoginPage() {
 
   useEffect(() => {
     getSSOStatus().then(setSsoStatus).catch(() => { /* SSO not available */ });
+    getAuthOptions()
+      .then((options) => setRegistrationEnabled(options.registration_enabled === true))
+      .catch(() => { /* unknown: offer sign-in only */ });
   }, []);
+
+  // A refused SSO sign-in comes back here as ?sso_error=1 (the reason stays in the server log).
+  const ssoErrorNotice = new URLSearchParams(location.search).has('sso_error')
+    ? 'Single sign-on did not complete. Try again, or ask your administrator.'
+    : null;
+  const notice = loginNotice ?? ssoErrorNotice;
 
   /** Shared tail of every successful sign-in — normal, post-challenge, or post-enrollment. */
   const completeSignIn = async (tokens: TokenResponse) => {
@@ -172,12 +184,13 @@ export default function LoginPage() {
 
     setIsRegistering(true);
     try {
+      // The page reports the outcome itself; the client's toast would repeat it.
       await api.post('/api/v1/auth/register', {
         email: regEmail,
         username: regUsername,
         full_name: regFullName || undefined,
         password: regPassword,
-      });
+      }, { suppressToast: true });
 
       toast.success('Account created! You will be prompted to set a new password after your first login.');
       // Switch to login and pre-fill email
@@ -185,8 +198,15 @@ export default function LoginPage() {
       setPassword('');
       setMode('login');
     } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      toast.error(detail ?? 'Registration failed. Please try again.');
+      const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+      if (detail && typeof detail === 'object' && (detail as { code?: string }).code === 'registration_disabled') {
+        // Turned off since the page loaded: say so, and stop offering it.
+        toast.error((detail as { message?: string }).message ?? 'Self-registration is turned off.');
+        setRegistrationEnabled(false);
+        setMode('login');
+      } else {
+        toast.error(extractErrorMessage(detail, 'Registration failed. Please try again.'));
+      }
     } finally {
       setIsRegistering(false);
     }
@@ -266,13 +286,13 @@ export default function LoginPage() {
         <div className="theme-bg-card py-8 px-4 shadow sm:rounded-lg sm:px-10 border theme-border">
 
           {/* ── Carry-over notice (lockout, expired challenge, SSO-required …) ── */}
-          {mode === 'login' && loginNotice && (
+          {mode === 'login' && notice && (
             <div
               role="alert"
               className="mb-5 flex items-start gap-2 rounded-md border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg-soft)] px-3 py-2 text-xs text-[var(--color-text)]"
             >
               <ShieldAlert className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-[var(--status-broken)]" />
-              <span>{loginNotice}</span>
+              <span>{notice}</span>
             </div>
           )}
 
@@ -391,7 +411,8 @@ export default function LoginPage() {
                     type="button"
                     onClick={async () => {
                       try {
-                        const { data } = await api.get('/api/v1/sso/login-url');
+                        // `next`: where to land after the identity provider (sent as the SAML RelayState).
+                        const { data } = await api.get('/api/v1/sso/login-url', { params: { next: from } });
                         if (!isSafeExternalUrl(data?.redirect_url)) {
                           toast.error('SSO login URL rejected');
                           return;
@@ -529,13 +550,13 @@ export default function LoginPage() {
             </form>
           )}
 
-          {/* ── Mode toggle (hidden mid-MFA — there is nothing to switch to) ── */}
+          {/* ── Mode toggle (hidden mid-MFA, and on sign-in while self-registration is off — there is nothing to switch to) ── */}
           <div
             className={`mt-5 pt-4 border-t border-[var(--color-border)] text-center text-sm text-[var(--color-text-muted)] ${
-              mode === 'login' || mode === 'register' ? '' : 'hidden'
+              (mode === 'login' && registrationEnabled) || mode === 'register' ? '' : 'hidden'
             }`}
           >
-            {mode !== 'register' ? (
+            {mode !== 'register' ? (registrationEnabled && (
               <>
                 Don't have an account?{' '}
                 <button
@@ -546,7 +567,7 @@ export default function LoginPage() {
                   Register
                 </button>
               </>
-            ) : (
+            )) : (
               <>
                 Already have an account?{' '}
                 <button

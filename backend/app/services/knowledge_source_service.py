@@ -55,17 +55,32 @@ VALID_CLASSIFICATIONS = {e.value for e in KnowledgeClassification}
 # drive the same switch.
 
 
-async def require_rag_enabled_async(db: AsyncSession) -> None:
+async def require_rag_enabled_async(
+    db: AsyncSession,
+    *,
+    project_id: Optional[uuid.UUID] = None,
+    user: Optional[User] = None,
+    any_scope: bool = False,
+) -> None:
     """The only Knowledge-RAG gate.
 
     Resolves the ``knowledge_rag`` flag in the ``feature_flags`` table (seeded
     by migration 0062), falling back to the legacy ``KNOWLEDGE_RAG_ENABLED``
     env var via ``LEGACY_ENV_VAR_MAP``. Anything that needs to *read* the state
-    without raising should call ``is_enabled("knowledge_rag", db=db)`` directly
-    rather than growing a second resolver.
+    without raising should call ``is_enabled("knowledge_rag", ...)`` directly,
+    with the same scope, rather than growing a second resolver.
+
+    Pass the project the request is about and the user making it: a project or
+    role allow-list on ``knowledge_rag`` is a statement about exactly those,
+    and asked without them it read as off for everyone. ``any_scope=True`` is
+    for the deployment-wide endpoints (the connector test, the domain
+    allow-list) and for the early check before a source's project is known:
+    it refuses only when RAG is off for every project.
     """
     from app.services.feature_flags import is_enabled
-    if await is_enabled("knowledge_rag", db=db):
+    if await is_enabled(
+        "knowledge_rag", db=db, project_id=project_id, user=user, any_scope=any_scope,
+    ):
         return
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -102,7 +117,7 @@ async def list_sources(
     page: int = 1,
     page_size: int = 50,
 ) -> dict:
-    await require_rag_enabled_async(db)
+    await require_rag_enabled_async(db, project_id=project_id, user=user)
     await _check_project_access(db, user, project_id)
 
     stmt = select(KnowledgeSource).where(KnowledgeSource.project_id == project_id)
@@ -136,7 +151,7 @@ async def create_source(
     payload: dict,
     user: User,
 ) -> KnowledgeSource:
-    await require_rag_enabled_async(db)
+    await require_rag_enabled_async(db, project_id=project_id, user=user)
     await _check_project_access(db, user, project_id)
     # Project-existence guard fires AFTER the access check so non-admins
     # never receive a "this project doesn't exist" signal for a project
@@ -224,12 +239,15 @@ async def get_source_or_404(
     source_id: uuid.UUID,
     user: User,
 ) -> KnowledgeSource:
-    await require_rag_enabled_async(db)
+    # Off for every project: 503 before the lookup, as before. The source's
+    # own project decides once the row says which project that is.
+    await require_rag_enabled_async(db, any_scope=True)
     result = await db.execute(select(KnowledgeSource).where(KnowledgeSource.id == source_id))
     source = result.scalar_one_or_none()
     if not source:
         raise HTTPException(status_code=404, detail="Knowledge source not found")
     await _check_project_access(db, user, source.project_id)
+    await require_rag_enabled_async(db, project_id=source.project_id, user=user)
     return source
 
 

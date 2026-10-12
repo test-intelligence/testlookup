@@ -144,14 +144,31 @@ class WebhookGateLookupError(RuntimeError):
     """The outbound-webhook feature gate could not be resolved."""
 
 
-async def _post_allowed(*, raise_on_lookup_error: bool = False) -> bool:
+async def _post_allowed(
+    *,
+    raise_on_lookup_error: bool = False,
+    project_id: Optional[uuid.UUID] = None,
+    user: Optional[User] = None,
+    any_scope: bool = False,
+) -> bool:
     """``AI_OFFLINE_MODE`` is the hard kill switch — even with the feature
-    flag on, an air-gapped deployment never egresses traffic."""
+    flag on, an air-gapped deployment never egresses traffic.
+
+    ``outbound_webhooks`` is asked for the project whose subscriptions would
+    receive the event (and the user, when a person triggered it). Every
+    subscription belongs to one project, so a project allow-list on the flag
+    means "these projects' subscriptions"; asked without the project, as it
+    was, the allow-list turned every emission off. A caller that does not know
+    the project yet passes ``any_scope=True`` to skip work when the flag is
+    off for everyone, and ``emit_event`` asks again with the project.
+    """
     if settings.AI_OFFLINE_MODE:
         return False
     try:
         from app.services.feature_flags import is_enabled
-        return await is_enabled("outbound_webhooks")
+        return await is_enabled(
+            "outbound_webhooks", project_id=project_id, user=user, any_scope=any_scope,
+        )
     except Exception as exc:
         logger.debug("outbound_webhooks flag check failed", error=str(exc))
         if raise_on_lookup_error:
@@ -424,6 +441,8 @@ async def list_deliveries(
 
 async def replay_delivery(
     delivery_id: uuid.UUID,
+    *,
+    actor: Optional[User] = None,
 ) -> Optional[uuid.UUID]:
     """Create a fresh PENDING delivery from a failed/DLQ'd one and enqueue it.
 
@@ -444,8 +463,11 @@ async def replay_delivery(
     the delivery row is committed or the worker may look up a row
     that doesn't exist yet. See the COMMIT_ALLOWLIST entry for
     webhook_service.py.
+
+    The flag is asked for the subscription's project and the ``actor``
+    replaying it, once the delivery says which subscription that is.
     """
-    if not await _post_allowed():
+    if not await _post_allowed(any_scope=True):
         return None
 
     async with AsyncSessionLocal() as db:
@@ -456,6 +478,15 @@ async def replay_delivery(
         if original is None:
             return None
         if original.status not in ("FAILED", "DLQ"):
+            return None
+        subscription_project = (
+            await db.execute(
+                select(WebhookSubscription.project_id).where(
+                    WebhookSubscription.id == original.subscription_id
+                )
+            )
+        ).scalar_one_or_none()
+        if not await _post_allowed(project_id=subscription_project, user=actor):
             return None
 
         new_row = WebhookDelivery(
@@ -579,14 +610,14 @@ async def emit_event(
     if event_type not in SUPPORTED_EVENTS:
         logger.debug("emit_event called with unknown event", event_type=event_type)
         return 0
-    if not await _post_allowed(
-        raise_on_lookup_error=raise_on_persistence_error
-    ):
-        return 0
-
     try:
         pid = project_id if isinstance(project_id, uuid.UUID) else uuid.UUID(str(project_id))
     except (TypeError, ValueError):
+        return 0
+    # The project's own answer: its subscriptions are the ones that would fire.
+    if not await _post_allowed(
+        raise_on_lookup_error=raise_on_persistence_error, project_id=pid,
+    ):
         return 0
     event_run_id: uuid.UUID | None = None
     if event_type in {"run.completed", "release.decided"}:
@@ -967,9 +998,12 @@ async def deliver(
             return {"error": "subscription missing or disabled"}
 
         # Feature flag / offline re-check — an admin may have disabled
-        # webhooks between enqueue and delivery.
+        # webhooks between enqueue and delivery (for this subscription's
+        # project: that is whose flag decides).
         try:
-            post_allowed = await _post_allowed(raise_on_lookup_error=True)
+            post_allowed = await _post_allowed(
+                raise_on_lookup_error=True, project_id=subscription.project_id,
+            )
         except WebhookGateLookupError as exc:
             retry_at = datetime.now(timezone.utc) + timedelta(seconds=30)
             changed = await _transition_processing_delivery(

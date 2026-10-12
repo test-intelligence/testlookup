@@ -10,7 +10,7 @@ Get Batch
 
 
 
-Source: [backend/app/routers/rag_generation.py:157](../../../backend/app/routers/rag_generation.py#L157).
+Source: [backend/app/routers/rag_generation.py:158](../../../backend/app/routers/rag_generation.py#L158).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_generation_batch_access.<locals>._check`.
 
@@ -91,7 +91,7 @@ Batch Accept
 
 
 
-Source: [backend/app/routers/rag_generation.py:212](../../../backend/app/routers/rag_generation.py#L212).
+Source: [backend/app/routers/rag_generation.py:213](../../../backend/app/routers/rag_generation.py#L213).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_generation_batch_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -188,7 +188,7 @@ Accept Case
 
 
 
-Source: [backend/app/routers/rag_generation.py:236](../../../backend/app/routers/rag_generation.py#L236).
+Source: [backend/app/routers/rag_generation.py:237](../../../backend/app/routers/rag_generation.py#L237).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_generation_batch_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -295,7 +295,7 @@ Reject Case
 
 
 
-Source: [backend/app/routers/rag_generation.py:255](../../../backend/app/routers/rag_generation.py#L255).
+Source: [backend/app/routers/rag_generation.py:256](../../../backend/app/routers/rag_generation.py#L256).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_generation_batch_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -389,7 +389,7 @@ Get Batch Coverage
 
 
 
-Source: [backend/app/routers/rag_generation.py:137](../../../backend/app/routers/rag_generation.py#L137).
+Source: [backend/app/routers/rag_generation.py:138](../../../backend/app/routers/rag_generation.py#L138).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_generation_batch_access.<locals>._check`.
 
@@ -474,7 +474,7 @@ Batch Eval
 
 
 
-Source: [backend/app/routers/rag_generation.py:363](../../../backend/app/routers/rag_generation.py#L363).
+Source: [backend/app/routers/rag_generation.py:379](../../../backend/app/routers/rag_generation.py#L379).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_generation_batch_access.<locals>._check`.
 
@@ -568,7 +568,7 @@ and "the gate is not running" look the same here on purpose, because the
 queue itself cannot tell them apart. `/settings/ai` is where the flag state
 is reported.
 
-Source: [backend/app/routers/rag_generation.py:169](../../../backend/app/routers/rag_generation.py#L169).
+Source: [backend/app/routers/rag_generation.py:170](../../../backend/app/routers/rag_generation.py#L170).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -674,7 +674,7 @@ Rag Generate
 
 
 
-Source: [backend/app/routers/rag_generation.py:90](../../../backend/app/routers/rag_generation.py#L90).
+Source: [backend/app/routers/rag_generation.py:91](../../../backend/app/routers/rag_generation.py#L91).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -843,7 +843,7 @@ List Stale Cases
 
 
 
-Source: [backend/app/routers/rag_generation.py:306](../../../backend/app/routers/rag_generation.py#L306).
+Source: [backend/app/routers/rag_generation.py:307](../../../backend/app/routers/rag_generation.py#L307).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -953,7 +953,7 @@ Get Case Citations
 
 
 
-Source: [backend/app/routers/rag_generation.py:277](../../../backend/app/routers/rag_generation.py#L277).
+Source: [backend/app/routers/rag_generation.py:278](../../../backend/app/routers/rag_generation.py#L278).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1040,7 +1040,7 @@ Dismiss Stale
 
 
 
-Source: [backend/app/routers/rag_generation.py:325](../../../backend/app/routers/rag_generation.py#L325).
+Source: [backend/app/routers/rag_generation.py:326](../../../backend/app/routers/rag_generation.py#L326).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1119,14 +1119,18 @@ endpoint with no role or project guard, so any authenticated user could
 read the whole install's totals. ``get_accessible_project_ids`` returns
 ``None`` for an ADMIN (sees everything) and a membership set otherwise.
 
-Source: [backend/app/routers/rag_generation.py:344](../../../backend/app/routers/rag_generation.py#L344).
+``project_id`` scopes ``enabled`` only (the generate tab passes its
+project, so it says "not enabled" exactly when generation would 503); a
+non-member is refused before anything is read.
+
+Source: [backend/app/routers/rag_generation.py:345](../../../backend/app/routers/rag_generation.py#L345).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+project_id: uuid.UUID | None=Query(None, description="The project the page is about: `enabled` is then that project's answer for the caller (project and role allow-lists applied)."), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
 ```
 
 ### Declared wire contract
@@ -1137,6 +1141,25 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 {
   "operationId": "rag_status_api_v1_test_management_rag_status_get",
   "parameters": [
+    {
+      "description": "The project the page is about: `enabled` is then that project's answer for the caller (project and role allow-lists applied).",
+      "in": "query",
+      "name": "project_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "format": "uuid",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "The project the page is about: `enabled` is then that project's answer for the caller (project and role allow-lists applied).",
+        "title": "Project Id"
+      }
+    },
     {
       "in": "header",
       "name": "X-API-Key",

@@ -104,7 +104,7 @@ async def test_defect_dialog_lists_jira_projects_and_issue_types(fake, monkeypat
     async def resolved(db):
         return _cfg(fake.state)
 
-    async def no_webhook(db, pid):
+    async def no_webhook(db, pid, user=None):
         return False
 
     monkeypatch.setattr(svc, "get_http_client", lambda: fake.client)
@@ -128,7 +128,7 @@ async def test_defect_dialog_reports_rejected_credentials_instead_of_empty_picke
     async def resolved(db):
         return _cfg(fake.state, api_token="revoked")
 
-    async def no_webhook(db, pid):
+    async def no_webhook(db, pid, user=None):
         return False
 
     monkeypatch.setattr(svc, "get_http_client", lambda: fake.client)

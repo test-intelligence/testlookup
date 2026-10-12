@@ -322,14 +322,33 @@ async def revoke_api_key(
     current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
     _: User = Depends(require_api_key_owner()),
 ):
-    """Revoke (soft-delete) an API key. Only the owner can revoke their own keys.
+    """Revoke (soft-delete) an API key: your own, or -- as an ADMIN -- anyone's.
+
+    An ADMIN revokes another user's key for incident response: a leaked CI key
+    has to stop working now, whoever minted it. The Streaming API keys page
+    lists every key bound to the project for an admin and offers Revoke on
+    each, and ``require_api_key_owner`` already let an admin through; this
+    query then looked the key up by ``user_id == current_user.id`` and answered
+    404 for every key the admin did not own. Everyone else revokes only their
+    own keys (``require_api_key_owner`` refuses the rest with 403, and the
+    query below would not find them either).
 
     A caller authenticated with a project-bound key may revoke only keys bound
     to that project; ``require_api_key_owner`` refuses the rest (re-audit N20).
+
+    Every revocation is written to the identity trail naming the actor and the
+    key's owner, so "who killed this key" has an answer when they differ.
     """
-    result = await db.execute(
-        select(ApiKey).where(ApiKey.id == key_id, ApiKey.user_id == current_user.id)
-    )
+    from app.core.deps import _normalize_user_role  # noqa: PLC0415
+
+    try:
+        caller_is_admin = _normalize_user_role(current_user.role) == UserRole.ADMIN
+    except ValueError:
+        caller_is_admin = False
+    stmt = select(ApiKey).where(ApiKey.id == key_id)
+    if not caller_is_admin:
+        stmt = stmt.where(ApiKey.user_id == current_user.id)
+    result = await db.execute(stmt)
     api_key = result.scalar_one_or_none()
     if not api_key:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
@@ -376,6 +395,8 @@ async def revoke_api_key(
                 context={"key_hint": child.key_hint, "cascade_from": str(api_key.id)},
             )
 
+    await _record_revocation_identity_event(db, api_key, current_user, len(descendants))
+
     await db.commit()
 
     # The live-event path caches each credential's project for a few seconds
@@ -387,6 +408,46 @@ async def revoke_api_key(
     for key_hash in (api_key.key_hash, *(child.key_hash for child in descendants)):
         await forget_streaming_key_hash(key_hash)
     return None
+
+
+async def _record_revocation_identity_event(
+    db: AsyncSession, api_key: ApiKey, actor: User, revoked_descendants: int,
+) -> None:
+    """Stage an ``API_KEY_REVOKED`` identity event naming the actor and the owner.
+
+    ``user_id`` is the key's OWNER and ``actor_id`` the person who revoked it,
+    so an admin revoking someone else's key reads as exactly that. The activity
+    feed row above is project-scoped and skipped for a user-scoped key; this one
+    is written for every revocation. Staged on the caller's session: it commits
+    with the revocation or not at all.
+    """
+    from app.models.postgres import IdentityEventType  # noqa: PLC0415
+    from app.services.sso_service import log_identity_event  # noqa: PLC0415
+
+    owner_username = None
+    if api_key.user_id == actor.id:
+        owner_username = actor.username
+    elif api_key.user_id is not None:
+        owner_username = (
+            await db.execute(select(User.username).where(User.id == api_key.user_id))
+        ).scalar_one_or_none()
+    await log_identity_event(
+        db,
+        IdentityEventType.API_KEY_REVOKED,
+        user_id=api_key.user_id,
+        actor_id=actor.id,
+        actor_name=actor.username,
+        detail={
+            "key_id": str(api_key.id),
+            "key_name": api_key.name,
+            "key_hint": api_key.key_hint,
+            "project_id": str(api_key.project_id) if api_key.project_id else None,
+            "owner_id": str(api_key.user_id) if api_key.user_id else None,
+            "owner_username": owner_username,
+            "revoked_by_owner": api_key.user_id == actor.id,
+            "revoked_descendants": revoked_descendants,
+        },
+    )
 
 
 _MINTING_PARENT = text(

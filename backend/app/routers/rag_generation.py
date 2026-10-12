@@ -68,6 +68,7 @@ async def rag_retrieve(
         source_ids=payload.source_ids,
         top_k=payload.top_k,
         min_score=payload.min_score,
+        user=current_user,
     )
     return RagRetrieveResponse(
         chunks=[RetrievedChunkSchema(
@@ -343,6 +344,13 @@ async def dismiss_stale(
 
 @router.get("/rag/status", response_model=RagStatusResponse)
 async def rag_status(
+    project_id: uuid.UUID | None = Query(
+        None,
+        description=(
+            "The project the page is about: `enabled` is then that project's "
+            "answer for the caller (project and role allow-lists applied)."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -352,12 +360,20 @@ async def rag_status(
     endpoint with no role or project guard, so any authenticated user could
     read the whole install's totals. ``get_accessible_project_ids`` returns
     ``None`` for an ADMIN (sees everything) and a membership set otherwise.
+
+    ``project_id`` scopes ``enabled`` only (the generate tab passes its
+    project, so it says "not enabled" exactly when generation would 503); a
+    non-member is refused before anything is read.
     """
     from app.core.deps import get_accessible_project_ids
     from app.services.rag_eval_service import get_rag_status
 
+    if project_id is not None:
+        await resolve_project_scope(db, current_user, str(project_id))
     scope = await get_accessible_project_ids(db, current_user)
-    return await get_rag_status(db, accessible_project_ids=scope)
+    return await get_rag_status(
+        db, accessible_project_ids=scope, project_id=project_id, user=current_user,
+    )
 
 
 @router.get("/batches/{batch_id}/eval")

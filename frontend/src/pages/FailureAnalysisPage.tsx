@@ -2012,13 +2012,18 @@ export default function FailureAnalysisPage() {
   const quarantineOn = useFeatureFlagStatus('flaky_auto_quarantine')
   // Correct and Classify rewrite failure categories (and the AI analysis), and
   // Notify mails the suite owner: QA engineer and above, as the API requires.
-  // Offered to a viewer they could only fail.
-  const { isQaEngineer } = usePermissions()
+  // Offered to a viewer they could only fail. The row actions follow their
+  // endpoints too: Mute proposes a quarantine (POST /quarantine, QA lead) and
+  // Jira files a defect (POST /projects/{id}/defects/jira, QA engineer); both
+  // were offered to every role.
+  const { isQaEngineer, isQaLead } = usePermissions()
 
   const actionTarget = model.topFailingTest
   const rowActions = useMemo<RowActionHandlers>(() => ({
     onMute: (row) => setMuteFor(row),
-    muteDisabledReason: (row) => !project?.id
+    muteDisabledReason: (row) => !isQaLead
+      ? 'QA Lead role required'
+      : !project?.id
       ? 'Pick a specific project to propose a quarantine.'
       : !row.test.test_fingerprint
         ? 'Test identity (fingerprint) not available yet — cannot propose a quarantine.'
@@ -2030,7 +2035,9 @@ export default function FailureAnalysisPage() {
     // says BOTH delivery paths are dead (Jira gated/unconfigured AND no
     // webhook receiver). While metadata is still loading the button stays
     // enabled — the dialog itself gates submission.
-    createJiraDisabledReason: (row) => !project?.id
+    createJiraDisabledReason: (row) => !isQaEngineer
+      ? 'QA Engineer role required'
+      : !project?.id
       ? 'Pick a specific project to create a Jira issue.'
       : !row.test.test_fingerprint
         ? 'Test identity (fingerprint) not available yet — cannot file a defect.'
@@ -2039,7 +2046,7 @@ export default function FailureAnalysisPage() {
           : null,
     onShowSuspects: (row) => setSuspectsFor(row),
     suspectsDisabledReason: latestFailedRun?.id ? null : 'No failed run in this window to attribute commits against.',
-  }), [project?.id, jiraMeta, latestFailedRun?.id, quarantineOn])
+  }), [project?.id, jiraMeta, latestFailedRun?.id, quarantineOn, isQaLead, isQaEngineer])
 
   const openCorrection = useCallback(() => {
     if (!project?.id) {

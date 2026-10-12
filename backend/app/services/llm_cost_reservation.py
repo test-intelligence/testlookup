@@ -205,7 +205,9 @@ async def _cap_context(project_id: uuid.UUID) -> Optional[tuple[float, float]]:
         current_period_bounds,
     )
 
-    if not await is_enabled("llm_cost_budget"):
+    # The cap is the project's own (``project_llm_quotas``): ask for that
+    # project, so a project allow-list on the flag caps exactly those projects.
+    if not await is_enabled("llm_cost_budget", project_id=project_id):
         return None
     async with AsyncSessionLocal() as db:
         quota = await _load_quota(db, project_id)

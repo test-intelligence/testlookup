@@ -50,6 +50,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import PolicyEditorPage from './PolicyEditorPage'
 import { useProjectStore } from '@/store/projectStore'
+import { useAuthStore } from '@/store/authStore'
 
 const mockCreatePolicy = vi.fn()
 const mockToastError = vi.fn()
@@ -129,6 +130,9 @@ function nameIt(value = 'Release gate') {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // Every write on this page is ADMIN on the API; these tests author policies.
+  // What a QA lead sees is PolicyEditorPage.roles.test.tsx.
+  useAuthStore.setState({ user: { id: 'admin', role: 'ADMIN' } as never })
 })
 
 describe('creating a policy is reachable', () => {

@@ -186,6 +186,7 @@ Source declarations only; no `.env` or running secrets are read. Compose/Helm/Ku
 | `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | `int` | `720` |
 | `JWT_REFRESH_TOKEN_EXPIRE_DAYS` | `int` | `7` |
 | `AUTH_REVOCATION_FAIL_OPEN` | `bool` | `False` |
+| `REGISTRATION_ENABLED` | `bool` | `False` |
 | `MFA_ISSUER_NAME` | `str` | `'TestLookup'` |
 | `MFA_CHALLENGE_TTL_SECONDS` | `int` | `300` |
 | `MFA_RECOVERY_CODE_COUNT` | `int` | `10` |

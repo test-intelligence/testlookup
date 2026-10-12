@@ -152,7 +152,8 @@ async def get_sync_history(
     current_user: User = Depends(get_current_active_user),
     _: User = Depends(require_knowledge_source_access()),
 ):
-    await svc.require_rag_enabled_async(db)
+    # get_source_or_404 asks again for the source's own project.
+    await svc.require_rag_enabled_async(db, any_scope=True)
     await svc.get_source_or_404(db, source_id, current_user)
     from app.services.knowledge_sync_service import get_sync_history as _get_history
     return await _get_history(db, source_id, limit=limit)
@@ -168,7 +169,8 @@ async def get_freshness(
     current_user: User = Depends(get_current_active_user),
     _: User = Depends(require_knowledge_source_access()),
 ):
-    await svc.require_rag_enabled_async(db)
+    # get_source_or_404 asks again for the source's own project.
+    await svc.require_rag_enabled_async(db, any_scope=True)
     source = await svc.get_source_or_404(db, source_id, current_user)
     from app.services.knowledge_sync_service import get_freshness as _get_freshness
     return await _get_freshness(db, source)
@@ -187,7 +189,10 @@ async def test_connector(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_active_user),
 ):
-    await svc.require_rag_enabled_async(db)
+    # Deployment-wide: a connector is the install's, not one project's, so
+    # it may be tested while RAG is on for any project (allow-lists apply
+    # to the project-scoped endpoints, not to this one).
+    await svc.require_rag_enabled_async(db, any_scope=True)
     from app.services.connectors.registry import bind_to_deployment, get_connector
     try:
         connector = get_connector(payload.source_type)
@@ -206,7 +211,9 @@ async def get_domain_allowlist(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_active_user),
 ):
-    await svc.require_rag_enabled_async(db)
+    # Deployment-wide: one domain allow-list serves every project, so it is
+    # readable while RAG is on for any project.
+    await svc.require_rag_enabled_async(db, any_scope=True)
     domains = await svc.get_domain_allowlist(db)
     return {"domains": domains}
 

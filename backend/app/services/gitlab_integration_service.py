@@ -119,19 +119,32 @@ def _project_ref(project_path: str) -> str:
 # ── Feature-flag + offline gate ────────────────────────────────────────────
 
 
-async def _post_allowed(db: Optional[AsyncSession] = None) -> bool:
+async def _post_allowed(
+    db: Optional[AsyncSession] = None,
+    *,
+    project_id: Optional[uuid.UUID] = None,
+    any_scope: bool = False,
+) -> bool:
     """Compound gate: ``gitlab`` feature flag ON and offline-mode OFF.
 
     ``AI_OFFLINE_MODE`` is the hard kill switch for every outbound
     integration — respected regardless of feature-flag state so air-gapped
     customers don't accidentally egress traffic when an admin toggles the
     ``gitlab`` flag on.
+
+    The flag is asked for the project whose GitLab integration would be
+    called: a project allow-list on ``gitlab`` turned every post off while it
+    was asked without one. The run-driven entry points exit early with
+    ``any_scope=True`` (off for everyone) and ask again with the run's project
+    as soon as they have loaded the run, before any other work.
     """
     if settings.AI_OFFLINE_MODE:
         return False
     try:
         from app.services.feature_flags import is_enabled
-        return await is_enabled("gitlab", db=db)
+        return await is_enabled(
+            "gitlab", db=db, project_id=project_id, any_scope=any_scope,
+        )
     except Exception as exc:
         logger.debug("gitlab flag check failed", error=str(exc))
         return False
@@ -451,6 +464,12 @@ async def _gather_mr_context(run_id: uuid.UUID) -> Optional[_MRNoteContext]:
         if run is None:
             logger.debug("mr_note skipped: run not found", run_id=str(run_id))
             return None
+        if not await _post_allowed(db, project_id=run.project_id):
+            logger.debug(
+                "mr_note skipped: gitlab flag off for the run's project",
+                run_id=str(run_id),
+            )
+            return None
         if not run.pr_number or not run.ci_repo:
             logger.debug("mr_note skipped: no MR context on run", run_id=str(run_id))
             return None
@@ -601,7 +620,9 @@ async def post_mr_note_for_run(run_id: uuid.UUID) -> Optional[dict[str, Any]]:
     recorded on the integration row for Integration Health).
     """
     try:
-        if not await _post_allowed():
+        # Off for everyone: skip without a session. The run's own project is
+        # asked in ``_gather_mr_context`` as soon as the run is loaded.
+        if not await _post_allowed(any_scope=True):
             logger.debug(
                 "mr_note skipped: offline mode or feature flag off",
                 run_id=str(run_id),
@@ -778,6 +799,8 @@ async def _gather_commit_status_context(
         run = result.scalar_one_or_none()
         if run is None:
             return {"skipped": "run_not_found"}
+        if not await _post_allowed(db, project_id=run.project_id):
+            return {"skipped": "feature_flag_off_or_offline_mode"}
         if not run.commit_hash:
             return {"skipped": "no_commit_sha"}
 
@@ -840,7 +863,9 @@ async def post_commit_status_for_run(run_id: uuid.UUID) -> Optional[dict[str, An
     persisted via ``_record_outcome`` (its own short session).
     """
     try:
-        if not await _post_allowed():
+        # Off for everyone: skip without a session. The run's own project is
+        # asked in ``_gather_commit_status_context`` once the run is loaded.
+        if not await _post_allowed(any_scope=True):
             return {"skipped": "feature_flag_off_or_offline_mode"}
 
         gathered = await _gather_commit_status_context(run_id)

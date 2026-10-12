@@ -4259,6 +4259,9 @@ class IdentityEventType(str, PyEnum):
     MFA_POLICY_UPDATED = "MFA_POLICY_UPDATED"
     ACCOUNT_LOCKED = "ACCOUNT_LOCKED"
     ACCOUNT_UNLOCKED = "ACCOUNT_UNLOCKED"
+    # ``DELETE /api/v1/keys/{id}``: ``user_id`` is the key's owner, ``actor_id``
+    # who revoked it (an ADMIN may revoke anyone's key, for incident response).
+    API_KEY_REVOKED = "API_KEY_REVOKED"
 
 
 class SSOConfiguration(Base):

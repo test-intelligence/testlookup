@@ -588,6 +588,12 @@ class Settings(BaseSettings):
     # Redis outage — and logs an ERROR on every use. Environment-only on
     # purpose: there is no in-app toggle for it.
     AUTH_REVOCATION_FAIL_OPEN: bool = False
+    # Self-service sign-up (``POST /api/v1/auth/register`` and the login page's
+    # "Register" link). Off by default: an open deployment would otherwise let
+    # anyone on the network create an account. An admin adds people under
+    # Settings > Users instead. When on, a new account is a VIEWER with no
+    # project access until an admin adds it to a project.
+    REGISTRATION_ENABLED: bool = False
 
     # ── Multi-factor authentication (TOTP) ────────────────────
     # Label shown in the authenticator app next to the account name.
