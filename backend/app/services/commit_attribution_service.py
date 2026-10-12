@@ -60,6 +60,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 import httpx
 import structlog
@@ -386,22 +387,39 @@ def normalize_supplied_payload(raw: Any) -> tuple[Optional[str], Optional[str], 
     return None, None, []
 
 
+def github_html_root(api_base: Optional[str]) -> str:
+    """The browser (and clone) root for a GitHub API base URL.
+
+    ``https://github.com`` when the API base is unset or its HOST is exactly
+    ``api.github.com``; otherwise GitHub Enterprise, whose API base is
+    ``https://host/api/v3`` and whose root is the base without that suffix.
+
+    The host is compared exactly. A substring test (``"api.github.com" in
+    base``) took any host whose name merely contained it -- e.g.
+    ``api.github.com.corp.example`` -- for public GitHub, so its commit links
+    and the fixer's authenticated clone URL pointed at github.com instead of
+    the enterprise server (CodeQL py/incomplete-url-substring-sanitization).
+    """
+    base = (api_base or "").rstrip("/")
+    # A scheme-less "api.github.com" still names public GitHub.
+    host_name = (urlparse(base if "://" in base else f"//{base}").hostname or "").lower()
+    if not base or host_name == "api.github.com":
+        return "https://github.com"
+    root = base
+    for suffix in ("/api/v3", "/api"):
+        if root.endswith(suffix):
+            root = root[: -len(suffix)]
+            break
+    return root.rstrip("/")
+
+
 def _commit_html_url(ci_repo: Optional[str], api_base: Optional[str], sha: str) -> Optional[str]:
     """Best-effort deep link to a commit. ``None`` when we can't honestly
     build one (no repo known) — the UI then shows the SHA as plain text."""
     if not ci_repo or not sha:
         return None
     repo = ci_repo.strip().strip("/")
-    base = (api_base or "").rstrip("/")
-    if not base or "api.github.com" in base:
-        return f"https://github.com/{repo}/commit/{sha}"
-    # GitHub Enterprise: api base is ``https://host/api/v3`` → html root is host.
-    host = base
-    for suffix in ("/api/v3", "/api"):
-        if host.endswith(suffix):
-            host = host[: -len(suffix)]
-            break
-    return f"{host.rstrip('/')}/{repo}/commit/{sha}"
+    return f"{github_html_root(api_base)}/{repo}/commit/{sha}"
 
 
 # ── Baseline / connector fetch ───────────────────────────────────────────────

@@ -261,6 +261,19 @@ def test_commit_url_none_without_repo():
     assert svc._commit_html_url(None, "https://api.github.com", "s" * 40) is None
 
 
+def test_an_enterprise_host_that_contains_api_github_com_is_not_github():
+    # A substring check sent this enterprise server's links (and the fixer's
+    # authenticated clone) to public github.com.
+    url = svc._commit_html_url("acme/webapp", "https://api.github.com.corp.example/api/v3", "s" * 40)
+    assert url == f"https://api.github.com.corp.example/acme/webapp/commit/{'s' * 40}"
+    assert svc.github_html_root("https://evil.example/api.github.com") == "https://evil.example/api.github.com"
+
+
+def test_public_github_is_recognised_by_its_exact_host():
+    for base in ("https://api.github.com", "https://API.GitHub.com/", "api.github.com", None, ""):
+        assert svc.github_html_root(base) == "https://github.com", base
+
+
 # ── Read model honesty ───────────────────────────────────────────────────────
 
 

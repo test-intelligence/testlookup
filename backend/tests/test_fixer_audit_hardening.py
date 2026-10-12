@@ -540,3 +540,15 @@ async def test_sweep_keeps_pr_open_when_outcome_record_fails(monkeypatch):
     assert summary["merged"] == 1 and summary["closed"] == 0
     assert _SweepSession.committed >= 1
     assert _SweepSession.rolled_back >= 1
+
+
+def test_clone_host_never_mistakes_an_enterprise_server_for_github():
+    """The fixer clones with the project's token. ``"api.github.com" in base``
+    sent an enterprise server whose name merely contains that string to public
+    github.com -- the token included. The host is compared exactly now."""
+    from app.agents.fixer.workflow import _clone_host
+
+    assert _clone_host("https://api.github.com.corp.example/api/v3") == "https://api.github.com.corp.example"
+    assert _clone_host("https://ghe.corp/api/v3") == "https://ghe.corp"
+    assert _clone_host("https://api.github.com") == "https://github.com"
+    assert _clone_host(None) == "https://github.com"

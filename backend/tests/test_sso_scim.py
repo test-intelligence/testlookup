@@ -495,6 +495,47 @@ class TestSCIMFilterParsing:
         value = _extract_scim_filter_value("invalid filter")
         assert value is None
 
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ('userName eq "john"', ("username", "john")),
+            ('userName   eq    "a b"', ("username", "a b")),
+            ('EMAILS.VALUE eq "x@example.com"', ("emails.value", "x@example.com")),
+            ('urn:ietf:params:scim:schemas:core:2.0:User:externalId eq "e1"', ("externalid", "e1")),
+            ("userName eq ", None),
+            ('userName eq "unterminated', None),
+        ],
+    )
+    def test_filter_grammar_is_unchanged(self, raw, expected):
+        from app.services.scim_service import _parse_scim_filter
+
+        assert _parse_scim_filter(raw) == expected
+
+    def test_a_long_run_of_spaces_cannot_stall_the_parser(self):
+        """CodeQL py/polynomial-redos: ``eq +(.+)`` let the spaces be split
+        between the two quantifiers in every way before failing, O(n^2)
+        (8,000 spaces: ~110 ms; 100,000: ~17 s by that curve). The value must
+        now start with a non-space, so the match is linear. Run in a subprocess
+        so a regression fails at the timeout instead of hanging the suite; the
+        bound is thousands of times what the linear match needs."""
+        import subprocess
+        import sys
+
+        from app.services.scim_service import _SCIM_EQUALITY_FILTER
+
+        # A newline after the spaces: `.` cannot cross it, so the match fails
+        # after trying (old pattern) every split of the spaces.
+        script = (
+            "import re, sys; "
+            "rx = re.compile(sys.argv[1], int(sys.argv[2])); "
+            "assert rx.fullmatch('userName eq ' + ' ' * 100_000 + chr(10) + 'x') is None"
+        )
+        subprocess.run(
+            [sys.executable, "-c", script, _SCIM_EQUALITY_FILTER.pattern, str(int(_SCIM_EQUALITY_FILTER.flags))],
+            check=True,
+            timeout=5,
+        )
+
 
 # ── SCIM user resource conversion tests ──────────────────────────────────────
 

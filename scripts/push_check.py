@@ -417,6 +417,13 @@ KNOWN_MYPY_SKEW: dict[str, tuple[int, str]] = {
         "CI 5, local 7 on main's unchanged file: the local ragas types add two "
         "union-attr errors on EvaluationResult | Executor (run 38155525673)."
     )),
+    # Found when the CodeQL triage touched it (2026-10-12): main @ 76a44286,
+    # unchanged, reads 2 locally -- two no-any-return on the User lookups --
+    # against the baseline's 1, which CI's ratchet passed.
+    "app/services/scim_service.py": (-1, (
+        "CI 1, local 2 on main's unchanged file (local mypy 2.3.1: an extra "
+        "no-any-return on the User lookups)."
+    )),
 }
 
 

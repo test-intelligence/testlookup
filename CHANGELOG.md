@@ -241,3 +241,18 @@ locally by default.
   `testlookup.example.com`).
 - Security reports go through GitHub private vulnerability reporting
   ([SECURITY.md](SECURITY.md)).
+- **A GitHub Enterprise server is never mistaken for github.com.** The GitHub
+  integration took any API base whose text contained `api.github.com` (for
+  example `https://api.github.com.corp.example/api/v3`) for public GitHub, so
+  commit links pointed at github.com and the fixer built its clone URL — which
+  carries the project's token — against github.com. The host is now compared
+  exactly.
+- **SCIM user filters can no longer stall a request.** The `userName eq ...`
+  parser backtracked quadratically on a long run of spaces (8,000 took
+  ~110 ms); it is linear now and accepts exactly the same filters.
+- The theme-token check (`npm run check:theme`) reads `--token : value` and
+  no longer lets `--status-passeds` answer for `--status-passed`: a `\s` in a
+  template literal had silently become the letter `s`.
+- Triaged the open CodeQL high alerts: the four above are fixed (plus an e2e
+  spec's URL regex now escapes every metacharacter); the rest are false
+  positives or test-only code, with dismissal reasons in the pull request.

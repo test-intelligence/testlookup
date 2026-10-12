@@ -62,11 +62,20 @@ function themeBlock(id) {
   return close === -1 ? null : CSS.slice(open, close)
 }
 
+/**
+ * The value of `--name` in a theme block. Written `\\s`: in a template literal
+ * `\s` is just "s", so the pattern was `--names*:s*` -- a token written
+ * `--name : value` was not read at all, and `--status-passeds: x` answered
+ * for `status-passed` (CodeQL js/useless-regexp-character-escape).
+ */
+function tokenIn(block, name) {
+  const m = new RegExp(`--${name}\\s*:\\s*([^;]+);`).exec(block)
+  return m ? m[1].trim().toLowerCase() : null
+}
+
 function token(id, name) {
   const block = themeBlock(id)
-  if (!block) return null
-  const m = new RegExp(`--${name}\s*:\s*([^;]+);`).exec(block)
-  return m ? m[1].trim().toLowerCase() : null
+  return block ? tokenIn(block, name) : null
 }
 
 // Guard the guard: a parse failure must not silently pass everything.
@@ -256,6 +265,16 @@ let selfTestCount = 0
   expectHit('rgb() literal', chartColourViolations('planted.tsx', "stroke: 'rgb(12 34 56)'"))
   expectHit('hsla() literal', chartColourViolations('planted.tsx', "color: 'hsla(210, 10%, 20%, 0.5)'"))
   expectClean('token reference', chartColourViolations('clean.tsx', "fill={CHART_VARS.grid} stroke=\"var(--chart-axis)\" fill=\"url(#totalGrad)\""))
+  // The token reader itself: whitespace around the colon, and a longer name
+  // that merely starts with the one asked for.
+  const expectToken = (label, block, name, expected) => {
+    selfTestCount += 1
+    const got = tokenIn(block, name)
+    if (got !== expected) selfTest.push(`self-test: token reader, ${label}: expected ${expected}, read ${got}`)
+  }
+  expectToken('space before the colon', '{ --status-passed : #00FF00; }', 'status-passed', '#00ff00')
+  expectToken('compact declaration', '{ --status-passed:#0f0; }', 'status-passed', '#0f0')
+  expectToken('a longer token name first', '{ --status-passeds: red; --status-passed: blue; }', 'status-passed', 'blue')
   const engine = runSelfTest()
   selfTestCount += engine.count
   selfTest.push(...engine.problems)
