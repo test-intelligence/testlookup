@@ -221,7 +221,7 @@ async def is_enabled(
 
     **Pass the project the operation is about, and the user when there is
     one.** A flag with a project or role allow-list is OFF for a call that
-    names neither: ``is_enabled("x")`` answers for "no project, no user", which
+    names neither: ``is_enabled(key)`` alone answers for "no project, no user", which
     no allow-list contains. The UI asks with the active project and the signed
     in user (``GET /feature-flags/{key}/status``), so a server call site that
     leaves them out shows a feature as on in the UI and runs it as off.
