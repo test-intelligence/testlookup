@@ -2,47 +2,60 @@
 # ============================================
 #
 # Place this file at your project root, in .testlookup/, or in ~/.testlookup/
-# to configure TestLookup SDKs without code changes.
+# to configure TestLookup SDKs without code changes. YAML needs the optional
+# dependency: pip install "testlookup-reporter[yaml]".
 #
-# Discovery order (first file found wins):
-#   1. ./testlookup.yaml           (project root — commit to repo, no secrets)
-#   2. ./.testlookup/config.yaml   (hidden dir — add to .gitignore)
-#   3. ~/.testlookup/config.yaml   (user home — personal defaults)
+# Discovery order (first file found wins; only that one file is read):
+#   1. ./testlookup.properties               (preferred — testlookup.* keys)
+#   2. ./.testlookup/testlookup.properties
+#   3. ./testlookup.yaml                     (this format)
+#   4. ./.testlookup/config.yaml
+#   5. ~/.testlookup/testlookup.properties
+#   6. ~/.testlookup/config.yaml
 #
 # Precedence (highest wins):
-#   Constructor args > Environment variables > Config file > Built-in defaults
+#   Constructor args / CLI flags > Environment variables > Config file > Built-in defaults
 #
 # Environment variables override any value in this file.
 # Use this file for non-secret config (URL, project ID), and env vars for secrets.
+# Every key below is read; keys not listed here are ignored.
 
 server:
-  url: "http://localhost:8000"         # TESTLOOKUP_URL
-  verify_ssl: true
+  url: "http://localhost:8000"         # TESTLOOKUP_ENDPOINT (or TESTLOOKUP_URL)
 
 auth:
-  # Set exactly one. Prefer api_key for CI/CD, token for interactive use.
-  token: ""                            # TESTLOOKUP_TOKEN  (JWT access token)
-  api_key: ""                          # TESTLOOKUP_API_KEY
+  # Prefer api_key for CI/CD, token for interactive use. If both are set the
+  # API key is used. A value starting with qai_ is always sent as an API key.
+  api_key: ""                          # TESTLOOKUP_API_KEY  (sent as X-API-Key)
+  token: ""                            # TESTLOOKUP_TOKEN    (JWT access token)
+  # TLS for self-signed / homelab servers. Set at most one.
+  # ca_cert_path: "./testlookup-ca.crt"  # TESTLOOKUP_CA_CERT (trust only this CA bundle)
+  # insecure: false                      # TESTLOOKUP_INSECURE (true skips verification)
 
 project:
-  id: ""                               # TESTLOOKUP_PROJECT_ID (UUID)
+  id: ""                               # TESTLOOKUP_PROJECT (or TESTLOOKUP_PROJECT_ID); UUID or name
 
 reporting:
-  framework: "auto"                    # auto-detected from test runner
-  client_name: ""                      # default: hostname
-  batch_size: 50                       # events per HTTP batch
-  batch_interval_ms: 100               # flush interval in milliseconds
-
-upload:
-  mode: "live"                         # TESTLOOKUP_UPLOAD_MODE
-                                       #   "live"    — stream events in real-time
-                                       #   "offline" — accumulate, POST once at end
+  # framework: "pytest"                # TESTLOOKUP_FRAMEWORK; default python (pytest plugin: pytest)
+  # launch_name: "Smoke suite"         # TESTLOOKUP_LAUNCH
+  # suite_name: "Smoke suite"          # TESTLOOKUP_SUITE   (default: launch_name)
+  # release_name: "2026.10"            # TESTLOOKUP_RELEASE (default: the project's default release)
+  client_name: ""                      # default: hostname (TestLookupReporter only)
+  batch_size: 50                       # events per HTTP batch (TestLookupReporter only)
+  batch_interval_ms: 100               # flush interval in milliseconds (TestLookupReporter only)
 
 ci:
   build_number: ""                     # TESTLOOKUP_BUILD  (e.g., CI pipeline ID)
   branch: ""                           # TESTLOOKUP_BRANCH (e.g., main, feature/x)
   commit_hash: ""                      # TESTLOOKUP_COMMIT (e.g., git SHA)
-  tags: []                             # extra tags attached to every run
+
+  # CI context (US-4.3b) is auto-detected on GitHub Actions, GitLab CI,
+  # Jenkins, Azure DevOps and CircleCI. Set these only to override detection.
+  # provider: ""                       # TESTLOOKUP_CI_PROVIDER
+  # repo: ""                           # TESTLOOKUP_CI_REPO (org/name)
+  # pr_number: ""                      # TESTLOOKUP_PR_NUMBER
+  # actor: ""                          # TESTLOOKUP_CI_ACTOR
+  # run_url: ""                        # TESTLOOKUP_CI_RUN_URL
 
   # Commit range (US-8.1) — the CLI and Python SDK read base..HEAD out of the
   # local git checkout (per-commit changed files included) so failures can be
@@ -52,13 +65,3 @@ ci:
   # branch. Shallow (--depth 1) checkouts degrade to a head-only range.
   # collect_commit_range: true         # TESTLOOKUP_COMMIT_RANGE (0/false to disable)
   # commit_range_base: ""              # TESTLOOKUP_COMMIT_RANGE_BASE (ref or SHA)
-
-# Framework-specific overrides (optional)
-# frameworks:
-#   pytest:
-#     capture_output: true
-#     capture_logs: true
-#   junit5:
-#     enabled: true
-#   testng:
-#     enabled: true
