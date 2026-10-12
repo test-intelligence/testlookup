@@ -107,7 +107,7 @@ For a whole report as a PDF or Excel file, see [Reports and exports](/docs/repor
 
 ## Explorer and saved views
 
-**Testing → Explorer** draws one metric as small multiples: one panel per suite or per release, up to 12. See [Dashboards and metrics](/docs/dashboards) for its options.
+**Trends → Explorer** (`/explore`) draws one metric as small multiples: one panel per suite or per release, up to 12. See [Dashboards and metrics](/docs/dashboards) for its options.
 
 **Views** saves the current filters on Overview, Trends, Coverage, Failures, Defects, the Summary report and the Explorer:
 

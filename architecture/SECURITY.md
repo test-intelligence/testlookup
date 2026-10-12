@@ -223,7 +223,7 @@ Two classes do not simply short-circuit:
 - **Notification channels** are judged by **residency** rather than switched
   off: a Slack-compatible webhook or mail relay on the LAN still works
   offline, a public one is refused, and `OFFLINE_NOTIFICATION_ALLOWED_HOSTS` is
-  the operator's explicit, per-host exception (re-audit H10). Because the
+  the operator's explicit, per-host exception. Because the
   exception is per host, and Slack and Teams put every workspace on the same
   hosts, allow-listing `hooks.slack.com` admits every Slack workspace, not
   only the operator's. It therefore covers only the deployment's own
@@ -231,7 +231,7 @@ Two classes do not simply short-circuit:
   an admin configures. A webhook set per user (notification preferences, open
   to any authenticated user) or per team (the Ownership page, QA_LEAD and up)
   is judged by residency alone, whatever the list says. For mail the
-  **recipients** are judged too (re-audit N25): an allow-listed hosted relay
+  **recipients** are judged too: an allow-listed hosted relay
   would otherwise deliver wherever an address points, including a user's own
   email override. With `OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS` set, every
   recipient must be in it (`corp.example` exactly, `.corp.example` any
@@ -240,7 +240,7 @@ Two classes do not simply short-circuit:
   Enforced at every SMTP send: notifications, digests, attachments, the
   trends report and the settings page's test email.
 
-**Residency is pinned at connect time** (re-audit N8). A residency check that
+**Residency is pinned at connect time.** A residency check that
 resolves a name and a client that resolves it again to connect can get two
 different answers (DNS rebinding, or a TTL that turned over in between).
 Offline, the LLM clients `get_llm()` builds (Ollama chat and embeddings, and
@@ -254,8 +254,7 @@ C3's threat model already trusts with the offline configuration, so a relay
 name that rebinds is an admin choosing egress; the test
 `test_documented_n8_limit_smtp_dials_the_relay_by_name` pins this behaviour.
 
-**Splunk and OpenShift short-circuit** like Jira and GitHub (re-audit N19,
-closed): with `SPLUNK_ENABLED` or `OCP_ENABLED` set, offline mode still stops
+**Splunk and OpenShift short-circuit** like Jira and GitHub: with `SPLUNK_ENABLED` or `OCP_ENABLED` set, offline mode still stops
 the triage agent's Splunk log search (`tools/query_splunk.py`, joining the two
 Splunk tools that were already gated), and the OpenShift pod lookups
 (`services/ocp_client.get_pod_metadata`, called during ingestion and, via
@@ -333,7 +332,7 @@ easier to over-read than to under-read:
   [DEPLOYMENT.md](./DEPLOYMENT.md)). There is no in-cluster mTLS between
   the backend, the workers, and the datastores.
 
-### 7a. The MinIO upload path is only as tenant-safe as the MinIO credential
+### 7a. The direct-to-bucket upload path is only as tenant-safe as the S3 credential
 
 Re-audit N13. `POST /webhooks/minio` takes the project from the object key --
 `{project_id}/runs/{build}/upload_complete.json` -- and reads the run's result
@@ -368,8 +367,14 @@ its own MinIO user, and keep the root credential for the backend and operators:
 }
 ```
 
-Runbook (the `mc` alias `local` is the root alias `scripts/setup-minio.sh`
-creates; `<bucket>` is `MINIO_BUCKET_NAME`):
+The bundled object store (versitygw) runs with a single root account: it
+has no per-user accounts configured, so on it the policy above cannot be
+applied — keep the S3 credential out of CI entirely and send results through
+the API (`POST /api/v1/ingest/file` with a project-scoped streaming API key),
+which is the default ingest path and needs no S3 credential at all. With a
+MinIO-compatible server that supports users and policies, the runbook is (the
+`mc` alias `local` points at the server with the root credential; `<bucket>`
+is `MINIO_BUCKET_NAME`):
 
 ```sh
 PROJECT=<project_id>          # the UUID the project's runs are filed under
@@ -435,7 +440,7 @@ an auditor will ask about:
   forever with no idea why.
 - **`identity_events` still has no retention clock.** MFA verification
   failures and lockouts write rows there, so a sustained credential-stuffing
-  campaign grows that table without bound (the US-11.4 purge does not touch
+  campaign grows that table without bound (the retention purge does not touch
   it — the table has no project scope). This is why there is deliberately *no*
   per-attempt `LOGIN_FAILED` event: the MFA events that exist are either
   operator-initiated or bounded by the lockout threshold. Prune out-of-band if

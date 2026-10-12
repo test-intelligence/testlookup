@@ -30,7 +30,12 @@ const APP_SOURCE = Object.values(
   import.meta.glob('./App.tsx', { query: '?raw', import: 'default', eager: true }),
 )[0] as string
 
-const PROBE_SOURCES = import.meta.glob('../tests/probe-*.spec.ts', {
+/**
+ * Every Playwright spec. The live probe specs this guard was written for
+ * (`tests/probe-*.spec.ts`) are no longer in the repository; the class of bug
+ * applies to any spec that navigates.
+ */
+const SPEC_SOURCES = import.meta.glob('../tests/**/*.spec.ts', {
   query: '?raw',
   import: 'default',
   eager: true,
@@ -68,11 +73,16 @@ function toMatcher(route: string): RegExp {
  */
 const REGEX_LITERAL = /\/[gimsuy]{1,4}$/
 
-/** Absolute-path route literals a spec navigates to. */
+/**
+ * Absolute-path route literals a spec navigates to with `page.goto(...)`,
+ * either quoted (`goto('/runs')`) or after an interpolated base
+ * (`` goto(`${BASE}/runs`) ``). Only navigations count: a quoted path in a
+ * `page.route(...)` stub is an API path the spec mocks, not a page it opens.
+ */
 function routeLiteralsIn(source: string): string[] {
   const found = new Set<string>()
-  for (const m of source.matchAll(/['"`](\/[a-z0-9][a-z0-9/:-]*)['"`]/gi)) found.add(m[1])
-  for (const m of source.matchAll(/\$\{BASE\}(\/[a-z0-9][a-z0-9/:-]*)/gi)) found.add(m[1])
+  for (const m of source.matchAll(/goto\(\s*['"`](\/[a-z0-9][a-z0-9/:-]*)/gi)) found.add(m[1])
+  for (const m of source.matchAll(/goto\(\s*`\$\{\w+\}(\/[a-z0-9][a-z0-9/:-]*)/gi)) found.add(m[1])
   return [...found].filter((path) => !REGEX_LITERAL.test(path))
 }
 
@@ -91,8 +101,13 @@ const NON_ROUTE_PREFIXES = [
   '/app-icon',
 ]
 
+/** Paths a spec visits precisely BECAUSE they are undeclared (the catch-all test). */
+const DELIBERATELY_UNDECLARED = new Set(['/this-route-does-not-exist'])
+
 function isNonRoute(path: string): boolean {
-  return NON_ROUTE_PREFIXES.some((prefix) => path.startsWith(prefix))
+  return (
+    DELIBERATELY_UNDECLARED.has(path) || NON_ROUTE_PREFIXES.some((prefix) => path.startsWith(prefix))
+  )
 }
 
 describe('Playwright route targets resolve to declared routes', () => {
@@ -122,14 +137,16 @@ describe('Playwright route targets resolve to declared routes', () => {
     expect(routes).not.toContain('/failure-analysis')
   })
 
-  it('found the probe specs to check', () => {
+  it('found the Playwright specs to check', () => {
     // Without this the suite below passes vacuously if the glob ever misses.
-    expect(Object.keys(PROBE_SOURCES).length).toBeGreaterThan(10)
+    expect(Object.keys(SPEC_SOURCES).length).toBeGreaterThan(10)
+    const navigations = Object.values(SPEC_SOURCES).flatMap(routeLiteralsIn)
+    expect(navigations.length, 'no page.goto route literals found').toBeGreaterThan(20)
   })
 
-  it('every route literal in every probe spec is declared', () => {
+  it('every route a Playwright spec navigates to is declared', () => {
     const offenders: string[] = []
-    for (const [file, source] of Object.entries(PROBE_SOURCES)) {
+    for (const [file, source] of Object.entries(SPEC_SOURCES)) {
       const name = file.split('/').pop()
       for (const path of routeLiteralsIn(source)) {
         if (!isNonRoute(path) && !resolves(path)) offenders.push(`${name}: ${path}`)

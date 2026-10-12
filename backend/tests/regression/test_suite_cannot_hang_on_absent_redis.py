@@ -25,8 +25,9 @@ Captured with ``faulthandler.dump_traceback_later``::
     celery/app/task.py:594 in apply_async
     app/services/stream_service.py:474 in close_session
 
-``backend/CLAUDE.md`` states the local suite does not need live services, and
-every dispatch call site is written on that assumption. ``tests/conftest.py``
+The local suite must not need live services (``architecture/DEVELOPER_GUIDE.md``
+§6 expects zero failures with no Docker stack running), and every dispatch call
+site is written on that assumption. ``tests/conftest.py``
 now makes it true by neutralising the result-consumer subscription, so the
 dispatch falls through to the broker publish, which *does* raise promptly.
 

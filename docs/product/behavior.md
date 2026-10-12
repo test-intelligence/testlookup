@@ -36,4 +36,4 @@
 | Release-level decision | `GO`, `CONDITIONAL_GO`, `NO_GO`, `NOT_EVALUATED`; distribution projection may add pending-review signaling |
 | Authored test lifecycle | `draft`, `review_requested`, `under_review`, `approved`, `active`, `rejected`, `needs_update`, `deprecated`, `archived` |
 
-For exact transition legality, see [workflow state](../../backend/app/services/workflow_run_state.py), [test lifecycle](../../backend/app/services/test_case_lifecycle_service.py) and [Python contracts](../reference/python-contracts.md). A completed-but-degraded pipeline is represented by metadata, not a new public “partial” status.
+For exact transition legality, see [workflow state](../../backend/app/services/workflow_run_state.py), [test lifecycle](../../backend/app/services/test_case_lifecycle_service.py) and the request/response [schemas](../reference/schemas.md). A completed-but-degraded pipeline is represented by metadata, not a new public “partial” status.

@@ -1,102 +1,141 @@
-# AI features — intelligence, deep investigation, agents, chat
+# AI configuration
 
-Everything AI-flavored in TestLookup follows two rules worth knowing up front:
+How to configure and govern the AI parts of TestLookup: the analysis engine and its models, Ask AI, the LLM cost budget, AI evaluation, and the human review gate for AI reports. How these features look to an end user (the run's Analysis tab, Root cause (AI), Pipeline runs, Ask AI, the Inbox Approvals tab) is in the in-app guide: `/docs/ai-agents`, `/docs/ask-ai`, `/docs/failure-analysis` and `/docs/inbox` (sources under [frontend/src/content/guide/](../frontend/src/content/guide/ai-agents.md)).
 
-1. **It works offline by default.** `AI_OFFLINE_MODE=true` is the default; rules and local ML always run, and the optional LLM tier uses a *local* model (Ollama) when you enable it — analysis degrades gracefully (LLM → ML → rules) rather than failing on a missing model. Nothing here sends your data to an external API in a default install.
-2. **Verdicts carry provenance.** Every analysis records which engine produced it (rules / ML / LLM / human-corrected) and why, so "the AI said so" is always inspectable — and correctable (see [Triaging failures](triaging-failures.md#correcting-the-ai-and-why-its-worth-doing)).
+Two rules hold everywhere:
 
-## Run Intelligence (`/intelligence`, `/runs/:id/intelligence`)
-
-The **Intelligence Hub** is the cross-run view: recent activity, per-run intelligence reports, cross-run AI insights, and — importantly — **Intelligence spend** (average per run), so the cost of the AI tier is visible where its output is. Pick a run to open its **Run Intelligence** report: what failed, why, clusters, risk, and the recommended actions, assembled from the pipeline's stages.
-
-## Deep Investigation (`/deep-investigate`, `/deep-investigate/:runId`)
-
-Deep Investigation is the heavyweight workflow for a bad run: it clusters the run's failures (you can tune the **clustering threshold**), investigates each cluster, and reports per-cluster confidence. Findings are persisted per `(run, cluster)` by the pipeline itself and carry an **origin** tag (`pipeline` for real analysis, `seed` for demo data), so you can always tell computed findings from seeded examples. Options include **auto-draft defects** and **auto-create Jira tickets** from investigation results (Jira requires the integration to be enabled — outbound integrations are off in offline mode). Past investigations are browsable, so an investigation is a durable artifact, not a one-off chat.
-
-## Agent Pipeline (`/agents`, `/agents/run/:runId`)
-
-The **Agent Pipeline** page is the operational view of the analysis pipeline itself: pick a run (by suite and build) and queue the standard pipeline, then watch **Workflow Progress** stage by stage — ingestion validation, anomaly detection, analysis, clustering, summary — ending in an **Executive Summary** / AI report. Use it when you want to (re)run analysis on demand or see exactly which stage produced a verdict.
-
-## Ask AI (`/chat`)
-
-Ask questions about one project's test results and follow up on the answers — "what failed in build 105, and why?", "is the first one flaky or a regression?", "what changed since the previous build?", "are any flaky tests quarantined?", "is it ready to release?". Starter questions on the page cover these, and a run's **⋯ → Ask AI about this run** opens chat with the question written for you. The same data is available to external assistants via the [MCP server](cli-sdk-mcp.md#the-mcp-server).
-
-**Answers arrive as they are written.** Your question shows at once, the assistant says what it is looking up ("Checking the history of test_refund_flow…"), then the answer streams in. **Stop** ends an answer early (the text so far is kept); a failed answer says why (the provider timed out, is unreachable, the budget is used up…) and **Retry** asks again without repeating your question.
-
-**Answers are grounded, and show it.** Each answer starts from the project's latest runs and the latest run's failures, and the assistant calls read-only lookups for anything else: a test's history across runs (with the pattern stated: regression since build X, or intermittent), a comparison between builds, the flaky-test list with quarantine state, failure clusters, the release-gate verdict, and what earlier analyses found. A question that names a test, asks about quarantine or about releasing gets those lookups before the model answers. Under each answer: the builds and tests it names, linked to their pages; **How I looked this up**, the lookups it made; and the model and how long it took.
-
-**Suggested actions are handoffs, not actions.** An answer may offer a follow-up (propose a quarantine, create a Jira issue). These open the normal dialogs pre-filled — chat proposes, you decide. Nothing is changed on your behalf from the chat box.
-
-**It is bounded on purpose:**
-
-| setting | what it limits |
-|---|---|
-| `CHAT_MAX_TOOL_ROUNDS` (4) | rounds of lookups per answer; after the last, the model must answer |
-| per-call + total token budgets | how much lookup output can enter the context (server-side) |
-| `CHAT_FIRST_TOKEN_TIMEOUT_SECONDS` (45) | the wait for the provider's first text, and any silence after it |
-| `CHAT_TURN_TIMEOUT_SECONDS` (120) | the whole answer, lookups included |
-| `CHAT_HISTORY_MESSAGES` (12) | earlier messages replayed to the model |
-| `CHAT_LLM_MODEL` (empty) | a model for chat only, e.g. a stronger tool user; empty = `LLM_MODEL` |
-
-Every model call goes through the same budget, cost cap and circuit breaker as the analysis pipeline, and is charged to the project. **Project scope is bound on the server** — the model never names a project or an id, so it cannot read outside the project you selected. One answer at a time per conversation.
-
-> Chat needs an LLM: it is available in **LLM** and **Auto** mode and says so in **Rules** or **ML** mode. It requires the `ask_ai_chat` flag (on by default) and a reachable provider (a local model, or a hosted one when offline mode is off). A provider that cannot take tool calls still answers, from the latest-runs data and the up-front lookups only.
-
-## What confidence scores actually mean
-
-Every analysis carries a 0–100 **confidence score**, but the number's *meaning* depends on which engine produced it — and TestLookup now labels that explicitly (the **confidence basis**, shown as a `calibrated` / `estimated` chip next to the score):
-
-- **Rules engine** — each of the ~23 rules (6 statistical heuristics + 17 error-message patterns) has a *named confidence band* defined in one auditable table (`backend/app/services/confidence_bands.py`), each with a documented basis:
-  - `heuristic_estimate` — an engineering estimate of how often the rule is right. **This is currently the basis for every rules-engine band**: no labeled corpus of raw error messages exists yet to measure per-rule precision, and the values are preserved from the original engine so behavior is stable. The UI tooltip reads "estimated heuristic confidence — not empirically calibrated".
-  - `empirical` — reserved for bands whose value equals measured precision on a labeled evaluation dataset (with the corpus and sample count recorded in the band's provenance). When such a corpus lands, bands flip to this basis individually.
-  - One band is *dynamic*: the historical-flakiness heuristic grows with evidence — `min(85, 50 + 2 × runs of history)` — because ten runs of pass/fail history genuinely say more than five.
-- **LLM analyses** — the model's self-reported confidence, then *adjusted* by deterministic validators (capped when there's no evidence, when no tools ran, when the summary is too thin; small bonus for multiple corroborating sources). Every adjustment is recorded in the per-test decision audit.
-- **ML classifier** — the model's class probability.
-
-Downstream thresholds read the score uniformly regardless of basis: results below the review threshold (default 70 in-engine, `AI_CONFIDENCE_THRESHOLD=80` in the pipeline) are flagged **requires human review**; auto-triage and defect auto-actions gate on the same knobs. The basis label exists so a human deciding whether to *trust* a 75 knows whether that 75 was measured or estimated.
-
-## Which engine actually answered (provenance)
-
-An analysis card tells you *what produced it*, not just what it concluded. Every analysis carries a **provenance** block: the engine that ran (`rules` / `ml` / `llm`), what was originally requested, and — the case that matters — whether a **fallback** happened and why. If Ollama was unreachable and the rules engine answered instead, the card says so; heuristics are never presented as model output. The block also carries the provider/model identity, the prompt version tags in force, and the confidence basis.
-
-Analyses recorded before this feature carry no routing metadata, so their provenance is simply **absent** rather than reconstructed — a blank is honest; a plausible guess is not.
-
-## The confidence gate (when automation is allowed to act)
-
-Automation acts on an AI conclusion only when its confidence clears a single configurable gate — **`ai_confidence_threshold`** on `/settings/ai` (default `AI_CONFIDENCE_THRESHOLD`, 80). Below the gate the automation does **not** act: it degrades to the deterministic path (hold for human review) and the output is marked **"low confidence — needs human review"** explicitly, as a field on the API contract, so no UI has to guess at a cutoff.
-
-The comparison is `confidence >= threshold` — a score exactly at the threshold passes. A missing confidence never passes, and is reported as *not evaluated* rather than as low: "we did not judge this" is a different statement from "we judged it poor".
-
-Every evaluation is recorded as a **threshold check** — `{threshold, observed_confidence, passed, source}`, where `source` is `ai_config` (an operator override is stored) or `env_default` — persisted alongside the routing decision and surfaced in the run's **decision trail**, which also rolls up how many analyses fell below the gate.
-
-> **This is a policy dial, not a calibration.** The numbers being compared are self-declared estimates (see the basis discussion above — every rules-engine band is currently `heuristic_estimate`, and a human correction pins a hard-coded 95). "Confidence ≥ 80" means *the engine claimed at least 80*, not *this is right 80% of the time*. Raising the gate buys caution, not accuracy.
-
-Two thresholds are deliberately **not** wired to this knob:
-
-- **The PR-comment kind-label display floor (60)** — a display floor and an action gate answer different questions. Nothing acts on a PR-comment label, and coupling them would mean tightening the action gate silently strips labels off PR comments.
-- **Fixer candidate selection** — its inputs (quarantine state, flip rate, prior attempt count) are entirely deterministic. There is no AI confidence there to gate on, and inventing one would be theatre. Fixer's safety story is its attempt budget, test-code-only restriction, ephemeral sandbox, and human-merged draft PR.
+1. **It works offline by default.** `AI_OFFLINE_MODE=true` is the default. Rules and the local ML classifier always run; the optional language-model tier uses a model on your own network (Ollama by default). Analysis degrades from the language model to ML to rules instead of failing when a model is missing. In offline mode the app only connects to a model endpoint whose address is loopback or private, so nothing reaches a hosted API.
+2. **Every verdict carries provenance.** Each analysis records which engine produced it (rules, ML, language model, or a human correction) and why, so "the AI said so" can always be inspected and corrected.
 
 ## Configuring the AI tier (`/settings/ai`, `/settings/ai-eval`)
 
-- **AI Settings** — analysis mode (rules/ML/LLM/auto), local-LLM (Ollama) model selection, and budget controls. Per-project daily budgets cap LLM spend; over budget, analysis downgrades mode instead of stopping.
-- **AI Evaluation** — the quality dashboard for the AI tier itself: how analyses are rating, feedback volumes, evaluation runs, and **Training Label Health** — how much of the ML training pool is human-verified vs the LLM's own output. If your team corrects verdicts regularly (do — corrections compound), this is where you watch accuracy improve.
+**Settings → AI → AI configuration** (`/settings/ai`). QA leads can open it and read the configuration; only administrators can change it (**Save Configuration**).
 
-## How the ML classifier actually learns
+| Card | What you set |
+|---|---|
+| **Analysis Engine** | **Auto** (ML when a trained model exists, else the language model when reachable, else rules), **LLM (AI Agent)**, **Machine Learning** or **Rules-Based**. Each option shows whether it is ready: the language model's reachability, and the ML model's state (**Not Trained**, **Ready (N% accuracy)**, or **Bootstrap (LLM-imitating)**) |
+| **Model Availability & Fallback Chain** | Read-only: offline mode, provider, mode, whether Ollama answers, whether each **Required model** is **Installed** or **Missing**, and the order the engines will be tried. **Re-check** probes again |
+| **LLM Provider** | **Provider** (`ollama`, `lmstudio`, `localai`, `vllm`, `openai`, `gemini`, `anthropic`, `openrouter`), **Model**, **Temperature** and **Max Tokens** |
+| **Embedding** | The embedding provider and model used for semantic search and knowledge-grounded generation |
+| **Pipeline Settings** | **Confidence Threshold (0-100)**, **Timeout (seconds)**, **Offline Mode** (shows **Pinned by environment** when the server pins it), **Deep Investigation**, **Fine-Tuning Pipeline** |
+| **Knowledge-Grounded Generation** | **Enable Knowledge RAG** for [test generation from your documents](knowledge-base.md) |
+| **Cloud API Keys** | OpenAI, Google, Anthropic and OpenRouter keys, stored encrypted. Only used when offline mode is off |
 
-Honesty first: the local ML classifier trains on two very different kinds of labels, and the distinction is tracked end to end.
+Defaults on a new install: provider `ollama`, model `qwen2.5:7b-instruct`, embedding model `nomic-embed-text:v1.5`, confidence threshold 80, offline mode on, analysis mode **Auto**. The server-side settings behind these (`LLM_PROVIDER`, `LLM_MODEL`, `EMBEDDING_MODEL`, the provider base URLs and allow-lists, `LLM_PRICE_OVERRIDES`) are listed in the [configuration reference](../docs/operations/configuration.md). Getting the models onto an air-gapped host is the [Offline model pack](offline-model-pack.md).
 
-- **Human labels** — your team confirming or correcting AI verdicts (the feedback card, the classifier-correction dialog, the MCP `correct_classification` tool → *human_direct*) and Jira-resolution auto-labels (*human_indirect*). These are ground truth and always train at full weight.
-- **LLM pseudo-labels** (*llm_pseudo*) — high-confidence analyses nobody has confirmed. They are the model's own opinion. Training on them unchecked teaches the classifier to imitate the LLM, not to learn from you — so they are **capped at 30% of the training set and down-weighted to 0.3** (`ML_PSEUDO_LABEL_CAP` / `ML_PSEUDO_LABEL_WEIGHT`).
+> **Deep investigation is switched by the server.** The **Deep Investigation** checkbox is stored with the configuration, but starting an investigation is governed by the server setting `DEEP_INVESTIGATION_ENABLED` (default on). Investigations are also refused when the analysis mode resolves to **Rules**.
 
-With few human labels, pseudo-labels may fill the set up to the training minimum — that is a deliberate bootstrap, and the system says so: below **50 human labels** (`ML_HUMAN_LABEL_FLOOR`) the ML tier reports itself as **bootstrap (LLM-imitating)** in AI Settings, on the AI Evaluation dashboard, and in each analysis's routing decision record. In that state ML mode reproduces the LLM's behavior (cheaply and offline) — it does *not* yet learn from your corrections. Every deployed model records the exact label mix it was trained on (`label_composition` in its metadata, surfaced at `GET /api/v1/ai-eval/label-health`), so "the model learns from your feedback" is a claim you can verify, not marketing. The fastest way out of bootstrap: confirm or correct verdicts on `/failures` — each one is a ground-truth label.
+**Settings → AI → AI evaluation** (`/settings/ai-eval`) measures the AI tier itself; see [AI evaluation](#ai-evaluation) below.
+
+## What confidence scores actually mean
+
+Every analysis carries a 0–100 **confidence score**, but its meaning depends on the engine that produced it, and the app labels that **basis** next to the score:
+
+- **Rules engine**: each rule has a named confidence band defined in one auditable table (`backend/app/services/confidence_bands.py`). Every band is currently a `heuristic_estimate` (an engineering estimate, not measured precision), and the tooltip says so. One band is dynamic: the historical-flakiness heuristic grows with evidence, `min(85, 50 + 2 × runs of history)`.
+- **Language-model analyses**: the model's self-reported confidence, then adjusted by deterministic validators (capped when there is no evidence or no tools ran, a small bonus for corroborating sources). Every adjustment is recorded in the per-test decision audit.
+- **ML classifier**: the model's class probability.
+
+## The confidence gate
+
+Automation acts on an AI conclusion only when its confidence clears the **Confidence Threshold** on `/settings/ai` (default `AI_CONFIDENCE_THRESHOLD`, 80). Below it, the automation does not act: the result is held for human review and marked **"low confidence — needs human review"** as a field of the API contract. The comparison is `confidence >= threshold`; a missing confidence never passes and is reported as *not evaluated*.
+
+Each check is recorded (`{threshold, observed_confidence, passed, source}`, where `source` is `ai_config` for a stored override or `env_default`) and rolled up in the run's decision trail.
+
+> **This is a policy dial, not a calibration.** "Confidence ≥ 80" means the engine *claimed* at least 80, not that it is right 80% of the time. Raising the gate buys caution, not accuracy.
+
+Some pipeline stages read the server default `AI_CONFIDENCE_THRESHOLD` directly rather than the stored value, so if you change the threshold on the page, set the environment value to the same number.
+
+Two thresholds are deliberately not wired to this dial: the display floor for kind labels on pull-request comments (60), and the Fixer's candidate selection, which uses only deterministic inputs.
+
+## Ask AI
+
+End users see Ask AI when the `ask_ai_chat` flag is on (default on) **and** the analysis mode is **Auto** or **LLM**. In **Rules** or **ML** mode the server refuses chat requests (`409 llm_disabled`) and the page says so. The flag only hides the sidebar entry and the run page's **Ask AI about this run**; it does not disable the chat API, so to turn chat off completely, use a Rules or ML analysis mode.
+
+Every chat model call goes through the same budget, cost cap and circuit breaker as the analysis pipeline, and is charged to the project. The project is bound on the server; the model never names a project or an id. Conversations are private to the user who started them (administrators can open any).
+
+The limits are server settings:
+
+| Setting | Default | Limits |
+|---|---|---|
+| `CHAT_MAX_TOOL_ROUNDS` | 4 | Rounds of lookups per answer; after the last, the model must answer |
+| `CHAT_FIRST_TOKEN_TIMEOUT_SECONDS` | 45 | The wait for the provider's first text, and any silence after it |
+| `CHAT_TURN_TIMEOUT_SECONDS` | 120 | The whole answer, lookups included |
+| `CHAT_HISTORY_MESSAGES` | 12 | Earlier messages replayed to the model |
+| `CHAT_LLM_MODEL` | empty | A model for chat only, on the same provider (for example a better tool user); empty means `LLM_MODEL` |
+
+A provider that cannot take tool calls still answers, from the latest-runs data and the lookups made before the model is called.
+
+## LLM cost budget
+
+**Settings → AI → LLM cost budget** (`/settings/billing`) caps what each project spends on language-model calls.
+
+> **Off by default.** Enforcement is behind the `llm_cost_budget` feature flag, which ships **off**. With it off, no usage is recorded and no cap applies; the page still opens and shows zero spend and **UNLIMITED**. Turn the flag on under **Settings → System → Feature flags** ([feature-flag reference](../docs/operations/feature-flags.md)).
+
+The page shows the current period's **Total spend**, **LLM calls** and **Projects over soft-warn**, and a row per project with spend, cap, utilisation, status (**OK**, **SOFT_WARN**, **CAPPED** or **UNLIMITED**) and cap hits. Administrators edit a project's budget (**Edit**); others can **View** it:
+
+| Field | Meaning |
+|---|---|
+| **Included per month ($)** | Spend covered before overage applies |
+| **Hard cap ($)** | The ceiling for the month |
+| **Overage rate ($/$)** | How spend above the included amount is counted |
+| **Soft-warn threshold (%)** | The utilisation at which the at-cap action starts |
+| **At-cap action** | **Soft warn** (log only), **Auto-downgrade to ML**, **Auto-downgrade to rules**, or **Hard block** |
+| **Budget enforcement enabled** | Per-project on/off |
+
+Budgets are **monthly**. Below the soft-warn threshold nothing happens; above it, the at-cap action applies. At 100% of the hard cap, calls are always blocked and a `quota.exceeded` event is sent to outbound webhooks. A failure of the budget check itself lets the call through, so a broken budget table never stops analysis; the separate per-call reservation, when a cap exists, refuses a call that would overrun it.
+
+Costs are computed from a built-in price table; `LLM_PRICE_OVERRIDES` (JSON, `{"provider:model-regex": {"input_per_mtok": ..., "output_per_mtok": ...}}`) adds or corrects prices. Self-hosted providers (`ollama`, `lmstudio`, `localai`, `vllm`) always count as zero cost. A hosted model with no price entry is recorded as **unpriced**: it counts as zero against the budget, logs a warning and increments the `llm_unpriced_calls_total` metric, so add an override for any hosted model you use.
+
+## AI evaluation
+
+**Settings → AI → AI evaluation** (`/settings/ai-eval`) has three tabs. QA leads can read everything; running evaluations, creating datasets and setting baselines need an administrator.
+
+- **Quality Overview** — runtime evaluation provenance, **Human-AI Agreement (30d)**, **Training Label Health** (how much of the ML training pool is human-verified), decision-report evaluation, **Quality Drift**, recent evaluation runs and model version history.
+- **Evaluation Datasets** — **Generate from Feedback** builds a dataset from your team's confirmations and corrections; **Seed Golden Datasets** loads the reference sets; **Run Evaluation** scores the current AI against a dataset.
+- **Evaluation Gate** — run the pre-release gate for one task type (**Gate: Classification**, **Gate: Root Cause**, **Gate: Duplicate Detection**, **Gate: Release Decision**) and read accuracy, precision, recall, F1 and the rules that passed or failed. **Active Baselines** lists the baselines each gate compares against; baselines are set through the API (`/api/v1/ai-eval/baselines`).
+
+The agent-stack release gate, tier comparison and reviewer-quality reports exist in the API (`/api/v1/ai-eval/...`, see `/api-docs`) but have no page yet. Design notes: [architecture/AI_EVALUATION.md](../architecture/AI_EVALUATION.md).
+
+## The human review gate for AI reports
+
+Every AI report the pipeline produces is a **review request**: `pending_review`, then `accepted`, `rejected` or `superseded` (by a newer report for the same run). Reviewers work from **Inbox → Approvals** (`/my-failures?tab=approvals`, filter **AI reports**): **Accept**, or **Reject** with a reason (wrong category, unsupported claim, missing evidence, contradiction, stale data, other) and optional notes.
+
+Settling a review needs the `QA_LEAD` role and membership of the project (or `ADMIN`), signed in interactively: API keys and synthetic accounts are refused. When the run proposes actions for an agent to take, the person who requested the run cannot settle its review (separation of duties). The report then carries a banner: **Draft: awaiting human review**, **Reviewed and accepted**, **Rejected by a reviewer** or **Superseded by a newer report**.
+
+Whether an unreviewed report may leave the app is the server setting **`REVIEW_GATE_ENFORCED`** (default `false`):
+
+| | `false` (default) | `true` |
+|---|---|---|
+| Exports, shared links, notifications, webhooks, PR/MR comments carrying an unreviewed report | Allowed. Each would-be refusal is logged to the access audit log as `ai_report.distribution_would_refuse`, so you can see what enforcement would block before turning it on | Refused (`409`). Notifications say an AI summary is ready and awaiting human review instead of including it. A QA lead can still export one deliberately (`include_unreviewed=true` on the run PDF export); it goes out watermarked "DRAFT - AI-generated, not human-reviewed" and audited. Rejected and superseded reports are never distributed |
+| Release verdict on an unreviewed report | The computed verdict | `PENDING_REVIEW` until a reviewer settles it |
+| AI kind labels on PR/MR comments | Shown | Stripped until reviewed |
+
+Run with it `false` for a while, read the would-refuse audit rows, make sure reviewers are keeping up with the Approvals queue, then turn it on.
+
+## How the ML classifier learns
+
+The local ML classifier trains on two kinds of labels, and the difference is tracked end to end.
+
+- **Human labels**: your team confirming or correcting verdicts (the feedback controls, **Correct classification**, the MCP `correct_classification` tool), and Jira-resolution auto-labels. These are ground truth and train at full weight.
+- **Language-model pseudo-labels**: high-confidence analyses nobody has confirmed. They are capped at 30% of the training set and down-weighted to 0.3 (`ML_PSEUDO_LABEL_CAP`, `ML_PSEUDO_LABEL_WEIGHT`).
+
+Below **50 human labels** (`ML_HUMAN_LABEL_FLOOR`) the ML tier reports itself as **Bootstrap (LLM-imitating)** on the AI configuration page, on the evaluation dashboard and in each analysis's routing record: it reproduces the language model's behaviour cheaply and offline, but does not yet learn from your corrections. Every deployed model records the label mix it was trained on (`GET /api/v1/ai-eval/label-health`). The fastest way out of bootstrap is to confirm or correct verdicts on **Failures** and on test results.
 
 ## What needs what
 
-| Feature | Works with rules/ML only (default) | Needs local LLM enabled |
+| Feature | Rules and ML only (default) | Needs a reachable language model |
 |---|---|---|
-| Failure categories, clusters, flaky verdicts | ✅ | — |
-| Run Intelligence reports | ✅ (rules/ML content) | richer narratives |
-| Deep Investigation | ✅ clustering + evidence | richer per-cluster analysis |
-| Ask AI chat | — | ✅ |
+| Failure categories, clusters, flaky scores, release verdicts | Yes | — |
+| A run's Analysis tab | Yes (rules and ML content) | Richer narratives |
+| Root cause (AI) deep investigation | Yes, clustering and evidence (not in **Rules** mode) | Richer per-cluster analysis |
+| Ask AI | — | Yes |
+| Generated test cases (knowledge base) | A stub | Yes |
 
-Start on the default (offline, rules+ML) and enable the local LLM when you want narrative depth — see the LLM stack notes in [GETTING_STARTED.md](../GETTING_STARTED.md) (`make dev-llm`).
+On Docker Compose, `make dev-llm` starts the stack with a local model (see [GETTING_STARTED.md](../GETTING_STARTED.md)).
+
+## Related
+
+- [Administration & settings](administration.md) — the Investigator and Fixer agents, agent activity, feature flags
+- [Offline model pack](offline-model-pack.md)
+- [Knowledge base & test generation](knowledge-base.md)
+- [architecture/AI_QUALITY.md](../architecture/AI_QUALITY.md)

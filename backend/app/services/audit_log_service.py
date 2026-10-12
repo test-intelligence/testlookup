@@ -20,10 +20,9 @@ Both helpers swallow transient DB failures via ``async_retry`` against
 ``DB_RETRYABLE_EXCEPTIONS`` and emit a structured WARNING on terminal
 failure so dropped audit rows are greppable.
 
-This module is the foundation called out as P2-6 in
-``docs/DATABASE_AUDIT_2026-05-16.md``. Migrating every existing audit
-call site to use these helpers is intentionally NOT in scope for the
-helper-introduction PR — flaky_quarantine_service and webhook_service
+This module is the shared foundation for audit writes. Migrating every
+existing audit call site to use these helpers was intentionally left out
+when the helpers were introduced — flaky_quarantine_service and webhook_service
 already use the in-line equivalent of ``record_attempt`` (fresh
 session + retry), so this module formalises the pattern. New audit
 write sites should use these helpers from day one; legacy sites

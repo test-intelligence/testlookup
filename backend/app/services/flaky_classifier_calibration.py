@@ -1,7 +1,7 @@
 """Backtest the flaky classifier we already ship, per project.
 
-Phase 0 (P0-2) of ``architecture/TEST_INTELLIGENCE_PLAN.md``. **Measures only —
-nothing in the product consumes the result yet.**
+**Measures only — this module never acts on the result.** What a measurement
+permits a flaky verdict to do is decided by ``flaky_suppression_gate``.
 
 ## Why per project
 

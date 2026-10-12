@@ -1,4 +1,4 @@
-"""Read-only tools for the Ask-AI chat (Agentic plan AI-6).
+"""Read-only tools for the Ask-AI chat.
 
 Ten thin, READ-ONLY wrappers over existing services/queries that the chat
 agent (``app.agents.conversation``) calls through the provider's native tool

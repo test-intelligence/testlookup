@@ -60,9 +60,39 @@ Duration uses the coefficient of variation (standard deviation ÷ mean). At or a
 - Each scoring pass reads at most `MAX_SCORING_ROWS = 200_000` rows per project — a memory ceiling on the sweep, not a statistical choice.
 - Scoring runs as a background sweep over active projects, so a newly ingested run does not update scores instantly.
 
+## The Flaky tests page
+
+**Flaky tests** in the sidebar (`/flaky`) works on one project at a time; in **All Projects** it asks you to pick one. Old links to `/flaky-coach` and `/quarantine` open here. It has four tabs:
+
+| Tab | Shows |
+|---|---|
+| **Detected** | Every test the detector considers unstable over the last 30 days, with its recent history, failure percentage, a recommendation (**Quarantine**, **Investigate**, **Monitor** or **Healthy**) and its impact. Filter by recommendation |
+| **Proposed** | Quarantine proposals waiting for a decision |
+| **Quarantined** | Tests currently in quarantine |
+| **History** | Released, rejected and expired quarantines |
+
+Click a test on **Detected** for the detail: total and failed runs, when it became flaky, the failure rate with its 95% confidence interval, the ML flakiness confidence, the likely cause, the step that fails (for step-based tests), and suggested stabilisation actions. The test's own page shows **Cross-run step flakiness**: which step flips between pass and fail across runs, so you can fix that step rather than the whole test.
+
+**Refresh** recomputes the detection now (`QA_ENGINEER` or higher). The three quarantine tabs carry an **Experimental** badge.
+
+## Quarantine on the Flaky tests page
+
+> **Off by default.** Quarantine proposals are switched by the `flaky_auto_quarantine` feature flag, which ships **off** for every project. Until an administrator turns it on (**Settings → System → Feature flags**), a QA lead sees "Quarantine is off for this project, so no test can be proposed for it." and **Mute** on the Failures page is disabled. The flag reference is in the repository docs (`docs/operations/feature-flags.md`).
+
+With the flag on, quarantine is a reviewed, audited holding state:
+
+1. **Propose.** A QA lead clicks **Propose quarantine** on a **Detected** test (or **Mute** on the Failures page) and gives a reason. The detector also proposes tests whose verdict is flaky; a test that fails consistently with the same error is a regression and is never proposed.
+2. **Decide.** On **Proposed** (or **Inbox → Approvals**), a QA lead clicks **Approve** or **Reject**, then confirms. A proposal nobody decides **expires after 7 days**.
+3. **Quarantined.** An approved test is quarantined for **14 days** by default. It still runs and still records results; it is only left out of the release gate's failure signal and out of CI gating with `testlookup ci-verdict`. A row can show **stale** when it has been quarantined beyond its time limit, and **Ready to promote** once it has passed consistently again.
+4. **Release.** When the fix lands, **Release** (or **Promote out**, when it is ready to promote) and confirm. The test counts again.
+
+Proposing, approving, rejecting and releasing need `QA_LEAD` or higher; everyone else sees the tables without the decision buttons. **File Jira** on a proposed or quarantined test (`QA_ENGINEER` or higher) opens the Jira dialog described under [Promoting to a defect](/docs/failure-analysis#promoting-to-a-defect). Every transition is recorded in the audit log.
+
 ## Quarantine is a recommendation, not an action
 
 TestLookup can recommend quarantining a test and record that a quarantine was requested or approved. **It does not change your test suite.** Nothing here skips, disables, retries or reruns a test — acting on the recommendation is a change you make in your own repository.
+
+What a quarantine does change is how TestLookup *reads* the test's failures: the release gate leaves them out, and a CI pipeline that calls `testlookup ci-verdict` can pass a build whose only failures are quarantined. Setting that up is described in the operator guide in the repository (`user-guide/flaky-tests.md`).
 
 ## Limitations, stated plainly
 

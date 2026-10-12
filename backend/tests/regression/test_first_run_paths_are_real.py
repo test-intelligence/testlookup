@@ -3,7 +3,7 @@
 Two classes, both found by walking the shipped runbooks against the code.
 
 **A required env var missing from a committed `.env` template.**
-``deploymentsteps.md`` and ``installation.md`` both tell a new self-hoster to
+The single-VM runbooks (now docs/operations/deploy-single-vm.md) told a new self-hoster to
 ``cp .env.gcp-vm.example .env`` and then ``docker compose up``. That template
 defined 32 keys and omitted ``MONGO_PASSWORD`` and ``FLOWER_PASSWORD``, both of
 which ``docker-compose.yml`` declares as ``${VAR:?...}``. ``:?`` fires at
@@ -90,11 +90,10 @@ def _files_that_advertise_the_api_docs() -> list[Path]:
     candidates = [
         REPO_ROOT / "Makefile",
         REPO_ROOT / "README.md",
-        REPO_ROOT / "README_FULL.md",
         REPO_ROOT / "GETTING_STARTED.md",
         REPO_ROOT / "CONTRIBUTING.md",
-        REPO_ROOT / "installation.md",
-        REPO_ROOT / "deploymentsteps.md",
+        REPO_ROOT / "docs" / "operations" / "deploy-single-vm.md",
+        REPO_ROOT / "docs" / "operations" / "deploy-compose.md",
         REPO_ROOT / "scripts" / "seed_dev_data.py",
         REPO_ROOT / "scripts" / "local_dev_setup_common.sh",
         REPO_ROOT / "scripts" / "local_dev_setup_windows.ps1",

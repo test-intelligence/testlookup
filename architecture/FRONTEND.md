@@ -132,8 +132,8 @@ data). The `.badge-*` primitives already sit on the tokens.
 - **New shared consumers split shared chunks.** rolldown groups modules by the set of chunks
   that reach them; a new lazy section that uses PART of an existing shared chart chunk splits
   it into more files, and every extra file costs every page that loaded it (a gzip-per-file and
-  export/import cost) plus a name in the entry's preload map (eager bytes). Wave 3 measured
-  this: +0.19 kB eager and 2-3.5 kB on the chart pages' first visit with no new code on them.
+  export/import cost) plus a name in the entry's preload map (eager bytes). One measured
+  case: +0.19 kB eager and 2-3.5 kB on the chart pages' first visit with no new code on them.
   Measure with `vite build --sourcemap` and compare page closures by module before adding a
   lazy consumer of the chart kit.
 - **Drill state lives in the URL** (`hooks/useDrillPath.ts`, C5 in `contracts/viz/README.md`):
@@ -146,5 +146,5 @@ data). The `.badge-*` primitives already sit on the tokens.
 ## Related docs
 
 - Route-level UX behaviors users see: [user-guide/](../user-guide/README.md)
-- Theme-token remediation plan: `design_handoff_ui_improvements/` (local) + the palette ratchet in the auto-routine
+- Theme tokens: the palette ESLint rule (§4) and `frontend/scripts/check-theme-tokens.mjs`
 - Build/deploy of the bundle: [DEPLOYMENT.md](./DEPLOYMENT.md)

@@ -1,5 +1,5 @@
 /**
- * Settings → Agent Activity (Agentic plan AI-3 — governance ledger).
+ * Settings → Agent Activity (the agent governance ledger).
  *
  * Immutable ledger of every agent run: agent, mode chip, trigger, status,
  * one-line summary, tokens, cost, duration, timestamp. Rows expand to show

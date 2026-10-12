@@ -1,4 +1,4 @@
-"""The Fixer — budgeted, validated-fix agent (Agentic plan AI-2).
+"""The Fixer — budgeted, validated-fix agent.
 
 Selects flaky/quarantined tests, generates test-code-only candidate fixes,
 validates them by rerunning the test in a sandbox, and (suggest mode only)

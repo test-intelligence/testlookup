@@ -1,4 +1,4 @@
-"""Fixer config + run-gate + serialization core (Agentic plan AI-2).
+"""Fixer config + run-gate + serialization core.
 
 Mirrors ``agent_investigation_service`` for the Investigator; the Fixer's
 governance lives in the canonical ``agent_configs`` row under ``agent_id='fixer'``:

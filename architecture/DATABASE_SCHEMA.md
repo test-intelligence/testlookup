@@ -24,7 +24,7 @@ See [`architecture/README.md`](./README.md) for which services write to each sto
 
 ## Relational schema conventions
 
-These conventions are enforced by the `add-migration` skill and the quality
+These conventions are enforced in review and by the quality
 gates; follow them for every new table or column (see the
 [Developer Guide](./DEVELOPER_GUIDE.md#4-migrations)):
 
@@ -60,7 +60,7 @@ The curated domain map groups the documented core tables into nine functional do
 | Test Management (Authored Cases) | 10 | Managed cases, versions, reviews, comments, duplicate review, plans, strategies, case audit |
 | Knowledge, RAG & Generation | 6 | Knowledge sources, sync events, chunks, generation batches + sources, requirement coverage |
 | Analytics, Comparison & Health | 12 | Run baselines/diffs/compare reports, perf baselines, tenant metrics, onboarding, usage, flaky coach/quarantine, health recs |
-| Platform, Ops & Integrations | 24 | Settings + secrets, feature flags, notifications, integration health, webhooks, GitHub, saved views, digests, share links, ownership, LLM quota/usage, chat |
+| Platform, Ops & Integrations | 25 | Settings + secrets, feature flags, notifications, integration health, webhooks, GitHub, saved views, digests, share links, report exports, ownership, LLM quota/usage, chat |
 
 ## Cross-domain hub map
 
@@ -3053,6 +3053,31 @@ _Constraints:_ Index(`ix_ds_user`, `user_id`); Index(`ix_ds_next`, `next_deliver
 | `created_at` | `DateTime` |  | NN def |  |
 
 _Constraints:_ Index(`ix_rsl_token_hash`, `token_hash`); Index(`ix_rsl_run`, `run_id`); Index(`ix_rsl_expires`, `expires_at`)
+
+#### `report_exports`  <sub>(model `ReportExport`)</sub>
+
+One background export of a report (migration 0194), rendered by `generate_report_export`. The file lives in object storage at `storage_key` until `expires_at` (requested + 7 days), when the nightly sweep deletes the file and the row.
+
+| Column | Type | Key | Flags | References |
+|---|---|---|---|---|
+| `id` | `UUID` | PK | NN def |  |
+| `project_id` | `UUID` | FK | NN | → `projects.id` (CASCADE) |
+| `requested_by_id` | `UUID` | FK |  | → `users.id` (SET NULL) |
+| `report` | `String(40)` |  | NN |  |
+| `format` | `String(10)` |  | NN |  |
+| `params` | `JSONB` |  | NN |  |
+| `status` | `String(20)` |  | NN def |  |
+| `attempts` | `Integer` |  | NN def |  |
+| `storage_key` | `Text` |  |  |  |
+| `filename` | `String(255)` |  |  |  |
+| `size_bytes` | `BigInteger` |  |  |  |
+| `error` | `Text` |  |  |  |
+| `requested_at` | `DateTime` |  | NN def |  |
+| `started_at` | `DateTime` |  |  |  |
+| `finished_at` | `DateTime` |  |  |  |
+| `expires_at` | `DateTime` |  | NN |  |
+
+_Constraints:_ Index(`ix_report_exports_project_user_requested`, `project_id`, `requested_by_id`, `requested_at`); Index(`ix_report_exports_expires_at`, `expires_at`); CheckConstraint(`ck_report_exports_status`: `queued`, `running`, `completed`, `failed`); CheckConstraint(`ck_report_exports_format`: `pdf`, `xlsx`)
 
 #### `service_ownership_rules`  <sub>(model `ServiceOwnershipRule`)</sub>
 

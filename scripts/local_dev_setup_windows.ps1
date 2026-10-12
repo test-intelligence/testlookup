@@ -10,7 +10,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $script:RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$ollamaSlmModel = if ($env:OLLAMA_SLM_MODEL) { $env:OLLAMA_SLM_MODEL } else { "qwen2.5:3b-instruct-q5_K_M" }
+$ollamaSlmModel = if ($env:OLLAMA_SLM_MODEL) { $env:OLLAMA_SLM_MODEL } else { "qwen2.5:7b-instruct" }
 $ollamaLlmModel = if ($env:OLLAMA_LLM_MODEL) { $env:OLLAMA_LLM_MODEL } else { "qwen2.5:14b-instruct-q5_K_M" }
 $ollamaEmbeddingModel = if ($env:OLLAMA_EMBEDDING_MODEL) { $env:OLLAMA_EMBEDDING_MODEL } else { "nomic-embed-text:v1.5" }
 
@@ -164,7 +164,7 @@ try {
     Write-Host "  - API Docs:       http://localhost:8000/api-docs"
     Write-Host "  - Health:         http://localhost:8000/health/details"
     Write-Host "  - Flower:         http://localhost:5555"
-    Write-Host "  - MinIO Console:  http://localhost:9001"
+    Write-Host "  - S3 API:         http://localhost:9000  (no web console)"
     Write-Host "  - MCP SSE:        http://localhost:8002/sse"
     Write-Host ""
     Write-Host "Helpful follow-up commands:"

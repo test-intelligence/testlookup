@@ -5,14 +5,19 @@ npm — a classified enclave, a regulated production segment, or any site where
 egress is blocked by policy.
 
 The mechanism is an **offline install bundle**: one tarball containing every
-container image, the Kubernetes manifests, the Compose files, checksums, and an
-import script. You build it once on a connected host, carry it across the
-boundary, and import it on the other side. Nothing in the install path touches
-the internet.
+container image TestLookup redistributes, the Kubernetes manifests, the Compose
+files, licence texts, checksums, and an import script. You build it once on a
+connected host, carry it across the boundary, and import it on the other side.
+Nothing in the install path touches the internet.
+
+One dependency is deliberately **not** in the bundle: **MongoDB** (licensed
+SSPL-1.0). It is an external prerequisite that you mirror into your registry
+yourself — see [§2a](#2a-not-in-the-bundle-mongodb).
 
 ```mermaid
 flowchart LR
     A["Connected build host<br/>make offline-bundle"] --> B["testlookup-offline-VERSION.tar.gz"]
+    M["mongo:7, pulled by you<br/>(SSPL-1.0)"] --> E
     B --> C["Physical or reviewed transfer"]
     C --> D["Air-gapped host<br/>import-bundle.sh"]
     D --> E["Local registry"]
@@ -42,6 +47,7 @@ flowchart LR
 |---|---|
 | `docker` (or `podman`) | To `docker load` the images. |
 | A container registry the target can pull from | Harbor, Artifactory, Nexus, the OpenShift internal registry, a plain `registry:2` — anything. Compose can also run straight off the loaded local images. |
+| MongoDB 7 image in that registry | Not in the bundle — mirror it yourself ([§2a](#2a-not-in-the-bundle-mongodb)). |
 | `kubectl` / `oc` | Kubernetes and OpenShift targets only. |
 
 ---
@@ -51,7 +57,8 @@ flowchart LR
 ```
 testlookup-offline-<version>/
 ├── README.md                  # a condensed copy of this procedure
-├── MANIFEST.json              # images, sha256, image ids, per-image SBOM status
+├── MANIFEST.json              # images, sha256, image ids, per-image SBOM status,
+│                              #   external_prerequisites (images NOT shipped)
 ├── images.manifest.txt        # the source-of-truth manifest it was built from
 ├── checksums.sha256           # every other file in the bundle
 ├── images.list                # "<tar>\t<image ref>" — what import-bundle.sh reads
@@ -60,19 +67,21 @@ testlookup-offline-<version>/
 ├── compose/                   # docker-compose.release.yml + .airgap.yml + .env.example
 ├── k8s/testlookup-airgap.yaml # rendered manifests, placeholders intact
 ├── k8s/base/, k8s/overlay/    # raw Kustomize sources, for customizing
+├── LICENSE, NOTICE, THIRD_PARTY_NOTICES.md   # licence texts
 └── import-bundle.sh           # verify → load → retag → push → next steps
 ```
 
 **Images included** (default, `core`):
 
-| Image | Role |
-|---|---|
-| `testlookup/backend` | API + Celery workers + beat + seed job (all one image) |
-| `testlookup/frontend` | nginx serving the SPA |
-| `testlookup/mcp` | MCP server (SSE) |
-| `postgres:16-alpine`, `mongo:7`, `redis:7-alpine` | datastores |
-| `pgsty/silo` (the maintained MinIO fork — see [§8](#8-object-storage-pgsty-silo)), `pgsty/mc` | object storage + bucket setup |
-| `busybox:1.36` | worker init containers on Kubernetes |
+| Image | Role | Licence |
+|---|---|---|
+| `testlookup/backend` | API + Celery workers + beat + seed job + bucket setup (all one image) | Apache-2.0 (+ Debian base layers) |
+| `testlookup/frontend` | nginx serving the SPA | Apache-2.0 (+ Alpine base layers) |
+| `testlookup/mcp` | MCP server (SSE) | Apache-2.0 (+ Debian base layers) |
+| `postgres:16-alpine` | relational store | PostgreSQL License |
+| `valkey/valkey:8.1-alpine` | Celery broker, cache, live-event streams — the `redis` service ([§8b](#8b-broker-valkey)) | BSD-3-Clause |
+| `ghcr.io/versity/versitygw:v1.8.0` | S3 object store — the `minio` service ([§8](#8-object-storage-versitygw)) | Apache-2.0 |
+| `busybox:1.36` | worker init containers on Kubernetes | GPL-2.0 |
 
 `ollama/ollama` and `chromadb/chroma` are **opt-in** — add `--with-llm`. They add
 roughly 2 GB and are only useful if you also transfer the model blobs
@@ -81,14 +90,47 @@ separately ([§9](#9-local-llm-in-an-air-gap)).
 Every one of these comes from **`deploy/images.manifest.txt`**, the single
 source of truth. Compose, the Kubernetes manifests, the OpenShift overlay and
 the mirror scripts are all checked against it in CI, so the bundle cannot
-silently miss an image the deployment needs.
+silently miss an image the deployment needs. Bucket creation needs no extra
+image: it is `scripts/s3_setup.py` inside the backend image.
+
+### 2a. Not in the bundle: MongoDB
+
+TestLookup stores documents in **MongoDB 7** (`mongo:7`), which compose and the
+Kubernetes manifests reference exactly as before. MongoDB Community Server is
+licensed under the **Server Side Public License (SSPL-1.0)**, which is not an
+OSI-approved licence, so the bundle does not redistribute it. In the manifest
+it is the bundle class `external`; the bundle's `README.md` and `MANIFEST.json`
+(`external_prerequisites`) list it, and `import-bundle.sh` prints the commands
+below.
+
+Review the SSPL against your organisation's policy, then mirror the image
+yourself, under the same naming contract as everything else
+(`<registry>/mongo:7`):
+
+```bash
+# connected host
+docker pull mongo:7
+docker save -o mongo-7.tar mongo:7
+sha256sum mongo-7.tar > mongo-7.tar.sha256
+
+# air-gapped host, after transfer
+sha256sum -c mongo-7.tar.sha256
+docker load -i mongo-7.tar
+docker tag mongo:7 registry.internal/mongo:7
+docker push registry.internal/mongo:7
+```
+
+If your registry can proxy Docker Hub from the connected side, mirroring it
+there works just as well. `openshiftsetup/mirror-images.sh` (and
+`make k8s-deploy-openshift-artifactory`) include it automatically, because they
+run on your connected host and pull from upstream.
 
 ---
 
 ## 3. Build the bundle (connected host)
 
 ```bash
-git clone https://github.com/anandtopu/testlookup && cd testlookup
+git clone https://github.com/test-intelligence/testlookup && cd testlookup
 
 # Optional but recommended — this is what produces real SBOMs:
 #   https://github.com/anchore/syft   (install it before building)
@@ -118,6 +160,9 @@ Preview what would be shipped without building anything:
 ```bash
 make offline-bundle-plan
 ```
+
+The plan lists the images that will be saved and, separately, the external
+prerequisites that will **not** be (`mongo:7`).
 
 ### Reproducibility
 
@@ -165,7 +210,8 @@ What happens, in order:
 3. each image is retagged into your registry;
 4. with `--push`, they are pushed there;
 5. the Kubernetes manifests are rendered with your registry substituted in;
-6. the exact next commands for each target are printed.
+6. the external prerequisites (`mongo:7`) are listed with the commands to
+   mirror them, followed by the exact next commands for each target.
 
 ### The naming contract
 
@@ -175,7 +221,13 @@ What happens, in order:
 --registry registry.internal
     → registry.internal/testlookup/backend:0.1.0
     → registry.internal/postgres:16-alpine
+    → registry.internal/valkey/valkey:8.1-alpine
+    → registry.internal/ghcr.io/versity/versitygw:v1.8.0
+    → registry.internal/mongo:7          (mirrored by you, §2a)
 ```
+
+An image that comes from a registry other than Docker Hub keeps its registry
+host as the first path segment (`ghcr.io/…`), so names can never collide.
 
 A repository path is fine (`artifactory.example.com/testlookup-docker`). Do
 **not** append `/testlookup` yourself — the app refs already carry it. This is
@@ -204,11 +256,17 @@ docker compose -f docker-compose.release.yml -f docker-compose.airgap.yml up -d
 ```
 
 `docker-compose.airgap.yml` is the piece that makes Compose air-gap-capable.
-`docker-compose.release.yml` alone hardcodes Docker Hub references for
-postgres, mongo, redis and MinIO with no way to redirect them; the override
-re-points **every** image — app and third-party — at `$TESTLOOKUP_REGISTRY`.
-Both variables are mandatory: Compose refuses to start rather than silently
-falling back to `docker.io`, which is the exact failure this file prevents.
+`docker-compose.release.yml` alone names Docker Hub (postgres, mongo, valkey)
+and GHCR (versitygw) with no way to redirect them; the override re-points
+**every** image — app and third-party, MongoDB included — at
+`$TESTLOOKUP_REGISTRY`, so `registry.internal/mongo:7` must exist (§2a). Both
+variables are mandatory: Compose refuses to start rather than silently falling
+back to `docker.io`, which is the exact failure this file prevents.
+
+The one-shot `minio-setup` service runs `scripts/s3_setup.py` from the backend
+image: it waits for the object store and creates every bucket the backend
+writes to. It is idempotent; re-run it with
+`docker compose -f docker-compose.release.yml -f docker-compose.airgap.yml run --rm minio-setup`.
 
 `make dev` and the public `install.sh` one-liner are unaffected — they never
 load the override.
@@ -253,7 +311,13 @@ if [ "$had_backend" -eq 0 ]; then
     bash ./run-k8s-migrations.sh testlookup "$backend_image"
 fi
 kubectl -n testlookup rollout status deploy/testlookup-backend --timeout=300s
+
+# Create the S3 buckets (idempotent; uses the pod's own MINIO_* settings).
+kubectl -n testlookup exec deploy/testlookup-backend -- python /app/scripts/s3_setup.py
 ```
+
+The MongoDB pod pulls `registry.internal/mongo:7`: mirror it first (§2a) or it
+stays in `ImagePullBackOff`.
 
 Re-run `import-bundle.sh` with `--storage-class <your class>` if the rendered
 file still contains `STORAGE_CLASS_PLACEHOLDER`; the script warns and lists any
@@ -275,10 +339,10 @@ oc adm policy add-scc-to-user anyuid -z default -n testlookup
 # Run the Kubernetes sequence above with KCLI=oc and oc in place of kubectl.
 ```
 
-The stock infra images (postgres, mongo, MinIO, nginx) run as fixed UIDs and
-need `anyuid` under `restricted-v2`. The rendered manifests already contain the
-OpenShift **Routes** (edge TLS, HTTP→HTTPS redirect). Supply the hostnames at
-import time:
+The stock infra images (postgres, mongo, valkey, versitygw, nginx) run as fixed
+UIDs and need `anyuid` under `restricted-v2`. The rendered manifests already
+contain the OpenShift **Routes** (edge TLS, HTTP→HTTPS redirect). Supply the
+hostnames at import time:
 
 ```bash
 ./import-bundle.sh --registry registry.internal --push \
@@ -288,7 +352,8 @@ import time:
 
 If your build host *can* reach both the internet and the cluster's registry,
 the older registry-to-registry path is still available and does the same job
-without a tarball:
+without a tarball — it also mirrors `mongo:7` from upstream, creates the
+buckets, and generates the first admin password (printed once at the end):
 
 ```bash
 make k8s-mirror-images-openshift          # seed Artifactory
@@ -324,7 +389,7 @@ So, to get SBOMs into a bundle, do one of:
 
   ```bash
   docker buildx imagetools inspect \
-      ghcr.io/anandtopu/testlookup/backend:<tag> --format '{{json .SBOM}}' \
+      ghcr.io/test-intelligence/testlookup/backend:<tag> --format '{{json .SBOM}}' \
       > backend.sbom.json
   ```
 
@@ -335,33 +400,63 @@ pulled rather than built locally.
 
 ---
 
-## 8. Object storage: PGSTY Silo
+## 8. Object storage: versitygw
 
-MinIO, Inc. stopped publishing community images: `quay.io/minio/minio` and
-`minio/minio` on Docker Hub refuse anonymous pulls. The bundle therefore ships
-**PGSTY Silo** (`pgsty/silo:RELEASE.2026-09-16T00-00-00Z`), the community-maintained fork of the open-source
-MinIO server, and PGSTY's build of the client (`pgsty/mc:RELEASE.2026-09-16T00-00-00Z`).
+The S3 object store is **[versitygw](https://github.com/versity/versitygw)**
+(`ghcr.io/versity/versitygw:v1.8.0`, Apache-2.0), a single-binary S3 gateway
+run with its **posix** backend: buckets are directories and objects are plain
+files on the data volume. It replaced the AGPL-3.0 MinIO fork (PGSTY Silo) and
+its `mc` client.
 
-| What | Same as MinIO? |
+| What | Detail |
 |---|---|
-| S3 API, `/minio/health/*` routes, `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | Yes |
-| Data on disk (`.minio.sys`) | Yes: an existing volume is read as is |
-| Web console on port 9001 | Yes, the full console (the 2025-04 community releases had cut it) |
-| Server binary | **`silo`**, no `minio` alias: the Kubernetes manifests call `silo server` |
+| Names | Unchanged: the Compose service is still `minio`, the Kubernetes objects `testlookup-minio` / PVC `minio-data`, and every `MINIO_*` setting means "the S3 endpoint". Existing configuration keeps working. |
+| Port | `9000` (S3 API). There is **no web console** — port 9001 is gone. |
+| Credentials | `ROOT_ACCESS_KEY` / `ROOT_SECRET_KEY`, fed from `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY`. |
+| Data location | `/data/s3` on the volume mounted at `/data` (created at start). An old MinIO/Silo data directory in `/data` is never read or modified. |
+| Health | `GET /health` → 200, unauthenticated. TestLookup's own storage health check accepts this route and the legacy `/minio/health/live`. |
+| Filesystem | The data volume must support **user extended attributes** (ext4, xfs, btrfs and most CSI block volumes do). On a filesystem without them (some NFS setups), set `VGW_META_SIDECAR` to an existing directory on the volume. |
+| Buckets | Created by `scripts/s3_setup.py` in the backend image (Compose: the `minio-setup` service; Kubernetes: `kubectl exec … python /app/scripts/s3_setup.py`). |
+| Bucket notifications | Not wired. TestLookup's API dispatches ingestion itself; the legacy direct-to-bucket path (`/webhooks/minio`) needs a notification sender that can present `Authorization: Bearer <WEBHOOK_SECRET>`, which versitygw's webhook cannot. Keep an S3 store that can (e.g. your existing MinIO) if you depend on it. |
 
-One tag now serves Compose and Kubernetes. It is newer than both tags this
-bundle used to pin (Compose `RELEASE.2024-11-07`, Kubernetes
-`RELEASE.2025-09-07`), so moving an existing deployment is a forward upgrade.
-CI fails if the manifest and the deployment files disagree.
+**Upgrading an install that ran MinIO/Silo:** versitygw does not read MinIO's
+on-disk format. Copy the objects over the S3 API with the setup script, from a
+temporary instance of the old server — see `UPGRADING.md` for the full
+procedure:
+
+```bash
+export S3_COPY_FROM_ACCESS_KEY=<old access key>
+export S3_COPY_FROM_SECRET_KEY=<old secret key>
+python /app/scripts/s3_setup.py --copy-from-endpoint http://<old-s3-host>:9000
+```
+
+It creates the buckets, streams every object across with its content type and
+metadata, and skips objects already copied, so it is safe to re-run.
+
+### 8b. Broker: Valkey
+
+The Celery broker, cache and live-event store is **Valkey 8.1**
+(`valkey/valkey:8.1-alpine`, BSD-3-Clause), the Linux Foundation fork of Redis
+7.2. It speaks the same protocol, so the `redis` service, the
+`testlookup-redis` objects and every `redis://` URL and `REDIS_*` setting are
+unchanged. It replaced `redis:7-alpine`, whose 7.4 releases are licensed
+RSALv2/SSPLv1. Valkey cannot load the data files of Redis 7.4 or later: an
+existing install drains its queues and starts Valkey on an empty volume — see
+`UPGRADING.md`.
 
 ## 9. Local LLM in an air-gap
 
 `--with-llm` bundles the Ollama and ChromaDB **images**, not the models. Model
-blobs (4–14 GB each) must be transferred separately:
+blobs (4–14 GB each) must be transferred separately — the full procedure,
+including how to verify the result from TestLookup, is the
+[offline model pack](offline-model-pack.md). In short:
 
 ```bash
-# connected host
-docker run --rm -v ollama_models:/root/.ollama ollama/ollama:0.5.4 ollama pull qwen2.5:7b
+# connected host — the exact tags TestLookup's defaults name (both Apache-2.0)
+docker run -d --name ollama-pack -v ollama_models:/root/.ollama ollama/ollama:0.5.4
+docker exec ollama-pack ollama pull qwen2.5:7b-instruct
+docker exec ollama-pack ollama pull nomic-embed-text:v1.5
+docker rm -f ollama-pack
 docker run --rm -v ollama_models:/root/.ollama -v "$PWD":/out busybox:1.36 \
     tar czf /out/ollama-models.tar.gz -C /root/.ollama .
 # air-gapped host: restore that tarball into the ollama_models volume / PVC
@@ -379,9 +474,13 @@ defaults to `true`, so no outbound integration is attempted regardless.
 |---|---|
 | `CHECKSUM MISMATCH` on import | The bundle was corrupted or altered in transit. Re-transfer; do not install it. |
 | `No sha256 tool available` | Install `coreutils` or `openssl` on the target. `--skip-verify` exists but leaves you unverified. |
+| `ImagePullBackOff` / pull error for `<registry>/mongo:7` | MongoDB is not in the bundle. Mirror it (§2a). |
 | `ImagePullBackOff` referencing `docker.io/...` | Something bypassed the retag. On Compose, you forgot `-f docker-compose.airgap.yml`; on Kubernetes, you applied the raw overlay instead of the rendered file. |
 | `..._PLACEHOLDER` in a manifest | Re-run `import-bundle.sh` with `--storage-class` / `--apps-domain`. The placeholders deliberately do not resolve so an un-rendered apply fails loudly instead of pulling from the wrong registry. |
 | Compose exits with "TESTLOOKUP_REGISTRY must be set" | Working as designed — set both `TESTLOOKUP_REGISTRY` and `TESTLOOKUP_VERSION` in `.env`. |
+| `testlookup-minio` restarts with `xattr check failed` | The data volume has no user extended attributes. Use a filesystem that does, or set `VGW_META_SIDECAR` (§8). |
+| Uploads fail with `NoSuchBucket` | The buckets were never created. Run `scripts/s3_setup.py` (§6a / §6b). |
+| `testlookup-redis` / `redis` exits right after an upgrade, log mentions the RDB format | An old Redis 7.4 AOF/RDB is on the volume. Follow `UPGRADING.md` (drain, then start Valkey on an empty volume). |
 | Infra pods `CrashLoopBackOff` on OpenShift | `anyuid` was not granted (§6c). |
 | Bundle build fails pulling images | The build host lost internet, or a TLS-intercepting proxy is in the way — see [DEPLOYMENT.md §5](../architecture/DEPLOYMENT.md). |
 
@@ -390,7 +489,10 @@ defaults to `true`, so no outbound integration is attempted regardless.
 ## 11. For maintainers
 
 - **`deploy/images.manifest.txt`** is the single source of truth for images.
-  Add or bump an image there **first**, then update the surfaces.
+  Add or bump an image there **first**, then update the surfaces. Its fourth
+  column decides what the bundle carries: `core`, `llm` (with `--with-llm`),
+  `external` (a prerequisite the bundle does not redistribute — the operator
+  mirrors it), `excluded` (tracked for drift only).
 - `make images-check` (CI job **Images — Manifest drift**) asserts Compose, the
   Kubernetes manifests, the `openshift-artifactory` overlay and the OpenShift
   mirror scripts all agree with it, and that no compose file carries a floating
@@ -399,11 +501,13 @@ defaults to `true`, so no outbound integration is attempted regardless.
   it fails on drift, not just that it passes today.
 - The **Offline bundle** workflow builds a bundle with the network on, then
   verifies checksums, `docker load`, retag and an offline application-module
-  import inside `--network none` containers. It proves *bundle integrity and
-  offline import*, not a full-stack end-to-end deployment.
+  import inside `--network none` containers, and that the bundle carries
+  Valkey and versitygw but not MongoDB. It proves *bundle integrity and offline
+  import*, not a full-stack end-to-end deployment.
 
 ## Related
 
 - [architecture/DEPLOYMENT.md](../architecture/DEPLOYMENT.md) — every deployment topology
+- [user-guide/offline-model-pack.md](./offline-model-pack.md) — local models in an air gap
 - [user-guide/administration.md](./administration.md) — backup, restore, upgrades
 - [user-guide/sizing.md](./sizing.md) — capacity planning

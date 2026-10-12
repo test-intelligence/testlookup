@@ -1,16 +1,13 @@
 """Add flaky_detection_state — when a test entered the corpus, and when we
 first had anything to say about it.
 
-Phase 6 of ``architecture/TEST_INTELLIGENCE_PLAN.md`` — the last phase, and the
-one whose headline justification did not survive review.
-
 ## What this is NOT justified by
 
-The plan originally leaned on "75% of flaky tests are already flaky at their
-introducing commit". That claim was **refuted 1–2** in the evidence review and
-is not used here. What survives is a weaker and heavily qualified finding:
-**85/15 among order- and implementation-dependent flaky tests in 55 Java OSS
-projects** — 85% were catchable by screening tests that were new or directly
+A widely repeated claim says "75% of flaky tests are already flaky at their
+introducing commit". Its evidence does not hold up — the claim is **refuted**
+— and it is not used here. What survives is a weaker and heavily qualified
+finding: **85/15 among order- and implementation-dependent flaky tests in 55
+Java OSS projects** — 85% were catchable by screening tests that were new or directly
 modified, the remaining 15% became flaky from changes elsewhere. That corpus was
 245 flaky tests found by two detectors, skewed towards order- and
 implementation-dependent flakiness with async-wait, concurrency and network

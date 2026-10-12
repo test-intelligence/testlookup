@@ -13,15 +13,15 @@
 - One reproducible IaC definition, three environments (dev/staging/prod), driven
   by `-var-file`.
 - **Validate everything without a real AWS account** — fmt, validate, lint,
-  security scan, kustomize render, Dockerfile + shell lint — as a CI gate and a
-  local script.
+  security scan, kustomize render, Dockerfile + shell lint — with one local
+  script.
 
 **Non-goals (this iteration)**
 - No `terraform apply` from this repo against a real account.
 - Ollama / ChromaDB are **not** externalised (no managed AWS equivalent) — they
   remain in-cluster on EBS. GPU node groups for Ollama are a follow-up.
 - App-layer GitOps (Argo/Flux) is noted but not wired; deploys use Kustomize +
-  `kubectl`/CI for now.
+  `scripts/deploy-k8s.sh` for now.
 
 ## 2. Target architecture
 
@@ -113,8 +113,9 @@ State is isolated per env: S3 key `aws/<env>/terraform.tfstate`, DynamoDB lock.
 
 ## 7. CI/CD
 
-1. **Infra PR** → `.github/workflows/aws-infra-validate.yml` runs the offline gate
-   (fmt, validate, tflint, tfsec, kustomize render, hadolint, shellcheck). No AWS.
+1. **Infra change** → run `scripts/validate.sh`, the offline gate (fmt, validate,
+   tflint, tfsec, kustomize render, hadolint, shellcheck). No AWS. No CI workflow
+   runs it.
 2. **Infra apply** → `plan.sh` (review) → `deploy.sh <env> --confirm` (gated;
    prod requires typed-name match). In CI, use OIDC-assumed roles, never static keys.
 3. **App release** → build `backend/frontend/mcp` images (the backend build stages
@@ -148,12 +149,11 @@ Every check is static / dry-run / render:
 | Image lint | `hadolint` | Dockerfile correctness |
 | Script lint | `shellcheck` | deploy scripts |
 
-`scripts/validate.sh` runs them locally (tool-or-Docker, auto-skip if absent);
-the CI workflow runs the full set on Linux. **Dev-host note:** a TLS-inspecting
-AV (Norton/NordVPN) intercepts terraform's loopback plugin mTLS, so native
-`terraform validate` fails locally with *“plugin did not respond”*. Use
-`./scripts/validate.sh --tf-docker` (runs terraform in a container, where
-loopback isn't intercepted). CI Linux runners are unaffected.
+`scripts/validate.sh` runs them locally (tool-or-Docker, auto-skip if absent).
+**Dev-host note:** a TLS-inspecting antivirus or proxy can intercept terraform's
+loopback plugin mTLS, so native `terraform validate` fails locally with
+*“plugin did not respond”*. Use `./scripts/validate.sh --tf-docker` (runs
+terraform in a container, where loopback isn't intercepted).
 
 ## 10. Follow-ups before prod
 
@@ -162,4 +162,4 @@ loopback isn't intercepted). CI Linux runners are unaffected.
   **cluster-autoscaler/Karpenter**, **External DNS**.
 - GPU node group + taints/tolerations if Ollama runs in-cluster (else keep offline).
 - Pin `public_access_cidrs`; consider a fully private EKS endpoint + bastion/SSM.
-- `tfsec`/`checkov` to **hard-fail** in CI once findings are triaged.
+- `tfsec`/`checkov` to **hard-fail** in `scripts/validate.sh` once findings are triaged.

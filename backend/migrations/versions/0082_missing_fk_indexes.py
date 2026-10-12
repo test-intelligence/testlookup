@@ -4,8 +4,7 @@ Revision ID: 0082
 Revises: 0081
 Create Date: 2026-05-16
 
-Database audit 2026-05-16 (docs/DATABASE_AUDIT_2026-05-16.md, finding P1-4)
-identified four foreign-key columns lacking indexes on tables that are
+A database audit (2026-05-16) identified four foreign-key columns lacking indexes on tables that are
 queried in hot paths. Postgres does NOT auto-index FKs, so every WHERE /
 JOIN on these columns performs a sequential scan.
 

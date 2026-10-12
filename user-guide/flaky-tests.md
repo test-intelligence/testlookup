@@ -1,43 +1,59 @@
-# Flaky tests & quarantine
+# Quarantine policy and CI gating
 
-A flaky test changes verdict without a code change — and it poisons everything downstream: trust in red builds, release-gate accuracy, triage time. TestLookup treats flakiness as a **verdict backed by evidence**, not a failure-rate threshold: pass/fail alternation, error-signature variety, a statistical confidence interval on the failure ratio, and an ML score are combined into `is_flaky` + a likely cause. A test that fails *consistently with the same error* is called a **regression** and will never be recommended for quarantine — that one needs a fix, not a mute.
+How to turn on flaky-test quarantine for a project, tune its policy, and make a CI pipeline fail only on real (non-quarantined) failures. Using the **Flaky tests** page itself (the Detected, Proposed, Quarantined and History tabs, proposing and approving) is covered in the in-app guide: **Flaky tests** (`/docs/flaky`, source [flaky.md](../frontend/src/content/guide/flaky.md)). Internals: [architecture/FLAKY_INTELLIGENCE.md](../architecture/FLAKY_INTELLIGENCE.md).
 
-(Internals: [architecture/FLAKY_INTELLIGENCE.md](../architecture/FLAKY_INTELLIGENCE.md).)
+TestLookup treats flakiness as a **verdict backed by evidence**, not a failure-rate threshold: pass/fail alternation, error-signature variety, a confidence interval on the failure ratio and an ML score combine into a flaky verdict and a likely cause. A test that fails *consistently with the same error* is a **regression** and is never recommended for quarantine.
 
-## Where flakiness shows up
+## Turning quarantine on
 
-| Surface | What you get |
-|---|---|
-| **Flaky Coach** (`/flaky-coach`) | Per-test coaching: cross-run history, flaky confidence, likely cause. Needs a *specific* project selected — it's disabled in the admin All-Projects view. |
-| **Test detail → "Cross-Run Step Flakiness"** | For step-based tests: *which step* flips verdict across runs, with flip counts and current status — so you fix the flaky step, not the whole test. Shows "Not enough run history" until enough runs exist, and says so when the test is stable. |
-| **Run detail → step-flip roll-up** | The same signal aggregated across a run's tests. |
-| **Failure Analysis / triage verdicts** | The regression-vs-flaky call on each failure (see [Triaging failures](triaging-failures.md)). |
-| **MCP** | `get_test_step_flips` exposes the step-flip report to AI/agent consumers. |
+Quarantine is switched per deployment by the **`flaky_auto_quarantine`** feature flag, which ships **off**. With it off:
+
+- **Propose quarantine** is unavailable (the page says "Quarantine is off for this project"; the API answers `503`).
+- **Existing quarantines are not enforced**: the release gate counts their failures again, and the quarantine manifest that `testlookup ci-verdict` reads is **empty**, so every failure counts as real.
+- Proposals do not expire.
+
+Turn it on under **Settings → System → Feature flags** (administrators), globally or for listed projects. See the [feature-flag reference](../docs/operations/feature-flags.md) for how project lists and rollout combine.
 
 ## The quarantine workflow
 
-Quarantine is a reviewed, audited holding state — not a mute button. **Flaky Quarantine** (`/quarantine`) organizes it into four buckets: **Awaiting review**, **Active quarantines**, **Released**, and **Rejected / expired**.
+With the flag on, quarantine is a reviewed, audited holding state:
 
-1. **Propose** — the flaky sentinel proposes quarantine when a test's *verdict* says flaky (recommendations are derived from the verdict, so a consistently-failing regression never gets proposed). Humans can propose too, from the flaky surfaces.
-2. **Review** — a human approves or rejects each proposal in **Awaiting review**. Proposals nobody acts on **expire** on their own rather than piling up.
-3. **Active** — while quarantined, the test still *runs* and still *records results*; it's excluded from the **release-gate failure signal** only. You keep the data, you lose the noise.
-4. **Release** — when the fix lands (watch the test go stable in the coach), release it from quarantine and it counts again.
+1. **Propose** — a QA lead proposes a test (**Propose quarantine** on Flaky tests, **Mute** on Failures, the MCP `propose_quarantine` tool, or Ask AI's suggested action). The flaky sentinel also proposes tests whose verdict is flaky.
+2. **Review** — a QA lead approves or rejects each proposal under **Flaky tests → Proposed** or **Inbox → Approvals**. Proposals nobody decides **expire after 7 days** (the nightly maintenance at 04:00 UTC).
+3. **Quarantined** — approval quarantines the test for the policy's SLA (**14 days** by default). It still runs and still records results; it is excluded from the release-gate failure signal and listed in the CI manifest.
+4. **Release** — when the fix lands, a QA lead releases it (**Release**, or **Promote out** once it has passed often enough). It counts again.
 
-Every transition is audit-logged.
+Every transition is audit-logged. All quarantine writes need `QA_LEAD`.
+
+## Quarantine policy
+
+Each project has a quarantine policy, served at `GET/PUT /api/v1/projects/{project_id}/quarantine/policy` (`QA_LEAD` to change). There is no page for it yet. Defaults:
+
+| Setting | Default |
+|---|---|
+| Quarantine SLA | 14 days |
+| Automatically file a defect for a quarantined test | off |
+| Automatically promote a test out of quarantine | off |
+| Consecutive passes before a test is ready to promote out | 20 |
+| Detection threshold | 20% flip rate over the last 10 runs |
+
+The exact field names are in the API reference (`/api-docs`, the flaky-quarantine section).
 
 ## Gating CI on real failures only (`testlookup ci-verdict`)
 
-Quarantine only pays off if it actually unblocks merges. `testlookup ci-verdict` closes the loop with **zero test-code changes**: after uploading results, ask TestLookup whether the run's failures are all quarantined/known-flaky — and let the exit code gate the pipeline.
+Quarantine only pays off if it actually unblocks merges. `testlookup ci-verdict` closes the loop with **zero test-code changes**: after uploading results, ask TestLookup whether the run's failures are all quarantined or known-flaky, and let the exit code gate the pipeline.
 
 ```bash
 testlookup ci-verdict --run "$RUN_ID" --project "$PROJECT_ID"
 ```
 
-- **Exit `0`** — no *real* failures. Quarantined failures don't block (that's the point).
+- **Exit `0`** — no *real* failures. Quarantined failures do not block (that is the point).
 - **Exit `1`** — at least one non-quarantined failure. With `--strict`, ANY failure blocks, quarantined included.
-- **Exit `2`** — TestLookup unreachable / API error / the run didn't finish inside `--timeout-seconds`. **Fails closed by default** — a broken TestLookup must never silently green a build. Teams that prefer availability can pass `--fail-open` (exit 0 with a loud warning on infrastructure errors).
+- **Exit `2`** — TestLookup unreachable, an API error, or the run did not finish inside `--timeout-seconds`. **Fails closed by default** — a broken TestLookup must never silently green a build. Teams that prefer availability can pass `--fail-open` (exit 0 with a loud warning on infrastructure errors).
 
-How it decides: the CLI fetches the run's FAILED/BROKEN tests and the project's **quarantine manifest** (`GET /api/v1/projects/{project_id}/quarantine/manifest` — currently-active quarantines only, ETag-cached; also an MCP resource, `testlookup://projects/{id}/quarantine-manifest`), then matches primarily by test fingerprint (`sha256(class::name)`, recomputed client-side), falling back to an exact `(test_name, suite_name)` match. `--output json` emits the full partition (`{verdict, counts, real_failures, quarantined_failures}`) for dashboards; `--timeout-seconds N` polls a still-running run before judging.
+How it decides: the CLI fetches the run's FAILED/BROKEN tests and the project's **quarantine manifest** (`GET /api/v1/projects/{project_id}/quarantine/manifest` — currently active quarantines only, ETag-cached; also an MCP resource, `testlookup://projects/{id}/quarantine-manifest`), then matches primarily by test fingerprint (`sha256(class::name)`, recomputed client-side), falling back to an exact `(test_name, suite_name)` match. `--output json` emits the full partition (`{verdict, counts, real_failures, quarantined_failures}`); `--timeout-seconds N` polls a still-running run before judging.
+
+> With `flaky_auto_quarantine` off the manifest is empty, so `ci-verdict` treats every failure as real.
 
 ### GitHub Actions
 
@@ -91,14 +107,11 @@ verdict:
 
 Note the `|| true` on the raw test command: the runner must not stop on the framework's own red exit, or the verdict step never runs. The gate's honesty moves to `ci-verdict` — which still fails the build on any real failure.
 
+The GitHub integration's check run follows the same rule: a run whose failures are all known-flaky or quarantined concludes `neutral` instead of `failure` (see [Administration → GitHub](administration.md#github-settingsgithub)).
+
 ## Recommended rhythm
 
-- **Weekly**: clear **Awaiting review** — approve the genuinely flaky, reject the rest. An un-reviewed queue silently expires, which wastes the detector's work.
-- **Per quarantine**: treat Active as a to-fix list with an owner, not a parking lot. The step-flip panel usually points at the exact wait/retry/assertion to fix.
-- **On release**: verify a few green runs in the coach's history before releasing — releasing a still-flaky test puts the noise straight back into the gate.
-
-## Tips
-
-- **Fix the step, not the test.** When the step-flip panel isolates one flipping step (a wait, a network call, an animation), the fix is usually local — the rest of the test is fine.
-- **Quarantine is for flaky, period.** If something red is blocking the gate and it *isn't* flaky, the answers are a fix, a defect, or (rarely) a reasoned gate override — see [Release gates](release-gates.md).
-- **Confidence grows with history.** Fresh tests can't be confidently called flaky; if the coach shows thin history, let it accumulate runs before acting.
+- **Weekly**: clear **Flaky tests → Proposed** — approve the genuinely flaky, reject the rest. An un-reviewed queue silently expires after 7 days.
+- **Per quarantine**: treat **Quarantined** as a to-fix list with an owner, not a parking lot. The test page's **Cross-run step flakiness** usually points at the exact wait, retry or assertion to fix. Rows marked **stale** have outlived their SLA.
+- **On release**: check a few green runs in the test's history before releasing it — releasing a still-flaky test puts the noise straight back into the gate. **Ready to promote** marks tests that have passed often enough.
+- **Fix the step, not the test**, and remember quarantine is for flaky tests only. A red test that is not flaky needs a fix, a defect, or a reasoned gate override — see [Gate policies and CI gating](release-gates.md).

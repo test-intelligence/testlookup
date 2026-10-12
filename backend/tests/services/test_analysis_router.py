@@ -1,7 +1,8 @@
 """Unit tests for services.analysis_router — the central LLM/ML/Rules dispatcher.
 
-CLAUDE.md mandates that every analysis call goes through this module
-(``never call run_triage_agent() or RulesEngine directly``). The tests below
+Every analysis call must go through this module (never call
+``run_triage_agent()`` or ``RulesEngine`` directly; the
+``backend.analysis-router`` quality gate enforces it). The tests below
 codify the contract callers depend on:
 
   - ``get_analysis_mode()`` resolves configured → auto → fallback chain

@@ -1,5 +1,5 @@
 /**
- * Investigator cockpit (Agentic plan AI-1, Wave B — shadow mode).
+ * Investigator cockpit (shadow mode).
  *
  * Renders as an "Agent Investigation" section on the Deep Investigation page:
  *   - "Investigate this run" CTA (tooltip-disabled when no run in scope, the

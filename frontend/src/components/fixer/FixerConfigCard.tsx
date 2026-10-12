@@ -1,5 +1,5 @@
 /**
- * Fixer settings card (Agentic plan AI-2 — Wave D), rendered on
+ * Fixer settings card, rendered on
  * Settings → AI Agents next to the Investigator governance card.
  *
  * Enabled toggle, trust-ladder mode limited to shadow/suggest ("suggest opens

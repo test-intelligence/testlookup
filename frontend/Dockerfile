@@ -2,8 +2,8 @@ FROM node:20-alpine AS base
 WORKDIR /app
 
 # ── TLS-interception CA support (homelab builds behind an HTTPS-inspecting
-#    middlebox: Norton/NordVPN SSL scanning, corporate proxy) ─────────────
-# Without this, `npm install` can't verify registry.npmjs.org against the
+#    middlebox: a corporate proxy or endpoint-security TLS scanning) ──
+# Without this, `npm ci` can't verify registry.npmjs.org against the
 # public roots and fails with "unable to get local issuer certificate".
 # NODE_EXTRA_CA_CERTS *appends* the staged root CA to Node's built-in roots
 # (no apk / update-ca-certificates needed on Alpine). deploy-homelab.sh drops
@@ -13,14 +13,14 @@ WORKDIR /app
 ARG INSTALL_EXTRA_CA=0
 COPY certs/ /opt/extra-ca/
 COPY package*.json ./
-# npm install works whether or not package-lock.json is committed.
-# After running locally once, commit the generated package-lock.json and
-# change this line to `RUN npm ci` for faster, reproducible Docker builds.
+# npm ci installs exactly what package-lock.json records, including the
+# platform-specific optional binaries (rolldown's linux-musl binding). Plain
+# `npm install` can skip those (npm/cli#4828) and break `vite build`.
 RUN if [ "$INSTALL_EXTRA_CA" = "1" ] && ls /opt/extra-ca/*.crt >/dev/null 2>&1; then \
       export NODE_EXTRA_CA_CERTS="$(ls /opt/extra-ca/*.crt | head -n1)"; \
       echo "[frontend] trusting interception CA: $NODE_EXTRA_CA_CERTS"; \
     fi; \
-    npm install --include=dev --prefer-offline || npm install --include=dev
+    npm ci --include=dev
 RUN test -x node_modules/.bin/tsc && test -x node_modules/.bin/vite
 
 # Development stage
@@ -33,7 +33,7 @@ CMD ["npm", "run", "dev"]
 # Build stage — Vite handles TypeScript compilation internally via esbuild
 FROM base AS builder
 # Default to empty so the bundle uses same-origin relative URLs (works behind
-# any ingress, e.g. testlookup.local in k8s). Deployments that need an absolute
+# any ingress, e.g. testlookup.localhost on K3s). Deployments that need an absolute
 # URL (gcp-vm, cloudrun) override this via --build-arg.
 ARG VITE_API_BASE_URL=""
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}

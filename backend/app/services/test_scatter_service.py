@@ -33,7 +33,7 @@ to the tests left out.
 
 **Cost.** The p95 is a per-test ordered-set aggregate over every timed row in
 the window, so the statement scales with the rows in the window, not with the
-points returned. Measured on the 1M-row seed: see ``docs/viz-work/w3/BE4.md``.
+points returned (measured on a 1M-row seed).
 The UI clamps every request to 90 days (``catalogueScope.ts``); a direct caller
 may ask for up to :data:`MAX_WINDOW_DAYS`.
 """

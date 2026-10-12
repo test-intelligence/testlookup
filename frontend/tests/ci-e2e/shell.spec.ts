@@ -72,7 +72,8 @@ test('? > Help for this page opens the Failures topic beside the page, and Open 
   await expect(ready(page)).toBeInViewport()
 
   await page.getByRole('link', { name: /Open in full docs/ }).click()
-  await expect(page).toHaveURL(/\/docs\/failure-analysis$/)
+  // Straight to the Failures section of the topic (helpTopics.ts anchors /failures).
+  await expect(page).toHaveURL(/\/docs\/failure-analysis#the-failures-page$/)
   await expect(help).toHaveCount(0)
   await networkQuiet(page, api)
   expect(api.unhandled).toEqual([])

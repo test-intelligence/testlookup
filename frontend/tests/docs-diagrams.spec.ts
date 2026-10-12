@@ -7,8 +7,9 @@
  *
  *   npx playwright test --config playwright.docs.config.ts
  *
- * Deliberately NOT named `probe-*`: `probe-live.config.ts` matches that prefix
- * and would run this against the homelab, where the harness does not exist.
+ * Deliberately NOT named `probe-*`: maintainers keep live probes by that
+ * prefix outside the repo, and they run against a real deployment, where the
+ * harness does not exist.
  */
 import { test, expect } from '@playwright/test'
 import * as fs from 'fs'

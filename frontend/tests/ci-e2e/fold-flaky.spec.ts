@@ -6,9 +6,8 @@
  * At 1440 x 900 the page's primary content (`[data-primary]`, the Detected
  * table) starts at most 300 px below the top of `#main-content`. The
  * scroller's `scrollHeight` is printed (FOLD line) so the page's height before
- * / after can be compared: measured on the unchanged page first (P4 agent C's
- * report, `docs/viz-work/p4-agent-C.md`: 1182 px, a card list under four
- * recommendation tiles, no table).
+ * / after can be compared: measured on the unchanged page first (1182 px, a
+ * card list under four recommendation tiles, no table).
  *
  * Also held here: the request inventory of one load, each tab's section (the
  * settled requests asked only by History), "Propose quarantine" from a

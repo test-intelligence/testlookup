@@ -22,7 +22,7 @@ _VERSION = _ROOT / "VERSION"
 
 # App services run from pre-built images; the rest are stock infra images.
 _APP_SERVICES = {"backend", "worker", "beat", "frontend", "mcp", "seed-init"}
-_REGISTRY_PREFIX = "ghcr.io/anandtopu/testlookup"
+_REGISTRY_PREFIX = "ghcr.io/test-intelligence/testlookup"
 
 
 @pytest.fixture(scope="module")
@@ -115,7 +115,21 @@ def test_install_script_fetches_the_required_files():
         assert needed in text, f"install.sh never references {needed!r}"
     # It must actually bring the stack up via compose.
     assert "up -d" in text
-    assert "raw.githubusercontent.com/anandtopu/testlookup" in text
+    # The canonical repository; the personal namespace it moved from serves
+    # nothing for this project (OSS release).
+    assert "raw.githubusercontent.com/test-intelligence/testlookup" in text
+    assert "anandtopu" not in text
+
+
+def test_release_compose_pulls_the_images_ci_publishes():
+    """CI publishes to ghcr.io/${{ github.repository }}; the no-clone install
+    must default to exactly that namespace (GHCR does not redirect)."""
+    compose = (_INSTALL.parent / "docker-compose.release.yml").read_text(encoding="utf-8")
+    for image in ("backend", "frontend", "mcp"):
+        assert (
+            "${TESTLOOKUP_IMAGE:-ghcr.io/test-intelligence/testlookup}/" + image
+        ) in compose, image
+    assert "anandtopu" not in compose
 
 
 def _resolve_bash() -> str | None:

@@ -1,10 +1,10 @@
 # HTTP request and response schemas
 
-[Documentation home](../README.md) · [Regeneration](../handoff/maintenance.md)
+[Documentation home](../README.md) · [Regeneration](../maintainers/maintenance.md)
 
-Generated from tracked source by `scripts/generate_handoff_reference.py`. Do not edit by hand. The baseline and validation limits are recorded in [verification](../handoff/verification.md).
+Generated from tracked source by `scripts/generate_reference.py`. Do not edit by hand. What the checks cover is recorded in [verification](../maintainers/verification.md).
 
-These are the full generated JSON Schema definitions, including required fields, defaults, enums, nested references and declared constraints. Custom validators and cross-field checks remain in the [Python contract inventory](python-contracts.md); JSON Schema does not encode every service-level rule.
+These are the full generated JSON Schema definitions, including required fields, defaults, enums, nested references and declared constraints. Custom validators and cross-field checks live in the Pydantic models under `backend/app/models/`; JSON Schema does not encode every service-level rule.
 
 ## AIConfigRead
 
@@ -3768,7 +3768,7 @@ These are the full generated JSON Schema definitions, including required fields,
 
 ```json
 {
-  "description": "US-2.4: latest AI analysis for a (project, fingerprint) pair.\n\nAll fields are ``None`` when the test has never been analysed — the UI\nrenders a \"no AI analysis recorded yet\" empty state instead of a 404\n(which axios would surface as a scary error toast).\n\n``failure_category`` is a plain string, NOT the ``FailureCategory``\nenum: the backing column is ``String(30)`` and a strict enum here would\nsilently 422 the response if a stored value ever drifts out of vocab\n(backend/CLAUDE.md pitfall).",
+  "description": "US-2.4: latest AI analysis for a (project, fingerprint) pair.\n\nAll fields are ``None`` when the test has never been analysed — the UI\nrenders a \"no AI analysis recorded yet\" empty state instead of a 404\n(which axios would surface as a scary error toast).\n\n``failure_category`` is a plain string, NOT the ``FailureCategory``\nenum: the backing column is ``String(30)`` and a strict enum here would\n422 the whole response if a stored value ever drifts out of vocab.",
   "properties": {
     "analysis_id": {
       "anyOf": [
@@ -10108,7 +10108,7 @@ These are the full generated JSON Schema definitions, including required fields,
 
 ```json
 {
-  "description": "AI-5: outcome of a fix informed by TestLookup's diagnosis.\n\n``outcome`` is a closed vocabulary validated here (the values map onto\nFeedbackRating in the service); ``fingerprint`` is the stable test\nidentity (sha256(class::test)[:16]) the analytics surface uses.",
+  "description": "Outcome of a fix informed by TestLookup's diagnosis.\n\n``outcome`` is a closed vocabulary validated here (the values map onto\nFeedbackRating in the service); ``fingerprint`` is the stable test\nidentity (sha256(class::test)[:16]) the analytics surface uses.",
   "properties": {
     "comment": {
       "anyOf": [

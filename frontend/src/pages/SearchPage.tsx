@@ -1,5 +1,5 @@
 /**
- * Search — hero-first redesign per design_handoff_search/README.md.
+ * Search — hero-first layout: a large search bar leads, index health follows.
  *
  * Layout (1320 px max-width, 14 px section gaps):
  *   Header  → the template's `PageHeader` (UX redesign P6: compact, **?** =

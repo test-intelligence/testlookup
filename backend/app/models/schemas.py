@@ -2030,7 +2030,7 @@ class DefectApprovalResponse(BaseModel):
 # ── One-click Jira defects (PMF US-6.1 / US-6.2 / US-6.3) ─────────────────
 # All status-ish fields are plain strings, not enums — they mirror String
 # columns / external Jira vocabulary and a strict enum here would silently
-# 422 the response when a value drifts (backend/CLAUDE.md pitfall).
+# 422 the whole response the moment a stored value drifts.
 
 class JiraDefectCreateRequest(BaseModel):
     """Body for POST /projects/{project_id}/defects/jira.

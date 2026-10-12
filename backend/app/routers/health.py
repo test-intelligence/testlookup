@@ -99,20 +99,30 @@ _PROBE_TIMEOUT = httpx.Timeout(
 )
 
 
+#: Unauthenticated liveness routes of the supported S3 servers, tried in order:
+#: versitygw (the bundled store, started with ``VGW_HEALTH=/health``), then
+#: MinIO / PGSTY Silo, which existing installs may still run. On a server that
+#: does not have the first route it is just an S3 request for a bucket called
+#: "health" (403/404), so the probe moves on to the next one.
+_S3_HEALTH_PATHS = ("/health", "/minio/health/live")
+
+
 async def _check_minio() -> dict[str, Any]:
     try:
         from app.core.http_client import get_http_client  # noqa: PLC0415
         from app.services.storage_config_service import get_effective_storage_config  # noqa: PLC0415
 
-        # MinIO health endpoint — available without auth
         config = await get_effective_storage_config(use_cache=False)
         endpoint = config["minio_endpoint"]
         scheme = "https" if config["minio_use_ssl"] else "http"
         client = get_http_client()
-        resp = await client.get(f"{scheme}://{endpoint}/minio/health/live", timeout=_PROBE_TIMEOUT)
-        if resp.status_code in (200, 204):
-            return {"status": "ok"}
-        return {"status": "degraded", "detail": f"HTTP {resp.status_code}"}
+        status_code = 0
+        for path in _S3_HEALTH_PATHS:
+            resp = await client.get(f"{scheme}://{endpoint}{path}", timeout=_PROBE_TIMEOUT)
+            status_code = resp.status_code
+            if status_code in (200, 204):
+                return {"status": "ok"}
+        return {"status": "degraded", "detail": f"HTTP {status_code}"}
     except Exception as exc:
         return {"status": "degraded", "detail": str(exc)[:200]}
 
@@ -349,10 +359,9 @@ async def health_ingestion() -> dict:
     """Surface the load + backpressure signals used by the live-stream
     admission gates.
 
-    The output is consumed by the future Grafana panel (Phase 1 of the
-    scalable-ingestion plan in ``docs/SCALABLE_INGESTION_DESIGN.md``)
-    and by support / on-call humans when a customer reports "my runs
-    are slow / 429ing". A single GET answers:
+    The output is for dashboards and for support / on-call humans when a
+    customer reports "my runs are slow / 429ing" (the admission gates are
+    described in ``architecture/INGESTION_SCALE.md``). A single GET answers:
 
     * Is Redis approaching the memory threshold that triggers 503?
     * What's the per-minute ingest vs reject rate?

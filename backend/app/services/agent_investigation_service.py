@@ -1,4 +1,4 @@
-"""Investigator lifecycle + agent governance core (Agentic plan AI-1 / AI-3).
+"""Investigator lifecycle + agent governance core.
 
 This module owns everything around the hypothesis-loop Investigator EXCEPT
 the reasoning itself (which lives in ``app/agents/investigator/``):

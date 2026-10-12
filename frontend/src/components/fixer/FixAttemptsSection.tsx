@@ -1,5 +1,5 @@
 /**
- * "Fix Attempts" section (Agentic plan AI-2 — Wave D), rendered on
+ * "Fix Attempts" section, rendered on
  * Settings → Agent Activity below the governance ledger.
  *
  * Every fix the Fixer attempted — including the honest outcomes

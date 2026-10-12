@@ -26,6 +26,13 @@
 #                k8s     = k8s/base + k8s/overlays/**
 #   4. bundle    core     = always in the offline bundle
 #                llm      = only with `make offline-bundle ARGS=--with-llm`
+#                external = a third-party PREREQUISITE the deployment needs
+#                           but the bundle does not redistribute (licence —
+#                           reason in the comment above the row). The
+#                           operator mirrors it into the same registry under
+#                           the same naming contract; mirror-images.sh and
+#                           the OpenShift deploy script pull it from upstream
+#                           on the operator's own connected host.
 #                excluded = tracked for drift, never bundled (reason in the
 #                           comment above the row)
 #
@@ -48,25 +55,26 @@ testlookup/frontend:@APP_TAG                 app    compose,k8s   core
 testlookup/mcp:@APP_TAG                      app    compose,k8s   core
 
 # ── Datastores ──────────────────────────────────────────────────────────────
+# PostgreSQL License.
 postgres:16-alpine                           infra  compose,k8s   core
-redis:7-alpine                               infra  compose,k8s   core
-mongo:7                                      infra  compose,k8s   core
+# Valkey 8.1 (BSD-3-Clause), the Linux Foundation fork of Redis 7.2: same
+# protocol for redis-py / Celery / kombu, so the `redis` service, the
+# testlookup-redis k8s objects and every redis:// URL keep their names. It
+# replaced redis:7-alpine, whose 7.4.x releases are RSALv2/SSPLv1.
+valkey/valkey:8.1-alpine                     infra  compose,k8s   core
+# MongoDB Community Server is SSPL-1.0 (not an OSI licence), so the offline
+# bundle does not redistribute it: an EXTERNAL prerequisite the operator
+# mirrors from upstream (see user-guide/air-gapped-install.md).
+mongo:7                                      infra  compose,k8s   external
 
 # ── Object storage ──────────────────────────────────────────────────────────
-# MinIO, Inc. stopped publishing community images: quay.io/minio/minio and
-# minio/minio on Docker Hub refuse anonymous pulls since 2026-10 (the offline
-# bundle build failed on PR #201). The server is PGSTY Silo, the maintained
-# community fork of the open-source MinIO server (AGPL-3.0, multi-arch,
-# signed manifests): it keeps the MINIO_* variables, the /minio/* health
-# routes and the .minio.sys data format, and its binary is `silo` (the k8s
-# manifests call it by name). It also keeps the full web console that the
-# 2025-04 community releases cut, so compose and k8s no longer need two tags:
-# one tag serves both, newer than both old pins (a forward upgrade only).
-pgsty/silo:RELEASE.2026-09-16T00-00-00Z      infra  compose,k8s   core
-# mc is the MinIO client used by the one-shot `minio-setup` compose service
-# (bucket creation) and `make setup-minio`. PGSTY's build of the client. k8s
-# creates buckets with an `mc` on the deploy host, so it is compose-only.
-pgsty/mc:RELEASE.2026-09-16T00-00-00Z        infra  compose       core
+# versitygw (Apache-2.0): a single-binary S3 gateway, posix backend (buckets
+# are directories, objects plain files under /data/s3 on the volume), health
+# route /health. It replaced PGSTY Silo + mc (AGPL-3.0). Served from GHCR, so
+# the name keeps its registry host: the air-gap path is
+# <registry>/ghcr.io/versity/versitygw:<tag>. Buckets are created by the
+# backend image's scripts/s3_setup.py (boto3) — no separate client image.
+ghcr.io/versity/versitygw:v1.8.0             infra  compose,k8s   core
 
 # ── Kubernetes-only helpers ─────────────────────────────────────────────────
 # busybox runs the `wait-for-backend` init container in every worker Deployment

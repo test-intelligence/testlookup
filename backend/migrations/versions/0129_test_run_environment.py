@@ -1,8 +1,5 @@
 """Add test_runs.environment — the missing environment dimension.
 
-Phase 0 (P0-1) of the test-intelligence roadmap
-(``architecture/TEST_INTELLIGENCE_PLAN.md``).
-
 ``test_runs`` carried branch, commit, CI provider/repo/actor and the OpenShift
 fields, but nothing that answers "which environment did this run execute
 against?". Two downstream items need it:

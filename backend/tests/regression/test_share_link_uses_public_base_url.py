@@ -15,8 +15,8 @@ Measured against the live homelab, which sets ``PUBLIC_BASE_URL`` correctly:
 ============================================  ===========================
                                               result
 ============================================  ===========================
-``PUBLIC_BASE_URL`` (configured)              ``http://testlookup.local``
-``settings.public_base_url`` would resolve    ``http://testlookup.local``
+``PUBLIC_BASE_URL`` (configured)              ``http://testlookup.example.com``
+``settings.public_base_url`` would resolve    ``http://testlookup.example.com``
 ``SAML_BASE_URL`` (default, SSO off)          ``http://localhost:8000``
 issued share_url, followed verbatim           **connection failed**
 same token on the real ingress                **HTTP 200, the report**
@@ -85,10 +85,10 @@ class TestTheResolverItself:
         assert s.public_base_url == "https://testlookup.example.com"
 
     def test_it_falls_back_to_the_first_cors_origin(self):
-        """The homelab case: an ingress hostname is known even when
+        """The single-node K3s case: an ingress hostname is known even when
         PUBLIC_BASE_URL is not set explicitly."""
-        s = Settings(PUBLIC_BASE_URL="", CORS_ORIGINS_RAW="http://testlookup.local")
-        assert s.public_base_url == "http://testlookup.local"
+        s = Settings(PUBLIC_BASE_URL="", CORS_ORIGINS_RAW="http://testlookup.example.com")
+        assert s.public_base_url == "http://testlookup.example.com"
 
     def test_it_never_returns_the_saml_default(self):
         """Whatever the fallback, it must not be the port-8000 API default that

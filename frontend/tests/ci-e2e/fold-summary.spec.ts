@@ -8,9 +8,9 @@
  *
  * The scroller's `scrollHeight` is printed (FOLD line) so the page's height
  * before / after the template can be compared: measured on the unchanged page
- * first (P3 agent B's report, `docs/viz-work/p3-agent-B.md`: 2533 px, the
- * suite chart at 484 px, the per-suite table at 1318 px). After P3: 1954 px,
- * table at 1132; after the P3 cleanup (no donut, the trend collapsed): 1599 px,
+ * first (2533 px, the suite chart at 484 px, the per-suite table at 1318 px).
+ * With the template: 1954 px, table at 1132; after the cleanup (no donut, the
+ * trend collapsed): 1599 px,
  * the suite chart at 298 px, the table at 716 px.
  *
  * Harness: `tests/lib/rollout.ts` (fail closed, pinned clock, the fixtures of

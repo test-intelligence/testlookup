@@ -249,7 +249,7 @@ async def latest_analysis_for_fingerprint(
     }
 
 
-# ── Fix outcomes (Agentic plan AI-5) ─────────────────────────────────────────
+# ── Fix outcomes ─────────────────────────────────────────────────────────────
 
 # Outcome vocabulary for record_fix_outcome. "fixed" = a fix informed by the
 # diagnosis merged and verified green; "not_fixed" = the attempted fix did not
@@ -295,11 +295,10 @@ async def record_fix_outcome(
     comment: str | None,
     current_user,
 ) -> dict:
-    """Record a fix outcome for a test fingerprint as an AI-F1 training signal.
+    """Record a fix outcome for a test fingerprint as a classifier training signal.
 
-    Closes the coding-agent loop (Agentic plan AI-5): after an agent (or
-    human) ships a fix informed by TestLookup's diagnosis, the merged /
-    reverted outcome lands as an ``ai_feedback`` row with
+    After a coding agent or a person ships a fix informed by TestLookup's
+    diagnosis, the merged / reverted outcome lands as an ``ai_feedback`` row with
     ``source="fix_outcome"`` — mapped by ``label_provenance`` into the
     ``human_indirect`` bucket (human-originated, but not an explicit rating),
     never ``human_direct`` and never ``llm_pseudo``.

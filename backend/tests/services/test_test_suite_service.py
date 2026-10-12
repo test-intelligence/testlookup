@@ -144,7 +144,8 @@ async def test_sync_canonical_no_cases_returns_zero_counts():
 
 @pytest.mark.asyncio
 async def test_sync_canonical_creates_test_suite_from_primary_suite_name():
-    """Regression for live-stream-gap missing suites (CLAUDE.md pitfall #15).
+    """Regression for live-stream-gap missing suites (the live-stream path
+    skips ``ingestion_pipeline.finalize_run``, so its suites were never linked).
 
     When ``test_cases`` is empty for a run BUT ``test_runs.primary_suite_name``
     is populated (typical state when the SDK heartbeat updates run aggregates

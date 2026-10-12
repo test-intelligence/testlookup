@@ -460,11 +460,11 @@ export async function expectHostileAsText(page: Page, scope: Locator, where: str
 // ── Wave 3 live probes (`tests/probe-w3-*.spec.ts`) ────────────────────────
 
 /**
- * The live probes' environment. They run by hand against a deployment after
- * it is rolled out (`npx playwright test --config probe-live.config.ts
- * probe-w3`), never in CI: without `PROBE_W3=1` every probe SKIPS (and says
- * how to run it). Credentials come ONLY from the environment; a probe with
- * `PROBE_W3=1` and no credentials FAILS with the instructions.
+ * The live probes' environment. Maintainers run such probes by hand against
+ * a deployment after it is rolled out (the probe specs are not shipped),
+ * never in CI: without `PROBE_W3=1` every probe SKIPS (and says how to run
+ * it). Credentials come ONLY from the environment; a probe with `PROBE_W3=1`
+ * and no credentials FAILS with the instructions.
  */
 export interface ProbeEnv {
   base: string
@@ -475,9 +475,8 @@ export interface ProbeEnv {
 }
 
 export const PROBE_HOWTO =
-  'Set PROBE_W3=1, PROBE_BASE_URL (default http://testlookup.local), PROBE_USER and PROBE_PASS (a read-only ' +
-  'account), optionally PROBE_PROJECT_ID; then ' +
-  '`npx playwright test --config probe-live.config.ts probe-w3`.'
+  'Set PROBE_W3=1, PROBE_BASE_URL (default http://localhost:3000), PROBE_USER and PROBE_PASS (a read-only ' +
+  'account), optionally PROBE_PROJECT_ID; then run the probe specs with Playwright.'
 
 /** `null` when the probes are not asked for (the caller skips). */
 export function probeEnv(): ProbeEnv | null {
@@ -485,7 +484,7 @@ export function probeEnv(): ProbeEnv | null {
   const user = process.env.PROBE_USER ?? ''
   const pass = process.env.PROBE_PASS ?? ''
   expect(user && pass, `PROBE_USER / PROBE_PASS are not set. ${PROBE_HOWTO}`).toBeTruthy()
-  return { base: process.env.PROBE_BASE_URL ?? 'http://testlookup.local', user, pass, projectId: process.env.PROBE_PROJECT_ID ?? null }
+  return { base: process.env.PROBE_BASE_URL ?? 'http://localhost:3000', user, pass, projectId: process.env.PROBE_PROJECT_ID ?? null }
 }
 
 /** Sign in through the login form; returns the project the probes read (env, else the active one). */

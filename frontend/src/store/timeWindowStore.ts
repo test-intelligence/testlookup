@@ -8,8 +8,9 @@
  * its own ``tl.<page>.window`` localStorage key, which broke that
  * expectation. One source of truth fixes it.
  *
- * Why Zustand: the standing rule (see ``frontend/CLAUDE.md``) is "no new
- * Zustand stores without strong reason" — a user-level preference that
+ * Why Zustand: the standing rule is "no new Zustand stores without strong
+ * reason" (Zustand holds client state only; server data goes through SWR)
+ * — a user-level preference that
  * has to be read + written from a dozen pages with cross-page reactivity
  * is the canonical strong reason.
  *

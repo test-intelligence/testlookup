@@ -275,7 +275,7 @@ def test_the_failing_tests_are_read_through_the_window_s_runs() -> None:
     row in the table through ``ix_test_cases_status_only`` (21,010 heap pages
     on the 1M seed, whatever the window) and only then applies the window.
     A fenced LATERAL per run keeps the read to the window's runs' failing
-    rows (``docs/viz-work/w3/perf/be1``)."""
+    rows."""
     sql, _ = svc.build_statement(_spec("test_run"), _scope(), now=FROZEN)
     failing = sql[sql.index("failing AS ("):sql.index("y_ranked AS (")]
     assert "FROM test_runs tr\n            CROSS JOIN LATERAL (" in failing

@@ -6,9 +6,8 @@
  * `#main-content`; the explanation is in the tabs Why · Context · History
  * below it, and the decision pipeline in a collapsed disclosure at the bottom.
  *
- * The scroller's `scrollHeight` is printed (FOLD line) for the before/after
- * comparison in `docs/viz-work/p4-agent-D.md` (measured on the unchanged page
- * first).
+ * The scroller's `scrollHeight` is printed (FOLD line) for a before/after
+ * comparison (measured on the unchanged page first).
  *
  * Harness: `tests/lib/rollout.ts` (fail closed, pinned clock, the fixtures of
  * the `prod-release-gate` visual spec).

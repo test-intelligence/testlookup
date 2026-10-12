@@ -189,8 +189,8 @@ async def reassign_failure(
     """Move a FAILED/BROKEN TestCase to a new assignee.
 
     Enforces the full authorisation contract documented at module top.
-    Caller owns the transaction (per backend/CLAUDE.md single-owner
-    rule) — this function flushes but does not commit.
+    Caller owns the transaction (single-owner rule: services flush,
+    routers commit) — this function flushes but does not commit.
     """
     tc = (
         await db.execute(

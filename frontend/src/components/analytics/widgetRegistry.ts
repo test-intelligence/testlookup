@@ -75,7 +75,7 @@ export function getDefaultWidgetIds(page: string): string[] {
 
 /**
  * crypto.randomUUID() only exists in secure contexts (HTTPS or localhost).
- * Homelab/plain-HTTP deployments (e.g. http://testlookup.local) don't expose
+ * Plain-HTTP deployments (e.g. http://testlookup.example.com) don't expose
  * it, so fall back to a manual RFC-4122 v4 generator. crypto.getRandomValues
  * is available in insecure contexts too, and Math.random is the last resort.
  */

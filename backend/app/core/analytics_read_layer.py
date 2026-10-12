@@ -877,7 +877,7 @@ def _dialect_of(db: Any) -> str:
 #: Planner settings every analytics read runs under, beside its timeout. Both
 #: are LOCAL for the same reason the timeout is (see
 #: :func:`apply_statement_timeout`); both were measured on the large seed
-#: (1M executions, one year; ``docs/viz-work/w26/perf/REPORT.md``).
+#: (1M executions over one year).
 #:
 #: ``jit = off``. The chart statements group by expressions across two
 #: tables, which the planner cannot estimate: it expects ~1M groups where

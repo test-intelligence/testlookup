@@ -16,7 +16,7 @@ export const DECISION_HALF = DECISION_SIZE / 2
 export const CANVAS_W = 1750
 export const CANVAS_H = 560
 
-/** Per-node top-left positions, in pixels. The handoff lists these verbatim. */
+/** Per-node top-left positions, in pixels: a fixed, hand-placed layout, not computed. */
 export const POS: Record<ComputeStageId | DecisionId, { x: number; y: number }> = {
   ingestion: { x:   32, y:  80 },
   anomaly:   { x:  290, y:  80 },

@@ -88,18 +88,10 @@ def test_production_topologies_isolate_agent_children(compose_files):
     )
 
 
-def test_gcp_staging_deploys_the_documented_effective_topology():
-    workflow = (ROOT / ".github/workflows/deploy-staging.yml").read_text(
-        encoding="utf-8"
-    )
-    command_prefix = (
-        "docker compose -f docker-compose.yml -f docker-compose.gcp-vm.yml "
-        "--profile async"
-    )
-
-    assert f"{command_prefix} pull" in workflow
-    assert f"{command_prefix} up -d --remove-orphans" in workflow
-
+def test_gcp_single_vm_override_runs_the_registry_images():
+    # The owner-specific deploy-staging.yml workflow left the public repo
+    # (OSS release); the single-VM override itself is a documented mode
+    # (docs/operations/deploy-single-vm.md) and keeps its image contract.
     override = load_compose_topology((ROOT / "docker-compose.gcp-vm.yml",))
     services = override["services"]
     backend_image = (
@@ -116,7 +108,6 @@ def test_gcp_staging_deploys_the_documented_effective_topology():
         "gcr.io/${GCP_PROJECT_ID:?GCP_PROJECT_ID must be set}/"
         "testlookup-mcp:${IMAGE_TAG:?IMAGE_TAG must be set}"
     )
-    assert "testlookup-mcp:$IMAGE_TAG ./mcp" in workflow
 
 
 def test_negative_shard_count_fails_closed(tmp_path):

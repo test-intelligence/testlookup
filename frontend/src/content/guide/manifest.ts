@@ -36,6 +36,11 @@ import {
   Route,
   ShieldCheck,
   LifeBuoy,
+  Compass,
+  GitBranch,
+  Radio,
+  Inbox,
+  MessageSquare,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -74,7 +79,16 @@ export const DOC_PAGES: DocPage[] = [
     icon: Rocket,
     summary:
       'Sign in, create a project, send your first test run, and confirm it arrived.',
-    keywords: ['onboarding', 'first run', 'quick start', 'setup', 'upload', 'login'],
+    keywords: ['onboarding', 'first run', 'quick start', 'setup', 'upload', 'login', 'checklist', 'register', 'mfa'],
+  },
+  {
+    id: 'navigation',
+    label: 'Finding your way around',
+    group: 'Start here',
+    icon: Compass,
+    summary:
+      'The sidebar, the top bar, the Help menu, the settings index, and where old links now go.',
+    keywords: ['sidebar', 'menu', 'navigation', 'top bar', 'project selector', 'time window', 'release picker', 'redirect', 'old links'],
   },
   {
     id: 'concepts',
@@ -93,7 +107,34 @@ export const DOC_PAGES: DocPage[] = [
     icon: Upload,
     summary:
       'Every way to send test results, what happens to them, and how to verify success.',
-    keywords: ['upload', 'ingest', 'junit', 'ci', 'sdk', 'cli', 'streaming', 'parser'],
+    keywords: ['upload', 'ingest', 'junit', 'ci', 'sdk', 'cli', 'streaming', 'parser', 'api key', 'manual_upload'],
+  },
+  {
+    id: 'runs',
+    label: 'Runs and run detail',
+    group: 'Using TestLookup',
+    icon: GitBranch,
+    summary:
+      'The run list, a run\'s Tests, Analysis, Changes and Evidence tabs, comparing runs and bisecting a regression.',
+    keywords: ['run', 'build', 'compare', 'bisect', 'analysis', 'evidence', 'test result', 'release tag', 'pipeline'],
+  },
+  {
+    id: 'live',
+    label: 'Watching runs live',
+    group: 'Using TestLookup',
+    icon: Radio,
+    summary:
+      'The Live page: runs streaming in test by test, sessions, the event feed, and connecting a test runner.',
+    keywords: ['live', 'streaming', 'sdk', 'session', 'websocket', 'real-time', 'reporter'],
+  },
+  {
+    id: 'inbox',
+    label: 'Your inbox and approvals',
+    group: 'Using TestLookup',
+    icon: Inbox,
+    summary:
+      'Failures assigned to you, how to resolve or reassign them, and the approvals waiting for you.',
+    keywords: ['inbox', 'my failures', 'assigned', 'triage', 'approvals', 'review', 'reassign', 'ai report', 'quarantine proposal'],
   },
   {
     id: 'failure-analysis',
@@ -101,8 +142,8 @@ export const DOC_PAGES: DocPage[] = [
     group: 'Using TestLookup',
     icon: SearchCheck,
     summary:
-      'How a failure is categorised, what evidence is attached, and how to correct it.',
-    keywords: ['triage', 'root cause', 'classification', 'evidence', 'category'],
+      'The Failures, Defects and Root cause (AI) pages: categories, evidence, corrections and defects.',
+    keywords: ['triage', 'root cause', 'classification', 'evidence', 'category', 'defect', 'jira', 'deep investigation', 'correct'],
   },
   {
     id: 'flaky',
@@ -119,8 +160,8 @@ export const DOC_PAGES: DocPage[] = [
     group: 'Using TestLookup',
     icon: Search,
     summary:
-      'Finding runs, tests and similar failures — and what happens when semantic search is off.',
-    keywords: ['search', 'similar', 'index', 'semantic', 'rag', 'discovery'],
+      'Finding runs, tests, defects and releases by keyword, and where meaning-based matching is used instead.',
+    keywords: ['search', 'similar', 'index', 'semantic', 'keyword', 'reindex', 'discovery'],
   },
   {
     id: 'dashboards',
@@ -145,8 +186,8 @@ export const DOC_PAGES: DocPage[] = [
     label: 'Test management',
     group: 'Using TestLookup',
     icon: ClipboardList,
-    summary: 'Suites, ownership, assignment and triage of individual test cases.',
-    keywords: ['suites', 'ownership', 'assignment', 'managed tests', 'triage'],
+    summary: 'Suites, observed tests, the authored test-case catalogue and its review lifecycle, and ownership.',
+    keywords: ['suites', 'ownership', 'assignment', 'managed tests', 'test cases', 'lifecycle', 'review', 'plans', 'strategy', 'duplicates', 'promote', 'knowledge'],
   },
   {
     id: 'releases',
@@ -154,8 +195,17 @@ export const DOC_PAGES: DocPage[] = [
     group: 'Using TestLookup',
     icon: GaugeCircle,
     summary:
-      'Release readiness, what a GO / CONDITIONAL_GO / NO_GO means, and who can override it.',
-    keywords: ['release', 'gate', 'go', 'no-go', 'readiness', 'risk'],
+      'Creating releases, phases and linked runs, gate policies, and what a GO / CONDITIONAL_GO / NO_GO means.',
+    keywords: ['release', 'gate', 'go', 'no-go', 'readiness', 'risk', 'phase', 'policy', 'override', 'compliance'],
+  },
+  {
+    id: 'ask-ai',
+    label: 'Ask AI',
+    group: 'Using TestLookup',
+    icon: MessageSquare,
+    summary:
+      'Asking questions about your test results in plain language, and how to check the answers.',
+    keywords: ['chat', 'ask ai', 'question', 'llm', 'assistant', 'conversation'],
   },
 
   {
@@ -168,8 +218,8 @@ export const DOC_PAGES: DocPage[] = [
     keywords: ['decision', 'confidence', 'evidence', 'override', 'audit', 'policy'],
   },
   {
-    // NOT 'agents': `.gitignore` ignores AGENTS.md at every depth (coding-agent
-    // instruction files), and a case-insensitive checkout matches `agents.md`,
+    // NOT 'agents': `.gitignore` ignores AGENTS.md at every depth (local-only
+    // files), and a case-insensitive checkout matches `agents.md`,
     // so the file was silently never committed and CI checked out 18 of 19.
     id: 'ai-agents',
     label: 'AI agents and the pipeline',
@@ -185,8 +235,8 @@ export const DOC_PAGES: DocPage[] = [
     group: 'How it decides',
     icon: FileText,
     summary:
-      'Every artefact TestLookup can produce, what generates it, and where it goes.',
-    keywords: ['report', 'export', 'pdf', 'csv', 'summary', 'share', 'decision report'],
+      'Every artefact TestLookup produces, the Summary report and Value metrics pages, exports and shared links.',
+    keywords: ['report', 'export', 'pdf', 'csv', 'summary', 'share', 'decision report', 'value metrics', 'hours saved', 'roi'],
   },
 
   {
@@ -215,11 +265,12 @@ export const DOC_PAGES: DocPage[] = [
   },
   {
     id: 'administration',
-    label: 'Administration',
+    label: 'Settings and administration',
     group: 'Reference',
     icon: Settings,
-    summary: 'Users, roles, API keys, feature flags, AI configuration and retention.',
-    keywords: ['admin', 'roles', 'permissions', 'api key', 'feature flag', 'settings'],
+    summary:
+      'Every settings page — account, project, integrations, AI, security and system — who can open it, and what it changes.',
+    keywords: ['admin', 'roles', 'permissions', 'api key', 'feature flag', 'settings', 'sso', 'mfa', 'webhook', 'notifications', 'retention', 'audit', 'activity log', 'billing', 'budget', 'storage', 'performance', 'team channels', 'ownership'],
   },
   {
     id: 'security',

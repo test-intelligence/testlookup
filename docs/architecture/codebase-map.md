@@ -2,7 +2,7 @@
 
 [Documentation home](../README.md)
 
-The machine-readable [source inventory](../reference/source-inventory.csv) records every tracked source/configuration/test file in supported source formats, line counts, Python module purpose, imports and top-level symbols. It includes legacy and test material; an entry is not proof that a module is on a live request path. [Reference counts](../reference/inventory-counts.json).
+The generated [endpoint index](../reference/api-index.md), [data dictionary](../reference/data-dictionary.md) and [worker task list](../reference/worker-operations.md) link each route, table and task to its source file.
 
 ## Repository map
 
@@ -29,11 +29,10 @@ The machine-readable [source inventory](../reference/source-inventory.csv) recor
 | `scripts` | Setup, seed, release/backup operations, quality ratchets and documentation generators |
 | `docker-compose*.yml`, `Makefile`, `install.sh` | Local/release/VM/air-gap startup and common operator tasks |
 | `k8s`, `homelabsetup`, `openshiftsetup` | Kubernetes base/overlays, K3s and OpenShift deployment workflows |
-| `infra`, `deploy` | Cloud/monitoring assets, image manifest and cutover runbooks |
-| `.github/workflows`, `Jenkinsfile`, `jenkins` | CI, release, infrastructure and deployment automation |
-| `benchmarks`, `samples`, `postman` | Performance/evaluation fixtures, report examples and API collections |
-| `architecture`, `docs`, `user-guide`, `UserGuides` | Architecture deep dives, handoff, operator and end-user documentation |
-| `qa`, `research`, `design_handoff_ui_improvements` | Dated verification evidence, proposals and UI design artifacts |
+| `infra`, `deploy` | Cloud/monitoring assets and the image manifest |
+| `.github/workflows` | CI, release, infrastructure and deployment automation |
+| `benchmarks`, `samples` | Performance/evaluation fixtures and report examples |
+| `architecture`, `docs`, `user-guide` | Architecture deep dives, maintainer docs and the operator guide (the end-user guide is `frontend/src/content/guide`) |
 
 ## Domain/service map
 
@@ -60,4 +59,4 @@ HTTP handlers depend on core guards, schemas, ORM and services. Services use sto
 
 Runtime dependencies are pinned/listed in [backend requirements](../../backend/requirements.txt), [frontend package/lock](../../frontend/package.json), [CLI package](../../cli/pyproject.toml), [client package](../../client/pyproject.toml) and [MCP requirements](../../mcp/requirements.txt). The frontend includes React Router, Axios, SWR, Zustand, Tailwind/Radix, charts and Markdown rendering. Backend services use FastAPI/Pydantic/SQLAlchemy, Celery/Redis, Motor, object-storage clients, LangChain/LangGraph, optional Chroma and export libraries. Read the files rather than copying version claims from old badges.
 
-For a change: locate the route → input schema → service → model/migration → worker or external side effect → serializer → frontend/client consumer → behavioral tests. The [integration audit](../reviews/2026-09-18-integration-checks.md) follows this method for the principal flows.
+For a change: locate the route → input schema → service → model/migration → worker or external side effect → serializer → frontend/client consumer → behavioral tests.

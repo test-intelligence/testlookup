@@ -17,8 +17,8 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * Discovers and loads testlookup.properties / testlookup.yaml configuration,
- * overlaying environment variables and JVM system properties.
+ * Discovers and loads TestLookup configuration from a properties or YAML
+ * file, overlaying environment variables and JVM system properties.
  *
  * <p>Sources, lowest precedence first: a {@code testlookup.properties} on the
  * classpath (e.g. {@code src/test/resources}); then the first filesystem file

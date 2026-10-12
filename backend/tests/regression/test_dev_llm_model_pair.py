@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 MAKEFILE = ROOT / "Makefile"
-SLM_TAG = "qwen2.5:3b-instruct-q5_K_M"
+SLM_TAG = "qwen2.5:7b-instruct"
 LLM_TAG = "qwen2.5:14b-instruct-q5_K_M"
 EMBEDDING_TAG = "nomic-embed-text:v1.5"
 
@@ -68,7 +68,7 @@ def test_local_llm_docs_name_the_same_exact_pair_and_automatic_pull():
         assert LLM_TAG in document
         assert EMBEDDING_TAG in document
     assert "`make dev-llm` waits for Ollama and pulls" in readme
-    assert "make pull-llm  # exact-tag 3B SLM + 14B LLM" in compose
+    assert "make pull-llm  # exact-tag 7B SLM + 14B LLM" in compose
     assert "make dev-llm` then `docker compose exec ollama ollama pull" not in readme
 
 

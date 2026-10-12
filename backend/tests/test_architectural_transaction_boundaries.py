@@ -312,9 +312,8 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
     # ``persist_agent_stack_gate_run`` and ``set_baseline_from_eval`` are
     # called from router handlers (Depends(get_db)) only — no Celery
     # worker calls them. The single-owner commit rule applies: services
-    # flush, the dependency commits. See docs/DATABASE_AUDIT_2026-05-16.md
-    # (P1-2) and backend/CLAUDE.md "Commit responsibility (single-owner
-    # rule)".
+    # flush, the dependency commits (architecture/DEVELOPER_GUIDE.md §2,
+    # "Layering & transactions").
     # ── Tier 0-2 services (2026-04-14 batch) ──────────────────────────
     # Each of these services integrates with audit-log writes that must
     # land in the same transaction as the primary mutation. Stage-only
@@ -410,8 +409,8 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
         1,
         "Fresh-session by design: ``record_attempt`` opens its own "
         "AsyncSessionLocal so the audit row commits independently and "
-        "SURVIVES a caller rollback (see backend/CLAUDE.md 'Audit-log "
-        "writes — attempt vs outcome'). ``record_outcome`` writes to the "
+        "SURVIVES a caller rollback (an attempt is audited even when the "
+        "action fails; its outcome lands with the mutation). ``record_outcome`` writes to the "
         "caller's session and does NOT commit. The single commit here is "
         "the intentional independent-durability path.",
     ),

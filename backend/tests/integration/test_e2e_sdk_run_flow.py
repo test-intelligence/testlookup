@@ -47,7 +47,7 @@ httpx = pytest.importorskip("httpx")
 
 BASE_URL = os.environ.get("TESTLOOKUP_E2E_BASE_URL", "").rstrip("/")
 ADMIN_USERNAME = os.environ.get("TESTLOOKUP_E2E_ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD = os.environ.get("TESTLOOKUP_E2E_ADMIN_PASSWORD", "Admin@2026!")
+ADMIN_PASSWORD = os.environ.get("TESTLOOKUP_E2E_ADMIN_PASSWORD", "")
 
 # Total budget for the live-persist + finalize_run pipeline to complete after
 # the SDK closes the session. Worker startup latency dominates on first run.
@@ -59,6 +59,10 @@ pytestmark = [
     pytest.mark.skipif(
         not BASE_URL,
         reason="Set TESTLOOKUP_E2E_BASE_URL=http://localhost:8000 (or a deployed URL) to run.",
+    ),
+    pytest.mark.skipif(
+        bool(BASE_URL) and not ADMIN_PASSWORD,
+        reason="Set TESTLOOKUP_E2E_ADMIN_PASSWORD (there is no default admin password).",
     ),
 ]
 

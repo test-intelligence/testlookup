@@ -8,8 +8,7 @@
  * `#main-content` (the shell's scroller: its padding and the section tabs
  * count). The scroller's `scrollHeight` is printed (FOLD line) to compare the
  * page's height before / after: measured on the unchanged page first
- * (`docs/viz-work/p4-agent-A.md`: 1977 px, the test table at 319 px, no
- * `[data-primary]`).
+ * (1977 px, the test table at 319 px, no `[data-primary]`).
  *
  * Also held here, in a browser:
  *  - the table lists failures first, and the counts are status chips;

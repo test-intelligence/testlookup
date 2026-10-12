@@ -300,15 +300,15 @@ celery_app.conf.update(
             "task": "app.worker.tasks.dispatch_scheduled_digests",
             "schedule": crontab(hour=7, minute=5, day_of_week="monday"),
         },
-        # Agentic plan AI-7: weekly flaky-debt review drafts to the US-7.3
-        # team channels (Mondays 07:10 UTC, right after the digest passes).
+        # Weekly flaky-debt review drafts to the teams' notification
+        # channels (Mondays 07:10 UTC, right after the digest passes).
         # Teams without a channel get their draft folded into the weekly
         # digest instead. Deterministic text only — no LLM calls.
         "monday-weekly-flaky-debt-reviews": {
             "task": "app.worker.tasks.dispatch_weekly_flaky_debt_reviews",
             "schedule": crontab(hour=7, minute=10, day_of_week="monday"),
         },
-        # Agentic plan AI-2 (the Fixer): scheduled fixer runs. No-op unless a
+        # The Fixer: scheduled fixer runs. No-op unless a
         # project's fixer policy is enabled with the matching schedule. Daily
         # at 06:00 UTC; weekly on Mondays at 06:15 UTC.
         "daily-fixer-runs": {

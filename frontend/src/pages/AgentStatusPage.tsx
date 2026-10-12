@@ -596,7 +596,7 @@ export function PipelineDetail({
   const { data: timeline } = usePipelineTimeline(pipelineId)
   const alertCount = timeline?.alerts?.length ?? 0
   const summaryStage = stages.find((stage) => stage.stage_name === 'summary')
-  // Direction-C compute graph: map the backend's flat stage list into the
+  // Compute graph: map the backend's flat stage list into the
   // node/edge/decision shape the canvas expects. Derived purely from the
   // current pipeline's stages so it stays in lockstep with the rest of the
   // page (no extra fetch).
@@ -718,7 +718,7 @@ export function PipelineDetail({
         <div className="space-y-4">
       <ObservabilityPanel timeline={timeline} />
 
-      {/* Direction-C compute graph: 1750×560 canvas with absolute-
+      {/* Compute graph: 1750×560 canvas with absolute-
           positioned nodes, SVG bezier edges, a decision diamond, and a
           360px right rail. It used to sit under a Live · Debug · Audit ·
           Compare tab bar, but only Debug (this canvas) had a body:

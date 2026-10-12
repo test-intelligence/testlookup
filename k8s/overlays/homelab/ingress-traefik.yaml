@@ -1,13 +1,11 @@
-# HTTP-only ingress for the homelab.
+# HTTP-only ingress for the single-node K3s path.
 #
-# TLS was intentionally removed: this cluster is on the local LAN, the
-# `testlookup.local` hostname only resolves via /etc/hosts on trusted
-# machines, and we kept hitting self-signed-cert friction on every client
-# (browsers, Java SDK, curl). Splitting the listeners is no longer needed
-# once the redirect is gone — there's only one origin, http://testlookup.local.
-#
-# If you ever want HTTPS back, restore middleware-redirect-https.yaml +
-# the split ingresses from git history.
+# Plain HTTP on purpose: the cluster is meant for a trusted network, and a
+# self-signed certificate creates friction on every client (browsers, Java SDK,
+# curl). There is one origin, http://<host>. The host below is the default;
+# homelabsetup/deploy-homelab.sh replaces it with K3S_HOST in its per-deploy
+# overlay. For HTTPS, terminate TLS in front of Traefik or add the
+# middleware-redirect-https.yaml pattern in this directory with a certificate.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -18,7 +16,7 @@ metadata:
 spec:
   ingressClassName: traefik
   rules:
-    - host: testlookup.local
+    - host: testlookup.localhost
       http:
         paths:
           - path: /api/

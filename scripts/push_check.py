@@ -24,7 +24,7 @@ This cannot promise "green here means green there" in every case, and it does
 not pretend to. Three known divergences are handled explicitly rather than
 hidden, because a gate that cries wolf gets bypassed and then protects nothing:
 
-1. **Handoff references.** ``generate_handoff_reference.py --check`` can NEVER
+1. **Generated references.** ``generate_reference.py --check`` can NEVER
    pass locally: the local FastAPI/Pydantic emits ``contentMediaType``,
    ``^password$``, ``format: password``, a de-duplicated ``JWT`` security entry
    and ``ctx``/``input`` on ``ValidationError`` where CI's does not. So this
@@ -167,6 +167,17 @@ KNOWN_LOCAL_FAILURES: dict[str, str] = {
 # on plain `get_current_user` gets two `{"JWT": []}` security entries from CI's
 # FastAPI and one locally: authentication.md has several. A new "any signed-in
 # user" route takes `get_current_active_user`, which renders the same in both.)
+REFERENCE_GENERATOR = "scripts/generate_reference.py"
+
+
+def _generator_in(checkout: Path) -> str:
+    """The reference generator as named in ``checkout``. A base commit from
+    before the rename still carries the old script name."""
+    if (checkout / REFERENCE_GENERATOR).is_file():
+        return REFERENCE_GENERATOR
+    return "scripts/generate_handoff_reference.py"
+
+
 SKEWED_REFERENCES = (
     "docs/reference/openapi.json",
     "docs/reference/schemas.md",
@@ -236,19 +247,19 @@ def build_checks() -> list[Check]:
             BACKEND, "backend",
         ),
         Check(
-            "docs: handoff link/consistency check",
-            [py, "scripts/check_handoff_docs.py"], REPO, "docs",
+            "docs: reference link/consistency check",
+            [py, "scripts/check_reference_docs.py"], REPO, "docs",
         ),
         Check(
-            "docs: handoff doc tests",
-            [py, "-m", "pytest", str(REPO / "scripts" / "test_handoff_docs.py"),
+            "docs: reference doc tests",
+            [py, "-m", "pytest", str(REPO / "scripts" / "test_reference_docs.py"),
              "-q", "-p", "no:testlookup"],
             BACKEND, "docs",
         ),
         # Before the slow suites, so a baseline slip costs ~1 minute, not 16.
         Check("backend: mypy ratchet (touched modules)", [], BACKEND, "backend",
               fn=check_mypy_touched),
-        Check("docs: handoff references current", [], REPO, "docs",
+        Check("docs: references current", [], REPO, "docs",
               fn=check_stale_references),
         # ── the expensive ones
         Check("frontend: vitest + coverage ratchet",
@@ -260,17 +271,12 @@ def build_checks() -> list[Check]:
               [npm, "run", "check:bundle"], FRONTEND, "frontend", slow=True),
         Check("frontend: theme tokens",
               [npm, "run", "check:theme"], FRONTEND, "frontend"),
-        # Mutation harnesses are EXCLUDED here and run in CI instead. Measured on
-        # this gate's first full run: they take minutes each, they patch REAL
-        # source files and restore only on a clean exit, and on slower hardware
-        # they hit their subprocess timeouts -- after which the file stays
-        # mutated and every later harness starts from a sabotaged baseline. One
-        # timeout became 9 harness failures and 23 corrupted files. CI ran every
-        # one of them green on the same code.
-        #
-        # That is not a check a pre-push gate can run safely, so it does not.
-        # Nothing ships unverified: CI still runs them, and the leak restore in
-        # main() remains as a backstop.
+        # Mutation harnesses (tests that patch REAL source files and restore
+        # them only on a clean exit) are not part of the repository; a
+        # maintainer's checkout may still hold local, untracked copies. A
+        # harness that timed out left its file mutated and every later test
+        # started from a sabotaged baseline, so the gate never collects them.
+        # The leak restore in main() remains as a backstop.
         Check("backend: full test suite",
               [py, "-m", "pytest", "tests/", "--ignore=tests/integration",
                "--ignore-glob=*mutation_harness*",
@@ -305,7 +311,7 @@ def _clear() -> str:
 
 # Variables git exports to the hooks it runs, pinning every `git` inside the
 # hook to THIS repository. The list is `git rev-parse --local-env-vars`.
-# A check that builds its own scratch repository (test_handoff_docs.py does,
+# A check that builds its own scratch repository (test_reference_docs.py does,
 # with `git init` + `git check-ignore`) must not inherit them: from a linked
 # worktree the pre-push hook sets GIT_DIR, the scratch `git` resolved to the
 # caller's repository, and the test failed with "this operation must be run
@@ -483,19 +489,13 @@ def check_mypy_touched() -> tuple[bool, str]:
 def check_stale_references() -> tuple[bool, str]:
     """Are the NON-skewed references current? This is what CI's --check fails on.
 
-    The first version of this gate only inspected the three files whose local
-    regeneration always differs from CI's. It never looked at
-    ``source-inventory.csv`` -- which records every file's line count and
-    exports, so editing ANY tracked file after regenerating makes it stale.
-    PR #147 went red on precisely that: a test and ``push_check.py`` were
-    changed after the references were refreshed, and the gate passed.
-
-    ``--check`` is usable locally after all, once its drift list is filtered:
-    it always names the three skewed files here, and anything beyond them is
-    genuine staleness.
+    The references change whenever the API, a setting, a migration, a model or
+    a worker task changes, so a change that touches those and is not followed
+    by a regeneration goes red in CI. ``--check`` is usable locally once its
+    drift list is filtered: it always names the skewed files here, and anything
+    beyond them is genuine staleness.
     """
-    code, out = run([sys.executable, "scripts/generate_handoff_reference.py",
-                     "--check"], REPO)
+    code, out = run([sys.executable, REFERENCE_GENERATOR, "--check"], REPO)
     if code == 0:
         return True, "references current"
     _, _, tail = out.partition("Generated reference drift:")
@@ -511,7 +511,7 @@ def check_stale_references() -> tuple[bool, str]:
         "references are stale -- a tracked file changed after they were "
         "regenerated:\n    " + "\n    ".join(stale)
         + "\n  Stage your changes, then:\n"
-        "    python scripts/generate_handoff_reference.py\n"
+        f"    python {REFERENCE_GENERATOR}\n"
         "    git checkout -- " + " ".join(SKEWED_REFERENCES) + "\n"
         "  (the second line drops the local skew; commit what remains)"
     )
@@ -557,7 +557,7 @@ def check_reference_drift() -> tuple[bool, str]:
         + "\n    ".join(offenders)
         + f"\n  ({why})\n"
         "  The committed file must be CI's file plus this change's delta:\n"
-        "    python scripts/generate_handoff_reference.py   # after staging\n"
+        f"    python {REFERENCE_GENERATOR}   # after staging\n"
         "  then, per skewed file, git merge-file -p <origin/main copy> "
         "<local generation of origin/main> <local generation of HEAD>."
     )
@@ -625,7 +625,7 @@ def _generate_references_at(ref: str, workdir: Path, *, with_working_tree: bool 
             code, out = run(["git", "apply", "--whitespace=nowarn", str(patch)], workdir)
             if code != 0:
                 raise RuntimeError(f"could not overlay the working tree: {out.strip()[:300]}")
-    code, out = run([sys.executable, "scripts/generate_handoff_reference.py"], workdir)
+    code, out = run([sys.executable, _generator_in(workdir)], workdir)
     if code != 0:
         raise RuntimeError(f"generating references at {ref} failed: {out.strip()[-300:]}")
     return {
@@ -788,12 +788,11 @@ def _dirty_tracked_files() -> set[str]:
 def _restore_harness_leaks(before: set[str]) -> list[str]:
     """Put back any tracked file a check modified, and report it.
 
-    The backend suite contains mutation harnesses that patch REAL source files,
-    run the tests, and restore on a clean exit. When one crashes mid-mutation
-    the file stays mutated -- and every later harness in the run then starts
-    from a sabotaged baseline and fails too. Measured on this gate's first full
-    run: 23 source files left mutated, including ``llm_circuit_breaker``
-    reporting an open breaker as closed.
+    A test that patches a REAL source file and restores it only on a clean
+    exit (a local mutation harness, for example) leaves the file mutated when
+    it crashes -- and every later test in the run then starts from a sabotaged
+    baseline. Measured once: 23 source files left mutated, including
+    ``llm_circuit_breaker`` reporting an open breaker as closed.
 
     That is the most dangerous thing this script can do, because the obvious
     next step after a gate run is ``git commit -a``.

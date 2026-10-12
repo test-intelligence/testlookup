@@ -1,4 +1,4 @@
-"""ValidationRunner implementations for the Fixer (Agentic plan AI-2).
+"""ValidationRunner implementations for the Fixer.
 
 A ``ValidationRunner`` reruns a single test M times against a candidate patch
 and returns ``validated`` (ALL reruns passed), ``failed`` (the fix did not

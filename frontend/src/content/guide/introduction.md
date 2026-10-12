@@ -49,11 +49,11 @@ Throughout the product and this documentation, AI-generated conclusions are labe
 |---|---|---|
 | **Viewer** | Read dashboards and reports | `VIEWER` |
 | **Tester** | Look at runs and failures for their work | `TESTER` |
-| **QA engineer** | Triage failures, manage suites, correct classifications | `QA_ENGINEER` |
-| **QA lead / manager** | Ownership, release gates, team-wide views | `QA_LEAD` |
-| **Platform administrator** | Users, API keys, AI configuration, retention, flags | `ADMIN` |
+| **QA engineer** | Send results, own API keys, triage failures, manage suites and test cases, correct classifications | `QA_ENGINEER` |
+| **QA lead / manager** | Releases, ownership, quarantine and AI-report decisions, gate overrides, team-wide views, most settings | `QA_LEAD` |
+| **Platform administrator** | Users and roles, SSO, feature flags, AI configuration, retention, gate policies | `ADMIN` |
 
-Roles are defined in `models/postgres.py` as `UserRole`. Higher roles include the abilities of lower ones. Individual pages in this guide name the role a task needs.
+Roles are defined in `models/postgres.py` as `UserRole`. Higher roles include the abilities of lower ones. Individual pages in this guide name the role a task needs; [Settings and administration](/docs/administration#who-can-open-what) lists who can open each settings page.
 
 ## How the pieces fit together
 
@@ -75,6 +75,7 @@ That last arrow matters: **you are part of the loop, not a recipient of it.**
 ## Where to go next
 
 - **New here?** [Getting started](/docs/getting-started)
+- **Looking for a page?** [Finding your way around](/docs/navigation)
 - **Want the vocabulary?** [Concepts and terminology](/docs/concepts)
 - **Sending results from CI?** [Getting results in](/docs/ingestion)
 - **Wondering how a number was produced?** [How decisions are made](/docs/decisions)

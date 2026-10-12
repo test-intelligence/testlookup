@@ -11,9 +11,9 @@ Step 3 of ``deploy-homelab.sh`` was::
 
 ``get`` exits non-zero for two very different reasons — the namespace does not
 exist, *or* the API server could not be reached. The guard treats both as
-"absent". On this cluster the control plane is intermittently interrupted
-(Norton intercepts :6443, producing ``wsarecv: An existing connection was
-forcibly closed``), so ``get`` failed spuriously, the else branch ran
+"absent". On a cluster whose control plane is intermittently interrupted
+(a TLS-intercepting proxy on :6443, producing ``wsarecv: An existing connection
+was forcibly closed``), ``get`` failed spuriously, the else branch ran
 ``create``, and::
 
     Error from server (AlreadyExists): namespaces "testlookup" already exists

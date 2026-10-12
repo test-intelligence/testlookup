@@ -6,8 +6,7 @@
  * never scrolls the window), at load, nothing scrolled.
  *
  * The page's height and the table's top are recorded as annotations
- * (`main-scroll-height`, `primary-top`) for the P3 report
- * (`docs/viz-work/p3-agent-D.md`): before P3 the page was 2,059 px tall and
+ * (`main-scroll-height`, `primary-top`). Before the page template the page was 2,059 px tall and
  * the suite table started at 607 px (verdict card and KPI cells above it);
  * after, 1,350 px and 254 px.
  * Harness: `tests/lib/production-pages.ts` (fail-closed mocks).

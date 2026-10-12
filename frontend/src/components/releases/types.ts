@@ -1,7 +1,7 @@
 /**
  * Local types for the /releases redesign.
  *
- * These mirror the handoff's data model (``ReleasesPage`` in README §7) but
+ * These are the page's own view model (release, gate, phases, blockers) and
  * stay loose enough to derive from the existing ``Release`` / ``LinkedRun``
  * shapes without backend changes. Anything missing from the backend renders
  * as ``null`` and the components fall back to ``—``.
@@ -38,7 +38,7 @@ export interface DerivedGate {
 
 export interface DerivedPhase {
   /**
-   * Phase key — six canonical buckets the handoff prescribes. Anything
+   * Phase key — six canonical buckets, smoke through sign-off. Anything
    * outside this set collapses into the closest match or is dropped from the
    * pipeline chip row.
    */

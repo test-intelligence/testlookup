@@ -190,7 +190,7 @@ class ConfigLoader:
     Discovery order (first file found wins; only that one file is read):
       1. ./testlookup.properties      (preferred, ReportPortal-compatible)
       2. ./.testlookup/testlookup.properties
-      3. ./testlookup.yaml
+      3. ./testlookup.yaml            (needs PyYAML; skipped without it)
       4. ./.testlookup/config.yaml
       5. ~/.testlookup/testlookup.properties
       6. ~/.testlookup/config.yaml

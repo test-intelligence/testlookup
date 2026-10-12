@@ -8,7 +8,7 @@ semantic cache) and stores it as a training signal for the next
 fine-tune cycle — the same path the UI's "correct classification"
 dialog uses.
 
-``record_fix_outcome`` (Agentic plan AI-5) closes the *fix* loop: after a
+``record_fix_outcome`` closes the *fix* loop: after a
 fix informed by TestLookup's diagnosis merges (or gets reverted), the
 outcome lands as an ``ai_feedback`` row with ``source="fix_outcome"`` —
 which the AI-F1 label-provenance policy buckets as ``human_indirect``
@@ -180,7 +180,7 @@ def register(mcp) -> None:  # noqa: ANN001
         """
         SIDE EFFECT: record the outcome of a fix for a diagnosed test
         failure — this is how a coding agent's merged fix teaches the
-        classifier (Agentic plan AI-5).
+        classifier.
 
         Call it AFTER the fix's fate is known, not when you open the PR:
           - "fixed"     → the fix merged and the test is verified green;

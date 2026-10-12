@@ -93,7 +93,16 @@ def test_compose_gates_api_on_one_bounded_migration(compose_path: Path):
     migration = services["db-migrate"]
     backend = services["backend"]
 
-    assert migration["command"] == ["alembic", "upgrade", "head"]
+    command = migration["command"]
+    if compose_path.name == "docker-compose.release.yml":
+        # The release stack also creates the first admin on a new database, in
+        # the same bounded one-shot container and only after the migration
+        # succeeded (``&&``): still exactly one ``alembic upgrade head``.
+        assert command[:2] == ["sh", "-c"] and len(command) == 3, command
+        steps = [step.strip() for step in command[2].split("&&")]
+        assert steps == ["alembic upgrade head", "python /app/scripts/create_admin.py"]
+    else:
+        assert command == ["alembic", "upgrade", "head"]
     assert migration["restart"] == "no"
     assert backend["depends_on"]["db-migrate"] == {
         "condition": "service_completed_successfully"

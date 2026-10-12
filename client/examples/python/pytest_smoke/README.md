@@ -14,10 +14,10 @@ pytest_smoke/
 
 ## Run it
 
-1. **Generate an API key.** TestLookup → *Settings → API Keys →
-   Generate streaming key*. Copy the `testlookup.properties` content from the
-   modal and paste it over the placeholder file in this directory (the
-   modal pre-fills `testlookup.endpoint`, `testlookup.api.key`,
+1. **Generate an API key.** As an ADMIN, TestLookup → *Settings → Streaming
+   API keys*. Copy the `testlookup.properties` content from the dialog that
+   shows the new key and paste it over the placeholder file in this directory
+   (it pre-fills `testlookup.endpoint`, `testlookup.api.key`,
    `testlookup.project`).
 
 2. **Install:**
@@ -38,30 +38,31 @@ because it finds `testlookup.properties` in the cwd.
 
 ## What you'll see
 
-- **TestLookup → Live Execution** — the run appears immediately under the
+- **TestLookup → Runs → Live** — the run appears immediately under the
   launch label `Smoke suite` (from `testlookup.launch`). Pass/fail counts
   tick up as the parametrized tests stream in.
 - **Runs / Overview / Coverage / Failures / Trends** — once pytest exits,
-  the plugin sends a `run_complete` event, the server finalises the session,
-  and the run lands on every other page within a few seconds (AI analysis
-  enqueues asynchronously).
+  the plugin closes the live session, the server finalises the run, and it
+  lands on every other page within a few seconds (AI analysis enqueues
+  asynchronously).
 
 ## CI wiring
 
-Most CI runners want build / branch / commit injected per-run. Override
-those without touching the file:
+Most CI runners want build / branch injected per-run. Override those
+without touching the file:
 
 ```bash
 TESTLOOKUP_BUILD=$BUILD_NUMBER \
 TESTLOOKUP_BRANCH=$GIT_BRANCH \
-TESTLOOKUP_COMMIT=$GIT_COMMIT \
 TESTLOOKUP_LAUNCH="Smoke suite ($GIT_BRANCH)" \
 pytest
 ```
 
-The `TESTLOOKUP_*` env vars override matching `testlookup.*` keys in the
-properties file. See `docs/integration/pytest.md` for the full precedence
-chain.
+These are the defaults of the plugin's `--testlookup-build`,
+`--testlookup-branch` and `--testlookup-launch` options and win over the
+properties file. The plugin does not send a commit SHA. The full key
+reference and precedence rules are in
+[client/README.md](../../../README.md#configuration).
 
 ## Programmatic alternative
 

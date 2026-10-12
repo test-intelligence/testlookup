@@ -183,7 +183,7 @@ def test_every_documentation_file_is_tracked_by_git():
     """A content file on disk but not in git is invisible to CI.
 
     The failure this exists for: ``.gitignore`` ignores ``AGENTS.md`` at every
-    depth (coding-agent instruction files, deliberately). A case-insensitive
+    depth (local-only files, deliberately). A case-insensitive
     checkout — every Windows clone — matches ``agents.md`` too, so the page's
     agent documentation sat on disk, rendered locally and passed every local
     test while never being committed. CI checked out 18 of 19 content files and

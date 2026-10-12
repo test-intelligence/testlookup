@@ -811,7 +811,7 @@ def _model_missing_hint(model: str) -> str:
     return (
         f"Model '{model}' not installed on the Ollama instance. "
         f"Ask your admin to pull it: {pull_cmd}. "
-        "If the Ollama pod has no internet egress (NordVPN / firewall blocking "
+        "If the Ollama pod has no internet egress (a VPN or firewall blocking "
         "registry.ollama.ai), the pull will fail until that's resolved."
     )
 

@@ -57,9 +57,8 @@ const AuditDashboardPage = lazy(() => import('@/pages/settings/AuditDashboardPag
 const AIEvalDashboardPage = lazy(() => import('@/pages/settings/AIEvalDashboardPage'))
 const PerformancePage = lazy(() => import('@/pages/settings/PerformancePage'))
 const SSOSettingsPage = lazy(() => import('@/pages/settings/SSOSettingsPage'))
-// /agents loads the Direction-C compute graph (see AgentStatusPage.tsx +
-// components/agents/computeGraph/*). The unrouted Direction-A page was deleted
-// in the UX redesign P2 (git history has it).
+// /agents loads the pipeline compute graph (see AgentStatusPage.tsx +
+// components/agents/computeGraph/*).
 const AgentStatusPage = lazy(() => import('@/pages/AgentStatusPage'))
 const WorkflowEditorPage = lazy(() => import('@/pages/WorkflowEditorPage'))
 const DeepInvestigationPage = lazy(() => import('@/pages/DeepInvestigationPage'))

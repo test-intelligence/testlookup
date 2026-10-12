@@ -3,7 +3,6 @@ import { Link, useLocation } from 'react-router-dom'
 import { BookOpen, ChartLine, CircleHelp, LifeBuoy, PanelRightOpen, Rocket } from 'lucide-react'
 import { HeaderPopover } from '@/components/ui/HeaderPopover'
 import { openHelp } from '@/store/helpStore'
-import { helpTopicFor } from '@/components/help/helpTopics'
 import AppVersionBadge from './AppVersionBadge'
 
 const ITEM =
@@ -49,9 +48,14 @@ export default function HelpMenu() {
             data-help-this-page=""
             className={ITEM}
             onClick={() => {
-              const { topic, anchor } = helpTopicFor(pathname)
-              openHelp(topic, anchor)
               setOpen(false)
+              // The route-to-topic map is needed only on this click. Imported
+              // here, it stays out of the eager bundle every route downloads
+              // (scripts/check-bundle-budget.mjs); the pages that use it are lazy.
+              void import('@/components/help/helpTopics').then(({ helpTopicFor }) => {
+                const { topic, anchor } = helpTopicFor(pathname)
+                openHelp(topic, anchor)
+              })
             }}
           >
             <PanelRightOpen className="h-4 w-4 shrink-0" aria-hidden="true" />

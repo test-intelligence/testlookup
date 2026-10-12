@@ -245,15 +245,17 @@ images:
   - name: postgres
     newName: ARTIFACTORY_REGISTRY_PLACEHOLDER/postgres
     newTag: 16-alpine
-  - name: redis
-    newName: ARTIFACTORY_REGISTRY_PLACEHOLDER/redis
-    newTag: 7-alpine
+  - name: valkey/valkey
+    newName: ARTIFACTORY_REGISTRY_PLACEHOLDER/valkey/valkey
+    newTag: 8.1-alpine
+  # MongoDB (SSPL-1.0) is an external prerequisite: it is not in the offline
+  # bundle; mirror-images.sh / the deploy script copy it from upstream.
   - name: mongo
     newName: ARTIFACTORY_REGISTRY_PLACEHOLDER/mongo
     newTag: "7"
-  - name: pgsty/silo
-    newName: ARTIFACTORY_REGISTRY_PLACEHOLDER/pgsty/silo
-    newTag: RELEASE.2026-09-16T00-00-00Z
+  - name: ghcr.io/versity/versitygw
+    newName: ARTIFACTORY_REGISTRY_PLACEHOLDER/ghcr.io/versity/versitygw
+    newTag: v1.8.0
   - name: chromadb/chroma
     newName: ARTIFACTORY_REGISTRY_PLACEHOLDER/chromadb/chroma
     newTag: 1.5.9

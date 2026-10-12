@@ -48,9 +48,12 @@ ARTIFACTORY_HOST="${ARTIFACTORY_REGISTRY%%/*}"
 # source of truth) rather than hardcoded here — a hardcoded copy is exactly how
 # this list drifted from the k8s manifests before. An explicit INFRA_IMAGES in
 # the environment still wins, for mirroring a subset.
+# `external` rows (MongoDB, SSPL-1.0) are included: the offline bundle does not
+# redistribute them, but this script runs on YOUR connected host and pulls them
+# from their upstream registry, which is how an operator mirrors a prerequisite.
 # shellcheck source=../scripts/release/image-manifest.sh
 . "$REPO_ROOT/scripts/release/image-manifest.sh"
-INFRA_IMAGES="${INFRA_IMAGES:-$(manifest_refs k8s infra core,llm | tr '\n' ' ')}"
+INFRA_IMAGES="${INFRA_IMAGES:-$(manifest_refs k8s infra core,llm,external | tr '\n' ' ')}"
 
 # --dry-run only prints the plan, so it must work on a host without docker
 # (that is the whole point of asking for the plan first).

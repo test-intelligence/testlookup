@@ -53,9 +53,9 @@ When `AI_OFFLINE_MODE=true`:
 | **Weekly retro digest narrative** | Falls back to the deterministic template path without calling the LLM. |
 | **Feature flags** | Still functional (flags resolve via Redis/Postgres, both local). The offline gate is checked BEFORE the feature flag in every outbound service. |
 | **Slack / Teams notifications** | Delivered only to a destination that resolves to a loopback or private address — a self-hosted webhook on the LAN still works, a public one is refused. The deployment's own webhooks may also go to a host the operator names in `OFFLINE_NOTIFICATION_ALLOWED_HOSTS`; a webhook set per user or per team never uses that list. |
-| **Email (SMTP)** | Same rule: an internal relay is allowed, a public relay is refused unless the operator names it. Applies to every SMTP connection the application makes: notifications, digests, report emails, the settings page's test email and the health probe. The **recipients** are judged too (re-audit N25): with `OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS` set, every recipient must be in it; without it, an on-box relay may deliver and a named off-box relay is refused, because it would deliver to any mailbox. |
+| **Email (SMTP)** | Same rule: an internal relay is allowed, a public relay is refused unless the operator names it. Applies to every SMTP connection the application makes: notifications, digests, report emails, the settings page's test email and the health probe. The **recipients** are judged too: with `OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS` set, every recipient must be in it; without it, an on-box relay may deliver and a named off-box relay is refused, because it would deliver to any mailbox. |
 | **Integration-health probes** | A probe never dials where its integration may not: Slack's API and the SMTP relay only when on-box; Jira, GitHub, Splunk and OpenShift not at all. It reports `skipped`, with the reason. |
-| **Splunk log search, OpenShift pod lookups** | Silent no-op (re-audit N19). The triage agent's Splunk search and the OpenShift pod lookups (ingestion and triage) return without a network call, whatever `SPLUNK_ENABLED` and `OCP_ENABLED` say. |
+| **Splunk log search, OpenShift pod lookups** | Silent no-op. The triage agent's Splunk search and the OpenShift pod lookups (ingestion and triage) return without a network call, whatever `SPLUNK_ENABLED` and `OCP_ENABLED` say. |
 | **Ingestion** | Fully functional. No network calls. |
 | **Analysis (rules/ML)** | Fully functional. No network calls. |
 | **Dashboard / API / CLI / MCP** | Fully functional. All traffic is local. |
@@ -92,7 +92,7 @@ recipient: an allow-listed hosted relay delivers wherever an address points,
 including a user's own email override.
 
 Until 2026-09-10 these three channels were gated by nothing at all and were
-absent from the table above, which is how it went unnoticed (re-audit H10).
+absent from the table above, which is how it went unnoticed.
 
 ## Authentication and authorization
 

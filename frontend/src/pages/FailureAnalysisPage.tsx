@@ -778,7 +778,8 @@ function TopFailingTable({
   // Aggregate failed-run count from trend (which reads test_runs.failed_tests
   // directly). A suite can have failed run aggregates (pass rate < 100%)
   // while test_cases rows haven't landed — the live-stream Redis-buffer gap
-  // from CLAUDE.md pitfall #15. Cross-check so we don't render the green
+  // (the live-stream path skips finalize_run, so per-test rows can be missing
+  // while run aggregates exist). Cross-check so we don't render the green
   // "every recent run passed" all-clear while pass-rate / KPI tiles show
   // the same suite is failing.
   const failingExecutions = trend.reduce(

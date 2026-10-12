@@ -117,7 +117,7 @@ retry loops and 145 duplicate-key events.
 
 `create_run_from_payload` now **resumes** an existing run when the explicit id
 already exists in that project, so the write is idempotent per
-`(entity, run)` — the convention `backend/CLAUDE.md` already required.
+`(entity, run)`, as every ingestion write path is required to be.
 
 > **Diagnostic note.** Redis queue depths read **0** throughout, because the
 > tasks were in retry-ETA rather than queued. "The queue is empty" is actively
@@ -158,7 +158,7 @@ flowchart TB
     BUDGET --> PIPE["analysis pipeline<br/>(mode possibly downgraded)"]
 ```
 
-## 8. The live stream runs inside the API processes (re-audit N4)
+## 8. The live stream runs inside the API processes
 
 `app/main.py`'s lifespan starts two background tasks in **every** API worker
 process, gunicorn workers times replicas:

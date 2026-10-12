@@ -23,8 +23,8 @@ dies on the primary key — so the task can **never** succeed. Any transient
 failure became a permanently stuck run, retrying every ~2 minutes forever, while
 dashboards silently under-reported (the run's aggregates stay zero).
 
-This violated a convention the repo states in ``backend/CLAUDE.md``:
-*"Per-(entity, run) writes must be idempotent."*
+This violated a convention the repo states in ``architecture/DEVELOPER_GUIDE.md``
+(§7, recurring bug classes): per-``(entity, run)`` writes must be idempotent.
 
 Fix: when an explicit ``run_id`` already exists **in the same project**, resume
 that row.
@@ -54,7 +54,7 @@ def _src() -> str:
 
     The fix's own comment discusses ``run_id``, ``reuse_existing`` and
     ``test_runs_pkey`` at length. Prose has fooled structural assertions
-    repeatedly in this session; strip it before reasoning.
+    before; strip it before reasoning.
     """
     src = inspect.getsource(ingestion_pipeline.create_run_from_payload)
     out, in_doc = [], False
@@ -140,10 +140,11 @@ class TestTheNoMergeInvariantSurvives:
 
 
 def test_convention_is_documented():
-    """Anchors the fix to the stated rule it restores."""
+    """Anchors the fix to the stated rule it restores: the developer guide's
+    recurring-bug-class list names per-(entity, run) idempotency."""
     from pathlib import Path
 
-    claude_md = Path(__file__).resolve().parents[2] / "CLAUDE.md"
-    if not claude_md.exists():
-        pytest.skip("backend/CLAUDE.md is gitignored and absent in this checkout")
-    assert "idempotent" in claude_md.read_text(encoding="utf-8").lower()
+    guide = Path(__file__).resolve().parents[3] / "architecture" / "DEVELOPER_GUIDE.md"
+    text = guide.read_text(encoding="utf-8")
+    assert "idempoten" in text.lower()
+    assert "(entity, run)" in text

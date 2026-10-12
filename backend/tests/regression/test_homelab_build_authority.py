@@ -283,7 +283,9 @@ def test_backend_readiness_and_execs_exclude_retained_migration_job_pods():
         'app.kubernetes.io/component=api"'
     ) in source
     assert source.count('wait_for_pods "$BACKEND_POD_SELECTOR"') == 2
-    assert source.count('get pod -l "$BACKEND_POD_SELECTOR"') == 2
+    # The bucket setup (Step 7), the admin bootstrap (Step 10) and the legacy
+    # MCP retirement all pick their exec pod with the component selector.
+    assert source.count('get pod -l "$BACKEND_POD_SELECTOR"') == 3
     assert 'wait_for_pods "app=testlookup-backend"' not in source
 
 

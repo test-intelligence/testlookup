@@ -4,8 +4,9 @@ import { mockJson, seedActiveProject } from './apiMock';
 
 /**
  * Project Data danger zone (/settings/project-data) — ADMIN-only destructive
- * reset guarded by a typed-name confirmation (the reference pattern in
- * frontend/CLAUDE.md). Unit-tested in ProjectDataPage.test.tsx; this adds the
+ * reset guarded by a typed-name confirmation (the reference pattern for
+ * destructive actions: the user types the project name to enable the
+ * button). Unit-tested in ProjectDataPage.test.tsx; this adds the
  * real browser flow: the modal, the typed-name gate, and the reset API call.
  *
  * Project-scoped: seed an active project so the danger-zone buttons enable.

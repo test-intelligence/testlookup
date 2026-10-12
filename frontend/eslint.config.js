@@ -88,7 +88,7 @@ export default tseslint.config(
       // crash — in app code.
       '@typescript-eslint/no-non-null-assertion': 'error',
 
-      // Design-audit guard (handoff 1.3): raw Tailwind palette classes
+      // Design rule: every color comes from a theme token. Raw Tailwind palette classes
       // (text-emerald-400, bg-red-900/40, …) bypass the per-theme token
       // system (--status-*, --gate-*, --color-*) and are each a light-theme
       // defect.

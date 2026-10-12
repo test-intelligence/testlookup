@@ -1,5 +1,5 @@
 /**
- * Types for the Investigator agent (Agentic plan AI-1) + agent governance
+ * Types for the Investigator agent + agent governance
  * (AI-3). These mirror the pinned Wave-B API contract verbatim — the backend
  * implements the same shapes. Do not extend without reconciling with
  * `backend` (see docs/AGENTIC_AI_PLAN_2026_07.md).

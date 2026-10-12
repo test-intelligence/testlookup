@@ -12,8 +12,8 @@ GET  /api/v1/projects/{project_id}/analyses/lookup — latest analysis_id for a
      test fingerprint (US-2.4; lives on ``lookup_router`` so the
      ``require_project_access`` guard applies to the {project_id} scope)
 POST /api/v1/projects/{project_id}/fix-outcomes — record a merged/reverted fix
-     outcome for a fingerprint as an AI-F1 ``human_indirect`` training signal
-     (Agentic plan AI-5; the MCP ``record_fix_outcome`` tool's endpoint)
+     outcome for a fingerprint as a ``human_indirect`` training signal
+     (the MCP ``record_fix_outcome`` tool's endpoint)
 """
 import hashlib
 import hmac
@@ -218,7 +218,7 @@ class PromoteModelRequest(BaseModel):
 
 
 class FixOutcomeRequest(BaseModel):
-    """AI-5: outcome of a fix informed by TestLookup's diagnosis.
+    """Outcome of a fix informed by TestLookup's diagnosis.
 
     ``outcome`` is a closed vocabulary validated here (the values map onto
     FeedbackRating in the service); ``fingerprint`` is the stable test
@@ -239,8 +239,7 @@ class AnalysisLookupResponse(BaseModel):
 
     ``failure_category`` is a plain string, NOT the ``FailureCategory``
     enum: the backing column is ``String(30)`` and a strict enum here would
-    silently 422 the response if a stored value ever drifts out of vocab
-    (backend/CLAUDE.md pitfall).
+    422 the whole response if a stored value ever drifts out of vocab.
     """
     analysis_id: Optional[uuid.UUID] = None
     failure_category: Optional[str] = None
@@ -413,7 +412,7 @@ async def record_fix_outcome(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_project_access()),
 ):
-    """Record a fix outcome for a fingerprint (Agentic plan AI-5).
+    """Record a fix outcome for a fingerprint.
 
     Writes an ``ai_feedback`` row with ``source="fix_outcome"`` against the
     latest analysis for the (project, fingerprint) pair — the AI-F1 label

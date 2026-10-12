@@ -1,13 +1,27 @@
 #!/usr/bin/env bash
 # ============================================================
-# deploy-homelab.sh — Deploy TestLookup to K3s homelab cluster
+# deploy-homelab.sh — Deploy TestLookup to a K3s cluster (single node or more)
 # ============================================================
+# The public "single-node K3s" path: build the three TestLookup images, push
+# them to an in-cluster registry, and apply k8s/overlays/homelab. Works on one
+# K3s node (the default) and on a multi-node K3s cluster. Guide:
+# docs/operations/deploy-k3s.md.
+#
 # Prerequisites:
-#   - 3-node K3s cluster running (k3s_setup.md steps 1-7, local-path storage)
-#   - kubectl configured and pointing to the cluster
-#   - Docker Desktop or Podman running on the dev machine
-#   - registry.local in hosts file pointing to 192.168.0.101
-#   - The selected container engine trusts registry.local:30500 as insecure
+#   - A K3s cluster with the built-in local-path StorageClass and Traefik
+#     (homelabsetup/bootstrap-homelab.sh can create one over SSH)
+#   - kubectl configured and pointing at the cluster
+#   - Docker or Podman on the build machine, trusting the registry below as an
+#     insecure (plain-HTTP) registry
+#
+# Site configuration (NOT part of the repository):
+#   Every site-specific value — the host name, the registry address, extra
+#   kustomize patches — comes from a local env file. Point
+#   TESTLOOKUP_HOMELAB_ENV at it, or keep it at
+#   ${XDG_CONFIG_HOME:-$HOME/.config}/testlookup/homelab.env. Variables already
+#   set in the environment win over the file. homelabsetup/homelab.env.example
+#   lists every variable; with no file at all the defaults below apply
+#   (host testlookup.localhost, registry registry.local:30500).
 #
 # Usage:
 #   ./homelabsetup/deploy-homelab.sh [--skip-registry] [--skip-build] [--skip-models]
@@ -19,19 +33,49 @@
 #   --skip-dns       Skip DNS/hosts file reminder
 #   --teardown       Delete the entire deployment (keeps PVCs)
 #   --teardown-all   Delete namespace + all data (DESTRUCTIVE)
+#
+# First install: the script generates every secret (database, object store,
+# signing keys) and a random password for the initial admin account, prints
+# them ONCE and saves them to the credentials file (K3S_CREDENTIALS_FILE).
+# Re-runs never regenerate a secret that exists and never change an existing
+# admin's password.
 # ============================================================
 
 set -euo pipefail
 
 # ── Configuration ───────────────────────────────────────────
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-REGISTRY="registry.local:30500"
+SITE_CONFIG_FILE=""
+# shellcheck source=homelabsetup/lib-site-config.sh
+. "$REPO_ROOT/homelabsetup/lib-site-config.sh"
+load_site_config
+# The public host the ingress answers on (plain HTTP). *.localhost resolves to
+# the loopback address on most systems; any other name needs a DNS or hosts
+# entry pointing at the Traefik LoadBalancer IP (Step 9 prints it).
+K3S_HOST="${K3S_HOST:-testlookup.localhost}"
+# The registry the cluster pulls TestLookup images from. Must match the
+# containerd mirror in /etc/rancher/k3s/registries.yaml on every node.
+REGISTRY="${K3S_REGISTRY:-registry.local:30500}"
+# Optional second address for the same registry (e.g. <node-ip>:30500), tried
+# when the registry host name does not resolve on the build machine.
+REGISTRY_FALLBACK="${K3S_REGISTRY_FALLBACK:-}"
+# Fixed: k8s/overlays/homelab places every resource in this namespace.
 NAMESPACE="testlookup"
+# A directory of extra kustomize patches (*.yaml, applied in name order) for
+# site-specific settings: an AI provider, resource limits, pinned images. Each
+# file is a strategic-merge patch that names the kind, metadata.name and
+# metadata.namespace (testlookup) of the resource it changes.
+K3S_PATCHES_DIR="${K3S_PATCHES_DIR:-}"
+CREDS_FILE="${K3S_CREDENTIALS_FILE:-$REPO_ROOT/homelabsetup/.homelab-credentials}"
+# The per-deploy overlay rendered from the site configuration (gitignored).
+RENDER_DIR="$REPO_ROOT/homelabsetup/.render"
+# Image names the tracked overlay rewrites the app images to; the rendered
+# overlay maps them onto ${REGISTRY} and this run's build tag.
+OVERLAY_IMAGE_PREFIX="registry.local:30500/testlookup"
+LLM_PULL_MODEL="${K3S_LLM_MODEL:-qwen2.5:7b-instruct}"
+EMBED_PULL_MODEL="${K3S_EMBEDDING_MODEL:-nomic-embed-text:v1.5}"
 BACKEND_POD_SELECTOR="app=testlookup-backend,app.kubernetes.io/component=api"
-NODES=("192.168.0.101" "192.168.0.102" "192.168.0.103")
-NODE_USER="labadmin"
-CONTROL_NODE="${NODES[0]}"
-MINIO_ACCESS="testlookup_minio"
+MINIO_ACCESS="${K3S_S3_ACCESS_KEY:-testlookup_minio}"
 # Step 5b re-checks the image authority this long before failing the deploy.
 IMAGE_AUTHORITY_TIMEOUT_SECONDS="${IMAGE_AUTHORITY_TIMEOUT_SECONDS:-120}"
 IMAGE_AUTHORITY_POLL_SECONDS="${IMAGE_AUTHORITY_POLL_SECONDS:-5}"
@@ -175,8 +219,9 @@ wait_for_deployment_image() {
 }
 
 verify_serving_revision() {
-  local ingress_ip=$1 expected_revision=$2 payload revision
-  payload=$(curl -fsS --max-time 10 -H "Host: testlookup.local" \
+  local ingress_ip=$1 expected_revision=$2 host=${3:-${K3S_HOST:-testlookup.localhost}}
+  local payload revision
+  payload=$(curl -fsS --max-time 10 -H "Host: ${host}" \
     "http://${ingress_ip}/health/version") || return 1
   revision=$(printf '%s\n' "$payload" \
     | sed -n 's/.*"revision"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
@@ -194,9 +239,90 @@ wait_for_pods() {
   }
 }
 
+# An existing install keeps serving the host it was installed with. If the
+# site configuration did not load (or names another host), stop BEFORE anything
+# is built or applied rather than silently moving the ingress to a new name.
+# Set ALLOW_HOST_CHANGE=true to move it on purpose.
+check_existing_host() {
+  local wanted=$1 existing
+  existing=$(kubectl -n "$NAMESPACE" get ingress testlookup-traefik-ingress \
+    -o jsonpath='{.spec.rules[0].host}' 2>/dev/null || true)
+  if [ -n "$existing" ] && [ "$existing" != "$wanted" ] \
+     && [ "${ALLOW_HOST_CHANGE:-false}" != true ]; then
+    echo "[x] This cluster already serves TestLookup on host '${existing}', but this run" >&2
+    echo "    would move it to '${wanted}'. Load your site configuration" >&2
+    echo "    (TESTLOOKUP_HOMELAB_ENV=<file> with K3S_HOST=${existing}), or set" >&2
+    echo "    ALLOW_HOST_CHANGE=true to move the ingress deliberately." >&2
+    return 1
+  fi
+}
+
+# Write the per-deploy overlay: the tracked k8s/overlays/homelab plus this
+# run's images, the site host, and any site patches. Nothing tracked is edited.
+render_overlay() {
+  local render_dir=$1 build_tag=$2 patch name patches_yaml=""
+  rm -rf -- "$render_dir"
+  mkdir -p "$render_dir"
+  cat > "$render_dir/site-ingress-host.yaml" <<EOF
+- op: replace
+  path: /spec/rules/0/host
+  value: ${K3S_HOST}
+EOF
+  cat > "$render_dir/site-config-host.yaml" <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: testlookup-config
+  namespace: ${NAMESPACE}
+data:
+  CORS_ORIGINS: "http://${K3S_HOST}"
+  PUBLIC_BASE_URL: "http://${K3S_HOST}"
+EOF
+  if [ -n "$K3S_PATCHES_DIR" ]; then
+    local patches_dir="$K3S_PATCHES_DIR"
+    # A Windows path (C:\... or C:/...) from the site file, under Git Bash.
+    if command -v cygpath >/dev/null 2>&1; then
+      patches_dir="$(cygpath -u "$patches_dir")"
+    fi
+    [ -d "$patches_dir" ] || { echo "[x] K3S_PATCHES_DIR '$K3S_PATCHES_DIR' is not a directory." >&2; return 1; }
+    for patch in "$patches_dir"/*.yaml; do
+      [ -f "$patch" ] || continue
+      name="site-patch-$(basename "$patch")"
+      cp -f -- "$patch" "$render_dir/$name"
+      patches_yaml="${patches_yaml}  - path: ${name}
+"
+    done
+  fi
+  cat > "$render_dir/kustomization.yaml" <<EOF
+# Generated by homelabsetup/deploy-homelab.sh for one deploy. Do not edit:
+# change the site configuration (TESTLOOKUP_HOMELAB_ENV) instead.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../k8s/overlays/homelab
+images:
+  - name: ${OVERLAY_IMAGE_PREFIX}/backend
+    newName: ${REGISTRY}/testlookup/backend
+    newTag: ${build_tag}
+  - name: ${OVERLAY_IMAGE_PREFIX}/frontend
+    newName: ${REGISTRY}/testlookup/frontend
+    newTag: ${build_tag}
+  - name: ${OVERLAY_IMAGE_PREFIX}/mcp
+    newName: ${REGISTRY}/testlookup/mcp
+    newTag: ${build_tag}
+patches:
+  - path: site-ingress-host.yaml
+    target:
+      kind: Ingress
+      name: testlookup-traefik-ingress
+  - path: site-config-host.yaml
+${patches_yaml}
+EOF
+}
+
 # ── TLS-interception CA staging ─────────────────────────────
-# An HTTPS-inspecting middlebox on the build host (Norton/NordVPN SSL
-# scanning, corporate proxy) re-signs traffic with a private root CA. The
+# An HTTPS-inspecting middlebox on the build host (a corporate proxy or an
+# endpoint-security product's TLS scanning) re-signs traffic with a private root CA. The
 # host trusts it, but the build containers (python:3.11-slim, node:20-alpine)
 # do not, so in-container pip/npm die with:
 #   "unable to get local issuer certificate".
@@ -308,16 +434,24 @@ log "Checking container engine (${CONTAINER_ENGINE})..."
 log "Checking local-path StorageClass..."
 kubectl get storageclass local-path >/dev/null 2>&1 || error "local-path StorageClass not found. Is this a K3s cluster?"
 
+if [ -n "$SITE_CONFIG_FILE" ]; then
+  log "Site configuration: ${SITE_CONFIG_FILE}"
+else
+  log "No site configuration file — using the defaults (host ${K3S_HOST}, registry ${REGISTRY})."
+fi
+check_existing_host "$K3S_HOST" || error "Refusing to change the host of an existing install."
+
 log "All preflight checks passed."
 
 # ── Helper: check registry reachability ─────────────────────
 check_registry() {
-  # Try hostname first, then raw IP
-  if curl -sf --max-time 5 "http://registry.local:30500/v2/_catalog" >/dev/null 2>&1; then
+  # Try the registry name first, then the optional fallback address.
+  if curl -sf --max-time 5 "http://${REGISTRY}/v2/_catalog" >/dev/null 2>&1; then
     return 0
-  elif curl -sf --max-time 5 "http://${CONTROL_NODE}:30500/v2/_catalog" >/dev/null 2>&1; then
-    warn "'registry.local' DNS not resolving, but registry is reachable at ${CONTROL_NODE}:30500"
-    warn "Add to your hosts file: ${CONTROL_NODE} registry.local"
+  elif [ -n "$REGISTRY_FALLBACK" ] \
+       && curl -sf --max-time 5 "http://${REGISTRY_FALLBACK}/v2/_catalog" >/dev/null 2>&1; then
+    warn "'${REGISTRY%%:*}' does not resolve here, but the registry answers at ${REGISTRY_FALLBACK}"
+    warn "Add a hosts-file entry mapping ${REGISTRY%%:*} to that address."
     return 0
   fi
   return 1
@@ -339,31 +473,31 @@ if [ "$SKIP_REGISTRY" = false ]; then
       echo ""
       warn "Possible causes:"
       echo "  1. Registry pod is not Running (check output above)"
-      echo "  2. 'registry.local' is not in your hosts file"
-      echo "     Fix: Add '${CONTROL_NODE} registry.local' to C:\\Windows\\System32\\drivers\\etc\\hosts"
-      echo "  3. Docker Desktop missing insecure-registries config"
-      echo "     Fix: Add 'registry.local:30500' to Docker Desktop > Settings > Docker Engine > insecure-registries"
-      echo "  4. Firewall blocking port 30500 on the nodes"
-      echo "     Fix: On each node: sudo ufw allow 30500/tcp"
+      echo "  2. '${REGISTRY%%:*}' does not resolve on this machine"
+      echo "     Fix: add a hosts-file entry mapping it to a node's IP address"
+      echo "  3. The container engine does not trust '${REGISTRY}' as an insecure registry"
+      echo "     Fix: add it to insecure-registries (Docker) or registries.conf (Podman)"
+      echo "  4. A firewall blocks the registry NodePort on the nodes"
       echo ""
-      log "Trying direct node IP (${CONTROL_NODE}:30500)..."
-      if curl -sf --max-time 5 "http://${CONTROL_NODE}:30500/v2/_catalog" 2>/dev/null; then
-        echo ""
-        log "Registry IS reachable via IP. The issue is DNS only."
-        warn "Add to hosts file: ${CONTROL_NODE} registry.local"
-        warn "Docker push will fail without this. Fix it before continuing."
-      else
-        warn "Registry is NOT reachable via IP either. Check firewall / pod status."
+      if [ -n "$REGISTRY_FALLBACK" ]; then
+        log "Trying the fallback address (${REGISTRY_FALLBACK})..."
+        if curl -sf --max-time 5 "http://${REGISTRY_FALLBACK}/v2/_catalog" 2>/dev/null; then
+          echo ""
+          log "Registry IS reachable via ${REGISTRY_FALLBACK}. The issue is name resolution only."
+          warn "Docker push will fail without it. Fix it before continuing."
+        else
+          warn "Registry is NOT reachable via ${REGISTRY_FALLBACK} either. Check firewall / pod status."
+        fi
       fi
       echo ""
       read -p "Press Enter after fixing the issue, or Ctrl+C to abort..."
     fi
   else
-    log "Creating registry directory on node1..."
-    ssh "${NODE_USER}@${CONTROL_NODE}" "sudo mkdir -p /opt/registry" 2>/dev/null || warn "Could not SSH to node1 — ensure /opt/registry exists manually."
-
-    log "Deploying registry to K3s..."
-    cat <<'EOF' | kubectl apply -f -
+    # The registry's data lives on one node (hostPath, created on demand).
+    REGISTRY_NODE="${K3S_REGISTRY_NODE:-$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)}"
+    [ -n "$REGISTRY_NODE" ] || error "Cannot pick a node for the registry; set K3S_REGISTRY_NODE."
+    log "Deploying registry to K3s (data on node ${REGISTRY_NODE})..."
+    cat <<EOF | kubectl apply -f -
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -379,13 +513,14 @@ spec:
   accessModes: [ReadWriteOnce]
   hostPath:
     path: /opt/registry
+    type: DirectoryOrCreate
   nodeAffinity:
     required:
       nodeSelectorTerms:
         - matchExpressions:
             - key: kubernetes.io/hostname
               operator: In
-              values: ["k8s-node1"]
+              values: ["${REGISTRY_NODE}"]
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -416,7 +551,7 @@ spec:
         app: registry
     spec:
       nodeSelector:
-        kubernetes.io/hostname: k8s-node1
+        kubernetes.io/hostname: ${REGISTRY_NODE}
       containers:
         - name: registry
           image: registry:2
@@ -450,29 +585,27 @@ EOF
 
     log "Configuring K3s nodes to trust the registry..."
     warn "You must configure registries.yaml on EACH node if not already done:"
-    echo "  SSH into each node and run:"
+    echo "  On each node run:"
     echo "    sudo mkdir -p /etc/rancher/k3s"
     echo "    sudo tee /etc/rancher/k3s/registries.yaml <<'YAML'"
     echo "    mirrors:"
-    # Port 30500 (NodePort), NOT 5000 (pod-internal). Containerd needs
-    # the same port the kustomization image refs use — see
-    # docs/CLAUDE.md pitfall + feedback_homelab_registry_port_consistency.
-    echo "      \"registry.local:30500\":"
+    # The NodePort (30500), NOT 5000 (pod-internal): containerd must use the
+    # same address the overlay's image references use.
+    echo "      \"${REGISTRY}\":"
     echo "        endpoint:"
-    echo "          - \"http://192.168.0.101:30500\""
+    echo "          - \"http://<a-node-ip>:${REGISTRY##*:}\""
     echo "    YAML"
-    echo "    sudo systemctl restart k3s  # or k3s-agent on workers"
+    echo "    sudo systemctl restart k3s  # or k3s-agent on agent nodes"
     echo ""
     read -p "Press Enter when registry mirrors are configured on all nodes (or skip if already done)..."
   fi
 
   # Verify registry is reachable
   if check_registry; then
-    log "Registry verified: $(curl -s http://registry.local:30500/v2/_catalog 2>/dev/null || curl -s http://${CONTROL_NODE}:30500/v2/_catalog 2>/dev/null)"
+    log "Registry verified: $(curl -s "http://${REGISTRY}/v2/_catalog" 2>/dev/null || { [ -n "$REGISTRY_FALLBACK" ] && curl -s "http://${REGISTRY_FALLBACK}/v2/_catalog" 2>/dev/null; } || true)"
   else
-    warn "Cannot reach registry at registry.local:30500 or ${CONTROL_NODE}:30500."
-    warn "Ensure 'registry.local' is in your hosts file pointing to ${CONTROL_NODE}"
-    warn "and Docker Desktop has 'registry.local:30500' in insecure-registries."
+    warn "Cannot reach the registry at ${REGISTRY}${REGISTRY_FALLBACK:+ or ${REGISTRY_FALLBACK}}."
+    warn "Make '${REGISTRY%%:*}' resolve on this machine and trust '${REGISTRY}' as an insecure registry."
     read -p "Press Enter to continue anyway, or Ctrl+C to abort..."
   fi
 else
@@ -514,17 +647,18 @@ if [ "$SKIP_BUILD" = false ]; then
   log "Embedding build provenance: revision=${BUILD_REVISION}, built_at=${BUILD_DATE}"
 
   # Stage a TLS-interception root CA into the build contexts when the host
-  # runs an HTTPS-inspecting middlebox (Norton/NordVPN/corporate proxy), so
+  # runs an HTTPS-inspecting middlebox (a corporate or endpoint-security proxy), so
   # in-container pip/npm don't fail with "unable to get local issuer
   # certificate". No-op (and INSTALL_EXTRA_CA stays 0) on clean networks.
   stage_tls_ca
 
   # Determine which registry address works for docker push
-  if curl -sf --max-time 3 "http://registry.local:30500/v2/_catalog" >/dev/null 2>&1; then
-    PUSH_REGISTRY="registry.local:30500"
-  elif curl -sf --max-time 3 "http://${CONTROL_NODE}:30500/v2/_catalog" >/dev/null 2>&1; then
-    PUSH_REGISTRY="${CONTROL_NODE}:30500"
-    warn "Using IP-based registry: ${PUSH_REGISTRY} (add 'registry.local' to hosts for consistency)"
+  if curl -sf --max-time 3 "http://${REGISTRY}/v2/_catalog" >/dev/null 2>&1; then
+    PUSH_REGISTRY="$REGISTRY"
+  elif [ -n "$REGISTRY_FALLBACK" ] \
+       && curl -sf --max-time 3 "http://${REGISTRY_FALLBACK}/v2/_catalog" >/dev/null 2>&1; then
+    PUSH_REGISTRY="$REGISTRY_FALLBACK"
+    warn "Using the fallback registry address: ${PUSH_REGISTRY} (make '${REGISTRY%%:*}' resolve for consistency)"
   else
     PUSH_REGISTRY="$REGISTRY"
     warn "Registry not reachable — builds will proceed but push may fail."
@@ -616,12 +750,13 @@ else
   #      matches the build-YYYYMMDD-HHMMSS shape (skip floating tags).
   #   4. Hard-fail with a helpful message if no common tag exists — the
   #      caller probably wanted a fresh build, or the registry got wiped.
-  if curl -sf --max-time 3 "http://registry.local:30500/v2/_catalog" >/dev/null 2>&1; then
-    LOOKUP_REGISTRY="registry.local:30500"
-  elif curl -sf --max-time 3 "http://${CONTROL_NODE}:30500/v2/_catalog" >/dev/null 2>&1; then
-    LOOKUP_REGISTRY="${CONTROL_NODE}:30500"
+  if curl -sf --max-time 3 "http://${REGISTRY}/v2/_catalog" >/dev/null 2>&1; then
+    LOOKUP_REGISTRY="$REGISTRY"
+  elif [ -n "$REGISTRY_FALLBACK" ] \
+       && curl -sf --max-time 3 "http://${REGISTRY_FALLBACK}/v2/_catalog" >/dev/null 2>&1; then
+    LOOKUP_REGISTRY="$REGISTRY_FALLBACK"
   else
-    error "Registry not reachable at registry.local:30500 or ${CONTROL_NODE}:30500. Cannot resolve a tag for --skip-build. Re-run without --skip-build to push fresh images."
+    error "Registry not reachable at ${REGISTRY}${REGISTRY_FALLBACK:+ or ${REGISTRY_FALLBACK}}. Cannot resolve a tag for --skip-build. Re-run without --skip-build to push fresh images."
   fi
 
   # Pure selection step, kept separate from the fetching so it can be
@@ -758,25 +893,27 @@ else
   echo -e "${YELLOW}╚══════════════════════════════════════════════════════╝${NC}"
   echo ""
 
-  # Save credentials to a local file (gitignored)
-  CREDS_FILE="$REPO_ROOT/homelabsetup/.homelab-credentials"
+  # Save credentials to a local file (gitignored by default location)
+  mkdir -p "$(dirname "$CREDS_FILE")"
+  ( umask 077; : > "$CREDS_FILE" )
   cat > "$CREDS_FILE" <<CREDS
-# TestLookup Homelab Credentials — generated $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+# TestLookup K3s credentials — generated $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 # DO NOT COMMIT THIS FILE
 POSTGRES_PASSWORD=${PG_PASSWORD}
 MINIO_ACCESS_KEY=${MINIO_ACCESS}
 MINIO_SECRET_KEY=${MINIO_SECRET}
 DATABASE_URL=${DATABASE_URL}
 CREDS
-  log "Credentials saved to homelabsetup/.homelab-credentials (do NOT commit this file)"
+  log "Credentials saved to ${CREDS_FILE} (do NOT commit this file)"
 fi
 
-# ── Step 4b: TLS Certificate (skipped — homelab ingress is HTTP-only) ───
+# ── Step 4b: TLS Certificate (skipped — the K3s ingress is HTTP-only) ───
 header "Step 4b — TLS Certificate (skipped)"
 
-# The homelab ingress was switched to HTTP-only on 2026-05-10 to remove the
-# self-signed-cert friction every client (browsers, Java SDK, curl) was hitting.
-# The kustomize overlay no longer references testlookup-tls-cert.
+# The ingress is plain HTTP to avoid self-signed-certificate friction on every
+# client (browsers, Java SDK, curl). Terminate TLS in front of Traefik, or add
+# a certificate with a site patch, if the cluster is reachable beyond a
+# trusted network. The overlay does not reference testlookup-tls-cert.
 #
 # If the Secret already exists from a prior HTTPS deploy, Step 5 below
 # prunes it along with the other orphaned redirect/middleware resources.
@@ -787,33 +924,24 @@ log "Skipping TLS cert generation (ingress is HTTP-only)."
 # ── Step 5: Deploy with Kustomize ──────────────────────────
 header "Step 5 — Deploy with Kustomize"
 
-# Substitute the BUILD_TAG_PLACEHOLDER literal in kustomization.yaml with
-# this run's immutable build tag, so the cluster pulls an exact image and
-# never a floating :latest. The trap restores the committed placeholder on
-# success or failure so the working tree stays clean and CI's anti-:latest
-# guard keeps passing.
-OVERLAY_KUSTOMIZATION="$REPO_ROOT/k8s/overlays/homelab/kustomization.yaml"
-cp "$OVERLAY_KUSTOMIZATION" "${OVERLAY_KUSTOMIZATION}.deploy-bak"
-restore_kustomization() {
-  if [ -f "${OVERLAY_KUSTOMIZATION}.deploy-bak" ]; then
-    mv -f "${OVERLAY_KUSTOMIZATION}.deploy-bak" "$OVERLAY_KUSTOMIZATION"
-  fi
-}
-trap restore_kustomization EXIT INT TERM
+# Render the per-deploy overlay: the tracked k8s/overlays/homelab (whose
+# image tags stay BUILD_TAG_PLACEHOLDER at rest), this run's immutable build
+# tag on ${REGISTRY}, the site host and the site patches. The cluster pulls an
+# exact image and never a floating :latest, and no tracked file is edited.
+log "Rendering the overlay for ${K3S_HOST} with image tag ${BUILD_TAG}..."
+render_overlay "$RENDER_DIR" "$BUILD_TAG" || error "Could not render the deploy overlay."
+cleanup_render_dir() { rm -rf -- "$RENDER_DIR"; }
+trap cleanup_render_dir EXIT INT TERM
 
-log "Pinning image tags to ${BUILD_TAG} for this deploy..."
-sed -i.tmp "s/BUILD_TAG_PLACEHOLDER/${BUILD_TAG}/g" "$OVERLAY_KUSTOMIZATION"
-rm -f "${OVERLAY_KUSTOMIZATION}.tmp"
-
-# Hard-fail if any unsubstituted placeholder remains — better than silently
-# deploying an image tag that won't pull.
-if grep -q "BUILD_TAG_PLACEHOLDER" "$OVERLAY_KUSTOMIZATION"; then
-  warn "BUILD_TAG_PLACEHOLDER still present in kustomization.yaml after substitution. Aborting."
+# Hard-fail if the rendered manifests still carry the placeholder — better
+# than silently deploying an image tag that won't pull.
+if kubectl kustomize "$RENDER_DIR" | grep -q "BUILD_TAG_PLACEHOLDER"; then
+  warn "BUILD_TAG_PLACEHOLDER survived the render. Aborting."
   exit 1
 fi
 
 # Pre-apply K3s mirror precheck. Without /etc/rancher/k3s/registries.yaml
-# on every node, containerd treats registry.local:30500 as an unknown
+# on every node, containerd treats ${REGISTRY} as an unknown
 # registry, falls back to HTTPS, and ImagePullBackOff hits every pod —
 # the only one the bootstrap script handles, the deploy script silently
 # assumes. Verify the file exists on each Ready node before applying so
@@ -831,12 +959,12 @@ else
   for node in $node_names; do
     # ``kubectl debug node/<n>`` spawns a privileged debug pod with the
     # node's filesystem at /host. The grep returns 0 only when the
-    # registries.yaml contains a ``registry.local:30500`` mirror entry —
-    # so we catch both "file missing" and "file present but wrong port"
-    # in one check. Output is suppressed; only the exit code matters.
+    # registries.yaml contains a mirror entry for ${REGISTRY} — so we
+    # catch both "file missing" and "file present but wrong port" in one
+    # check. Output is suppressed; only the exit code matters.
     if ! kubectl debug node/"$node" --image=busybox:1.36 \
            --quiet --profile=sysadmin -- \
-           chroot /host grep -q "registry.local:30500" \
+           chroot /host grep -qF "$REGISTRY" \
                 /etc/rancher/k3s/registries.yaml >/dev/null 2>&1; then
       mirror_missing_nodes+=("$node")
     fi
@@ -855,33 +983,18 @@ if [ "$mirror_check_skipped" = false ] && [ ${#mirror_missing_nodes[@]} -gt 0 ];
 $(printf "       - %s\n" "${mirror_missing_nodes[@]}")
 
     Without this, every locally-built TestLookup image
-    (registry.local:30500/testlookup/*) will ImagePullBackOff because
+    (${REGISTRY}/testlookup/*) will ImagePullBackOff because
     containerd treats the registry as unknown and tries HTTPS.
 
-    Fix — run this from the build host (Git Bash works):
+    Fix — on every node, write /etc/rancher/k3s/registries.yaml:
 
-        NODE_USER=labadmin
-        NODE1_IP=192.168.0.101
-        for ip in 192.168.0.101 192.168.0.102 192.168.0.103; do
-          ssh -o StrictHostKeyChecking=no \$NODE_USER@\$ip bash <<'REMOTE'
-            sudo grep -q "registry.local" /etc/hosts || \\
-              echo "192.168.0.101 registry.local" | sudo tee -a /etc/hosts
-            sudo mkdir -p /etc/rancher/k3s
-            sudo tee /etc/rancher/k3s/registries.yaml >/dev/null <<YAML
-mirrors:
-  "registry.local:30500":
-    endpoint:
-      - "http://192.168.0.101:30500"
-  "192.168.0.101:30500":
-    endpoint:
-      - "http://192.168.0.101:30500"
-YAML
-            sudo systemctl restart k3s 2>/dev/null || sudo systemctl restart k3s-agent
-        REMOTE
-        done
+        mirrors:
+          "${REGISTRY}":
+            endpoint:
+              - "http://<a-node-ip>:${REGISTRY##*:}"
 
-    Or re-run ./homelabsetup/bootstrap-homelab.sh (idempotent) which
-    automates the same thing.
+    then restart k3s (server) or k3s-agent (agents). Or re-run
+    ./homelabsetup/bootstrap-homelab.sh (idempotent), which automates it.
 
     Pass --skip-mirror-check to bypass this guard (NOT recommended).
 ══════════════════════════════════════════════════════════════════════
@@ -893,7 +1006,7 @@ EOF
   fi
 fi
 
-MIGRATION_IMAGE="registry.local:30500/testlookup/backend:${BUILD_TAG}"
+MIGRATION_IMAGE="${REGISTRY}/testlookup/backend:${BUILD_TAG}"
 HAD_BACKEND=0
 if kubectl -n "$NAMESPACE" get deployment testlookup-backend >/dev/null 2>&1; then
   HAD_BACKEND=1
@@ -903,23 +1016,22 @@ fi
 
 log "Applying Kustomize overlay..."
 bash "$REPO_ROOT/scripts/prepare-live-fanout-cutover.sh" "$NAMESPACE"
-kubectl apply -k "$REPO_ROOT/k8s/overlays/homelab"
+kubectl apply -k "$RENDER_DIR"
 if [ "$HAD_BACKEND" -eq 0 ]; then
   log "Fresh install detected; running the migration after datastore creation..."
   bash "$REPO_ROOT/scripts/run-k8s-migrations.sh" "$NAMESPACE" "$MIGRATION_IMAGE"
 fi
 log "All resources applied and database migrations completed."
 
-# Restore the placeholder immediately after a successful apply too — the
-# trap covers the failure paths; this one keeps `git status` clean on the
-# happy path so subsequent commands see the canonical file.
-restore_kustomization
+# The rendered overlay is per deploy; remove it now (the trap covers the
+# failure paths).
+cleanup_render_dir
 trap - EXIT INT TERM
 
 # ``kubectl apply -k`` only creates/updates resources — it does not delete
 # resources that were removed from the manifest. Explicitly remove orphans
 # left over from previous HTTPS-enabled deploys, otherwise the old redirect
-# Ingress keeps 308'ing http://testlookup.local/ → https://. Idempotent.
+# Ingress keeps 308'ing http://<host>/ to https://. Idempotent.
 log "Pruning HTTPS-era orphans (if present)..."
 kubectl -n "$NAMESPACE" delete ingress testlookup-traefik-redirect \
   --ignore-not-found=true >/dev/null
@@ -1080,46 +1192,25 @@ fi
 log "Waiting for backend (may take a minute)..."
 wait_for_pods "$BACKEND_POD_SELECTOR" 180 || warn "Backend not ready yet. Check: kubectl -n testlookup logs deployment/testlookup-backend"
 
-# ── Step 7: Create MinIO Buckets ───────────────────────────
-header "Step 7 — Create MinIO Buckets"
+# ── Step 7: Create object-store buckets ────────────────────
+header "Step 7 — Create object-store buckets"
 
-# Read MinIO secret from cluster
-MINIO_SECRET_VAL=$(kubectl -n "$NAMESPACE" get secret testlookup-secrets -o jsonpath='{.data.MINIO_SECRET_KEY}' | base64 -d 2>/dev/null || echo "")
-
-if [ -z "$MINIO_SECRET_VAL" ]; then
-  warn "Could not read MinIO secret from cluster. Skipping bucket creation."
-  warn "Create buckets manually: mc mb homelab/test-telemetry && mc mb homelab/knowledge-docs"
+# The bucket setup runs INSIDE the backend pod with the app's own settings
+# (MINIO_ENDPOINT / MINIO_ACCESS_KEY / MINIO_SECRET_KEY / bucket names), so
+# the build machine needs no S3 client and no port-forward. Idempotent: an
+# existing bucket is left as it is.
+S3_SETUP_POD=$(kubectl -n "$NAMESPACE" get pod -l "$BACKEND_POD_SELECTOR" \
+  --field-selector=status.phase=Running \
+  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+if [ -z "$S3_SETUP_POD" ]; then
+  warn "No running backend pod yet — skipping bucket creation. Run later:"
+  warn "  kubectl -n $NAMESPACE exec deploy/testlookup-backend -c backend -- python /app/scripts/s3_setup.py"
+elif kubectl -n "$NAMESPACE" exec "$S3_SETUP_POD" -c backend -- \
+     python /app/scripts/s3_setup.py; then
+  log "Object-store buckets are in place."
 else
-  # Check if mc is available
-  if command -v mc >/dev/null 2>&1; then
-    log "Starting MinIO port-forward..."
-    kubectl -n "$NAMESPACE" port-forward svc/testlookup-minio 9000:9000 &
-    PF_PID=$!
-    sleep 3
-
-    log "Configuring MinIO client..."
-    mc alias set homelab http://localhost:9000 "$MINIO_ACCESS" "$MINIO_SECRET_VAL" --api S3v4 2>/dev/null || true
-
-    log "Creating buckets..."
-    mc mb homelab/test-telemetry --ignore-existing 2>/dev/null || warn "Could not create test-telemetry bucket"
-    mc mb homelab/knowledge-docs --ignore-existing 2>/dev/null || warn "Could not create knowledge-docs bucket"
-
-    log "Buckets:"
-    mc ls homelab/ 2>/dev/null || true
-
-    kill $PF_PID 2>/dev/null || true
-    wait $PF_PID 2>/dev/null || true
-  else
-    warn "MinIO client (mc) not found. Install it to create buckets:"
-    echo "  Windows: winget install MinIO.Client"
-    echo "  Linux:   wget https://dl.min.io/client/mc/release/linux-amd64/mc && chmod +x mc && sudo mv mc /usr/local/bin/"
-    echo ""
-    echo "Then run:"
-    echo "  kubectl -n testlookup port-forward svc/testlookup-minio 9000:9000 &"
-    echo "  mc alias set homelab http://localhost:9000 $MINIO_ACCESS <secret>"
-    echo "  mc mb homelab/test-telemetry"
-    echo "  mc mb homelab/knowledge-docs"
-  fi
+  warn "Bucket setup did not complete. Re-run it once the object store is up:"
+  warn "  kubectl -n $NAMESPACE exec deploy/testlookup-backend -c backend -- python /app/scripts/s3_setup.py"
 fi
 
 # ── Step 8: Pull Ollama Models ─────────────────────────────
@@ -1136,19 +1227,14 @@ if [ "$SKIP_MODELS" = false ]; then
       # Check if models already exist
       EXISTING_MODELS=$(kubectl -n "$NAMESPACE" exec "$OLLAMA_POD" -- ollama list 2>/dev/null || echo "")
 
-      if echo "$EXISTING_MODELS" | grep -q "qwen2.5:7b"; then
-        log "qwen2.5:7b already present. Skipping pull."
-      else
-        log "Pulling qwen2.5:7b (this may take several minutes)..."
-        kubectl -n "$NAMESPACE" exec "$OLLAMA_POD" -- ollama pull qwen2.5:7b
-      fi
-
-      if echo "$EXISTING_MODELS" | grep -q "nomic-embed-text"; then
-        log "nomic-embed-text already present. Skipping pull."
-      else
-        log "Pulling nomic-embed-text..."
-        kubectl -n "$NAMESPACE" exec "$OLLAMA_POD" -- ollama pull nomic-embed-text
-      fi
+      for model in "$LLM_PULL_MODEL" "$EMBED_PULL_MODEL"; do
+        if echo "$EXISTING_MODELS" | awk '{print $1}' | grep -qxF "$model"; then
+          log "${model} already present. Skipping pull."
+        else
+          log "Pulling ${model} (this may take several minutes)..."
+          kubectl -n "$NAMESPACE" exec "$OLLAMA_POD" -- ollama pull "$model"
+        fi
+      done
 
       log "Installed models:"
       kubectl -n "$NAMESPACE" exec "$OLLAMA_POD" -- ollama list
@@ -1173,46 +1259,34 @@ if [ "$SKIP_DNS" = false ]; then
     HOSTS_FILE="/etc/hosts"
     [ -f "/c/Windows/System32/drivers/etc/hosts" ] && HOSTS_FILE="/c/Windows/System32/drivers/etc/hosts"
 
-    # Verify the IP in the hosts file matches the CURRENT Traefik IP.
-    # When MetalLB's IPAddressPool is recreated (e.g. during a fresh
-    # bootstrap) the assigned LoadBalancer IP can change — we shipped
-    # 192.168.0.200 → 192.168.0.201 on 2026-05-18 and the browser kept
-    # hitting the old IP because the hosts file was never updated. The
-    # check below catches that drift and tells the user the exact
-    # one-line fix instead of just declaring "all good" on a stale entry.
-    HOSTS_LINE="$(grep -E '^[^#]*\stestlookup\.local(\s|$)' "$HOSTS_FILE" 2>/dev/null \
-                   | head -1 || true)"
-    HOSTS_IP="$(echo "$HOSTS_LINE" | awk '{print $1}')"
-
-    if [ -z "$HOSTS_LINE" ]; then
-      echo ""
-      warn "testlookup.local is NOT in your hosts file. Add it:"
-      echo ""
-      echo "  Windows (Admin PowerShell):"
-      echo "    Add-Content C:\\Windows\\System32\\drivers\\etc\\hosts \"$TRAEFIK_IP testlookup.local\""
-      echo "    ipconfig /flushdns"
-      echo ""
-      echo "  Linux/Mac:"
-      echo "    echo \"$TRAEFIK_IP testlookup.local\" | sudo tee -a /etc/hosts"
-      echo ""
-      warn "Note: Some browsers auto-upgrade .local to HTTPS. Use http:// explicitly."
-      echo ""
-    elif [ "$HOSTS_IP" != "$TRAEFIK_IP" ]; then
-      echo ""
-      warn "Hosts file points testlookup.local → ${HOSTS_IP}, but Traefik is now on ${TRAEFIK_IP}."
-      warn "Update the entry — the browser is hitting the wrong IP and getting nothing back."
-      echo ""
-      echo "  Windows (Admin PowerShell — replace existing line):"
-      echo "    \$h = 'C:\\Windows\\System32\\drivers\\etc\\hosts'"
-      echo "    (Get-Content \$h) -replace '\\d+\\.\\d+\\.\\d+\\.\\d+\\s+testlookup\\.local', '$TRAEFIK_IP testlookup.local' | Set-Content \$h"
-      echo "    ipconfig /flushdns"
-      echo ""
-      echo "  Linux/Mac:"
-      echo "    sudo sed -i.bak -E 's/^[0-9.]+[[:space:]]+testlookup\\.local/$TRAEFIK_IP testlookup.local/' /etc/hosts"
-      echo ""
-    else
-      log "Hosts file already maps testlookup.local → ${TRAEFIK_IP} ✓"
-    fi
+    # Verify the IP in the hosts file matches the CURRENT Traefik IP. When
+    # a LoadBalancer pool is recreated the assigned IP can change, and a
+    # browser keeps hitting the old one because the hosts file was never
+    # updated. This catches that drift and prints the exact fix.
+    case "$K3S_HOST" in
+      localhost|*.localhost)
+        log "${K3S_HOST} resolves to the loopback address; open it on a cluster node, or map it to ${TRAEFIK_IP} elsewhere." ;;
+      *)
+        HOST_RE="$(printf '%s' "$K3S_HOST" | sed 's/[.]/\\./g')"
+        HOSTS_LINE="$(grep -E "^[^#]*[[:space:]]${HOST_RE}([[:space:]]|\$)" "$HOSTS_FILE" 2>/dev/null \
+                       | head -1 || true)"
+        HOSTS_IP="$(echo "$HOSTS_LINE" | awk '{print $1}')"
+        if [ -z "$HOSTS_LINE" ]; then
+          echo ""
+          warn "${K3S_HOST} is NOT in your hosts file (and may not be in DNS). Add:"
+          echo "    ${TRAEFIK_IP} ${K3S_HOST}"
+          echo "  to /etc/hosts (Linux/macOS) or %SystemRoot%\\System32\\drivers\\etc\\hosts (Windows)."
+          warn "Some browsers upgrade unknown names to HTTPS. Use http:// explicitly."
+          echo ""
+        elif [ "$HOSTS_IP" != "$TRAEFIK_IP" ]; then
+          echo ""
+          warn "Hosts file points ${K3S_HOST} at ${HOSTS_IP}, but Traefik is now on ${TRAEFIK_IP}."
+          warn "Update that line to: ${TRAEFIK_IP} ${K3S_HOST}"
+          echo ""
+        else
+          log "Hosts file already maps ${K3S_HOST} to ${TRAEFIK_IP} ✓"
+        fi ;;
+    esac
   else
     warn "Could not determine Traefik IP. Check: kubectl -n kube-system get svc traefik"
   fi
@@ -1221,12 +1295,11 @@ fi
 # ── Step 10: Create Initial Admin User ─────────────────────
 header "Step 10 — Create Initial Admin User"
 
-# Defaults — override by exporting ADMIN_USERNAME/ADMIN_PASSWORD/ADMIN_EMAIL
-# before invoking this script. On first deploy these are written to the
-# .homelab-credentials file; subsequent deploys read from that file so the
-# banner stays accurate even after re-runs.
-CREDS_FILE="$REPO_ROOT/homelabsetup/.homelab-credentials"
-
+# The initial admin account is created ONCE, on a fresh install. Its password
+# is ADMIN_PASSWORD when you export one (or set it in the site configuration);
+# otherwise a random one is generated here. It is shown once and appended to
+# the credentials file. An admin that already exists is never modified: its
+# password is not changed and not shown (reset it with scripts/getUser.py).
 if [ -f "$CREDS_FILE" ] && grep -q "^ADMIN_PASSWORD=" "$CREDS_FILE"; then
   : "${ADMIN_USERNAME:=$(grep -E '^ADMIN_USERNAME=' "$CREDS_FILE" | cut -d= -f2- | head -n1)}"
   : "${ADMIN_PASSWORD:=$(grep -E '^ADMIN_PASSWORD=' "$CREDS_FILE" | cut -d= -f2- | head -n1)}"
@@ -1234,79 +1307,82 @@ if [ -f "$CREDS_FILE" ] && grep -q "^ADMIN_PASSWORD=" "$CREDS_FILE"; then
 fi
 
 ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-Admin@2026!}"
-ADMIN_EMAIL="${ADMIN_EMAIL:-admin@testlookup.local}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-admin@example.com}"
 ADMIN_FULL_NAME="${ADMIN_FULL_NAME:-TestLookup Admin}"
+ADMIN_PASSWORD_GENERATED=false
+if [ -z "${ADMIN_PASSWORD:-}" ]; then
+  ADMIN_PASSWORD="$(openssl rand -base64 24 | tr -d '=/+' | head -c 20)"
+  ADMIN_PASSWORD_GENERATED=true
+fi
 
 log "Waiting for backend to be ready..."
 ADMIN_OUTPUT=""
-ADMIN_RAN=false
+ADMIN_CREATED=false
 if wait_for_pods "$BACKEND_POD_SELECTOR" 120; then
   BACKEND_POD=$(kubectl -n "$NAMESPACE" get pod -l "$BACKEND_POD_SELECTOR" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
 
   if [ -n "$BACKEND_POD" ]; then
     log "Running scripts/createAdmin.py inside backend pod (idempotent)..."
     # Pipe the script over stdin (matches the docstring usage). `env ...` sets
-    # the per-invocation overrides so the script picks up our values without
-    # mutating the pod's environment.
+    # the per-invocation values without mutating the pod's environment. The
+    # script never prints the password; this script shows it once below.
     if ADMIN_OUTPUT=$(kubectl -n "$NAMESPACE" exec -i "$BACKEND_POD" -- \
         env \
           ADMIN_USERNAME="$ADMIN_USERNAME" \
           ADMIN_PASSWORD="$ADMIN_PASSWORD" \
           ADMIN_EMAIL="$ADMIN_EMAIL" \
           ADMIN_FULL_NAME="$ADMIN_FULL_NAME" \
+          ADMIN_PASSWORD_GENERATED="$ADMIN_PASSWORD_GENERATED" \
           python < "$REPO_ROOT/scripts/createAdmin.py" 2>&1); then
-      ADMIN_RAN=true
       echo "$ADMIN_OUTPUT"
+      if echo "$ADMIN_OUTPUT" | grep -q "^admin user created"; then
+        ADMIN_CREATED=true
+      fi
     else
       warn "createAdmin.py failed inside the backend pod. Output:"
       echo "$ADMIN_OUTPUT"
-      warn "Run manually once the backend is healthy:"
-      warn "  kubectl -n $NAMESPACE exec -i deployment/testlookup-backend -- \\"
-      warn "    env ADMIN_PASSWORD='$ADMIN_PASSWORD' python < scripts/createAdmin.py"
+      warn "Run it manually once the backend is healthy (it generates a password when"
+      warn "ADMIN_PASSWORD is unset and prints nothing secret):"
+      warn "  kubectl -n $NAMESPACE exec -i deployment/testlookup-backend -- python < scripts/createAdmin.py"
     fi
   else
     warn "Could not find backend pod. Create admin user manually later."
   fi
 else
   warn "Backend not ready. Create admin user manually after backend starts:"
-  echo "  kubectl -n testlookup exec -i deployment/testlookup-backend -- python < scripts/createAdmin.py"
+  echo "  kubectl -n $NAMESPACE exec -i deployment/testlookup-backend -- python < scripts/createAdmin.py"
 fi
 
-if [ "$ADMIN_RAN" = true ]; then
-  # Persist creds so future re-runs can read them back. We only write the
-  # admin block once — never overwrite a password the operator may have
-  # rotated via getUser.py.
-  if [ -f "$CREDS_FILE" ] && ! grep -q "^ADMIN_USERNAME=" "$CREDS_FILE"; then
+if [ "$ADMIN_CREATED" = true ]; then
+  # Persist the new admin's credentials beside the other generated secrets.
+  if [ ! -f "$CREDS_FILE" ] || ! grep -q "^ADMIN_USERNAME=" "$CREDS_FILE"; then
+    mkdir -p "$(dirname "$CREDS_FILE")"
+    ( umask 077; touch "$CREDS_FILE" )
     cat >> "$CREDS_FILE" <<CREDS
 
-# Initial admin user — printed on every deploy banner.
-# Rotate the password via scripts/getUser.py and update this file by hand.
+# Initial admin user (created $(date -u +"%Y-%m-%dT%H:%M:%SZ")).
+# Change the password after the first sign-in; this file is not updated then.
 ADMIN_USERNAME=${ADMIN_USERNAME}
 ADMIN_PASSWORD=${ADMIN_PASSWORD}
 ADMIN_EMAIL=${ADMIN_EMAIL}
 CREDS
-    log "Admin credentials appended to homelabsetup/.homelab-credentials"
+    log "Admin credentials saved to ${CREDS_FILE}"
   fi
 
   echo ""
   echo -e "${YELLOW}╔══════════════════════════════════════════════════════╗${NC}"
-  echo -e "${YELLOW}║  ADMIN LOGIN — TestLookup Dashboard                ║${NC}"
+  echo -e "${YELLOW}║  ADMIN LOGIN — SHOWN ONCE, SAVE IT NOW               ║${NC}"
   echo -e "${YELLOW}╠══════════════════════════════════════════════════════╣${NC}"
-  echo -e "${YELLOW}║${NC}  URL:      http://testlookup.local"
+  echo -e "${YELLOW}║${NC}  URL:      http://${K3S_HOST}"
   echo -e "${YELLOW}║${NC}  Username: ${ADMIN_USERNAME}"
   echo -e "${YELLOW}║${NC}  Password: ${ADMIN_PASSWORD}"
   echo -e "${YELLOW}║${NC}  Email:    ${ADMIN_EMAIL}"
   echo -e "${YELLOW}╚══════════════════════════════════════════════════════╝${NC}"
   echo ""
-
-  if echo "$ADMIN_OUTPUT" | grep -q "already exists"; then
-    warn "Admin user already existed — the password above is what the deploy"
-    warn "script believes is current (from .homelab-credentials or env). If it"
-    warn "was rotated out-of-band, reset it with:"
-    warn "  kubectl -n $NAMESPACE exec -i deployment/testlookup-backend -- \\"
-    warn "    env ADMIN_PASSWORD='$ADMIN_PASSWORD' python < scripts/getUser.py"
-  fi
+elif echo "$ADMIN_OUTPUT" | grep -q "already exists"; then
+  log "An admin account already exists — left unchanged (password not shown)."
+  log "To reset it: kubectl -n $NAMESPACE exec -i deployment/testlookup-backend -- \\"
+  log "  env ADMIN_PASSWORD='<new password>' python < scripts/getUser.py"
 fi
 
 # ── Retire the legacy process-wide MCP principal on upgrade ────────────────
@@ -1334,9 +1410,8 @@ if [ -n "$LEGACY_MCP_USER" ] && [ "${KEEP_LEGACY_MCP_SERVICE_ACCOUNT:-false}" !=
         python < "$REPO_ROOT/scripts/retireLegacyMcpServiceAccount.py"; then
       kubectl -n "$NAMESPACE" patch secret testlookup-secrets --type=merge \
         -p='{"data":{"MCP_USERNAME":null,"MCP_PASSWORD":null}}'
-      if [ -f "$REPO_ROOT/homelabsetup/.homelab-credentials" ]; then
-        sed -i '/^MCP_USERNAME=/d;/^MCP_PASSWORD=/d' \
-          "$REPO_ROOT/homelabsetup/.homelab-credentials"
+      if [ -f "$CREDS_FILE" ]; then
+        sed -i '/^MCP_USERNAME=/d;/^MCP_PASSWORD=/d' "$CREDS_FILE"
       fi
       log "Legacy MCP account retired and stored credentials removed."
     else
@@ -1394,7 +1469,7 @@ fi
 TRAEFIK_IP=$(kubectl -n kube-system get svc traefik -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
 if [ -n "$TRAEFIK_IP" ]; then
   log "Testing health endpoint via Traefik IP (HTTP, ingress is plain-text)..."
-  HEALTH=$(curl -sf --max-time 5 -H "Host: testlookup.local" "http://${TRAEFIK_IP}/health/live" 2>/dev/null || echo "")
+  HEALTH=$(curl -sf --max-time 5 -H "Host: ${K3S_HOST}" "http://${TRAEFIK_IP}/health/live" 2>/dev/null || echo "")
   if [ -n "$HEALTH" ]; then
     if [ "${DEPLOY_DEGRADED:-false}" = true ]; then
       warn "Ingress answered ($HEALTH) — but see the unhealthy pods above. This"
@@ -1426,14 +1501,14 @@ fi
 
 header "Deployment Complete"
 
-echo -e "${GREEN}TestLookup has been deployed to your K3s homelab cluster.${NC}"
+echo -e "${GREEN}TestLookup has been deployed to your K3s cluster.${NC}"
 echo ""
-echo "  Dashboard:      http://testlookup.local"
-echo "  User Docs:      http://testlookup.local/docs"
-echo "  API Reference:  http://testlookup.local/api-docs"
-echo "  Health Check:   http://testlookup.local/health/live"
+echo "  Dashboard:      http://${K3S_HOST}"
+echo "  User Docs:      http://${K3S_HOST}/docs"
+echo "  API Reference:  http://${K3S_HOST}/api-docs"
+echo "  Health Check:   http://${K3S_HOST}/health/live"
 echo ""
-echo "  Note: ingress is HTTP-only on the homelab. If a browser keeps redirecting"
+echo "  Note: the ingress is HTTP-only. If a browser keeps redirecting"
 echo "        to https://, clear the site's HSTS cache (chrome://net-internals/#hsts)."
 echo ""
 echo "Useful commands:"

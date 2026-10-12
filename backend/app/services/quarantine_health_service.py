@@ -1,7 +1,5 @@
 """Keep quarantine a loop, not a landfill.
 
-Phase 5 (P5-B) of ``architecture/TEST_INTELLIGENCE_PLAN.md``.
-
 The lifecycle already had the parts everyone builds: an SLA, auto-created
 defects, auto-promotion after a pass streak, and quarantined tests that keep
 running to collect health signals. The published closed-loop spec agrees with

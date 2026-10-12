@@ -78,7 +78,7 @@ export interface Step {
  * package (name `testlookup-cli`, not on PyPI — see `cli/pyproject.toml`), so it
  * is installed editable from source rather than `pip install testlookup-cli`.
  * This mirrors the documented step in `GETTING_STARTED.md`
- * (`pip install -e /app/cli/` inside the backend container); from a plain repo
+ * (`pip install -e cli/` from a clone of the repository); from a plain repo
  * checkout the path is the repo-root-relative `cli/`.
  */
 export const CLI_INSTALL_COMMAND = 'pip install -e cli/'

@@ -47,7 +47,8 @@ async def revoke_project_credentials(
 
     Returns counts of what changed. Idempotent — re-running on an
     already-revoked project reports zeros. Caller owns commit, per the
-    single-owner transaction rule in ``backend/CLAUDE.md``.
+    single-owner transaction rule: services stage and flush, the router
+    commits.
     """
     totals = {"qa_lead_accounts": 0, "api_keys": 0}
 

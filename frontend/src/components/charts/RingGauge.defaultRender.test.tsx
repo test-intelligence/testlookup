@@ -31,7 +31,7 @@
  * refactored `PassRateGauge` against the ORIGINAL file (`git show
  * d55c6ce1:…/PassRateGauge.tsx`) over 216 renders — sizes 60/120/200/320 x
  * animate undefined/false/true x 18 values including NaN, ±Infinity, both
- * clamps and every band edge: identical bytes in all 216 (docs/viz-work/w25/B4.md).
+ * clamps and every band edge: identical bytes in all 216.
  */
 import { render } from '@testing-library/react'
 import { cloneElement, isValidElement, type ReactElement, type ReactNode } from 'react'

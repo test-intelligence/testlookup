@@ -85,14 +85,26 @@ def test_manifest_shape():
     # Everything a default `make offline-bundle` must carry.
     assert "postgres:16-alpine" in core
     assert "busybox:1.36" in core
-    # One object-storage server tag for every surface (PGSTY Silo since
-    # MinIO's community images were withdrawn; the compose/k8s skew is gone).
-    silo = sorted(r.ref for r in rows if r.name == "pgsty/silo")
-    assert len(silo) == 1, "compose and k8s share one Silo tag"
-    assert not [r.ref for r in rows if "minio/minio" in r.name], "no withdrawn MinIO image may come back"
+    # One object-storage server tag for every surface: versitygw (Apache-2.0)
+    # replaced PGSTY Silo + mc (AGPL-3.0); buckets come from s3_setup.py.
+    s3 = sorted(r.ref for r in rows if r.name == "ghcr.io/versity/versitygw")
+    assert s3 == ["ghcr.io/versity/versitygw:v1.8.0"]
+    assert "valkey/valkey:8.1-alpine" in core
+    for gone in ("redis", "pgsty/silo", "pgsty/mc", "minio/minio", "minio/mc"):
+        assert not [r.ref for r in rows if r.name == gone], f"{gone} may not come back"
+    # MongoDB (SSPL-1.0) is a referenced prerequisite, never bundled.
+    mongo = [r for r in rows if r.name == "mongo"]
+    assert [(r.ref, r.bundle, r.surfaces) for r in mongo] == [("mongo:7", "external", ("compose", "k8s"))]
     # The optional LLM images are opt-in, never core.
     llm = {r.ref for r in rows if r.bundle == "llm"}
     assert llm == {"ollama/ollama:0.5.4", "chromadb/chroma:1.5.9"}
+
+
+def test_unknown_bundle_class_is_refused(tmp_path: Path):
+    manifest = tmp_path / "images.manifest.txt"
+    manifest.write_text("postgres:16-alpine  infra  compose,k8s  sometimes\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="unknown bundle class"):
+        load_manifest(manifest)
 
 
 # ── 2. Drift is actually detected ───────────────────────────────────────────
@@ -130,12 +142,24 @@ def test_manifest_entry_nothing_references_fails(repo: Path):
 def test_airgap_override_missing_a_service_fails(repo: Path):
     _sub(
         repo / "docker-compose.airgap.yml",
-        "  redis:\n    image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/redis:7-alpine\n",
+        "  redis:\n    image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/valkey/valkey:8.1-alpine\n",
         "",
     )
     errors = _joined(check(repo))
-    assert "redis:7-alpine" in errors
+    assert "valkey/valkey:8.1-alpine" in errors
     assert "docker.io" in errors, "the operator must be told what actually breaks"
+
+
+def test_airgap_override_must_still_repoint_the_external_mongo(repo: Path):
+    """Mongo is not bundled, but the override must still send it to the local
+    registry the operator mirrored it into — never to docker.io."""
+    _sub(
+        repo / "docker-compose.airgap.yml",
+        "  mongo:\n    image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/mongo:7\n",
+        "",
+    )
+    errors = _joined(check(repo))
+    assert "mongo:7" in errors and "docker.io" in errors
 
 
 def test_openshift_overlay_missing_a_remap_fails(repo: Path):
@@ -163,8 +187,8 @@ def test_hardcoded_infra_images_in_mirror_script_fails(repo: Path):
     script = repo / "openshiftsetup/mirror-images.sh"
     _sub(
         script,
-        'INFRA_IMAGES="${INFRA_IMAGES:-$(manifest_refs k8s infra core,llm | tr \'\\n\' \' \')}"',
-        'INFRA_IMAGES="postgres:16-alpine redis:7-alpine"',
+        'INFRA_IMAGES="${INFRA_IMAGES:-$(manifest_refs k8s infra core,llm,external | tr \'\\n\' \' \')}"',
+        'INFRA_IMAGES="postgres:16-alpine valkey/valkey:8.1-alpine"',
     )
     errors = _joined(check(repo))
     assert "hardcoded INFRA_IMAGES" in errors
@@ -184,7 +208,7 @@ def test_script_not_sourcing_the_manifest_fails(repo: Path):
 
 
 def test_latest_tag_in_any_compose_file_fails(repo: Path):
-    _sub(repo / "docker-compose.dev-lite.yml", "pgsty/mc:RELEASE.2026-09-16T00-00-00Z", "pgsty/mc:latest")
+    _sub(repo / "docker-compose.dev-lite.yml", "ghcr.io/versity/versitygw:v1.8.0", "ghcr.io/versity/versitygw:latest")
     errors = _joined(check_latest_tags(repo))
     assert "floating ':latest'" in errors
 

@@ -25,7 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN groupadd -r -g 1000 testlookup && useradd -r -u 1000 -g testlookup testlookup
 
 # ── TLS-interception CA support (homelab builds behind an HTTPS-inspecting
-#    middlebox: Norton/NordVPN SSL scanning, corporate proxy) ─────────────
+#    middlebox: a corporate proxy or endpoint-security TLS scanning) ──
 # When the host re-signs TLS with a private root CA, in-container pip can't
 # verify pypi.org against the public roots and dies with
 #   "unable to get local issuer certificate".
@@ -75,9 +75,8 @@ COPY . .
 # ``COPY --from=builder /app/__client_sdks_staged ./client_sdks``.
 # That directory is populated by the caller's CI (``ci.yml`` job
 # ``build-images`` step "Stage client SDKs into backend context", and
-# ``homelabsetup/deploy-homelab.sh``). When a deploy pipeline skips
-# the staging step — e.g. ``deploy-{aks,gke,eks,staging,production}.yml``
-# building directly with ``docker build ./backend`` — the path is
+# ``homelabsetup/deploy-homelab.sh``). When a build skips the staging
+# step — e.g. a plain ``docker build ./backend`` — the path is
 # missing and BuildKit fails to compute a cache key for the COPY,
 # producing:
 #   failed to compute cache key: failed to calculate checksum of ref

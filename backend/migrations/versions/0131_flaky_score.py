@@ -1,7 +1,5 @@
 """Add flaky_score — a continuous, explainable per-test flakiness score.
 
-Phase 2 (P2-B) of ``architecture/TEST_INTELLIGENCE_PLAN.md``.
-
 Replaces a binary flaky/not-flaky label with a bounded 0–1 score fused from four
 signals. Every component is stored alongside the score, not just the total, for
 two reasons: a score nobody can decompose is a number users are asked to trust
@@ -13,11 +11,12 @@ score. A test seen 4 times and a test seen 400 times can produce the same 0.5,
 and collapsing that distinction is precisely how a thin-history guess comes to
 look like a measurement.
 
-**Deliberately NOT a Bayesian posterior.** The Phase 0 census measured every
+**Deliberately NOT a Bayesian posterior.** A readiness census measured every
 genuine project on the reference deployment at 12–15 fingerprints with a median
 of 5–12 runs each — far below what a moving-window posterior needs, where it
 would mostly report its prior back. The four signals here degrade honestly at
-that volume. See the gate reading in the plan.
+that volume. ``flaky_readiness_service`` reports, per project, whether the
+history would support a posterior.
 
 Revision ID: 0131
 Revises: 0130

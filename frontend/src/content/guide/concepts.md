@@ -28,7 +28,7 @@ flowchart LR
 
 **Test fingerprint** — a stable identity for a test derived from its name and location. This is what lets TestLookup follow a test across runs and branches. **Rename a test and its history follows the old fingerprint.**
 
-**Suite** — the grouping a test belongs to. Taken from the report where present, inferred otherwise.
+**Suite** — the grouping a test belongs to. Taken from the report where present, inferred otherwise; tests without one land in the project's default suite. The **Suites** page and a suite's own page are described in [Test management](/docs/test-management#suites).
 
 **Build and branch** — your CI's identifiers, carried through as metadata. Branch matters because baselines are branch-aware.
 
@@ -44,7 +44,7 @@ flowchart LR
 
 **Defect** — a tracked problem promoted from a cluster, with severity and evidence. May be linked to an external ticket when an issue tracker is configured.
 
-**Release** — a named grouping of runs used for readiness assessment.
+**Release** — a named grouping of runs used for readiness assessment, with phases. See [Releases and gates](/docs/releases#releases).
 
 **Release gate** — the policy evaluated for a release, producing GO / CONDITIONAL_GO / NO_GO **as a recommendation**.
 

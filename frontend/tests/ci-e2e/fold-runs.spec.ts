@@ -6,8 +6,7 @@
  *
  * The scroller's `scrollHeight` is printed (FOLD line) so the page's height
  * before / after the template can be compared: measured on the unchanged page
- * first (P3 agent B's report, `docs/viz-work/p3-agent-B.md`: 1748 px, the
- * table at 652 px).
+ * first (1748 px, the table at 652 px).
  *
  * Also held here, in a browser: the failure signatures open in the side panel
  * (beside the page, not under the table), and the two Disclosures below the

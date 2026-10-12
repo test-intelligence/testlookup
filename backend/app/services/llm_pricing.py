@@ -1,6 +1,6 @@
 """Token → USD pricing, and honest capture of what a call actually used.
 
-Phase 0 of the Batch-API PRD. Before this module TestLookup could not measure
+Before this module TestLookup could not measure
 LLM cost **at all**: there was not one price constant in the backend, and every
 ``cost_usd`` traced back to a literal ``0.0`` with a comment promising that
 "cloud cost lands via base metering when known". It never did. The consequence

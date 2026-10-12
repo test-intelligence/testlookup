@@ -1,7 +1,5 @@
 """Add failure_attribution — one verdict per failure, with its evidence.
 
-Phase 4 of ``architecture/TEST_INTELLIGENCE_PLAN.md`` — the flagship.
-
 At Google roughly **84% of pass→fail transitions involve a flaky test**. A raw
 transition is therefore a weak signal of a real regression, and presenting one as
 "new failure" floods engineers with false positives until they dismiss the real

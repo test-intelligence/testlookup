@@ -1,6 +1,6 @@
 """Regression: TestRun.ingestion_source tracks how a run entered TestLookup.
 
-Manual-upload feature (PRD: Manual Test Report Upload, MRU-1/MRU-2). The
+Manual-upload feature. The
 ``ingestion_source`` column (migration 0091) lets the UI badge manually
 uploaded runs and lets dashboards distinguish CI-driven runs from operator
 uploads. This pins:

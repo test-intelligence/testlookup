@@ -27,7 +27,7 @@ Env:
     SERVICE_USERNAME   required
     SERVICE_PASSWORD   required — no default, see below
     SERVICE_ROLE       default QA_LEAD
-    SERVICE_EMAIL      default <username>@testlookup.local
+    SERVICE_EMAIL      default <username>@example.com
     SERVICE_FULL_NAME  default "<username> (service account)"
 """
 import asyncio
@@ -81,7 +81,7 @@ async def main() -> int:
     username = os.environ.get('SERVICE_USERNAME', '').strip()
     password = os.environ.get('SERVICE_PASSWORD', '')
     role_name = os.environ.get('SERVICE_ROLE', 'QA_LEAD').strip().upper()
-    email = os.environ.get('SERVICE_EMAIL', '').strip() or f'{username}@testlookup.local'
+    email = os.environ.get('SERVICE_EMAIL', '').strip() or f'{username}@example.com'
     full_name = (
         os.environ.get('SERVICE_FULL_NAME', '').strip()
         or f'{username} (service account)'

@@ -2,7 +2,7 @@
 
 TestLookup can generate test cases **from your own documents** — a requirements spec, an API doc, a runbook — instead of from a blank prompt. You register the documents as **knowledge sources**, and the AI drafts test cases grounded in them, each one citing the passages it came from. Every generated case is traceable to its evidence, so you review facts, not guesses.
 
-> This is part of the **optional AI stack** (ChromaDB + a local LLM) and is gated by `AI_OFFLINE_MODE` and a feature flag. In a default offline install, generation returns a deterministic stub rather than calling a model — enable the local-LLM profile ([GETTING_STARTED](../GETTING_STARTED.md), `make dev-llm`) to use it for real. Internals: [architecture/KNOWLEDGE_RAG.md](../architecture/KNOWLEDGE_RAG.md).
+> This is part of the **optional AI stack** (ChromaDB and a language model). Turn it on with **Enable Knowledge RAG** under **Settings → AI → AI configuration** (administrators); that switch is the `knowledge_rag` feature flag. Without a reachable model, generation returns a deterministic stub rather than calling one — on Compose, start the local-LLM profile ([GETTING_STARTED](../GETTING_STARTED.md), `make dev-llm`) to use it for real. `AI_OFFLINE_MODE` keeps the model and URL fetches on your own network. Internals: [architecture/KNOWLEDGE_RAG.md](../architecture/KNOWLEDGE_RAG.md).
 
 ## Registering knowledge sources
 
@@ -17,7 +17,7 @@ URL sources are validated against an allowlist and scheme check before fetching 
 
 ## Generating test cases
 
-In **Test Management**, the knowledge-generation tab (needs a specific project selected) lets you generate cases from the indexed sources:
+In **Test cases → More → Knowledge** (or **AI Generate → From documents**; needs a specific project selected) you generate cases from the indexed sources:
 
 1. Pick the knowledge source(s) to ground on (the source picker).
 2. Generate — the AI retrieves the most relevant chunks and drafts cases from them.
@@ -27,10 +27,10 @@ In **Test Management**, the knowledge-generation tab (needs a specific project s
 
 Generated cases don't silently become real tests — they go through a **review panel**. This is deliberate: the AI drafts, a human approves. Two signals help you review:
 
-- **Faithfulness** — an automatic score of whether each case is actually supported by its cited chunks (an LLM judge or the RAGAS metric). Low-faithfulness drafts are the ones to scrutinize or reject.
+- **Faithfulness** — an automatic score of whether each case is actually supported by its cited chunks (an LLM judge or the RAGAS metric). Low-faithfulness drafts are the ones to scrutinize or reject. Scoring, and the gate that holds back unfaithful drafts, run only when the `rag_faithfulness_gate` feature flag is on; it ships **off**, in which case every draft passes unscored.
 - **Citations** — read the cited passages; if they don't back the assertion, don't approve it.
 
-Approved cases join the [test-case catalog](test-management.md) like any other.
+Approved cases join the test-case catalogue like any other, under the [authored test-case lifecycle](test-management.md#authored-test-case-lifecycle).
 
 ## Keeping generated cases honest over time
 

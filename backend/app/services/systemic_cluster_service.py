@@ -1,7 +1,5 @@
 """Find tests that fail TOGETHER across runs, and name the shared cause.
 
-Phase 3 of ``architecture/TEST_INTELLIGENCE_PLAN.md``.
-
 ## The finding this implements
 
 Roughly 75% of flaky tests fail in co-occurring clusters rather than in

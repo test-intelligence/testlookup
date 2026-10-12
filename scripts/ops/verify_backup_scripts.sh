@@ -12,7 +12,7 @@
 #
 # For a LIVE round-trip (backup → wipe → restore → verify) against a
 # throwaway compose project, see the procedure documented in
-# user-guide/administration.md#backup--restore.
+# user-guide/administration.md#backup-restore--upgrades.
 # ============================================================
 
 set -euo pipefail

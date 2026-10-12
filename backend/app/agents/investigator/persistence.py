@@ -1,4 +1,4 @@
-"""Row-level persistence helpers for the Investigator (Agentic plan AI-1).
+"""Row-level persistence helpers for the Investigator.
 
 The investigation row (``agent_investigations``) is the progress surface the
 UI polls, so hypothesis nodes persist their result the moment they finish.

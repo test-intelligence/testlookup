@@ -920,8 +920,8 @@ async def list_test_suites(
     # suite (e.g. "Realistic TestNG client examples") is visible on /runs
     # and /coverage but invisible on /test-management because the catalog
     # SQL above only reads from test_cases. Same root cause as the
-    # ingestion_pipeline.finalize_run skip documented in CLAUDE.md
-    # pitfall #15 — and the same union-fallback pattern used in
+    # live-stream path skipping ingestion_pipeline.finalize_run, which
+    # left its suites unlinked — and the same union-fallback pattern used in
     # services/summary_report_service._per_suite_breakdown_window.
     run_aggregate_where = "AND tr.project_id = :project_id" if project_id else ""
     if release_where:

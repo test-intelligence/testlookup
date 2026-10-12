@@ -1,5 +1,5 @@
 // crypto.randomUUID is only exposed in secure contexts (HTTPS or localhost).
-// Homelab/plain-HTTP deployments (e.g. http://testlookup.local) lack it, which
+// Plain-HTTP deployments (e.g. http://testlookup.example.com) lack it, which
 // breaks third-party libraries that call it unconditionally. crypto.getRandomValues
 // is available even in insecure contexts, so we shim randomUUID on top of it.
 if (typeof globalThis.crypto !== 'undefined' && typeof globalThis.crypto.randomUUID !== 'function') {

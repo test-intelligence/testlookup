@@ -7,8 +7,8 @@ on:
   #
   # Deliberately NOT ``**/*.md``. That glob would also swallow
   # ``docs/reference/**``, whose markdown is GENERATED from Python source
-  # (schemas.md, python-contracts.md) and checked against it by the backend
-  # job's handoff-reference step. A hand-edit there must still face the drift
+  # (schemas.md, data-dictionary.md) and checked against it by the backend
+  # job's reference step. A hand-edit there must still face the drift
   # check, so those paths keep triggering the full run.
   #
   # The list is spelled out twice rather than shared through a YAML anchor:
@@ -100,7 +100,7 @@ jobs:
           echo "All k8s image tags pinned. ✓"
 
       # Same rule, widened to Compose. `docker-compose.dev-lite.yml` shipped
-      # minio/minio:latest + minio/mc:latest (now pgsty/silo + pgsty/mc) for a long time because the grep
+      # minio/minio:latest + minio/mc:latest (since replaced) for a long time because the grep
       # above only ever looked at k8s/ — and an unpinned tag makes an offline
       # bundle unreproducible (whatever was on Docker Hub the day it was built
       # is what the customer runs forever, with no record of which version).
@@ -154,8 +154,9 @@ jobs:
 
   # ─────────────────────────────────────────────────────────────
   # JOB 0b: Cross-cutting invariant guards
-  # Runs scripts/quality_gate.py which codifies the rules from
-  # CLAUDE.md as a ratchet: existing violations are baselined in
+  # Runs scripts/quality_gate.py, which codifies the repo's
+  # cross-cutting invariants (architecture/DEVELOPER_GUIDE.md §1)
+  # as a ratchet: existing violations are baselined in
   # scripts/quality-gate-baselines/, only NEW violations fail.
   # No backend / frontend / DB deps required — file IO plus `git
   # check-ignore` / `git ls-files` for the repo.no-gitignored-source
@@ -309,14 +310,34 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+      # Valkey (BSD-3-Clause), the image every deployment ships, from ECR Public.
       redis:
-        image: public.ecr.aws/docker/library/redis:7-alpine
+        image: public.ecr.aws/valkey/valkey:8.1-alpine
         ports: ["6379:6379"]
         options: >-
-          --health-cmd "redis-cli ping"
+          --health-cmd "valkey-cli ping"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+
+      # The bundled S3 store (versitygw, Apache-2.0), for
+      # tests/integration/test_s3_storage_versitygw.py. GHCR, not Docker Hub.
+      # Test-only root credentials; /tmp/vgw exists in the image.
+      s3:
+        image: ghcr.io/versity/versitygw:v1.8.0
+        env:
+          VGW_BACKEND: posix
+          VGW_BACKEND_ARG: /tmp/vgw
+          ROOT_ACCESS_KEY: ci-s3-root
+          ROOT_SECRET_KEY: ci-s3-root-secret-test-only
+          VGW_PORT: ":9000"
+          VGW_HEALTH: /health
+        ports: ["9000:9000"]
+        options: >-
+          --health-cmd "wget -q -O /dev/null http://127.0.0.1:9000/health"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
 
     defaults:
       run:
@@ -332,21 +353,10 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
-      - name: Set up Node.js 22 for cross-surface mutation harnesses
-        uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
           pip install -e ../cli
-
-      - name: Install frontend dependencies for mutation harnesses
-        working-directory: ./frontend
-        run: npm install
 
       - name: Lint with ruff
         run: ruff check app/ tests/
@@ -376,14 +386,14 @@ jobs:
           AI_OFFLINE_MODE: "true"
         run: python -m app.services.agent_api_docs --check
 
-      - name: Handoff references and documentation tests
+      - name: Reference docs and documentation tests
         working-directory: .
         env:
           PYTHONDONTWRITEBYTECODE: "1"
         run: |
-          python scripts/generate_handoff_reference.py --check
-          python scripts/check_handoff_docs.py
-          python -m pytest scripts/test_handoff_docs.py -q -p no:cacheprovider
+          python scripts/generate_reference.py --check
+          python scripts/check_reference_docs.py
+          python -m pytest scripts/test_reference_docs.py -q -p no:cacheprovider
 
       - name: Run tests
         env:
@@ -392,6 +402,9 @@ jobs:
           REDIS_URL: redis://localhost:6379/0
           CELERY_BROKER_URL: redis://localhost:6379/0
           TESTLOOKUP_RUN_REDIS_INTEGRATION: "1"
+          TESTLOOKUP_S3_TEST_ENDPOINT: http://localhost:9000
+          TESTLOOKUP_S3_TEST_ACCESS_KEY: ci-s3-root
+          TESTLOOKUP_S3_TEST_SECRET_KEY: ci-s3-root-secret-test-only
           LLM_PROVIDER: ollama
           LLM_MODEL: qwen2.5:7b
           AI_OFFLINE_MODE: "true"
@@ -481,10 +494,10 @@ jobs:
           --health-retries 10
 
       redis:
-        image: public.ecr.aws/docker/library/redis:7-alpine
+        image: public.ecr.aws/valkey/valkey:8.1-alpine
         ports: ["6379:6379"]
         options: >-
-          --health-cmd "redis-cli ping"
+          --health-cmd "valkey-cli ping"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
@@ -627,7 +640,6 @@ jobs:
           git fetch --no-tags --depth=1 origin "$base_sha"
           if git diff --quiet "$base_sha" HEAD -- \
             '.github/workflows/ci.yml' \
-            '.github/workflows/deploy-staging.yml' \
             'docker-compose*.yml' \
             'backend/app/worker/celery_app.py' \
             'backend/app/worker/ingestion_routing.py' \
@@ -717,6 +729,7 @@ jobs:
           tests/integration/test_run_email_report_postgres.py
           tests/integration/test_jira_fake_contract_postgres.py
           tests/integration/test_case_latest_execution_postgres.py
+          tests/integration/test_manual_upload_default_postgres.py
           tests/integration/test_every_get_route_answers_without_500_postgres.py
           tests/integration/test_key_mint_revoke_race_postgres.py
           tests/integration/test_migration_index_leftovers_postgres.py

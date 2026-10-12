@@ -1,6 +1,6 @@
 """Unit tests for services.ai_config_resolver — the single source of truth for AI config.
 
-CLAUDE.md mandates a strict precedence:
+AI config resolves with a strict precedence:
 
   1. Database overrides (``AppSetting.key == "ai_config"``)
   2. Secret refs (``secret_service.read_secret("ai_config", <key>)``)

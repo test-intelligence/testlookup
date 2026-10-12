@@ -6,7 +6,7 @@
 | **Decision** | Keep **Recharts 3** for simple charts. Add **Apache ECharts 6**, registered per chart type on the canvas renderer, for dense charts. Use **three.js** for the single opt-in 3D scatter. Reject `echarts-gl`, Plotly and Highcharts. |
 | **Applies to** | `frontend/` — every chart added by the Visualization Upgrade (stories `VIZ-*`) |
 | **Supersedes** | — |
-| **Amended** | 2026-10-02, Wave 3: the treemap and scatter types, `d3-hierarchy` / `d3-force` for the failure-group layouts, no ECharts `large` mode (section "Wave 3 amendment"). 2026-10-04, VIZ-508: the 3D scatter shipped, its bundle markers proven (section "VIZ-508 amendment") |
+| **Amended** | 2026-10-02: the treemap and scatter types, `d3-hierarchy` / `d3-force` for the failure-group layouts, no ECharts `large` mode (section "Amendment: treemap, scatter and d3 layouts"). 2026-10-04: the 3D scatter shipped, its bundle markers proven (section "Amendment: the 3D scatter") |
 
 ## Context
 
@@ -123,17 +123,16 @@ scans the real tree.
 - **Bundle.** `echarts`, `zrender`, `recharts` and `three` must not be in an eagerly preloaded
   chunk. Each is detected by string literals that survive minification. three.js has two markers:
   `__THREE__`, which is a top-level side effect that tree-shaking may drop, and
-  `WebGLRenderer: Context Lost.`. VIZ-508 proved both with an eager-import build (see the
-  "VIZ-508 amendment"). The lazy ECharts base chunk has a ceiling of 198 600 bytes gzip. No production route
+  `WebGLRenderer: Context Lost.`. Both were proven with an eager-import build (see
+  "Amendment: the 3D scatter"). The lazy ECharts base chunk has a ceiling of 198 600 bytes gzip. No production route
   renders ECharts yet, so no build tests that ceiling, and the script's output says so. The script
   also prints the remaining eager headroom. On 2026-09-22 it measured 178 205 of 180 000 bytes,
   which leaves 1 795 bytes (1.0%).
 
-## Wave 3 amendment (2026-10-02)
+## Amendment: treemap, scatter and d3 layouts (2026-10-02)
 
-Wave 3 (VIZ-501, 502, 504, 506) added two ECharts types and two small d3 modules. Three spikes ran
-first under the production CSP `<meta>` (`docs/viz-work/w3/spikes.md`, gitignored; summarised
-here): S1 treemap `highlight` + `showTip`, S2 brush without a toolbox, S3 d3 pack + force. All
+This amendment added two ECharts types and two small d3 modules. Three spikes ran
+first under the production CSP `<meta>` (summarised here): S1 treemap `highlight` + `showTip`, S2 brush without a toolbox, S3 d3 pack + force. All
 three passed with zero CSP violations.
 
 1. **Treemap** (`engines/echarts/treemap.ts`: `TreemapChart`; option in
@@ -170,15 +169,15 @@ three passed with zero CSP violations.
    filter) gets its handler AND, for the SVG cursor charts, the activation code (`markKit`) from
    its host, so `ChartCursor` and `BarChart` import only types and a page whose bars or day
    strips take no activation downloads none of it. `sectionOnlyModules.test.ts` lists the
-   Wave 3 modules no page may reach statically.
+   section-only modules no page may reach statically.
 5. **No formatter, still.** Every new option is built without a `*formatter` (axis numbers are
    ECharts' defaults on a decade-snapped log axis with the unit in the axis name; labels are
    pre-truncated text), and tooltips stay `domTooltipFormatter`. The chart guard and the runtime
    check above did not change.
 
-The ECharts base chunk measured 160,453 bytes gzip with Wave 3 (ceiling 198,600).
+The ECharts base chunk measured 160,453 bytes gzip after this amendment (ceiling 198,600).
 
-## VIZ-508 amendment (2026-10-04)
+## Amendment: the 3D scatter (2026-10-04)
 
 The opt-in 3D test scatter shipped behind `viz_three_d` (seeded OFF by migration 0192; turned
 on by 0195; no longer read since Phase D, see the amendment below).

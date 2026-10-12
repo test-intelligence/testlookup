@@ -36,7 +36,7 @@ from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -416,7 +416,12 @@ async def _seed_users(db: AsyncSession) -> dict[UserRole, User]:
     print("Creating demo users...")
     users: dict[UserRole, User] = {}
     for u in USERS:
-        existing = (await db.execute(select(User).where(User.email == u["email"]))).scalar_one_or_none()
+        # Match on the username too: an install that already created its first
+        # admin (`admin`, via create_admin.py) must not make the demo seed fail
+        # on the unique username. An existing account is reused, never modified.
+        existing = (await db.execute(
+            select(User).where(or_(User.email == u["email"], User.username == u["username"]))
+        )).scalars().first()
         if existing:
             users[u["role"]] = existing
             print(f"  {u['email']} already exists — skipped")

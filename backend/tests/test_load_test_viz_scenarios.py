@@ -241,8 +241,8 @@ class TestTargetGuard:
 
     @pytest.mark.parametrize(
         "url",
-        ["http://127.0.0.1:18000", "https://testlookup.local", "http://testlookup.local:8000",
-         "http://192.168.1.50:8000"],
+        ["http://127.0.0.1:18000", "https://testlookup.example.com",
+         "http://testlookup.example.com:8000", "http://192.168.1.50:8000"],
     )
     def test_other_targets_are_allowed(self, url):
         harness.check_target(url)

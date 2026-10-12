@@ -1,4 +1,4 @@
-"""Fixer run orchestrator (Agentic plan AI-2).
+"""Fixer run orchestrator.
 
 ``run_fixer_run`` executes one budgeted fixer run end-to-end:
 

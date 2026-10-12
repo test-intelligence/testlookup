@@ -4,7 +4,7 @@ import { defineConfig } from '@playwright/test'
  * Route and action sweeps against a LIVE deployment (see tests/sweeps/common.ts).
  * Not part of the hermetic CI lanes: they need a running backend with data.
  *
- *   SWEEP_BASE_URL=http://testlookup.local SWEEP_FIXTURES=/tmp/sweep-fixtures.json \
+ *   SWEEP_BASE_URL=http://testlookup.localhost SWEEP_FIXTURES=/tmp/sweep-fixtures.json \
  *     npx playwright test -c playwright.sweep.config.ts [route-sweep|action-sweep]
  *
  * One worker by default: a sweep should not be the load that breaks the deployment.

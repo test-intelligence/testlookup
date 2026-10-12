@@ -1,0 +1,8 @@
+TestLookup Reporter (Java)
+Copyright 2026 TestLookup Contributors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+The "-all" jar bundles and relocates Jackson (com.fasterxml.jackson, Apache
+License 2.0) and SnakeYAML (org.yaml:snakeyaml, Apache License 2.0). Their
+NOTICE files are merged below this text when the jar is built.

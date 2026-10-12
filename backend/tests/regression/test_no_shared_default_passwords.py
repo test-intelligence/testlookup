@@ -4,7 +4,7 @@
 gave every one of them the same password, written as a module constant in an
 open-source file::
 
-    DEFAULT_QA_LEAD_PASSWORD = "QaLead@2026!"
+    DEFAULT_QA_LEAD_PASSWORD = "<a fixed literal, redacted>"
     ...
     hashed_password=get_password_hash(DEFAULT_QA_LEAD_PASSWORD),
     is_active=True,

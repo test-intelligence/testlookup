@@ -1,12 +1,12 @@
 /**
- * End-to-end contract probes for OPEN backlog items.
+ * End-to-end contract probes for endpoints that are planned but may not exist.
  *
- * Each test asserts the user-visible behaviour the backlog promises.
+ * Each test asserts the user-visible behaviour the endpoint should have.
  * For endpoints that aren't implemented yet, the test must NOT fail
  * the suite — it ``skip``s with a clear reason. When the item lands,
  * we flip ``skip`` to ``test`` and the suite enforces the contract.
  *
- * Backlog source: ``docs/BACKLOG.md``. Items covered here:
+ * Endpoints covered here:
  *
  *   1. ``GET /api/v1/intelligence/insights?range=24h``
  *   2. ``GET /api/v1/intelligence/spend?cycle=current``
@@ -39,7 +39,7 @@ test.describe('Backlog pending contracts', () => {
     expect(resp.status()).toBeLessThan(500)
     if (resp.status() === 200) {
       const body = await resp.json()
-      // Acceptance shape from BACKLOG.md: a list of insight cards
+      // Expected shape: a list of insight cards
       // covering perf drift, flake-rising, coverage drop, cost.
       // Tolerate either ``{items: [...]}`` or ``[...]``.
       const items = Array.isArray(body) ? body : body.items ?? body.insights

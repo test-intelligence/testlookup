@@ -6,8 +6,7 @@
  * never scrolls the window), at load, nothing scrolled.
  *
  * The page's height and the hero's top are recorded as annotations
- * (`main-scroll-height`, `primary-top`) for the P3 report
- * (`docs/viz-work/p3-agent-D.md`): before P3 the page was 3,686 px tall and
+ * (`main-scroll-height`, `primary-top`). Before the page template the page was 3,686 px tall and
  * the pass-rate chart started at 1,231 px (verdict card, KPI cells, cadence
  * and daily breakdown above it); after, 1,733 px and 254 px.
  * Harness: `tests/lib/production-pages.ts` (fail-closed mocks).

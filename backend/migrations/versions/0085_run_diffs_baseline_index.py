@@ -4,7 +4,7 @@ Revision ID: 0085
 Revises: 0084
 Create Date: 2026-05-16
 
-Database audit 2026-05-16 (docs/DATABASE_AUDIT_2026-05-16.md, finding P3-4).
+A database audit (2026-05-16) found that
 ``RunDiff.baseline_run_id`` is the only baseline-pointer FK in the
 run-comparison schema without an index. Its sibling
 ``RunBaseline.baseline_run_id`` already has ``ix_run_baselines_baseline``

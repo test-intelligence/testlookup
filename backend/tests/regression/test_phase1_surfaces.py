@@ -1,8 +1,8 @@
-"""Phase 1 surfaces must show evidence, not erase it.
+"""Stability surfaces must show evidence, not erase it.
 
-Roadmap Phase 1 (``architecture/TEST_INTELLIGENCE_PLAN.md``). Each test pins a
-property that, if it regressed, would silently remove information a user needs
-to judge stability — the failure mode all three Phase 1 items exist to fix.
+Covers the per-test run-history timeline and the flake-load metric. Each test
+pins a property that, if it regressed, would silently remove information a user
+needs to judge stability — the failure mode all three surfaces exist to fix.
 
 1. **The per-test history payload must carry run context.** A timeline that
    cannot say *which environment* is just a list of ticks.
@@ -111,7 +111,7 @@ def test_zero_runs_is_insufficient_not_zero_percent():
 
 
 def test_payload_states_the_load_framing_so_it_cannot_read_as_a_backlog():
-    """THE Phase 1 framing guard. Flaky-test insertion rate tracks the fix
+    """THE flake-load framing guard. Flaky-test insertion rate tracks the fix
     rate, so anything implying a remaining count trending to zero is a promise
     that will never be kept."""
     payload = summarize_flake_load(100, 5, project_id="p", window_days=30).to_dict()

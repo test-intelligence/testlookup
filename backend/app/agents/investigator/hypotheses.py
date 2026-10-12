@@ -1,4 +1,4 @@
-"""The five hypothesis sub-agents of the Investigator (Agentic plan AI-1).
+"""The five hypothesis sub-agents of the Investigator.
 
 Each sub-agent follows the same discipline:
 

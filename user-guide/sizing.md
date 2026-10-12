@@ -29,8 +29,8 @@ The dev/self-host Compose stack ships these limits **(configured — `deploy.res
 |---|---|---|---|---|
 | postgres | 2.0 | 4 GB ↑ | 512 MB | The primary store; give it the fastest disk you have. Medium: 8 GB, large: 16 GB + tuned `shared_buffers` (estimate). |
 | mongo | 2.0 | 4 GB | 512 MB | Pipeline event logs / audit streams. Grows with ingestion volume; see the math below. |
-| redis | 1.0 | 768 MB | 128 MB | Broker + caches + live buffers. `maxmemory 512mb` **(configured)**; ingestion backpressure rejects new batches at 75% of maxmemory **(configured: `INGEST_REDIS_MEMORY_THRESHOLD_PCT`)**. Raise maxmemory for heavy live-streaming (many concurrent SDK sessions). |
-| minio | — | — | — | Unbounded by config; sized by your attachments/reports (see disk math). |
+| redis (Valkey) | 1.0 | 768 MB | 128 MB | Broker + caches + live buffers. `maxmemory 512mb` **(configured)**; ingestion backpressure rejects new batches at 75% of maxmemory **(configured: `INGEST_REDIS_MEMORY_THRESHOLD_PCT`)**. Raise maxmemory for heavy live-streaming (many concurrent SDK sessions). |
+| minio (the bundled S3 server, versitygw) | — | — | — | Unbounded by config; sized by your attachments/reports (see disk math). |
 | backend | 2.0 | 2 GB | 256 MB | Stateless — scale horizontally behind an ingress if API latency matters. |
 | worker | 2.0 | 3 GB ↑ | 512 MB | Ingestion + analysis. First knob to turn: `CELERY_CONCURRENCY` (default 4) or more replicas. Every ingestion worker must subscribe to **all** shard queues ([INGESTION_SCALE.md §3](../architecture/INGESTION_SCALE.md#3-shard-queues-workeringestion_routingpy)). |
 | beat / flower / frontend / mcp | — | — | — | Negligible (tens of MB each). |
@@ -39,7 +39,7 @@ The dev/self-host Compose stack ships these limits **(configured — `deploy.res
 
 - Each project's batch ingest is budgeted at **200 batches/minute** (`INGEST_RATE_LIMIT_PER_MINUTE`). SDK event batches, JSON result uploads (`POST /api/v1/ingest`) and result-file uploads (`POST /api/v1/ingest/file`) all draw on this one budget.
 - Single live events (`POST /ws/events/{run_id}`) have a separate budget of **20,000 events/minute** per project (`INGEST_EVENT_RATE_LIMIT_PER_MINUTE`).
-- A spent budget answers `429` with a `Retry-After` header. While Redis memory is over its backpressure threshold, every result-ingest route answers `503`. Setting a budget to `0` disables it.
+- A spent budget answers `429` with a `Retry-After` header. While the cache's (Valkey) memory is over its backpressure threshold, every result-ingest route answers `503`. Setting a budget to `0` disables it.
 - One uploaded report may carry at most **50,000 test results** (`INGEST_MAX_RESULTS_PER_UPLOAD`), the same cap as one JSON batch. A larger report is refused with the reason `too_many_results`; split it into smaller reports.
 - Live run buffers cap at **50,000 events/run** (`LIVE_BUFFER_MAX_EVENTS_PER_RUN`), and older events are drained to Postgres every ~30 s. The live event stream is capped at 100k entries.
 
@@ -49,8 +49,8 @@ Everything above runs the rules/ML analysis tier. Adding the local LLM tier (Oll
 
 | Component | Disk | RAM | Notes |
 |---|---|---|---|
-| Ollama + `qwen2.5:7b` | ~5 GB | ~6–8 GB during inference (estimate) | CPU inference works but is slow (tens of seconds per analysis); a GPU with 8 GB+ VRAM is the comfortable path. The larger models (`make pull-llm-large`) want 16 GB+ VRAM. |
-| `nomic-embed-text` | ~0.3 GB | small | Embeddings for semantic search / RAG. |
+| Ollama + `qwen2.5:7b-instruct` (the default model) | ~5 GB | ~6–8 GB during inference (estimate) | CPU inference works but is slow (tens of seconds per analysis); a GPU with 8 GB+ VRAM is the comfortable path. The larger models (`make pull-llm-large`) want 16 GB+ VRAM. |
+| `nomic-embed-text:v1.5` | ~0.3 GB | small | Embeddings for semantic search / RAG. |
 | ChromaDB | ~1–2 KB per indexed test (estimate) | ~0.5–1 GB | Rebuildable state — it is deliberately **excluded from backups** and re-indexed hourly from Postgres. |
 
 LLM **cost** ceilings are separate from sizing: analysis is debounced, budgeted per project/day, and sampled at high volume ([INGESTION_SCALE.md §6](../architecture/INGESTION_SCALE.md#6-keeping-the-ai-layer-affordable-under-volume)), so ingestion volume does not translate 1:1 into inference load.
@@ -77,10 +77,10 @@ Postgres+Mongo growth/day ≈ results_per_day × 3 KB
 
 All estimates — multiply by your real failure rate and stack-trace verbosity. Two additional pools:
 
-- **MinIO** grows only with what you attach: screenshots/videos/HTML reports uploaded alongside results, compliance packs, RAG documents. A Playwright shop attaching failure screenshots can easily outgrow the databases here — budget it from your attachment policy, not from result counts.
+- **Object storage** grows only with what you attach: screenshots/videos/HTML reports uploaded alongside results, compliance packs, RAG documents. A Playwright shop attaching failure screenshots can easily outgrow the databases here — budget it from your attachment policy, not from result counts.
 - **Backups** (`make backup`) are compressed; expect an archive at roughly 20–40% of the live Postgres+Mongo footprint **(estimate)**. Keep at least 2× the newest archive free on the backup destination.
 
-When disk pressure arrives, the levers are per-project retention/cleanup (**Settings → Project Data**) and pruning old backups. Keep free headroom above **2× the Postgres volume size** so restores and migration table rewrites always have working room (`make preflight` checks this for you).
+When disk pressure arrives, the levers are per-project retention (**Settings → Project → Retention & purge**), a project reset (**Project data**) and pruning old backups. Keep free headroom above **2× the Postgres volume size** so restores and migration table rewrites always have working room (`make preflight` checks this for you).
 
 ## Related
 

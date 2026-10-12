@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Create and verify the immutable image set for a TestLookup release.
 
-The release workflow builds the three application images once, records their
-registry digests here, and later deployment workflows materialize that same
-set under a destination registry.  A tag is deliberately not accepted as an
+CI builds the three application images once and records their registry
+digests here; a deployment can later materialize that same set under a
+destination registry.  A tag is deliberately not accepted as an
 image identity: tags may be moved after verification while a digest cannot.
 
 The module intentionally uses only the Python standard library so it can run

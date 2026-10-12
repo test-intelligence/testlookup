@@ -1,8 +1,8 @@
 # Database migration inventory
 
-[Documentation home](../README.md) · [Regeneration](../handoff/maintenance.md)
+[Documentation home](../README.md) · [Regeneration](../maintainers/maintenance.md)
 
-Generated from tracked source by `scripts/generate_handoff_reference.py`. Do not edit by hand. The baseline and validation limits are recorded in [verification](../handoff/verification.md).
+Generated from tracked source by `scripts/generate_reference.py`. Do not edit by hand. What the checks cover is recorded in [verification](../maintainers/verification.md).
 
 Alembic revisions extracted without executing migrations. An inventory is not evidence that a live database is upgraded. Run `alembic current` and `alembic heads` in the target deployment.
 
@@ -116,7 +116,7 @@ Alembic revisions extracted without executing migrations. An inventory is not ev
 | [backend/migrations/versions/0106_notify_routing_delta_digests.py](../../backend/migrations/versions/0106_notify_routing_delta_digests.py) | `'0106'` | `'0105'` | ownership-routed notifications + delta digests |
 | [backend/migrations/versions/0107_digest_report_attachment.py](../../backend/migrations/versions/0107_digest_report_attachment.py) | `'0107'` | `'0106'` | digest report attachment opt-in |
 | [backend/migrations/versions/0108_agent_investigations_ledger_policies.py](../../backend/migrations/versions/0108_agent_investigations_ledger_policies.py) | `'0108'` | `'0107'` | agent investigations + policies + agent-runs ledger |
-| [backend/migrations/versions/0109_fix_attempts.py](../../backend/migrations/versions/0109_fix_attempts.py) | `'0109'` | `'0108'` | fix attempts table (Agentic plan AI-2 — the Fixer) |
+| [backend/migrations/versions/0109_fix_attempts.py](../../backend/migrations/versions/0109_fix_attempts.py) | `'0109'` | `'0108'` | fix attempts table (the Fixer) |
 | [backend/migrations/versions/0110_run_commit_ranges.py](../../backend/migrations/versions/0110_run_commit_ranges.py) | `'0110'` | `'0109'` | run commit ranges — commit attribution (Epic 8 US-8.1/US-8.2) |
 | [backend/migrations/versions/0111_gitlab_integrations.py](../../backend/migrations/versions/0111_gitlab_integrations.py) | `'0111'` | `'0110'` | gitlab_integrations + gitlab feature flag |
 | [backend/migrations/versions/0112_value_metric_assumptions.py](../../backend/migrations/versions/0112_value_metric_assumptions.py) | `'0112'` | `'0111'` | value_metric_assumptions — per-project hours-saved tunables |
@@ -208,3 +208,4 @@ Alembic revisions extracted without executing migrations. An inventory is not ev
 | [backend/migrations/versions/0198_clean_seeded_member_roles.py](../../backend/migrations/versions/0198_clean_seeded_member_roles.py) | `'0198'` | `'0197'` | Clean 'UserRole.X' role strings again: the dev seed re-created them after 0045. |
 | [backend/migrations/versions/0199_date_seeded_test_cases_at_their_run.py](../../backend/migrations/versions/0199_date_seeded_test_cases_at_their_run.py) | `'0199'` | `'0198'` | Date the dev seed's test cases at their run, not at the moment the seed ran. |
 | [backend/migrations/versions/0200_test_case_category_from_its_analysis.py](../../backend/migrations/versions/0200_test_case_category_from_its_analysis.py) | `'0200'` | `'0199'` | Give each analysed test case the category its analysis concluded. |
+| [backend/migrations/versions/0201_manual_upload_on_for_new_installs.py](../../backend/migrations/versions/0201_manual_upload_on_for_new_installs.py) | `'0201'` | `'0200'` | Turn the ``manual_upload`` flag ON for a new install, and only for one. |

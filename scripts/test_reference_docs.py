@@ -1,0 +1,252 @@
+"""Negative-path checks for the reference tooling; no application services are started."""
+
+from __future__ import annotations
+
+import ast
+import contextlib
+import difflib
+import io
+import re
+import runpy
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.dont_write_bytecode = True
+
+
+class CheckerTests(unittest.TestCase):
+    def check(self, relative: str | None = None, transform=None):
+        original = Path.read_text
+
+        def read(path, *args, **kwargs):
+            content = original(path, *args, **kwargs)
+            if relative and path.resolve() == (ROOT / relative).resolve():
+                return transform(content)
+            return content
+
+        output = io.StringIO()
+        with patch.object(Path, "read_text", read), contextlib.redirect_stdout(output):
+            try:
+                runpy.run_path(
+                    str(ROOT / "scripts/check_reference_docs.py"), run_name="__main__"
+                )
+            except (ValueError, RuntimeError, OSError) as error:
+                return error, output.getvalue()
+            except SystemExit as error:
+                return error, output.getvalue()
+        return None, output.getvalue()
+
+    def test_current_documentation_passes(self):
+        error, output = self.check()
+        self.assertIsNone(error, output)
+
+    def test_missing_heading_is_rejected(self):
+        error, output = self.check(
+            "docs/README.md", lambda s: s + "\n[Bad](#nonexistent-review-heading)\n"
+        )
+        self.assertIsInstance(error, SystemExit)
+        self.assertIn("missing heading", output)
+
+    def test_top_level_entrypoint_is_checked(self):
+        error, output = self.check(
+            "GETTING_STARTED.md", lambda s: s + "\n[Bad](does-not-exist-review.md)\n"
+        )
+        self.assertIsInstance(error, SystemExit)
+        self.assertIn("GETTING_STARTED.md: missing link", output)
+
+    def test_actual_request_example_is_validated(self):
+        error, _ = self.check(
+            "docs/api/README.md",
+            lambda s: s.replace(
+                '"status":"FAILED"', '"status":"INVALID_REVIEW_STATUS"'
+            ),
+        )
+        self.assertIsNotNone(error)
+        self.assertIn("INVALID_REVIEW_STATUS", str(error))
+
+    def test_duplicate_domain_operation_is_rejected(self):
+        error, output = self.check(
+            "docs/reference/api/ingest.md",
+            lambda s: (
+                s
+                + "\n"
+                + re.search(r"^## POST `[^`]+`", s, re.MULTILINE).group(0)
+                + "\n"
+            ),
+        )
+        self.assertIsInstance(error, SystemExit)
+        self.assertIn("domain operation multiplicity mismatch", output)
+
+
+class GenerationTests(unittest.TestCase):
+    def test_generated_agents_page_survives_case_insensitive_git_checkout(self):
+        tree = ast.parse(
+            (ROOT / "scripts/generate_reference.py").read_text(encoding="utf-8")
+        )
+        functions = [
+            n
+            for n in tree.body
+            if isinstance(n, ast.FunctionDef)
+            and n.name in {"api_domain_filename", "verify_tracked_outputs"}
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(
+                ["git", "init", "-q", str(root)], check=True, capture_output=True
+            )
+            (root / ".gitignore").write_text(
+                (ROOT / ".gitignore").read_text(encoding="utf-8"), encoding="utf-8"
+            )
+            out = root / "docs/reference/api"
+            out.mkdir(parents=True)
+            (out / "agents.md").write_text("Old generated page", encoding="utf-8")
+            ignored = subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "core.ignorecase=true",
+                    "check-ignore",
+                    "--quiet",
+                    "docs/reference/api/agents.md",
+                ],
+                cwd=root,
+                check=False,
+            )
+            self.assertEqual(ignored.returncode, 0)
+            namespace = {
+                "ROOT": root,
+                "GENERATED": {"api/agents.md"},
+                "ERRORS": [],
+                "subprocess": subprocess,
+                "re": re,
+            }
+            exec(  # noqa: S102 - trusted local functions isolated from application imports
+                compile(
+                    ast.Module(body=functions, type_ignores=[]), "tracking", "exec"
+                ),
+                namespace,
+            )
+            namespace["verify_tracked_outputs"]()
+            self.assertIn(
+                "Untracked generated output: docs/reference/api/agents.md",
+                namespace["ERRORS"][0],
+            )
+            name = namespace["api_domain_filename"]("Agents")
+            self.assertEqual(name, "api/agent-operations.md")
+            relative = "docs/reference/" + name
+            (root / relative).write_text("Renamed generated page", encoding="utf-8")
+            subprocess.run(
+                ["git", "-c", "core.ignorecase=true", "add", "--", relative],
+                cwd=root,
+                check=True,
+                capture_output=True,
+            )
+            namespace.update(GENERATED={name}, ERRORS=[])
+            namespace["verify_tracked_outputs"]()
+            self.assertEqual(namespace["ERRORS"], [])
+
+    def test_drift_check_reports_difference_without_rewriting(self):
+        tree = ast.parse(
+            (ROOT / "scripts/generate_reference.py").read_text(encoding="utf-8")
+        )
+        function = next(
+            n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "write"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            out = root / "docs/reference"
+            out.mkdir(parents=True)
+            target = out / "example.md"
+            target.write_text("old content\n", encoding="utf-8")
+            original = target.read_bytes()
+            namespace = {
+                "ROOT": root,
+                "OUT": out,
+                "GENERATED": set(),
+                "CHECK": True,
+                "ERRORS": [],
+                "difflib": difflib,
+            }
+            exec(  # noqa: S102 - trusted local function isolated from application imports
+                compile(ast.Module(body=[function], type_ignores=[]), "write", "exec"),
+                namespace,
+            )
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                namespace["write"]("example.md", "new content")
+            self.assertEqual(
+                namespace["ERRORS"], [str(Path("docs/reference/example.md"))]
+            )
+            self.assertIn("-old content", output.getvalue())
+            self.assertIn("+new content", output.getvalue())
+            self.assertEqual(target.read_bytes(), original)
+
+    def test_obsolete_and_unowned_outputs(self):
+        # Load the real reconciliation functions without importing FastAPI or
+        # generating the entire reference. Exercise real temporary files in a
+        # real (scratch) Git repository, because the candidates come from Git.
+        tree = ast.parse(
+            (ROOT / "scripts/generate_reference.py").read_text(encoding="utf-8")
+        )
+        functions = [
+            n
+            for n in tree.body
+            if isinstance(n, ast.FunctionDef)
+            and n.name in {"candidate_outputs", "reconcile_outputs"}
+        ]
+        self.assertEqual(len(functions), 2)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(
+                ["git", "init", "-q", str(root)], check=True, capture_output=True
+            )
+            (root / ".gitignore").write_text("/docs/reference/retired.md\n")
+            out = root / "docs/reference"
+            out.mkdir(parents=True)
+            current = out / "current.md"
+            current.write_text("Current output")
+            obsolete = out / "obsolete.md"
+            obsolete.write_text(
+                "Generated from tracked source by `scripts/generate_reference.py`."
+            )
+            user_file = out / "unowned.md"
+            user_file.write_text("Keep this manual content")
+            # A retired output the checkout ignores: neither reported nor pruned.
+            retired = out / "retired.md"
+            retired.write_text(
+                "Generated from tracked source by `scripts/generate_reference.py`."
+            )
+            namespace = {
+                "OUT": out,
+                "ROOT": root,
+                "GENERATED": {"current.md"},
+                "CHECK": True,
+                "ERRORS": [],
+                "Path": Path,
+                "subprocess": subprocess,
+            }
+            exec(  # noqa: S102 - trusted local functions isolated from import side effects
+                compile(
+                    ast.Module(body=functions, type_ignores=[]), "reconcile", "exec"
+                ),
+                namespace,
+            )
+            namespace["reconcile_outputs"]()
+            self.assertEqual(len(namespace["ERRORS"]), 2, namespace["ERRORS"])
+            self.assertFalse(any("retired.md" in e for e in namespace["ERRORS"]))
+            self.assertTrue(obsolete.exists())
+            namespace.update(CHECK=False, ERRORS=[])
+            namespace["reconcile_outputs"]()
+            self.assertFalse(obsolete.exists())
+            self.assertTrue(current.exists())
+            self.assertTrue(retired.exists())
+            self.assertEqual(user_file.read_text(), "Keep this manual content")
+            self.assertEqual(len(namespace["ERRORS"]), 1)
+
+if __name__ == "__main__":
+    unittest.main()

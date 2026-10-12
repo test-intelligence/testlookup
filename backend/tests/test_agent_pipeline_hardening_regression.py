@@ -11,31 +11,12 @@ import ast
 import re
 from pathlib import Path
 
-import pytest
-
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def _read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
-
-
-def _read_doc(relative: str) -> str:
-    """Read a doc file that lives under the gitignored ``docs/`` tree.
-
-    ``docs/`` is intentionally gitignored in this repo (local working
-    notes — PROGRESS.md / BACKLOG.md / the agent-hardening PLAN), so the
-    file is absent in a fresh CI checkout. These documentation-content
-    assertions can only run where the doc is present; skip cleanly
-    otherwise instead of FileNotFoundError-ing the whole pytest job
-    (mirrors the suite's ``pytest.importorskip`` convention for
-    environment-dependent prerequisites).
-    """
-    path = ROOT / relative
-    if not path.exists():
-        pytest.skip(f"{relative} not present (docs/ is gitignored — local-only)")
-    return path.read_text(encoding="utf-8")
 
 
 def _function_source(relative: str, name: str) -> str:
@@ -187,24 +168,6 @@ def test_deterministic_ordering_for_clusters_and_summary_context():
     assert "list(analyses.items())[:15]" not in summary
     assert "list(analyses.items())[:10]" not in summary
     assert "list(analyses.items())[:5]" not in summary
-
-
-def test_hardening_plan_tracks_remaining_phases():
-    plan = _read_doc("../docs/AGENT_PIPELINE_HARDENING_PLAN.md")
-
-    for heading in [
-        "Phase 1: Correctness And Audit Correlation",
-        "Phase 2: Deterministic Inputs And Reproducibility",
-        "Phase 3: Structured Output Enforcement",
-        "Phase 4: Performance And Backpressure",
-        "Phase 5: Full Audit Replay",
-        "Refactor R2: Planner And Verifier",
-        "Refactor R3: Memory And Retrieval",
-        "Refactor R4: Safety And HITL Enforcement",
-        "Refactor R5: Evaluation Release Gate",
-        "Refactor R6: Observability And Cost Control",
-    ]:
-        assert heading in plan
 
 
 def test_low_confidence_retry_skips_deterministic_and_cached_results():
@@ -571,14 +534,6 @@ def test_next_agents_validate_outputs_against_contracts():
     assert "test_health_analysis_completed" in test_health
 
 
-def test_r1_contract_coverage_rule_is_documented():
-    plan = _read_doc("../docs/AGENT_PIPELINE_HARDENING_PLAN.md")
-
-    assert "Contract coverage rule" in plan
-    assert "no LangGraph pipeline agent should return an" in plan
-    assert "validate_agent_contract(...)" in plan
-
-
 def test_r2_planner_and_verifier_service_is_deterministic():
     planner = _read("app/services/agent_planner.py")
     build_plan = _function_source("app/services/agent_planner.py", "build_workflow_plan")
@@ -622,7 +577,6 @@ def test_r2_verifier_checks_evidence_and_policy_alignment():
         "app/services/agent_planner.py",
         "_check_release_decision_policy_trace",
     )
-    plan = _read_doc("../docs/AGENT_PIPELINE_HARDENING_PLAN.md")
 
     for check_name in [
         "_check_contract_evidence_support(final_state)",
@@ -647,9 +601,6 @@ def test_r2_verifier_checks_evidence_and_policy_alignment():
     assert "policy_evaluation" in release_check
     assert "release_decision_policy_trace" in release_check
     assert "_check_contract_evidence_support(final_state)" in planner
-    assert "deeper verifier checks" in plan
-    assert "evidence support" in plan
-    assert "policy alignment" in plan
 
 
 def test_workflow_persists_r2_plan_and_verification():
@@ -721,7 +672,6 @@ def test_r3_memory_retrieval_is_deterministic_and_auditable():
     )
     schemas = _read("app/models/schemas.py")
     router = _read("app/routers/agent_memory.py")
-    plan = _read_doc("../docs/AGENT_PIPELINE_HARDENING_PLAN.md")
 
     assert "_MEMORY_RETRIEVAL_VERSION = \"agent_memory.recall:v1\"" in memory
     assert "retrieval_version" in retrieval_manifest
@@ -811,12 +761,6 @@ def test_r3_memory_retrieval_is_deterministic_and_auditable():
     assert "attach_memory_reference_manifest" in save_snapshot
     assert "source_snapshot_id" in snapshot_manifest
     assert "_memory_reference_id(reference)" in snapshot_manifest
-    assert "Refactor R3: Memory And Retrieval" in plan
-    assert "deterministically ranks equal-score matches" in plan
-    assert "canonical `memory_reference` contract" in plan
-    assert "evidence artifacts, defect candidates/promoted defects" in plan
-    assert "memory reference manifest" in plan
-    assert "R3.6 wires release risk" in plan
 
 
 def test_r4_triage_gates_jira_creation_with_action_policy():
@@ -839,7 +783,6 @@ def test_r4_manual_jira_endpoint_stages_pending_review_before_mutation():
     endpoint = _function_source("app/routers/integrations.py", "create_jira_defect")
     stage = _function_source("app/routers/integrations.py", "_stage_pending_jira_defect")
     schemas = _class_source("app/models/schemas.py", "JiraIssueResponse")
-    plan = _read_doc("../docs/AGENT_PIPELINE_HARDENING_PLAN.md")
 
     assert "check_jira_ticket_creation_policy" in router
     assert "_stage_pending_jira_defect" in endpoint
@@ -853,7 +796,6 @@ def test_r4_manual_jira_endpoint_stages_pending_review_before_mutation():
     assert "approval_status: Optional[str]" in schemas
     assert "requires_approval: bool" in schemas
     assert "policy_reasons: List[str]" in schemas
-    assert "manual Jira integration endpoint uses the same policy gate" in plan
 
 
 def test_r5_agent_stack_release_gate_manifest_is_auditable():
@@ -884,13 +826,12 @@ def test_r5_agent_stack_release_gate_runs_are_persisted_for_audit():
     schemas = _class_source("app/models/schemas.py", "AIEvalGateRunResponse")
     model = _class_source("app/models/postgres.py", "AIEvalGateRun")
     migration = _read("migrations/versions/0078_ai_eval_gate_runs.py")
-    plan = _read_doc("../docs/AGENT_PIPELINE_HARDENING_PLAN.md")
 
     assert "AIEvalGateRun" in service
     assert "db.add(row)" in persist
     # Persistence used to call ``db.commit()`` directly. Per the
-    # 2026-05-16 P1-2 audit fix (see docs/DATABASE_AUDIT_2026-05-16.md
-    # and backend/CLAUDE.md "Commit responsibility (single-owner rule)"),
+    # 2026-05-16 P1-2 audit fix (single-owner commit rule,
+    # architecture/DEVELOPER_GUIDE.md §2 "Layering & transactions"),
     # services that receive an injected session must NOT commit — they
     # flush so callers can read server-generated values, and the request
     # handler / get_db dependency commits. The row is still persisted on
@@ -917,7 +858,6 @@ def test_r5_agent_stack_release_gate_runs_are_persisted_for_audit():
         assert field in model
         assert field in migration
     assert "ai_eval_gate_runs" in migration
-    assert "historical `ai_eval_gate_runs`" in plan
 
 
 def test_r6_timeline_exposes_agent_observability_summary():
@@ -930,7 +870,6 @@ def test_r6_timeline_exposes_agent_observability_summary():
     frontend_page = _read("../frontend/src/pages/AgentStatusPage.tsx")
     frontend_types = _read("../frontend/src/types/agent.ts")
     frontend_test = _read("../frontend/src/pages/AgentStatusPage.test.tsx")
-    plan = _read_doc("../docs/AGENT_PIPELINE_HARDENING_PLAN.md")
 
     assert "build_agent_observability_summary" in service
     for key in [
@@ -965,6 +904,3 @@ def test_r6_timeline_exposes_agent_observability_summary():
     assert "alert.routing.escalation_owner" in frontend_page
     assert "alert.routing.priority" in frontend_page
     assert "surfaces observability cost signals and alert routing" in frontend_test
-    assert "frontend Agent Pipeline" in plan
-    assert "timeline now surfaces" in plan
-    assert "deterministic owner, escalation" in plan

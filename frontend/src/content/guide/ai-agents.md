@@ -60,8 +60,15 @@ flowchart TD
 
 Twenty stages, in the order the deep pipeline plans them. A **standard** (offline)
 run is much shorter — `ingestion`, `anomaly_detection`, `root_cause_analysis`,
-`summary`, `triage` — so a run's Intelligence page will show five stages, not
+`summary`, `triage` — so a run's **Evidence → Agent stages** list will show five stages, not
 twenty, unless it was a deep run.
+
+Not every deep stage runs on every install. The planner skips a stage, and records why ("feature flag is off for this project"), when it is switched off:
+
+- `contract_validation`, `log_intelligence`, `regression_watchman`, `change_ownership` and `defect_commander` each run only when a feature flag of the same name is on for the project. No install creates these flags, so they are **off** until an administrator adds and enables them (for `contract_validation` and `change_ownership`, a server environment setting can also turn them on).
+- `gap_detection` and `report_refinement` run only when the server setting `AIQ_GAP_REFINEMENT_ENABLED` is on; it is off by default.
+
+The feature-flag reference in the repository (`docs/operations/feature-flags.md`) lists each of these switches.
 
 A separate **investigation** workflow runs a planner, five parallel hypothesis agents (infrastructure, commit, environment, known-flaky, regression) and a synthesis stage.
 
@@ -123,12 +130,51 @@ The pipeline is then **verified** against the plan it was given. The verifier ch
 
 ## Budgets and configuration
 
-Pipelines carry a budget (LLM calls, tokens, cost, seconds) allocated across stages that use a model. A stage that cannot reserve budget records a stop reason instead of running unbounded. Provider and model selection is administrative — see [Administration](/docs/administration).
+Pipelines carry a budget (LLM calls, tokens, cost, seconds) allocated across stages that use a model. A stage that cannot reserve budget records a stop reason instead of running unbounded. Provider and model selection, and the per-project monthly LLM cost budget, are administrative — see [Settings and administration](/docs/administration#ai).
+
+## Running a pipeline
+
+The **standard** pipeline runs on its own when a run is finalised. You can also queue one, or a **deep** investigation, by hand. Both need the `QA_ENGINEER` role or above:
+
+| Where | Standard pipeline | Deep investigation |
+|---|---|---|
+| A run's page, **⋯** menu | **Trigger pipeline** | **Deep investigation** |
+| **Runs**, a row's action icons | **Re-trigger standard pipeline** | **Trigger deep investigation** |
+| **Runs**, ticked rows | **Bulk trigger** | **Bulk deep** |
+| **Runs**, **⋯** menu | **Trigger all failed (N)** | **Deep all failed (N)** |
+| **Pipeline runs** page | **Trigger pipeline** | — |
+
+If a pipeline is already queued or running for that run, a new request is not started twice.
+
+## Pipeline runs
+
+**Pipeline runs** (`/agents`, listed under **AI** in the settings index) lists every AI pipeline run in the projects you can see, newest first. Pick a run under **Test suite & build** to see only its pipelines and to enable **Trigger pipeline**. The badge next to it shows the analysis mode in use (**LLM Mode**, **ML Mode**, **Rules Mode** or **Auto Mode**).
+
+Each pipeline shows its type, run, suite, start time, duration and status (**IN PROGRESS**, **COMPLETED**, **FAILED** or **PASSED**), plus **DEGRADED** when a stage fell back, **awaiting review** when its report is waiting for a human decision, and **retrying** while it retries. Select one to read its **AI Report** (**View AI report**), its **Agent stages** (each stage, its timing, the compute graph and the raw stage records) and its **Workflow Progress**.
+
+The same report and stages for one run are on that run's **Evidence** tab. Anyone with access to the project can read this page.
+
+## The workflow editor
+
+**Pipeline runs → Workflow editor** (`/agents/workflows`) holds the versioned definitions behind the pipelines. The three built-in workflows (`offline` — the standard pipeline, `deep` and `live`) are read-only; to change one, you fork it.
+
+- **Fork workflow** — give a **New workflow ID** and a **Fork name**, then **Create fork**. Forks start as drafts.
+- Edit the **Definition JSON** (steps, edges, loops, retry and review policies, deadline) and **Save draft**. Saving a published version creates the next version as a draft; published versions are never edited in place.
+- **Validate** checks the definition; **Graph preview** draws its topology.
+- **Run evaluation** replays recent runs (20 by default) through the draft and compares the result with the published version.
+- **Publish** makes the draft the version runs use. Publishing re-evaluates the draft on 100 replayed runs and refuses a measured regression unless you tick **Accept the measured regression for this publication** and give a reason.
+
+Anyone can open the editor and inspect definitions and validation; forking, editing, evaluating and publishing need the `QA_LEAD` role. Only **published** versions ever execute. Runs triggered from the app use the built-in workflows; a forked workflow is run by naming it (`workflow_id`) in the pipeline API call (`POST /api/v1/agents/pipelines/trigger`).
+
+## The Investigator and the Fixer
+
+Two further agents can act on a project's failures beyond the analysis pipeline: the **Investigator** (reasons about clusters of failures) and the **Fixer** (proposes validated fixes for flaky tests as draft pull requests). Their policies, autonomy levels and budgets are per project under **Admin → AI → AI agents**, and what they did is under **Agent activity**; see [Settings and administration](/docs/administration#ai).
 
 ## Human-in-the-loop
 
 - Every AI-produced category or explanation can be **corrected**; the correction is stored alongside the original.
 - Decision reports carry their evidence, so a reviewer can check the reasoning rather than the wording.
+- Every AI report is a **review request**: a QA lead can accept or reject it from the Inbox's **Approvals** tab, and the report carries a banner saying whether it is a draft, accepted, rejected or superseded. An administrator can make review mandatory before a report is distributed. See [Your inbox and approvals](/docs/inbox#approvals).
 - Nothing an agent produces is treated as final by the release gate — see [Releases and gates](/docs/releases).
 
 ## Related

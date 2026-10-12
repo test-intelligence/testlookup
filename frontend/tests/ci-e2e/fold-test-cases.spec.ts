@@ -7,9 +7,8 @@
  * "Insights" drawer; "Generate test cases" is the AI Generate modal's
  * "From documents" option.
  *
- * The scroller's `scrollHeight` is printed (FOLD line) for the before/after
- * comparison in `docs/viz-work/p4-agent-D.md` (measured on the unchanged page
- * first).
+ * The scroller's `scrollHeight` is printed (FOLD line) for a before/after
+ * comparison (measured on the unchanged page first).
  *
  * Harness: `tests/lib/rollout.ts` (fail closed, pinned clock). The page has
  * no visual-spec fixtures: its answers are `TEST_CASES` in

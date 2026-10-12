@@ -4,9 +4,9 @@ Re-audit finding N1. ``scripts/deploy-k8s.sh`` verified the rollout of five
 ``testlookup-celery-*`` Deployments that exist in no manifest. The script runs
 under ``set -euo pipefail``, so the first ``kubectl rollout status`` against a
 missing Deployment aborted it — *after* ``kubectl apply -k`` had already rolled
-the release out. Every verified cloud deploy (GKE/AKS/EKS all call this one
-script) therefore reported failure on a successful apply, and the per-Deployment
-image-digest check the loop exists to perform never ran against the workers.
+the release out. Every verified deploy through this script therefore reported
+failure on a successful apply, and the per-Deployment image-digest check the
+loop exists to perform never ran against the workers.
 
 The defect is name drift between a hand-typed shell list and the manifests, so
 the guard is a cross-check between exactly those two sources.

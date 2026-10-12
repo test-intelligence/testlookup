@@ -1,44 +1,28 @@
-# Defects & promotion
+# Issue trackers and defect automation
 
-When a failure is a real product bug, it becomes a **defect** — a tracked item with severity, an owner, and (optionally) a linked ticket in your issue tracker. TestLookup's job is to make that promotion one click and carry the evidence along, so the defect arrives explaining *itself*.
+How TestLookup files and tracks issues in Jira (or your own tracker through a webhook), and what can create defects automatically. Using the **Defects** page and promoting a failure by hand are covered in the in-app guide: **Investigating failures** (`/docs/failure-analysis`, source [failure-analysis.md](../frontend/src/content/guide/failure-analysis.md)).
 
-## The Defects page (`/defects`)
+## Connecting Jira
 
-The defect queue for the project, with **KPIs** at the top: open defects, **mean time to resolve**, **escape rate** (bugs that reached a release), and **linked defects**. Around the queue:
-
-- **Status filter** and **Severity** — narrow to what you're working.
-- **Defect queue verdict** — the health read on the queue itself.
-- **Recommended actions** and **Auto-link rule misses** — where the auto-linker couldn't match a failure to an existing defect (candidates for a new promotion or a rule fix).
-- **Last sync** — freshness of the external-tracker link.
-
-## Promoting a cluster to a defect
-
-The natural flow is cluster → defect. From a failure cluster (in [Failure Analysis](triaging-failures.md) or a [Deep Investigation](ai-features.md#deep-investigation-deep-investigate-deep-investigaterunid)), promote it. The promotion:
-
-- **Bundles the evidence** — the cluster's analyses, error signatures, and dimension scores travel with the defect, so whoever picks it up sees the same picture you did.
-- **Assigns a severity automatically** from the composite risk score — **CRITICAL** (≥70), **HIGH** (≥50), **MEDIUM** (≥30), else **LOW** — which you can override.
-- **Resolves an owner**, drawing on prior assignment memory so recurring areas land with the right person.
-
-Promotion is the outcome behind the `DEFECT_CREATED` triage status ([Triaging failures](triaging-failures.md#your-inbox-my-failures)) — resolving a My-Failures row as `DEFECT_CREATED` and promoting the cluster are two ends of the same action.
-
-## Auto-linking to your issue tracker
-
-TestLookup can link defects to external tickets (e.g. Jira) so the two systems stay in sync — the `Last sync` and `Auto-link rule misses` surfaces track how well that's working. **This is subordinate to `AI_OFFLINE_MODE`**: offline mode is a *hard kill-switch above any integration flag*, so in a default install nothing is created or synced externally regardless of settings. Enable outbound integrations deliberately (see [Administration](administration.md#connecting-to-your-world)) before expecting tickets to appear.
+1. Under **Settings → Integrations → Jira, Splunk, OCP, Slack, Teams**, an administrator fills in the Jira **Domain**, **Email**, **Default Project Key** and **API Token**, and ticks **Enabled** (or sets the equivalent `JIRA_*` environment variables; see the [integrations reference](../docs/operations/integrations.md)).
+2. Set each project's **Jira Project Key** on **Projects** if it differs from the default.
+3. Turn off `AI_OFFLINE_MODE`, or the Jira target stays disabled: offline mode is a hard switch above every integration setting.
+4. Check **Integration health** shows Jira as healthy.
 
 ## One-click Jira issues
 
-From the **Failure Analysis** page (headline failing test) or a **Quarantine** row without a linked defect, `Create Jira issue` / `File Jira` opens a review dialog with a **server-prefilled** ticket: summary (`[TestLookup] <test or cluster>`), failure message + truncated stack trace, occurrence history (first/last seen, failing-run count), branch/build context, a deep link back to TestLookup, and — when an AI analysis exists — a clearly labelled *"Suggested root cause (AI, confidence X%)"* block. You pick the Jira project and issue type (fetched live from Jira, cached ~5 minutes), optionally add a comment, and confirm — **nothing is filed silently**.
+From **Failures** (**Jira** on a failing test), from a quarantined or proposed test (**File Jira** on Flaky tests), or from Ask AI's suggested action, **Create Jira issue** opens a review dialog with a **server-prefilled** ticket: summary (`[TestLookup] <test or cluster>`), failure message and truncated stack trace, occurrence history (first and last seen, failing-run count), branch and build, a link back to TestLookup, and — when an AI analysis exists — a clearly labelled *"Suggested root cause (AI, confidence X%)"* block. The person picks the Jira project and issue type (fetched live from Jira), optionally adds a comment, and confirms — **nothing is filed silently**. Filing needs `QA_ENGINEER`.
 
 Two guarantees:
 
-- **Recurrence dedup** — if an open defect is already linked to Jira for the same failure signature, no duplicate issue is created. The existing issue gets a *"recurred in build X"* comment and the dialog reports *"Linked to existing KEY (recurrence noted)"*.
-- **Status sync-back** — every ~15 minutes TestLookup mirrors the Jira status of linked, still-open defects. If Jira says the issue is done but the same test kept failing in the last 7 days, the defect (and its quarantine row) shows a **"closed in Jira but still failing"** warning badge.
+- **Recurrence dedup** — if an open defect is already linked to Jira for the same failure signature, no duplicate issue is created. The button reads **Note recurrence**; the existing issue gets a *"recurred in build X"* comment.
+- **Status sync-back** — about every 15 minutes TestLookup mirrors the Jira status of linked, still-open defects. If Jira says the issue is done but the same test kept failing in the last 7 days, the defect (and its quarantine row) shows **closed in Jira but still failing**.
 
-As with auto-linking, `AI_OFFLINE_MODE` is a hard kill-switch: with it on, the Jira target is disabled with an explanatory tooltip.
+A test result's **Create Jira Defect** button (on the AI root-cause panel) is disabled when the project has no Jira key or when the analysis needs human review first.
 
 ### No Jira? Use the webhook fallback
 
-The create dialog also offers **Webhook event** as the delivery target: instead of calling Jira, TestLookup emits a `defect.create_requested` [outbound webhook](administration.md#connecting-to-your-world) carrying the full prefilled payload —
+The create dialog also offers **Webhook event** as the delivery target: instead of calling Jira, TestLookup emits a `defect.create_requested` [outbound webhook](administration.md#outbound-webhooks-settingswebhooks) carrying the full prefilled payload:
 
 ```json
 {
@@ -50,17 +34,22 @@ The create dialog also offers **Webhook event** as the delivery target: instead 
     "occurrences": {"first_seen": "…", "last_seen": "…", "failing_runs": 6},
     "context": {"branch": "main", "build_number": "1234", "ci_run_url": null},
     "ai_analysis": {"root_cause": "…", "confidence": 82, "failure_category": "PRODUCT_BUG"},
-    "deep_link": "https://testlookup…/runs/…", "extra_comment": null, "requested_by": "qa.lead"
+    "deep_link": "https://testlookup.example.com/runs/…", "extra_comment": null, "requested_by": "qa.lead"
   }
 }
 ```
 
-Subscribe a receiver to that event (Settings → Webhooks) and open tickets anywhere. A minimal GitHub-Issues receiver sketch:
+Subscribe a receiver to that event (**Settings → Integrations → Outbound webhooks**; needs the `outbound_webhooks` flag on and offline mode off) and open tickets anywhere. A minimal GitHub-Issues receiver sketch:
 
 ```python
 # flask receiver: defect.create_requested → GitHub issue
+import hashlib, hmac
+
 @app.post("/hooks/testlookup")
 def testlookup_hook():
+    expected = hmac.new(WEBHOOK_SECRET.encode(), request.get_data(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, request.headers.get("X-TestLookup-Signature", "")):
+        return "", 401
     body = request.get_json()
     if body.get("event_type") != "defect.create_requested":
         return "", 204
@@ -75,15 +64,25 @@ def testlookup_hook():
     return "", 204
 ```
 
-(Verify the `X-TestLookup-Signature` HMAC header in production — see the webhook docs.)
+The signature is the hex HMAC-SHA256 of the raw request body, keyed with the subscription's secret; see [Administration → Outbound webhooks](administration.md#outbound-webhooks-settingswebhooks).
+
+## Promotion from clusters
+
+On a run's **Analysis** tab, **File defect** promotes a failure cluster to a defect (**Promote to Defect**, `QA_ENGINEER`). The cluster's analyses, error signatures and dimension scores travel with it; the severity is pre-filled from the composite risk score — **CRITICAL** (≥ 70), **HIGH** (≥ 50), **MEDIUM** (≥ 30), else **LOW** — and can be changed. A **Jira Project Key** files a ticket as well; leave it blank for a TestLookup-only defect.
+
+Some promotions come back as "Defect created — awaiting approval": the defect needs a QA lead's approval before a Jira ticket is created. That approval is API-only today (`GET /api/v1/deep-investigate/defects/pending-review` and `POST /api/v1/deep-investigate/defects/{id}/review`, `QA_LEAD`).
+
+## Automatic promotion (`defect_commander`)
+
+The deep pipeline's `defect_commander` stage can create defects from clusters on its own, and file tickets when Jira is enabled. It is the only pipeline stage that changes state outside its own records, and it runs only when a feature flag named `defect_commander` exists and is enabled for the project. No install creates that flag, so automatic promotion is **off** until an administrator adds it under **Feature flags**. Try it on one project first.
 
 ## Duplicate detection
 
-As teams add tests and file defects independently, near-duplicates creep in. TestLookup fingerprints test cases (normalizing names + steps) and flags likely duplicates so the catalog and the defect queue stay deduplicated — the same machinery that powers duplicate detection in [Test Management](test-management.md#the-test-management-page). Fewer duplicate tickets is one of the numbers on [Value Metrics](dashboards.md#value-metrics-value-metrics).
+TestLookup fingerprints test cases (normalising names and steps) and flags likely duplicates on **Test cases → Duplicates**, banded Exact, Strong or Possible, so the catalogue stays deduplicated as teams add tests independently. Duplicate failures absorbed into one cluster are counted on **Reports → Value** ("Duplicates avoided").
 
 ## A promotion routine
 
-1. Triage a cluster ([Triaging failures](triaging-failures.md)); confirm it's a product bug, not flaky or a script issue.
-2. Promote the cluster — accept or adjust the auto-severity, confirm the owner.
-3. If outbound integrations are on, let the auto-linker file/sync the ticket; otherwise record the defect internally.
-4. Watch **escape rate** and **mean time to resolve** on the Defects KPIs to see whether triage is keeping bugs out of releases.
+1. Triage a cluster; confirm it is a product bug, not flaky or a script issue.
+2. Promote it (or file from the failing test), accepting or adjusting the severity.
+3. With Jira connected and offline mode off, file the ticket from the same dialog; otherwise keep the defect in TestLookup or use the webhook fallback.
+4. Watch **Time to resolve** and the defects with no Jira ticket on **Failures → Defects**.

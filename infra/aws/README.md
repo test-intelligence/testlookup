@@ -3,7 +3,9 @@
 Terraform IaC + scripts to run TestLookup on AWS, plus an **offline quality gate**
 that validates everything **without a real AWS account**.
 
-Full design: [STRATEGY.md](./STRATEGY.md). Original Q&A: [deployment_instructions.md](./deployment_instructions.md).
+Full design: [STRATEGY.md](./STRATEGY.md). Deploying the application onto the
+cluster, including how the generated secrets map onto the app's settings:
+[docs/operations/deploy-cloud.md](../../docs/operations/deploy-cloud.md#aws-eks).
 
 ```
 infra/aws/
@@ -27,14 +29,13 @@ infra/aws/
 # Each tool is used from PATH or its Docker image; missing ones are skipped.
 ./infra/aws/scripts/validate.sh
 
-# Dev hosts with a TLS-inspecting AV (Norton/NordVPN) that breaks terraform's
-# loopback plugin mTLS — run terraform inside a container instead:
+# Hosts whose endpoint-security software inspects TLS can break Terraform's
+# loopback connection to its provider plugins — run terraform in a container:
 ./infra/aws/scripts/validate.sh --tf-docker
 ```
 
-CI runs the same gate on Linux: `.github/workflows/aws-infra-validate.yml`
-(triggered by PRs touching `infra/aws/**` or the `aws-eks` overlay). No AWS
-credentials are configured in that workflow.
+No CI workflow runs this gate. Run it yourself after you change `infra/aws/**`
+or the `aws-eks` overlay.
 
 Minimal manual checks:
 
@@ -62,7 +63,8 @@ export TF_STATE_BUCKET=testlookup-tfstate-<acct-id> TF_LOCK_TABLE=testlookup-tfl
 # 3. point kubectl at the cluster, then deploy the app overlay
 aws eks update-kubeconfig --region us-east-1 --name testlookup-dev
 # (sync Secrets Manager → testlookup-secrets, set ECR image refs + ACM ARN, then)
-kubectl apply -k k8s/overlays/aws-eks
+# deploy-k8s.sh runs the database migration Job before applying the overlay
+scripts/deploy-k8s.sh --cloud=aws --registry=<account>.dkr.ecr.<region>.amazonaws.com --image-tag=<tag>
 ```
 
 ## Guard rails

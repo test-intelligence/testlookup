@@ -1667,8 +1667,9 @@ async def verify_webhook_secret(
     ``auth_token`` is sent as ``Authorization: Bearer <token>`` -- so before
     re-audit R15 a real MinIO notification never carried ``X-Webhook-Secret``
     and was refused, every time. Either form is accepted; ``X-Webhook-Secret``
-    stays for callers already using it. ``scripts/setup-minio.sh`` sets the
-    ``auth_token``.
+    stays for callers already using it. A MinIO operator sets the target's
+    ``auth_token`` to WEBHOOK_SECRET. The bundled versitygw store's event
+    webhook sends no auth header, so it is not wired to this endpoint.
     """
     expected = str(settings.WEBHOOK_SECRET or "")
     presented: list[str] = []

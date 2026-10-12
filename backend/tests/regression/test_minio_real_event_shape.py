@@ -228,8 +228,27 @@ async def test_an_unset_secret_matches_nothing(monkeypatch):
         await verify_webhook_secret(x_webhook_secret="", authorization="Bearer ")
 
 
-def test_setup_minio_sets_the_auth_token():
+def test_no_deployment_wires_an_unauthenticated_notification_webhook():
+    """The bundled S3 store is versitygw since the AGPL Silo/mc pair left.
+
+    Its bucket-notification webhook (VGW_EVENT_WEBHOOK_URL) sends only a
+    Content-Type header: no ``Authorization: Bearer``, no ``X-Webhook-Secret``,
+    and no retry. Pointed at /webhooks/minio, every event would be refused with
+    the 403 above and silently lost. The default ingest path dispatches Celery
+    from the API, so nothing is wired; whoever needs direct-to-bucket uploads
+    keeps a store that can authenticate its notifications (MinIO's auth_token).
+    """
     from pathlib import Path
 
-    script = (Path(__file__).resolve().parents[3] / "scripts" / "setup-minio.sh").read_text(encoding="utf-8")
-    assert 'auth_token="${WEBHOOK_SECRET}"' in script
+    root = Path(__file__).resolve().parents[3]
+    surfaces = sorted(root.glob("docker-compose*.yml")) + sorted((root / "k8s").rglob("*.yaml"))
+    surfaces += sorted((root / "openshiftsetup").glob("*"))
+    assert len(surfaces) > 10, "found no deployment surfaces: the guard no longer looks"
+    for path in surfaces:
+        text = path.read_text(encoding="utf-8")
+        assert "VGW_EVENT_WEBHOOK_URL" not in text, path
+        assert "event-webhook-url" not in text, path
+    assert not (root / "scripts" / "setup-minio.sh").exists(), (
+        "scripts/setup-minio.sh configured MinIO notifications with `mc admin`; "
+        "bucket setup is backend/scripts/s3_setup.py now"
+    )

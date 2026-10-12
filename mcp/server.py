@@ -29,7 +29,7 @@ Tool Domains:
   - Classification corrections (feedback → training signal)
   - Failure assignment (reassign + valid-assignee lookup)
   - Notification policy (transition-policy get/set)
-  # Agentic plan AI-5 — MCP-first agent workflows
+  # MCP-first agent workflows
   - Investigator agent (start/poll/list shadow-mode investigations)
   - Fix-outcome learning loop (record merged/reverted fix outcomes)
   # Architecture E8.4 — human review gate
@@ -80,7 +80,7 @@ from tools import intelligence, deep, search, reports
 from tools import decision_trail, compliance_pack, quarantine, billing, defects, governance
 # PMF US-14.1 — write-path tools so agents can close the triage loop.
 from tools import assignments, feedback, notifications
-# Agentic plan AI-5 — Investigator over MCP.
+# Investigator over MCP.
 from tools import investigations
 from tools import reviews
 from tools import agents
@@ -200,7 +200,7 @@ governance.register(mcp)       # policies, saved views, digests, ownership, flag
 feedback.register(mcp)         # correct_classification + record_fix_outcome → training signals
 assignments.register(mcp)      # failure reassignment (my-failures inbox)
 notifications.register(mcp)    # transition-notification policy get/set
-# Agentic plan AI-5 — Investigator agent over MCP (shadow-mode).
+# Investigator agent over MCP (shadow mode).
 investigations.register(mcp)   # start/poll/list investigations
 reviews.register(mcp)          # E8.4 review queue (read-only)
 agents.register(mcp)           # E1.5 agent catalog + single-agent invocations

@@ -1,10 +1,10 @@
-"""Phase 6: detect sooner, and be honest about what actually limits it.
+"""Flaky detection: detect sooner, and be honest about what actually limits it.
 
-Roadmap Phase 6 (``architecture/TEST_INTELLIGENCE_PLAN.md``) — the last phase,
-and the one whose headline justification did not survive review.
+Covers ``flaky_screening_service`` (tier 1) and
+``flaky_detection_timing_service`` (tier 2 and detection latency).
 
 The refuted claim ("75% of flaky tests are already flaky at their introducing
-commit", voted down 1–2) justifies nothing here. What survives is the weaker
+commit") justifies nothing here. What survives is the weaker
 **85/15 among order- and implementation-dependent flaky tests in 55 Java OSS
 projects**, heavily qualified by its authors — enough to justify screening the
 new and the directly-modified *first*, not enough to justify a constant.
@@ -15,7 +15,7 @@ So these tests guard three properties:
    still swept by tier 2 — which is where the environment- and
    dependency-induced flakiness this product mostly sees would land.
 2. **Cadence is derived, not borrowed.** A commit-count cadence would never
-   fire on this corpus; the Phase 0 census measured zero of four genuine
+   fire on this corpus; a readiness census measured zero of four genuine
    projects clearing what one assumes.
 3. **No fabricated latency.** A fingerprint whose first appearance was not
    observed is excluded and counted, never backfilled to a flattering zero.
@@ -56,8 +56,8 @@ from app.services.flaky_screening_service import (
 # ── The refuted claim must not have come back ────────────────────────────────
 
 def test_the_refuted_75_percent_claim_justifies_nothing_in_this_phase():
-    """It was voted down 1–2. A module that quietly reinstated it would be
-    building on evidence the review rejected."""
+    """Its evidence does not hold up. A module that quietly reinstated it would
+    be building on evidence that was already rejected."""
     import app.services.flaky_detection_timing_service as timing
     import app.services.flaky_screening_service as screening
 
@@ -83,7 +83,7 @@ def test_the_surviving_finding_is_cited_with_its_qualifications():
 
 
 def test_no_borrowed_commit_count_cadence():
-    """~150 commits is unusable here: the Phase 0 census measured zero of four
+    """~150 commits is unusable here: a readiness census measured zero of four
     genuine projects clearing what a commit-count cadence assumes."""
     import app.services.flaky_detection_timing_service as timing
 
@@ -242,7 +242,7 @@ def test_an_unknown_arrival_rate_yields_no_number():
 
 
 def test_on_a_thin_corpus_run_frequency_dominates():
-    """The Phase 0 census: 12–15 fingerprints, median 5–12 runs each over the
+    """The readiness census: 12–15 fingerprints, median 5–12 runs each over the
     window. At roughly a run a day, clearing a 5-observation floor is days
     away — so shortening a 30-minute screen changes nothing, and the product
     must say that rather than sell the cadence."""

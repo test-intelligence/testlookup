@@ -10,27 +10,33 @@ This guide is the **model pack**: which models TestLookup needs, what each one c
 
 | Purpose | Setting | Default | Why it exists |
 |---|---|---|---|
-| Triage LLM | `LLM_MODEL` | `qwen2.5:7b` | The ReAct agent behind Deep Investigation, run narratives, and Ask AI |
-| Embeddings | `EMBEDDING_MODEL` | `nomic-embed-text` | Semantic search, the semantic analysis cache, and knowledge-base RAG |
+| Triage LLM | `LLM_MODEL` | `qwen2.5:7b-instruct` | The ReAct agent behind Deep Investigation, run narratives, and Ask AI |
+| Embeddings | `EMBEDDING_MODEL` | `nomic-embed-text:v1.5` | Semantic search, the semantic analysis cache, and knowledge-base RAG |
 | Fast classifier (optional) | `CLASSIFIER_MODEL` | unset — reuses `LLM_MODEL` | Single-call classification ahead of the full agent |
 
-Both defaults are **served by Ollama**, including the embedding model — TestLookup does not use ChromaDB's bundled ONNX embedder, so ChromaDB alone is not enough to make semantic features work. If your pack contains the LLM but not `nomic-embed-text`, triage works and semantic search does not.
+These are the defaults in `backend/app/core/config.py` and `.env.example`; the Kubernetes base ConfigMap sets the same `LLM_MODEL`. `make dev-llm` additionally pulls `qwen2.5:14b-instruct-q5_K_M` as the larger LLM tier. Both defaults are licensed **Apache-2.0**, so they are usable commercially.
 
-## Size and quality tradeoffs
+Both defaults are **served by Ollama**, including the embedding model — TestLookup does not use ChromaDB's bundled ONNX embedder, so ChromaDB alone is not enough to make semantic features work. If your pack contains the LLM but not `nomic-embed-text:v1.5`, triage works and semantic search does not.
 
-Disk figures are the Ollama download size at the default quantisation (Q4); RAM is the rough working-set while generating. Latency is relative, on CPU-only hardware — a GPU changes the absolute numbers, not the ordering.
+**Pull the exact tags.** Model presence is matched on the exact name (see [Verifying it worked](#verifying-it-worked-from-testlookup)). `qwen2.5:7b` and `qwen2.5:7b-instruct` are the same weights on the Ollama registry, but a pack that only contains `qwen2.5:7b` is reported **Missing** for `LLM_MODEL=qwen2.5:7b-instruct`; likewise `nomic-embed-text` (which is `:latest`) does not satisfy `nomic-embed-text:v1.5`.
 
-| Model | Disk | RAM | Quality / latency tradeoff | Status |
-|---|---|---|---|---|
-| `qwen2.5:7b` | ~4.7 GB | ~8 GB | The baseline everything is tuned and evaluated against. Follows the agent's tool-calling format reliably. | **Supported default** |
-| `nomic-embed-text` | ~275 MB | ~1 GB | 768-dim embeddings, fast enough to embed every failure inline. | **Supported default** |
-| `qwen2.5:3b` | ~2 GB | ~4 GB | ~2× faster and fits a small VM, at a visible cost in root-cause specificity; more likely to break the ReAct format, which surfaces as a fallback to rules. Reasonable as `CLASSIFIER_MODEL` while `LLM_MODEL` stays at 7b. | Known-workable alternate |
-| `llama3.1:8b` | ~4.7 GB | ~8 GB | Comparable cost and quality to the 7b default; sometimes more verbose summaries. Useful if your organisation has already vetted this family. | Known-workable alternate |
-| `qwen2.5:14b` | ~9 GB | ~16 GB | Noticeably better multi-step reasoning on tangled failures; roughly 2× the latency of 7b. Worth it if triage runs asynchronously and you have the RAM. | Known-workable alternate |
-| `qwen2.5:32b` | ~20 GB | ~32 GB+ | Best reasoning on offer, but per-failure latency makes inline triage impractical on CPU. Only sensible with a GPU. | Known-workable alternate |
-| `mxbai-embed-large` | ~670 MB | ~2 GB | 1024-dim embeddings, modestly better retrieval than nomic. **Changing the embedding model invalidates existing vectors** — see the warning below. | Known-workable alternate |
+## Size, quality and licence tradeoffs
+
+Disk figures are the Ollama download size at the default quantisation (Q4 unless the tag says otherwise); RAM is the rough working-set while generating. Latency is relative, on CPU-only hardware — a GPU changes the absolute numbers, not the ordering. TestLookup does not distribute any of these weights; check each licence against your use before you pull it.
+
+| Model | Disk | RAM | Quality / latency tradeoff | Licence | Status |
+|---|---|---|---|---|---|
+| `qwen2.5:7b-instruct` | ~4.7 GB | ~8 GB | The baseline everything is tuned and evaluated against. Follows the agent's tool-calling format reliably. | Apache-2.0 | **Supported default** |
+| `nomic-embed-text:v1.5` | ~275 MB | ~1 GB | 768-dim embeddings, fast enough to embed every failure inline. | Apache-2.0 | **Supported default** |
+| `qwen2.5:14b-instruct-q5_K_M` | ~11 GB | ~16 GB | Noticeably better multi-step reasoning on tangled failures; roughly 2× the latency of 7b. Worth it if triage runs asynchronously and you have the RAM. What `make dev-llm` pulls as the LLM tier. | Apache-2.0 | Known-workable alternate |
+| `qwen2.5:32b-instruct` | ~20 GB | ~32 GB+ | Best reasoning on offer, but per-failure latency makes inline triage impractical on CPU. Only sensible with a GPU (`make pull-llm-large`). | Apache-2.0 | Known-workable alternate |
+| `qwen2.5:1.5b-instruct` | ~1 GB | ~2 GB | Fits a very small VM, at a clear cost in root-cause specificity; more likely to break the ReAct format, which surfaces as a fallback to rules. Reasonable as `CLASSIFIER_MODEL` while `LLM_MODEL` stays at 7b. | Apache-2.0 | Known-workable alternate |
+| `mxbai-embed-large` | ~670 MB | ~2 GB | 1024-dim embeddings, modestly better retrieval than nomic. **Changing the embedding model invalidates existing vectors** — see the warning below. | Apache-2.0 | Known-workable alternate |
+| `llama3.1:8b` | ~4.7 GB | ~8 GB | Comparable cost and quality to the 7b default; sometimes more verbose summaries. Useful if your organisation has already vetted this family. | Llama 3.1 Community License (attribution and usage terms) | Optional — review the licence first |
 
 *Supported default* means it is what the defaults, the prompt evaluation gate, and our testing use. *Known-workable alternate* means the integration works and the behaviour is reasonable, but the prompts are not tuned for it — validate on your own failures before rolling it out.
+
+> **Not recommended: `qwen2.5:3b` / `qwen2.5:3b-instruct`.** Unlike the other Qwen2.5 sizes, the 3B model is released under the *Qwen Research License*, which does not permit commercial use. It was TestLookup's default before the open-source release; installs that still set `LLM_MODEL=qwen2.5:3b-instruct-q5_K_M` should move to `qwen2.5:7b-instruct` (or `qwen2.5:1.5b-instruct` for a small host).
 
 > **Changing the embedding model is not a drop-in swap.** Vectors written with one embedding model are not comparable to vectors from another. If you switch, existing collections must be re-embedded or dropped, or semantic search silently returns nonsense neighbours. Changing `LLM_MODEL` has no such effect.
 
@@ -43,9 +49,9 @@ Ollama has **no `save`/`load` command**. What it does have is a flat, content-ad
 Do this on any internet-connected machine with Ollama installed. It does not need to be a TestLookup host.
 
 ```bash
-# 1. Pull exactly the models your target will use.
-ollama pull qwen2.5:7b
-ollama pull nomic-embed-text
+# 1. Pull exactly the models your target will use (the default tags, both Apache-2.0).
+ollama pull qwen2.5:7b-instruct
+ollama pull nomic-embed-text:v1.5
 
 # 2. Confirm what you have (these names must match LLM_MODEL / EMBEDDING_MODEL).
 ollama list
@@ -68,8 +74,8 @@ sha256sum testlookup-model-pack.manifest.txt >> testlookup-model-pack.tar.gz.sha
 If the connected machine runs Ollama in Docker, pull inside the container and archive from there. `-T` matters — without it Docker allocates a TTY and corrupts the binary stream:
 
 ```bash
-docker exec -i <container> ollama pull qwen2.5:7b
-docker exec -i <container> ollama pull nomic-embed-text
+docker exec -i <container> ollama pull qwen2.5:7b-instruct
+docker exec -i <container> ollama pull nomic-embed-text:v1.5
 docker exec -i <container> tar -C /root/.ollama/models -czf - blobs manifests > testlookup-model-pack.tar.gz
 sha256sum testlookup-model-pack.tar.gz > testlookup-model-pack.tar.gz.sha256
 ```
@@ -154,10 +160,10 @@ Read the two failure states as distinct problems — the page keeps them apart o
 | What you see | What it means | What to do |
 |---|---|---|
 | `ollama_reachable: false` | Connectivity. The backend cannot reach `OLLAMA_BASE_URL` at all. Says nothing about your models. | Check the Ollama service/pod is up and the URL is right. Pulling or restoring won't help yet. |
-| `ollama_reachable: true`, a required model `present: false` | The daemon is fine; the pack didn't land, or the name doesn't match. | Compare `ollama list` against `LLM_MODEL` / `EMBEDDING_MODEL` — exact tag, including `:7b`. Re-extract if a blob is missing. |
+| `ollama_reachable: true`, a required model `present: false` | The daemon is fine; the pack didn't land, or the name doesn't match. | Compare `ollama list` against `LLM_MODEL` / `EMBEDDING_MODEL` — exact tag, including `:7b-instruct` / `:v1.5`. Re-extract if a blob is missing. |
 | LLM tier unavailable, rules available | Triage still runs, on the rules engine. Results are shallower, not absent. | Fix the above; no data is lost in the meantime. |
 
-Model presence is matched on the **exact** Ollama name, treating a missing tag as `:latest`. `qwen2.5:14b` does **not** satisfy `LLM_MODEL=qwen2.5:7b` — a same-family, different-size tag is reported as missing, because at run time the agent asks for the configured name and gets nothing.
+Model presence is matched on the **exact** Ollama name, treating a missing tag as `:latest`. `qwen2.5:14b` does **not** satisfy `LLM_MODEL=qwen2.5:7b-instruct` — a same-family, different-size tag is reported as missing, because at run time the agent asks for the configured name and gets nothing. The same rule makes `nomic-embed-text` (that is, `nomic-embed-text:latest`) a miss for the default `EMBEDDING_MODEL=nomic-embed-text:v1.5`, even though the registry serves the same weights under both names: pull the tag your settings name.
 
 ## How this relates to `AI_OFFLINE_MODE`
 
@@ -171,7 +177,7 @@ One related quirk worth knowing: `/health/details` only reports on Ollama when `
 
 ## Automating it
 
-Deployment scripts pull the default models when the host has egress — `homelabsetup/deploy-homelab.sh` (skippable with `--skip-models`) and `openshiftsetup/deploy-openshift-artifactory.sh`, which warns `Could not pull <model> (air-gapped Ollama?)` and carries on. **That warning is the signal to run this procedure.** The deploy is not broken; it simply couldn't fetch weights, and the install will run on rules until a pack is restored.
+Deployment scripts pull the default models (`qwen2.5:7b-instruct` and `nomic-embed-text:v1.5`) when the host has egress — `homelabsetup/deploy-homelab.sh` (skippable with `--skip-models`) and `openshiftsetup/deploy-openshift-artifactory.sh` when `PULL_OLLAMA_MODELS=true` (list in `OLLAMA_MODELS`), which warns `Could not pull <model> (air-gapped Ollama?)` and carries on. **That warning is the signal to run this procedure.** The deploy is not broken; it simply couldn't fetch weights, and the install will run on rules until a pack is restored.
 
 If you image environments repeatedly, keep the pack and its `.sha256` in your artifact repository next to the release bundle, and make restoring it a step in the environment build — the same way you'd stage base container images.
 

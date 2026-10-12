@@ -1,4 +1,4 @@
-# Homelab NetworkPolicy additions:
+# NetworkPolicy additions for the single-node K3s overlay:
 #   1. The colocated data stores (postgres/mongo/redis/minio/chroma) need
 #      ingress allows — the base default-deny-all otherwise blocks them.
 #   2. Traefik on K3s lives in kube-system, not ingress-nginx, so the base

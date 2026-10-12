@@ -37,8 +37,8 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 #: Docs a prospective user reads before deciding the product fits.
 FRONT_DOOR_DOCS = (
     "README.md",
-    "UserGuides/TESTLOOKUP_USER_GUIDE.md",
     "frontend/src/content/guide/getting-started.md",
+    "frontend/src/content/guide/ingestion.md",
 )
 
 #: ``auto`` is a directive, not a format. ``junit`` is the fallback every doc

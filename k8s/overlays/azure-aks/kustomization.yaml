@@ -10,7 +10,7 @@ kind: Kustomization
 #   - For production prefer Azure Database for PostgreSQL Flexible Server,
 #     Cosmos DB for MongoDB API, Azure Cache for Redis, and Azure Blob Storage
 #     (S3-compatible via blob-csi-driver, or use rclone). Wire connection
-#     strings into testlookup-secrets out-of-band — see docs/deployment/azure-aks.md.
+#     strings into testlookup-secrets out-of-band — see docs/operations/deploy-cloud.md.
 
 resources:
   - ../prod

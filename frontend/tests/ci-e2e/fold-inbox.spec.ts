@@ -6,9 +6,8 @@
  * At 1440 x 900 the page's primary content (`[data-primary]`, the assigned
  * failures table) starts at most 300 px below the top of `#main-content`. The
  * scroller's `scrollHeight` is printed (FOLD line) so the page's height before
- * / after can be compared: measured on the unchanged page first (P4 agent C's
- * report, `docs/viz-work/p4-agent-C.md`: 2029 px, the table at 140 px with
- * 74 px rows).
+ * / after can be compared: measured on the unchanged page first (2029 px, the
+ * table at 140 px with 74 px rows).
  *
  * Also held here: the request inventory of one load (the Approvals count asks
  * for its three queues; nothing else), the Approvals tab and its source

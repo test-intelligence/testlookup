@@ -952,7 +952,7 @@ async def _update_run_aggregates(db, run_id: uuid.UUID) -> None:
     # matches the live-stream transient displays (live_consumer / stream_service)
     # and the FAILED-iff-failed+broken status rule, so a run's pass_rate no
     # longer shifts when a live run finalizes. (Previously divided by ``total``
-    # which included skipped — see docs/reviews/live-stream-ingestion.)
+    # which included skipped.)
     executed = passed + failed + broken
     pass_rate = round((passed / executed * 100), 2) if executed > 0 else 0.0
 

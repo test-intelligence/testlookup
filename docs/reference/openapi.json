@@ -3540,7 +3540,7 @@
         "type": "object"
       },
       "AnalysisLookupResponse": {
-        "description": "US-2.4: latest AI analysis for a (project, fingerprint) pair.\n\nAll fields are ``None`` when the test has never been analysed — the UI\nrenders a \"no AI analysis recorded yet\" empty state instead of a 404\n(which axios would surface as a scary error toast).\n\n``failure_category`` is a plain string, NOT the ``FailureCategory``\nenum: the backing column is ``String(30)`` and a strict enum here would\nsilently 422 the response if a stored value ever drifts out of vocab\n(backend/CLAUDE.md pitfall).",
+        "description": "US-2.4: latest AI analysis for a (project, fingerprint) pair.\n\nAll fields are ``None`` when the test has never been analysed — the UI\nrenders a \"no AI analysis recorded yet\" empty state instead of a 404\n(which axios would surface as a scary error toast).\n\n``failure_category`` is a plain string, NOT the ``FailureCategory``\nenum: the backing column is ``String(30)`` and a strict enum here would\n422 the whole response if a stored value ever drifts out of vocab.",
         "properties": {
           "analysis_id": {
             "anyOf": [
@@ -9405,7 +9405,7 @@
         "type": "object"
       },
       "FixOutcomeRequest": {
-        "description": "AI-5: outcome of a fix informed by TestLookup's diagnosis.\n\n``outcome`` is a closed vocabulary validated here (the values map onto\nFeedbackRating in the service); ``fingerprint`` is the stable test\nidentity (sha256(class::test)[:16]) the analytics surface uses.",
+        "description": "Outcome of a fix informed by TestLookup's diagnosis.\n\n``outcome`` is a closed vocabulary validated here (the values map onto\nFeedbackRating in the service); ``fingerprint`` is the stable test\nidentity (sha256(class::test)[:16]) the analytics surface uses.",
         "properties": {
           "comment": {
             "anyOf": [
@@ -50802,7 +50802,7 @@
     },
     "/api/v1/projects/{project_id}/fix-outcomes": {
       "post": {
-        "description": "Record a fix outcome for a fingerprint (Agentic plan AI-5).\n\nWrites an ``ai_feedback`` row with ``source=\"fix_outcome\"`` against the\nlatest analysis for the (project, fingerprint) pair — the AI-F1 label\nsystem maps that source into the ``human_indirect`` provenance bucket.\n404 when the fingerprint has never been analysed (nothing to grade).\nProject-scoped via ``require_project_access`` (authorization ratchet);\nany active project member may record an outcome, matching the feedback\nendpoints above.",
+        "description": "Record a fix outcome for a fingerprint.\n\nWrites an ``ai_feedback`` row with ``source=\"fix_outcome\"`` against the\nlatest analysis for the (project, fingerprint) pair — the AI-F1 label\nsystem maps that source into the ``human_indirect`` provenance bucket.\n404 when the fingerprint has never been analysed (nothing to grade).\nProject-scoped via ``require_project_access`` (authorization ratchet);\nany active project member may record an outcome, matching the feedback\nendpoints above.",
         "operationId": "record_fix_outcome_api_v1_projects__project_id__fix_outcomes_post",
         "parameters": [
           {
@@ -73436,7 +73436,7 @@
     },
     "/health/ingestion": {
       "get": {
-        "description": "Surface the load + backpressure signals used by the live-stream\nadmission gates.\n\nThe output is consumed by the future Grafana panel (Phase 1 of the\nscalable-ingestion plan in ``docs/SCALABLE_INGESTION_DESIGN.md``)\nand by support / on-call humans when a customer reports \"my runs\nare slow / 429ing\". A single GET answers:\n\n* Is Redis approaching the memory threshold that triggers 503?\n* What's the per-minute ingest vs reject rate?\n* How many live sessions are active right now?\n* How deep are the Celery queues backing ingestion + AI analysis?\n* What thresholds is the gate using today (env-tuned, useful for\n  verifying the deployment matches the docs)?\n\nEverything is best-effort — a degraded Redis returns partial data\nrather than 500'ing the health endpoint itself.",
+        "description": "Surface the load + backpressure signals used by the live-stream\nadmission gates.\n\nThe output is for dashboards and for support / on-call humans when a\ncustomer reports \"my runs are slow / 429ing\" (the admission gates are\ndescribed in ``architecture/INGESTION_SCALE.md``). A single GET answers:\n\n* Is Redis approaching the memory threshold that triggers 503?\n* What's the per-minute ingest vs reject rate?\n* How many live sessions are active right now?\n* How deep are the Celery queues backing ingestion + AI analysis?\n* What thresholds is the gate using today (env-tuned, useful for\n  verifying the deployment matches the docs)?\n\nEverything is best-effort — a degraded Redis returns partial data\nrather than 500'ing the health endpoint itself.",
         "operationId": "health_ingestion_health_ingestion_get",
         "responses": {
           "200": {

@@ -1,7 +1,5 @@
 """Continuous, decomposable flakiness score.
 
-Phase 2 (P2-B) of ``architecture/TEST_INTELLIGENCE_PLAN.md``.
-
 ## What this replaces
 
 A binary flaky/not-flaky label answers "is it?", which is the wrong question:
@@ -11,16 +9,18 @@ stores every component beside it.
 
 ## Why there is no Bayesian posterior here
 
-The plan originally specified one. The Phase 0 census then measured the actual
-corpus: every genuine project on the reference deployment carries 12–15 test
-fingerprints with a median of 5–12 runs each, against thresholds wanting ≥25
-fingerprints at ≥20 runs. A moving-window posterior over 5–12 observations is
+A windowed posterior is the obvious design. A readiness census
+(``flaky_readiness_service``) then measured the actual corpus: every genuine
+project on the reference deployment carries 12–15 test fingerprints with a
+median of 5–12 runs each, against thresholds wanting ≥25 fingerprints at ≥20
+runs. A moving-window posterior over 5–12 observations is
 dominated by its prior — it emits a confident-looking number that is mostly an
 assumption. The four signals below degrade honestly instead: with little data
 they produce small, low-confidence values rather than a fabricated certainty.
 
-That decision is recorded in the plan with its evidence and its limits. It is a
-measurement, not a permanent ruling.
+That choice follows from a measurement, not a permanent ruling:
+``flaky_readiness_service`` reports, per project, whether the history has
+grown enough to support a posterior.
 
 ## The signals
 
@@ -30,7 +30,7 @@ signal                  meaning                                     source
 result_volatility       pass/fail flips per adjacent run pair       have
 retry_rate              share of runs needing an in-run retry       have
 duration_variance       coefficient of variation of runtime         perf_baselines
-environment_instability outcome disagrees across environments       new (P0-1)
+environment_instability outcome disagrees across environments       run_environment
 ======================  ==========================================  ==========
 
 Each is already a 0–1 rate, so fusion is a weighted mean — deliberately the

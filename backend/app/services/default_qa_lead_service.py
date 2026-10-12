@@ -97,8 +97,8 @@ async def ensure_default_qa_lead(
         (e.g. a previous create-then-rollback) — attaches the existing user
         and writes the FK without creating a duplicate.
 
-    The caller owns the transaction (per the single-owner rule in
-    ``backend/CLAUDE.md``). This service only ``flush``-es so the new user's
+    The caller owns the transaction (single-owner rule: services flush,
+    routers commit). This service only ``flush``-es so the new user's
     PK is materialised; commit happens at the caller's request boundary.
     """
     if project.default_qa_lead_user_id is not None:

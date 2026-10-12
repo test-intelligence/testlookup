@@ -11,8 +11,12 @@
 # and clearly marked not-for-production.
 #
 # Usage:
-#   scripts/gen-dev-env.sh            # no-op if .env already exists
-#   scripts/gen-dev-env.sh --force    # overwrite an existing .env
+#   scripts/gen-dev-env.sh                    # no-op if .env already exists
+#   scripts/gen-dev-env.sh --force            # overwrite an existing .env
+#   scripts/gen-dev-env.sh --release [--force]
+#       for the release images (install.sh): random secrets as above, but the
+#       secure .env.example defaults stay (APP_ENV=production, no dev-login),
+#       and the first admin gets the random INITIAL_ADMIN_PASSWORD.
 set -euo pipefail
 
 if [[ -n "${TL_PYTHON_BIN:-}" ]]; then
@@ -35,7 +39,14 @@ cd "$(dirname "$0")/.."
 ENV_FILE=".env"
 EXAMPLE=".env.example"
 FORCE=0
-[ "${1:-}" = "--force" ] && FORCE=1
+RELEASE=0
+for arg in "$@"; do
+  case "$arg" in
+    --force)   FORCE=1 ;;
+    --release) RELEASE=1 ;;
+    *) echo "error: unknown option $arg (use --force and/or --release)" >&2; exit 2 ;;
+  esac
+done
 
 if [ ! -f "$EXAMPLE" ]; then
   echo "error: $EXAMPLE not found (run from the repo root)" >&2
@@ -73,6 +84,7 @@ APP_SECRET="$(rand hex 32)"
 JWT_SECRET="$(rand hex 32)"
 WEBHOOK_SECRET="$(rand hex 32)"
 GF_ADMIN_PW="$(rand hex 16)"
+INITIAL_ADMIN_PW="$(rand b64 18)"
 
 PG_USER="testlookup_user"; PG_DB="testlookup"
 MONGO_USER="testlookup"; MONGO_DB="testlookup_logs"
@@ -116,12 +128,15 @@ set_kv APP_SECRET_KEY "$APP_SECRET"
 set_kv JWT_SECRET_KEY "$JWT_SECRET"
 set_kv WEBHOOK_SECRET "$WEBHOOK_SECRET"
 set_kv GF_SECURITY_ADMIN_PASSWORD "$GF_ADMIN_PW"
-# Local convenience: gen-dev-env is the LOCAL/DEMO path, so restore the dev
-# affordances the secure .env.example defaults turn off (passwordless dev-login
-# on APP_ENV=development). Real deployments use the .env.example defaults.
-set_kv APP_ENV "development"
-set_kv APP_DEBUG "true"
-set_kv DEV_AUTO_LOGIN_ENABLED "true"
+set_kv INITIAL_ADMIN_PASSWORD "$INITIAL_ADMIN_PW"
+if [ "$RELEASE" -ne 1 ]; then
+  # Local convenience: gen-dev-env is the LOCAL/DEMO path, so restore the dev
+  # affordances the secure .env.example defaults turn off (passwordless
+  # dev-login on APP_ENV=development). --release keeps the secure defaults.
+  set_kv APP_ENV "development"
+  set_kv APP_DEBUG "true"
+  set_kv DEV_AUTO_LOGIN_ENABLED "true"
+fi
 
 # Stamp a clear local-only banner at the top.
 "${PYTHON_CMD[@]}" - "$ENV_FILE" <<'PY'

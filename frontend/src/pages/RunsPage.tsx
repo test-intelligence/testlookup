@@ -817,7 +817,7 @@ export function SignatureClusters({
       </div>
       {outlierCount > 0 && (
         <p className="text-[11.5px] m-0 italic" style={{ color: 'var(--color-text-muted)', lineHeight: 1.5 }}>
-          The outlier ran a different test count, with the same single failure pattern. Likely an older Jenkinsfile that included a smoke-test suite later removed. Same failing test underneath — treat it as part of the cluster.
+          {outlierCount} failed build{outlierCount === 1 ? '' : 's'} carr{outlierCount === 1 ? 'ies' : 'y'} a different signature. Open {outlierCount === 1 ? 'it' : 'them'} to check whether the same test fails underneath before counting {outlierCount === 1 ? 'it' : 'them'} as a separate incident.
         </p>
       )}
       {/* Renders nothing at one page, so small clusters look exactly as before. */}
@@ -1387,7 +1387,7 @@ export default function RunsPage() {
   // `manual_upload` feature flag.
   const uploadEnabled = useFeatureEnabled('manual_upload')
 
-  // Manual report upload (PRD MRU-4). Opens from the header's primary button
+  // Manual report upload. Opens from the header's primary button
   // or via the deep-link ``/runs?upload=1`` (bookmarks, docs). The modal asks
   // for the project itself, so All Projects does not block it.
   const [searchParams, setSearchParams] = useSearchParams()

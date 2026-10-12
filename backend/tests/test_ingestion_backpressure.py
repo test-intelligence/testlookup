@@ -1,7 +1,7 @@
 """Unit tests for the Redis-memory backpressure gate.
 
-The gate is the second admission layer (Phase 1 of
-``docs/SCALABLE_INGESTION_DESIGN.md``). It complements the per-project
+The gate is the second admission layer (see
+``architecture/INGESTION_SCALE.md``). It complements the per-project
 rate limit by enforcing a global cap when EVERY project is within
 budget but aggregate load is still pushing Redis toward OOM.
 

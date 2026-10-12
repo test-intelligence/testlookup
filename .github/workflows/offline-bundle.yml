@@ -19,7 +19,7 @@ name: TestLookup — Offline bundle (air-gapped install)
 #
 # WHAT THIS DOES NOT PROVE: it is NOT a full-stack end-to-end run. Nothing
 # here boots Postgres/Mongo/Redis/MinIO or exercises the app against them —
-# that is `backend-test` + the deploy workflows' job. Do not read a green
+# that is the job of ci.yml's `backend-test`. Do not read a green
 # tick here as "the air-gapped deployment works", only as "the bundle is
 # intact and importable offline".
 #
@@ -203,7 +203,8 @@ jobs:
           # `import app.main` needs a parseable DATABASE_URL even though nothing
           # here connects to anything (the network is off). These values are
           # syntactically valid and point nowhere on purpose — same contract the
-          # backend test suite runs under (see backend/CLAUDE.md).
+          # backend test suite runs under (backend/tests/conftest.py defaults
+          # DATABASE_URL to a host that never resolves).
           docker run --rm --network none --pull=never \
             -e APP_ENV=production -e AI_OFFLINE_MODE=true \
             -e DATABASE_URL="postgresql+asyncpg://offline:offline@127.0.0.1:5432/offline" \
@@ -265,6 +266,39 @@ jobs:
               print("MANIFEST.json problems:", *errors, sep="\n  - ")
               sys.exit(1)
           print(f"MANIFEST.json OK — {len(m['images'])} images, sbom_mode={m['sbom_mode']}")
+          PY
+
+      # Licence boundary of the bundle: MongoDB (SSPL-1.0) is an external
+      # prerequisite and must NOT be redistributed; Valkey (BSD-3-Clause) and
+      # versitygw (Apache-2.0) replaced Redis 7.4 (RSALv2/SSPLv1) and PGSTY
+      # Silo/mc (AGPL-3.0) and must be present.
+      - name: Bundle carries no SSPL/AGPL/RSAL images and lists Mongo as external
+        run: |
+          set -euo pipefail
+          cd "testlookup-offline-${BUNDLE_VERSION}"
+          python3 - <<'PY'
+          import json
+
+          refs = {line.split("\t")[1].strip() for line in open("images.list") if line.strip()}
+          names = {ref.rsplit(":", 1)[0] for ref in refs}
+          errors = []
+          for banned in ("mongo", "redis", "pgsty/silo", "pgsty/mc", "minio/minio", "minio/mc"):
+              if banned in names or f"docker.io/library/{banned}" in names:
+                  errors.append(f"bundle redistributes {banned}")
+          for required in ("valkey/valkey", "ghcr.io/versity/versitygw"):
+              if required not in names:
+                  errors.append(f"bundle is missing {required}")
+          manifest = json.load(open("MANIFEST.json"))
+          if "mongo:7" not in manifest.get("external_prerequisites", []):
+              errors.append("MANIFEST.json does not list mongo:7 under external_prerequisites")
+          for f in ("LICENSE",):
+              try:
+                  open(f).close()
+              except OSError:
+                  errors.append(f"bundle ships no {f}")
+          if errors:
+              raise SystemExit("bundle licence boundary violated:\n  - " + "\n  - ".join(errors))
+          print(f"bundle images OK: {sorted(refs)}; external: {manifest['external_prerequisites']}")
           PY
 
       - name: Verdict

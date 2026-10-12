@@ -1,7 +1,7 @@
 # ============================================================
 # TestLookup — Developer Makefile
 # ============================================================
-.PHONY: benchmark-pipeline help dev dev-llm dev-setup dev-lite dev-lite-stop dev-logs dev-logs-seed stop restart clean clean-scratch backup restore preflight upgrade verify-ops-scripts migrate migrate-create migrate-down migrate-status pull-llm pull-llm-large list-llm test-backend test-backend-cov test-frontend test-e2e test-agent lint format type-check build build-push offline-bundle offline-bundle-plan images-check images-check-test logs shell-backend shell-db simulate-upload seed-data seed-data-reset quickstart demo smoke benchmark setup-minio build-java-sdk build-java-sdk-docker mcp-install mcp-start mcp-sse mcp-sse-docker k8s-deploy-dev k8s-deploy-staging k8s-deploy-prod k8s-deploy-openshift k8s-deploy-openshift-artifactory k8s-deploy-openshift-artifactory-update k8s-migrate k8s-mirror-images-openshift k8s-status k8s-rollout-async k8s-rollout-async-dev k8s-rollout-async-staging k8s-rollout-async-prod k8s-status-async k8s-status-openshift k8s-scale-worker
+.PHONY: help dev dev-llm dev-setup dev-lite dev-lite-stop dev-logs dev-logs-seed stop restart clean clean-scratch backup restore preflight upgrade verify-ops-scripts migrate migrate-create migrate-down migrate-status pull-llm pull-llm-large list-llm test-backend test-backend-cov test-frontend test-e2e test-agent lint format type-check build build-push offline-bundle offline-bundle-plan images-check images-check-test logs shell-backend shell-db simulate-upload seed-data seed-data-reset quickstart demo smoke setup-minio build-java-sdk build-java-sdk-docker mcp-install mcp-start mcp-sse mcp-sse-docker k8s-deploy-dev k8s-deploy-staging k8s-deploy-prod k8s-deploy-openshift k8s-deploy-openshift-artifactory k8s-deploy-openshift-artifactory-update k8s-migrate k8s-mirror-images-openshift k8s-status k8s-rollout-async k8s-rollout-async-dev k8s-rollout-async-staging k8s-rollout-async-prod k8s-status-async k8s-status-openshift k8s-scale-worker
 
 # Force bash for recipe shells. On Windows, GNU make defaults to cmd.exe which
 # breaks bash builtins like `until`/`for f in glob`. Git Bash provides bash at
@@ -16,7 +16,7 @@ SHELL := bash
 DOCKER_COMPOSE ?= docker compose
 BACKEND_CONTAINER = testlookup_backend
 OLLAMA_CONTAINER = ollama
-OLLAMA_SLM_MODEL ?= qwen2.5:3b-instruct-q5_K_M
+OLLAMA_SLM_MODEL ?= qwen2.5:7b-instruct
 OLLAMA_LLM_MODEL ?= qwen2.5:14b-instruct-q5_K_M
 OLLAMA_EMBEDDING_MODEL ?= nomic-embed-text:v1.5
 K8S_NAMESPACE ?= testlookup
@@ -53,7 +53,7 @@ dev: .env ## Start core stack without local LLM (Ollama/ChromaDB excluded)
 	@echo "Stack started (no local LLM — AI falls back to rules/ML engine)."
 	@echo "  Dashboard  -> http://localhost:3000"
 	@echo "  API Docs   -> http://localhost:8000/api-docs"
-	@echo "  MinIO      -> http://localhost:9001  (credentials from .env)"
+	@echo "  S3 (API)   -> http://localhost:9000  (MINIO_ACCESS_KEY / MINIO_SECRET_KEY from .env)"
 	@echo "  Flower     -> http://localhost:5555"
 	@echo ""
 	@echo "  To enable Ollama + ChromaDB: run 'make dev-llm' instead."
@@ -167,12 +167,12 @@ pull-llm: ## Pull pinned SLM, LLM, and embedding models (requires Ollama)
 	$(DOCKER_COMPOSE) --profile local-llm exec -T $(OLLAMA_CONTAINER) ollama pull $(OLLAMA_EMBEDDING_MODEL)
 	@echo "Pinned SLM/LLM pair and embedding model downloaded."
 
-pull-llm-large: ## Pull larger/more capable models — 16GB+ VRAM (requires: make dev-llm)
+pull-llm-large: ## Pull the 32B model (Apache-2.0, ~20 GB; needs 32GB+ RAM or a 24GB GPU) (requires: make dev-llm)
 	@$(DOCKER_COMPOSE) --profile local-llm ps --services --filter status=running | grep -q "^ollama$$" || \
 	  (echo "ERROR: Ollama is not running. Start it first with: make dev-llm" && exit 1)
-	$(DOCKER_COMPOSE) --profile local-llm exec $(OLLAMA_CONTAINER) ollama pull qwen2.5:14b
-	$(DOCKER_COMPOSE) --profile local-llm exec $(OLLAMA_CONTAINER) ollama pull llama3.2:8b
-	$(DOCKER_COMPOSE) --profile local-llm exec $(OLLAMA_CONTAINER) ollama pull deepseek-coder:6.7b
+	$(DOCKER_COMPOSE) --profile local-llm exec $(OLLAMA_CONTAINER) ollama pull qwen2.5:32b-instruct
+	@echo "Pulled qwen2.5:32b-instruct. Use it with LLM_MODEL=qwen2.5:32b-instruct."
+	@echo "Other model families have their own licences (e.g. Llama: Llama Community License; DeepSeek: DeepSeek License) — review before use."
 
 list-llm: ## List downloaded LLM models (requires: make dev-llm)
 	$(DOCKER_COMPOSE) --profile local-llm exec $(OLLAMA_CONTAINER) ollama list
@@ -310,19 +310,19 @@ else
   BASH_CMD := bash
 endif
 
-k8s-bootstrap-homelab: ## Bootstrap K3s on 3 homelab nodes via SSH (cluster only, no app)
+k8s-bootstrap-homelab: ## Bootstrap a K3s cluster over SSH (nodes from your site config, TESTLOOKUP_HOMELAB_ENV; cluster only, no app)
 	$(BASH_CMD) homelabsetup/bootstrap-homelab.sh $(ARGS)
 
-k8s-oneclick-homelab: ## One-click: bootstrap K3s + deploy TestLookup (HOMELAB_NODE{1,2,3}_PASS env or interactive)
+k8s-oneclick-homelab: ## One-click: bootstrap K3s + deploy TestLookup (HOMELAB_NODE<n>_PASS env or interactive)
 	$(BASH_CMD) homelabsetup/bootstrap-homelab.sh --deploy $(ARGS)
 
-k8s-teardown-homelab: ## Uninstall K3s from all 3 homelab nodes
+k8s-teardown-homelab: ## Uninstall K3s from every node in your site config
 	$(BASH_CMD) homelabsetup/bootstrap-homelab.sh --teardown $(ARGS)
 
-k8s-deploy-homelab: ## Deploy to K3s homelab cluster (pass extra flags via ARGS, e.g. make k8s-deploy-homelab ARGS="--skip-registry")
+k8s-deploy-homelab: ## Deploy to a K3s cluster, single node or more (docs/operations/deploy-k3s.md; flags via ARGS, e.g. ARGS="--skip-registry")
 	$(BASH_CMD) homelabsetup/deploy-homelab.sh $(ARGS)
 
-k8s-deploy-homelab-update: ## Rebuild images and redeploy to homelab (skip registry + models)
+k8s-deploy-homelab-update: ## Rebuild images and redeploy to the K3s cluster (skip registry + models)
 	$(BASH_CMD) homelabsetup/deploy-homelab.sh --skip-registry --skip-models $(ARGS)
 
 k8s-deploy-openshift-artifactory: ## Air-gapped OpenShift deploy over HTTPS, all images from one Artifactory (config: openshiftsetup/artifactory.env; flags via ARGS)
@@ -333,12 +333,6 @@ k8s-deploy-openshift-artifactory-update: ## Rebuild app images + redeploy to Ope
 
 k8s-mirror-images-openshift: ## Pre-seed the configured Artifactory with all third-party infra images (run on an internet-connected host)
 	$(BASH_CMD) openshiftsetup/mirror-images.sh $(ARGS)
-
-k8s-stop-homelab: ## Graceful pause: drain testlookup workloads + stop K3s on every node (PVCs preserved)
-	$(BASH_CMD) homelabsetup/stop-homelab.sh $(ARGS)
-
-k8s-restart-homelab: ## Resume from k8s-stop-homelab: start K3s + scale workloads back to their pre-shutdown replicas
-	$(BASH_CMD) homelabsetup/restart-homelab.sh $(ARGS)
 
 k8s-status: ## Show Kubernetes deployment status
 	kubectl get pods,svc,ing -n testlookup
@@ -431,41 +425,8 @@ asyncio.run((lambda: httpx.AsyncClient(base_url='http://localhost:8000', timeout
 	@echo "    Default login: use the dev-login endpoint or register via the API."
 	@echo "    To stop: make stop"
 
-benchmark: ## Run classification + throughput benchmarks (stack must be running)
-	@echo "==> Running classification benchmark (rules mode, in-container)..."
-	$(DOCKER_COMPOSE) exec backend python /app/benchmarks/classification/evaluate.py \
-		--mode rules \
-		--output /app/benchmarks/results/classification_rules.json
-	@echo ""
-	@echo "==> Running throughput benchmark..."
-	$(DOCKER_COMPOSE) exec backend python /app/scripts/load_test_concurrent.py bench \
-		--base-url http://localhost:8000 \
-		--iterations 20 \
-		--concurrency 5 \
-		--check-budgets \
-		--output /app/benchmarks/results/throughput.json
-	@echo ""
-	@echo "==> Benchmarks complete. Results in benchmarks/results/"
-
-benchmark-pipeline: ## Baseline the AI pipeline from recorded telemetry (needs runs in the DB)
-	@echo "==> Aggregating AI pipeline baseline from agent_stage_results..."
-	$(DOCKER_COMPOSE) exec backend python /app/benchmarks/pipeline/collect.py \
-		--days $(or $(DAYS),30) \
-		--output /app/benchmarks/results/pipeline_baseline.json
-	@echo ""
-	@echo "==> Baseline written to benchmarks/results/pipeline_baseline.json"
-
-setup-minio: .env ## Manually configure MinIO bucket and webhook (runs inside Docker — no host deps)
-	# .env carries MINIO_ACCESS_KEY / MINIO_SECRET_KEY / WEBHOOK_SECRET, which the
-	# script requires (WEBHOOK_SECRET becomes MinIO's auth_token, re-audit R15).
-	docker run --rm \
-		--network testlookup_net \
-		--env-file "$(CURDIR)/.env" \
-		-v "$(CURDIR)/scripts/setup-minio.sh:/setup-minio.sh:ro" \
-		-e MINIO_ENDPOINT=http://minio:9000 \
-		-e BACKEND_URL=http://backend:8000 \
-		--entrypoint sh \
-		pgsty/mc:RELEASE.2026-09-16T00-00-00Z /setup-minio.sh
+setup-minio: .env ## (Re)create the S3 buckets the backend uses — idempotent; backend/scripts/s3_setup.py in the backend image
+	$(DOCKER_COMPOSE) run --rm minio-setup
 
 # ── Client SDKs ──────────────────────────────────────────────
 

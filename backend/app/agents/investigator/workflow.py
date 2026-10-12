@@ -1,4 +1,4 @@
-"""LangGraph workflow for the hypothesis-loop Investigator (Agentic plan AI-1).
+"""LangGraph workflow for the hypothesis-loop Investigator.
 
 Graph topology (mirrors the chassis conventions in ``app/agents/workflow.py``:
 parallel fan-out, reducer keys, singleton agents, per-stage tracking rows):

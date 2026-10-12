@@ -7,22 +7,20 @@ final run_complete event automatically.
 
 Install (one of):
 
-    # From the repo (local dev) — pyproject.toml lives in client/
+    # From a clone of the repository (the reporter is not on PyPI) —
+    # pyproject.toml lives in client/
     pip install -e ./client
-
-    # From PyPI (once published)
-    pip install testlookup-reporter
 
 Run:
 
     export TESTLOOKUP_API_KEY=qai_...               # or in testlookup.properties
-    export TESTLOOKUP_ENDPOINT=https://testlookup.local
+    export TESTLOOKUP_ENDPOINT=https://testlookup.example.com
 
     python livestream_script.py
 
 Or fully programmatic (no env vars / properties file):
 
-    python livestream_script.py --base-url https://testlookup.local \\
+    python livestream_script.py --base-url https://testlookup.example.com \\
                                 --api-key qai_... \\
                                 --run-id ci-build-42 \\
                                 --launch "Nightly E2E"

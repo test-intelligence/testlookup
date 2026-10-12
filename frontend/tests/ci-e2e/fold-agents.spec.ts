@@ -19,8 +19,7 @@
  *
  * The FOLD line prints the scroller's `scrollHeight` and the report's top
  * and width. Before (unchanged page, same fixtures): scrollHeight 1231 px,
- * the "AI Report" heading at 117 px, 587 px wide, two run selects
- * (`docs/viz-work/p5-agent-D.md`).
+ * the "AI Report" heading at 117 px, 587 px wide, two run selects.
  *
  * Harness: `tests/lib/rollout.ts` (fail closed, pinned clock); the fixtures
  * are the Run page's (`fixtures-run.ts`: the run's pipeline, its stages,

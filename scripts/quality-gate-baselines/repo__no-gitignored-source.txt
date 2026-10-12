@@ -48,7 +48,7 @@
 # The real fix for the three that DO match is to anchor the glob to the file
 # types that actually carry secrets (`*api_key*.json`, `*.env`, `*.txt`, ...)
 # so it stops matching source. That narrows a SECURITY control, so it is the
-# owner's call, not this guard's -- see GIT-001 in docs/exploratory/BACKLOG.md.
+# owner's call, not this guard's.
 # Clear these three by doing that, then re-run with --update-baseline.
 775dae70c8bba1ee  # backend/app/routers/api_keys.py
 f9b92aa520f6c7ff  # backend/migrations/versions/0056_api_key_project_scope.py

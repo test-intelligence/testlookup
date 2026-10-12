@@ -1,12 +1,11 @@
 /**
  * ComputeCanvas — the dotted-background, scroll-capable canvas that hosts the
- * stage nodes, decision diamond, and SVG edge layer for the /agents Direction-C
- * compute graph.
+ * stage nodes, decision diamond, and SVG edge layer for the /agents compute
+ * graph.
  *
  * The inner content is a fixed-size 1750×560 stage; the outer wrapper handles
- * horizontal/vertical scroll when the viewport is narrower. The handoff is
- * explicit that we should NOT auto-fit / zoom-to-fit — narrow viewports get a
- * scrollbar.
+ * horizontal/vertical scroll when the viewport is narrower. By design the
+ * canvas does NOT auto-fit / zoom-to-fit — narrow viewports get a scrollbar.
  */
 import { clsx } from 'clsx'
 import { Fragment } from 'react'

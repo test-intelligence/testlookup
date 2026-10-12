@@ -14,6 +14,12 @@ Check these before anything else.
 
 ## Ingestion
 
+**There is no Upload report button on Runs.**
+An administrator has turned the `manual_upload` feature flag off. Send results through the API, CLI or an SDK, or ask for the flag to be turned back on. If the button is there but greyed out, your role is below `QA_ENGINEER`.
+
+**Upload or API call answers 403 "Requires at least QA_ENGINEER role".**
+Sending results needs the `QA_ENGINEER` role in that project, and an API key acts with its owner's role.
+
 **Upload returns 202 but no run appears.**
 Still queued, or the report parsed to zero results. Wait and refresh; confirm the report actually contains test cases; confirm the format is supported.
 
@@ -59,8 +65,8 @@ Project scope or time window. See the top of this page.
 **Trends are missing.**
 Not enough history. Trends need runs over time.
 
-**My failures is empty.**
-Most auto-assignments go to a synthetic project QA-lead account. Switch the scope toggle to **team**.
+**The Inbox is empty.**
+Failures are assigned to suite owners first and then spread across the project's QA leads, often onto a synthetic default QA-lead account. QA leads and administrators: switch **Scope** to **team**. Everyone else: your suites may have another owner; see [Your inbox and approvals](/docs/inbox#how-failures-get-assigned).
 
 **A chart says "Waiting to retry".**
 Too many chart requests in a minute, usually many tabs or a script on the same account. The chart retries by itself; if it gives up, press **Retry**.
@@ -71,10 +77,38 @@ There was nothing to measure for that point, for example a day with only skipped
 **"View in 3D" shows the 2D chart with a note.**
 The browser does not offer WebGL 2, or graphics acceleration is off. The 2D chart has the same points.
 
+## AI features
+
+**Ask AI is missing from the sidebar.**
+Ask AI needs analysis in **Auto** or **LLM** mode and the `ask_ai_chat` flag on. In **Rules** or **ML** mode it is hidden; an administrator changes the mode under **Admin → AI → AI configuration**. See [Ask AI](/docs/ask-ai#when-ask-ai-is-available).
+
+**Ask AI says the project's AI budget for the month is used up.**
+The project reached its LLM cost budget. An administrator can raise it under **Admin → AI → LLM cost budget**.
+
+**Root cause (AI) refuses to run.**
+Deep investigation needs the `QA_ENGINEER` role and an analysis mode other than **Rules**.
+
+**An export or shared link is refused because the report is pending review.**
+Your administrator has made human review of AI reports mandatory. A QA lead accepts the report under **Inbox → Approvals**, then try again.
+
+## Workflow pages that say they are off
+
+**"Quarantine is off for this project".**
+Quarantine proposals need the `flaky_auto_quarantine` feature flag, which ships off. An administrator turns it on under **Settings → System → Feature flags**.
+
+**Outbound webhook "Test" says no delivery was enqueued.**
+Outbound webhooks need the `outbound_webhooks` flag on and offline mode off.
+
+**"Release compliance pack feature is disabled".**
+Compliance packs need the `release_compliance_pack` flag.
+
+**"Failed to update phase" on a release.**
+Release phase enforcement (`release_phase_gate_enforcement`) is on, and the phase's gate is not GO. See [Releases and gates](/docs/releases#phases).
+
 ## Search
 
-**Similar failures look shallow.**
-Semantic search may be unavailable and search may have fallen back to keyword matching. Ask an administrator to check index health.
+**Search does not find a failure I know exists.**
+Global search matches keywords, not meaning. Search for a distinctive part of the error message, the test name or the build number. See [Search and discovery](/docs/search).
 
 **Recently ingested data is not searchable.**
 The run list reads the database; search reads the index. Indexing lags slightly.

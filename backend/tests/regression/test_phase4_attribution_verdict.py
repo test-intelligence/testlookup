@@ -1,8 +1,10 @@
-"""Phase 4: the verdict must be honest, complete, and powerless to hide.
+"""Attribution: the verdict must be honest, complete, and powerless to hide.
 
-Roadmap Phase 4 (``architecture/TEST_INTELLIGENCE_PLAN.md``) — the flagship.
+Covers ``failure_attribution_service``, which composes the flaky score,
+systemic clusters, commit-range overlap and classifier calibration into one
+verdict per failure.
 
-Three properties carry this phase, and every test pins one:
+Three properties carry the verdict, and every test pins one:
 
 **1. UNCERTAIN when the signals disagree.** At Google ~84% of pass→fail
 transitions involve a flaky test, so a raw transition is weak evidence. A
@@ -45,7 +47,7 @@ def _inputs(**overrides) -> AttributionInputs:
 # ── 1. Disagreement and thin evidence both yield UNCERTAIN ───────────────────
 
 def test_conflicting_signals_yield_uncertain_not_the_strongest_one():
-    """THE Phase 4 guard. A cluster says infra, the diff says your change.
+    """THE attribution guard. A cluster says infra, the diff says your change.
     Resolving that to whichever scored higher would invent a confidence the
     evidence does not support."""
     result = compose(_inputs(
@@ -111,8 +113,8 @@ def test_a_single_member_cluster_is_not_evidence_of_anything():
 
 @pytest.mark.parametrize("confidence", ["none", "low"])
 def test_a_thin_history_flaky_score_does_not_vote(confidence):
-    """Phase 2 refuses to emit a score it cannot support; that refusal must not
-    be undone here by letting a weak score cast a full-strength vote."""
+    """The flaky score refuses to emit a number it cannot support; that refusal
+    must not be undone here by letting a weak score cast a full-strength vote."""
     result = compose(_inputs(flaky_score=0.95, flaky_confidence=confidence))
     assert result.verdict is AttributionVerdict.UNCERTAIN
 
@@ -148,7 +150,7 @@ def test_a_weak_classifier_caps_the_verdict_at_uncertain(mode):
 
 # ── 2. Every input is shown ──────────────────────────────────────────────────
 
-# The five signals the plan requires. Guarding the SET means adding a signal
+# The five signals every verdict composes. Guarding the SET means adding a signal
 # without exposing it fails here.
 REQUIRED_INPUT_FIELDS = {
     "is_new_failure",
@@ -254,7 +256,7 @@ def test_compose_never_raises_on_malformed_signals():
 
 def test_every_orm_attribute_the_composer_reads_actually_exists():
     """Guard the CLASS. This is the second time a signal has been wired to a
-    column that does not exist: Phase 0's OpenShift branch read
+    column that does not exist: the environment resolver's OpenShift branch read
     ``oc_namespace`` when the column is ``ocp_namespace``, and this module
     first read ``run.changed_files`` when the changed files live in
     ``run_commit_ranges.commits[].files``.

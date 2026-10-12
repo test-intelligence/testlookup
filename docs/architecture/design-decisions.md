@@ -30,4 +30,4 @@ Concrete patterns the implementation guards against include granting access base
 
 ## Constraints and future improvements
 
-Preserve existing API/state vocabulary unless versioning it deliberately. Keep the data stores, broker and worker topology in the capacity model. Prefer complete response models where APIs currently return unstructured dicts. Consolidate documentation entrypoints and automate drift checks. Profile actual workloads before changing databases, model tiers or concurrency. Future improvements are proposals, not currently guaranteed capabilities; see the [action register](../reviews/2026-09-18-action-register.md).
+Preserve existing API/state vocabulary unless versioning it deliberately. Keep the data stores, broker and worker topology in the capacity model. Prefer complete response models where APIs currently return unstructured dicts. Consolidate documentation entrypoints and automate drift checks. Profile actual workloads before changing databases, model tiers or concurrency. Future improvements are proposals, not currently guaranteed capabilities.

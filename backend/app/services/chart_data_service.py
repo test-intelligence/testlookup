@@ -563,7 +563,7 @@ class AxisCounts:
 #: every row-grain chart into a sort-based grouping, and on the large seed
 #: ``pass_rate`` by suite over 365 days spent ~1,300 ms in a 76 MB external
 #: sort to find 200 groups; without it the same chart took ~197 ms
-#: (``docs/viz-work/w26/perf/REPORT.md``). The ``run_count`` METRIC keeps its
+#: on the same seed. The ``run_count`` METRIC keeps its
 #: own ``COUNT(DISTINCT tr.id)`` as ``metric_value``, so the only price is
 #: paid by the one chart that asks for it.
 _COUNT_COLUMNS = (

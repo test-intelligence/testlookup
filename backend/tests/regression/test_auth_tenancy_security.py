@@ -1,7 +1,6 @@
 """
 Regression pins for the 2026-05-31 auth / tenancy / security review fixes.
 
-Action plan: ``docs/reviews/auth-tenancy-security/00-action-plan.md``.
 
 Covers:
   Tier 1 — SAML assertion hardening

@@ -2,10 +2,13 @@
 # ============================================================================
 # offline-bundle.sh — build the TestLookup air-gapped install bundle
 # ----------------------------------------------------------------------------
-# Produces ONE tarball that carries everything an air-gapped site needs:
-# every container image (`docker save`), the rendered Kubernetes manifests,
-# the Compose files, per-image SBOM status, a checksum file, and the
-# import script that loads it all on the far side with zero internet.
+# Produces ONE tarball that carries what an air-gapped site needs: every
+# container image we redistribute (`docker save`), the rendered Kubernetes
+# manifests, the Compose files, per-image SBOM status, licence texts, a
+# checksum file, and the import script that loads it all on the far side with
+# zero internet. Images of bundle class `external` in the manifest (MongoDB,
+# SSPL-1.0) are NOT saved: they are listed as prerequisites the operator
+# mirrors (README.md / MANIFEST.json `external_prerequisites`).
 #
 #   make offline-bundle
 #   make offline-bundle ARGS="--with-llm --version 0.1.0"
@@ -48,7 +51,7 @@ log()    { echo -e "${GREEN}[+]${NC} $1"; }
 warn()   { echo -e "${YELLOW}[!]${NC} $1"; }
 error()  { echo -e "${RED}[x]${NC} $1" >&2; exit 1; }
 header() { echo -e "\n${CYAN}── $1 ─────────────────────────────────${NC}"; }
-usage()  { sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
+usage()  { sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
 
 DOCKER="${DOCKER:-docker}"
 
@@ -111,6 +114,10 @@ fi
 APP_REFS="$(manifest_refs any app "$BUNDLE_FILTER")"
 INFRA_REFS="$(manifest_refs any infra "$BUNDLE_FILTER")"
 ALL_REFS="$(printf '%s\n%s\n' "$APP_REFS" "$INFRA_REFS" | grep -v '^$')"
+# Prerequisites the deployment needs but this bundle does not redistribute
+# (bundle class `external` in the manifest — today MongoDB, SSPL-1.0). They are
+# listed in the plan, README.md and MANIFEST.json so the operator mirrors them.
+EXTERNAL_REFS="$(manifest_refs any infra external)"
 
 header "Plan"
 echo "  version      : $VERSION"
@@ -121,6 +128,10 @@ echo "  llm images   : $WITH_LLM"
 echo "  output       : $TARBALL"
 echo "  images       :"
 printf '                 %s\n' $ALL_REFS
+if [ -n "$EXTERNAL_REFS" ]; then
+  echo "  NOT bundled  : (external prerequisites — the operator mirrors these)"
+  printf '                 %s\n' $EXTERNAL_REFS
+fi
 
 if [ "$DRY_RUN" = true ]; then
   warn "--dry-run — nothing built, pulled, saved or written."
@@ -298,6 +309,21 @@ chmod +x "$STAGING/prepare-live-fanout-cutover.sh" 2>/dev/null || true
 cp "$REPO_ROOT/scripts/run-k8s-migrations.sh" "$STAGING/run-k8s-migrations.sh"
 chmod +x "$STAGING/run-k8s-migrations.sh" 2>/dev/null || true
 cp "$REPO_ROOT/deploy/images.manifest.txt" "$STAGING/images.manifest.txt"
+# Licence texts travel with the redistributed software (Apache-2.0 §4).
+for f in LICENSE NOTICE THIRD_PARTY_NOTICES.md; do
+  if [ -f "$REPO_ROOT/$f" ]; then cp "$REPO_ROOT/$f" "$STAGING/$f"; else warn "$f not found in the repo — not shipped in the bundle"; fi
+done
+
+# External prerequisites as a JSON array of strings (refs carry no quotes).
+EXTERNAL_JSON=""
+for ref in $EXTERNAL_REFS; do
+  if [ -z "$EXTERNAL_JSON" ]; then EXTERNAL_JSON="\"$ref\""; else EXTERNAL_JSON="$EXTERNAL_JSON, \"$ref\""; fi
+done
+EXTERNAL_MD=""
+for ref in $EXTERNAL_REFS; do EXTERNAL_MD="${EXTERNAL_MD}* \`$ref\`
+"; done
+[ -n "$EXTERNAL_MD" ] || EXTERNAL_MD="* (none)
+"
 
 SBOM_MODE="unavailable"; [ "$HAVE_SYFT" = true ] && SBOM_MODE="syft"
 cat > "$STAGING/MANIFEST.json" <<JSON
@@ -315,6 +341,7 @@ cat > "$STAGING/MANIFEST.json" <<JSON
   },
   "sbom_mode": "$SBOM_MODE",
   "k8s_manifests": $K8S_STATUS,
+  "external_prerequisites": [$EXTERNAL_JSON],
   "images": [
 $IMAGE_JSON
   ]
@@ -329,8 +356,9 @@ cat > "$STAGING/README.md" <<README
 
 Created: \`$CREATED_AT\` · source commit: \`$GIT_SHA\`
 
-Everything TestLookup needs to run with **no internet access**: every container
-image, the Kubernetes manifests, the Compose files, and the import script.
+What TestLookup needs to run with **no internet access**: its container images
+(except the external prerequisites listed below), the Kubernetes manifests, the
+Compose files, and the import script.
 
 ## Contents
 
@@ -346,6 +374,18 @@ image, the Kubernetes manifests, the Compose files, and the import script.
 | \`k8s/base/\`, \`k8s/overlay/\` | the raw Kustomize sources, for customizing |
 | \`sbom/\` | SPDX SBOMs, **when the build host had \`syft\`** (see below) |
 | \`import-bundle.sh\` | verify → load → retag → (optional) push → next steps |
+| \`LICENSE\`, \`NOTICE\`, \`THIRD_PARTY_NOTICES.md\` | licence texts for TestLookup and the software it ships |
+
+## Not in this bundle — mirror these yourself
+
+The deployment also needs the image(s) below, which this bundle does **not**
+redistribute (licence: MongoDB Community Server is SSPL-1.0). Pull each one
+from its upstream registry on a connected host, review its licence, and push
+it to your registry under the same naming contract as everything else
+(\`<registry>/<image>:<tag>\`) before you start the stack:
+
+${EXTERNAL_MD}
+\`MANIFEST.json\` lists them under \`external_prerequisites\`.
 
 ## Quick start (air-gapped host)
 

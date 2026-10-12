@@ -1,10 +1,10 @@
 # Environment settings reference
 
-[Documentation home](../README.md) · [Regeneration](../handoff/maintenance.md)
+[Documentation home](../README.md) · [Regeneration](../maintainers/maintenance.md)
 
-Generated from tracked source by `scripts/generate_handoff_reference.py`. Do not edit by hand. The baseline and validation limits are recorded in [verification](../handoff/verification.md).
+Generated from tracked source by `scripts/generate_reference.py`. Do not edit by hand. What the checks cover is recorded in [verification](../maintainers/verification.md).
 
-Source declarations only; no `.env` or running secrets are read. Compose/Helm/Kustomize can override these defaults. `Field` aliases and constraints are retained. For production requirements and profiles see [deployment](../operations/deployment.md).
+Source declarations only; no `.env` or running secrets are read. Compose/Helm/Kustomize can override these defaults. `Field` aliases and constraints are retained. What each setting does is explained in the [configuration reference](../operations/configuration.md); production requirements are in [deployment](../operations/deployment.md).
 
 | Setting | Type | Source default/constraints |
 |---|---|---|
@@ -91,7 +91,7 @@ Source declarations only; no `.env` or running secrets are read. Compose/Helm/Ku
 | `INGESTION_DLQ_ENABLED` | `bool` | `True` |
 | `CANONICAL_DELETION_WINDOW_RUNS` | `int` | `5` |
 | `LLM_PROVIDER` | `Literal['ollama', 'lmstudio', 'localai', 'vllm', 'openai', 'gemini', 'anthropic', 'openrouter']` | `'ollama'` |
-| `LLM_MODEL` | `str` | `'qwen2.5:3b-instruct-q5_K_M'` |
+| `LLM_MODEL` | `str` | `'qwen2.5:7b-instruct'` |
 | `LLM_TEMPERATURE` | `float` | `0.1` |
 | `LLM_MAX_TOKENS` | `int` | `4096` |
 | `OLLAMA_BASE_URL` | `str` | `'http://localhost:11434'` |
@@ -104,7 +104,7 @@ Source declarations only; no `.env` or running secrets are read. Compose/Helm/Ku
 | `ANTHROPIC_API_KEY` | `Optional[str]` | `None` |
 | `OPENROUTER_API_KEY` | `Optional[str]` | `None` |
 | `OPENROUTER_BASE_URL` | `str` | `'https://openrouter.ai/api/v1'` |
-| `OPENROUTER_SITE_URL` | `str` | `'https://github.com/anandtopu/testlookup'` |
+| `OPENROUTER_SITE_URL` | `str` | `'https://github.com/test-intelligence/testlookup'` |
 | `OPENROUTER_APP_NAME` | `str` | `'TestLookup'` |
 | `LLM_PRICE_OVERRIDES` | `Optional[str]` | `None` |
 | `EMBEDDING_PROVIDER` | `str` | `'ollama'` |

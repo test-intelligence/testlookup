@@ -1,5 +1,5 @@
 /**
- * Derive the handoff's release shape from the existing ``Release`` rows the
+ * Derive the /releases page's release shape from the existing ``Release`` rows the
  * backend already returns. Anything the backend doesn't expose (coverage,
  * flake rate, owner, blockers, compliance packs) lands as ``null`` /
  * ``[]`` and the UI shows the appropriate empty treatment.
@@ -27,7 +27,12 @@ function mapStage(s: string): ReleaseStage {
   return 'planning'
 }
 
-/** Gate thresholds — handoff §5.5. Lower = stricter on composite/coverage, inverted on flake. */
+/**
+ * Gate thresholds: composite go >= 95, warn >= 90; coverage go >= 80, warn >= 70;
+ * flake go <= 1.5%, warn <= 3%. The worst tone decides (fail → no-go,
+ * warn → conditional). A missing signal counts as go; with all three missing
+ * the gate is not evaluated.
+ */
 function decideGate(composite: number | null, coverage: number | null, flakePct: number | null, stage: ReleaseStage): GateDecision {
   if (stage === 'cancelled') return 'cancelled'
   // Need at least one signal to evaluate.
@@ -45,7 +50,7 @@ function decideGate(composite: number | null, coverage: number | null, flakePct:
   return worst === 'fail' ? 'no_go' : worst === 'warn' ? 'conditional' : 'go'
 }
 
-/** Phase-name → handoff key. Anything unrecognised falls back to ``e2e``. */
+/** Phase-name → phase key. Anything unrecognised falls back to ``e2e``. */
 const PHASE_KEYS: DerivedPhase['key'][] = ['smoke', 'regression', 'e2e', 'perf', 'uat', 'sign']
 const PHASE_LABELS: Record<DerivedPhase['key'], string> = {
   smoke: 'Smoke',

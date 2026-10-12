@@ -21,17 +21,18 @@ describe('helpTopics (UX redesign P1)', () => {
   })
 
   it('the longest prefix wins, and an unknown page falls back to the introduction', () => {
-    expect(helpTopicFor('/settings/sso')).toEqual({ topic: 'security' })
+    expect(helpTopicFor('/settings/sso')).toEqual({ topic: 'administration', anchor: 'sso-and-identity' })
     // A settings page with no entry of its own falls back to /settings (P5 gave most of them a section).
-    expect(helpTopicFor('/settings/storage')).toEqual({ topic: 'administration' })
+    expect(helpTopicFor('/settings/seed-data')).toEqual({ topic: 'administration', anchor: 'the-settings-index' })
     expect(helpTopicFor('/settings/ai')).toEqual({ topic: 'administration', anchor: 'ai-configuration' })
     expect(helpTopicFor('/defects')).toEqual({ topic: 'failure-analysis', anchor: 'promoting-to-a-defect' })
     expect(helpTopicFor('/runs/r1/intelligence')).toEqual({ topic: 'ingestion' })
+    expect(helpTopicFor('/runs/compare')).toEqual({ topic: 'runs', anchor: 'comparing-two-runs' })
     expect(helpTopicFor('/nowhere')).toBe(DEFAULT_HELP_TOPIC)
   })
 
   it("helpTopicParam keeps the route's section for PageHeader (topic#anchor)", () => {
     expect(helpTopicParam('/defects')).toBe('failure-analysis#promoting-to-a-defect')
-    expect(helpTopicParam('/failures')).toBe('failure-analysis')
+    expect(helpTopicParam('/chat')).toBe('ask-ai')
   })
 })

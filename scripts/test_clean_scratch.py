@@ -105,10 +105,9 @@ def _touch(repo: Path, rel: str) -> Path:
     return path
 
 
-# Exactly the spellings tracked callers pass: scripts/mutation_check_e2_1.py
-# uses `backend/.pytest-tmp-e21-mutation`, EXPLORATORY_RUNBOOK.md uses
-# `.pytest-tmp-exploratory-*`, backend/CLAUDE.md uses `.pytest_tmp`, and
-# `.pytest_cache_t0` is the spelling that broke the mcp image build.
+# Spellings seen in real use: hyphenated and underscored `--basetemp` roots
+# (`backend/.pytest-tmp-e21-mutation`, `.pytest-tmp-exploratory-*`,
+# `.pytest_tmp`), and `.pytest_cache_t0`, the one that broke the mcp image build.
 @pytest.mark.parametrize(
     "scratch",
     [

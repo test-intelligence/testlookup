@@ -1,0 +1,30 @@
+name: Code of Conduct report
+description: Tell the maintainers about behaviour that breaks the Code of Conduct.
+title: "Code of Conduct report"
+labels: ["conduct"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Issues are public.** Do not describe the incident or name anyone here. Give us a link and a way to reach you; a maintainer will contact you, continue the conversation privately, and then hide or lock this issue.
+        Reports are confidential. If your concern involves a maintainer, say so below and a different maintainer will handle it.
+  - type: input
+    id: where
+    attributes:
+      label: Where did it happen?
+      description: A link to the issue, pull request, discussion or comment (or "elsewhere").
+    validations:
+      required: true
+  - type: input
+    id: contact
+    attributes:
+      label: How can a maintainer reach you privately?
+      description: For example "the e-mail address on my GitHub profile".
+    validations:
+      required: true
+  - type: checkboxes
+    id: maintainer
+    attributes:
+      label: Involves a maintainer
+      options:
+        - label: My concern involves one of the maintainers.

@@ -63,7 +63,7 @@ Grouped service-level tests, kept together to amortize stubbing setup across rel
 - **One service, one feature, no milestone tie-in** → root `tests/test_<service>.py` (or `tests/services/test_<service>.py` if it's a dedicated service test alongside the existing ones there).
 - **Router contract / status codes / auth wiring through the real app** → `tests/integration/test_<router>_api.py`.
 - **Project-wide invariant** ("no service may commit outside the allowlist") → extend `test_architectural_*.py`.
-- **Continuation of an active milestone** → matching `test_<prefix>_*.py` file (check `docs/PROGRESS.md` for the current phase).
+- **Continuation of an active milestone** → matching `test_<prefix>_*.py` file.
 - **Multi-service grab-bag with shared stubbing** → `tests/services/test_batch*.py`, but prefer a dedicated file unless setup cost truly justifies bundling.
 
-See `backend/CLAUDE.md` "Test Patterns" for the fixture/mocking style and Pydantic v2 / async conventions every test must follow.
+Every test must run with no live services: stub the database with the `tests/conftest.py` fakes (`FakeExecuteResult`, `FakeRedis`) or `monkeypatch`, and write async tests as plain `async def` (`asyncio_mode = auto` in `pytest.ini`). `architecture/DEVELOPER_GUIDE.md` §6 covers running the suite and the test-ordering pitfalls.

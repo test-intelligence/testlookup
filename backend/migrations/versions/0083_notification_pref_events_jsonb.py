@@ -4,8 +4,7 @@ Revision ID: 0083
 Revises: 0082
 Create Date: 2026-05-16
 
-Database audit 2026-05-16 (docs/DATABASE_AUDIT_2026-05-16.md, finding P1-3)
-flagged this column as inconsistent with its sibling ``webhook_subscriptions.events``
+A database audit (2026-05-16) flagged this column as inconsistent with its sibling ``webhook_subscriptions.events``
 (line 2847 in models/postgres.py) which already uses JSONB. Both columns
 hold the same logical data — a list of event-type strings the consumer
 subscribed to — and both will be queried by "list subscribers for event X"

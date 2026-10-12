@@ -33,7 +33,7 @@ async def test_health_probes_the_effective_storage_endpoints(monkeypatch):
     probe = await integration_probe_service.probe_chromadb()
     assert probe.status == "healthy"
     assert [call.args[0] for call in client.get.await_args_list] == [
-        "https://saved-minio:9443/minio/health/live",
+        "https://saved-minio:9443/health",
         "http://saved-chroma:9123/api/v2/heartbeat",
         "http://saved-chroma:9123/api/v2/heartbeat",
     ]

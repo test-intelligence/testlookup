@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useHelpStore } from '@/store/helpStore'
@@ -19,12 +19,15 @@ afterEach(() => {
 })
 
 describe('HelpMenu (UX redesign P1)', () => {
-  it('"Help for this page" opens the topic mapped to the current route', () => {
+  it('"Help for this page" opens the topic mapped to the current route', async () => {
     renderAt('/defects')
     fireEvent.click(screen.getByRole('button', { name: 'Help' }))
     fireEvent.click(screen.getByRole('menuitem', { name: /Help for this page/ }))
-    expect(useHelpStore.getState()).toMatchObject({ topic: 'failure-analysis', anchor: 'promoting-to-a-defect' })
     expect(screen.queryByRole('menuitem', { name: /Help for this page/ })).toBeNull()
+    // The topic map loads on this click (kept off the eager bundle).
+    await waitFor(() =>
+      expect(useHelpStore.getState()).toMatchObject({ topic: 'failure-analysis', anchor: 'promoting-to-a-defect' }),
+    )
   })
 
   it('lists the guides that left the sidebar, and the build line', () => {

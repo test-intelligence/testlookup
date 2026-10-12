@@ -1,4 +1,4 @@
-"""Redis-backed status for async report uploads (PRD MRU-5/6).
+"""Redis-backed status for async report uploads.
 
 The ``ingest_uploaded_file`` Celery task processes an upload out-of-band, so the
 HTTP 202 can't report whether parsing/ingestion actually succeeded. This module

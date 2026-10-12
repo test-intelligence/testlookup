@@ -6,7 +6,7 @@ can read server-generated values (PK, defaults) immediately, but the
 caller (request handler via ``get_db``, or background task) owns the
 transaction lifecycle.
 
-See backend/CLAUDE.md "Commit responsibility (single-owner rule)".
+See ``architecture/DEVELOPER_GUIDE.md`` §2, "Layering & transactions".
 """
 from __future__ import annotations
 

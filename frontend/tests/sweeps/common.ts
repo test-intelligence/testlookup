@@ -8,7 +8,7 @@
  * typed password, and read real ids for parameterised routes from the same
  * fixtures file:
  *
- *   SWEEP_BASE_URL=http://testlookup.local SWEEP_FIXTURES=/tmp/sweep-fixtures.json \
+ *   SWEEP_BASE_URL=http://testlookup.localhost SWEEP_FIXTURES=/tmp/sweep-fixtures.json \
  *     npx playwright test -c playwright.sweep.config.ts
  *
  * Without SWEEP_FIXTURES every sweep test is skipped.

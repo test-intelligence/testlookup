@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # install.sh — one-command remote install for TestLookup (no git clone needed).
 #
-#   curl -fsSL https://raw.githubusercontent.com/anandtopu/testlookup/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/test-intelligence/testlookup/main/install.sh | bash
 #
 # It downloads the pinned-image release stack, generates a local .env with
 # random secrets, and brings the stack up with `docker compose`. Nothing is
@@ -15,7 +15,7 @@
 #   TL_NO_UP=1               download + gen .env only, don't `up`
 set -euo pipefail
 
-REPO_RAW="https://raw.githubusercontent.com/anandtopu/testlookup"
+REPO_RAW="https://raw.githubusercontent.com/test-intelligence/testlookup"
 REF="${TL_REF:-main}"
 DIR="${TL_DIR:-testlookup}"
 COMPOSE_FILE="docker-compose.release.yml"
@@ -60,8 +60,8 @@ chmod +x scripts/gen-dev-env.sh 2>/dev/null || true
 if [ -f .env ]; then
   say "Reusing existing .env"
 else
-  say "Generating .env with random local secrets"
-  bash scripts/gen-dev-env.sh || die "could not generate .env"
+  say "Generating .env with random secrets"
+  bash scripts/gen-dev-env.sh --release || die "could not generate .env"
 fi
 
 # ── Bring the stack up ───────────────────────────────────────────────────────
@@ -73,6 +73,11 @@ if [ "${TL_NO_UP:-0}" = "1" ]; then
   echo "    cd $DIR && $DC -f $COMPOSE_FILE $PROFILE_ARGS up -d"
   exit 0
 fi
+
+# The first admin's password lives in .env (INITIAL_ADMIN_PASSWORD); show it
+# once at the end. An .env reused from an earlier install keeps its admin.
+INITIAL_ADMIN_SHOWN="$(sed -n 's/^INITIAL_ADMIN_PASSWORD=//p' .env | head -n 1)"
+[ -n "$INITIAL_ADMIN_SHOWN" ] || INITIAL_ADMIN_SHOWN="(generated: see '$DC -f $COMPOSE_FILE logs db-migrate')"
 
 say "Pulling images and starting the stack (first boot pulls a few GB)…"
 # shellcheck disable=SC2086
@@ -86,10 +91,14 @@ TestLookup is starting. Give it a minute for migrations + health checks, then:
   User docs : http://localhost:3000/docs
   API ref   : http://localhost:8000/api-docs
 
+First sign-in (created on a new install only; you will be asked to change it):
+  Username  : admin
+  Password  : ${INITIAL_ADMIN_SHOWN}
+
 Useful commands (run from ./$DIR):
   $DC -f $COMPOSE_FILE ps           # service status
   $DC -f $COMPOSE_FILE logs -f      # follow logs
   $DC -f $COMPOSE_FILE down         # stop (keeps data)
 
-Want demo data? Re-run with: TL_PROFILE=demo curl ... | bash
+Want demo data? Re-run with: curl -fsSL <install.sh URL> | TL_PROFILE=demo bash
 EOF
