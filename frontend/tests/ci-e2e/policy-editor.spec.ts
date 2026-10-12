@@ -16,7 +16,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import { MAIN, networkQuiet, openRollout } from '../lib/rollout'
 import type { ApiHandlers } from '../lib/production-pages'
-import { isoAgo, LAYOUT, PROJECT_ID } from '../visual/production/fixtures'
+import { isoAgo, LAYOUT, PROJECT_ID, USER } from '../visual/production/fixtures'
 
 const POLICY_ID = 'bbbbbbbb-0000-4000-8000-000000000001'
 const RUN = '33333333-3333-4333-8333-333333333333'
@@ -83,6 +83,10 @@ const POLICY_PAGE: ApiHandlers = [
 
 const editorReady = (p: Page) => p.getByRole('heading', { name: 'Edit: Checkout gate', level: 1 })
 
+// Policies are edited by an ADMIN (every write route is ADMIN); the layout under
+// test is the editor's. A lower role gets the read-only view (PolicyEditorPage.roles.test.tsx).
+const ADMIN = { ...USER, id: '00000000-0000-4000-8000-0000000000ad', username: 'admin', email: 'admin@example.test', full_name: 'Admin', role: 'ADMIN' }
+
 test.use({ viewport: { width: 1440, height: 900 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
 /** Boxes relative to the top of the scroller (scrolled to `scrollTop`). */
@@ -112,7 +116,7 @@ async function boxes(page: Page, scrollTop: number | 'bottom') {
 
 test('the editor: the rules open, the tuning collapsed, the simulator a sticky right column', async ({ page }) => {
   simulated.length = 0
-  const { api, errors } = await openRollout(page, `/policies/${POLICY_ID}`, { handlers: POLICY_PAGE, ready: editorReady })
+  const { api, errors } = await openRollout(page, `/policies/${POLICY_ID}`, { handlers: POLICY_PAGE, ready: editorReady, user: ADMIN })
   await networkQuiet(page, api)
 
   const top = await boxes(page, 0)
@@ -163,7 +167,7 @@ test('the editor: the rules open, the tuning collapsed, the simulator a sticky r
 
 test('below 1280 px the simulator follows the form', async ({ page }) => {
   await page.setViewportSize({ width: 1279, height: 900 })
-  const { api, errors } = await openRollout(page, `/policies/${POLICY_ID}`, { handlers: POLICY_PAGE, ready: editorReady })
+  const { api, errors } = await openRollout(page, `/policies/${POLICY_ID}`, { handlers: POLICY_PAGE, ready: editorReady, user: ADMIN })
   await networkQuiet(page, api)
   const top = await boxes(page, 0)
   expect(top.simulator.top).toBeGreaterThan(top.form.bottom)
@@ -174,7 +178,7 @@ test('below 1280 px the simulator follows the form', async ({ page }) => {
 
 test('the list: a compact header, New Policy, the policies as primary content', async ({ page }) => {
   const ready = (p: Page) => p.getByRole('heading', { name: 'Release Gate Policies', level: 1 })
-  const { api, errors } = await openRollout(page, '/policies', { handlers: POLICY_PAGE, ready })
+  const { api, errors } = await openRollout(page, '/policies', { handlers: POLICY_PAGE, ready, user: ADMIN })
   await networkQuiet(page, api)
   await expect(page.locator('[data-page-header]')).toHaveAttribute('data-compact', 'true')
   const primary = page.locator('[data-primary]')

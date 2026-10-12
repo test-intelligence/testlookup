@@ -39,6 +39,8 @@ export interface RolloutOpen {
   theme?: Theme
   /** The stored global window (`testlookup-time-window`), default 30. */
   days?: number
+  /** The signed-in user (`/auth/me` and the stored session), default the QA lead fixture. */
+  user?: typeof USER
 }
 
 /** Seed, pin the clock, mock (fail closed), open `path`, wait for `ready`. */
@@ -46,8 +48,8 @@ export function openRollout(page: Page, path: string, options: RolloutOpen): Pro
   return openProductionPage(page, path, {
     theme: options.theme ?? 'signal',
     now: NOW,
-    me: USER,
-    user: USER,
+    me: options.user ?? USER,
+    user: options.user ?? USER,
     projectId: PROJECT_ID,
     days: options.days,
     handlers: options.handlers,
