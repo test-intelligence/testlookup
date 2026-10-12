@@ -97,6 +97,11 @@ const REVIEWED: Record<string, ErrorState> = {
   'settings/TeamChannelsPage': 'own-error-ui',
 
   SettingsPage: 'no-fetch',
+  // Lazily routed since the eager-bundle headroom change: the forced password
+  // change only posts; the SSO return shows an alert with a way back to sign in
+  // when the code exchange (or the user read after it) fails.
+  ResetPasswordPage: 'no-fetch',
+  SSOCallbackPage: 'own-error-ui',
   DocsPage: 'no-fetch',
   'settings/ProfilePage': 'no-fetch',
   'settings/ProjectDataPage': 'no-fetch',

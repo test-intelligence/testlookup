@@ -22,7 +22,7 @@ export default function SSOCallbackPage() {
   const location = useLocation()
   const navigate = useNavigate()
   const setAuth = useAuthStore((s) => s.setAuth)
-  const [failed, setFailed] = useState(false)
+  const [signInError, setSignInError] = useState(false)
   // The code works once: never spend it twice (a re-render, or StrictMode's double effect).
   const started = useRef(false)
   // Read once: the address bar is cleared of the code right after.
@@ -47,14 +47,17 @@ export default function SSOCallbackPage() {
         // ProtectedRoute sends a user who must change their password to /reset-password.
         navigate(next, { replace: true })
       })
-      .catch(() => setFailed(true))
+      .catch(() => setSignInError(true))
   }, [code, next, navigate, setAuth])
+
+  // No code in the URL is the same dead end as a refused exchange.
+  const showFailure = signInError || !code
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-[var(--color-bg)] px-4">
       <div className="w-full max-w-sm card p-6 text-center space-y-4">
         <div className="flex justify-center"><AppLogo /></div>
-        {failed || !code ? (
+        {showFailure ? (
           <>
             <p role="alert" className="text-sm text-[var(--color-text)]">
               This single sign-on link has expired or was already used.

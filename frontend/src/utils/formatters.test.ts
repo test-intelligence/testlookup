@@ -1,3 +1,4 @@
+import { format } from 'date-fns'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -168,6 +169,18 @@ describe('formatCompactDateTime', () => {
     expect(formatCompactDateTime(null)).toBe('—')
     expect(formatCompactDateTime(undefined)).toBe('—')
     expect(formatCompactDateTime('not-a-date')).toBe('—')
+  })
+
+  it("matches date-fns format(d, 'MMM d, HH:mm') exactly", () => {
+    // It no longer calls date-fns (that kept date-fns' token engine on every
+    // route through the TopBar); the hand-written stamp must not drift from it.
+    for (let month = 0; month < 12; month++) {
+      for (const [day, hour, minute] of [[1, 0, 0], [9, 9, 5], [28, 12, 30], [31, 23, 59]]) {
+        const d = new Date(2026, month, day, hour, minute)
+        expect(formatCompactDateTime(d)).toBe(format(d, 'MMM d, HH:mm'))
+        expect(formatCompactDateTime(d.toISOString())).toBe(format(d, 'MMM d, HH:mm'))
+      }
+    }
   })
 })
 

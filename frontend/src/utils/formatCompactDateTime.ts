@@ -1,4 +1,7 @@
-import { format } from 'date-fns'
+// No date-fns here: the eager TopBar uses this, and date-fns' `format` pulls
+// its whole token engine (~19 KB raw) onto every route for one fixed pattern.
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const pad2 = (n: number) => String(n).padStart(2, '0')
 
 /**
  * Compact wall-clock stamp for dense table cells: 'Aug 28, 14:32'.
@@ -16,5 +19,6 @@ export const formatCompactDateTime = (d?: string | Date | null): string => {
   if (!d) return '—'
   const date = new Date(d)
   if (Number.isNaN(date.getTime())) return '—'
-  return format(date, 'MMM d, HH:mm')
+  // date-fns 'MMM d, HH:mm', local time: 'Aug 8, 09:05'.
+  return `${MONTHS[date.getMonth()]} ${date.getDate()}, ${pad2(date.getHours())}:${pad2(date.getMinutes())}`
 }

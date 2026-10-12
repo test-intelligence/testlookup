@@ -147,6 +147,12 @@ locally by default.
   deployment-wide question.
 - Rollout buckets hash with SHA-256 (were SHA-1): a flag at a partial rollout
   re-buckets its users once.
+- **Every page loads about 14 kB (gzip) less JavaScript before it renders**
+  (eager bundle 179,330 -> 165,363; the budget is 180,000). The MFA enrolment
+  panel and its QR-code library load when enrolment starts; the reset-password
+  and SSO-callback pages load when visited; the top bar's timestamps no longer
+  pull in date-fns. `npm run check:bundle` now also fails if date-fns or
+  qrcode.react reach the eager bundle again.
 
 ### Deprecated
 
@@ -241,18 +247,17 @@ locally by default.
   `testlookup.example.com`).
 - Security reports go through GitHub private vulnerability reporting
   ([SECURITY.md](SECURITY.md)).
-- **A GitHub Enterprise server is never mistaken for github.com.** The GitHub
-  integration took any API base whose text contained `api.github.com` (for
-  example `https://api.github.com.corp.example/api/v3`) for public GitHub, so
-  commit links pointed at github.com and the fixer built its clone URL — which
-  carries the project's token — against github.com. The host is now compared
-  exactly.
 - **SCIM user filters can no longer stall a request.** The `userName eq ...`
   parser backtracked quadratically on a long run of spaces (8,000 took
   ~110 ms); it is linear now and accepts exactly the same filters.
 - The theme-token check (`npm run check:theme`) reads `--token : value` and
   no longer lets `--status-passeds` answer for `--status-passed`: a `\s` in a
   template literal had silently become the letter `s`.
-- Triaged the open CodeQL high alerts: the four above are fixed (plus an e2e
-  spec's URL regex now escapes every metacharacter); the rest are false
-  positives or test-only code, with dismissal reasons in the pull request.
+- Triaged the open CodeQL high alerts: the SCIM and theme-token fixes above,
+  an e2e spec's URL regex that now escapes every metacharacter, and the GitHub
+  hostname fix below; the rest are false positives or test-only code, with
+  dismissal reasons in the pull request.
+- Public GitHub is recognised by the API base URL's hostname. The Fixer's clone
+  host and commit links matched the substring `api.github.com`, so a base such
+  as `https://api.github.com.example.net` was taken for github.com (CodeQL
+  incomplete URL substring sanitization).
