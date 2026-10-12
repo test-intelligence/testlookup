@@ -260,4 +260,8 @@ locally by default.
 - Public GitHub is recognised by the API base URL's hostname. The Fixer's clone
   host and commit links matched the substring `api.github.com`, so a base such
   as `https://api.github.com.example.net` was taken for github.com (CodeQL
-  incomplete URL substring sanitization).
+  incomplete URL substring sanitization). A base typed without a scheme
+  (`api.github.com`) still means github.com; that check had turned it into
+  commit links like `api.github.com/owner/repo/commit/<sha>`. Other scheme-less
+  bases are left as typed, so the Fixer never sends its clone token to a host
+  the API calls refuse.
