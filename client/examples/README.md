@@ -39,20 +39,13 @@ Every sample needs:
    The API key carries the project, but the UI shows runs scoped to the
    selected project.
 
-The pytest plugin used by `python/pytest_smoke` currently sends an API key
-as a bearer token, which the server refuses (see the known issue in
-[client/README.md](../README.md#pytest-plugin)); the `LiveStream`-based
-Python samples and the Java samples send it correctly.
-
 ## What to expect when you run
 
 For every sample, immediately after launching the test command:
 
 - The run appears under **Runs → Live**. Pass / fail / skip counters tick
-  up live. Its launch label comes from `testlookup.launch` for the Python
-  samples; the TestNG listener takes the launch label only from
-  `-Dtestlookup.launch` or `TESTLOOKUP_LAUNCH` (a `testlookup.launch` in the
-  properties file becomes the run's suite name instead).
+  up live. Its launch label (and, unless `testlookup.suite` is set, its
+  suite name) comes from `testlookup.launch`.
 
 After the test command exits:
 
@@ -65,15 +58,18 @@ After the test command exits:
 
 ## Troubleshooting
 
-- **"401 Unauthorized" on the first batch**: the API key is wrong, expired,
-  or was sent in the wrong header. Re-generate it, and check the known issue
-  above if you use the pytest plugin.
+- **"401 Unauthorized" on the first batch**: the API key is wrong, revoked or
+  expired. Re-generate it. (The reporters send a `qai_` key as `X-API-Key`;
+  a hand-written request must too.)
 - **"403: API key lacks the 'stream:write' scope"**: the key needs that
   scope (or no scopes at all, which means full access).
 - **"Streaming requires a project-scoped API key"**: the key is not bound to
   a project. Only an ADMIN can mint project-scoped keys; ask one to create a
   key for your project.
 - **Run shows on Runs → Live but not in Runs / Overview**: the run was not
-  finalised. The Python and Java reporters do it automatically on
-  context-manager exit or suite finish; if you build raw JSON requests, send
-  `{"event_type": "run_complete"}` in the final batch.
+  finalised. The reporters do it automatically when the run ends: the
+  session-based reporters (the pytest plugin, `TestLookupReporter`, Java, JS)
+  close the session with `DELETE /api/v1/stream/sessions/{id}`, and
+  `LiveStream` sends a `run_complete` event. If you build raw JSON requests
+  against `/api/v1/stream/ingest`, send `{"event_type": "run_complete"}` in
+  the final batch.

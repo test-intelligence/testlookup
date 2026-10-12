@@ -36,14 +36,6 @@ That's it. `test_smoke.py` has no TestLookup imports — the
 `testlookup-reporter` package registers a pytest plugin that auto-activates
 because it finds `testlookup.properties` in the cwd.
 
-> **Known issue.** The plugin currently sends the API key from
-> `testlookup.api.key` as `Authorization: Bearer`, and the server accepts API
-> keys only in the `X-API-Key` header, so session creation fails with 401.
-> Until that is fixed, run the plugin with a JWT access token
-> (`TESTLOOKUP_TOKEN=<token> pytest`, token from `POST /api/v1/auth/login`)
-> or use `LiveStream` as in `../livestream_script.py` and `../pytest_realistic`.
-> Details: [client/README.md](../../../README.md#pytest-plugin).
-
 ## What you'll see
 
 - **TestLookup → Runs → Live** — the run appears immediately under the

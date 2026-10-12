@@ -42,10 +42,9 @@ testng_smoke/
 ## What you'll see
 
 - **TestLookup → Runs → Live** — the run appears immediately, with the
-  suite name `Smoke suite` (the listener uses `testlookup.launch` from the
-  properties file as the run's suite; a launch label comes only from
-  `-Dtestlookup.launch` or `TESTLOOKUP_LAUNCH`, see below). Counters tick up
-  live as the data-provider rows stream in.
+  launch label and suite name `Smoke suite` (from `testlookup.launch` in the
+  properties file; `-Dtestlookup.launch` or `TESTLOOKUP_LAUNCH` override it,
+  see below). Counters tick up live as the data-provider rows stream in.
 - **Runs / Overview / Coverage / Failures / Trends** — once the suite
   finishes, the listener's `onFinish(ISuite)` closes the session and the
   run lands on every other page within a few seconds.

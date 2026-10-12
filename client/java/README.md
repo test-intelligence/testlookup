@@ -40,7 +40,7 @@ A running TestLookup server can also hand out the SDK at `GET /api/v1/sdk/java`:
 
 ## Credentials
 
-The Java reporter takes either an **API key** (sent as `X-API-Key`) or a **JWT access token** (sent as `Authorization: Bearer`). When both are configured the API key is used. Use a key whose owner has the QA_ENGINEER role or higher on the project; a project-scoped streaming key from **Settings → Streaming API keys** works, and that page's dialog offers a ready-made `testlookup.properties` block. Keep keys out of committed files: pass them as environment variables or JVM properties in CI.
+The Java reporter takes either an **API key** (sent as `X-API-Key`) or a **JWT access token** (sent as `Authorization: Bearer`); a value that starts with `qai_` is sent as an API key even when given as the token. The two resolve as a pair: one set on the `Builder` (or as a TestNG suite parameter) wins; otherwise the first source holding either one wins, in the order JVM properties, environment variables, configuration files; within one source the API key wins. Use a key whose owner has the QA_ENGINEER role or higher on the project; a project-scoped streaming key from **Settings → Streaming API keys** works, and that page's dialog offers a ready-made `testlookup.properties` block. Keep keys out of committed files: pass them as environment variables or JVM properties in CI.
 
 ## TestNG
 
@@ -59,7 +59,7 @@ The jar registers `io.testlookup.testng.TestLookupListener` through `META-INF/se
 
 The listener opens one session per TestNG suite, records `PASSED`, `FAILED` and `SKIPPED` results (a failure within the success percentage, or a timeout, is recorded as `BROKEN`), and closes the session when the suite finishes. It does nothing when no configuration is found, so the jar is safe to leave on the classpath.
 
-The listener first looks for these names as `<parameter>` values in `testng.xml`, then as JVM system properties, then as environment variables, and finally lets the configuration chain below fill the gaps:
+The listener first looks for these names as `<parameter>` values in `testng.xml`, then resolves the rest through the [configuration chain](#configuration-chain): JVM system properties, then environment variables, then `testlookup.properties` / `testlookup.yaml` (the file keys are `testlookup.build`, `testlookup.branch`, `testlookup.commit`, `testlookup.launch`, `testlookup.suite` and so on):
 
 | Suite parameter / `-D` property | Environment variable | Meaning |
 |---|---|---|
@@ -89,7 +89,7 @@ or register the extension for every class. The jar ships `META-INF/services/org.
 junit.jupiter.extensions.autodetection.enabled=true
 ```
 
-The extension opens **one session per top-level test class** (so each class becomes its own run), records each test under its display name with the class as the suite, and maps successful to `PASSED`, failed to `FAILED` (with the exception), aborted to `BROKEN` and disabled to `SKIPPED`. It does nothing when no configuration is found.
+The extension opens **one session for the whole test run**, however many classes use it, and closes it when JUnit finishes the run. It records each test under its display name with its measured duration and the class as the suite, and maps successful to `PASSED`, failed to `FAILED` (with the exception), aborted to `BROKEN` and disabled to `SKIPPED`. Server, credentials, project, build (default `junit5-<epoch ms>`), branch, commit, launch, suite and release all come from the [configuration chain](#configuration-chain). It does nothing when no configuration is found.
 
 ## Programmatic use
 
@@ -112,7 +112,7 @@ try (LiveSession session = reporter.startSession(
 }                                               // close() flushes and finalises the run
 ```
 
-- `Builder`: `baseUrl`, `apiKey` or `token`, `projectId` (required; `build()` throws `IllegalStateException` when they cannot be resolved), `clientName`, `framework`, `suiteName`, `releaseName`, `batchSize`, `batchIntervalMs`. `TestLookupReporter.login(baseUrl, username, password)` returns a JWT access token.
+- `Builder`: `baseUrl`, `apiKey` or `token`, `projectId` (required; `build()` throws `IllegalStateException` when they cannot be resolved), `clientName`, `framework`, `suiteName`, `releaseName`, `batchSize`, `batchIntervalMs`, `caCertPath`, `insecure` (see [TLS](#tls)). `TestLookupReporter.login(baseUrl, username, password)` returns a JWT access token.
 - `SessionOptions.builder()`: `buildNumber`, `branch`, `commitHash`, `machineId`, `totalTests`, `launchName`, `suiteName`, `releaseName`, and the CI-context fields below.
 - `LiveSession`: `record(testName, status, durationMs[, RecordOptions])` with `RecordOptions.builder()` (`suiteName`, `className`, `error`, `stackTrace`, `tags`, `metadata`); `log(message, level)`; `metric(name, value, unit)`; `close()`. `TestStatus` is `PASSED`, `FAILED`, `SKIPPED` or `BROKEN`.
 - Events are batched and retried with back-off; each batch keeps its client-generated `batch_id` across retries (see [Replay-safe live identity](../README.md#replay-safe-live-identity)).
@@ -136,6 +136,8 @@ Lowest precedence first; a later source overrides an earlier one:
 | `testlookup.launch`, `testlookup.suite`, `testlookup.release` | `TESTLOOKUP_LAUNCH`, `TESTLOOKUP_SUITE`, `TESTLOOKUP_RELEASE` | same names |
 | `testlookup.build`, `testlookup.branch`, `testlookup.commit` | `TESTLOOKUP_BUILD`, `TESTLOOKUP_BRANCH`, `TESTLOOKUP_COMMIT` | same names |
 | `testlookup.framework` | `TESTLOOKUP_FRAMEWORK` | `testlookup.framework` |
+| `testlookup.ca_cert_path` | `TESTLOOKUP_CA_CERT` | `testlookup.ca_cert_path`, `testlookup.caCertPath` |
+| `testlookup.insecure` | `TESTLOOKUP_INSECURE` | `testlookup.insecure` |
 
 ```properties
 # src/test/resources/testlookup.properties
@@ -151,22 +153,13 @@ In CI, override per-build values without editing the file:
 mvn test -Dtestlookup.build="$BUILD_NUMBER" -Dtestlookup.branch="$GIT_BRANCH" -Dtestlookup.commit="$GIT_COMMIT"
 ```
 
+## TLS
+
+For a server whose certificate a private or self-signed CA issued, point the reporter at that CA's PEM file with `testlookup.ca_cert_path` / `TESTLOOKUP_CA_CERT` / `Builder.caCertPath(...)`: the reporter then trusts only the certificates in that file and still checks the host name. `testlookup.insecure=true` / `TESTLOOKUP_INSECURE=true` / `Builder.insecure(true)` skips certificate and host-name verification altogether and logs a warning; use it only for local experiments. A CA path wins over `insecure`.
+
 ## CI context
 
 Sessions carry the CI provider, repository, pull/merge request number, actor and run URL, detected from the standard variables of GitHub Actions, GitLab CI, Jenkins, Azure DevOps and CircleCI (`CiContext.java`). `TESTLOOKUP_CI_PROVIDER`, `TESTLOOKUP_CI_REPO`, `TESTLOOKUP_PR_NUMBER`, `TESTLOOKUP_CI_ACTOR` and `TESTLOOKUP_CI_RUN_URL` override detection, and the `ciProvider`, `ciRepo`, `prNumber`, `ciActor` and `ciRunUrl` session options override both. The Java reporter does not collect a commit range.
-
-## Known limitations
-
-Today's behaviour, to be removed from this list as each is fixed:
-
-- The JUnit 5 extension records every test with a duration of 0.
-- The TestNG listener and the JUnit 5 extension take the build, branch,
-  commit and launch label only from JVM properties, environment variables
-  (and, for TestNG, suite parameters); those keys in `testlookup.properties`
-  are not used for the session.
-- `TESTLOOKUP_UPLOAD_MODE` is read but changes nothing, and there is no
-  CA-certificate or insecure-TLS option: import a private CA into the JVM
-  trust store instead.
 
 ## License
 

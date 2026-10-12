@@ -18,7 +18,9 @@ Two kinds of credential reach the streaming API, and the Python reporter has a c
 | Class | Credential | Header | Server endpoints |
 |---|---|---|---|
 | `LiveStream` (recommended) | A **project-scoped API key** with the `stream:write` scope (or no scopes) | `X-API-Key` | `POST /api/v1/stream/ingest`; the server derives the project from the key and creates the session on the first batch |
-| `TestLookupReporter`, and the pytest plugin built on it | A JWT access token (`/api/v1/auth/login`), or an API key passed as `api_key` in configuration with no `token` | `Authorization: Bearer` (token) or `X-API-Key` (key) | `POST /api/v1/stream/sessions`, `/stream/events/batch`, `DELETE /stream/sessions/{id}` |
+| `TestLookupReporter`, and the pytest plugin built on it | An API key, or a JWT access token (`/api/v1/auth/login`) | `X-API-Key` (key) or `Authorization: Bearer` (token) | `POST /api/v1/stream/sessions`, `/stream/events/batch`, `DELETE /stream/sessions/{id}` |
+
+The token and the key resolve as a pair, the same way in every bundled reporter: one passed explicitly (argument or command-line option) wins; otherwise the first source holding either one wins, environment variables before the configuration file; within one source the API key wins. A value that starts with `qai_` is always sent as an API key, whichever option carries it.
 
 An ADMIN creates a project-scoped streaming key under **Settings → Streaming API keys** (`/settings/api-keys`; the dialog that shows the new key also offers a ready-made `testlookup.properties` block), or with `POST /api/v1/keys` and a `project_id`. Keys start with `qai_` and are shown once. See [docs/api/README.md](../docs/api/README.md#credential-types) for scopes and expiry.
 
@@ -70,8 +72,8 @@ Other constructor options: `commit_hash`, `framework` (default `python`), `total
 from testlookup_reporter import TestLookupReporter
 
 reporter = TestLookupReporter(
-    base_url="http://localhost:8000",
-    token="<JWT access token>",
+    base_url="https://testlookup.example.com",
+    api_key="qai_your_api_key_here",          # or token="<JWT access token>"
     project_id="<project UUID or name>",
 )
 async with reporter.session(build_number="build-42", branch="main") as session:
@@ -79,7 +81,7 @@ async with reporter.session(build_number="build-42", branch="main") as session:
 await reporter.aclose()
 ```
 
-`session(...)` registers a live session, yields a `LiveSession` with the same `record` / `log` / `metric` methods, and closes the session on exit. It also accepts `commit_hash`, `total_tests`, `machine_id`, `launch_name`, `suite_name`, `release_name`, the CI-context fields and `commit_range`.
+`session(...)` registers a live session, yields a `LiveSession` with the same `record` / `log` / `metric` methods, and closes the session on exit (`DELETE /stream/sessions/{id}`), which finalises the run on the server just as `LiveStream`'s `run_complete` does. It also accepts `commit_hash`, `total_tests`, `machine_id`, `launch_name`, `suite_name`, `release_name`, the CI-context fields and `commit_range`; any of build, branch, commit, launch, suite and release left out comes from configuration. Other constructor options: `framework` (default `testlookup.framework`, else `python`), `client_name`, `batch_size`, `batch_interval_ms`, `verify_ssl` (default from `testlookup.ca_cert_path` / `testlookup.insecure`), `commit_range_base`, `collect_commit_range`.
 
 ### pytest plugin
 
@@ -87,16 +89,15 @@ With the package installed, the plugin activates when it can resolve a server UR
 
 | Option | Environment variable | Meaning |
 |---|---|---|
-| `--testlookup-url` | `TESTLOOKUP_URL` | Server URL |
-| `--testlookup-token` | `TESTLOOKUP_TOKEN` | Credential (sent as `Authorization: Bearer`) |
-| `--testlookup-project` | `TESTLOOKUP_PROJECT_ID` | Project UUID or name |
+| `--testlookup-url` | `TESTLOOKUP_ENDPOINT` or `TESTLOOKUP_URL` | Server URL |
+| `--testlookup-api-key` | `TESTLOOKUP_API_KEY` | API key (sent as `X-API-Key`) |
+| `--testlookup-token` | `TESTLOOKUP_TOKEN` | JWT access token (sent as `Authorization: Bearer`; a `qai_` value is sent as an API key) |
+| `--testlookup-project` | `TESTLOOKUP_PROJECT` or `TESTLOOKUP_PROJECT_ID` | Project UUID or name |
 | `--testlookup-build` | `TESTLOOKUP_BUILD` | Build number (default `pytest-<unix time>`) |
 | `--testlookup-branch` | `TESTLOOKUP_BRANCH` | Git branch |
 | `--testlookup-launch` | `TESTLOOKUP_LAUNCH` | Launch label |
 
-If the options leave the URL, credential or project unset, the plugin falls back to the configuration file and the variables in the next section. It reports each test as `PASSED`, `FAILED`, `SKIPPED` or `BROKEN` (a setup or teardown error), with the test file as the suite.
-
-**Known issue:** the plugin passes whatever credential it resolves as a bearer token, including an API key from `testlookup.api.key` / `TESTLOOKUP_API_KEY`. The server accepts API keys only in the `X-API-Key` header, so with an API key the plugin's session creation fails with 401. Until this is fixed, give the plugin a JWT access token (`--testlookup-token` or `TESTLOOKUP_TOKEN`), or use `LiveStream` from a `conftest.py` for API-key streaming.
+An option left unset falls back to its environment variable and then the configuration file, exactly as in the next section; commit, suite, release, framework (default `pytest`) and the TLS settings come from there too. The plugin reports each test as `PASSED`, `FAILED`, `SKIPPED` or `BROKEN` (a setup or teardown error), with the test file as the suite, and closes the session when pytest finishes.
 
 ### Configuration
 
@@ -130,16 +131,15 @@ testlookup.launch=Smoke suite
 | `testlookup.project` | `TESTLOOKUP_PROJECT` (canonical) or `TESTLOOKUP_PROJECT_ID` (legacy) | Project UUID or name (`TestLookupReporter` and the plugin; `LiveStream` takes the project from the key) |
 | `testlookup.launch` | `TESTLOOKUP_LAUNCH` | Launch label; also the suite fallback |
 | `testlookup.suite` | `TESTLOOKUP_SUITE` | Default suite for records that name none |
-| `testlookup.release` | `TESTLOOKUP_RELEASE` | Release of the run (`TestLookupReporter.session()` only; `LiveStream` takes `release_name=`). Blank: the project's default release |
+| `testlookup.release` | `TESTLOOKUP_RELEASE` | Release of the run. Blank: the project's default release |
 | `testlookup.build`, `testlookup.branch`, `testlookup.commit` | `TESTLOOKUP_BUILD`, `TESTLOOKUP_BRANCH`, `TESTLOOKUP_COMMIT` | CI metadata |
-| `testlookup.framework` | `TESTLOOKUP_FRAMEWORK` | Framework label (`LiveStream`) |
-| `testlookup.ca_cert_path` | `TESTLOOKUP_CA_CERT` | CA bundle to verify the server's certificate with (`LiveStream` only) |
-| `testlookup.insecure` | `TESTLOOKUP_INSECURE` | `true` disables certificate verification (`LiveStream` only; logs a warning; never in CI) |
+| `testlookup.framework` | `TESTLOOKUP_FRAMEWORK` | Framework label (default `python`; the pytest plugin's default is `pytest`) |
+| `testlookup.ca_cert_path` | `TESTLOOKUP_CA_CERT` | CA bundle (file or directory) to verify the server's certificate with; only that CA is trusted |
+| `testlookup.insecure` | `TESTLOOKUP_INSECURE` | `true` disables certificate verification (logs a warning; never in CI) |
 | `testlookup.ci_provider`, `testlookup.ci_repo`, `testlookup.pr_number`, `testlookup.ci_actor`, `testlookup.ci_run_url` | `TESTLOOKUP_CI_PROVIDER`, `TESTLOOKUP_CI_REPO`, `TESTLOOKUP_PR_NUMBER`, `TESTLOOKUP_CI_ACTOR`, `TESTLOOKUP_CI_RUN_URL` | Override the detected CI context |
 | `testlookup.commit_range`, `testlookup.commit_range_base` | `TESTLOOKUP_COMMIT_RANGE`, `TESTLOOKUP_COMMIT_RANGE_BASE` | Commit-range collection (see below) |
-| none | `TESTLOOKUP_UPLOAD_MODE` | Mapped by the loader but not used by the reporter |
 
-An empty environment variable counts as unset. Keep keys and tokens in environment variables or CI secrets rather than in a committed file.
+Every variable applies the same way to `TestLookupReporter`, the pytest plugin and `LiveStream` (except the token and project, which `LiveStream` does not use). An empty environment variable counts as unset. Keep keys and tokens in environment variables or CI secrets rather than in a committed file.
 
 ### CI context and commit range
 
@@ -150,21 +150,6 @@ It also collects the commit range (base..`HEAD`, up to 100 commits with their ch
 ### Replay-safe live identity
 
 All bundled reporters serialise a client-generated `batch_id` once before the first POST and reuse it verbatim for transport and back-pressure retries. The server derives each event's identity as SHA-256 of `session_id`, `batch_id` and the event's zero-based position in the batch, so event order is part of the wire contract and must not change on retry. `batch_id` is optional on the server so older reporters stay wire-compatible.
-
-### Known limitations (Python)
-
-Today's behaviour, to be removed from this list as each is fixed:
-
-- **pytest plugin + API key:** the plugin sends any credential as
-  `Authorization: Bearer`, and the server accepts API keys only in
-  `X-API-Key`, so the plugin needs a **JWT access token**
-  (`--testlookup-token` / `TESTLOOKUP_TOKEN`). API-key streaming goes through
-  `LiveStream`.
-- The pytest plugin does not apply the configured suite or release defaults
-  (`TESTLOOKUP_SUITE`, `TESTLOOKUP_RELEASE`); each test's suite is its file.
-- `TESTLOOKUP_UPLOAD_MODE` is read into the configuration but changes nothing.
-- `TESTLOOKUP_CA_CERT` / `TESTLOOKUP_INSECURE` (and the matching properties)
-  are honoured by `LiveStream` only.
 
 ## Downloading reporters from a running server
 

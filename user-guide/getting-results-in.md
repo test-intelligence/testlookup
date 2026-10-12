@@ -90,7 +90,7 @@ To fail the build only on real (non-quarantined) failures after uploading, see [
 
 For test-by-test streaming while the suite is still running, so the run shows up on **Runs → Live** as it happens. SDKs live under `client/` in the repository: **Python** (a pytest plugin and a `LiveStream` reporter), **Java** (a TestNG listener and a JUnit 5 extension), **JavaScript/TypeScript** (Jest and Mocha reporters) and **Go**.
 
-Every SDK follows the same session lifecycle: open a session, stream `test_started` / `test_finished` events, then send `run_complete`, which closes the session and finalises the run. Sessions carry a heartbeat, so a run whose runner dies mid-flight is detected and recovered instead of staying "in progress" forever. While a live run is in progress, the Runs and report pages read from the live buffer, so their counts match what **Live** shows.
+Every SDK follows the same lifecycle: it opens a live session, streams each test's result in batches while the tests run, and finalises the run when they finish. The session-based reporters (the pytest plugin, Java, JavaScript, Go) do that by closing the session; Python's `LiveStream`, which has no explicit session, sends a `run_complete` event. Either one finalises the run the same way. Sessions carry a heartbeat, so a run whose runner dies mid-flight is detected and recovered instead of staying "in progress" forever. While a live run is in progress, the Runs and report pages read from the live buffer, so their counts match what **Live** shows.
 
 Installation and configuration for each SDK (URL, API key, project, build, release and suite settings, and the shared configuration file) are in [CLI, SDKs & MCP](cli-sdk-mcp.md).
 
