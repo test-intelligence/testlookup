@@ -424,6 +424,12 @@ KNOWN_MYPY_SKEW: dict[str, tuple[int, str]] = {
         "CI 1, local 2 on main's unchanged file (local mypy 2.3.1: an extra "
         "no-any-return on the User lookups)."
     )),
+    # Found when the intelligence pool fix touched it (2026-10-13): main @
+    # 3f844244, unchanged, reads 0 locally against the baseline's 2, which
+    # CI's ratchet passed (run 38467961639).
+    "app/services/intelligence_snapshot_service.py": (2, (
+        "CI 2, local 0 on main's unchanged file (run 38467961639 vs local ratchet)."
+    )),
 }
 
 
