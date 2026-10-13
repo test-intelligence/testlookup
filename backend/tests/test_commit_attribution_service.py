@@ -316,7 +316,8 @@ async def test_rank_suspects_ranks_with_range():
     )
     tcs = [_tc(stack_trace='File "services/payments/test_charge.py", line 3')]
     with patch.object(svc, "_get_row", AsyncMock(return_value=row)), \
-         patch.object(svc, "_target_test_cases", AsyncMock(return_value=tcs)):
+         patch.object(svc, "_target_test_cases", AsyncMock(return_value=tcs)), \
+         patch.object(svc, "get_integration", AsyncMock(return_value=None)):
         out = await svc.rank_suspects(MagicMock(), run, fingerprint="fp1")
     assert out["available"] is True
     assert out["suspects"][0]["sha"] == "a" * 40

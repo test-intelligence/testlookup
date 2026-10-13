@@ -239,6 +239,13 @@ locally by default.
   its `openshift-ingress` namespace and by the namespace label
   `policy-group.network.openshift.io/ingress`, which also covers a router on
   the host network (`HostNetwork` endpoint publishing).
+- **Commit links go to the project's own GitHub.** The commit range and the
+  suspect commits on **Failure Analysis** always linked to github.com, even
+  when the project's GitHub integration names a GitHub Enterprise server. They
+  now use the integration's API base (enabled or not), so
+  `https://ghe.corp/api/v3` links to `https://ghe.corp/<repo>/commit/<sha>`.
+  An API base that is not an http(s) URL shows the SHA as plain text instead
+  of an unusable or unsafe link.
 - **The Anthropic provider works.** `LLM_PROVIDER=anthropic` was accepted,
   offered in **Settings → AI Configuration** and priced, but its LangChain
   package was never installed, so every AI call failed with
