@@ -281,7 +281,14 @@ async def save_snapshot(
     cannot serialise those, so the flush died with ``Object of type datetime
     is not JSON serializable``. Encoding at this boundary covers every field
     that reaches the column, including ones added later.
+
+    A payload whose ``defect_candidates_pending`` is set is not cached: its
+    candidates are the heuristic stand-in while the LLM build runs in the
+    background, and caching it would serve that stand-in as the answer.
     """
+    if isinstance(payload, dict) and payload.get("defect_candidates_pending"):
+        logger.debug("Not caching run %s: defect candidates still building", run_id)
+        return
     payload = jsonable_encoder(payload)
     result = await db.execute(
         select(RunIntelligenceSnapshot).where(

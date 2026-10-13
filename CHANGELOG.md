@@ -221,6 +221,16 @@ locally by default.
 
 ### Fixed
 
+- **No more random "Token revocation status cannot be verified" errors.**
+  Opening a run's AI summary with nothing cached wrote its defect candidates
+  with up to five LLM calls inside the request, holding two database
+  connections throughout; each call's cost check took a third. A worker has
+  three, so a few runs opened together left every other request waiting
+  30 seconds for a connection, and the token check, the first to give up,
+  reported the revocation store as unavailable. The summary now answers at
+  once with the rule-based candidates (`defect_candidates_pending: true`)
+  and writes the LLM ones in the background, one at a time per worker; the
+  next view shows them. A summary with pending candidates is not cached.
 - **Commit links go to the project's own GitHub.** The commit range and the
   suspect commits on **Failure Analysis** always linked to github.com, even
   when the project's GitHub integration names a GitHub Enterprise server. They
