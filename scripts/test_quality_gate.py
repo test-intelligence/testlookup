@@ -4196,6 +4196,68 @@ def test_a_shipped_copyleft_or_unlisted_dependency_fails(monkeypatch, tmp_path) 
     assert "mystery-lib" in messages[0] and "no license entry" in messages[0]
 
 
+def test_the_no_python_jose_guard_passes_on_the_real_repo() -> None:
+    assert qg._deps_no_python_jose() == []
+
+
+# Assembled at runtime so this file never contains the shapes the guard scans for.
+_JOSE = "jo" + "se"
+
+
+def _jose_repo(monkeypatch, tmp_path, files: dict[str, str], requirements: str) -> None:
+    import json
+
+    _redirect_repo_root(monkeypatch, tmp_path)
+    filler = {f"backend/app/m{i}.py": "import jwt\n" for i in range(110)}
+    for rel, body in {**filler, **files}.items():
+        _write(tmp_path / rel, body)
+    _write(tmp_path / "backend/requirements.txt", requirements)
+    _write(tmp_path / qg._LICENSE_ALLOWLIST_REL, json.dumps({
+        "allowed": ["MIT"], "python_manifests": ["backend/requirements.txt"], "python": {},
+    }))
+    _fake_tracked(monkeypatch, sorted({**filler, **files}) + ["backend/requirements.txt"])
+
+
+def test_python_jose_in_a_manifest_or_the_source_fails_the_gate(monkeypatch, tmp_path) -> None:
+    """Each way jose came in before the PyJWT migration, and the stub shapes the
+    tests used, is refused; PyJWT and prose that merely names jose are not."""
+    _jose_repo(monkeypatch, tmp_path, {
+        "backend/app/core/deps.py": f"from {_JOSE} import ExpiredSignatureError, JWTError\n",
+        "backend/app/core/security.py": f"import jwt\n\ndef f():\n    from {_JOSE}.jwt import decode\n",
+        "backend/app/routers/x.py": f"import {_JOSE}\n",
+        "backend/tests/test_a.py": f'import pytest\npytest.importorskip("{_JOSE}")\n',
+        "backend/tests/test_b.py": (
+            "import importlib.util, sys\n"
+            f'if importlib.util.find_spec("{_JOSE}") is None:\n'
+            f'    m.setitem(sys.modules, "{_JOSE}.jwt", stub)\n'
+            f'sys.modules["{_JOSE}"] = stub\n'
+        ),
+        "backend/app/core/ok.py": (
+            '"""We moved off python-jose to PyJWT."""\n'
+            "from app.core.security import JWTError\n"
+            "josephine = 1\nimport jwt\n"
+        ),
+    }, requirements=f"fastapi==1.0\npython-{_JOSE}[cryptography]==3.5.0  # old\nPyJWT==2.15.1\n")
+    found = sorted((v.relpath, v.line) for v in qg._deps_no_python_jose())
+    assert found == [
+        ("backend/app/core/deps.py", 1),
+        ("backend/app/core/security.py", 4),
+        ("backend/app/routers/x.py", 1),
+        ("backend/requirements.txt", 2),
+        ("backend/tests/test_a.py", 2),
+        ("backend/tests/test_b.py", 2),
+        ("backend/tests/test_b.py", 3),
+        ("backend/tests/test_b.py", 4),
+    ]
+
+
+def test_the_no_python_jose_guard_refuses_to_pass_having_read_nothing(monkeypatch, tmp_path) -> None:
+    _jose_repo(monkeypatch, tmp_path, {}, requirements="PyJWT==2.15.1\n")
+    _fake_tracked(monkeypatch, [])
+    messages = [v.message for v in qg._deps_no_python_jose()]
+    assert len(messages) == 1 and "meaningless" in messages[0]
+
+
 def test_local_only_files_on_disk_are_not_reported_as_ignored_source(monkeypatch) -> None:
     """Maintainers keep the local-only files on disk; the gitignored-source
     guard must not report them as code `git add` would silently drop."""

@@ -51,10 +51,6 @@ def _stub_external_modules(monkeypatch: pytest.MonkeyPatch) -> None:
                     gensalt=MagicMock(return_value=b"$2b$12$salt"),
                 ),
             )
-        if importlib.util.find_spec("jose") is None:
-            jose_jwt_stub = _make_stub("jose.jwt", encode=MagicMock(return_value="tok"), decode=MagicMock(return_value={}))
-            m.setitem(sys.modules, "jose.jwt", jose_jwt_stub)
-            m.setitem(sys.modules, "jose", _make_stub("jose", jwt=jose_jwt_stub, JWTError=Exception))
 
         yield
 

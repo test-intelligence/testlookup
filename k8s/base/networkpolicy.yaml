@@ -213,6 +213,45 @@ spec:
           port: 8000
 
 ---
+# ChromaDB: in-cluster only, reachable by the backend + Celery workers on its
+# container port. Selects nothing where Chroma runs outside the namespace; the
+# homelab and openshift-artifactory overlays run it here (infra-chromadb.yaml).
+#
+# Narrower than the other data stores on purpose. The chromadb/chroma 1.x
+# server has no authentication, and the backend's Python client builds each
+# collection's embedding function from the configuration Chroma returns
+# (chromadb Collection._embed -> build_from_config), so a pod that can write
+# to Chroma can point the backend's embedding calls -- and the API key it
+# reads from the environment -- at an endpoint of its choosing. The open
+# chromadb advisories (GHSA-f4j7-r4q5-qw2c, GHSA-36p7-vc44-83pf,
+# GHSA-2wm9-hf6c-p5cr, GHSA-xph7-9rjv-w5fr) have no fixed release, which
+# leaves network reachability as the control. Keep no other policy selecting
+# these pods: NetworkPolicy allows are a union, so one broad allow elsewhere
+# undoes this one (tests/regression/test_chroma_network_isolation.py).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-chromadb
+  namespace: testlookup
+spec:
+  podSelector:
+    matchLabels:
+      app: testlookup-chromadb
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: testlookup-backend
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: worker
+      ports:
+        - protocol: TCP
+          port: 8000
+
+---
 # Ollama: in-cluster only, reachable by backend + workers.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

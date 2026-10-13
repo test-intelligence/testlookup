@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 pytest.importorskip("httpx")
-pytest.importorskip("jose")
+pytest.importorskip("jwt")
 pytest.importorskip("asyncpg")
 
 from app.models.postgres import UserRole  # noqa: E402

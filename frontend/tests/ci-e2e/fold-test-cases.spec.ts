@@ -85,6 +85,40 @@ test('Cases: the table starts within the fold budget at 1440 x 900', async ({ pa
   expect(errors).toEqual([])
 })
 
+test('Cases: a clicked case docks beside the list, not over it (master-detail)', async ({ page }, testInfo) => {
+  const { api, errors } = await openRollout(page, '/test-management', { handlers: TEST_CASES, ready })
+  await networkQuiet(page, api)
+  const table = page.locator('[data-primary]').getByRole('table')
+  await table.getByRole('row').nth(1).click()
+
+  const panel = page.locator('[data-case-panel]')
+  await expect(panel).toBeVisible()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(table).toBeVisible()
+  await expect(table.getByRole('row').nth(1)).toHaveAttribute('aria-current', 'true')
+  const [list, side] = await Promise.all([page.locator('[data-primary]').boundingBox(), panel.boundingBox()])
+  console.log(`SPLIT /test-management ${JSON.stringify({ list, side })}`)
+  if (!list || !side) throw new Error('the list or the case panel has no box')
+  // Side by side, from the same top: the list on the left, the case on the right.
+  expect(side.x).toBeGreaterThan(list.x + list.width - 1)
+  expect(Math.abs(side.y - list.y)).toBeLessThanOrEqual(1)
+  expect(side.width).toBeGreaterThanOrEqual(440)
+  if (process.env.FOLD_SHOT) await page.screenshot({ path: testInfo.outputPath('test-cases-split.png') })
+
+  // Expanded, the case takes the row; the list comes back with one click.
+  await panel.getByRole('button', { name: 'Expand the case to full width' }).click()
+  await expect(page.locator('[data-primary]')).toBeHidden()
+  if (process.env.FOLD_SHOT) await page.screenshot({ path: testInfo.outputPath('test-cases-expanded.png') })
+  await panel.getByRole('button', { name: 'Show the list beside the case' }).click()
+  await expect(page.locator('[data-primary]')).toBeVisible()
+
+  await panel.getByRole('button', { name: 'Close case' }).click()
+  await expect(panel).toHaveCount(0)
+  await networkQuiet(page, api)
+  expect(api.unhandled).toEqual([])
+  expect(errors).toEqual([])
+})
+
 test('Cases: the Insights drawer holds the former right rail', async ({ page }, testInfo) => {
   const { api, errors } = await openRollout(page, '/test-management', { handlers: TEST_CASES, ready })
   await expect(page.getByRole('complementary', { name: 'Insights' })).toHaveCount(0)

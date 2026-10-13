@@ -90,6 +90,14 @@ locally by default.
 
 ### Changed
 
+- **A test case opens beside the list, not over it** (Test Management > Cases).
+  The case view was a modal pinned to the top-right corner over a backdrop, so
+  reading the next case meant closing this one first. It now docks beside the
+  list (master-detail): the list stays visible with the open row marked, a
+  click on another row swaps the case in place, previous / next step through
+  the page ("3 of 25"), Expand gives the case the full width, and Esc or the
+  open row's second click closes it. The open case is in the URL
+  (`?case=<id>`), so a refresh or a shared link reopens it.
 - **Default local model is `qwen2.5:7b-instruct`** (Apache-2.0), replacing
   `qwen2.5:3b-instruct`, whose Qwen Research License forbids commercial use.
 - **Redis is replaced by Valkey 8** (BSD-3-Clause) in Compose, Kubernetes, the
@@ -153,6 +161,25 @@ locally by default.
   and SSO-callback pages load when visited; the top bar's timestamps no longer
   pull in date-fns. `npm run check:bundle` now also fails if date-fns or
   qrcode.react reach the eager bundle again.
+- **JWTs are signed and verified with PyJWT 2.15.1 instead of python-jose.**
+  Tokens issued before the upgrade stay valid and every token type keeps its
+  claims. One PyJWT default is deliberately not taken: it rejects an `iat`
+  later than the API pod's clock, and `iat` comes from PostgreSQL's clock, so a
+  database a second ahead would have refused fresh sign-ins; `iat` must still
+  be a number. Code that caught `jose.JWTError` imports `JWTError` /
+  `ExpiredSignatureError` from `app.core.security`.
+- ChromaDB is reachable only by the backend and the Celery workers: Compose
+  puts it on its own `chroma_net` network (internal in the release stack), the
+  development stack publishes it on `127.0.0.1:8001` only and the release stack
+  not at all, and Kubernetes admits it through a new `allow-chromadb`
+  NetworkPolicy (the homelab overlay no longer lists it in
+  `allow-data-stores`, which also admitted the MCP server and beat).
+- Dependency upgrades from the Dependabot triage: DOMPurify 3.4.16 and KaTeX
+  0.18.4 (web UI, via Mermaid; npm overrides), Vitest 4.1.11, PostCSS 8.5.28
+  (also under `@tailwindcss/postcss`), undici 8.11.2, @babel/core 7.29.7,
+  @humanfs/node 0.16.8, brace-expansion 5.0.12 and source-map-js 1.2.2; the
+  docs Mermaid checker moves to Mermaid 11.17.2 with the same DOMPurify and
+  KaTeX pins.
 
 ### Deprecated
 
@@ -265,3 +292,26 @@ locally by default.
   commit links like `api.github.com/owner/repo/commit/<sha>`. Other scheme-less
   bases are left as typed, so the Fixer never sends its clone token to a host
   the API calls refuse.
+- Triaged the 44 open Dependabot alerts (2026-10-12). **python-jose is gone**
+  (GHSA-3qf3-8w2g-rqmx, critical, no fixed release): the backend uses PyJWT
+  2.15.1, and the quality gate's `deps.no-python-jose` guard refuses jose in a
+  manifest, an import, or a test stub. Every npm alert with a fixed release is
+  upgraded (DOMPurify, KaTeX, Mermaid, PostCSS, Vitest, undici, Babel, humanfs,
+  brace-expansion, source-map-js).
+- **chromadb** (GHSA-f4j7-r4q5-qw2c, GHSA-36p7-vc44-83pf, GHSA-2wm9-hf6c-p5cr,
+  GHSA-xph7-9rjv-w5fr; no fixed release) stays at 1.5.9. The advisories are in
+  chromadb's Python server and its auth providers; the deployments run the
+  `chromadb/chroma` image, a Rust server with no Python and no authentication,
+  and the backend uses the package as a client. The client does build each
+  collection's embedding function from the configuration the server returns,
+  so whoever can write to Chroma can redirect the backend's embedding calls;
+  Compose and Kubernetes now let only the backend and workers connect to it
+  (see Changed). Before this, both Compose stacks published it on every host
+  interface.
+- **langchain 0.3.30, langchain-openai 0.2.12 and langgraph 0.6.11** stay
+  pinned until the langchain 1.x migration: the advisories against them
+  (GHSA-gr75-jv2w-4656 file-search middleware and prompt/chain loaders,
+  GHSA-r7w7-9xr2-qq2r image token counting, GHSA-g48c-2wqr-h844 checkpoint
+  msgpack loading) are in features TestLookup does not call; it loads no
+  prompt or chain files, counts no image tokens and compiles its graphs without
+  a checkpointer.

@@ -8,7 +8,7 @@ journeys depend on.
 
 Skipped automatically when integration deps aren't importable
 locally — matches the rest of ``tests/integration/`` (`asyncpg`,
-`jose`, etc. are Docker-only on bare checkouts).
+`jwt`, etc. are Docker-only on bare checkouts).
 
 Covered journeys:
 
@@ -34,7 +34,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 pytest.importorskip("httpx")
-pytest.importorskip("jose")
+pytest.importorskip("jwt")
 pytest.importorskip("asyncpg")
 
 from app.models.postgres import UserRole  # noqa: E402

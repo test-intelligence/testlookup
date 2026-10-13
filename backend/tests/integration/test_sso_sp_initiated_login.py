@@ -25,7 +25,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 import pytest
 
 pytest.importorskip("httpx")
-pytest.importorskip("jose")
+pytest.importorskip("jwt")
 pytest.importorskip("defusedxml")
 
 import defusedxml.ElementTree as SafeET  # noqa: E402

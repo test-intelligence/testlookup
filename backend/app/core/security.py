@@ -6,9 +6,22 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, cast
 
 import bcrypt
-from jose import jwt
+import jwt
 
 from app.core.config import settings
+
+# PyJWT, not python-jose (GHSA-3qf3-8w2g-rqmx: jose <= 3.5.0 has an unfixed
+# algorithm-confusion bypass and the project is unmaintained). Callers catch
+# these two names from HERE rather than from the JWT library, so a library
+# swap stays a one-file change:
+#   * ``JWTError`` is PyJWT's base class, so it still covers every decode
+#     failure python-jose's ``JWTError`` covered (bad signature, malformed
+#     token, bad claim, and a key PyJWT refuses to use as an HMAC secret).
+#   * ``ExpiredSignatureError`` is a subclass of it, as it was in jose, so a
+#     handler that catches it before ``JWTError`` keeps working.
+# scripts/quality_gate.py (deps.no-python-jose) keeps jose from coming back.
+JWTError = jwt.PyJWTError
+ExpiredSignatureError = jwt.ExpiredSignatureError
 
 
 # bcrypt hashes at most 72 bytes. Versions before 5.0 truncated silently;
@@ -137,13 +150,32 @@ def decode_token(token: str, expected_type: Optional[str] = None) -> dict[Any, A
     token's ``type`` claim must match or a ``JWTError`` is raised — pushing the
     access-vs-refresh confused-deputy check into the decode layer as
     defense-in-depth (callers may still re-check for clearer error messages).
-    """
-    from jose import JWTError
 
+    ``algorithms`` is always the single configured algorithm: the token's own
+    ``alg`` header never chooses how it is verified.
+
+    ``iat`` is minted from PostgreSQL's clock (``auth_session_tokens``), not
+    this process's. PyJWT rejects an ``iat`` later than "now" by default, so
+    with zero leeway a database clock a fraction of a second ahead of the API
+    pod would 401 a freshly issued token. python-jose never checked that, and
+    ``exp`` (which IS checked) is what bounds a token's life, so this keeps
+    jose's rule instead: ``iat``, when present, must be a number. The options
+    dict is built per call, never shared (PyJWT has mutated a caller's options
+    in place before: GHSA-gvp8-978c-rx2q).
+    """
     payload = cast(
         dict[Any, Any],
-        jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM]),
+        jwt.decode(
+            token,
+            settings.JWT_SECRET_KEY,
+            algorithms=[settings.JWT_ALGORITHM],
+            options={"verify_iat": False},
+        ),
     )
+    if "iat" in payload:
+        iat = payload["iat"]
+        if isinstance(iat, bool) or not isinstance(iat, (int, float)):
+            raise jwt.InvalidIssuedAtError("Issued At claim (iat) must be a number")
     if expected_type is not None and payload.get("type") != expected_type:
-        raise JWTError(f"Unexpected token type: expected {expected_type!r}")
+        raise jwt.InvalidTokenError(f"Unexpected token type: expected {expected_type!r}")
     return payload

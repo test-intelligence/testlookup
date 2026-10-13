@@ -29,7 +29,11 @@ email-validator==2.3.0
 PyYAML==6.0.3
 
 # ── Authentication & Security ────────────────────────────────
-python-jose[cryptography]==3.5.0
+# PyJWT, not python-jose: jose <= 3.5.0 has an unfixed algorithm-confusion
+# bypass (GHSA-3qf3-8w2g-rqmx) and is unmaintained. The app signs HS256 only,
+# so no [crypto] extra. 2.15.0 fixes GHSA-x33g-cr3x-6449 / GHSA-42vr-xj54-vc7v.
+# The quality gate's deps.no-python-jose guard keeps jose out.
+PyJWT==2.15.1
 passlib[bcrypt]==1.7.4
 python-dotenv==1.2.2
 slowapi==0.1.10
@@ -44,6 +48,10 @@ pyotp==2.9.0
 aiosmtplib==5.1.2
 
 # ── LangChain & AI ───────────────────────────────────────────
+# Held on 0.3.x pending the langchain 1.x migration. The open advisories
+# against these pins (GHSA-gr75-jv2w-4656 file loaders/middleware,
+# GHSA-r7w7-9xr2-qq2r image token counting, GHSA-g48c-2wqr-h844 checkpoint
+# msgpack) are in features the app does not use; see CHANGELOG 0.1.0 Security.
 langchain==0.3.30        # CVE-2026-45134
 langchain-ollama==0.2.1
 langchain-openai==0.2.12
@@ -51,6 +59,10 @@ langchain-google-genai==2.0.7
 langgraph==0.6.11
 
 # ── Vector Store ─────────────────────────────────────────────
+# Client only: HttpClient to the chromadb/chroma server image (a Rust binary)
+# plus an in-process EphemeralClient for duplicate detection. The open
+# chromadb advisories have no fixed release and are in the Python server and
+# its auth providers, which never run here; see CHANGELOG 0.1.0 Security.
 chromadb==1.5.9
 
 # ── Background Tasks ─────────────────────────────────────────
@@ -63,7 +75,7 @@ flower==2.1.0
 lxml==6.1.2
 defusedxml==0.7.1
 # XML-DSig verification for SAML assertion signatures. Uses lxml +
-# cryptography (already pulled in via python-jose) under the hood.
+# cryptography (a signxml dependency, >=45) under the hood.
 # 4.0.x removes references to deprecated EC curves (SECT163K1 etc.) that
 # `cryptography` >= 43.0 dropped — pinning < 4.0 breaks at import time.
 signxml==5.1.0

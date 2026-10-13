@@ -1,7 +1,7 @@
 """
 Unit tests for SSO/SAML, SCIM provisioning, and identity event endpoints (ENT-01).
 
-All DB calls and heavy dependencies (bcrypt, jose) are mocked.
+All DB calls and heavy dependencies (bcrypt) are mocked.
 Tests cover:
  - SSO configuration CRUD (create, read, update, delete, test-connection)
  - SAML assertion parsing and validation
@@ -53,10 +53,6 @@ def _stub_external_modules(monkeypatch: pytest.MonkeyPatch) -> None:
                     gensalt=MagicMock(return_value=b"$2b$12$salt"),
                 ),
             )
-        if importlib.util.find_spec("jose") is None:
-            jose_jwt_stub = _make_stub("jose.jwt", encode=MagicMock(return_value="tok"), decode=MagicMock(return_value={}))
-            m.setitem(sys.modules, "jose.jwt", jose_jwt_stub)
-            m.setitem(sys.modules, "jose", _make_stub("jose", jwt=jose_jwt_stub, JWTError=Exception))
 
 
         # Stub DB connection factories (no real DB in unit tests)

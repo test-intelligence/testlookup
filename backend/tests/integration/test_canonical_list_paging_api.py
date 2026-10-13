@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 pytest.importorskip("httpx")
-pytest.importorskip("jose")
+pytest.importorskip("jwt")
 
 from app.models.postgres import UserRole  # noqa: E402
 

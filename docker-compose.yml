@@ -250,8 +250,13 @@ services:
     container_name: testlookup_chroma
     profiles: ["local-llm"]
     restart: unless-stopped
+    # Chroma has no authentication, and the backend builds each collection's
+    # embedding function from the configuration Chroma hands back, so anyone
+    # who can write to it can steer the backend's embedding calls. Loopback
+    # only (a backend run on the host still reaches it on localhost:8001), and
+    # on its own network shared only with the services that use it.
     ports:
-      - "8001:8000"
+      - "127.0.0.1:8001:8000"
     volumes:
       - chroma_data:/chroma/chroma
     environment:
@@ -264,7 +269,7 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - testlookup_net
+      - chroma_net
 
   # ──────────────────────────────────────────────────────────
   # APPLICATION LAYER
@@ -368,6 +373,7 @@ services:
           memory: 256M
     networks:
       - testlookup_net
+      - chroma_net
 
   # Celery worker for background tasks (ingestion, AI analysis)
   worker:
@@ -417,6 +423,7 @@ services:
           memory: 512M
     networks:
       - testlookup_net
+      - chroma_net
 
   # Isolated bounded queue for planner-spawned Investigator children.
   worker-children:
@@ -465,6 +472,7 @@ services:
           memory: 512M
     networks:
       - testlookup_net
+      - chroma_net
 
   # Celery Beat scheduler for periodic tasks
   beat:
@@ -587,6 +595,11 @@ services:
 
 networks:
   testlookup_net:
+    driver: bridge
+  # ChromaDB and the only services that use it (backend, worker,
+  # worker-children). Not internal, so the loopback-only port above still
+  # publishes; the chromadb/chroma server has no authentication of its own.
+  chroma_net:
     driver: bridge
 
 volumes:

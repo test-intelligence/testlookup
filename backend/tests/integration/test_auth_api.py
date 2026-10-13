@@ -12,10 +12,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-# Hard skip the whole file when integration deps are missing (jose,
+# Hard skip the whole file when integration deps are missing (PyJWT,
 # asyncpg). Same pattern used by other auth-adjacent tests in this repo.
 pytest.importorskip("httpx")
-pytest.importorskip("jose")
+pytest.importorskip("jwt")
 pytest.importorskip("asyncpg")
 
 from app.models.postgres import UserRole  # noqa: E402

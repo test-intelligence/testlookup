@@ -15,9 +15,9 @@ import inspect
 import pytest
 
 pytest.importorskip("fastapi")
-# app.routers.ingest imports app.core.deps, which needs python-jose + asyncpg.
+# app.routers.ingest imports app.core.deps, which needs PyJWT + asyncpg.
 # Present in the Docker test image; skip cleanly on a bare local checkout.
-pytest.importorskip("jose")
+pytest.importorskip("jwt")
 pytest.importorskip("asyncpg")
 
 from annotated_types import MaxLen, MinLen  # noqa: E402

@@ -100,7 +100,9 @@ flowchart TB
 | **Ollama** | optional | 11434 | Local LLM for triage/summary |
 
 > Postgres is published on **5433** (container 5432) to avoid colliding with a
-> local Postgres; ChromaDB on **8001**; the object store on **9000**.
+> local Postgres; ChromaDB on **127.0.0.1:8001** (loopback only, and on its own
+> network with the backend and workers; the release stack publishes no Chroma
+> port); the object store on **9000**.
 
 ### Request layering
 
