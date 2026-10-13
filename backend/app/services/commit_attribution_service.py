@@ -60,6 +60,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 import httpx
 import structlog
@@ -395,7 +396,28 @@ def _commit_html_url(ci_repo: Optional[str], api_base: Optional[str], sha: str) 
     repo = ci_repo.strip().strip("/")
     # github.com for the public API (by hostname); GitHub Enterprise's
     # ``https://host/api/v3`` links to ``https://host``.
-    return f"{github_html_root(api_base)}/{repo}/commit/{sha}"
+    root = github_html_root(api_base)
+    # The API base is free text, and this lands in an href: only an http(s)
+    # URL with a host becomes a link. A scheme-less "ghe.corp" would be a
+    # relative link, and "javascript:..." must never reach the page.
+    try:
+        parts = urlsplit(root)
+        if parts.scheme not in ("http", "https") or not parts.hostname:
+            return None
+    except ValueError:
+        return None
+    return f"{root}/{repo}/commit/{sha}"
+
+
+async def _commit_link_api_base(db: AsyncSession, run: TestRun) -> Optional[str]:
+    """The API base commit links are built against: the project's GitHub
+    integration, so a GitHub Enterprise project links to its own server.
+
+    Read whether or not the integration is enabled -- ``enabled`` switches the
+    outbound calls (checks, comments, the connector), not where the code
+    lives. ``None`` (github.com) when the project has no integration."""
+    integration = await get_integration(db, run.project_id)
+    return integration.api_base_url if integration is not None else None
 
 
 # ── Baseline / connector fetch ───────────────────────────────────────────────
@@ -876,8 +898,11 @@ def _base_source_of(row: Optional[RunCommitRange]) -> str:
     return value if value in BASE_SOURCES else BASE_SOURCE_UNAVAILABLE
 
 
-def _serialize_range(row: Optional[RunCommitRange], run: TestRun) -> dict[str, Any]:
-    """Shape the range for the API. Honest ``available`` flag."""
+def _serialize_range(
+    row: Optional[RunCommitRange], run: TestRun, api_base: Optional[str] = None,
+) -> dict[str, Any]:
+    """Shape the range for the API. Honest ``available`` flag. ``api_base`` is
+    the project's GitHub API base for the commit links (``None``: github.com)."""
     base_source = _base_source_of(row)
     if row is None or row.source == SOURCE_UNAVAILABLE or not row.commits:
         return {
@@ -892,7 +917,6 @@ def _serialize_range(row: Optional[RunCommitRange], run: TestRun) -> dict[str, A
             "commits": [],
             "resolved_at": row.resolved_at.isoformat() if row is not None and row.resolved_at else None,
         }
-    api_base = None  # html-url derivation only needs ci_repo for github.com
     commits = [
         {**c, "commit_url": _commit_html_url(run.ci_repo, api_base, c.get("sha", ""))}
         for c in row.commits
@@ -916,7 +940,9 @@ def _serialize_range(row: Optional[RunCommitRange], run: TestRun) -> dict[str, A
 async def get_commit_range(db: AsyncSession, run: TestRun) -> dict[str, Any]:
     """Return the persisted commit range for a run (read-only)."""
     row = await _get_row(db, run.id)
-    return _serialize_range(row, run)
+    has_commits = row is not None and row.source != SOURCE_UNAVAILABLE and bool(row.commits)
+    api_base = await _commit_link_api_base(db, run) if has_commits else None
+    return _serialize_range(row, run, api_base)
 
 
 # ── Suspect ranking (US-8.2) ─────────────────────────────────────────────────
@@ -1073,9 +1099,10 @@ async def rank_suspects(
     )
     loc = build_locator(test_cases)
     suspects = score_commits(list(row.commits), loc)
-    # Attach deep links now that we know the repo.
+    # Attach deep links now that we know the repo, on the project's GitHub host.
+    api_base = await _commit_link_api_base(db, run)
     for s in suspects:
-        s["commit_url"] = _commit_html_url(run.ci_repo, None, s.get("sha", ""))
+        s["commit_url"] = _commit_html_url(run.ci_repo, api_base, s.get("sha", ""))
 
     return {
         "run_id": str(run.id),
