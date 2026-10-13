@@ -24,6 +24,9 @@ resources:
 # k8s/components/backup/README.md.
 components:
   - ../../components/backup
+  # Ingress allows for the in-cluster Postgres / MongoDB / Redis / object store
+  # above (shared with openshift-artifactory).
+  - ../../components/colocated-data-stores
 
 namespace: testlookup
 

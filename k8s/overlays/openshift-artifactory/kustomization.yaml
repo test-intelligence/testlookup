@@ -40,6 +40,10 @@ resources:
 # k8s/components/backup/README.md.
 components:
   - ../../components/backup
+  # Ingress allows for the in-cluster Postgres / MongoDB / Redis / object store
+  # above. Without them the base default-deny-all leaves the stores
+  # unreachable (shared with the homelab overlay).
+  - ../../components/colocated-data-stores
 
 namespace: testlookup
 

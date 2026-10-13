@@ -4,8 +4,10 @@
 # lateral-movement surface area if any pod is compromised.
 #
 # NOTE: these policies assume the stateful data stores (postgres, mongo, redis,
-# minio, chroma) run OUTSIDE the testlookup namespace (managed services or a
-# shared "data" namespace). If you colocate them here, add matching allows.
+# minio) run OUTSIDE the testlookup namespace (managed services or a shared
+# "data" namespace). An overlay that colocates them here includes the
+# k8s/components/colocated-data-stores component for their allows; an
+# in-namespace Chroma is covered by allow-chromadb below.
 # ───────────────────────────────────────────────────────────────────────────
 
 apiVersion: networking.k8s.io/v1

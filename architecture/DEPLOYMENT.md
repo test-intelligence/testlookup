@@ -72,7 +72,9 @@ Overlays specialize it per target ([map of every overlay](../k8s/README.md)):
 
 `k8s/monitoring` (PodMonitors + a PrometheusRule rendered from the Compose alert
 rules) and `k8s/components/backup` (daily dump CronJob + restore) are opt-in
-add-ons.
+add-ons. `k8s/components/colocated-data-stores` holds the network policy that
+opens in-namespace datastores to the backend, workers and beat; `homelab` and
+`openshift-artifactory` include it.
 
 ## 4. CI/CD pipelines (`.github/workflows/`)
 

@@ -1,6 +1,6 @@
 # Kubernetes manifests
 
-Kustomize base, overlays, an opt-in monitoring bundle and a backup component for TestLookup. Start with the [deployment guide](../docs/operations/deployment.md) to choose a mode.
+Kustomize base, overlays, an opt-in monitoring bundle and two components (backups, and the network policy for in-cluster datastores) for TestLookup. Start with the [deployment guide](../docs/operations/deployment.md) to choose a mode.
 
 | Path | What it is | Deploy with | Guide |
 |---|---|---|---|
@@ -17,6 +17,7 @@ Kustomize base, overlays, an opt-in monitoring bundle and a backup component for
 | `overlays/homelab` | Single-node K3s: in-cluster datastores, Traefik on HTTP, local-path storage | `homelabsetup/deploy-homelab.sh` | [Single-node K3s](../docs/operations/deploy-k3s.md) |
 | `monitoring/` | `PodMonitor`s and a `PrometheusRule` for the Prometheus Operator (opt-in) | `kubectl apply -k k8s/monitoring` | [Monitoring](../docs/operations/deploy-kubernetes.md#monitoring-podmonitor-and-prometheusrule) |
 | `components/backup/` | Daily backup CronJob, retention and an on-demand restore | Add to an overlay's `components:` | [Backup component](components/backup/README.md) |
+| `components/colocated-data-stores/` | Network policy that admits the backend, workers and beat to PostgreSQL, MongoDB, Redis and the object store when an overlay runs them in the namespace (`homelab`, `openshift-artifactory`) | Add to an overlay's `components:` | [Network policies](../docs/operations/deploy-kubernetes.md#network-policies) |
 
 Rules that apply to every overlay:
 

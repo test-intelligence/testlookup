@@ -221,6 +221,17 @@ locally by default.
 
 ### Fixed
 
+- **The air-gapped OpenShift overlay's datastores are reachable.**
+  `k8s/overlays/openshift-artifactory` runs PostgreSQL, MongoDB, Redis and the
+  object store inside the namespace, under the base `default-deny-all`, but had
+  no policy letting anything connect to them, so the workers waited forever
+  for Redis and the migration Job and the API could not reach the database.
+  The allow now lives in a shared component,
+  `k8s/components/colocated-data-stores`, which the overlay and the
+  single-node K3s overlay both include. It is also narrower than the K3s
+  overlay's own copy: the backend and the workers reach each store on its own
+  port, beat reaches Redis only, and the MCP server reaches none (it never
+  connected to them).
 - **The Anthropic provider works.** `LLM_PROVIDER=anthropic` was accepted,
   offered in **Settings → AI Configuration** and priced, but its LangChain
   package was never installed, so every AI call failed with
