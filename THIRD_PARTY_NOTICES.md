@@ -112,6 +112,7 @@ same family of permissive licenses (MIT, BSD, Apache-2.0, PSF, ISC, MPL-2.0).
 | `httpx` | BSD-3-Clause | backend, cli, client, mcp |
 | `kombu` | BSD-3-Clause | backend |
 | `langchain` | MIT | backend |
+| `langchain-anthropic` | MIT | backend |
 | `langchain-google-genai` | MIT | backend |
 | `langchain-ollama` | MIT | backend |
 | `langchain-openai` | MIT | backend |

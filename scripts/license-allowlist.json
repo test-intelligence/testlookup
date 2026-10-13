@@ -63,6 +63,7 @@
     "httpx": "BSD-3-Clause",
     "kombu": "BSD-3-Clause",
     "langchain": "MIT",
+    "langchain-anthropic": "MIT",
     "langchain-google-genai": "MIT",
     "langchain-ollama": "MIT",
     "langchain-openai": "MIT",
