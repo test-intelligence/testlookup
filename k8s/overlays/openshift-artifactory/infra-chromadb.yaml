@@ -36,15 +36,17 @@ spec:
           ports:
             - containerPort: 8000
           env:
-            - name: IS_PERSISTENT
-              value: "TRUE"
-            - name: PERSIST_DIRECTORY
-              value: /chroma/chroma
             - name: ANONYMIZED_TELEMETRY
               value: "FALSE"
+          # Chroma 1.x persists to /data (its /config.yaml); the 0.x settings
+          # IS_PERSISTENT / PERSIST_DIRECTORY are ignored, so the claim was
+          # mounted where nothing current was written. subPath chroma-1x: a fresh
+          # directory on the same claim, leaving the 0.x files at its root as they
+          # are; the vectors are rebuilt by a search reindex (UPGRADING.md).
           volumeMounts:
             - name: data
-              mountPath: /chroma/chroma
+              mountPath: /data
+              subPath: chroma-1x
           resources:
             requests:
               cpu: 100m

@@ -257,14 +257,17 @@ services:
     # on its own network shared only with the services that use it.
     ports:
       - "127.0.0.1:8001:8000"
+    # Chroma 1.x persists to /data (its /config.yaml); the 0.x settings
+    # IS_PERSISTENT / PERSIST_DIRECTORY are ignored. A fresh volume: the old
+    # chroma_data (mounted at /chroma/chroma, never written by 1.x) is left
+    # untouched, and the vectors are rebuilt by a search reindex (UPGRADING.md).
     volumes:
-      - chroma_data:/chroma/chroma
+      - chroma_data_v1:/data
     environment:
-      IS_PERSISTENT: "TRUE"
-      PERSIST_DIRECTORY: /chroma/chroma
       ANONYMIZED_TELEMETRY: "FALSE"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v2/heartbeat"]
+      # The image has bash but no curl / wget: the heartbeat over /dev/tcp.
+      test: ["CMD", "bash", "-c", 'exec 3<>/dev/tcp/127.0.0.1/8000; printf "GET /api/v2/heartbeat HTTP/1.0\r\n\r\n" >&3; head -n1 <&3 | grep -q " 200 "']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -608,4 +611,4 @@ volumes:
   redis_data:
   minio_data:
   ollama_models:     # Persists downloaded LLM models (4–14GB each)
-  chroma_data:       # Persists embedding vectors
+  chroma_data_v1:     # Chroma 1.x vectors (/data)
