@@ -221,6 +221,14 @@ locally by default.
 
 ### Fixed
 
+- **Chroma's vectors survive a restart.** `chromadb/chroma` 1.x writes to
+  `/data`, but the volume was mounted at `/chroma/chroma` (a Chroma 0.x
+  setting it ignores), so search vectors lived in the container and vanished
+  when it was recreated. Compose and Kubernetes now mount the volume at
+  `/data`, on a fresh volume or sub-path so 1.x never opens the old 0.x
+  files, and the Compose healthcheck no longer calls `curl`, which the image
+  does not ship. After upgrading, reindex search and re-sync knowledge sources
+  ([UPGRADING.md](UPGRADING.md)).
 - **The pytest plugin authenticates with an API key.** It sent every
   credential as `Authorization: Bearer`, and the server reads API keys only from
   `X-API-Key`, so a `qai_` key was refused with 401 before the first test. A

@@ -131,6 +131,31 @@ licensed SSPL-1.0). Mirror `mongo:7` into your registry yourself before running
 `import-bundle.sh`; see
 [user-guide/air-gapped-install.md](user-guide/air-gapped-install.md).
 
+### Chroma's data volume
+
+`chromadb/chroma` 1.x keeps its data in `/data` (`persist_path` in the image's
+`/config.yaml`); the Chroma 0.x settings `IS_PERSISTENT` /
+`PERSIST_DIRECTORY` are ignored. The manifests mounted the volume at
+`/chroma/chroma`, so a 1.x server wrote its collections into the container
+and lost them whenever the container was recreated.
+
+The volume is now mounted at `/data`: Compose uses a new named volume,
+`chroma_data_v1`, and Kubernetes mounts the same claim on a fresh `chroma-1x`
+sub-path. Nothing is deleted: the old `chroma_data` volume, and the 0.x files
+at the claim's root, stay as they were. Remove them once you no longer need
+them.
+
+Chroma holds derived data only, so after upgrading:
+
+- **Semantic search:** reindex each project with
+  `POST /api/v1/search/reindex?project_id=<id>&full=true` (QA lead or admin
+  token).
+- **Knowledge sources:** sync each source again
+  (`POST /api/v1/knowledge-sources/<id>/sync`).
+- **Analysis and semantic caches** refill as they are used.
+- **Duplicate and defect indexes and agent memory** repopulate as new runs,
+  defects and investigations arrive.
+
 ### Default local model
 
 The default `LLM_MODEL` is now `qwen2.5:7b-instruct` (Apache-2.0) instead of
