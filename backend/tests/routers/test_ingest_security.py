@@ -8,10 +8,10 @@ import pytest
 
 pytest.importorskip("fastapi")
 # app.core.deps (imported transitively by app.routers.ingest) depends on
-# python-jose and asyncpg. They are present in the Docker test image but
+# PyJWT and asyncpg. They are present in the Docker test image but
 # may be absent from a bare local checkout, so we skip cleanly when they
 # are — same pattern as other auth/DB-adjacent tests in the repo.
-pytest.importorskip("jose")
+pytest.importorskip("jwt")
 pytest.importorskip("asyncpg")
 
 from fastapi import HTTPException  # noqa: E402

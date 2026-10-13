@@ -1,6 +1,10 @@
 # NetworkPolicy additions for the single-node K3s overlay:
-#   1. The colocated data stores (postgres/mongo/redis/minio/chroma) need
+#   1. The colocated data stores (postgres/mongo/redis/minio) need
 #      ingress allows — the base default-deny-all otherwise blocks them.
+#      ChromaDB is deliberately NOT in this list: the base allow-chromadb
+#      policy admits only the backend and the workers. Allows are a union, so
+#      listing it here would also open it to the MCP server and beat, on every
+#      port, and Chroma has no authentication of its own.
 #   2. Traefik on K3s lives in kube-system, not ingress-nginx, so the base
 #      allow-frontend/allow-backend/allow-mcp policies are extended below.
 
@@ -19,7 +23,6 @@ spec:
           - testlookup-mongo
           - testlookup-redis
           - testlookup-minio
-          - testlookup-chromadb
   policyTypes:
     - Ingress
   ingress:

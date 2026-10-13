@@ -23,7 +23,7 @@ Why this style instead of a real DB:
 
 Skip strategy:
 
-- The whole package is skipped if ``jose``/``asyncpg`` are missing locally
+- The whole package is skipped if ``jwt`` (PyJWT)/``asyncpg`` are missing locally
   (same pattern as the existing tests in this repo). All integration tests
   therefore run in Docker CI and skip on bare local checkouts.
 """

@@ -40,10 +40,10 @@ API endpoint, a pipeline agent, a UI page and a migration.
 
 ## 1. Quality gates — the invariant ratchets
 
-`make quality-gate` runs `scripts/quality_gate.py`, which enforces **53 guards**.
+`make quality-gate` runs `scripts/quality_gate.py`, which enforces **54 guards**.
 18 are *ratchets*: pre-existing violations are baselined in
 `scripts/quality-gate-baselines/` and the count can only shrink. New violations
-fail CI. The other 35 ship at zero with **no baseline file at all** — those are
+fail CI. The other 36 ship at zero with **no baseline file at all** — those are
 absolute rules, not ratchets, and are marked **†** in the tables below. Know
 these before you write code.
 
@@ -151,6 +151,7 @@ fails if a *second* deleter appears.
 | `repo.no-local-only-paths` † | a tracked path matching `scripts/local-only-paths.txt` (run evidence, working notes, live probes against a private deployment, owner tooling), or a pattern there that `.gitignore` does not ignore | Keep the file on disk and out of git: `git rm --cached <path>` and add it to `.gitignore`. Making a listed path public again means removing its pattern from both files in the same change |
 | `repo.no-private-markers` † | a tracked file naming the former private homelab host (`testlookup` under the `.local` domain), a Windows user-profile path, a `192.168.x.y` address outside tests, or a real-looking `qai_` API key | Use `testlookup.localhost` / `localhost` / `testlookup.example.com`, repo-relative paths and `qai_your_api_key_here`; site addresses belong in local site configuration (`TESTLOOKUP_HOMELAB_ENV`) |
 | `licenses.shipped-allowlist` † | a shipped npm package (non-dev, in `frontend/` or `client/js/` lockfiles) or a declared Python dependency whose license is not on `scripts/license-allowlist.json`; GPL, AGPL, LGPL, SSPL, BUSL and non-commercial licenses are refused outright | Choose a permissively licensed dependency. A new Python dependency needs its SPDX license in the allowlist's `python` map; an npm package without a `license` field needs an `npm_overrides` entry after you have read its LICENSE file |
+| `deps.no-python-jose` † | a manifest that declares `python-jose`, or a Python file that imports `jose`, plants a fake one in `sys.modules`, or skips on it (`find_spec("jose")`, `importorskip("jose")`) | Use PyJWT and import `JWTError` / `ExpiredSignatureError` from `app.core.security`. python-jose <= 3.5.0 has an unfixed algorithm-confusion bypass (GHSA-3qf3-8w2g-rqmx) and is unmaintained; the backend moved off it on 2026-10-12. The old test stubs planted a fake `jose` whenever the real one was missing, which is now always, so a stub or skip on it would quietly hollow out a suite |
 | `repo.no-repo-relative-basetemp` † | a tracked command that passes `--basetemp` a path inside the repo | Delete the argument. pytest's own default lives under the system temp, is unique per run — so concurrent suites cannot clobber each other, which is all the unique suffixes on the old paths were doing — and is rotated down to the last three runs. An in-repo root is created owner-only on Windows, so it hides from `git status` entirely and breaks the image build's context walk; 186 of them had accumulated at the repo root by 2026-09-20 and `require_clean_build_inputs` refused to deploy from that tree. Prose that documents the history (`qa/`, `CHANGELOG.md`, this guide) is out of scope or exempt. If a run truly needs its scratch elsewhere, pass an **absolute** path outside the repository |
 
 ### CI

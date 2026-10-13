@@ -16,7 +16,7 @@ import pytest
 from fastapi import HTTPException
 
 pytest.importorskip("httpx")
-pytest.importorskip("jose")
+pytest.importorskip("jwt")
 pytest.importorskip("asyncpg")
 
 from app.models.postgres import UserRole  # noqa: E402

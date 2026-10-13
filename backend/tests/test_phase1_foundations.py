@@ -411,7 +411,7 @@ class TestGetLlmAsync:
 # ═════════════════════════════════════════════════════════════════════════════
 
 class TestUserRoleNormalization:
-    """Test the normalization logic directly without importing deps.py (needs jose).
+    """Test the normalization logic directly without importing deps.py (needs PyJWT).
 
     The normalization logic is identical in deps.py and users.py, so we
     replicate the function here to test the algorithm in isolation.

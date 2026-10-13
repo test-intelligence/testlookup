@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 pytest.importorskip("httpx")
-pytest.importorskip("jose")
+pytest.importorskip("jwt")
 pytest.importorskip("asyncpg")
 
 from app.core.config import settings  # noqa: E402

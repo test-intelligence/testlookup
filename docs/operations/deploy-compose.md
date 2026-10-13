@@ -56,7 +56,7 @@ Once it is up:
 | MCP server (SSE, bearer token required) | `http://127.0.0.1:8002/sse` (bound to loopback) |
 | Flower (Celery monitor, basic auth from `.env`) | `http://127.0.0.1:5555` |
 | PostgreSQL | host port 5433 |
-| Ollama and ChromaDB (`local-llm` profile) | ports 11434 and 8001 |
+| Ollama and ChromaDB (`local-llm` profile) | port 11434; ChromaDB on `127.0.0.1:8001` (loopback only: it has no authentication, so only the backend and workers share its network) |
 
 ### Services
 

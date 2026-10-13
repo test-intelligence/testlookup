@@ -23,7 +23,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-pytest.importorskip("jose")
+pytest.importorskip("jwt")
 pytest.importorskip("sqlalchemy")
 
 REPO_ROOT = Path(__file__).resolve().parents[3]

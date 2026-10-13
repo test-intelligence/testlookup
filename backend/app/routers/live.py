@@ -23,7 +23,6 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
-from jose import JWTError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,7 +31,7 @@ from app.core.deps import (
     get_accessible_project_ids,
     get_streaming_api_key_context,
 )
-from app.core.security import decode_token
+from app.core.security import JWTError, decode_token
 from app.db.postgres import AsyncSessionLocal, get_db
 from app.models.postgres import User
 from app.services.access_audit_service import log_access_change

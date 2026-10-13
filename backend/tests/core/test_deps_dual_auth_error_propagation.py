@@ -119,7 +119,7 @@ def _valid_token(monkeypatch):
 
 def _invalid_token(monkeypatch):
     """Structurally broken bearer token → ``get_current_user`` answers 401."""
-    from jose import JWTError
+    from app.core.security import JWTError
 
     def _boom(_t):
         raise JWTError("bad signature")
