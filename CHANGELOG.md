@@ -232,6 +232,13 @@ locally by default.
   overlay's own copy: the backend and the workers reach each store on its own
   port, beat reaches Redis only, and the MCP server reaches none (it never
   connected to them).
+- **OpenShift's API Route reaches the backend.** Both OpenShift overlays
+  publish a `testlookup-api` Route to the backend, but the base
+  `allow-backend` policy did not admit OpenShift's router, so the Route never
+  reached it. The frontend, backend and MCP allows now admit the router by
+  its `openshift-ingress` namespace and by the namespace label
+  `policy-group.network.openshift.io/ingress`, which also covers a router on
+  the host network (`HostNetwork` endpoint publishing).
 - **The Anthropic provider works.** `LLM_PROVIDER=anthropic` was accepted,
   offered in **Settings → AI Configuration** and priced, but its LangChain
   package was never installed, so every AI call failed with

@@ -72,21 +72,30 @@ def policies_for(overlay: str) -> list[dict[str, Any]]:
     ]
 
 
-def admits(
-    policies: list[dict[str, Any]], dest: dict[str, str], src: dict[str, str], port: int
-) -> bool:
-    """Would a same-namespace pod labelled ``src`` reach ``dest`` on ``port``?"""
-    governing = [
+def _governing(policies: list[dict[str, Any]], dest: dict[str, str]) -> list[dict[str, Any]]:
+    """The policies that isolate ``dest`` for ingress."""
+    return [
         p for p in policies
         if selects(p["spec"].get("podSelector"), dest)
         and "Ingress" in (p["spec"].get("policyTypes") or ["Ingress"])
     ]
+
+
+def _rule_covers_port(rule: dict[str, Any], port: int) -> bool:
+    ports = {p.get("port") for p in rule.get("ports") or []}
+    return not ports or port in ports
+
+
+def admits(
+    policies: list[dict[str, Any]], dest: dict[str, str], src: dict[str, str], port: int
+) -> bool:
+    """Would a same-namespace pod labelled ``src`` reach ``dest`` on ``port``?"""
+    governing = _governing(policies, dest)
     if not governing:
         return True  # not isolated at all
     for policy in governing:
         for rule in policy["spec"].get("ingress") or []:
-            ports = {p.get("port") for p in rule.get("ports") or []}
-            if ports and port not in ports:
+            if not _rule_covers_port(rule, port):
                 continue
             peers = rule.get("from")
             if not peers:
@@ -98,6 +107,34 @@ def admits(
                 if ns is not None and ns != {}:
                     continue  # another namespace by label
                 if selects(peer.get("podSelector", {}), src):
+                    return True
+    return False
+
+
+def admits_from_namespace(
+    policies: list[dict[str, Any]], dest: dict[str, str], namespace: dict[str, str], port: int
+) -> bool:
+    """Would traffic from a namespace labelled ``namespace`` reach ``dest`` on ``port``?
+
+    Matches peers that name a whole namespace (a namespaceSelector with no, or
+    an empty, podSelector), which is how the manifests admit ingress
+    controllers and scrapers.
+    """
+    governing = _governing(policies, dest)
+    if not governing:
+        return True  # not isolated at all
+    for policy in governing:
+        for rule in policy["spec"].get("ingress") or []:
+            if not _rule_covers_port(rule, port):
+                continue
+            peers = rule.get("from")
+            if not peers:
+                return True  # no `from`: every source
+            for peer in peers:
+                ns = peer.get("namespaceSelector")
+                if ns is None or peer.get("podSelector") not in (None, {}):
+                    continue  # a pod in this namespace, an ipBlock, or narrower than a namespace
+                if selects(ns, namespace):
                     return True
     return False
 
