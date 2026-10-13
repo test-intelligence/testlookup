@@ -14,7 +14,6 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from jose import JWTError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +22,7 @@ from app.core.deps import get_current_active_user
 from app.core.security import (
     MFA_CHALLENGE_TOKEN_TYPE,
     MFA_ENROLLMENT_TOKEN_TYPE,
+    JWTError,
     decode_token,
     verify_password,
 )

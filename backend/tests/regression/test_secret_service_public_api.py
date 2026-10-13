@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import pytest
 
-pytest.importorskip("cryptography")  # core dep (via python-jose); guards odd envs
+pytest.importorskip("cryptography")  # core dep (via signxml); guards odd envs
 
 pytestmark = pytest.mark.regression
 

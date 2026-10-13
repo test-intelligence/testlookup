@@ -8,6 +8,10 @@
   },
   "dependencies": {
     "jsdom": "^25.0.1",
-    "mermaid": "^11.4.1"
+    "mermaid": "^11.17.2"
+  },
+  "overrides": {
+    "dompurify": "3.4.16",
+    "katex": "0.18.4"
   }
 }

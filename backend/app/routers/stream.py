@@ -263,9 +263,8 @@ async def sse_stream(
     import uuid as _uuid
 
     from sqlalchemy import select as _select
-    from jose import JWTError
 
-    from app.core.security import decode_token
+    from app.core.security import JWTError, decode_token
     from app.db.postgres import AsyncSessionLocal
     from app.models.postgres import ProjectMember, User, UserRole
 

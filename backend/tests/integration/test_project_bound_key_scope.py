@@ -26,7 +26,7 @@ import pytest
 from fastapi import HTTPException
 
 pytest.importorskip("httpx")
-pytest.importorskip("jose")
+pytest.importorskip("jwt")
 
 from app.core.deps import (  # noqa: E402
     CREDENTIAL_KIND_API_KEY,

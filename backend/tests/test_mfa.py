@@ -298,7 +298,7 @@ class TestChallengeTokenIsolation:
         assert jti and ttl > 0
 
     def test_decode_layer_rejects_cross_type_use(self):
-        from jose import JWTError
+        from app.core.security import JWTError
 
         challenge, _, _ = create_mfa_token(uuid.uuid4(), MFA_CHALLENGE_TOKEN_TYPE)
         enroll_tok, _, _ = create_mfa_token(uuid.uuid4(), MFA_ENROLLMENT_TOKEN_TYPE)

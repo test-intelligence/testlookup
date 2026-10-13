@@ -31,7 +31,7 @@ from app.streams.producer import (  # noqa: E402
 
 class TestMembershipCacheTTL:
     def test_ttl_is_300_seconds(self):
-        # Lazy import to avoid pulling in bcrypt/jose on systems without them
+        # Lazy import to avoid pulling in bcrypt/PyJWT on systems without them
         deps = pytest.importorskip("app.core.deps")
         assert deps._MEMBERSHIP_CACHE_TTL == 300
 

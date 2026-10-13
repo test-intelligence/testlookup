@@ -1,8 +1,8 @@
 """
 Unit tests for user management endpoints.
-All DB calls and heavy dependencies (bcrypt, jose) are mocked.
+All DB calls and heavy dependencies (bcrypt) are mocked.
 
-Strategy: stub only native deps (bcrypt, jose) when they are not installed.
+Strategy: stub only native deps (bcrypt) when they are not installed.
 The real app.core / app.db modules import without Docker or env vars, so
 they are never stubbed (see tests/test_no_stubbed_app_modules.py).
 """
@@ -49,20 +49,6 @@ def _stub_external_modules(monkeypatch: pytest.MonkeyPatch) -> None:
                     hashpw=MagicMock(return_value=b"$2b$fake"),
                     gensalt=MagicMock(return_value=b"$2b$12$salt"),
                 ),
-            )
-
-        # Native deps: jose
-        if importlib.util.find_spec("jose") is None:
-            jose_jwt_stub = _make_stub(
-                "jose.jwt",
-                encode=MagicMock(return_value="tok"),
-                decode=MagicMock(return_value={}),
-            )
-            m.setitem(sys.modules, "jose.jwt", jose_jwt_stub)
-            m.setitem(
-                sys.modules,
-                "jose",
-                _make_stub("jose", jwt=jose_jwt_stub, JWTError=Exception),
             )
 
         # The membership routes invalidate a Redis cache after a write. The

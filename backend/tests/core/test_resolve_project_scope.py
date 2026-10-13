@@ -5,10 +5,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-# app.core.deps pulls in python-jose and asyncpg at import time. Both are
+# app.core.deps pulls in PyJWT and asyncpg at import time. Both are
 # available in the Docker test image but may be absent from a bare local
 # checkout, so we skip cleanly when they are.
-pytest.importorskip("jose")
+pytest.importorskip("jwt")
 pytest.importorskip("asyncpg")
 
 from fastapi import HTTPException  # noqa: E402

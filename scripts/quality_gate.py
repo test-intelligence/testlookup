@@ -3899,6 +3899,63 @@ def _licenses_shipped_allowlist() -> list[Violation]:
     return violations
 
 
+# ── deps.no-python-jose ────────────────────────────────────────────────────
+#
+# python-jose <= 3.5.0 has an unfixed algorithm-confusion bypass
+# (GHSA-3qf3-8w2g-rqmx, critical) and the project is unmaintained. The backend
+# moved to PyJWT (2026-10-12), with the JWT error names re-exported from
+# app.core.security. Three ways jose could come back, all refused:
+#   * a manifest declares it (any file the license guard reads);
+#   * code imports it;
+#   * a test plants a fake one or skips on its absence -- the shape the old
+#     stubs had (``find_spec("jose")`` / ``sys.modules, "jose"`` /
+#     ``importorskip("jose")``), which would quietly stub or skip a suite now
+#     that jose is never installed.
+_JOSE_DISTS = {"python-jose", "python-jose-cryptodome"}
+_JOSE_SOURCE_RE = re.compile(
+    r"^\s*(?:from\s+jose(?:\.\w+)*\s+import\b|import\s+jose\b)"
+    r"|(?:find_spec|importorskip|import_module)\(\s*[\"']jose[\"'.]"
+    r"|sys\.modules(?:\s*\[\s*|\s*,\s*)[\"']jose[\"'.]",
+    re.M,
+)
+
+
+def _deps_no_python_jose() -> list[Violation]:
+    violations: list[Violation] = []
+    config = json.loads((REPO_ROOT / _LICENSE_ALLOWLIST_REL).read_text(encoding="utf-8"))
+    manifests = config.get("python_manifests", [])
+    for rel in manifests:
+        for name, lineno in _python_manifest_names(rel):
+            if name in _JOSE_DISTS:
+                violations.append(Violation(
+                    REPO_ROOT / rel, lineno,
+                    f"declares {name}; use PyJWT (GHSA-3qf3-8w2g-rqmx has no fix)",
+                ))
+    scanned = 0
+    for rel in _git_ls_files():
+        if not rel.endswith(".py") or rel == "scripts/quality_gate.py":
+            continue
+        path = REPO_ROOT / rel
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        scanned += 1
+        for match in _JOSE_SOURCE_RE.finditer(text):
+            violations.append(Violation(
+                path, text.count("\n", 0, match.start()) + 1,
+                "imports, stubs or skips on python-jose; import JWTError / "
+                "ExpiredSignatureError from app.core.security (PyJWT)",
+            ))
+    if scanned < 100 or not manifests:
+        violations.append(Violation(
+            REPO_ROOT / _LICENSE_ALLOWLIST_REL, 0,
+            f"only {scanned} Python files and {len(manifests)} manifests were read; "
+            "a pass here would be meaningless",
+        ))
+    return violations
+
+
 # ── Homelab guards ───────────────────────────────────────────────────────────
 
 _HOMELAB_OVERLAY_REL = "k8s/overlays/homelab/kustomization.yaml"
@@ -6858,6 +6915,20 @@ GUARDS: list[Guard] = [
             "needs its SPDX license in scripts/license-allowlist.json; an npm "
             "package without a license field needs an npm_overrides entry after "
             "you have checked its LICENSE file."
+        ),
+    ),
+    Guard(
+        name="deps.no-python-jose",
+        description=(
+            "No manifest declares python-jose and no Python file imports it, "
+            "stubs it into sys.modules, or skips on it (GHSA-3qf3-8w2g-rqmx, "
+            "unfixed; the backend signs with PyJWT)."
+        ),
+        check=_deps_no_python_jose,
+        fix_hint=(
+            "Use PyJWT. Import JWTError / ExpiredSignatureError from "
+            "app.core.security; a test that needs the JWT library skips on "
+            "pytest.importorskip('jwt')."
         ),
     ),
     Guard(

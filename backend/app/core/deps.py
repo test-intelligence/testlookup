@@ -10,12 +10,11 @@ from typing import Callable, Optional, Sequence
 
 from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import ExpiredSignatureError, JWTError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.security import decode_token
+from app.core.security import ExpiredSignatureError, JWTError, decode_token
 from app.db.postgres import get_db
 from app.models.postgres import ApiKey, User, UserRole
 

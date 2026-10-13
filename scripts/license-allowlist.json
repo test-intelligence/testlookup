@@ -96,7 +96,6 @@
     "python-dateutil": "Apache-2.0 OR BSD-3-Clause",
     "python-docx": "MIT",
     "python-dotenv": "BSD-3-Clause",
-    "python-jose": "MIT",
     "python-multipart": "Apache-2.0",
     "pytz": "MIT",
     "pyyaml": "MIT",
