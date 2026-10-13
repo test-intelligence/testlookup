@@ -8,6 +8,12 @@ the URL's hostname -- and GitHub Enterprise's ``https://host/api/v3`` becomes
 The check used to be a substring (``"api.github.com" in base``), so a base such
 as ``https://evil.example/api.github.com`` or ``https://api.github.com.evil.example``
 was taken for public GitHub (CodeQL: incomplete URL substring sanitization).
+
+The settings field is free text, so a base typed without a scheme
+(``api.github.com``) is still public GitHub: its hostname is read as if the
+scheme were there. Any other scheme-less base is left as typed -- the Fixer
+puts its token only into an ``https://`` clone URL, and inventing one would
+send it to a host the SSRF guard refuses for the API calls.
 """
 from __future__ import annotations
 
@@ -26,6 +32,9 @@ def github_html_root(api_base_url: Optional[str]) -> str:
         return PUBLIC_GITHUB
     try:
         hostname = urlsplit(base).hostname
+        if hostname is None and "://" not in base:
+            # "api.github.com" parses as a bare path; "//" makes it the netloc.
+            hostname = urlsplit("//" + base).hostname
     except ValueError:
         hostname = None
     if hostname == _PUBLIC_API_HOST:
