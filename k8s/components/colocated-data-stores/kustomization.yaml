@@ -1,0 +1,17 @@
+# Ingress allows for the data stores an overlay runs INSIDE the testlookup
+# namespace (its own infra-postgres / infra-mongo / infra-redis /
+# infra-minio.yaml). The base default-deny-all blocks every inbound
+# connection, and the base allows assume the stores are external, so an
+# overlay that colocates them opts in with
+#
+#   components:
+#     - ../../components/colocated-data-stores
+#
+# homelab and openshift-artifactory include it. It is one component so the
+# allows cannot drift apart again: openshift-artifactory copied the homelab's
+# stores but not its allow, so nothing could reach them (2026-10).
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - networkpolicy.yaml

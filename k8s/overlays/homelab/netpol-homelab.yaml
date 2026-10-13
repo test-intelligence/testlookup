@@ -1,46 +1,10 @@
-# NetworkPolicy additions for the single-node K3s overlay:
-#   1. The colocated data stores (postgres/mongo/redis/minio) need
-#      ingress allows — the base default-deny-all otherwise blocks them.
-#      ChromaDB is deliberately NOT in this list: the base allow-chromadb
-#      policy admits only the backend and the workers. Allows are a union, so
-#      listing it here would also open it to the MCP server and beat, on every
-#      port, and Chroma has no authentication of its own.
-#   2. Traefik on K3s lives in kube-system, not ingress-nginx, so the base
-#      allow-frontend/allow-backend/allow-mcp policies are extended below.
+# NetworkPolicy additions for the single-node K3s overlay. The colocated data
+# stores' allow-data-stores comes from k8s/components/colocated-data-stores,
+# shared with openshift-artifactory.
+#
+# Traefik on K3s lives in kube-system, not ingress-nginx, so the base
+# allow-frontend/allow-backend/allow-mcp policies are extended below.
 
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-data-stores
-  namespace: testlookup
-spec:
-  podSelector:
-    matchExpressions:
-      - key: app
-        operator: In
-        values:
-          - testlookup-postgres
-          - testlookup-mongo
-          - testlookup-redis
-          - testlookup-minio
-  policyTypes:
-    - Ingress
-  ingress:
-    - from:
-        - podSelector:
-            matchLabels:
-              app: testlookup-backend
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: worker
-        - podSelector:
-            matchLabels:
-              app: testlookup-mcp
-        - podSelector:
-            matchLabels:
-              app: testlookup-beat
-
----
 # Allow Traefik (kube-system) to reach frontend, backend, and MCP.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

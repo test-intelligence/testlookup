@@ -134,7 +134,16 @@ Runs `alembic upgrade head` as one Kubernetes Job (`backoffLimit: 0`, kept for 7
 
 ## Network policies
 
-`default-deny-all` blocks all traffic, then explicit policies open what each component needs: DNS egress for every pod; the frontend accepts traffic on port 80 from the `ingress-nginx` and `openshift-ingress` namespaces; the backend accepts port 8000 from `ingress-nginx`, the frontend, workers and MCP; workers and the backend accept metrics scrapes from the `monitoring`, `openshift-monitoring` and `openshift-user-workload-monitoring` namespaces, or any namespace labelled `testlookup.io/metrics-scraper: "true"`. Backend and worker egress is open because datastores may live outside the namespace.
+`default-deny-all` blocks all traffic, then explicit policies open what each component needs: DNS egress for every pod; the frontend (port 80), the backend (port 8000) and MCP (port 8002) accept traffic from the `ingress-nginx` namespace and from OpenShift's router, matched by the `openshift-ingress` namespace name and by the `policy-group.network.openshift.io/ingress` namespace label (which also covers a router on the host network); the backend also accepts port 8000 from the frontend, workers and MCP; workers and the backend accept metrics scrapes from the `monitoring`, `openshift-monitoring` and `openshift-user-workload-monitoring` namespaces, or any namespace labelled `testlookup.io/metrics-scraper: "true"`. Backend and worker egress is open because datastores may live outside the namespace.
+
+The base assumes the datastores run outside the namespace. An overlay that runs PostgreSQL, MongoDB, Redis or the object store inside it, as `homelab` and `openshift-artifactory` do, includes the [`colocated-data-stores` component](../../k8s/components/colocated-data-stores/networkpolicy.yaml):
+
+```yaml
+components:
+  - ../../components/colocated-data-stores
+```
+
+Its `allow-data-stores` policy admits the backend and the workers to each store on that store's port (5432, 27017, 6379, 9000), and beat to Redis only. The migration Job carries the backend's label, so it reaches PostgreSQL too. Without the component, `default-deny-all` leaves the stores unreachable. An in-namespace ChromaDB is covered by the base `allow-chromadb`, which admits only the backend and the workers on port 8000.
 
 If your ingress controller runs in a namespace with another name (Traefik in `kube-system`, for example) or sends traffic straight to pod IPs (AWS ALB `target-type: ip`, GKE container-native load balancing), add a matching `from` rule to `allow-frontend` and `allow-backend` in your overlay. The `aws-eks` and `gcp-gke` overlays already do this for MCP.
 

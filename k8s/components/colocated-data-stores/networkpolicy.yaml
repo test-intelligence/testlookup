@@ -1,0 +1,60 @@
+# Who may connect to the colocated data stores, and on which port.
+#
+# Measured on the single-node K3s install from the pods' live sockets
+# (2026-10-13): the backend and the Celery workers use all four stores; beat
+# (component: scheduler) uses only Redis, its broker; the MCP server uses none
+# (allow-mcp lets it reach the backend only). The migration Job that
+# scripts/run-k8s-migrations.sh creates carries app: testlookup-backend, so the
+# backend rule admits it. Backups reach Postgres, MongoDB and the object store
+# through the backup component's allow-backup-to-data-stores.
+#
+# ChromaDB is deliberately NOT selected here: the base allow-chromadb admits
+# only the backend and the workers, and NetworkPolicy allows are a union, so
+# listing it would widen that (tests/regression/test_chroma_network_isolation.py).
+#
+# One policy, so an install that ran the homelab's earlier, wider
+# allow-data-stores (MCP and beat to every store, on every port) is narrowed in
+# place by `kubectl apply`, which does not delete a renamed policy. A store
+# never listens on another store's port, so the port list confines the backend
+# and the workers to each store's own port, and beat to Redis.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-data-stores
+  namespace: testlookup
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - testlookup-postgres
+          - testlookup-mongo
+          - testlookup-redis
+          - testlookup-minio
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: testlookup-backend
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: worker
+      ports:
+        - protocol: TCP
+          port: 5432    # testlookup-postgres
+        - protocol: TCP
+          port: 27017   # testlookup-mongo
+        - protocol: TCP
+          port: 6379    # testlookup-redis
+        - protocol: TCP
+          port: 9000    # testlookup-minio (S3 API)
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: scheduler
+      ports:
+        - protocol: TCP
+          port: 6379    # beat publishes to the Redis broker

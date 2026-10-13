@@ -4,8 +4,10 @@
 # lateral-movement surface area if any pod is compromised.
 #
 # NOTE: these policies assume the stateful data stores (postgres, mongo, redis,
-# minio, chroma) run OUTSIDE the testlookup namespace (managed services or a
-# shared "data" namespace). If you colocate them here, add matching allows.
+# minio) run OUTSIDE the testlookup namespace (managed services or a shared
+# "data" namespace). An overlay that colocates them here includes the
+# k8s/components/colocated-data-stores component for their allows; an
+# in-namespace Chroma is covered by allow-chromadb below.
 # ───────────────────────────────────────────────────────────────────────────
 
 apiVersion: networking.k8s.io/v1
@@ -64,6 +66,12 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: openshift-ingress
+        # OpenShift's router by its policy group, which also matches a router
+        # on the host network (HostNetwork endpoint publishing); the namespace
+        # name above matches only a router on the pod network.
+        - namespaceSelector:
+            matchLabels:
+              policy-group.network.openshift.io/ingress: ""
       ports:
         - protocol: TCP
           port: 80
@@ -77,8 +85,9 @@ spec:
           port: 8000
 
 ---
-# Backend API: ingress from ingress-nginx + frontend + workers + the MCP
-# server (for internal service-to-service calls). Egress is allowed to anywhere
+# Backend API: ingress from ingress-nginx, OpenShift's router (the
+# testlookup-api Route) + frontend + workers + the MCP server (for internal
+# service-to-service calls). Egress is allowed to anywhere
 # in-cluster — the backend talks to Ollama, MCP, and data stores; tightening
 # this further needs explicit per-service labels which vary by environment.
 #
@@ -114,6 +123,15 @@ spec:
         - podSelector:
             matchLabels:
               app: testlookup-mcp
+        # OpenShift's router, for the testlookup-api Route of both OpenShift
+        # overlays: by namespace name (a router on the pod network) and by
+        # policy group (which also matches a router on the host network).
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-ingress
+        - namespaceSelector:
+            matchLabels:
+              policy-group.network.openshift.io/ingress: ""
       ports:
         - protocol: TCP
           port: 8000
@@ -200,6 +218,10 @@ spec:
         - podSelector:
             matchLabels:
               app: testlookup-backend
+        # OpenShift's router by its policy group (also a host-network router).
+        - namespaceSelector:
+            matchLabels:
+              policy-group.network.openshift.io/ingress: ""
       ports:
         - protocol: TCP
           port: 8002
