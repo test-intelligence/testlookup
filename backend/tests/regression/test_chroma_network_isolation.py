@@ -29,115 +29,33 @@ rendering kustomize, so they run on any machine.
 """
 from __future__ import annotations
 
-import pathlib
-from typing import Any, Iterable
+from typing import Any
 
 import pytest
 import yaml
 
 from compose_topology_contract import load_compose_topology
+from k8s_network_policy_contract import (
+    BASE,
+    REPO,
+    admits as _admits,
+    app_pods as _app_pods,
+    policies_for as _policies_for,
+    template_labels as _template_labels,
+    yaml_docs as _yaml_docs,
+)
 
-REPO = pathlib.Path(__file__).resolve().parents[3]
-BASE = REPO / "k8s" / "base"
 OVERLAYS_WITH_CHROMA = ("homelab", "openshift-artifactory")
 CHROMA_PORT = 8000
 CHROMA_SERVICE = "chromadb"
 
 
-# ── NetworkPolicy evaluation ────────────────────────────────────────────────
-
-def _yaml_docs(path: pathlib.Path) -> list[dict[str, Any]]:
-    return [d for d in yaml.safe_load_all(path.read_text(encoding="utf-8")) if isinstance(d, dict)]
-
-
-def _selects(selector: dict[str, Any] | None, labels: dict[str, str]) -> bool:
-    """Kubernetes label-selector semantics (an empty selector selects all)."""
-    if selector is None:
-        return False
-    for key, value in (selector.get("matchLabels") or {}).items():
-        if labels.get(key) != value:
-            return False
-    for expr in selector.get("matchExpressions") or []:
-        key, op, values = expr["key"], expr["operator"], expr.get("values") or []
-        if op == "In" and labels.get(key) not in values:
-            return False
-        if op == "NotIn" and labels.get(key) in values:
-            return False
-        if op == "Exists" and key not in labels:
-            return False
-        if op == "DoesNotExist" and key in labels:
-            return False
-    return True
-
-
-def _template_labels(paths: Iterable[pathlib.Path]) -> dict[str, dict[str, str]]:
-    """Deployment name -> its pod-template labels."""
-    out: dict[str, dict[str, str]] = {}
-    for path in paths:
-        for doc in _yaml_docs(path):
-            if doc.get("kind") in ("Deployment", "StatefulSet"):
-                out[doc["metadata"]["name"]] = doc["spec"]["template"]["metadata"]["labels"]
-    return out
-
-
-def _policies_for(overlay: str) -> list[dict[str, Any]]:
-    """Every NetworkPolicy the overlay ships: base, its own files, its components."""
-    overlay_dir = REPO / "k8s" / "overlays" / overlay
-    kustomization = yaml.safe_load((overlay_dir / "kustomization.yaml").read_text(encoding="utf-8"))
-    files = sorted(BASE.glob("*.yaml")) + [
-        p for p in sorted(overlay_dir.glob("*.yaml")) if p.name != "kustomization.yaml"
-    ]
-    for component in kustomization.get("components") or []:
-        files += sorted((overlay_dir / component).resolve().glob("*.yaml"))
-    return [
-        d for path in files for d in _yaml_docs(path)
-        if d.get("kind") == "NetworkPolicy"
-    ]
-
-
-def _admits(
-    policies: list[dict[str, Any]], dest: dict[str, str], src: dict[str, str], port: int
-) -> bool:
-    """Would a same-namespace pod labelled ``src`` reach ``dest`` on ``port``?"""
-    governing = [
-        p for p in policies
-        if _selects(p["spec"].get("podSelector"), dest)
-        and "Ingress" in (p["spec"].get("policyTypes") or ["Ingress"])
-    ]
-    if not governing:
-        return True  # not isolated at all
-    for policy in governing:
-        for rule in policy["spec"].get("ingress") or []:
-            ports = {p.get("port") for p in rule.get("ports") or []}
-            if ports and port not in ports:
-                continue
-            peers = rule.get("from")
-            if not peers:
-                return True  # no `from`: every source
-            for peer in peers:
-                ns = peer.get("namespaceSelector")
-                if "ipBlock" in peer:
-                    continue
-                if ns is not None and ns != {}:
-                    continue  # another namespace by label
-                if _selects(peer.get("podSelector", {}), src):
-                    return True
-    return False
-
+# ── NetworkPolicy evaluation: k8s_network_policy_contract ───────────────────
 
 def _chroma_labels(overlay: str) -> dict[str, str]:
     labels = _template_labels([REPO / "k8s" / "overlays" / overlay / "infra-chromadb.yaml"])
     assert "testlookup-chromadb" in labels, f"{overlay}: no testlookup-chromadb Deployment"
     return labels["testlookup-chromadb"]
-
-
-def _app_pods() -> dict[str, dict[str, str]]:
-    pods = _template_labels(sorted(BASE.glob("*.yaml")))
-    for name in ("testlookup-backend", "testlookup-mcp", "testlookup-beat", "testlookup-frontend"):
-        assert name in pods, f"k8s/base no longer defines {name}; update this test"
-    workers = [n for n, labels in pods.items() if labels.get("app.kubernetes.io/component") == "worker"]
-    assert workers, "no worker Deployments found in k8s/base"
-    return pods
 
 
 @pytest.mark.parametrize("overlay", OVERLAYS_WITH_CHROMA)

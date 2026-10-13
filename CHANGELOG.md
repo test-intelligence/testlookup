@@ -231,6 +231,24 @@ locally by default.
   once with the rule-based candidates (`defect_candidates_pending: true`)
   and writes the LLM ones in the background, one at a time per worker; the
   next view shows them. A summary with pending candidates is not cached.
+- **The air-gapped OpenShift overlay's datastores are reachable.**
+  `k8s/overlays/openshift-artifactory` runs PostgreSQL, MongoDB, Redis and the
+  object store inside the namespace, under the base `default-deny-all`, but had
+  no policy letting anything connect to them, so the workers waited forever
+  for Redis and the migration Job and the API could not reach the database.
+  The allow now lives in a shared component,
+  `k8s/components/colocated-data-stores`, which the overlay and the
+  single-node K3s overlay both include. It is also narrower than the K3s
+  overlay's own copy: the backend and the workers reach each store on its own
+  port, beat reaches Redis only, and the MCP server reaches none (it never
+  connected to them).
+- **OpenShift's API Route reaches the backend.** Both OpenShift overlays
+  publish a `testlookup-api` Route to the backend, but the base
+  `allow-backend` policy did not admit OpenShift's router, so the Route never
+  reached it. The frontend, backend and MCP allows now admit the router by
+  its `openshift-ingress` namespace and by the namespace label
+  `policy-group.network.openshift.io/ingress`, which also covers a router on
+  the host network (`HostNetwork` endpoint publishing).
 - **Commit links go to the project's own GitHub.** The commit range and the
   suspect commits on **Failure Analysis** always linked to github.com, even
   when the project's GitHub integration names a GitHub Enterprise server. They
