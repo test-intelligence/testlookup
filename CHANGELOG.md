@@ -221,6 +221,12 @@ locally by default.
 
 ### Fixed
 
+- **The Anthropic provider works.** `LLM_PROVIDER=anthropic` was accepted,
+  offered in **Settings → AI Configuration** and priced, but its LangChain
+  package was never installed, so every AI call failed with
+  `ModuleNotFoundError`. `langchain-anthropic` 0.3.22 (MIT) is now in
+  `backend/requirements.txt`, and a regression test checks that every
+  LangChain package the backend imports is declared there.
 - **Chroma's vectors survive a restart.** `chromadb/chroma` 1.x writes to
   `/data`, but the volume was mounted at `/chroma/chroma` (a Chroma 0.x
   setting it ignores), so search vectors lived in the container and vanished
