@@ -68,14 +68,19 @@ async def get_defect_candidate(
     Assemble a pre-filled defect candidate for a cluster.
     No side effects — used by GET endpoint to pre-populate the promotion modal.
     """
-    # Load cluster
+    # Load cluster. A run analysed twice keeps both pipelines' clusters (the
+    # unique key is per pipeline run), so the same cluster id can repeat:
+    # the newest is the one the run page shows.
     cluster_result = await db.execute(
-        select(FailureCluster).where(
+        select(FailureCluster)
+        .where(
             FailureCluster.test_run_id == _uuid.UUID(run_id),
             FailureCluster.cluster_id == cluster_id,
         )
+        .order_by(FailureCluster.created_at.desc())
+        .limit(1)
     )
-    cluster = cluster_result.scalar_one_or_none()
+    cluster = cluster_result.scalars().first()
     if not cluster:
         raise ValueError(f"Cluster {cluster_id} not found for run {run_id}")
 
@@ -98,14 +103,17 @@ async def get_defect_candidate(
         )
         analyses = list(analyses_result.scalars().all())
 
-    # Load deep finding for this cluster
+    # Load deep finding for this cluster (newest, for the same reason).
     finding_result = await db.execute(
-        select(DeepFinding).where(
+        select(DeepFinding)
+        .where(
             DeepFinding.test_run_id == _uuid.UUID(run_id),
             DeepFinding.cluster_id == cluster_id,
         )
+        .order_by(DeepFinding.created_at.desc())
+        .limit(1)
     )
-    finding = finding_result.scalar_one_or_none()
+    finding = finding_result.scalars().first()
 
     # Compute dimension scores using criticality_service
     model_info = get_scoring_model_info()
@@ -555,11 +563,65 @@ async def _generate_jira_content(
         content = re.sub(r"\s*```$", "", content, flags=re.MULTILINE)
         match = re.search(r"\{.*\}", content, re.DOTALL)
         if match:
-            return cast(dict[str, Any], json.loads(match.group()))
+            return _normalize_jira_content(json.loads(match.group()), cluster)
     except Exception as exc:
         logger.warning("LLM defect content generation failed: %s", exc)
 
     return _deterministic_jira_content(cluster)
+
+
+# The ticket fields the candidate row stores, with the row's column limits.
+_TICKET_TEXT_FIELDS: dict[str, Optional[int]] = {
+    "title": 500,
+    "description": None,
+    "severity": 20,
+    "component": 255,
+    "owner_team": 255,
+    "duplicate_hint": None,
+}
+
+
+def _ticket_text(value: Any) -> Optional[str]:
+    """One ticket field as plain text, whatever JSON shape the model chose."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value.strip() or None
+    if isinstance(value, dict):
+        lines = []
+        for key, item in value.items():
+            text = _ticket_text(item)
+            if text:
+                lines.append(f"{str(key).replace('_', ' ').capitalize()}: {text}")
+        return "\n".join(lines) or None
+    if isinstance(value, (list, tuple)):
+        lines = [f"- {text}" for text in (_ticket_text(item) for item in value) if text]
+        return "\n".join(lines) or None
+    return str(value)
+
+
+def _normalize_jira_content(parsed: Any, cluster: FailureCluster) -> dict[str, Any]:
+    """The model's ticket JSON in the shape the candidate row can store.
+
+    The model sometimes answers a field with an object or a list -- e.g.
+    ``"description": {"what": ..., "why": ...}`` -- and asyncpg then refuses
+    the whole INSERT ("expected str, got dict"), which lost every candidate of
+    the run (homelab, 2026-10-14). Each text field is rendered as text and
+    clipped to its column; a missing or empty one takes the deterministic text.
+    """
+    fallback = _deterministic_jira_content(cluster)
+    if not isinstance(parsed, dict):
+        return fallback
+    content: dict[str, Any] = dict(parsed)
+    for field, limit in _TICKET_TEXT_FIELDS.items():
+        text = _ticket_text(parsed.get(field)) or fallback[field]
+        content[field] = text[:limit] if limit else text
+    labels = parsed.get("labels")
+    content["labels"] = (
+        [text for text in (_ticket_text(label) for label in labels) if text]
+        if isinstance(labels, list) else fallback["labels"]
+    ) or fallback["labels"]
+    return content
 
 
 async def _find_duplicate_semantic(
