@@ -7,6 +7,9 @@
 | Project | Primary authorization and configuration scope for test intelligence |
 | Test run / `TestRun` | One collected execution context/build with aggregates and result records |
 | Execution / `TestCase` | A test outcome within a particular run |
+| Test time (summed) | The sum of a run's (or suite's) test durations: `test_runs.duration_ms`, `suite_executions.summed_ms`. Not how long the run took: tests that run in parallel make it larger than the wall clock |
+| Wall clock | How long a run or suite took from first start to last finish: `test_runs.wall_clock_ms`, `suite_executions.wall_ms`. `timing_source`/`source` says where it came from: `report` (the report stated it), `derived` (computed from test or suite start/finish times) or `derived_sum` (no wall clock known; it stays NULL and the UI says "not reported", never shows the sum instead) |
+| Parallelism | Test time (summed) divided by wall clock, e.g. 17.4 s / 9.0 s = 1.9x. Above 1 means tests overlapped; there is no value when the wall clock is unknown |
 | Canonical test | Stable suite/test identity linking executions over time |
 | Managed test case | Authored test content with review and lifecycle state |
 | Fingerprint | Stable test-name/class identity hash; distinct from run ingestion identity |
