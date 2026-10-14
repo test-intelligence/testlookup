@@ -24,7 +24,7 @@ import {
   type ExecutionTimelineModel,
   type TimelineBar,
 } from './executionTimeline.model'
-import { zeroBasedScale } from './niceScale'
+import { durationScale } from './niceScale'
 import {
   ChartLegend,
   patternFill,
@@ -124,7 +124,7 @@ export default function ExecutionTimeline({ model, onSelect, selectedTestId = nu
 
   const width = measured > 0 ? measured : FALLBACK_WIDTH
   const plotWidth = Math.max(40, width - RIGHT_PAD)
-  const axis = useMemo(() => zeroBasedScale(model.spanMs > 0 ? model.spanMs : 1, { intervals: AXIS_INTERVALS }), [model.spanMs])
+  const axis = useMemo(() => durationScale(model.spanMs > 0 ? model.spanMs : 1, { intervals: AXIS_INTERVALS }), [model.spanMs])
   const top = axis.domain[1]
   const scale = useMemo<Scale>(() => {
     const x = (ms: number) => (ms / top) * plotWidth

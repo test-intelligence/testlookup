@@ -28,7 +28,7 @@ import { COLUMN_SIDES } from './tipPlacement'
 import ChartResponsive from './ChartResponsive'
 import { ChartLegend, type LegendEntry } from './patterns'
 import { durationTickLabel } from './durationBuckets'
-import { zeroBasedScale, type NiceScale } from './niceScale'
+import { durationScale, type NiceScale } from './niceScale'
 import { SUMMED_LABEL, WALL_CLOCK_LABEL, type ExecutionTimeModel } from './executionTimeModel'
 import {
   EXECUTION_TREND_CAPTION,
@@ -73,7 +73,7 @@ export default function ExecutionTimeTrend({
   const height = useFramePlotLayoutHeight(requestedHeight, NOTES_RESERVE)
   const animate = useChartAnimation(requested)
   // From zero to a nice top over the larger line (a duration starts at zero; so does this axis).
-  const axis = useMemo(() => (model.max !== null && model.max > 0 ? zeroBasedScale(model.max, { intervals: 4 }) : null), [model.max])
+  const axis = useMemo(() => (model.max !== null && model.max > 0 ? durationScale(model.max, { intervals: 4 }) : null), [model.max])
   const ticks = useMemo(() => new Map(model.points.map((point) => [point.key, point.tick])), [model.points])
   const rows = model.points.map((point) => ({ key: point.key, wall: point.wall, summed: point.summed }))
   const legend: LegendEntry[] = [

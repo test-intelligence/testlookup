@@ -452,7 +452,7 @@ export default function ExecutionTimeSection({ days, suiteFilter }: ExecutionTim
         <div className="grid min-w-0 grid-cols-1 items-start gap-3.5">
           <DurationChartFrame
             kind="slowest"
-            title={slowestTitle(data?.slowest_tests.limit ?? 20)}
+            title={slowestTitle(data?.slowest_tests.limit ?? 20, data?.slowest_tests.items.length ?? 20)}
             headingLevel={3}
             height={SIDE_HEIGHT}
             state={slowestState as ChartState<unknown>}

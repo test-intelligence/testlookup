@@ -18,6 +18,7 @@ import {
   serverHistogramCaption,
   SERVER_TOO_OLD_REASON,
   slowestFromServer,
+  slowestTitle,
   slowTestName,
   suiteRuleText,
 } from './ExecutionTimeSection.model'
@@ -112,6 +113,11 @@ describe('figures and words', () => {
   it('a slow test is named test (suite); an unnamed one by its fingerprint, never blank', () => {
     expect(slowTestName({ test_name: 'test_pay', suite_name: 'checkout', test_fingerprint: 'abcdef0123' })).toBe('test_pay (checkout)')
     expect(slowTestName({ test_name: null, suite_name: null, test_fingerprint: 'abcdef0123' })).toBe('Unnamed test abcdef01')
+  })
+
+  it('the slowest title names the limit only when the list is full', () => {
+    expect(slowestTitle(20, 20)).toBe('20 slowest tests (p95)')
+    expect(slowestTitle(20, 6)).toBe('Slowest tests (p95)')
   })
 
   it('the slowest tests keep the server order and their executions as the run count', () => {
