@@ -13,6 +13,13 @@ export interface DashboardMetricValue {
    */
   basis?: string | null
   basis_label?: string | null
+  /**
+   * TRND-05, `avg_pass_rate_7d` only: the pass rate's move against the
+   * previous window of the same length, in percentage points (80 -> 88 = 8).
+   * `trend` is the RELATIVE change in percent (10 for the same move). `null`
+   * when either window has no executions; absent in a pre-TRND-05 payload.
+   */
+  pass_rate_delta_pp?: number | null
 }
 
 export type ReleaseReadinessBand = 'red' | 'orange' | 'yellow' | 'green'

@@ -1152,12 +1152,16 @@ export default function TrendsPage() {
   // The two KPI sparklines draw the window's real per-day series (OD-1); the
   // other three tiles had only decoration and carry none.
   const kpiSeries = kpiSparkSeries(model.cadenceCells)
-  // Dashboard summary delta — used by KPI 1 when we have a baseline.
+  // Dashboard summary delta — used by KPI 1 when we have a baseline. TRND-05:
+  // `pass_rate_delta_pp` is the move in percentage points against the previous
+  // window of the same length. `trend` beside it is the RELATIVE change, which
+  // this tile used to print as "pp" (80 % -> 88 % read "10pp", not 8); a
+  // payload without the points shows no delta rather than that one.
   const passRateDelta = (() => {
-    const prev = (dashSummary?.avg_pass_rate_7d?.trend ?? null) as number | null
-    if (prev == null) return null
-    return prev
+    const pp = dashSummary?.avg_pass_rate_7d?.pass_rate_delta_pp
+    return typeof pp === 'number' && Number.isFinite(pp) ? pp : null
   })()
+  const previousWindowLabel = days === 1 ? 'previous 24 hours' : `previous ${days} days`
   const passRateTone = model.passRate >= 80 ? 'good' : model.passRate >= 50 ? 'warn' : 'bad'
   const passRateChange: { trend_direction: 'up' | 'down' | 'flat' | 'none'; trend_text: string } =
     model.daysWithRuns < 2
@@ -1165,7 +1169,7 @@ export default function TrendsPage() {
       : passRateDelta != null
         ? {
             trend_direction: passRateDelta > 0 ? 'up' : passRateDelta < 0 ? 'down' : 'flat',
-            trend_text: `${Math.abs(Math.round(passRateDelta))}pp vs prev window`,
+            trend_text: `${Math.round(Math.abs(passRateDelta) * 10) / 10} pp vs ${previousWindowLabel}`,
           }
         : { trend_direction: 'none', trend_text: `${model.daysWithRuns} active days` }
   const daysWithRunsPct = model.windowDays > 0 ? Math.round((model.daysWithRuns / model.windowDays) * 100) : 0

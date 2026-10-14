@@ -25,6 +25,15 @@ export interface ValueMetricsMonthly {
 }
 
 export interface ValueMetricsHeadline {
+  /**
+   * TRND-05: hours saved over the page's window (`window_days`, the `days`
+   * the request sent). Optional: a payload from before TRND-05 carries only
+   * the 30-day pair below, which the page then shows as "last 30 days".
+   */
+  hours_saved?: number
+  fte_equivalent?: number
+  window_days?: number
+  /** The trailing 30 days whatever the window (digests, older readers). */
   hours_saved_30d: number
   fte_equivalent_30d: number
 }
