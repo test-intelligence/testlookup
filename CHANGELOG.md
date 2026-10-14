@@ -52,6 +52,27 @@ locally by default.
 
 ### Added
 
+- **Execution time for tests, suites and runs** (deferred-features wave W02,
+  EXEC-01 to EXEC-06): every report format and the live reporters keep each
+  test's start, finish, setup / test / teardown split and worker
+  (migration 0202); each run records its wall clock, summed test time and
+  parallelism, and each suite its own (`suite_executions`, migration 0203,
+  with a backfill). A run's **Timing** tab draws the tests on a timeline per
+  worker, lists the 20 slowest against their baselines, the suites, workers
+  and phases, and exports `run-<build>-timing.csv`; **Trends › Execution
+  time** shows wall clock against test time per day, each suite's p50 / p95
+  and its change, the slowest tests and the duration distribution
+  (`GET /analytics/execution-metrics`, `.csv`); a suite's Charts tab plots its
+  execution time per run. **Duration regressions** (migration 0204): a test
+  slower than 3σ over its baseline of 10+ runs, or a suite whose last 5 runs'
+  median is 1.5× the 20 before, is marked on the run, can fail an opt-in gate
+  rule, and announces "became slower" once to subscribed channels
+  (`perf_regression_detection`, on for new installs; an existing install
+  keeps its setting). CLI: `testlookup runs timing <run>
+  [--fail-on-regression]` (exit 7) and `testlookup analytics execution`; MCP:
+  `get_run_timing`, `get_execution_metrics`. Where a report carries no clock,
+  the UI says so instead of showing 0.
+
 - **Release decisions from the run page, policy weights and share links**
   (deferred-features wave W01): a QA lead can Hold, Approve with conditions or
   Override to GO from a run's Analysis tab through the existing audited
