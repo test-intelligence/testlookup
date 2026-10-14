@@ -311,3 +311,90 @@ describe('CanonicalDetailPage', () => {
     expect(suitesService.unlinkManagedCase).toHaveBeenCalledTimes(1)
   })
 })
+
+// W03 AIH-05: the run-history table's "AI category" column (contract §7.3, §9.8).
+describe('CanonicalDetailPage — AI category per run', () => {
+  const CANONICAL = {
+    id: 'canon-ai', project_id: 'proj-1', test_suite_id: 'suite-1',
+    test_suite_name: 'Regression', test_fingerprint: 'fingerprint-ai',
+    test_name: 'ai test', class_name: null, status: 'active', source: 'execution',
+    first_seen_run_id: null, last_seen_run_id: null, last_seen_test_case_id: null,
+    deleted_at_run_id: null, managed_test_case_id: null, review_tag: null,
+    tags: null, run_count: 3, created_at: '2026-05-17T10:00:00Z', updated_at: null,
+  }
+  const row = (n: number, extra: Record<string, unknown>) => ({
+    test_case_id: `tc-${n}`,
+    test_run_id: `run-${n}000000`,
+    status: 'FAILED',
+    duration_ms: 1000,
+    suite_name: 'Regression',
+    created_at: `2026-05-1${n}T10:00:00Z`,
+    ...extra,
+  })
+  const AI = {
+    category: 'PRODUCT_BUG', confidence: 85, analysis_mode: 'llm', model: 'llama3.1',
+    requires_human_review: true, root_cause_excerpt: 'tax skipped', version_count: 3,
+  }
+
+  async function renderWith(data: unknown) {
+    const { useCanonicalCase, useCanonicalRuns, useSuite } = await import('@/hooks/useSuites')
+    ;(usePermissions as ReturnType<typeof vi.fn>).mockReturnValue({ isQaEngineer: false })
+    ;(useCanonicalCase as ReturnType<typeof vi.fn>).mockReturnValue({ data: CANONICAL, isLoading: false, mutate: vi.fn() })
+    ;(useSuite as ReturnType<typeof vi.fn>).mockReturnValue({ data: undefined })
+    ;(useCanonicalRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data, isLoading: false })
+    const utils = renderAt('canon-ai')
+    await screen.findByRole('heading', { name: /ai test/i })
+    return utils
+  }
+
+  it('adds the column after Duration: chip + confidence, the engine in the title, "—" without an analysis', async () => {
+    const { container } = await renderWith({
+      items: [
+        row(3, { ai: AI }),
+        row(2, { ai: { ...AI, category: null, confidence: null, analysis_mode: null, model: null, requires_human_review: false } }),
+        row(1, { status: 'PASSED', ai: null }),
+      ],
+      total: 3,
+      ai_truncated: false,
+    })
+    const headers = Array.from(container.querySelectorAll('thead th')).map((th) => th.textContent)
+    expect(headers.slice(0, 4)).toEqual(['Status', 'Run', 'Duration', 'AI category'])
+
+    const cells = Array.from(container.querySelectorAll<HTMLElement>('td[data-canonical-ai]'))
+    expect(cells.map((td) => td.dataset.canonicalAi)).toEqual(['PRODUCT_BUG', 'uncategorized', ''])
+    expect(cells[0]).toHaveTextContent('PRODUCT_BUG85%')
+    expect(cells[0]).toHaveAttribute('title', 'LLM llama3.1 - needs human review')
+    // A missing confidence / engine reads "not reported", never 0.
+    expect(cells[1]).toHaveTextContent('uncategorizedconfidence not reported')
+    expect(cells[1]).toHaveAttribute('title', 'engine not reported')
+    expect(cells[2]).toHaveTextContent('—')
+    expect(container.querySelector('[data-canonical-ai-truncated]')).toBeNull()
+  })
+
+  it('an older server (no ai, no ai_truncated) still renders, every AI cell "—"', async () => {
+    const { container } = await renderWith({ items: [row(1, {}), row(2, {})], total: 2 })
+    const cells = Array.from(container.querySelectorAll('td[data-canonical-ai]'))
+    expect(cells).toHaveLength(2)
+    cells.forEach((td) => expect(td).toHaveTextContent('—'))
+    expect(container.querySelector('[data-canonical-ai-truncated]')).toBeNull()
+  })
+
+  it('says when only the newest rows carry the AI category', async () => {
+    const { container } = await renderWith({ items: [row(1, { ai: AI }), row(2, { ai: null })], total: 2500, ai_truncated: true })
+    expect(container.querySelector('[data-canonical-ai-truncated]')).toHaveTextContent(
+      'AI category is shown for the newest 2,000 runs only',
+    )
+  })
+
+  it('renders a hostile category and model as text', async () => {
+    const hostile = '<img src=x onerror=alert(1)>'
+    const { container } = await renderWith({
+      items: [row(1, { ai: { ...AI, category: hostile, model: hostile } })],
+      total: 1,
+    })
+    expect(container.querySelector('img')).toBeNull()
+    const cell = container.querySelector('td[data-canonical-ai]') as HTMLElement
+    expect(cell).toHaveTextContent(hostile)
+    expect(cell.title).toContain(hostile)
+  })
+})
