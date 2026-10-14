@@ -9103,6 +9103,217 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## DurationRegressionsResponse
+
+```json
+{
+  "description": "A run's duration regressions. ``measured: false`` + ``reason`` when\nneither check could be made -- never an empty list read as \"no\nregressions\". ``stored: false`` = computed at read time for a run that\nwas not evaluated on ingest (nothing was written).",
+  "properties": {
+    "evaluated_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Evaluated At"
+    },
+    "measured": {
+      "title": "Measured",
+      "type": "boolean"
+    },
+    "notified": {
+      "additionalProperties": true,
+      "title": "Notified",
+      "type": "object"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    },
+    "run_id": {
+      "format": "uuid",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "spike_count": {
+      "default": 0,
+      "title": "Spike Count",
+      "type": "integer"
+    },
+    "spikes": {
+      "items": {
+        "$ref": "#/components/schemas/DurationSpikeResponse"
+      },
+      "title": "Spikes",
+      "type": "array"
+    },
+    "stored": {
+      "default": false,
+      "title": "Stored",
+      "type": "boolean"
+    },
+    "suite_check": {
+      "additionalProperties": true,
+      "title": "Suite Check",
+      "type": "object"
+    },
+    "suite_regression_count": {
+      "default": 0,
+      "title": "Suite Regression Count",
+      "type": "integer"
+    },
+    "suites": {
+      "items": {
+        "$ref": "#/components/schemas/SuiteDurationRegressionResponse"
+      },
+      "title": "Suites",
+      "type": "array"
+    },
+    "test_check": {
+      "additionalProperties": true,
+      "title": "Test Check",
+      "type": "object"
+    }
+  },
+  "required": [
+    "run_id",
+    "measured"
+  ],
+  "title": "DurationRegressionsResponse",
+  "type": "object"
+}
+```
+
+## DurationSpikeResponse
+
+```json
+{
+  "description": "A PASSED test slower than its Welford baseline (>= 3 sigma, >= 10 samples).",
+  "properties": {
+    "baseline_mean_ms": {
+      "title": "Baseline Mean Ms",
+      "type": "number"
+    },
+    "baseline_p95_ms": {
+      "default": 0.0,
+      "title": "Baseline P95 Ms",
+      "type": "number"
+    },
+    "baseline_stddev_ms": {
+      "default": 0.0,
+      "title": "Baseline Stddev Ms",
+      "type": "number"
+    },
+    "delta_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Delta Ms"
+    },
+    "new": {
+      "default": false,
+      "title": "New",
+      "type": "boolean"
+    },
+    "observed_ms": {
+      "title": "Observed Ms",
+      "type": "integer"
+    },
+    "previous_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Previous Ms"
+    },
+    "ratio": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Ratio"
+    },
+    "sample_count": {
+      "default": 0,
+      "title": "Sample Count",
+      "type": "integer"
+    },
+    "sigma": {
+      "title": "Sigma",
+      "type": "number"
+    },
+    "suite_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Suite Name"
+    },
+    "test_fingerprint": {
+      "title": "Test Fingerprint",
+      "type": "string"
+    },
+    "test_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Test Name"
+    },
+    "was_slow_before": {
+      "default": false,
+      "title": "Was Slow Before",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "test_fingerprint",
+    "observed_ms",
+    "baseline_mean_ms",
+    "sigma"
+  ],
+  "title": "DurationSpikeResponse",
+  "type": "object"
+}
+```
+
 ## EmailTrendsRequest
 
 ```json
@@ -9195,6 +9406,17 @@ These are the full generated JSON Schema definitions, including required fields,
       },
       "title": "Attachments",
       "type": "array"
+    },
+    "call_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Call Ms"
     },
     "class_name": {
       "anyOf": [
@@ -9315,6 +9537,18 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Feature"
     },
+    "finished_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Finished At"
+    },
     "full_name": {
       "anyOf": [
         {
@@ -9397,6 +9631,17 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Schema Version",
       "type": "integer"
     },
+    "setup_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Setup Ms"
+    },
     "severity": {
       "anyOf": [
         {
@@ -9407,6 +9652,18 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Severity"
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Started At"
     },
     "status": {
       "$ref": "#/components/schemas/TestStatus"
@@ -9470,6 +9727,17 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Tags"
     },
+    "teardown_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Teardown Ms"
+    },
     "test_name": {
       "title": "Test Name",
       "type": "string"
@@ -9478,6 +9746,28 @@ These are the full generated JSON Schema definitions, including required fields,
       "format": "uuid",
       "title": "Test Run Id",
       "type": "string"
+    },
+    "timing_source": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Timing Source"
+    },
+    "worker_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Worker Id"
     }
   },
   "required": [
@@ -9774,6 +10064,1030 @@ These are the full generated JSON Schema definitions, including required fields,
     "execution_status"
   ],
   "title": "ExecuteTestPlanItemRequest",
+  "type": "object"
+}
+```
+
+## ExecutionDayPoint
+
+```json
+{
+  "properties": {
+    "day": {
+      "title": "Day",
+      "type": "string"
+    },
+    "runs": {
+      "default": 0,
+      "title": "Runs",
+      "type": "integer"
+    },
+    "summed_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Summed Ms"
+    },
+    "summed_runs": {
+      "default": 0,
+      "title": "Summed Runs",
+      "type": "integer"
+    },
+    "wall_clock_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Wall Clock Ms"
+    },
+    "wall_runs": {
+      "default": 0,
+      "title": "Wall Runs",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "day"
+  ],
+  "title": "ExecutionDayPoint",
+  "type": "object"
+}
+```
+
+## ExecutionDurationHistogram
+
+```json
+{
+  "description": "TRND-09: the window's test executions by duration, over fixed\nlog-spaced bucket edges (every bucket present, zero-filled).",
+  "properties": {
+    "buckets": {
+      "items": {
+        "$ref": "#/components/schemas/ExecutionHistogramBucket"
+      },
+      "title": "Buckets",
+      "type": "array"
+    },
+    "measured": {
+      "default": false,
+      "title": "Measured",
+      "type": "boolean"
+    },
+    "n": {
+      "default": 0,
+      "title": "N",
+      "type": "integer"
+    },
+    "p50_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "P50 Ms"
+    },
+    "p95_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "P95 Ms"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    }
+  },
+  "title": "ExecutionDurationHistogram",
+  "type": "object"
+}
+```
+
+## ExecutionHistogramBucket
+
+```json
+{
+  "description": "One duration bucket: ``lower_ms <= duration < upper_ms``.",
+  "properties": {
+    "count": {
+      "default": 0,
+      "title": "Count",
+      "type": "integer"
+    },
+    "lower_ms": {
+      "title": "Lower Ms",
+      "type": "integer"
+    },
+    "upper_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Upper Ms"
+    }
+  },
+  "required": [
+    "lower_ms"
+  ],
+  "title": "ExecutionHistogramBucket",
+  "type": "object"
+}
+```
+
+## ExecutionMetricsResponse
+
+```json
+{
+  "description": "GET /api/v1/analytics/execution-metrics.",
+  "properties": {
+    "branch": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Branch"
+    },
+    "days": {
+      "title": "Days",
+      "type": "integer"
+    },
+    "duration_histogram": {
+      "$ref": "#/components/schemas/ExecutionDurationHistogram"
+    },
+    "measured": {
+      "default": false,
+      "title": "Measured",
+      "type": "boolean"
+    },
+    "meta": {
+      "additionalProperties": true,
+      "title": "Meta",
+      "type": "object"
+    },
+    "per_day": {
+      "$ref": "#/components/schemas/ExecutionPerDay"
+    },
+    "previous_window_start": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Previous Window Start"
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Project Id"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    },
+    "regressions": {
+      "$ref": "#/components/schemas/ExecutionRegressions"
+    },
+    "slowest_tests": {
+      "$ref": "#/components/schemas/ExecutionSlowTests"
+    },
+    "suites": {
+      "$ref": "#/components/schemas/ExecutionSuites"
+    },
+    "totals": {
+      "$ref": "#/components/schemas/ExecutionTotals"
+    },
+    "window_end": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Window End"
+    },
+    "window_start": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Window Start"
+    }
+  },
+  "required": [
+    "days",
+    "suites",
+    "regressions",
+    "slowest_tests"
+  ],
+  "title": "ExecutionMetricsResponse",
+  "type": "object"
+}
+```
+
+## ExecutionPerDay
+
+```json
+{
+  "properties": {
+    "grain": {
+      "default": "run",
+      "title": "Grain",
+      "type": "string"
+    },
+    "points": {
+      "items": {
+        "$ref": "#/components/schemas/ExecutionDayPoint"
+      },
+      "title": "Points",
+      "type": "array"
+    }
+  },
+  "title": "ExecutionPerDay",
+  "type": "object"
+}
+```
+
+## ExecutionPercentiles
+
+```json
+{
+  "description": "p50 / p95 of one figure over a set of executions.",
+  "properties": {
+    "measured": {
+      "default": false,
+      "title": "Measured",
+      "type": "boolean"
+    },
+    "n": {
+      "default": 0,
+      "title": "N",
+      "type": "integer"
+    },
+    "p50_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "P50 Ms"
+    },
+    "p95_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "P95 Ms"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    }
+  },
+  "title": "ExecutionPercentiles",
+  "type": "object"
+}
+```
+
+## ExecutionRegressionRule
+
+```json
+{
+  "properties": {
+    "baseline_runs": {
+      "title": "Baseline Runs",
+      "type": "integer"
+    },
+    "min_baseline_runs": {
+      "title": "Min Baseline Runs",
+      "type": "integer"
+    },
+    "ratio": {
+      "title": "Ratio",
+      "type": "number"
+    },
+    "recent_runs": {
+      "title": "Recent Runs",
+      "type": "integer"
+    },
+    "same_branch": {
+      "default": true,
+      "title": "Same Branch",
+      "type": "boolean"
+    },
+    "test_min_samples": {
+      "title": "Test Min Samples",
+      "type": "integer"
+    },
+    "test_ratio": {
+      "title": "Test Ratio",
+      "type": "number"
+    }
+  },
+  "required": [
+    "recent_runs",
+    "baseline_runs",
+    "min_baseline_runs",
+    "ratio",
+    "test_min_samples",
+    "test_ratio"
+  ],
+  "title": "ExecutionRegressionRule",
+  "type": "object"
+}
+```
+
+## ExecutionRegressions
+
+```json
+{
+  "properties": {
+    "rule": {
+      "$ref": "#/components/schemas/ExecutionRegressionRule"
+    },
+    "suites": {
+      "$ref": "#/components/schemas/ExecutionSuiteRegressions"
+    },
+    "tests": {
+      "$ref": "#/components/schemas/ExecutionTestRegressions"
+    }
+  },
+  "required": [
+    "rule",
+    "suites",
+    "tests"
+  ],
+  "title": "ExecutionRegressions",
+  "type": "object"
+}
+```
+
+## ExecutionSlowTest
+
+```json
+{
+  "properties": {
+    "max_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Max Ms"
+    },
+    "n": {
+      "default": 0,
+      "title": "N",
+      "type": "integer"
+    },
+    "p50_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "P50 Ms"
+    },
+    "p95_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "P95 Ms"
+    },
+    "suite_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Suite Name"
+    },
+    "test_fingerprint": {
+      "title": "Test Fingerprint",
+      "type": "string"
+    },
+    "test_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Test Name"
+    }
+  },
+  "required": [
+    "test_fingerprint"
+  ],
+  "title": "ExecutionSlowTest",
+  "type": "object"
+}
+```
+
+## ExecutionSlowTests
+
+```json
+{
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/ExecutionSlowTest"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "limit": {
+      "title": "Limit",
+      "type": "integer"
+    },
+    "measured": {
+      "default": false,
+      "title": "Measured",
+      "type": "boolean"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    }
+  },
+  "required": [
+    "limit"
+  ],
+  "title": "ExecutionSlowTests",
+  "type": "object"
+}
+```
+
+## ExecutionSuiteRegression
+
+```json
+{
+  "properties": {
+    "baseline_median_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Baseline Median Ms"
+    },
+    "baseline_runs": {
+      "default": 0,
+      "title": "Baseline Runs",
+      "type": "integer"
+    },
+    "branch": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Branch"
+    },
+    "latest_run_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Latest Run At"
+    },
+    "latest_run_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Latest Run Id"
+    },
+    "metric": {
+      "title": "Metric",
+      "type": "string"
+    },
+    "observed_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Observed Ms"
+    },
+    "ratio": {
+      "title": "Ratio",
+      "type": "number"
+    },
+    "recent_median_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Recent Median Ms"
+    },
+    "recent_runs": {
+      "default": 0,
+      "title": "Recent Runs",
+      "type": "integer"
+    },
+    "suite_key": {
+      "title": "Suite Key",
+      "type": "string"
+    },
+    "suite_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Suite Name"
+    },
+    "was_slow_before": {
+      "default": false,
+      "title": "Was Slow Before",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "suite_key",
+    "metric",
+    "ratio"
+  ],
+  "title": "ExecutionSuiteRegression",
+  "type": "object"
+}
+```
+
+## ExecutionSuiteRegressions
+
+```json
+{
+  "properties": {
+    "considered": {
+      "default": 0,
+      "title": "Considered",
+      "type": "integer"
+    },
+    "evaluated": {
+      "default": 0,
+      "title": "Evaluated",
+      "type": "integer"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/ExecutionSuiteRegression"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "measured": {
+      "default": false,
+      "title": "Measured",
+      "type": "boolean"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    },
+    "total": {
+      "default": 0,
+      "title": "Total",
+      "type": "integer"
+    }
+  },
+  "title": "ExecutionSuiteRegressions",
+  "type": "object"
+}
+```
+
+## ExecutionSuiteRow
+
+```json
+{
+  "properties": {
+    "current": {
+      "$ref": "#/components/schemas/ExecutionSuiteWindow"
+    },
+    "previous": {
+      "$ref": "#/components/schemas/ExecutionSuiteWindow"
+    },
+    "suite_key": {
+      "title": "Suite Key",
+      "type": "string"
+    },
+    "suite_name": {
+      "title": "Suite Name",
+      "type": "string"
+    },
+    "summed_p50_change_pct": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Summed P50 Change Pct"
+    },
+    "summed_p95_change_pct": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Summed P95 Change Pct"
+    },
+    "wall_p50_change_pct": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Wall P50 Change Pct"
+    },
+    "wall_p95_change_pct": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Wall P95 Change Pct"
+    }
+  },
+  "required": [
+    "suite_key",
+    "suite_name",
+    "current",
+    "previous"
+  ],
+  "title": "ExecutionSuiteRow",
+  "type": "object"
+}
+```
+
+## ExecutionSuiteWindow
+
+```json
+{
+  "properties": {
+    "runs": {
+      "default": 0,
+      "title": "Runs",
+      "type": "integer"
+    },
+    "summed": {
+      "$ref": "#/components/schemas/ExecutionPercentiles"
+    },
+    "wall": {
+      "$ref": "#/components/schemas/ExecutionPercentiles"
+    }
+  },
+  "title": "ExecutionSuiteWindow",
+  "type": "object"
+}
+```
+
+## ExecutionSuites
+
+```json
+{
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/ExecutionSuiteRow"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "limit": {
+      "title": "Limit",
+      "type": "integer"
+    },
+    "total": {
+      "default": 0,
+      "title": "Total",
+      "type": "integer"
+    },
+    "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "limit"
+  ],
+  "title": "ExecutionSuites",
+  "type": "object"
+}
+```
+
+## ExecutionTestRegression
+
+```json
+{
+  "properties": {
+    "baseline_mean_ms": {
+      "title": "Baseline Mean Ms",
+      "type": "number"
+    },
+    "baseline_p95_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Baseline P95 Ms"
+    },
+    "ratio": {
+      "title": "Ratio",
+      "type": "number"
+    },
+    "sample_count": {
+      "default": 0,
+      "title": "Sample Count",
+      "type": "integer"
+    },
+    "suite_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Suite Name"
+    },
+    "test_fingerprint": {
+      "title": "Test Fingerprint",
+      "type": "string"
+    },
+    "test_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Test Name"
+    },
+    "window_n": {
+      "default": 0,
+      "title": "Window N",
+      "type": "integer"
+    },
+    "window_p50_ms": {
+      "title": "Window P50 Ms",
+      "type": "number"
+    }
+  },
+  "required": [
+    "test_fingerprint",
+    "baseline_mean_ms",
+    "window_p50_ms",
+    "ratio"
+  ],
+  "title": "ExecutionTestRegression",
+  "type": "object"
+}
+```
+
+## ExecutionTestRegressions
+
+```json
+{
+  "properties": {
+    "considered": {
+      "default": 0,
+      "title": "Considered",
+      "type": "integer"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/ExecutionTestRegression"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "measured": {
+      "default": false,
+      "title": "Measured",
+      "type": "boolean"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    },
+    "total": {
+      "default": 0,
+      "title": "Total",
+      "type": "integer"
+    }
+  },
+  "title": "ExecutionTestRegressions",
+  "type": "object"
+}
+```
+
+## ExecutionTotals
+
+```json
+{
+  "properties": {
+    "parallelism": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Parallelism"
+    },
+    "runs": {
+      "default": 0,
+      "title": "Runs",
+      "type": "integer"
+    },
+    "summed_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Summed Ms"
+    },
+    "summed_runs": {
+      "default": 0,
+      "title": "Summed Runs",
+      "type": "integer"
+    },
+    "wall_clock_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Wall Clock Ms"
+    },
+    "wall_runs": {
+      "default": 0,
+      "title": "Wall Runs",
+      "type": "integer"
+    }
+  },
+  "title": "ExecutionTotals",
   "type": "object"
 }
 ```
@@ -12108,6 +13422,18 @@ These are the full generated JSON Schema definitions, including required fields,
 {
   "description": "A single test result in a JSON batch ingest.",
   "properties": {
+    "call_ms": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Call Ms"
+    },
     "class_name": {
       "anyOf": [
         {
@@ -12143,6 +13469,18 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Error Message"
     },
+    "finished_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Finished At"
+    },
     "metadata": {
       "anyOf": [
         {
@@ -12155,6 +13493,18 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Metadata"
     },
+    "setup_ms": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Setup Ms"
+    },
     "stack_trace": {
       "anyOf": [
         {
@@ -12165,6 +13515,18 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Stack Trace"
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Started At"
     },
     "status": {
       "pattern": "^(PASSED|FAILED|SKIPPED|BROKEN)$",
@@ -12197,11 +13559,35 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Tags"
     },
+    "teardown_ms": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Teardown Ms"
+    },
     "test_name": {
       "maxLength": 1000,
       "minLength": 1,
       "title": "Test Name",
       "type": "string"
+    },
+    "worker_id": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Worker Id"
     }
   },
   "required": [
@@ -14023,6 +15409,18 @@ These are the full generated JSON Schema definitions, including required fields,
 {
   "description": "A single test execution event from a client machine.",
   "properties": {
+    "call_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The test body's own time, ms (0..24 h).",
+      "title": "Call Ms"
+    },
     "class_name": {
       "anyOf": [
         {
@@ -14075,6 +15473,18 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Metadata"
     },
+    "setup_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Fixture / before-hook time of this test, ms (0..24 h).",
+      "title": "Setup Ms"
+    },
     "stack_trace": {
       "anyOf": [
         {
@@ -14085,6 +15495,18 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Stack Trace"
+    },
+    "started_at_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Client epoch ms when the test started (its setup included), sent on test_result.",
+      "title": "Started At Ms"
     },
     "status": {
       "anyOf": [
@@ -14124,6 +15546,18 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Tags"
     },
+    "teardown_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Fixture / after-hook time of this test, ms (0..24 h).",
+      "title": "Teardown Ms"
+    },
     "test_name": {
       "anyOf": [
         {
@@ -14146,6 +15580,18 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Timestamp Ms"
+    },
+    "worker_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The parallel worker / runner slot that ran the test (at most 64 characters).",
+      "title": "Worker Id"
     }
   },
   "required": [
@@ -24522,6 +25968,814 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## RunTimeline
+
+```json
+{
+  "description": "Tests with a start and a finish, for the waterfall. When more than\n``limit`` qualify, the ``limit`` LONGEST are kept (``truncated``).",
+  "properties": {
+    "end": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "End"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/RunTimelineItem"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "limit": {
+      "title": "Limit",
+      "type": "integer"
+    },
+    "measured": {
+      "default": false,
+      "title": "Measured",
+      "type": "boolean"
+    },
+    "origin": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Origin"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    },
+    "total": {
+      "default": 0,
+      "title": "Total",
+      "type": "integer"
+    },
+    "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "limit"
+  ],
+  "title": "RunTimeline",
+  "type": "object"
+}
+```
+
+## RunTimelineItem
+
+```json
+{
+  "properties": {
+    "duration_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Duration Ms"
+    },
+    "finished_at": {
+      "format": "date-time",
+      "title": "Finished At",
+      "type": "string"
+    },
+    "offset_ms": {
+      "title": "Offset Ms",
+      "type": "integer"
+    },
+    "started_at": {
+      "format": "date-time",
+      "title": "Started At",
+      "type": "string"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    },
+    "suite_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Suite Name"
+    },
+    "test_id": {
+      "format": "uuid",
+      "title": "Test Id",
+      "type": "string"
+    },
+    "test_name": {
+      "title": "Test Name",
+      "type": "string"
+    },
+    "worker_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Worker Id"
+    }
+  },
+  "required": [
+    "test_id",
+    "test_name",
+    "status",
+    "started_at",
+    "finished_at",
+    "offset_ms"
+  ],
+  "title": "RunTimelineItem",
+  "type": "object"
+}
+```
+
+## RunTimingFigures
+
+```json
+{
+  "description": "The run's own figures (EXEC-02 columns on ``test_runs``).",
+  "properties": {
+    "duration_count": {
+      "default": 0,
+      "title": "Duration Count",
+      "type": "integer"
+    },
+    "exec_finished_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Exec Finished At"
+    },
+    "exec_started_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Exec Started At"
+    },
+    "parallelism": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Parallelism"
+    },
+    "summed_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Summed Ms"
+    },
+    "test_count": {
+      "default": 0,
+      "title": "Test Count",
+      "type": "integer"
+    },
+    "timed_count": {
+      "default": 0,
+      "title": "Timed Count",
+      "type": "integer"
+    },
+    "timing_source": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Timing Source"
+    },
+    "wall_clock_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Wall Clock Ms"
+    }
+  },
+  "title": "RunTimingFigures",
+  "type": "object"
+}
+```
+
+## RunTimingLane
+
+```json
+{
+  "description": "One worker lane: the timed tests one worker ran.",
+  "properties": {
+    "busy_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Busy Ms"
+    },
+    "finished_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Finished At"
+    },
+    "span_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Span Ms"
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Started At"
+    },
+    "test_count": {
+      "default": 0,
+      "title": "Test Count",
+      "type": "integer"
+    },
+    "worker_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Worker Id"
+    }
+  },
+  "title": "RunTimingLane",
+  "type": "object"
+}
+```
+
+## RunTimingPhases
+
+```json
+{
+  "description": "Setup / test body / teardown totals over the run's tests.",
+  "properties": {
+    "call_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Call Ms"
+    },
+    "measured": {
+      "default": false,
+      "title": "Measured",
+      "type": "boolean"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    },
+    "setup_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Setup Ms"
+    },
+    "setup_share": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Setup Share"
+    },
+    "teardown_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Teardown Ms"
+    },
+    "teardown_share": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Teardown Share"
+    },
+    "tests_with_phases": {
+      "default": 0,
+      "title": "Tests With Phases",
+      "type": "integer"
+    }
+  },
+  "title": "RunTimingPhases",
+  "type": "object"
+}
+```
+
+## RunTimingResponse
+
+```json
+{
+  "description": "GET /api/v1/runs/{run_id}/timing.",
+  "properties": {
+    "branch": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Branch"
+    },
+    "build_number": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Build Number"
+    },
+    "created_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Created At"
+    },
+    "duration_findings": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/DurationRegressionsResponse"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "phases": {
+      "$ref": "#/components/schemas/RunTimingPhases"
+    },
+    "project_id": {
+      "format": "uuid",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "run": {
+      "$ref": "#/components/schemas/RunTimingFigures"
+    },
+    "run_id": {
+      "format": "uuid",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "slowest": {
+      "$ref": "#/components/schemas/RunTimingSlowest"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    },
+    "suites": {
+      "$ref": "#/components/schemas/RunTimingSuites"
+    },
+    "timeline": {
+      "$ref": "#/components/schemas/RunTimeline"
+    },
+    "workers": {
+      "$ref": "#/components/schemas/RunTimingWorkers"
+    }
+  },
+  "required": [
+    "run_id",
+    "project_id",
+    "status",
+    "run",
+    "phases",
+    "suites",
+    "slowest",
+    "workers",
+    "timeline"
+  ],
+  "title": "RunTimingResponse",
+  "type": "object"
+}
+```
+
+## RunTimingSlowest
+
+```json
+{
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/RunTimingTestResponse"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "limit": {
+      "title": "Limit",
+      "type": "integer"
+    },
+    "measured": {
+      "default": false,
+      "title": "Measured",
+      "type": "boolean"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    },
+    "total": {
+      "default": 0,
+      "title": "Total",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "limit"
+  ],
+  "title": "RunTimingSlowest",
+  "type": "object"
+}
+```
+
+## RunTimingSuites
+
+```json
+{
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/SuiteExecutionResponse"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "measured": {
+      "default": false,
+      "title": "Measured",
+      "type": "boolean"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    },
+    "total": {
+      "default": 0,
+      "title": "Total",
+      "type": "integer"
+    },
+    "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+    }
+  },
+  "title": "RunTimingSuites",
+  "type": "object"
+}
+```
+
+## RunTimingTestResponse
+
+```json
+{
+  "description": "One test of the run, as the slowest list shows it.",
+  "properties": {
+    "baseline": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/TestDurationBaselineResponse"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "baseline_ratio": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Baseline Ratio"
+    },
+    "call_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Call Ms"
+    },
+    "duration_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Duration Ms"
+    },
+    "finished_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Finished At"
+    },
+    "setup_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Setup Ms"
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Started At"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    },
+    "suite_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Suite Name"
+    },
+    "teardown_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Teardown Ms"
+    },
+    "test_fingerprint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Test Fingerprint"
+    },
+    "test_id": {
+      "format": "uuid",
+      "title": "Test Id",
+      "type": "string"
+    },
+    "test_name": {
+      "title": "Test Name",
+      "type": "string"
+    },
+    "timing_source": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Timing Source"
+    },
+    "worker_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Worker Id"
+    }
+  },
+  "required": [
+    "test_id",
+    "test_name",
+    "status"
+  ],
+  "title": "RunTimingTestResponse",
+  "type": "object"
+}
+```
+
+## RunTimingWorkers
+
+```json
+{
+  "properties": {
+    "lanes": {
+      "items": {
+        "$ref": "#/components/schemas/RunTimingLane"
+      },
+      "title": "Lanes",
+      "type": "array"
+    },
+    "measured": {
+      "default": false,
+      "title": "Measured",
+      "type": "boolean"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    },
+    "total": {
+      "default": 0,
+      "title": "Total",
+      "type": "integer"
+    },
+    "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+    }
+  },
+  "title": "RunTimingWorkers",
+  "type": "object"
+}
+```
+
 ## SCIMEmail
 
 ```json
@@ -27024,6 +29278,543 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## SuiteDurationRegressionResponse
+
+```json
+{
+  "description": "A suite whose median over its last 5 runs is >= 1.5x the 20 before.",
+  "properties": {
+    "baseline_median_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Baseline Median Ms"
+    },
+    "baseline_runs": {
+      "default": 0,
+      "title": "Baseline Runs",
+      "type": "integer"
+    },
+    "metric": {
+      "default": "summed",
+      "title": "Metric",
+      "type": "string"
+    },
+    "new": {
+      "default": false,
+      "title": "New",
+      "type": "boolean"
+    },
+    "observed_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Observed Ms"
+    },
+    "ratio": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Ratio"
+    },
+    "recent_median_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Recent Median Ms"
+    },
+    "recent_runs": {
+      "default": 0,
+      "title": "Recent Runs",
+      "type": "integer"
+    },
+    "suite_key": {
+      "title": "Suite Key",
+      "type": "string"
+    },
+    "suite_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Suite Name"
+    },
+    "was_slow_before": {
+      "default": false,
+      "title": "Was Slow Before",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "suite_key"
+  ],
+  "title": "SuiteDurationRegressionResponse",
+  "type": "object"
+}
+```
+
+## SuiteExecutionHistoryResponse
+
+```json
+{
+  "description": "GET /api/v1/analytics/execution/suite-history.",
+  "properties": {
+    "branch": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Branch"
+    },
+    "days": {
+      "title": "Days",
+      "type": "integer"
+    },
+    "limit": {
+      "title": "Limit",
+      "type": "integer"
+    },
+    "measured": {
+      "default": false,
+      "title": "Measured",
+      "type": "boolean"
+    },
+    "meta": {
+      "additionalProperties": true,
+      "title": "Meta",
+      "type": "object"
+    },
+    "points": {
+      "items": {
+        "$ref": "#/components/schemas/SuiteHistoryPoint"
+      },
+      "title": "Points",
+      "type": "array"
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Project Id"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    },
+    "stats": {
+      "$ref": "#/components/schemas/SuiteHistoryStats"
+    },
+    "suite_key": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Suite Key"
+    },
+    "suite_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Suite Name"
+    },
+    "total": {
+      "default": 0,
+      "title": "Total",
+      "type": "integer"
+    },
+    "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "days",
+    "limit"
+  ],
+  "title": "SuiteExecutionHistoryResponse",
+  "type": "object"
+}
+```
+
+## SuiteExecutionResponse
+
+```json
+{
+  "description": "One ``suite_executions`` row: how long one suite of one run took.",
+  "properties": {
+    "broken": {
+      "default": 0,
+      "title": "Broken",
+      "type": "integer"
+    },
+    "failed": {
+      "default": 0,
+      "title": "Failed",
+      "type": "integer"
+    },
+    "finished_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Finished At"
+    },
+    "parallelism": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Parallelism"
+    },
+    "passed": {
+      "default": 0,
+      "title": "Passed",
+      "type": "integer"
+    },
+    "setup_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Setup Ms"
+    },
+    "skipped": {
+      "default": 0,
+      "title": "Skipped",
+      "type": "integer"
+    },
+    "source": {
+      "title": "Source",
+      "type": "string"
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Started At"
+    },
+    "suite_key": {
+      "title": "Suite Key",
+      "type": "string"
+    },
+    "suite_name": {
+      "title": "Suite Name",
+      "type": "string"
+    },
+    "summed_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Summed Ms"
+    },
+    "teardown_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Teardown Ms"
+    },
+    "test_count": {
+      "default": 0,
+      "title": "Test Count",
+      "type": "integer"
+    },
+    "timed_count": {
+      "default": 0,
+      "title": "Timed Count",
+      "type": "integer"
+    },
+    "unknown": {
+      "default": 0,
+      "title": "Unknown",
+      "type": "integer"
+    },
+    "wall_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Wall Ms"
+    }
+  },
+  "required": [
+    "suite_name",
+    "suite_key",
+    "source"
+  ],
+  "title": "SuiteExecutionResponse",
+  "type": "object"
+}
+```
+
+## SuiteHistoryPoint
+
+```json
+{
+  "description": "One run of the suite.",
+  "properties": {
+    "branch": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Branch"
+    },
+    "broken": {
+      "default": 0,
+      "title": "Broken",
+      "type": "integer"
+    },
+    "build_number": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Build Number"
+    },
+    "failed": {
+      "default": 0,
+      "title": "Failed",
+      "type": "integer"
+    },
+    "finished_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Finished At"
+    },
+    "parallelism": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Parallelism"
+    },
+    "passed": {
+      "default": 0,
+      "title": "Passed",
+      "type": "integer"
+    },
+    "run_created_at": {
+      "format": "date-time",
+      "title": "Run Created At",
+      "type": "string"
+    },
+    "run_id": {
+      "format": "uuid",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "run_status": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Run Status"
+    },
+    "skipped": {
+      "default": 0,
+      "title": "Skipped",
+      "type": "integer"
+    },
+    "source": {
+      "title": "Source",
+      "type": "string"
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Started At"
+    },
+    "summed_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Summed Ms"
+    },
+    "test_count": {
+      "default": 0,
+      "title": "Test Count",
+      "type": "integer"
+    },
+    "timed_count": {
+      "default": 0,
+      "title": "Timed Count",
+      "type": "integer"
+    },
+    "unknown": {
+      "default": 0,
+      "title": "Unknown",
+      "type": "integer"
+    },
+    "wall_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Wall Ms"
+    }
+  },
+  "required": [
+    "run_id",
+    "run_created_at",
+    "source"
+  ],
+  "title": "SuiteHistoryPoint",
+  "type": "object"
+}
+```
+
+## SuiteHistoryStats
+
+```json
+{
+  "description": "Window percentiles over EVERY execution in the window (not only the\nreturned points).",
+  "properties": {
+    "parallelism_p50": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Parallelism P50"
+    },
+    "summed": {
+      "$ref": "#/components/schemas/ExecutionPercentiles"
+    },
+    "wall": {
+      "$ref": "#/components/schemas/ExecutionPercentiles"
+    }
+  },
+  "title": "SuiteHistoryStats",
+  "type": "object"
+}
+```
+
 ## SuiteOwnerResponse
 
 ```json
@@ -28550,12 +31341,94 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## TestCaseDurationStatsResponse
+
+```json
+{
+  "description": "EXEC-03: duration percentiles of the test over the history window\n(every execution in the window, not only the 50 points returned).",
+  "properties": {
+    "max_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Max Ms"
+    },
+    "measured": {
+      "default": false,
+      "title": "Measured",
+      "type": "boolean"
+    },
+    "n": {
+      "default": 0,
+      "title": "N",
+      "type": "integer"
+    },
+    "p50_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "P50 Ms"
+    },
+    "p95_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "P95 Ms"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    },
+    "window_days": {
+      "default": 30,
+      "title": "Window Days",
+      "type": "integer"
+    }
+  },
+  "title": "TestCaseDurationStatsResponse",
+  "type": "object"
+}
+```
+
 ## TestCaseExecutionSection
 
 ```json
 {
   "description": "Outcome and bounded execution metadata for the result snapshot.",
   "properties": {
+    "call_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Call Ms"
+    },
     "duration_ms": {
       "anyOf": [
         {
@@ -28588,6 +31461,18 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Failure Category"
+    },
+    "finished_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Finished At"
     },
     "has_attachments": {
       "default": false,
@@ -28624,6 +31509,17 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Retry Count"
     },
+    "setup_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Setup Ms"
+    },
     "stack_trace": {
       "anyOf": [
         {
@@ -28634,6 +31530,18 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Stack Trace"
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Started At"
     },
     "status": {
       "$ref": "#/components/schemas/TestStatus"
@@ -28653,6 +31561,39 @@ These are the full generated JSON Schema definitions, including required fields,
       "default": false,
       "title": "Steps Present",
       "type": "boolean"
+    },
+    "teardown_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Teardown Ms"
+    },
+    "timing_source": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Timing Source"
+    },
+    "worker_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Worker Id"
     }
   },
   "required": [
@@ -28737,6 +31678,17 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Build Number"
     },
+    "call_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Call Ms"
+    },
     "created_at": {
       "anyOf": [
         {
@@ -28759,6 +31711,18 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Duration Ms"
+    },
+    "finished_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Finished At"
     },
     "run_id": {
       "anyOf": [
@@ -28786,9 +31750,65 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Run Seq"
     },
+    "setup_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Setup Ms"
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Started At"
+    },
     "status": {
       "title": "Status",
       "type": "string"
+    },
+    "teardown_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Teardown Ms"
+    },
+    "timing_source": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Timing Source"
+    },
+    "worker_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Worker Id"
     }
   },
   "required": [
@@ -28806,6 +31826,26 @@ These are the full generated JSON Schema definitions, including required fields,
 {
   "description": "Wrapper for GET /runs/{run_id}/tests/{test_id}/history.",
   "properties": {
+    "baseline": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/TestDurationBaselineResponse"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "duration_stats": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/TestCaseDurationStatsResponse"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "flakiness": {
       "$ref": "#/components/schemas/TestCaseFlakinessResponse"
     },
@@ -30014,6 +33054,69 @@ These are the full generated JSON Schema definitions, including required fields,
     "created_at"
   ],
   "title": "TestCaseVersionResponse",
+  "type": "object"
+}
+```
+
+## TestDurationBaselineResponse
+
+```json
+{
+  "description": "A test's running duration statistics (``perf_baselines``).",
+  "properties": {
+    "last_observed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Last Observed At"
+    },
+    "last_observed_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Last Observed Ms"
+    },
+    "mean_ms": {
+      "title": "Mean Ms",
+      "type": "number"
+    },
+    "p95_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "P95 Ms"
+    },
+    "sample_count": {
+      "default": 0,
+      "title": "Sample Count",
+      "type": "integer"
+    },
+    "stddev_ms": {
+      "default": 0.0,
+      "title": "Stddev Ms",
+      "type": "number"
+    }
+  },
+  "required": [
+    "mean_ms"
+  ],
+  "title": "TestDurationBaselineResponse",
   "type": "object"
 }
 ```
