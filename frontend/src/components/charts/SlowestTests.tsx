@@ -35,11 +35,19 @@
  * did need is room: below `SLOWEST_STACK_WIDTH` the name takes its own line
  * (`useContainerWidth`), because on one line at 320 px it truncated to about
  * nine characters and all twenty rows read identically.
+ *
+ * THE CLAMP (TRND-09). Scaled against the longest p95, one 40 s outlier drew
+ * the other nineteen as slivers. The scale now stops at the p90 of the shown
+ * p95s when the longest is more than twice that (`slowestScale`): a bar past
+ * the stop fills the track and ends in a torn, hatched OFF-SCALE marker, its
+ * real p95 still printed beside it, and the figure says where the scale stops
+ * and how many bars run past it. An even spread keeps the plain linear scale.
  */
 import { formatDuration, formatNumber, NO_VALUE } from '@/utils/formatters'
 import { CHART_VARS } from './tokens'
 import { useContainerWidth } from './chartLayout'
 import type { SlowestTestsModel } from './durationBuckets'
+import { isOffScale, offScaleNote, OFF_SCALE_TEXT, slowestBarWidth, slowestScale } from './slowestScale'
 
 export interface SlowestTestsProps {
   model: SlowestTestsModel
@@ -59,8 +67,9 @@ export const SLOWEST_EMPTY = 'No test in this window carries a duration'
 export const SLOWEST_STACK_WIDTH = 420
 
 export default function SlowestTests({ model }: SlowestTestsProps) {
-  // The longest MEASURED p95 sets the bar scale; an unmeasured row has no bar.
-  const longest = model.rows.reduce((most, row) => (row.p95 !== null && row.p95 > most ? row.p95 : most), 0)
+  // The bar scale: the longest MEASURED p95, or the clamp at the p90 when one
+  // outlier would flatten the rest (`slowestScale`). An unmeasured row has no bar.
+  const scale = slowestScale(model.rows.map((row) => row.p95))
   // 0 is "not measured yet", which must read as "not narrow" — never as narrow.
   const [wrapRef, width] = useContainerWidth<HTMLElement>()
   const stacked = width > 0 && width < SLOWEST_STACK_WIDTH
@@ -80,30 +89,51 @@ export default function SlowestTests({ model }: SlowestTestsProps) {
         data-slowest-stacked={stacked ? 'true' : 'false'}
         className={stacked ? 'flex flex-col gap-2' : 'flex flex-col gap-1'}
       >
-        {model.rows.map((row) => {
-          const width = row.p95 !== null && longest > 0 ? Math.max((row.p95 / longest) * 100, 1) : 0
+        {model.rows.map((row, index) => {
+          const width = slowestBarWidth(row.p95, scale)
+          const off = isOffScale(row.p95, scale)
           const bar = (
             <span className="flex items-center gap-1">
               <span
                 data-testid="ranked-bar"
+                data-off-scale={off ? '' : undefined}
                 aria-hidden="true"
                 // The value axis starts at zero by construction: the bar's
-                // length IS the value, scaled against the longest measured p95.
+                // length IS the value, scaled against the longest measured p95
+                // — or against the clamp, which a longer bar runs past.
                 style={{ width: `${width}%`, backgroundColor: CHART_VARS.series[4] }}
-                className="inline-block h-2 rounded-sm"
-              />
+                className="relative inline-block h-2 rounded-sm"
+              >
+                {off ? (
+                  // The torn end: the bar is cut here, not finished. Card-coloured
+                  // hatching over the bar's last few pixels, so it reads as a break
+                  // in any theme without a colour of its own.
+                  <span
+                    data-off-scale-marker=""
+                    className="absolute inset-y-0 right-0 w-2.5 rounded-r-sm"
+                    style={{
+                      backgroundImage: `repeating-linear-gradient(135deg, ${CHART_VARS.card} 0 2px, transparent 2px 4px)`,
+                    }}
+                  />
+                ) : null}
+              </span>
             </span>
           )
+          // `relative`: the off-scale words are `sr-only` (absolute), and an absolute box whose
+          // containing block is outside a scrolling ancestor escapes its clip and widens the page.
           const value = (
-            <span className={stacked ? 'flex items-baseline gap-2 tabular-nums' : 'flex flex-col items-end tabular-nums'}>
+            <span className={stacked ? 'relative flex items-baseline gap-2 tabular-nums' : 'relative flex flex-col items-end tabular-nums'}>
               <span className="text-[var(--color-text)]">{row.p95 === null ? NO_VALUE : formatDuration(row.p95)}</span>
+              {off ? <span className="sr-only">{OFF_SCALE_TEXT}</span> : null}
               <span className="text-[10px] text-[var(--color-text-secondary)]">
                 {formatNumber(row.runs)} {row.runs === 1 ? 'run' : 'runs'}
               </span>
             </span>
           )
+          // The position is part of the key: two tests may share a display name.
+          const key = `${index}:${row.name}`
           return stacked ? (
-            <li key={row.name} className="flex flex-col gap-1 text-xs">
+            <li key={key} className="flex flex-col gap-1 text-xs">
               {/* The whole name, wrapped — not nine characters and a `title`. */}
               <span data-slowest-name="" className="break-words text-[var(--color-text)]">
                 {row.name}
@@ -114,7 +144,7 @@ export default function SlowestTests({ model }: SlowestTestsProps) {
               </span>
             </li>
           ) : (
-            <li key={row.name} className="grid grid-cols-[minmax(0,1fr)_5rem_4.5rem] items-center gap-2 text-xs">
+            <li key={key} className="grid grid-cols-[minmax(0,1fr)_5rem_4.5rem] items-center gap-2 text-xs">
               <span data-slowest-name="" title={row.name} className="truncate text-[var(--color-text)]">
                 {row.name}
               </span>
@@ -124,6 +154,11 @@ export default function SlowestTests({ model }: SlowestTestsProps) {
           )
         })}
       </ol>
+      {scale.clamped && (
+        <p data-chart-off-scale="" className="m-0 text-xs text-[var(--color-text-secondary)]">
+          {offScaleNote(scale.max, scale.offScale)}
+        </p>
+      )}
       {model.truncated && (
         <figcaption data-chart-truncation="" className="text-xs text-[var(--color-text-secondary)]">
           Showing the slowest {formatNumber(model.shown)} of {formatNumber(model.total)} tests.

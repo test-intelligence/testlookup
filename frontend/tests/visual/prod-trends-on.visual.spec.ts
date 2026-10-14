@@ -14,8 +14,10 @@
  * UX redesign P3 (the page template): the pass-rate frame is the hero, full
  * width under the KPI strip; the catalogue's sections are the page's tabs —
  * By suite (the suite series and Compare, beside the suite pass rates card),
- * Durations, Heatmap — each captured after its tab is opened. Every region
- * keeps its name; the sizes changed with the layout.
+ * Durations (labelled "Execution time" since EXEC-04b, which puts the
+ * execution-metrics section above the p50 / p95 band), Heatmap — each
+ * captured after its tab is opened. Every region keeps its name; the sizes
+ * changed with the layout.
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { expect, test, type Page } from '@playwright/test'
@@ -55,7 +57,7 @@ for (const theme of THEMES) {
     await visualRegion(page, 'trends-on-multi-series', theme, suites)
     await visualRegion(page, 'trends-on-compare', theme, compare)
 
-    await openTab(page, 'Durations')
+    await openTab(page, 'Execution time')
     const duration = sectionFrame(page, 'trends-duration', 'Test duration (p50 / p95)')
     await expectDrawn(duration, 'duration')
     await waitForCharts(duration)

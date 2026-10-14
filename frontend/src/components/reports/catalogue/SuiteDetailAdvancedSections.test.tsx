@@ -6,17 +6,23 @@
 import { render } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import SuiteDetailAdvancedSections from './SuiteDetailAdvancedSections'
-import { SUITE_HEATMAP_MIN_HEIGHT, SUITE_SCATTER_MIN_HEIGHT } from './SuiteDetailAdvanced.model'
+import { SUITE_EXECUTION_MIN_HEIGHT, SUITE_HEATMAP_MIN_HEIGHT, SUITE_SCATTER_MIN_HEIGHT } from './SuiteDetailAdvanced.model'
 
 const never = vi.hoisted(() => new Promise<never>(() => {}))
 vi.mock('./HeatmapSection', async () => never)
 vi.mock('./ScatterSection', async () => never)
+vi.mock('./SuiteExecutionSection', async () => never)
 
 describe('SuiteDetailAdvancedSections while the sections load', () => {
   it('holds each section’s height, in page order, and nothing else', () => {
     const { container } = render(<SuiteDetailAdvancedSections days={30} suiteFilter={['Auth']} />)
     const block = container.querySelector('[data-suite-advanced]') as HTMLElement
     const placeholders = [...block.querySelectorAll('div[aria-hidden="true"]')] as HTMLElement[]
-    expect(placeholders.map((el) => el.style.minHeight)).toEqual([`${SUITE_HEATMAP_MIN_HEIGHT}px`, `${SUITE_SCATTER_MIN_HEIGHT}px`])
+    // EXEC-04b: "Suite execution time" is the third, last (jsdom has no IntersectionObserver, so it is near at once).
+    expect(placeholders.map((el) => el.style.minHeight)).toEqual([
+      `${SUITE_HEATMAP_MIN_HEIGHT}px`,
+      `${SUITE_SCATTER_MIN_HEIGHT}px`,
+      `${SUITE_EXECUTION_MIN_HEIGHT}px`,
+    ])
   })
 })

@@ -242,6 +242,12 @@ export function runs() {
       total_tests: total,
       pass_rate: Math.round((passed / evaluated) * 10_000) / 100,
       duration_ms: duration,
+      // EXEC-02: the wall clock where the report carried timestamps (two runs in three); the
+      // others are summed time only ("derived_sum"), shown as such by the Runs table and the run header.
+      wall_clock_ms: i % 3 === 1 ? null : Math.round(duration / 1.9),
+      timing_source: i % 3 === 1 ? 'derived_sum' : 'derived',
+      exec_started_at: i % 3 === 1 ? null : start,
+      exec_finished_at: i % 3 === 1 ? null : new Date(Date.parse(start) + Math.round(duration / 1.9)).toISOString(),
       start_time: start,
       end_time: new Date(Date.parse(start) + duration).toISOString(),
       created_at: start,
@@ -3000,19 +3006,275 @@ export function wave3Bodies(): FixtureBody[] {
   ]
 }
 
+// ── Execution metrics (EXEC-03/04b): Trends › Execution time, Suite execution time ──
+
+export const EXECUTION_METRICS_PATH = '/api/v1/analytics/execution-metrics'
+export const SUITE_HISTORY_PATH = '/api/v1/analytics/execution/suite-history'
+
+/** The suites of the execution table, the hostile one with no wall clock in either window. */
+const EXECUTION_SUITES: { name: string; wall: number | null; summed: number; prev: number | null }[] = [
+  { name: 'Checkout', wall: 312_000, summed: 640_000, prev: 280_000 },
+  { name: 'Payments', wall: 251_000, summed: 498_000, prev: 140_000 },
+  { name: 'Auth', wall: 96_000, summed: 211_000, prev: 101_000 },
+  { name: HOSTILE_NAME, wall: null, summed: 48_000, prev: null },
+]
+
+/** The 15 fixed buckets' lower edges (EXEC-03 contract §3, `duration_histogram`); the last is open-ended. */
+const HISTOGRAM_EDGES = [0, 10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000, 30_000, 60_000, 300_000]
+const HISTOGRAM_COUNTS = [12, 30, 64, 120, 210, 260, 190, 140, 70, 34, 12, 4, 2, 1]
+
+const percentiles = (n: number, p50: number | null, p95: number | null) => ({
+  n: p50 === null ? 0 : n,
+  p50_ms: p50,
+  p95_ms: p95,
+  measured: p50 !== null,
+  reason: p50 === null ? 'no execution in the window reported a wall clock' : null,
+})
+const changePct = (current: number | null, previous: number | null) =>
+  current === null || previous === null ? null : Math.round(((current - previous) / previous) * 1000) / 10
+
+/**
+ * `GET /analytics/execution-metrics`: every UTC day of the request's window
+ * (oldest first; every 6th day without a run, every 5th with runs that
+ * reported no wall clock), the four suites above with their change against
+ * the previous window, one suite regression (Payments, wall clock, main), the
+ * test regressions not measured (no baseline of 10 samples), the 20 slowest
+ * tests with one 40 s outlier, and the fixed-bucket histogram. Another
+ * project's id answers the denied shape.
+ */
+export function executionMetrics(request: ApiRequest) {
+  const days = intParam(request, 'days', 30)
+  const suites = request.url.searchParams.getAll('suite_name')
+  const denied = request.url.searchParams.get('project_id') !== PROJECT_ID
+  const points = []
+  for (let n = days - 1; n >= 0; n--) {
+    const runs = n % 6 === 5 ? 0 : 1 + (n % 3)
+    const wallKnown = runs > 0 && n % 5 !== 4
+    const summed = runs > 0 ? runs * (210_000 + ((n * 37_000) % 90_000)) : null
+    points.push({
+      day: daysAgo(n),
+      runs,
+      wall_clock_ms: wallKnown && summed !== null ? Math.round(summed / 1.9) : null,
+      wall_runs: wallKnown ? runs : 0,
+      summed_ms: summed,
+      summed_runs: runs,
+    })
+  }
+  const sum = (key: 'wall_clock_ms' | 'summed_ms') => points.reduce((total, p) => total + (p[key] ?? 0), 0)
+  const runsTotal = points.reduce((total, p) => total + p.runs, 0)
+  const wallRuns = points.reduce((total, p) => total + p.wall_runs, 0)
+  const wallTotal = sum('wall_clock_ms')
+  const summedOfWallRuns = points.reduce((total, p) => total + (p.wall_clock_ms !== null ? (p.summed_ms ?? 0) : 0), 0)
+  const base = {
+    project_id: denied ? null : PROJECT_ID,
+    days,
+    branch: request.url.searchParams.get('branch'),
+    window_start: `${daysAgo(days - 1)}T00:00:00+00:00`,
+    window_end: NOW.toISOString(),
+    previous_window_start: `${daysAgo(2 * days - 1)}T00:00:00+00:00`,
+    meta: { scope: { project_ids: denied ? [] : [PROJECT_ID] }, measured: !denied },
+  }
+  if (denied) {
+    return {
+      ...base,
+      measured: false,
+      reason: 'you cannot read this project',
+      totals: { runs: 0, wall_clock_ms: null, wall_runs: 0, summed_ms: null, summed_runs: 0, parallelism: null },
+      per_day: { grain: 'run', points: [] },
+      suites: { limit: 50, total: 0, truncated: false, items: [] },
+      regressions: {
+        rule: {},
+        suites: { measured: false, reason: 'you cannot read this project', evaluated: 0, considered: 0, total: 0, items: [] },
+        tests: { measured: false, reason: 'you cannot read this project', considered: 0, total: 0, items: [] },
+      },
+      slowest_tests: { limit: 20, measured: false, reason: 'you cannot read this project', items: [] },
+      duration_histogram: { measured: false, reason: 'you cannot read this project', n: 0, buckets: [], p50_ms: null, p95_ms: null },
+    }
+  }
+  const shown = suites.length > 0 ? EXECUTION_SUITES.filter((s) => suites.some((name) => name.toLowerCase() === s.name.toLowerCase())) : EXECUTION_SUITES
+  return {
+    ...base,
+    measured: true,
+    reason: null,
+    totals: {
+      runs: runsTotal,
+      wall_clock_ms: wallRuns > 0 ? wallTotal : null,
+      wall_runs: wallRuns,
+      summed_ms: sum('summed_ms'),
+      summed_runs: runsTotal,
+      parallelism: wallTotal > 0 ? round2(summedOfWallRuns / wallTotal) : null,
+    },
+    per_day: { grain: suites.length > 0 ? 'suite' : 'run', points },
+    suites: {
+      limit: 50,
+      total: shown.length,
+      truncated: false,
+      items: shown.map((s) => ({
+        suite_key: suiteKey(s.name),
+        suite_name: s.name,
+        current: {
+          runs: 12,
+          wall: percentiles(12, s.wall, s.wall === null ? null : Math.round(s.wall * 1.25)),
+          summed: percentiles(12, s.summed, Math.round(s.summed * 1.2)),
+        },
+        previous: {
+          runs: 11,
+          wall: percentiles(11, s.prev, s.prev === null ? null : Math.round(s.prev * 1.2)),
+          summed: percentiles(11, s.summed, Math.round(s.summed * 1.2)),
+        },
+        wall_p50_change_pct: changePct(s.wall, s.prev),
+        wall_p95_change_pct: s.wall === null || s.prev === null ? null : changePct(s.wall * 1.25, s.prev * 1.2),
+        summed_p50_change_pct: 0,
+        summed_p95_change_pct: null,
+      })),
+    },
+    regressions: {
+      rule: { recent_runs: 5, baseline_runs: 20, min_baseline_runs: 10, ratio: 1.5, same_branch: true, test_min_samples: 10, test_ratio: 1.5 },
+      suites: {
+        measured: true,
+        reason: null,
+        evaluated: 3,
+        considered: 4,
+        total: 1,
+        items: [
+          {
+            suite_key: 'payments',
+            suite_name: 'Payments',
+            branch: 'main',
+            metric: 'wall',
+            ratio: 1.79,
+            recent_median_ms: 251_000,
+            baseline_median_ms: 140_000,
+            recent_runs: 5,
+            baseline_runs: 20,
+            observed_ms: 262_000,
+            was_slow_before: false,
+            latest_run_id: runs()[3].id,
+            latest_run_at: runs()[3].created_at,
+          },
+        ],
+      },
+      tests: {
+        measured: false,
+        reason: 'no test in this project has a duration baseline of at least 10 samples yet',
+        considered: 0,
+        total: 0,
+        items: [],
+      },
+    },
+    slowest_tests: {
+      limit: 20,
+      measured: true,
+      reason: null,
+      items: [
+        { test_fingerprint: 'fp-exec-outlier', test_name: 'nightly ledger export', suite_name: 'Payments', n: 4, p50_ms: 38_000, p95_ms: 40_000, max_ms: 40_400 },
+        ...Array.from({ length: 19 }, (_, i) => ({
+          test_fingerprint: `fp-exec-${i}`,
+          test_name: i === 4 ? HOSTILE_NAME : `checkout step ${String(i + 1).padStart(2, '0')}`,
+          suite_name: i % 2 === 0 ? 'Checkout' : 'Auth',
+          n: 12 + i,
+          p50_ms: 1_200 - i * 30,
+          p95_ms: 2_600 - i * 80,
+          max_ms: 2_900 - i * 80,
+        })),
+      ],
+    },
+    duration_histogram: {
+      measured: true,
+      reason: null,
+      n: HISTOGRAM_COUNTS.reduce((total, count) => total + count, 0),
+      buckets: HISTOGRAM_EDGES.map((lower, i) => ({
+        lower_ms: lower,
+        upper_ms: i + 1 < HISTOGRAM_EDGES.length ? HISTOGRAM_EDGES[i + 1] : null,
+        count: HISTOGRAM_COUNTS[i],
+      })),
+      p50_ms: 240,
+      p95_ms: 3_100,
+    },
+  }
+}
+
+/**
+ * `GET /analytics/execution/suite-history` for the suite page's suite: one
+ * execution per recent run of `suiteDetail()` (the Runs tab joins on those
+ * ids), OLDEST FIRST, the third one from a report without timestamps (no wall
+ * clock); the window's p50 / p95 over all of them.
+ */
+export function suiteExecutionHistory(request: ApiRequest) {
+  const name = request.url.searchParams.get('suite_name') ?? ''
+  const limit = intParam(request, 'limit', 100)
+  const recent = suiteDetail().recent_runs
+  const all = [...recent].reverse().map((run, i) => {
+    const summed = 200_000 + ((i * 41_000) % 60_000)
+    const wall = i === 2 ? null : Math.round(summed / (1.7 + (i % 3) * 0.2))
+    return {
+      run_id: run.test_run_id,
+      build_number: run.build_number,
+      run_created_at: run.run_date,
+      branch: 'main',
+      run_status: run.failed > 0 ? 'FAILED' : 'PASSED',
+      source: wall === null ? 'derived_sum' : 'derived',
+      wall_ms: wall,
+      summed_ms: summed,
+      parallelism: wall === null ? null : round2(summed / wall),
+      started_at: wall === null ? null : run.run_date,
+      finished_at: wall === null ? null : new Date(Date.parse(run.run_date) + wall).toISOString(),
+      test_count: run.passed + run.failed + run.skipped,
+      timed_count: wall === null ? 0 : run.passed + run.failed + run.skipped,
+      passed: run.passed,
+      failed: run.failed,
+      broken: 0,
+      skipped: run.skipped,
+      unknown: 0,
+    }
+  })
+  const points = all.slice(-limit)
+  const known = (key: 'wall_ms' | 'summed_ms') => all.map((p) => p[key]).filter((v): v is number => v !== null).sort((a, b) => a - b)
+  const stats = (values: number[]) => ({
+    n: values.length,
+    p50_ms: values.length ? values[Math.ceil(values.length * 0.5) - 1] : null,
+    p95_ms: values.length ? values[Math.ceil(values.length * 0.95) - 1] : null,
+    measured: values.length > 0,
+    reason: values.length ? null : 'no execution of this suite in the window reported one',
+  })
+  return {
+    project_id: PROJECT_ID,
+    suite_name: name.toLowerCase() === SUITE.toLowerCase() ? SUITE : name,
+    suite_key: name.trim().toLowerCase(),
+    branch: null,
+    days: intParam(request, 'days', 90),
+    limit,
+    total: all.length,
+    truncated: all.length > points.length,
+    measured: all.length > 0,
+    reason: all.length > 0 ? null : 'no execution of this suite in the window',
+    points,
+    stats: { wall: stats(known('wall_ms')), summed: stats(known('summed_ms')), parallelism_p50: 1.9 },
+    meta: { scope: { project_ids: [PROJECT_ID] }, measured: true },
+  }
+}
+
+/** The two execution reads (Trends › Execution time; the suite page's Charts and Runs tabs). */
+export const EXECUTION: ApiHandlers = [
+  [EXECUTION_METRICS_PATH, executionMetrics],
+  [SUITE_HISTORY_PATH, suiteExecutionHistory],
+]
+
 /**
  * /trends with the catalogue: + chart-data (suites, p50, p95); the probe is a
  * `/runs` read. Wave 3: the suite x day heatmap asks
- * `/analytics/heatmap?kind=suite_day` itself (and a cell's rows).
+ * `/analytics/heatmap?kind=suite_day` itself (and a cell's rows). EXEC-04b:
+ * the Execution time tab's execution metrics.
  */
-export const TRENDS_ON: ApiHandlers = [...RELEASES_LIST, ...CHART_DATA, ...WAVE3, ...TRENDS]
+export const TRENDS_ON: ApiHandlers = [...RELEASES_LIST, ...CHART_DATA, ...WAVE3, ...EXECUTION, ...TRENDS]
 
 /**
  * /coverage/suite with the catalogue: no new request (the overlays read the
  * page's points). Wave 3: the test x run heatmap, the scatter, their rows,
  * and the sections' unfiltered "ever had a run?" probe (`/runs?page=1&size=1`).
+ * EXEC-04b: "Suite execution time" and the Runs tab's wall clock.
  */
-export const SUITE_DETAIL_ON: ApiHandlers = [...RELEASES_LIST, ...WAVE3, ...RUNS, ...SUITE_DETAIL]
+export const SUITE_DETAIL_ON: ApiHandlers = [...RELEASES_LIST, ...WAVE3, ...EXECUTION, ...RUNS, ...SUITE_DETAIL]
 
 /** The two Object members the hostile fixtures use as names (`constructor`, `__proto__`). */
 export const OBJECT_MEMBER_NAMES: readonly string[] = ['constructor', '__proto__']

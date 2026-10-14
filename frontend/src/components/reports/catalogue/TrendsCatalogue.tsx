@@ -6,6 +6,12 @@
  *      `chart-data?metric=pass_rate&group_by=day&group_by=suite&top_n=7`: the
  *      seven busiest suites plus "Other", the server folding the rest from
  *      counts.
+ *   1b. **Execution time** (EXEC-04b, TRND-09) — `ExecutionTimeSection`, one
+ *      read of `/analytics/execution-metrics`: the wall clock and summed test
+ *      time totals and per day, the per-suite table with its change against
+ *      the previous window, the biggest regressions, the 20 slowest tests and
+ *      the duration distribution. Opt-in (`sections`): Trends renders it on
+ *      its Execution time tab, above the p50 / p95 band.
  *   2. **Test duration p50 / p95** — `DurationChartFrame kind="trend"` over two
  *      `chart-data` day series joined by `durationBandPoints`. A day whose p95
  *      the server did not measure is a GAP in the line and "—" in the table,
@@ -66,6 +72,7 @@ import type { ScopeValue } from '@/lib/scopeParams'
 import type { EnvelopeMeta, SeriesChart } from '@/lib/viz/contracts'
 import CompareSection, { COMPARE_HEIGHT } from './CompareSection'
 import { defaultCompareSuites } from './compareModel'
+import ExecutionTimeSection, { EXECUTION_SECTION_MIN_HEIGHT } from './ExecutionTimeSection'
 import LazySection from './LazySection'
 import { clampCatalogueDays, ROW_GRAIN_MAX_WINDOW_DAYS, useCatalogueParams } from './catalogueScope'
 import { HeatmapSection } from './HeatmapSection'
@@ -305,8 +312,14 @@ function CompareNear({ onNear, ...props }: Parameters<typeof CompareSection>[0] 
 // ── The catalogue ───────────────────────────────────────────────────────────
 
 /** The catalogue's sections, by their `data-catalogue-section` / `data-lazy-section` ids, in drawing order. */
-const TRENDS_SECTION_IDS = ['trends-multi-series', 'trends-compare', 'trends-duration', 'trends-heatmap'] as const
+const TRENDS_SECTION_IDS = ['trends-multi-series', 'trends-compare', 'trends-execution', 'trends-duration', 'trends-heatmap'] as const
 export type TrendsSectionId = (typeof TRENDS_SECTION_IDS)[number]
+/**
+ * What renders when no `sections` are given: the four VIZ-408 sections. The
+ * execution section (EXEC-04b) is opt-in, so a host that names no sections
+ * asks exactly what it asked before it existed.
+ */
+const DEFAULT_SECTION_IDS: readonly TrendsSectionId[] = TRENDS_SECTION_IDS.filter((id) => id !== 'trends-execution')
 
 export interface TrendsCatalogueProps {
   /** The page's window, days, as the page shows it (snapped to its options). Clamped again on the wire. */
@@ -315,14 +328,14 @@ export interface TrendsCatalogueProps {
   suiteFilter: ScopeValue
   /**
    * Which sections to render (a composition choice, UX redesign P3; default
-   * all four). A section left out is not rendered at all — no placeholder,
-   * no hook, no request; one listed is drawn exactly as with all four, always
-   * in the catalogue's own order.
+   * the four VIZ-408 sections, `DEFAULT_SECTION_IDS`). A section left out is
+   * not rendered at all — no placeholder, no hook, no request; one listed is
+   * drawn exactly as with all of them, always in the catalogue's own order.
    */
   sections?: readonly TrendsSectionId[]
 }
 
-export default function TrendsCatalogue({ days, suiteFilter, sections = TRENDS_SECTION_IDS }: TrendsCatalogueProps) {
+export default function TrendsCatalogue({ days, suiteFilter, sections = DEFAULT_SECTION_IDS }: TrendsCatalogueProps) {
   const windowDays = clampCatalogueDays(days, ROW_GRAIN_MAX_WINDOW_DAYS)
   const singleDay = windowDays < 2
   const shows = (id: TrendsSectionId) => sections.includes(id)
@@ -381,6 +394,13 @@ export default function TrendsCatalogue({ days, suiteFilter, sections = TRENDS_S
             busiestSuites={busiestSuites}
             onNear={onDurationNear}
           />
+        </LazySection>
+      )}
+      {/* EXEC-04b: its own read of the execution metrics, once it is near (no probe: the
+          read answers "no run in this scope" itself). */}
+      {shows('trends-execution') && (
+        <LazySection label="trends-execution" minHeight={EXECUTION_SECTION_MIN_HEIGHT}>
+          <ExecutionTimeSection days={days} suiteFilter={suiteFilter} />
         </LazySection>
       )}
       {shows('trends-duration') && (

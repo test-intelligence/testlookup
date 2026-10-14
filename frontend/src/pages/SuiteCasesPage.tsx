@@ -11,10 +11,13 @@
  *   Tests (default): the catalog, each test with its pass rate, executions,
  *     duration, latest result, flaky flag and last error — Move and the bulk
  *     move kept (`suite/SuiteTestsTable`)
- *   Runs: the suite's recent runs with this suite's counts in each
- *   Charts: the run history, per-day pass rate, test x run heatmap and test
- *     scatter — the former `/coverage/suite` charts (`SuiteChartsPanel`,
- *     lazy: the Tests tab loads no chart code)
+ *   Runs: the suite's recent runs with this suite's counts in each, and
+ *     (EXEC-04b) each run's wall clock for this suite, from the suite's
+ *     execution history (asked only while the tab is open)
+ *   Charts: the run history, per-day pass rate, test x run heatmap, test
+ *     scatter and (EXEC-04b) "Suite execution time" — the former
+ *     `/coverage/suite` charts (`SuiteChartsPanel`, lazy: the Tests tab loads
+ *     no chart code)
  *
  * `/coverage/suite?name=X` redirects here (`?tab=charts`), keeping its other
  * parameters: an old link's `?days=` becomes the window (`useSuiteWindow`).
@@ -40,18 +43,21 @@ import {
   useSuiteTestCases,
 } from '@/hooks/useSuites'
 import { useSuiteDetail } from '@/hooks/useMetrics'
+import { useSuiteExecutionHistory } from '@/hooks/useExecutionMetrics'
+import { useReleaseScope } from '@/hooks/useReleaseScope'
+import { useActiveProjectId } from '@/hooks/useProjectScopedSWR'
 import { suitesService } from '@/services/suitesService'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import type { SuiteDetailTestCase } from '@/types/analytics'
 import type { CanonicalTestCase, TestSuite } from '@/types/suites'
 import { lazyWithRetry } from '@/utils/lazyWithRetry'
 import SuiteTestsTable from './suite/SuiteTestsTable'
-import { RecentRunsTable } from './suite/SuiteParts'
+import { RecentRunsTable, type RunWallClocks } from './suite/SuiteParts'
 import { formatSuiteDuration } from './suite/format'
 
 // The Charts tab's chart code (the kit's frames, the Wave 3 composite) loads
 // when the tab is first opened, not with the catalog.
-const SuiteChartsPanel = lazyWithRetry<{ suiteName: string; days: number }>(() =>
+const SuiteChartsPanel = lazyWithRetry<{ suiteName: string; days: number; projectId?: string | null }>(() =>
   import('./SuiteDetailPage').then((m) => ({ default: m.SuiteChartsPanel })),
 )
 
@@ -309,6 +315,27 @@ export default function SuiteCasesPage() {
   // sends it once.
   const { data: detail, isLoading: detailLoading, error: detailError } = useSuiteDetail(suite?.name ?? null, days)
   const cases = useMemo(() => casesData?.items ?? [], [casesData])
+  // EXEC-04b: the Runs tab's Wall-clock column — this suite's execution per
+  // run, from its execution history (asked only while that tab is open), in
+  // the same window and release scope as the runs it sits beside. The release
+  // belongs to the active project: it is sent only for a suite of that project.
+  const activeProjectId = useActiveProjectId()
+  const release = useReleaseScope()
+  const wallHistory = useSuiteExecutionHistory({
+    projectId: tab === 'runs' ? suite?.project_id ?? null : null,
+    suiteName: suite?.name ?? null,
+    days,
+    releaseIds: release && suite?.project_id === activeProjectId ? [release] : undefined,
+    limit: 500,
+  })
+  const wallClocks = useMemo<RunWallClocks>(
+    () => ({
+      byRun: new Map((wallHistory.data?.points ?? []).map((point) => [point.run_id, point])),
+      loading: wallHistory.isLoading,
+      failed: Boolean(wallHistory.error),
+    }),
+    [wallHistory.data, wallHistory.isLoading, wallHistory.error],
+  )
   const catalogEmpty = casesData !== undefined && cases.length === 0
   // Run-level aggregates for the same suite so an EMPTY catalog can tell
   // "this suite has truly never ingested anything" from "runs landed but
@@ -523,13 +550,13 @@ export default function SuiteCasesPage() {
           ) : recentRuns.length === 0 ? (
             <EmptyState title="No runs in this window" description={`No run of this suite in the last ${days} days.`} />
           ) : (
-            <RecentRunsTable runs={recentRuns} primary />
+            <RecentRunsTable runs={recentRuns} primary wallClocks={wallClocks} />
           )
         )}
 
         {tab === 'charts' && (
           <Suspense fallback={<div className="flex h-64 items-center justify-center"><LoadingSpinner size="lg" /></div>}>
-            <SuiteChartsPanel suiteName={suite.name} days={days} />
+            <SuiteChartsPanel suiteName={suite.name} days={days} projectId={suite.project_id} />
           </Suspense>
         )}
       </div>

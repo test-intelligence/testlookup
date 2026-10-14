@@ -91,3 +91,32 @@ describe('TimingCell', () => {
     expect(container.querySelector('td')?.className).toMatch(/overflow-hidden/)
   })
 })
+
+// EXEC-04b: a run has two durations; with `wallClockMs` the cell says which one it shows.
+describe('TimingCell with a wall clock (EXEC-04b)', () => {
+  const started = new Date(2026, 7, 28, 14, 32)
+  const end = new Date(2026, 7, 28, 14, 46)
+
+  it('shows the wall clock, labelled, with both durations in the tooltip', () => {
+    const { container } = renderCell(<TimingCell started={started} end={end} durationMs={17_400} wallClockMs={9_000} />)
+    expect(screen.getByText(/^9\.0s wall · /)).toBeInTheDocument()
+    expect(container.querySelector('td')?.getAttribute('title')).toMatch(/\nWall clock 9\.0s · Test time \(summed\) 17\.4s$/)
+  })
+
+  it('no wall clock: the SUMMED time, labelled as such (never passed off as how long the run took)', () => {
+    const { container } = renderCell(<TimingCell started={started} end={end} durationMs={17_400} wallClockMs={null} />)
+    expect(screen.getByText(/^17\.4s summed · /)).toBeInTheDocument()
+    expect(screen.queryByText(/wall/)).toBeNull()
+    expect(container.querySelector('td')?.getAttribute('title')).toMatch(/Wall clock not reported · Test time \(summed\) 17\.4s$/)
+  })
+
+  it('neither figure: no duration line, never "0ms"', () => {
+    renderCell(<TimingCell started={started} end={end} wallClockMs={null} />)
+    expect(screen.queryByText(/ms|summed|wall/)).toBeNull()
+  })
+
+  it('a caller that passes no wall clock (Live) keeps the unlabelled duration', () => {
+    renderCell(<TimingCell started={started} end={end} durationMs={17_400} />)
+    expect(screen.getByText(/^17\.4s · /)).toBeInTheDocument()
+  })
+})

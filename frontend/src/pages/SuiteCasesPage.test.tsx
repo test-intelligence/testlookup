@@ -34,6 +34,13 @@ vi.mock('./SuiteDetailPage', () => ({
   ),
 }))
 
+// EXEC-04b: the Runs tab's Wall-clock column reads the suite's execution
+// history; answered per call so a test can see what it was asked for.
+const mockUseSuiteExecutionHistory = vi.fn()
+vi.mock('@/hooks/useExecutionMetrics', () => ({
+  useSuiteExecutionHistory: (...args: unknown[]) => mockUseSuiteExecutionHistory(...args),
+}))
+
 vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: vi.fn(() => ({
     hasRole: () => true,
@@ -194,7 +201,60 @@ function scriptDetail(detail: SuiteDetailResponse | undefined, extra: { isLoadin
 beforeEach(() => {
   mockUseSuiteDetail.mockReset()
   scriptDetail(DETAIL)
+  mockUseSuiteExecutionHistory.mockReset()
+  mockUseSuiteExecutionHistory.mockReturnValue({ data: undefined, isLoading: false, error: undefined, mutate: vi.fn() })
   act(() => useTimeWindowStore.getState().setDays(30))
+})
+
+/** One run's execution of the suite, as `/analytics/execution/suite-history` sends it. */
+function _execution(runId: string, wall: number | null, summed: number | null) {
+  return {
+    run_id: runId, build_number: null, run_created_at: '2026-05-15T10:00:00Z', branch: 'main', run_status: 'PASSED',
+    source: wall === null ? 'derived_sum' : 'derived', wall_ms: wall, summed_ms: summed, parallelism: null,
+    started_at: null, finished_at: null, test_count: 10, timed_count: 10,
+    passed: 9, failed: 1, broken: 0, skipped: 0, unknown: 0,
+  }
+}
+
+// EXEC-04b: the Runs tab's Wall-clock column, from the suite's execution history.
+describe('SuiteCasesPage — the Runs tab wall clock (EXEC-04b)', () => {
+  beforeEach(async () => {
+    await scriptSuite()
+  })
+
+  it('asks nothing on the Tests tab: the history is read only while Runs is open', () => {
+    renderPage()
+    for (const [scope] of mockUseSuiteExecutionHistory.mock.calls) expect((scope as { projectId: unknown }).projectId).toBeNull()
+  })
+
+  it("Runs asks for the suite's own project, name and window, and shows each run's wall clock, never its summed time", () => {
+    mockUseSuiteExecutionHistory.mockReturnValue({
+      data: { points: [_execution('run-1', 9_000, 17_400), _execution('run-2', null, 12_500)] },
+      isLoading: false,
+      error: undefined,
+      mutate: vi.fn(),
+    })
+    renderPage('/suites/suite-a?tab=runs')
+    const calls = mockUseSuiteExecutionHistory.mock.calls
+    const scope = calls[calls.length - 1]?.[0] as Record<string, unknown>
+    expect(scope).toMatchObject({ projectId: 'proj-1', suiteName: 'Login Suite', days: 30 })
+    const panel = screen.getByRole('tabpanel', { name: 'Runs' })
+    expect(within(panel).getByRole('columnheader', { name: 'Wall clock' })).toBeInTheDocument()
+    const cells = [...panel.querySelectorAll('[data-wall-clock]')] as HTMLElement[]
+    expect(cells.map((cell) => cell.textContent)).toEqual(['9.0s', 'not reported'])
+    expect(cells[0]).toHaveAttribute('title', 'Test time (summed): 17.4s')
+    // The summed time is in the tooltip, named as such: it never fills the wall-clock cell.
+    expect(cells[1].getAttribute('title')).toMatch(/no timestamps.*Test time \(summed\): 12\.5s/)
+    expect(within(panel).queryByText('12.5s')).toBeNull()
+  })
+
+  it('a run the history does not cover (or a failed read) is a dash that says why, never 0', () => {
+    mockUseSuiteExecutionHistory.mockReturnValue({ data: undefined, isLoading: false, error: new Error('boom'), mutate: vi.fn() })
+    renderPage('/suites/suite-a?tab=runs')
+    const cells = [...document.querySelectorAll('[data-wall-clock]')] as HTMLElement[]
+    expect(cells.map((cell) => cell.textContent)).toEqual(['—', '—'])
+    expect(cells[0]).toHaveAttribute('title', 'The suite execution times could not be loaded')
+  })
 })
 
 describe('SuiteCasesPage bulk move', () => {

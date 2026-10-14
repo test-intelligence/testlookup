@@ -7,6 +7,8 @@ import { Link } from 'react-router-dom'
 import { AlertTriangle, Calendar } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { SuiteDetailRun } from '@/types/analytics'
+import type { SuiteHistoryPoint } from '@/types/executionMetrics'
+import { formatDuration } from '@/utils/formatters'
 import { formatSuiteDate } from './format'
 
 /** A pass rate as a bar and a number, its hue by band (>= 90 passed, >= 70 broken, else failed). */
@@ -54,11 +56,77 @@ export function FlakyPill() {
 }
 
 /**
+ * EXEC-04b: each run's execution of THIS suite (`/analytics/execution/suite-history`),
+ * by run id, for the Wall-clock column. `loading` / `failed` say why a run has
+ * no entry yet, so a missing figure is never shown as a measured one.
+ */
+export interface RunWallClocks {
+  byRun: ReadonlyMap<string, SuiteHistoryPoint>
+  loading: boolean
+  failed: boolean
+}
+
+/** The words of a Wall-clock cell the report did not carry (never the summed time, never 0). */
+export const WALL_NOT_REPORTED = 'not reported'
+
+/**
+ * One run's Wall-clock cell: the suite's wall clock in that run; "not
+ * reported" when the run's report carried no timestamps (its summed time, which
+ * is known, is in the tooltip — it is not a wall clock); "—" while the
+ * history loads, when it could not be read, or for a run it does not cover.
+ */
+export function WallClockCell({ runId, wallClocks }: { runId: string; wallClocks: RunWallClocks }) {
+  const point = wallClocks.byRun.get(runId)
+  if (!point) {
+    const why = wallClocks.loading
+      ? 'Loading the suite execution times'
+      : wallClocks.failed
+        ? 'The suite execution times could not be loaded'
+        : 'No execution record of this suite for this run yet'
+    return (
+      <td data-wall-clock="" className="td text-right text-xs text-[var(--color-text-muted)]" title={why}>
+        —
+      </td>
+    )
+  }
+  if (point.wall_ms === null) {
+    const summed = point.summed_ms === null ? '' : ` Test time (summed): ${formatDuration(point.summed_ms)}.`
+    return (
+      <td
+        data-wall-clock="not-reported"
+        className="td text-right text-xs text-[var(--color-text-muted)]"
+        title={`This run's report carried no timestamps, so the suite's wall clock is not known.${summed}`}
+      >
+        {WALL_NOT_REPORTED}
+      </td>
+    )
+  }
+  return (
+    <td
+      data-wall-clock="measured"
+      className="td text-right tabular-nums text-xs text-[var(--color-text-secondary)]"
+      title={point.summed_ms === null ? undefined : `Test time (summed): ${formatDuration(point.summed_ms)}`}
+    >
+      {formatDuration(point.wall_ms)}
+    </td>
+  )
+}
+
+/**
  * The suite's most recent runs in the window, with this suite's counts in each
  * (a run can hold several suites). The server returns the newest few, not
- * every run, so the heading counts the rows shown.
+ * every run, so the heading counts the rows shown. With `wallClocks`
+ * (EXEC-04b) a Wall-clock column says how long this suite took in each run.
  */
-export function RecentRunsTable({ runs, primary = false }: { runs: readonly SuiteDetailRun[]; primary?: boolean }) {
+export function RecentRunsTable({
+  runs,
+  primary = false,
+  wallClocks,
+}: {
+  runs: readonly SuiteDetailRun[]
+  primary?: boolean
+  wallClocks?: RunWallClocks
+}) {
   return (
     <div className="card" data-primary={primary ? '' : undefined} data-suite-recent-runs="">
       <div className="flex items-center gap-2 mb-4">
@@ -77,6 +145,11 @@ export function RecentRunsTable({ runs, primary = false }: { runs: readonly Suit
               <th className="th text-right text-[var(--status-failed)]">Failed</th>
               <th className="th text-right text-[var(--status-skipped)]">Skipped</th>
               <th className="th min-w-[160px]">Pass Rate</th>
+              {wallClocks ? (
+                <th className="th text-right" title="How long this suite took on the clock in the run (not the summed test time)">
+                  Wall clock
+                </th>
+              ) : null}
               <th className="th text-left">Run</th>
             </tr>
           </thead>
@@ -91,6 +164,7 @@ export function RecentRunsTable({ runs, primary = false }: { runs: readonly Suit
                 <td className="td w-44">
                   <PassRateBar rate={Number(r.pass_rate ?? 0)} />
                 </td>
+                {wallClocks ? <WallClockCell runId={r.test_run_id} wallClocks={wallClocks} /> : null}
                 <td className="td">
                   <Link
                     to={`/runs/${r.test_run_id}`}

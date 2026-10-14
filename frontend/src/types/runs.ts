@@ -17,7 +17,27 @@ export interface TestRun {
   total_tests: number
   /** `null` while the run is in progress (the list sends it so); read it with `measuredRunPassRate`. */
   pass_rate: number | null
+  /**
+   * TEST TIME (SUMMED): every test's duration added up, ms. NOT how long the
+   * run took — tests that ran in parallel are each counted in full. The UI
+   * labels it "Test time (summed)" (EXEC-02).
+   */
   duration_ms?: number
+  /**
+   * WALL CLOCK (EXEC-02): how long the run took on the clock, ms. `null` = not
+   * reported (the report carried no timestamps, or the run is not timed yet) —
+   * never the summed time standing in for it. Optional for older API responses.
+   */
+  wall_clock_ms?: number | null
+  /** When the run's first test started / its last test finished (UTC instants), as reported or derived. */
+  exec_started_at?: string | null
+  exec_finished_at?: string | null
+  /**
+   * Where the run's timing came from: `report` (the report's own run span),
+   * `derived` (from its tests' start and finish times), `derived_sum` (no
+   * timestamps: only the summed test time is known). `null` = not timed yet.
+   */
+  timing_source?: 'report' | 'derived' | 'derived_sum' | null
   /** Run start timestamp (TestRun.start_time). Set by ingestion / live close. */
   start_time?: string | null
   /** Run completion timestamp (TestRun.end_time). May be null while a live run is still in flight. */

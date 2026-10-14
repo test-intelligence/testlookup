@@ -32,9 +32,11 @@ export interface SuiteDetailAdvancedProps {
   days: number
   /** The page's suite (`?name=`). Empty: nothing is rendered. */
   suiteName: string
+  /** EXEC-04b: the suite's own project, for its execution-time read (default: the active project). */
+  projectId?: string | null
 }
 
-export default function SuiteDetailAdvanced({ days, suiteName }: SuiteDetailAdvancedProps): ReactElement | null {
+export default function SuiteDetailAdvanced({ days, suiteName, projectId }: SuiteDetailAdvancedProps): ReactElement | null {
   // The page's ONE suite, as every section's suite scope (identity-stable).
   const suiteFilter = useMemo(() => [suiteName] as const, [suiteName])
   if (!suiteName) return null
@@ -42,7 +44,7 @@ export default function SuiteDetailAdvanced({ days, suiteName }: SuiteDetailAdva
     // A sections module that failed to load is nothing at all (logged and reported): the page is unchanged.
     <Quiet label="suite-detail">
       <Suspense fallback={<div aria-hidden="true" style={{ minHeight: SUITE_ADVANCED_MIN_HEIGHT }} />}>
-        <SuiteDetailAdvancedSections days={days} suiteFilter={suiteFilter} />
+        <SuiteDetailAdvancedSections days={days} suiteFilter={suiteFilter} projectId={projectId} />
       </Suspense>
     </Quiet>
   )
