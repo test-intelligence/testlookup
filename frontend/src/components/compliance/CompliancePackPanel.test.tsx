@@ -1,0 +1,58 @@
+/**
+ * HON-07: compliance packs are tamper-evident (a SHA-256 manifest), not
+ * signed. `compliance_pack_service` has no HMAC and no PKI, and the flag's own
+ * description says so; the panel promised "a signed ZIP".
+ */
+import { render, screen } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+import CompliancePackPanel from './CompliancePackPanel'
+
+const packsState = vi.hoisted(() => ({ packs: [] as unknown[] }))
+
+vi.mock('@/hooks/useCompliancePacks', () => ({
+  useCompliancePacks: () => ({ packs: packsState.packs, isLoading: false, isError: false, refresh: vi.fn() }),
+}))
+
+vi.mock('@/hooks/usePermissions', () => ({
+  usePermissions: () => ({ canAccessManagement: true }),
+}))
+
+vi.mock('@/services/compliancePackService', () => ({
+  compliancePackService: { generate: vi.fn(), download: vi.fn() },
+}))
+
+vi.mock('react-hot-toast', () => ({ default: { success: vi.fn(), error: vi.fn() } }))
+
+describe('CompliancePackPanel', () => {
+  beforeEach(() => {
+    packsState.packs = []
+  })
+
+  it('calls the pack tamper-evident, never signed', () => {
+    const { container } = render(<CompliancePackPanel releaseId="rel-1" releaseName="2026.10" />)
+
+    expect(screen.getByText(/sealed with a tamper-evident SHA-256 manifest/)).toBeInTheDocument()
+    expect(container).not.toHaveTextContent(/signed/i)
+    expect(screen.getByRole('button', { name: /Generate pack/ })).toBeInTheDocument()
+  })
+
+  it('lists a generated pack with its manifest digest', () => {
+    packsState.packs = [
+      {
+        id: 'pack-1',
+        release_id: 'rel-1',
+        generated_at: '2026-10-01T12:00:00Z',
+        bytes: 2048,
+        file_count: 9,
+        manifest_sha256: 'ab'.repeat(32),
+        notes: null,
+      },
+    ]
+    const { container } = render(<CompliancePackPanel releaseId="rel-1" />)
+
+    expect(screen.getByText(`sha256: ${'ab'.repeat(32)}`)).toBeInTheDocument()
+    expect(screen.getByText(/2\.0 KB · 9 files/)).toBeInTheDocument()
+    expect(container).not.toHaveTextContent(/signed/i)
+  })
+})

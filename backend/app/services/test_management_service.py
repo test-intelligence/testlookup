@@ -76,6 +76,35 @@ async def get_test_case_or_404(
     )
 
 
+def managed_case_search_clause(search: str):
+    """HON-07: the authored-case search, as wide as the Cases box promises.
+
+    The placeholder said "ID, title, tags, owner, or requirement" while this
+    matched the title alone. It now matches the title, the description, any
+    tag (the JSON list cast to text; the list holds strings, so a key name
+    cannot match by accident), and the case id by PREFIX, with or without the
+    ``TC-`` the page prints before the id's first six characters. Owner and
+    requirement are not searched, and the placeholder no longer names them.
+    A full scan per project, which is acceptable at library sizes.
+    """
+    from sqlalchemy import Text
+
+    from app.services.sql_utils import escape_like, like_contains
+
+    pattern = like_contains(search)
+    clauses = [
+        ManagedTestCase.title.ilike(pattern, escape="\\"),
+        ManagedTestCase.description.ilike(pattern, escape="\\"),
+        ManagedTestCase.tags.cast(Text).ilike(pattern, escape="\\"),
+    ]
+    id_term = search.strip().lower()
+    if id_term.startswith("tc-"):
+        id_term = id_term[3:]
+    if id_term:
+        clauses.append(ManagedTestCase.id.cast(Text).ilike(f"{escape_like(id_term)}%", escape="\\"))
+    return or_(*clauses)
+
+
 async def list_managed_test_cases(
     db: AsyncSession,
     project_id: Optional[uuid.UUID],
@@ -126,8 +155,7 @@ async def list_managed_test_cases(
             == normalize_suite_name(suite_name)
         )
     if search:
-        from app.services.sql_utils import like_contains
-        query = query.where(ManagedTestCase.title.ilike(like_contains(search), escape="\\"))
+        query = query.where(managed_case_search_clause(search))
     return await paginate_scalars(db, query.order_by(ManagedTestCase.created_at.desc()), page, size)
 
 
@@ -183,11 +211,7 @@ async def list_combined_test_case_identities(
             == normalize_suite_name(suite_name)
         )
     if search:
-        from app.services.sql_utils import like_contains
-
-        managed = managed.where(
-            ManagedTestCase.title.ilike(like_contains(search), escape="\\")
-        )
+        managed = managed.where(managed_case_search_clause(search))
 
     sources = [managed]
     if not test_type or test_type.lower() == "automation":

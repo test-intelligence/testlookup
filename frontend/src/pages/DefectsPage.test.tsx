@@ -341,13 +341,24 @@ describe('DefectsPage — KPI glyphs draw only real numbers', () => {
 
   it('deletes the four hard-coded glyphs', async () => {
     const kpis = await renderWith([p0('d1', 4)])
-    for (const label of ['Open defects', 'P0 / P1 open', 'Time to resolve', 'Escape rate']) {
+    for (const label of ['Open defects', 'P0 / P1 open', 'Time to resolve', 'Unlinked to Jira']) {
       const cell = kpiCell(kpis, label)
       expect(cell.querySelector('svg:not(.lucide)'), label).toBeNull()
       expect(cell.querySelector('polyline'), label).toBeNull()
       expect(within(cell).queryByRole('meter'), label).toBeNull()
       expect(within(cell).queryByRole('img'), label).toBeNull()
     }
+  })
+
+  // HON-07: the share of defects with no Jira issue was labelled "Escape rate"
+  // (defects found after a release shipped, which nothing here measures).
+  it('names the no-Jira share for what it is: "Unlinked to Jira", never "Escape rate"', async () => {
+    const kpis = await renderWith([p0('d1', 4), { ...p0('d2', 2), jira_ticket_id: 'PAY-12' }, p0('d3', 1), p0('d4', 1)])
+    const cell = kpiCell(kpis, 'Unlinked to Jira')
+    // Three of the four have no Jira issue.
+    expect(cell).toHaveTextContent('Unlinked to Jira75%')
+    expect(within(cell).getByText('Unlinked to Jira')).toHaveAttribute('title', 'Share of defects (any status) with no Jira issue')
+    expect(within(kpis).queryByText(/escape rate/i)).toBeNull()
   })
 
   it('gauges the oldest open P0 in days on a one-week scale, toned by the KPI bands', async () => {
