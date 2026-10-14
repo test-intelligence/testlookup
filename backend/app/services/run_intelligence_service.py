@@ -17,6 +17,7 @@ issuing two ``db.execute()`` calls on it from gathered coroutines raises
 """
 import asyncio
 import logging
+import time
 import uuid
 from typing import Any, Optional
 
@@ -435,8 +436,8 @@ async def get_run_intelligence(
         logger.warning("Failed to compute baseline diff for run %s: %s", run_id, exc)
         _partial_errors.append("baseline_diff_unavailable")
 
-    # ── 7. Defect candidates — from persisted candidates or real promotion service ─
-    defect_candidates = await _load_or_build_defect_candidates(
+    # ── 7. Defect candidates — persisted, or the heuristic while the LLM build runs ─
+    defect_candidates, defect_candidates_pending = await _load_or_build_defect_candidates(
         run_id=run_id,
         failure_clusters=failure_clusters,
         top_analyses=top_analyses,
@@ -544,6 +545,10 @@ async def get_run_intelligence(
         "dimension_scores": dimension_scores,
         "what_changed_since_last_good_run": what_changed,
         "defect_candidates": defect_candidates,
+        # True while the LLM-written candidates are still being built in the
+        # background: ``defect_candidates`` is the heuristic until then, and
+        # ``save_snapshot`` does not cache the payload.
+        "defect_candidates_pending": defect_candidates_pending,
         "summary_modes": summary_modes,
         "provenance": provenance,
         "partial_errors": _partial_errors if _partial_errors else None,
@@ -575,6 +580,65 @@ def _serialize_persisted_candidate(c) -> dict:
     }
 
 
+# The LLM-backed defect-candidate build runs OFF the request path.
+#
+# It used to run inside ``GET /runs/{id}/intelligence`` on a cold cache: the
+# request session held its connection while a second session made up to five
+# LLM calls, and each call's cost-cap check took a third. The production pool
+# is THREE connections per worker (``db/postgres.py``), so three runs opened
+# at once held them all, every other request waited out the 30 s pool timeout,
+# and the first thing to need a connection -- the token revocation check --
+# answered 503 "revocation store unavailable" (homelab, 2026-10-13).
+#
+# Now a cold read answers with the heuristic candidates and schedules the
+# build: one per run (in flight), one at a time per worker (the slot is taken
+# before the session opens, so a queued build costs a coroutine, not a
+# connection), and not again for an hour after an attempt that persisted
+# nothing -- otherwise every view of such a run would pay for five LLM calls.
+_DEFECT_BUILD_SLOT = asyncio.Semaphore(1)
+_DEFECT_BUILD_IN_FLIGHT: set[str] = set()
+_DEFECT_BUILD_FINISHED_AT: dict[str, float] = {}
+_DEFECT_BUILD_RETRY_SECONDS = 3600.0
+# The event loop keeps only weak references to its tasks.
+_DEFECT_BUILD_TASKS: set[asyncio.Task] = set()
+
+
+def _schedule_defect_candidate_build(run_id: uuid.UUID, failure_clusters: list[dict]) -> bool:
+    """Start the background build for ``run_id`` unless one is running or was
+    attempted within the retry window. True while a build is in flight."""
+    key = str(run_id)
+    if key in _DEFECT_BUILD_IN_FLIGHT:
+        return True
+    now = time.monotonic()
+    finished_at = _DEFECT_BUILD_FINISHED_AT.get(key)
+    if finished_at is not None and now - finished_at < _DEFECT_BUILD_RETRY_SECONDS:
+        return False
+    for stale_key in [k for k, t in _DEFECT_BUILD_FINISHED_AT.items() if now - t >= _DEFECT_BUILD_RETRY_SECONDS]:
+        del _DEFECT_BUILD_FINISHED_AT[stale_key]
+    _DEFECT_BUILD_IN_FLIGHT.add(key)
+    task = asyncio.get_running_loop().create_task(
+        _build_defect_candidates_in_background(run_id, list(failure_clusters[:5]))
+    )
+    _DEFECT_BUILD_TASKS.add(task)
+    task.add_done_callback(_DEFECT_BUILD_TASKS.discard)
+    return True
+
+
+async def _build_defect_candidates_in_background(
+    run_id: uuid.UUID, failure_clusters: list[dict],
+) -> None:
+    """Build and persist the candidates for ``run_id``. Never raises."""
+    key = str(run_id)
+    try:
+        async with _DEFECT_BUILD_SLOT:
+            await _build_and_persist_defect_candidates(run_id, failure_clusters)
+    except Exception as exc:  # noqa: BLE001 -- a background build must not crash the worker
+        logger.warning("Background defect candidate build failed for run %s: %s", run_id, exc)
+    finally:
+        _DEFECT_BUILD_IN_FLIGHT.discard(key)
+        _DEFECT_BUILD_FINISHED_AT[key] = time.monotonic()
+
+
 async def _build_and_persist_defect_candidates(
     run_id: uuid.UUID,
     failure_clusters: list[dict],
@@ -583,10 +647,8 @@ async def _build_and_persist_defect_candidates(
     top candidates via the real promotion service, persist them, and return
     the serialized result.
 
-    Item #4 (command/query separation): this is explicitly the write half
-    of the read-path cache populate. Keeping it on its own session means
-    the GET handler's primary transaction stays read-only even when the
-    cache is cold.
+    Runs only in the background build (``_build_defect_candidates_in_background``),
+    never inside a request: it holds its session across the LLM calls.
     """
     from app.db.postgres import AsyncSessionLocal
     from app.models.postgres import DefectCandidate as DefectCandidateModel
@@ -655,21 +717,21 @@ async def _load_or_build_defect_candidates(
     failure_clusters: list[dict],
     top_analyses: list[dict],
     db: AsyncSession,
-) -> list[dict]:
+) -> tuple[list[dict], bool]:
     """
-    Load persisted defect candidates for this run, or trigger a dedicated
-    build-and-persist pass if the cache is cold.
+    Load persisted defect candidates for this run; on a cold cache, schedule
+    the LLM-backed build in the background and answer with the heuristic.
 
-    **Pure read** on the caller's ``db`` session — the cache populate runs
-    in a separate write session (see ``_build_and_persist_defect_candidates``)
-    so ``GET /run-intelligence`` never mutates its own transaction.
+    **Pure read** on the caller's ``db`` session, and no LLM call: see the
+    comment above ``_DEFECT_BUILD_SLOT`` for why the build never runs here.
 
-    Returns candidates enriched with lifecycle status.
+    Returns ``(candidates, pending)``; ``pending`` is True while a background
+    build is in flight, so the caller does not cache the heuristic answer.
     """
     from app.models.postgres import DefectCandidate as DefectCandidateModel
 
     if not failure_clusters:
-        return []
+        return [], False
 
     # ── 1. Cache hit: return persisted candidates ──────────────────────────
     try:
@@ -682,17 +744,16 @@ async def _load_or_build_defect_candidates(
         persisted = persisted_result.scalars().all()
 
         if persisted:
-            return [_serialize_persisted_candidate(c) for c in persisted]
+            return [_serialize_persisted_candidate(c) for c in persisted], False
     except Exception as exc:
+        # A failed read is not an empty one: building now could duplicate
+        # rows that exist. Answer with the heuristic and leave the cache be.
         logger.warning("Failed to load persisted defect candidates: %s", exc)
+        return _build_fallback_candidates(failure_clusters, top_analyses), False
 
-    # ── 2. Cache miss: build + persist on a dedicated write session ────────
-    built = await _build_and_persist_defect_candidates(run_id, failure_clusters)
-    if built:
-        return built
-
-    # ── 3. Fallback: lightweight heuristic ─────────────────────────────────
-    return _build_fallback_candidates(failure_clusters, top_analyses)
+    # ── 2. Cache miss: build in the background, heuristic for this answer ──
+    pending = _schedule_defect_candidate_build(run_id, failure_clusters)
+    return _build_fallback_candidates(failure_clusters, top_analyses), pending
 
 
 def _build_fallback_candidates(
