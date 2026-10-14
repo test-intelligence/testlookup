@@ -288,6 +288,10 @@ async def test_defect_promotion_writes_its_ticket_inside_the_runs_project_scope(
         def scalar_one_or_none(self):
             return self.value
 
+        def scalars(self):
+            # The cluster lookup takes the newest row: .scalars().first().
+            return SimpleNamespace(first=lambda: self.value)
+
     async def execute(*args, **kwargs):
         return _Row(next(rows))
 

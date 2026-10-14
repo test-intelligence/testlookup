@@ -617,7 +617,7 @@ def _schedule_defect_candidate_build(run_id: uuid.UUID, failure_clusters: list[d
         del _DEFECT_BUILD_FINISHED_AT[stale_key]
     _DEFECT_BUILD_IN_FLIGHT.add(key)
     task = asyncio.get_running_loop().create_task(
-        _build_defect_candidates_in_background(run_id, list(failure_clusters[:5]))
+        _build_defect_candidates_in_background(run_id, _first_unique_clusters(failure_clusters))
     )
     _DEFECT_BUILD_TASKS.add(task)
     task.add_done_callback(_DEFECT_BUILD_TASKS.discard)
@@ -656,12 +656,13 @@ async def _build_and_persist_defect_candidates(
 
     results: list[dict] = []
 
+    # Each candidate is committed on its own: one the database refuses (the
+    # LLM wrote a field as an object, 2026-10-14) used to roll back the whole
+    # run's batch, silently, while the build still returned the lost rows.
     async with AsyncSessionLocal() as write_db:
         try:
-            for cluster in failure_clusters[:5]:
-                cluster_id = cluster.get("cluster_id", "")
-                if not cluster_id:
-                    continue
+            for cluster in _first_unique_clusters(failure_clusters):
+                cluster_id = cluster["cluster_id"]
                 try:
                     candidate = await get_defect_candidate(str(run_id), cluster_id, write_db)
                     write_db.add(DefectCandidateModel(
@@ -681,6 +682,7 @@ async def _build_and_persist_defect_candidates(
                         member_count=candidate.get("member_count", 0),
                         status="pending",
                     ))
+                    await write_db.commit()
                     results.append({
                         "cluster_id": cluster_id,
                         "label": candidate.get("title", cluster.get("label", "")),
@@ -696,20 +698,32 @@ async def _build_and_persist_defect_candidates(
                         "evidence_bundle": candidate.get("evidence_bundle", {}),
                     })
                 except Exception as exc:
-                    logger.debug("Skipping candidate for cluster %s: %s", cluster_id, exc)
-
-            if results:
-                try:
-                    await write_db.commit()
-                except Exception:
                     await write_db.rollback()
-                    # Even if the persist fails, we still return the computed
-                    # candidates for this request — next call will retry.
+                    logger.warning(
+                        "Defect candidate for run %s cluster %s not saved: %s: %s",
+                        run_id, cluster_id, type(exc).__name__, str(exc)[:300],
+                    )
         except Exception as exc:
             logger.warning("Full defect candidate generation failed: %s", exc)
             await write_db.rollback()
 
     return results
+
+
+def _first_unique_clusters(failure_clusters: list[dict], limit: int = 5) -> list[dict]:
+    """The first ``limit`` clusters with distinct ids. A run analysed twice
+    lists a cluster id once per pipeline run; building it twice would store
+    two candidates for one cluster."""
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for cluster in failure_clusters:
+        cluster_id = cluster.get("cluster_id") or ""
+        if cluster_id and cluster_id not in seen:
+            seen.add(cluster_id)
+            unique.append(cluster)
+            if len(unique) == limit:
+                break
+    return unique
 
 
 async def _load_or_build_defect_candidates(

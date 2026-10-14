@@ -264,6 +264,15 @@ locally by default.
   - Five stale documentation statements are corrected and `GET /releases`
     returns one shape (HYG-10).
 
+- **AI defect drafts are saved again, and a failure is logged.** Most runs
+  never got their LLM-written defect candidates. The model sometimes wrote a
+  ticket field (usually the description) as an object rather than text; the
+  database refused that row; and because a run's candidates were saved in
+  one commit, the rejection discarded all of them without a log line. A run
+  analysed twice also lists a cluster twice, and its lookup failed. Ticket
+  fields are now stored as text, clipped to their columns; each candidate is
+  saved on its own, and one that cannot be saved is logged as a warning; a
+  repeated cluster uses its newest row and is built once.
 - **Opening several runs' Analysis tabs no longer stalls the backend.** The
   tab's failure-cluster and findings requests (and the deep-investigation
   trigger and promote actions) opened a second database session while the
