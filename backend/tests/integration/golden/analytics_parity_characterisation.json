@@ -702,8 +702,11 @@
    "duplicate_tickets_avoided": 0,
    "flaky_tests_identified": 0,
    "headline": {
+    "fte_equivalent": 0.0,
     "fte_equivalent_30d": 0.0,
-    "hours_saved_30d": 0.0
+    "hours_saved": 0.0,
+    "hours_saved_30d": 0.0,
+    "window_days": 30
    },
    "insufficient_data_reason": "no automation signal in the last 30 days",
    "intelligence_reports_generated": 0,
