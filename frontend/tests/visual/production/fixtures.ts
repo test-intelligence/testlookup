@@ -1247,6 +1247,9 @@ const TOP_FAILING = {
     failure_category: category,
     failure_kind: kind,
     last_failed: isoAgo(i === 0 ? 0 : i + 1, 2),
+    // HON-05: the run of this test's last failure (run 0, build 240, FAILED).
+    last_failed_run_id: RUN_ID,
+    last_failed_build: '240',
     failure_step: null,
   })),
 }
@@ -1588,6 +1591,8 @@ export const TOP_FAILING_ROWS = TOP_FAILING_12.map(([test, suite, count], i) => 
   failure_category: i % 3 === 0 ? 'TIMEOUT' : 'ASSERTION',
   failure_kind: i % 3 === 0 ? 'infrastructure' : 'product',
   last_failed: isoAgo(i % 4, 2),
+  last_failed_run_id: RUN_ID,
+  last_failed_build: '240',
   failure_step: null,
 }))
 

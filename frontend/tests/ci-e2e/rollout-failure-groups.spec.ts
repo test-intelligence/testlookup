@@ -83,7 +83,7 @@ const FAILURES_PAGE_READS = [
   `GET /api/v1/feature-flags/flaky_auto_quarantine/status?project_id=${P}`,
 ]
 
-/** The suspect commits for the top row's test, against the latest failing run: asked by the Suspects panel only. */
+/** The suspect commits for the top row's test, against the run of that test's last failure: asked by the Suspects panel only. */
 const SUSPECTS_READ = `GET /api/v1/runs/${RUN_ID}/suspects?fingerprint=fp-top-0`
 
 const GROUPS_READ = `GET ${FAILURE_GROUPS_PATH}?include=edges&project_id=${P}&days=30`
