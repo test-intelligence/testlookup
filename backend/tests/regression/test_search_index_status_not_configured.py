@@ -37,6 +37,10 @@ def _no_cursor():
 
 @pytest.mark.asyncio
 async def test_no_chroma_server_at_the_configured_address_is_not_configured():
+    # Drives the REAL client library, so it needs the package (CI and every image
+    # install it; a dev Python without it skips rather than misreading the
+    # ImportError as "unavailable").
+    pytest.importorskip("chromadb")
     from app.db.chroma import get_chroma_client
     from app.services import semantic_search
 
