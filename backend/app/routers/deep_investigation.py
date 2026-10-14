@@ -17,7 +17,7 @@ from app.core.deps import (
     require_run_access,
     resolve_project_scope,
 )
-from app.db.postgres import AsyncSessionLocal, get_db
+from app.db.postgres import get_db
 from app.models.postgres import (
     Defect,
     DeepFinding,
@@ -93,6 +93,7 @@ async def trigger_deep_investigation(
     # call queues an LLM pipeline, and a VIEWER member could loop it.
     current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
     _: User = Depends(require_run_access()),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Trigger the deep investigation pipeline for a completed test run.
@@ -111,11 +112,10 @@ async def trigger_deep_investigation(
             detail="Deep investigation requires LLM or Auto mode. Current mode: rules.",
         )
 
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(TestRun).where(TestRun.id == run_id))
-        run = result.scalar_one_or_none()
-        if not run:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Test run not found")
+    result = await db.execute(select(TestRun).where(TestRun.id == run_id))
+    run = result.scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Test run not found")
 
     workflow_type = body.mode if body.mode in ("deep", "offline") else "deep"
 
@@ -145,16 +145,16 @@ async def trigger_deep_investigation(
 async def get_failure_clusters(
     run_id: uuid.UUID,
     current_user: User = Depends(require_run_access()),
+    db: AsyncSession = Depends(get_db),
 ):
     """Return semantic failure clusters for a test run."""
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(FailureCluster)
-            .where(FailureCluster.test_run_id == run_id)
-            .order_by(FailureCluster.size.desc())
-            .limit(200)  # Scalability: prevent unbounded results on large runs
-        )
-        clusters = result.scalars().all()
+    result = await db.execute(
+        select(FailureCluster)
+        .where(FailureCluster.test_run_id == run_id)
+        .order_by(FailureCluster.size.desc())
+        .limit(200)  # Scalability: prevent unbounded results on large runs
+    )
+    clusters = result.scalars().all()
 
     return [
         ClusterResponse(
@@ -173,15 +173,15 @@ async def get_failure_clusters(
 async def get_deep_findings(
     run_id: uuid.UUID,
     current_user: User = Depends(require_run_access()),
+    db: AsyncSession = Depends(get_db),
 ):
     """Return deep investigation findings per failure cluster for a test run."""
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(DeepFinding)
-            .where(DeepFinding.test_run_id == run_id)
-            .limit(200)  # Scalability: prevent unbounded results on large runs
-        )
-        findings = result.scalars().all()
+    result = await db.execute(
+        select(DeepFinding)
+        .where(DeepFinding.test_run_id == run_id)
+        .limit(200)  # Scalability: prevent unbounded results on large runs
+    )
+    findings = result.scalars().all()
 
     return [_to_finding_response(f) for f in findings]
 
@@ -240,9 +240,8 @@ async def promote_cluster_to_defect(
 ):
     """Promote a failure cluster to a defect record (optionally with Jira ticket)."""
     # Resolve project_id from run
-    async with AsyncSessionLocal() as _db:
-        result = await _db.execute(select(TestRun).where(TestRun.id == run_id))
-        run = result.scalar_one_or_none()
+    result = await db.execute(select(TestRun).where(TestRun.id == run_id))
+    run = result.scalar_one_or_none()
     if not run:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Test run not found"
