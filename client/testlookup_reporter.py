@@ -737,6 +737,31 @@ class TestLookupReporter:
 
 # ── Live Session ───────────────────────────────────────────────────────────────
 
+def _add_timing(
+    event: dict,
+    started_at_ms: Optional[int],
+    setup_ms: Optional[int],
+    call_ms: Optional[int],
+    teardown_ms: Optional[int],
+    worker_id: Optional[str],
+) -> None:
+    """Put the optional execution-timing keys on a test_result event (only those given).
+
+    Servers before EXEC-01 ignore unknown event keys, so sending them is
+    always safe.
+    """
+    for key, value in (
+        ("started_at_ms", started_at_ms),
+        ("setup_ms", setup_ms),
+        ("call_ms", call_ms),
+        ("teardown_ms", teardown_ms),
+    ):
+        if value is not None:
+            event[key] = int(value)
+    if worker_id:
+        event["worker_id"] = str(worker_id)[:64]
+
+
 class LiveSession:
     """
     Represents an active test execution session.
@@ -791,6 +816,11 @@ class LiveSession:
         stack_trace: Optional[str] = None,
         tags: Optional[list[str]] = None,
         metadata: Optional[dict] = None,
+        started_at_ms: Optional[int] = None,
+        setup_ms: Optional[int] = None,
+        call_ms: Optional[int] = None,
+        teardown_ms: Optional[int] = None,
+        worker_id: Optional[str] = None,
     ) -> None:
         """
         Record a test result.
@@ -806,6 +836,10 @@ class LiveSession:
         stack_trace : Full stack trace (optional)
         tags        : List of tags (optional)
         metadata    : Extra key/value pairs (optional)
+        started_at_ms : Epoch ms the test started, setup included (optional).
+                        The event's ``timestamp_ms`` (now) is its finish.
+        setup_ms / call_ms / teardown_ms : Phase split in ms (optional)
+        worker_id   : Parallel worker / runner slot that ran it (optional)
         """
         event: dict[str, Any] = {
             "event_type": "test_result",
@@ -823,6 +857,7 @@ class LiveSession:
         if stack_trace:   event["stack_trace"] = stack_trace
         if tags:          event["tags"] = tags
         if metadata:      event["metadata"] = metadata
+        _add_timing(event, started_at_ms, setup_ms, call_ms, teardown_ms, worker_id)
 
         await self._queue.put(event)
 
@@ -1263,6 +1298,11 @@ class LiveStream:
         stack_trace: Optional[str] = None,
         tags: Optional[list[str]] = None,
         metadata: Optional[dict] = None,
+        started_at_ms: Optional[int] = None,
+        setup_ms: Optional[int] = None,
+        call_ms: Optional[int] = None,
+        teardown_ms: Optional[int] = None,
+        worker_id: Optional[str] = None,
     ) -> None:
         event: dict[str, Any] = {
             "event_type": "test_result",
@@ -1280,6 +1320,7 @@ class LiveStream:
         if stack_trace:   event["stack_trace"] = stack_trace
         if tags:          event["tags"] = tags
         if metadata:      event["metadata"] = metadata
+        _add_timing(event, started_at_ms, setup_ms, call_ms, teardown_ms, worker_id)
 
         self._last_real_enqueue_ms = time.time() * 1_000
         await self._queue.put(event)
@@ -1525,6 +1566,14 @@ def pytest_configure(config):  # noqa: D401
         config.pluginmanager.register(plugin, "testlookup_live")
 
 
+def _report_start_ms(report: Any) -> Optional[int]:
+    """Epoch ms a pytest phase report started, where this pytest stamps it."""
+    start = getattr(report, "start", None)
+    if isinstance(start, (int, float)) and not isinstance(start, bool) and start > 0:
+        return int(start * 1_000)
+    return None
+
+
 class _TestLookupPytestPlugin:
     """Pytest plugin that streams results to TestLookup during the test run."""
 
@@ -1562,6 +1611,9 @@ class _TestLookupPytestPlugin:
         #: nodeids already streamed, so a test is recorded once even
         #: though pytest emits a report for setup, call and teardown.
         self._recorded: set = set()
+        #: nodeid -> (setup_ms, started_at_ms) from its setup report, so the
+        #: call report can send the phase split and when the test began.
+        self._setup: dict = {}
 
     # ── pytest hooks ──────────────────────────────────────────────────────
 
@@ -1604,8 +1656,15 @@ class _TestLookupPytestPlugin:
 
         nodeid = report.nodeid
         suffix = ""
+        phase_ms = int(getattr(report, "duration", 0) * 1_000)
+        phase_start = _report_start_ms(report)
+        timing: dict = {"worker_id": os.environ.get("PYTEST_XDIST_WORKER") or None}
 
         if report.when == "setup":
+            # The test starts with its setup. Recent pytest stamps each report's
+            # start; on a version that does not, the start is left out.
+            self._setup[nodeid] = (phase_ms, phase_start)
+            timing.update(setup_ms=phase_ms, started_at_ms=phase_start)
             if report.failed:
                 # An exception in a fixture: pytest calls this an *error*, and
                 # the test body never ran. BROKEN, not FAILED.
@@ -1615,6 +1674,12 @@ class _TestLookupPytestPlugin:
             else:
                 return  # setup passed -- wait for the call report
         elif report.when == "call":
+            setup_ms, started_at_ms = self._setup.get(nodeid, (None, None))
+            timing.update(
+                setup_ms=setup_ms,
+                call_ms=phase_ms,
+                started_at_ms=started_at_ms if started_at_ms is not None else phase_start,
+            )
             if report.failed:
                 status = "FAILED"
             elif report.skipped:
@@ -1622,12 +1687,14 @@ class _TestLookupPytestPlugin:
             else:
                 status = "PASSED"
         else:  # teardown
+            self._setup.pop(nodeid, None)
             if not report.failed:
                 return
             # The call phase already recorded the test's own outcome; report
             # the cleanup failure separately rather than overwriting it.
             status = "BROKEN"
             suffix = " (teardown)"
+            timing.update(teardown_ms=phase_ms, started_at_ms=phase_start)
 
         key = nodeid + suffix
         if key in self._recorded:
@@ -1648,7 +1715,7 @@ class _TestLookupPytestPlugin:
             if isinstance(longrepr, tuple) and len(longrepr) == 3:
                 error = str(longrepr[2])
 
-        duration_ms = int(getattr(report, "duration", 0) * 1_000)
+        duration_ms = phase_ms
 
         # Derive suite name from node id (file path part)
         parts = nodeid.split("::")
@@ -1663,6 +1730,7 @@ class _TestLookupPytestPlugin:
                 suite_name=suite,
                 error=error,
                 stack_trace=stack,
+                **{name: value for name, value in timing.items() if value is not None},
             )
         )
 

@@ -51,7 +51,8 @@ import java.util.logging.Logger;
  * </pre>
  */
 public class TestLookupExtension
-        implements BeforeAllCallback, BeforeTestExecutionCallback, AfterTestExecutionCallback, TestWatcher {
+        implements BeforeAllCallback, BeforeEachCallback, BeforeTestExecutionCallback,
+                   AfterTestExecutionCallback, AfterEachCallback, TestWatcher {
 
     private static final Logger LOG = Logger.getLogger(TestLookupExtension.class.getName());
     private static final String NS  = "io.testlookup";
@@ -76,6 +77,8 @@ public class TestLookupExtension
          * own store: JUnit may close that store before TestWatcher callbacks.
          */
         final Map<String, Long> durationsMs = new java.util.concurrent.ConcurrentHashMap<>();
+        /** Phase timing per test (unique id), for the same reason. */
+        final Map<String, Phases> phases = new java.util.concurrent.ConcurrentHashMap<>();
 
         RunSession(LiveSession session) { this.session = session; }
 
@@ -130,18 +133,65 @@ public class TestLookupExtension
 
     // ── Timing ────────────────────────────────────────────────────────────────
 
+    /**
+     * When a test began and how long its {@code @BeforeEach} / body / {@code @AfterEach}
+     * took. JUnit calls the extension's beforeEach before the test's own
+     * {@code @BeforeEach} methods and its afterEach after the {@code @AfterEach}
+     * methods, so the gaps between the callbacks are the setup and teardown.
+     */
+    static final class Phases {
+        final long startedAtMs = System.currentTimeMillis();
+        final long eachNanos = System.nanoTime();
+        volatile long bodyStartNanos = -1;
+        volatile long bodyEndNanos = -1;
+        volatile Long setupMs;
+        volatile Long callMs;
+        volatile Long teardownMs;
+    }
+
+    @Override
+    public void beforeEach(ExtensionContext ctx) {
+        RunSession run = run(ctx);
+        if (run != null) run.phases.put(ctx.getUniqueId(), new Phases());
+    }
+
     @Override
     public void beforeTestExecution(ExtensionContext ctx) {
-        ctx.getStore(NAMESPACE).put(KEY_STARTED, System.nanoTime());
+        long now = System.nanoTime();
+        ctx.getStore(NAMESPACE).put(KEY_STARTED, now);
+        Phases p = phases(ctx);
+        if (p != null) {
+            p.bodyStartNanos = now;
+            p.setupMs = (now - p.eachNanos) / 1_000_000L;
+        }
     }
 
     @Override
     public void afterTestExecution(ExtensionContext ctx) {
+        long now = System.nanoTime();
         Long started = ctx.getStore(NAMESPACE).remove(KEY_STARTED, Long.class);
         RunSession run = run(ctx);
         if (started != null && run != null) {
-            run.durationsMs.put(ctx.getUniqueId(), (System.nanoTime() - started) / 1_000_000L);
+            run.durationsMs.put(ctx.getUniqueId(), (now - started) / 1_000_000L);
         }
+        Phases p = phases(ctx);
+        if (p != null && p.bodyStartNanos >= 0) {
+            p.bodyEndNanos = now;
+            p.callMs = (now - p.bodyStartNanos) / 1_000_000L;
+        }
+    }
+
+    @Override
+    public void afterEach(ExtensionContext ctx) {
+        Phases p = phases(ctx);
+        if (p != null && p.bodyEndNanos >= 0) {
+            p.teardownMs = (System.nanoTime() - p.bodyEndNanos) / 1_000_000L;
+        }
+    }
+
+    private static Phases phases(ExtensionContext ctx) {
+        RunSession run = run(ctx);
+        return run == null ? null : run.phases.get(ctx.getUniqueId());
     }
 
     // ── TestWatcher ───────────────────────────────────────────────────────────
@@ -179,15 +229,22 @@ public class TestLookupExtension
         String suiteName = ctx.getParent().map(ExtensionContext::getDisplayName).orElse(null);
         // A disabled test never executes, so it has no duration.
         Long durationMs = run.durationsMs.remove(ctx.getUniqueId());
+        // ...and no timing either: beforeEach never ran for it.
+        Phases phases = run.phases.remove(ctx.getUniqueId());
 
-        RecordOptions opts = RecordOptions.builder()
+        RecordOptions.Builder opts = RecordOptions.builder()
             .suiteName(suiteName)
             .className(ctx.getTestClass().map(Class::getName).orElse(null))
             .error(error)
-            .stackTrace(stack)
-            .build();
+            .stackTrace(stack);
+        if (phases != null) {
+            opts.startedAtMs(phases.startedAtMs)
+                .setupMs(phases.setupMs)
+                .callMs(phases.callMs)
+                .teardownMs(phases.teardownMs);
+        }
 
-        run.session.record(testName, status, durationMs != null ? durationMs : 0L, opts);
+        run.session.record(testName, status, durationMs != null ? durationMs : 0L, opts.build());
     }
 
     private static RunSession run(ExtensionContext ctx) {

@@ -45,6 +45,7 @@
         "Error",
         "Metadata",
         "StackTrace",
+        "StartedAt",
         "SuiteName",
         "Tags"
       ],
@@ -171,12 +172,17 @@
     ],
     "fields": {
       "RecordOptions": [
+        "callMs",
         "className",
         "error",
         "metadata",
+        "setupMs",
         "stackTrace",
+        "startedAtMs",
         "suiteName",
-        "tags"
+        "tags",
+        "teardownMs",
+        "workerId"
       ],
       "ReporterConfig": [
         "apiKey",

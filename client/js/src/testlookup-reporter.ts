@@ -141,6 +141,21 @@ export interface RecordOptions {
   stackTrace?: string
   tags?: string[]
   metadata?: Record<string, unknown>
+  /**
+   * Execution timing (EXEC-01), all optional. The event's ``timestamp_ms``
+   * (taken when ``record`` is called) is the test's finish; ``startedAtMs`` is
+   * when it started (epoch ms, setup included). Servers that predate these
+   * fields ignore them.
+   */
+  startedAtMs?: number
+  /** Fixture / before-hook time of this test, ms. */
+  setupMs?: number
+  /** The test body's own time, ms. */
+  callMs?: number
+  /** Fixture / after-hook time of this test, ms. */
+  teardownMs?: number
+  /** The parallel worker / runner slot that ran the test. */
+  workerId?: string
 }
 
 export interface SessionStats {
@@ -162,6 +177,29 @@ interface LiveEvent {
   stack_trace?: string
   tags?: string[]
   metadata?: Record<string, unknown>
+  started_at_ms?: number
+  setup_ms?: number
+  call_ms?: number
+  teardown_ms?: number
+  worker_id?: string
+}
+
+/** A finite, non-negative millisecond figure as an integer; anything else is left out. */
+function wholeMs(value: number | undefined): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.round(value) : undefined
+}
+
+/** Put the optional timing keys on a test_result event — only those that were given. */
+function addTiming(event: LiveEvent, opts: RecordOptions): void {
+  const startedAt = wholeMs(opts.startedAtMs)
+  const setup = wholeMs(opts.setupMs)
+  const call = wholeMs(opts.callMs)
+  const teardown = wholeMs(opts.teardownMs)
+  if (startedAt !== undefined) event.started_at_ms = startedAt
+  if (setup !== undefined) event.setup_ms = setup
+  if (call !== undefined) event.call_ms = call
+  if (teardown !== undefined) event.teardown_ms = teardown
+  if (opts.workerId) event.worker_id = String(opts.workerId).slice(0, 64)
 }
 
 interface SessionCreateResponse {
@@ -427,6 +465,7 @@ export class LiveSession {
     if (opts.stackTrace) event.stack_trace   = opts.stackTrace
     if (opts.tags?.length) event.tags        = opts.tags
     if (opts.metadata)   event.metadata      = opts.metadata
+    addTiming(event, opts)
 
     this.buffer.push(event)
     if (this.buffer.length >= this.batchSize) {
