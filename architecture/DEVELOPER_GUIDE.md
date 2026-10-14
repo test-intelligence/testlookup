@@ -40,10 +40,10 @@ API endpoint, a pipeline agent, a UI page and a migration.
 
 ## 1. Quality gates — the invariant ratchets
 
-`make quality-gate` runs `scripts/quality_gate.py`, which enforces **54 guards**.
+`make quality-gate` runs `scripts/quality_gate.py`, which enforces **55 guards**.
 18 are *ratchets*: pre-existing violations are baselined in
 `scripts/quality-gate-baselines/` and the count can only shrink. New violations
-fail CI. The other 36 ship at zero with **no baseline file at all** — those are
+fail CI. The other 37 ship at zero with **no baseline file at all** — those are
 absolute rules, not ratchets, and are marked **†** in the tables below. Know
 these before you write code.
 
@@ -108,6 +108,7 @@ fails if a *second* deleter appears.
 | `frontend.refresh-intervals-from-config` † | a hand-picked SWR `refreshInterval` | `import { REFRESH_INTERVALS } from '@/config/refreshIntervals'` and take a tier — `REALTIME` / `ACTIVE` / `POLLING` / `BACKGROUND` (`0` = disabled is fine) |
 | `frontend.ai-output-hedging` † | AI output rendered as a verdict — a bare `Root cause:`, `Root Cause Summary`, "the cause is …", "is caused by" | Hedge the copy ("Suggested root cause", "likely caused by") and render the conclusion through `components/ai/AISuggestion` so it carries the badge, basis and provenance (US-15.1). Pipeline **stage** names like "Root Cause Analysis" are already allowed |
 | `frontend.ingest-formats-match-backend` † | the upload dropdown (`reportUploadService.ts::SUPPORTED_FORMATS`) advertising a format `/ingest/file` rejects, the backend accepting a parser the UI never offers, or either registry becoming unparseable by the guard | Add or remove the format on **both** sides of the language boundary — the `SUPPORTED_FORMATS` array (value + label) and the `ReportFormat` union in `reportUploadService.ts`, and `_SUPPORTED_FORMATS` in `routers/ingest.py` (a new backend parser also needs `_detect_format` wired). If a refactor changes a registry's source shape, update the guard parser in the same change; otherwise CI fails instead of silently disabling parity enforcement |
+| `frontend.sdk-symbols-fresh` † | `frontend/src/components/live/sdkSymbols.json` differing from what `scripts/gen_sdk_symbols.py` reads out of `client/go` and `client/js` (the `/live` "Connect a test runner" snippet test checks every Go and JavaScript identifier against it) | Run `python scripts/gen_sdk_symbols.py` after an SDK change and commit the JSON, then `npx vitest run src/components/live/sdkSnippets.test.ts` in `frontend/` and fix any snippet that names a symbol the SDK no longer has |
 
 ### Database
 
