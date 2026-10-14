@@ -20,6 +20,7 @@ from app.models.postgres import FailureCluster, TestCase, TestRun
 from app.services.evidence_sanitizer import sanitize_reference_text
 from app.services.ownership_resolver_service import resolve_cluster_ownership
 from app.services.regression_diff_service import compute_regression_diff
+from app.services.cluster_snapshot import is_current_snapshot
 
 _MAX_CLUSTERS = 20
 _MAX_MEMBERS = 50
@@ -135,7 +136,7 @@ class ChangeOwnershipAgent(BaseAgent):
                 clusters = (
                     await db.execute(
                         select(FailureCluster)
-                        .where(FailureCluster.test_run_id == run_uuid)
+                        .where(FailureCluster.test_run_id == run_uuid, is_current_snapshot())
                         .order_by(FailureCluster.size.desc(), FailureCluster.cluster_id)
                         .limit(_MAX_CLUSTERS)
                     )

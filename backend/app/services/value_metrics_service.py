@@ -47,6 +47,7 @@ from app.models.postgres import (
     TestRun,
     ValueMetricAssumptions,
 )
+from app.services.cluster_snapshot import current_snapshot_sql, is_current_snapshot
 
 logger = logging.getLogger("services.value_metrics")
 
@@ -255,6 +256,7 @@ async def _cluster_counts(
         WHERE tr.project_id = :project_id
           AND fc.created_at >= :since
           AND fc.size >= 2
+          AND {current_snapshot_sql('fc')}
         {bucket_grp}
     """)
     result = await db.execute(query, {"project_id": str(project_id), "since": since})
@@ -698,6 +700,7 @@ async def get_value_metrics(
     cluster_stmt = select(sa_func.count(FailureCluster.id)).where(
         FailureCluster.created_at >= cutoff,
         FailureCluster.size >= 2,
+        is_current_snapshot(),
     )
     cluster_stmt = _scope_via_run(
         cluster_stmt, FailureCluster.test_run_id == TestRun.id, project_id
@@ -708,6 +711,7 @@ async def get_value_metrics(
     tests_grouped_stmt = select(sa_func.coalesce(sa_func.sum(FailureCluster.size), 0)).where(
         FailureCluster.created_at >= cutoff,
         FailureCluster.size >= 2,
+        is_current_snapshot(),
     )
     tests_grouped_stmt = _scope_via_run(
         tests_grouped_stmt, FailureCluster.test_run_id == TestRun.id, project_id

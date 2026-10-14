@@ -37,6 +37,7 @@ from app.services.action_policy import (
 )
 from app.services.criticality_service import get_scoring_model_info, score_cluster
 from app.services.prompt_registry import get_prompt_text
+from app.services.cluster_snapshot import is_current_snapshot
 
 logger = logging.getLogger("services.defect_promotion")
 
@@ -76,6 +77,7 @@ async def get_defect_candidate(
         .where(
             FailureCluster.test_run_id == _uuid.UUID(run_id),
             FailureCluster.cluster_id == cluster_id,
+            is_current_snapshot(),
         )
         .order_by(FailureCluster.created_at.desc())
         .limit(1)
@@ -203,6 +205,7 @@ async def promote_cluster(
         select(FailureCluster).where(
             FailureCluster.test_run_id == _uuid.UUID(run_id),
             FailureCluster.cluster_id == cluster_id,
+            is_current_snapshot(),
         )
     )
     cluster = cluster_result.scalar_one_or_none()

@@ -44,6 +44,7 @@ from app.services.criticality_service import (
 from app.core.config import settings
 
 from app.models.constants import DIMENSION_METADATA
+from app.services.cluster_snapshot import is_current_snapshot
 
 logger = logging.getLogger("services.release_council")
 
@@ -213,7 +214,7 @@ async def assemble_input_snapshot(
     # ── Failure clusters ─────────────────────────────────────────────────────
     cluster_result = await db.execute(
         select(FailureCluster)
-        .where(FailureCluster.test_run_id == run_id)
+        .where(FailureCluster.test_run_id == run_id, is_current_snapshot())
         .order_by(FailureCluster.size.desc())
     )
     clusters = cluster_result.scalars().all()
@@ -527,7 +528,7 @@ async def get_release_council(
     # Build cluster insights
     cluster_result = await db.execute(
         select(FailureCluster)
-        .where(FailureCluster.test_run_id == run_id)
+        .where(FailureCluster.test_run_id == run_id, is_current_snapshot())
         .order_by(FailureCluster.size.desc())
     )
     clusters = cluster_result.scalars().all()
