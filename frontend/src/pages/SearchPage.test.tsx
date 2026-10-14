@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import {
   MemoryRouter, Route, Routes, useLocation, useNavigate,
 } from 'react-router-dom'
@@ -388,16 +388,53 @@ describe('SearchPage', () => {
     )
   })
 
-  it('shows the Down badge in Index Health when /index-status reports unavailable', async () => {
-    mockGetIndexStatus.mockResolvedValue(makeIndexStatus({ status: 'unavailable' }))
+  // HON-08: the rail ("Index health") copied ONE vector-index status onto all
+  // six entity rows, so a ChromaDB outage -- or no ChromaDB at all, the
+  // `make dev` default -- marked Tests, Runs, Suites, Defects, Flaky and
+  // Releases "Down" although global search is a SQL keyword match over each.
+  const ENTITY_LABELS = ['Tests', 'Runs', 'Suites', 'Defects', 'Flaky', 'Releases']
+
+  async function railCard() {
+    const summary = await screen.findByTestId('searchable-data-summary')
+    return { summary, semantic: screen.getByTestId('semantic-index-line') }
+  }
+
+  it.each([
+    ['unavailable', 'Unavailable', /ChromaDB answered with an error/],
+    ['not_configured', 'Not configured', /No ChromaDB server answers here/],
+  ] as const)('with the semantic index %s, the six entities stay keyword-searchable and nothing reads "Down"', async (status, label, detail) => {
+    mockGetIndexStatus.mockResolvedValue(makeIndexStatus({ status: status as IndexStatus['status'] }))
 
     renderAt('/search')
 
-    const badges = await screen.findAllByLabelText(/index: Down/i)
-    expect(badges.length).toBeGreaterThan(0)
+    const { summary, semantic } = await railCard()
+    await waitFor(() => expect(summary).toHaveTextContent(`6 entity types · semantic: ${label.toLowerCase()}`))
+    for (const entity of ENTITY_LABELS) {
+      expect(screen.getByLabelText(`${entity}: keyword search`)).toHaveTextContent('Keyword')
+    }
+    expect(within(semantic).getByLabelText(`Semantic index: ${label}`)).toBeInTheDocument()
+    expect(semantic).toHaveTextContent(detail)
+    expect(screen.queryByText('Down')).toBeNull()
+    expect(screen.queryByLabelText(/index: Down/i)).toBeNull()
   })
 
-  it('shows project-scoped entity totals in the Index Health rows before any query is run', async () => {
+  it('an index last written hours ago is idle, not down: still Ready, with its count and time', async () => {
+    mockGetIndexStatus.mockResolvedValue(makeIndexStatus({
+      status: 'healthy',
+      document_count: 1234,
+      last_indexed_at: new Date(Date.now() - 3 * 3_600_000).toISOString(),
+    }))
+
+    renderAt('/search')
+
+    const { summary, semantic } = await railCard()
+    await waitFor(() => expect(summary).toHaveTextContent('6 entity types · semantic: ready'))
+    expect(within(semantic).getByLabelText('Semantic index: Ready')).toBeInTheDocument()
+    expect(semantic).toHaveTextContent(/1,234 docs · last indexed 3h ago/)
+    expect(screen.queryByText('Down')).toBeNull()
+  })
+
+  it('shows project-scoped entity totals in the Searchable data rows before any query is run', async () => {
     // The bug this test pins: chips and Index Health rows previously
     // showed 0 unconditionally before the user typed anything, because
     // the page only read counts from the search response. The /search
@@ -416,10 +453,10 @@ describe('SearchPage', () => {
     // Wait for entity-counts to land. The numbers are rendered inside
     // the Index Health card next to each entity label. Use a regex on
     // the formatted number so locale-grouped values match too.
-    expect(await screen.findByText(/^47 items/i)).toBeInTheDocument()
-    expect(screen.getByText(/^20 items/i)).toBeInTheDocument()
-    expect(screen.getByText(/^5 items/i)).toBeInTheDocument()
-    expect(screen.getByText(/^3 items/i)).toBeInTheDocument()
+    expect(await screen.findByText(/^47 rows · keyword match/i)).toBeInTheDocument()
+    expect(screen.getByText(/^20 rows · keyword match/i)).toBeInTheDocument()
+    expect(screen.getByText(/^5 rows · keyword match/i)).toBeInTheDocument()
+    expect(screen.getByText(/^3 rows · keyword match/i)).toBeInTheDocument()
 
     // The service is called with the active project from the store
     // (proj-1 in the mock above).

@@ -8,6 +8,7 @@ import {
   QuarantineRedirect,
   ReviewsRedirect,
   RunIntelligenceRedirect,
+  UnmatchedPath,
 } from '@/routing/legacyRedirects'
 import AppLayout from '@/components/layout/AppLayout'
 import ProtectedRoute from '@/components/auth/ProtectedRoute'
@@ -345,7 +346,10 @@ export default function App() {
               }
             />
           ))}
-          <Route path="*" element={<Navigate to="/overview" replace />} />
+          {/* HON-09: an unknown path is "Page not found" inside the shell, with
+              the URL as typed; `/audit` (linked, never routed) forwards to
+              Activity. It used to redirect every unknown path to /overview. */}
+          <Route path="*" element={<UnmatchedPath />} />
         </Route>
         <Route path="*" element={<Navigate to="/overview" replace />} />
       </Route>

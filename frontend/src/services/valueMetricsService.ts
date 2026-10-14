@@ -1,4 +1,7 @@
+import { isAxiosError } from 'axios'
 import { api } from './api'
+import { extractErrorMessage } from './apiErrors'
+import { downloadBlob } from '@/utils/download'
 import type {
   AssumptionsRead,
   AssumptionsSource,
@@ -69,9 +72,53 @@ export const valueMetricsService = {
     api.put<unknown>(`/api/v1/projects/${projectId}/value-metrics/assumptions`, patch)
       .then(r => normalizeAssumptions(r.data, current)),
 
-  exportUrl: (projectId?: string, days = 30) => {
-    const params = new URLSearchParams({ days: String(days) })
-    if (projectId) params.set('project_id', projectId)
-    return `/api/v1/value-metrics/export?${params}`
+  /**
+   * HON-04: the JSON export, fetched through the shared axios instance so the
+   * Bearer token goes with it. The page used to link `<a href download>` at
+   * the endpoint: a plain navigation carries no Authorization header, so the
+   * file saved was the API's 401 body. Saved under the server's filename,
+   * else `value-metrics-{days}d.json`. The caller owns the error message
+   * (`exportErrorMessage`): the shared toast cannot read a blob's `detail`.
+   */
+  downloadExport: async (projectId?: string, days = 30): Promise<void> => {
+    const response = await api.get<Blob>('/api/v1/value-metrics/export', {
+      params: { ...(projectId ? { project_id: projectId } : {}), days },
+      responseType: 'blob',
+      suppressToast: true,
+    })
+    const fallback = `value-metrics-${days}d.json`
+    downloadBlob(response.data, filenameFromDisposition(response.headers?.['content-disposition'], fallback))
   },
+
+  /** The words for a failed `downloadExport`: the API's `detail`, read out of the blob body. */
+  exportErrorMessage: async (error: unknown): Promise<string> => {
+    if (!isAxiosError(error)) return error instanceof Error ? error.message : 'Export failed'
+    const body: unknown = error.response?.data
+    let detail: unknown
+    if (body instanceof Blob) {
+      try {
+        detail = (JSON.parse(await body.text()) as { detail?: unknown }).detail
+      } catch {
+        detail = undefined
+      }
+    } else if (body && typeof body === 'object') {
+      detail = (body as { detail?: unknown }).detail
+    }
+    return extractErrorMessage(detail, error.message)
+  },
+}
+
+/** `attachment; filename=x.json` (plain, quoted or RFC 5987) → `x.json`; else `fallback`. */
+function filenameFromDisposition(header: unknown, fallback: string): string {
+  if (typeof header !== 'string' || !header) return fallback
+  const encoded = header.match(/filename\*=UTF-8''([^;]+)/i)
+  if (encoded?.[1]) {
+    try {
+      return decodeURIComponent(encoded[1].trim())
+    } catch {
+      return fallback
+    }
+  }
+  const named = header.match(/filename="([^"]+)"/i) ?? header.match(/filename=([^;]+)/i)
+  return named?.[1]?.trim() || fallback
 }

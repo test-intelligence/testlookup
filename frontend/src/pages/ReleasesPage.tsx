@@ -976,7 +976,9 @@ export default function ReleasesPage() {
           <EmptyState
             icon={<Package className="h-8 w-8" />}
             title="No releases yet"
-            description={isAllProjects ? 'No releases exist across any project yet' : 'Create your first release or clone from an org template'}
+            // HON-07: no org template or clone exists to offer (and an empty
+            // project has nothing to clone from), so the copy promises neither.
+            description={isAllProjects ? 'No releases exist across any project yet' : 'Create your first release'}
             action={!isAllProjects ? (
               <button
                 onClick={() => setShowModal(true)}

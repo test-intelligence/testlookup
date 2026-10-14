@@ -1544,7 +1544,7 @@ function CasesFilterBar({
           type="search"
           value={search}
           onChange={(e) => onSearchChange(e.target.value)}
-          placeholder="Search by ID, title, tags, owner, or requirement…"
+          placeholder="Search by title, tags or ID…"
           className="bg-transparent text-[13px] text-[var(--color-text)] outline-none flex-1"
           aria-label="Search cases"
         />

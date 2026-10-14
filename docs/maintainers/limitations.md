@@ -6,7 +6,7 @@ These are observed contracts/operational constraints or explicitly identified fo
 
 ## Important limits
 
-- The summary report has a confirmed release-filter propagation defect: headline/suite/step metrics remain project-wide while top failures receive `release_id`. Its `unique_tests` basis label also does not describe every mode/fallback. See the exact [aggregation rules and examples](../pipelines/reporting.md). These are observed source behavior, not guarantees inferred from OpenAPI descriptions.
+- The summary report applies `release_id` to every release-scopable figure (headline totals, run count, suite breakdown, step metrics, top failures); only `flaky_test_count` stays project-wide, by design and declared on the field. Its `pass_rate_basis` is always `unique_tests`, which describes the `window` mode but not `latest` or the run-aggregate fallback (both sum run aggregates). See the exact [aggregation rules and examples](../pipelines/reporting.md#aggregation-and-evidence). These are observed source behavior, not guarantees inferred from OpenAPI descriptions.
 
 - API contracts are not uniformly complete: some endpoints return plain dicts, streamed files or manually shaped responses. Each such operation's generated domain page says so under "Contract limit"; use the linked handler/serializer until a response model is added.
 - Source import and schema generation do not prove live migration compatibility, database availability, queue delivery, model behavior or external integration credentials. Verify a specific installation with the checks in the [deployment guide](../operations/deployment.md#startup-and-upgrade-order).

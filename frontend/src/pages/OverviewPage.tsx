@@ -217,6 +217,12 @@ function CataloguePending({ row }: { row: 'headline' | 'breakdown' }) {
  * It deliberately ignores the page's window selector, so every word about it
  * says 24 h and nothing else (never "in the window", never "since the last
  * green run": no such baseline is part of the computation).
+ *
+ * HON-07: the verdict is the readiness band (`mapReadinessToVerdict`: pass
+ * rate, plus the policy's caps on open defects, flaky tests and new
+ * failures), and the copy says so. It used to name a `release` branch no
+ * project field holds, claim "All quality gates passed" (no gate is
+ * evaluated here) and offer an "override" this page does not have.
  */
 function VerdictDetails({
   verdict, newFailures24h, totalExecutions, windowDays, passRatePct, passRateBasis,
@@ -228,18 +234,22 @@ function VerdictDetails({
   passRatePct: number
   passRateBasis: string
 }) {
+  const period = windowWords(windowDays)
+  const sample = `${totalExecutions} test execution${totalExecutions === 1 ? '' : 's'}`
   const lede = verdict === 'PENDING' ? (
-    <>No test executions in {windowWords(windowDays)} — readiness will assess once data lands in <code className="font-mono text-[12px]">release</code>.</>
+    <>No test executions in {period}. The readiness band is graded once results land in this window.</>
   ) : verdict === 'NO_GO' ? (
     newFailures24h > 0 ? (
-      <>{newFailures24h} new failure{newFailures24h === 1 ? '' : 's'} in the last 24 h on a run that completed with failures still open. Resolve the failures or override before merging to <code className="font-mono text-[12px]">release</code>.</>
+      <>{newFailures24h} new failure{newFailures24h === 1 ? '' : 's'} in the last 24 h. The readiness band for {period} reads No-Go: resolve the failures before release.</>
     ) : (
-      <>No new failures in the last 24 h; existing failures still require resolution or an approved override before merging to <code className="font-mono text-[12px]">release</code>.</>
+      <>No new failures in the last 24 h, but the readiness band for {period} still reads No-Go: the pass rate, open defects or flaky tests hold it there. Resolve them before release.</>
     )
   ) : verdict === 'CONDITIONAL' ? (
-    <>Some quality criteria need attention. Verify the warning evidence before merging to <code className="font-mono text-[12px]">release</code>.</>
+    <>The readiness band for {period} reads Conditional: check the pass rate, open defects and flaky tests before release.</>
+  ) : verdict === 'WATCH' ? (
+    <>The readiness band for {period} reads Go with watch across {sample}: the pass rate sits one band below the top.</>
   ) : (
-    <>All quality gates passed across {totalExecutions} test execution{totalExecutions === 1 ? '' : 's'} in {windowWords(windowDays)}. Safe to merge to <code className="font-mono text-[12px]">release</code>.</>
+    <>The readiness band for {period} reads Go across {sample}. Nothing it measures blocks a release.</>
   )
   return (
     <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between" data-testid="verdict-details">

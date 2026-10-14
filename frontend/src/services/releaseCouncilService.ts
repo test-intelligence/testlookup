@@ -57,6 +57,10 @@ export interface ReleaseCouncilDecision {
   // The page surfaces a "quick-look" note + a CTA to run deep
   // investigation for cluster / defect / narrative context.
   synthesized?: boolean
+  // When the stored ReleaseDecision row was written / last changed (HON-06).
+  // Null on a synthesised view: no decision was stored, so there is no time.
+  created_at?: string | null
+  updated_at?: string | null
 }
 
 // ── Service ──────────────────────────────────────────────────────────────────

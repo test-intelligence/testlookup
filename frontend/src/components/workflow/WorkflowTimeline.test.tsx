@@ -47,6 +47,29 @@ describe('WorkflowTimeline', () => {
     expect(screen.getAllByText(/Evidence/i).length).toBeGreaterThan(0)
   })
 
+  // HON-06: an event's date line is its record's own time. An undated event
+  // renders no date (it used to print "Invalid Date" or an invented time).
+  it('renders the recorded time for a dated event and no date line for an undated one', () => {
+    const { container } = render(
+      <WorkflowTimeline
+        showEventFeed
+        stages={[{ stage_name: 'release_decision', status: 'completed', label: 'Release Decision' }]}
+        events={[
+          { event_type: 'decision_overridden', stage_name: 'release_decision', timestamp: '2026-10-02T11:15:00Z', detail: { by: 'priya' } },
+          { event_type: 'stage_completed', stage_name: 'release_decision', timestamp: null },
+          { event_type: 'stage_completed', stage_name: 'release_decision', timestamp: 'garbage' },
+        ]}
+      />,
+    )
+
+    const times = container.querySelectorAll('[data-event-time]')
+    expect(times).toHaveLength(1)
+    expect(times[0]?.getAttribute('data-event-time')).toBe('2026-10-02T11:15:00.000Z')
+    expect(screen.getByText('Decision overridden')).toBeInTheDocument()
+    expect(screen.getByText('priya')).toBeInTheDocument()
+    expect(container.textContent).not.toMatch(/Invalid Date/)
+  })
+
   it('shows an empty state when there are no stages', () => {
     render(<WorkflowTimeline stages={[]} />)
 

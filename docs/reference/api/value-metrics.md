@@ -190,7 +190,7 @@ bounds the monthly trend).
 ``meta.ignored_filters`` with the reason: these are time-based counts
 over the project, and most of them have no release or suite to filter.
 
-Source: [backend/app/routers/value_metrics.py:49](../../../backend/app/routers/value_metrics.py#L49).
+Source: [backend/app/routers/value_metrics.py:41](../../../backend/app/routers/value_metrics.py#L41).
 
 Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -359,7 +359,7 @@ rate, defect count, MTTR hours, and estimated minutes saved so
 the dashboard can render per-team tiles without any further
 transformation.
 
-Source: [backend/app/routers/value_metrics.py:95](../../../backend/app/routers/value_metrics.py#L95).
+Source: [backend/app/routers/value_metrics.py:87](../../../backend/app/routers/value_metrics.py#L87).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -457,7 +457,14 @@ Export Metrics
 
 Export value metrics as a downloadable JSON report.
 
-Source: [backend/app/routers/value_metrics.py:118](../../../backend/app/routers/value_metrics.py#L118).
+HON-04: the scope is ``resolve_project_scope``'s, as on ``/by-team``. A
+project the caller cannot read is a 403. It used to be a 200 carrying a
+one-key ``{"report_type": "value_metrics"}`` stub, which the browser saved
+as if it were the report. A non-admin who names no project is refused
+too: the unpinned export is the every-project aggregate, which spans
+tenants, so only an admin may take it.
+
+Source: [backend/app/routers/value_metrics.py:110](../../../backend/app/routers/value_metrics.py#L110).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -465,6 +472,12 @@ Declared Python handler arguments (includes exact role/guard options):
 
 ```python
 project_id: Optional[str]=Query(None), days: int=Query(30, ge=1, le=365), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='Select a project to export its value metrics')
 ```
 
 ### Declared wire contract
@@ -551,7 +564,6 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-Response(content='{"report_type": "value_metrics"}', media_type='application/json', headers={'Content-Disposition': f'attachment; filename=value-metrics-{days}d.json'})
 Response(content=content, media_type='application/json', headers={'Content-Disposition': f'attachment; filename=value-metrics-{days}d.json'})
 ```
 
@@ -565,7 +577,7 @@ US-12.1: the hours-saved model documented — legs, formulas, caveats,
 defaults, research anchors. Static content; login-only, not
 project-scoped.
 
-Source: [backend/app/routers/value_metrics.py:85](../../../backend/app/routers/value_metrics.py#L85).
+Source: [backend/app/routers/value_metrics.py:77](../../../backend/app/routers/value_metrics.py#L77).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 

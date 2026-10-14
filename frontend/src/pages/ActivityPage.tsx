@@ -28,7 +28,13 @@ export default function ActivityPage() {
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID || activeProjectId === null
 
   const [searchParams, setSearchParams] = useSearchParams()
-  const [category, setCategory] = useState<string>('')
+  // HON-09: `?category=` pre-selects the filter, so a link can open the feed
+  // already narrowed (the /releases rail's "View full audit log" sends
+  // `release`; so does the old `/audit` bookmark). Read once, at mount: the
+  // select owns the value from then on.
+  const [category, setCategory] = useState<string>(
+    () => searchParams.get('category')?.trim().toLowerCase() ?? '',
+  )
   const [actorType, setActorType] = useState<string>('')
   const [q, setQ] = useState('')
   const [queryText, setQueryText] = useState('')
@@ -37,7 +43,14 @@ export default function ActivityPage() {
   const setStoredDays = useTimeWindowStore(s => s.setDays)
   const days = snapToAllowed(storedDays, WINDOW_OPTIONS)
 
-  const { eventTypes } = useActivityEventTypes()
+  const { eventTypes, error: eventTypesError } = useActivityEventTypes()
+  // A category from the URL applies once the registry lists it: the API 422s
+  // an unknown one. Until the registry answers, the feed waits (no flash of
+  // the unfiltered feed); if the registry fails, the filter is dropped, not
+  // the feed.
+  const knownCategories = eventTypes?.categories
+  const categoryPending = category !== '' && knownCategories === undefined && !eventTypesError
+  const activeCategory = category !== '' && knownCategories?.some((known) => known === category) ? category : ''
 
   // `days`, not a resolved `since`. The window boundary is computed inside the
   // SWR fetcher instead of here: Date.now() during render is impure, and an
@@ -45,13 +58,13 @@ export default function ActivityPage() {
   // page someone leaves open.
   const query = useMemo(
     () => ({
-      ...(category ? { category: [category] } : {}),
+      ...(activeCategory ? { category: [activeCategory] } : {}),
       ...(actorType ? { actor_type: actorType } : {}),
       ...(q.trim().length >= 3 ? { q: q.trim() } : {}),
       days,
       limit: 50,
     }),
-    [category, actorType, q, days],
+    [activeCategory, actorType, q, days],
   )
 
   const {
@@ -62,7 +75,7 @@ export default function ActivityPage() {
     isLoading,
     isValidating,
     error,
-  } = useActivityFeed(isAllProjects ? null : activeProjectId, query, !isAllProjects)
+  } = useActivityFeed(isAllProjects ? null : activeProjectId, query, !isAllProjects && !categoryPending)
 
   const openEventId = searchParams.get('event')
   const openEvent = (id: string) => {
@@ -161,7 +174,7 @@ export default function ActivityPage() {
 
         <select
           aria-label="Filter by category"
-          value={category}
+          value={activeCategory}
           onChange={e => setCategory(e.target.value)}
           className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)] px-3 py-1.5 text-[13px] text-[var(--color-text)]"
         >
@@ -223,7 +236,7 @@ export default function ActivityPage() {
             title="Activity is unavailable"
             description="The activity feed could not be loaded. This is a loading failure, not an empty project — try again shortly."
           />
-        ) : isLoading ? (
+        ) : isLoading || categoryPending ? (
           <p
             className="px-4 py-10 text-center text-[13px] text-[var(--color-text-muted)]"
             aria-busy="true"

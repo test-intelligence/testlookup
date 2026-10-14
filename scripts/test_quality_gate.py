@@ -4267,3 +4267,169 @@ def test_local_only_files_on_disk_are_not_reported_as_ignored_source(monkeypatch
     real = {p for p in candidates if qg._matches_local_only(p, qg._local_only_patterns())}
     reported = {v.relpath for v in qg._repo_no_gitignored_source()}
     assert not (real & reported)
+
+
+# ── frontend.sdk-symbols-fresh (HON-03) ──────────────────────────────────────
+
+_TAB = chr(9)
+
+
+def _sdk_repo(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A minimal client/go + client/js that scripts/gen_sdk_symbols.py can read."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    go_pkg = tmp_path / "client" / "go" / "testlookup"
+    go_pkg.mkdir(parents=True)
+    (go_pkg.parent / "go.mod").write_bytes(b"module github.com/testlookup/testlookup-go\n\ngo 1.21\n")
+    go_src = "\n".join([
+        "package testlookup",
+        "",
+        "type TestStatus string",
+        "",
+        "const (",
+        f'{_TAB}Passed TestStatus = "PASSED"',
+        f"{_TAB}defaultBatchSize = 50",
+        ")",
+        "",
+        "type Config struct {",
+        f"{_TAB}BaseURL string",
+        f"{_TAB}// Token is a JWT.",
+        f"{_TAB}Token, ProjectID string",
+        "}",
+        "",
+        "type SessionOptions struct {",
+        f"{_TAB}BuildNumber string",
+        "}",
+        "",
+        "type RecordOptions struct {",
+        f"{_TAB}Error string",
+        "}",
+        "",
+        "type Reporter struct {",
+        f"{_TAB}cfg Config",
+        "}",
+        "",
+        "func New(cfg Config) (*Reporter, error) {",
+        f'{_TAB}_ = env("TESTLOOKUP_URL", "")',
+        f'{_TAB}_ = overlay("TESTLOOKUP_PROJECT", nil)',
+        f"{_TAB}return nil, nil",
+        "}",
+        "",
+        "func (r *Reporter) StartSession(opts SessionOptions) error { return nil }",
+        "func (r *Reporter) private() {}",
+        "",
+    ])
+    (go_pkg / "client.go").write_bytes(go_src.encode())
+    (go_pkg / "client_test.go").write_bytes(b"package testlookup\n\nfunc TestOnly() {}\n")
+    js_dir = tmp_path / "client" / "js"
+    _write(js_dir / "package.json", """
+        {"name": "testlookup-reporter", "version": "1.0.0", "exports": {
+          ".": {"default": "./dist/testlookup-reporter.js"},
+          "./jest-reporter": {"default": "./dist/jest-reporter.js"},
+          "./package.json": "./package.json"}}
+    """)
+    _write(js_dir / "src" / "testlookup-reporter.ts", """
+        export interface ReporterConfig {
+          baseUrl: string
+          token?: string
+        }
+        export interface SessionOptions {
+          buildNumber?: string
+        }
+        export interface RecordOptions {
+          error?: string
+        }
+        export class TestLookupReporter {
+          private readonly baseUrl: string
+          constructor(config: ReporterConfig) {
+            this.baseUrl = config.baseUrl
+          }
+          async startSession(opts: SessionOptions = {}): Promise<void> {}
+          static async login(u: string): Promise<string> { return u }
+          private async _fetch(): Promise<void> {}
+        }
+    """)
+    _write(js_dir / "src" / "jest-reporter.ts", """
+        interface TestLookupJestReporterOptions {
+          baseUrl?: string
+          projectId?: string
+        }
+    """)
+    _write(js_dir / "src" / "mocha-reporter.ts", """
+        interface MochaOptions {
+          reporterOptions?: {
+            testlookupUrl?: string
+            [key: string]: unknown
+          }
+        }
+    """)
+    _write(js_dir / "src" / "config-loader.ts", """
+        const ENV_KEYS = {
+          TESTLOOKUP_URL: 'baseUrl',
+        }
+    """)
+
+
+def _sdk_generator():
+    import gen_sdk_symbols
+
+    return gen_sdk_symbols
+
+
+def test_sdk_symbols_generator_reads_only_the_public_sdk_surface(monkeypatch, tmp_path) -> None:
+    _sdk_repo(monkeypatch, tmp_path)
+    symbols = _sdk_generator().build_symbols(tmp_path)
+    go, js = symbols["go"], symbols["js"]
+    assert go["import_path"] == "github.com/testlookup/testlookup-go/testlookup"
+    assert go["functions"] == ["New"]  # TestOnly lives in a _test.go file
+    assert go["constants"] == ["Passed"]
+    assert go["methods"] == {"Reporter": ["StartSession"]}
+    assert go["fields"]["Config"] == ["BaseURL", "ProjectID", "Token"]
+    # Only what New reads: LoadConfig's overlay() names configure nothing in New.
+    assert go["env"] == ["TESTLOOKUP_URL"]
+    assert js["subpaths"] == ["jest-reporter"]
+    assert js["members"] == {"TestLookupReporter": ["login", "startSession"]}
+    assert js["fields"]["ReporterConfig"] == ["baseUrl", "token"]
+    assert js["jest_options"] == ["baseUrl", "projectId"]
+    assert js["mocha_options"] == ["testlookupUrl"]
+    assert js["env"] == ["TESTLOOKUP_URL"]
+
+
+def test_sdk_symbols_guard_passes_when_fresh_even_if_reformatted(monkeypatch, tmp_path) -> None:
+    import json
+
+    _sdk_repo(monkeypatch, tmp_path)
+    gen = _sdk_generator()
+    gen.write(tmp_path)
+    assert qg._frontend_sdk_symbols_fresh() == []
+    # prettier runs over frontend/src and may rewrap the JSON: still fresh.
+    target = tmp_path / gen.SYMBOLS_REL
+    target.write_bytes(json.dumps(json.loads(target.read_text(encoding="utf-8"))).encode())
+    assert qg._frontend_sdk_symbols_fresh() == []
+
+
+def test_sdk_symbols_guard_fails_when_the_sdk_renames_a_function(monkeypatch, tmp_path) -> None:
+    _sdk_repo(monkeypatch, tmp_path)
+    _sdk_generator().write(tmp_path)
+    # The SDK renames New -> NewReporter and nobody regenerates the JSON, so
+    # the snippet test would keep accepting the old name.
+    client_go = tmp_path / "client" / "go" / "testlookup" / "client.go"
+    client_go.write_bytes(client_go.read_bytes().replace(b"func New(", b"func NewReporter("))
+    violations = qg._frontend_sdk_symbols_fresh()
+    assert [v.message for v in violations] == ["go.functions differs from the SDK sources"]
+    assert violations[0].relpath == "frontend/src/components/live/sdkSymbols.json"
+
+
+def test_sdk_symbols_guard_fails_when_the_json_is_missing(monkeypatch, tmp_path) -> None:
+    _sdk_repo(monkeypatch, tmp_path)
+    messages = [v.message for v in qg._frontend_sdk_symbols_fresh()]
+    assert messages == ["frontend/src/components/live/sdkSymbols.json is missing"]
+
+
+def test_sdk_symbols_guard_reports_an_sdk_it_cannot_read(monkeypatch, tmp_path) -> None:
+    _sdk_repo(monkeypatch, tmp_path)
+    _sdk_generator().write(tmp_path)
+    (tmp_path / "client" / "js" / "src" / "mocha-reporter.ts").write_bytes(b"export {}\n")
+    messages = [v.message for v in qg._frontend_sdk_symbols_fresh()]
+    assert messages == [
+        "cannot read the SDK sources: mocha-reporter.ts has no reporterOptions block"
+    ]

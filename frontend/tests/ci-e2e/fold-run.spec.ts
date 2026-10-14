@@ -22,8 +22,9 @@
  */
 import { expect, test, type Page } from '@playwright/test'
 import { MAIN, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
-import { RUN_ID } from '../visual/production/fixtures'
-import { AI_REPORT_SUMMARY, RUN_PAGE } from '../visual/production/fixtures-run'
+import { type ApiHandlers } from '../lib/production-pages'
+import { releaseGateOn, RUN_ID, USER } from '../visual/production/fixtures'
+import { AI_REPORT_SUMMARY, RUN_PAGE, RUN_RELEASE_DECISION } from '../visual/production/fixtures-run'
 
 /** The fold budget of the page template (§2): primary content top, px below the scroller's top. */
 const FOLD_BUDGET_PX = 300
@@ -148,6 +149,82 @@ test('the old URLs of the merged pages land on their tab', async ({ page }) => {
     await expect(page.getByRole('tablist', { name: 'Run sections' }).getByRole('tab', { selected: true })).toHaveAttribute('data-tab', tab)
     await expect(sentinel).toBeVisible()
   }
+  expect(api.unhandled).toEqual([])
+  expect(errors).toEqual([])
+})
+
+/**
+ * GATE-01: a QA lead takes the gate decision from the run's Analysis tab, and
+ * it persists through the release gate's own override (one write path, one
+ * audit trail): the banner says "(overridden)" with who and why, and the
+ * release gate shows the same override in its History.
+ */
+test('Approve with conditions from the Analysis banner persists as the release gate override', async ({ page }) => {
+  const reason = 'perf soak pending'
+  const posted: unknown[] = []
+  let decision: Record<string, unknown> = { ...RUN_RELEASE_DECISION, recommendation: 'NO_GO' }
+  const readiness = /^\/api\/v1\/release-readiness\/[^/]+$/
+  const handlers: ApiHandlers = [
+    [readiness, () => decision],
+    [
+      /^\/api\/v1\/release-readiness\/[^/]+\/override$/,
+      ({ route }) => {
+        const body = route.request().postDataJSON() as { override_recommendation: string; reason: string }
+        posted.push(body)
+        decision = {
+          ...decision,
+          recommendation: body.override_recommendation,
+          human_override: body.reason,
+          overridden_by: USER.id,
+          original_recommendation: 'NO_GO',
+          original_risk_score: decision.risk_score,
+          override_audit: [{
+            timestamp: '2026-09-18T11:40:00Z',
+            actor_id: USER.id,
+            actor_name: USER.username,
+            before_recommendation: 'NO_GO',
+            before_risk_score: decision.risk_score,
+            after_recommendation: body.override_recommendation,
+            reason: body.reason,
+            policy_id: null,
+            policy_version: null,
+          }],
+        }
+        return decision
+      },
+      'POST',
+    ],
+    ...RUN_PAGE,
+    ...releaseGateOn(),
+  ]
+  const { api, errors } = await openRollout(page, `/runs/${RUN_ID}?tab=analysis`, {
+    handlers,
+    ready: (p) => p.locator('[data-status-banner]'),
+  })
+  const banner = page.getByRole('region', { name: 'Release verdict' })
+  const actions = banner.getByRole('group', { name: 'Gate decision' })
+  await expect(actions.getByRole('button')).toHaveText(['Hold', 'Approve with conditions', 'Override → GO'])
+  await expect(banner.locator('[data-verdict-override]')).toHaveCount(0)
+
+  await actions.getByRole('button', { name: 'Approve with conditions' }).click()
+  await expect(banner.getByRole('button', { name: 'CONDITIONAL GO' })).toHaveAttribute('aria-pressed', 'true')
+  await banner.getByRole('textbox', { name: 'Reason for override' }).fill(reason)
+  const intelligenceReads = requestsTo(api, `/api/v1/runs/${RUN_ID}/intelligence`).length
+  await banner.getByRole('button', { name: 'Apply Override' }).click()
+
+  await expect(banner.locator('[data-status-banner]')).toHaveAttribute('data-status-banner', 'conditional')
+  await expect(banner).toContainText('Conditional Go (overridden)')
+  await expect(banner.locator('[data-verdict-override]')).toHaveText(`Overridden to Conditional Go by ${USER.username} · ${reason} · Sep 18, 11:40`)
+  expect(posted).toEqual([{ override_recommendation: 'CONDITIONAL_GO', reason }])
+  // The override drops the run's intelligence snapshot: the page re-read it.
+  await expect.poll(() => requestsTo(api, `/api/v1/runs/${RUN_ID}/intelligence`).length).toBeGreaterThan(intelligenceReads)
+
+  // The same override, on the release gate.
+  await page.goto(`/release-gate/${RUN_ID}?tab=history`)
+  await expect(page.getByRole('heading', { name: 'Override History (1)' })).toBeVisible()
+  await expect(page.locator('[data-primary]')).toContainText('CONDITIONAL GO')
+  await expect(page.locator('[data-primary]')).toContainText(reason)
+  await networkQuiet(page, api)
   expect(api.unhandled).toEqual([])
   expect(errors).toEqual([])
 })

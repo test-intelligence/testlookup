@@ -176,6 +176,16 @@ describe('Test Management: one case view for every row', () => {
 
     expect(screen.getByText('RUN RESULT PAGE')).toBeInTheDocument()
   })
+
+  // HON-07: the box promised "ID, title, tags, owner, or requirement" over a
+  // title-only search. The API now matches title, description, tags and the
+  // id prefix; owner and requirement are not searched, so they are not named.
+  it('names only the fields the case search matches', () => {
+    renderTab()
+    const search = screen.getByRole('searchbox', { name: 'Search cases' })
+    expect(search).toHaveAttribute('placeholder', 'Search by title, tags or ID…')
+    expect(search.getAttribute('placeholder')).not.toMatch(/owner|requirement/i)
+  })
 })
 
 describe('Test Management: the case panel docks beside the list (master-detail)', () => {
@@ -240,7 +250,7 @@ describe('Test Management: the case panel docks beside the list (master-detail)'
   it('Esc closes the case, but not while the reader types in a field', () => {
     renderTab()
     openRow('Verify refund email')
-    fireEvent.keyDown(screen.getByPlaceholderText(/Search by ID, title/), { key: 'Escape' })
+    fireEvent.keyDown(screen.getByPlaceholderText('Search by title, tags or ID…'), { key: 'Escape' })
     expect(screen.getByRole('complementary', { name: 'Verify refund email' })).toBeInTheDocument()
 
     fireEvent.keyDown(document.body, { key: 'Escape' })

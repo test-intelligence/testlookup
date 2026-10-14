@@ -40,7 +40,8 @@ GET  /api/v1/keys              # manage API keys
 Conventions worth knowing:
 
 - Ingestion returns **202 Accepted** — queued, not stored.
-- List endpoints page with `page` and `size` (**not** `limit`) and return `{items, total, page, size, pages}`.
+- Paged lists — runs (`/api/v1/runs`), search (`/api/v1/search`), defects (`/api/v1/analytics/defects`) and the test-management cases, plans and audit log — take `page` and `size` (**not** `limit`) and return `{items, total, page, size, pages}`.
+- Other lists are not paged: `/api/v1/releases` returns every match as `{items, total}`, and `/api/v1/projects` and `/api/v1/keys` return a plain array.
 - Run listings default to **30 days**; `days=0` means all time.
 - Listings exclude runs from deleted projects.
 

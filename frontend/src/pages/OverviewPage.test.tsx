@@ -639,7 +639,7 @@ describe('OverviewPage — executions are not runs', () => {
     const banner = await findBanner()
     const fact = Array.from(banner.querySelectorAll('[data-banner-fact]')).find((el) => el.textContent?.startsWith('Sample'))
     const details = await openVerdictDetails()
-    const sentence = within(details).getByText(/quality gates passed/).textContent ?? ''
+    const sentence = within(details).getByText(/reads Go across/).textContent ?? ''
     return `${fact?.textContent ?? ''} | ${sentence}`
   }
 
@@ -751,7 +751,7 @@ describe('OverviewPage — the 24-hour new failures describe their own metric', 
     expect(banner).toHaveTextContent('ship blocked by unresolved failures')
     expect(banner).toHaveTextContent(/New failures · 24h 0/)
     expect(screen.queryByText('Nothing is blocking release.')).toBeNull()
-    expect(await openVerdictDetails()).toHaveTextContent(/No new failures in the last 24 h; existing failures still require resolution/i)
+    expect(await openVerdictDetails()).toHaveTextContent(/No new failures in the last 24 h, but the readiness band for the last [0-9]+ days still reads No-Go/i)
   })
 })
 
@@ -1477,7 +1477,7 @@ describe('OverviewPage — the catalogue row (VIZ-408)', () => {
     // Its summary carries the pass rate and the population it is over.
     expect(button).toHaveTextContent('pass rate 85% · weighted · 30d')
     fireEvent.click(button)
-    expect(screen.getByTestId('verdict-details')).toHaveTextContent(/All quality gates passed across 108 test executions/)
+    expect(screen.getByTestId('verdict-details')).toHaveTextContent(/reads Go across 108 test executions/)
     expect(screen.getByTestId('verdict-pass-rate-basis')).toHaveTextContent('85% · weighted · 30d')
     fireEvent.click(button)
     expect(screen.queryByTestId('verdict-details')).toBeNull()
@@ -1521,5 +1521,53 @@ describe('OverviewPage — the catalogue row (VIZ-408)', () => {
     const windows = (useFailureCategories as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0])
     expect(new Set(windows)).toEqual(new Set([30]))
     ;(useFailureCategories as ReturnType<typeof vi.fn>).mockReturnValue({ data: undefined, isLoading: false })
+  })
+})
+
+// HON-07: "How this verdict is decided" named a `release` branch no project
+// field holds, claimed "All quality gates passed" (no gate is evaluated here)
+// and offered an "override" this page does not have. The verdict is the
+// readiness band, and every state's copy now says that and nothing more.
+describe('OverviewPage — HON-07: the verdict copy promises only the readiness band', () => {
+  async function renderVerdict(summary: Record<string, unknown>) {
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    mockDashboardData(useDashboardSummary, useTrendData)
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        total_executions_7d: { value: 40 },
+        avg_pass_rate_7d: { value: 90 },
+        active_defects: { value: 0 },
+        flaky_test_count: { value: 0 },
+        new_failures_24h: { value: 0 },
+        avg_duration_ms: { value: 1000 },
+        ...summary,
+      },
+      isLoading: false,
+    })
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <Routes>
+          <Route path="/overview" element={<OverviewPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    await findBanner()
+    return openVerdictDetails()
+  }
+
+  it.each([
+    ['GO', { release_readiness: 'GREEN' }, /reads Go across 40 test executions/],
+    ['WATCH', { release_readiness_band: 'yellow' }, /reads Go with watch across 40 test executions/],
+    ['CONDITIONAL', { release_readiness: 'AMBER' }, /reads Conditional/],
+    ['NO_GO with new failures', { release_readiness: 'RED', new_failures_24h: { value: 2 } }, /2 new failures in the last 24 h\. The readiness band for the last 30 days reads No-Go/],
+    ['NO_GO without new failures', { release_readiness: 'RED' }, /still reads No-Go: the pass rate, open defects or flaky tests hold it there/],
+  ] as const)('%s: names the readiness band, no branch, no gates, no override', async (_state, summary, expected) => {
+    const details = await renderVerdict(summary)
+    expect(details).toHaveTextContent(expected)
+    expect(details).toHaveTextContent(/readiness band/)
+    expect(details.querySelector('code')).toBeNull()
+    expect(details).not.toHaveTextContent(/quality gates passed/i)
+    expect(details).not.toHaveTextContent(/override/i)
+    expect(details).not.toHaveTextContent(/merg(e|ing) to/i)
   })
 })

@@ -1,0 +1,39 @@
+{
+  "total_executions_7d": {
+    "value": 1680,
+    "trend": 16.7,
+    "trend_direction": "up"
+  },
+  "avg_pass_rate_7d": {
+    "value": 96.4,
+    "trend": 5.9,
+    "trend_direction": "up",
+    "basis": "executions",
+    "basis_label": "per test execution"
+  },
+  "active_defects": {
+    "value": 3,
+    "trend": null,
+    "trend_direction": "flat"
+  },
+  "flaky_test_count": {
+    "value": 7,
+    "trend": null,
+    "trend_direction": "flat"
+  },
+  "new_failures_24h": {
+    "value": 4,
+    "trend": null,
+    "trend_direction": "flat"
+  },
+  "avg_duration_ms": {
+    "value": 182000.0,
+    "trend": -4.2,
+    "trend_direction": "flat"
+  },
+  "release_readiness": "RED",
+  "release_readiness_band": "red",
+  "release_readiness_downgrades": [
+    "p0_defects:2>0"
+  ]
+}

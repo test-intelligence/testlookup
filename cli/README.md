@@ -169,7 +169,12 @@ matches a manifest entry, or, failing that, when its exact
 `(test_name, suite_name)` pair does. It does not read the release-gate
 verdict (GO / NO_GO); `testlookup intelligence show <run-id>` prints the run's
 release recommendation, and the MCP `check_run_release_readiness` tool returns
-the full decision.
+the full decision. For a whole project, the MCP `check_release_readiness` tool
+states the verdict `/overview` shows (GREEN / AMBER / RED, decided by the
+server from the project's release-gate policy, with the hard caps that fired as
+blockers, or "Pending" when the window has no executions); given a
+`release_id`, it returns that release's stored gate decision
+(`GET /api/v1/releases/{id}/gate`) and its blocking reasons.
 
 | Option | Meaning |
 |---|---|

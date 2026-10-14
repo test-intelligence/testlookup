@@ -2383,6 +2383,32 @@ def _frontend_refresh_intervals_from_config() -> list[Violation]:
     return violations
 
 
+_SDK_SYMBOLS_GENERATOR = Path(__file__).resolve().parent / "gen_sdk_symbols.py"
+
+
+def _frontend_sdk_symbols_fresh() -> list[Violation]:
+    """The /live SDK snippets' symbol list matches client/go and client/js.
+
+    ``frontend/src/components/live/sdkSnippets.test.ts`` checks every Go and
+    JavaScript identifier the "Connect a test runner" panel shows against
+    ``sdkSymbols.json``. That file is generated (the frontend image builds from
+    ``frontend/`` alone, so the test cannot read ``client/``). If an SDK renames
+    or drops a function and nobody regenerates the JSON, the test keeps passing
+    against the old names and the panel goes back to showing calls that do not
+    compile, which is how ``RunWithReporter`` and ``createSession`` shipped.
+    The comparison is on parsed JSON, so a formatter rewrapping the file is not
+    a violation."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("gen_sdk_symbols", _SDK_SYMBOLS_GENERATOR)
+    if spec is None or spec.loader is None:
+        return [Violation(_SDK_SYMBOLS_GENERATOR, 0, "cannot load scripts/gen_sdk_symbols.py")]
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+    target = REPO_ROOT / gen.SYMBOLS_REL
+    return [Violation(target, 0, problem) for problem in gen.stale_problems(REPO_ROOT)]
+
+
 # Settings consumed by a property/validator *inside* config.py itself, so they
 # legitimately have no reference elsewhere.
 _SETTINGS_INTERNAL_ONLY = {"CORS_ORIGINS_RAW"}
@@ -6568,6 +6594,20 @@ GUARDS: list[Guard] = [
         description="SWR poll cadences come from config/refreshIntervals.ts tiers.",
         check=_frontend_refresh_intervals_from_config,
         fix_hint="`import { REFRESH_INTERVALS } from '@/config/refreshIntervals'` and use REALTIME / ACTIVE / POLLING / BACKGROUND (0 = disabled is fine).",
+    ),
+    Guard(
+        name="frontend.sdk-symbols-fresh",
+        description=(
+            "frontend/src/components/live/sdkSymbols.json matches the exported "
+            "surface of client/go and client/js, so the /live snippet test checks "
+            "real SDK names."
+        ),
+        check=_frontend_sdk_symbols_fresh,
+        fix_hint=(
+            "Run `python scripts/gen_sdk_symbols.py` and commit the JSON, then run "
+            "`npx vitest run src/components/live/sdkSnippets.test.ts` in frontend/ "
+            "and fix any snippet that names a symbol the SDK no longer has."
+        ),
     ),
     Guard(
         name="frontend.single-axios",

@@ -136,10 +136,15 @@ describe('testManagementService request contracts', () => {
       order_index: 2,
     })
     expect(deleteData).toHaveBeenCalledWith('/api/v1/test-management/plans/plan-1/items/item-1')
-    expect(postData).toHaveBeenNthCalledWith(3, '/api/v1/test-management/plans/plan-1/items/item-1/execute', {
+    // The backend registers only PATCH on /execute; a POST is a 405.
+    expect(patchData).toHaveBeenNthCalledWith(2, '/api/v1/test-management/plans/plan-1/items/item-1/execute', {
       execution_status: 'passed',
       actual_duration_minutes: 4,
     })
+    expect(postData).not.toHaveBeenCalledWith(
+      '/api/v1/test-management/plans/plan-1/items/item-1/execute',
+      expect.anything(),
+    )
   })
 
   it('uses the plan and strategy AI contracts', () => {

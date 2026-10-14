@@ -5,6 +5,7 @@ import {
   RunIntelligence,
   RunModeSummary,
   ScoringModel,
+  ScoringModelScope,
   DecisionReportVersionSummary,
 } from '@/services/runIntelligenceService'
 
@@ -113,10 +114,22 @@ export function useRunFull(
 }
 
 
-export function useScoringModel() {
+/**
+ * The scoring model "Why this score?" explains. Scoped (GATE-05), it is the
+ * project's policy weights; the SWR key carries the scope, so two projects
+ * (or a project and the unscoped default) never share a cached model.
+ */
+export function useScoringModel(scope: ScoringModelScope = {}) {
+  const projectId = scope.projectId || null
+  const runId = projectId ? null : scope.runId || null
+  const key = projectId
+    ? ['scoring-model', 'project', projectId]
+    : runId
+      ? ['scoring-model', 'run', runId]
+      : 'scoring-model'
   const { data, error, isLoading } = useSWR<ScoringModel>(
-    'scoring-model',
-    () => runIntelligenceService.getScoringModel(),
+    key,
+    () => runIntelligenceService.getScoringModel(projectId ? { projectId } : runId ? { runId } : {}),
     {
       revalidateOnFocus: false,
       // Scoring model rarely changes — cache aggressively

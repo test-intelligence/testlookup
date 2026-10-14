@@ -376,6 +376,20 @@ export default function ValueMetricsPage() {
 
   const { metrics, error, isLoading, refresh } = useValueMetrics(projectId, days)
   const [showMethodology, setShowMethodology] = useState(false)
+  const [exporting, setExporting] = useState(false)
+
+  // HON-04: through the shared API client, whose token goes with the request,
+  // not a bare `<a href download>` that saved the API's 401 body as the report.
+  async function exportReport() {
+    setExporting(true)
+    try {
+      await valueMetricsService.downloadExport(projectId, days)
+    } catch (err) {
+      toast.error(`Export failed: ${await valueMetricsService.exportErrorMessage(err)}`)
+    } finally {
+      setExporting(false)
+    }
+  }
 
   const header = (
     <PageHeader
@@ -385,13 +399,16 @@ export default function ValueMetricsPage() {
       actions={
         <>
           <WindowPicker options={VALUE_OPTIONS} />
-          <a
-            href={valueMetricsService.exportUrl(projectId, days)}
+          <button
+            type="button"
+            onClick={() => void exportReport()}
+            disabled={exporting}
+            aria-busy={exporting}
+            data-testid="value-metrics-export"
             className="btn-secondary !py-1 text-sm flex items-center gap-2"
-            download
           >
-            <Download className="h-4 w-4" /> Export
-          </a>
+            <Download className="h-4 w-4" /> {exporting ? 'Exporting…' : 'Export'}
+          </button>
         </>
       }
     />
@@ -414,6 +431,13 @@ export default function ValueMetricsPage() {
   // backend: only treat the model as available when the headline actually
   // arrived alongside available=true.
   const hoursSavedAvailable = metrics.available === true && metrics.headline != null
+  // TRND-05: the headline covers the window the picker asked for. A payload
+  // without `window_days` predates that and is the trailing 30 days: it is
+  // labelled as such, never as the picked window.
+  const headline = metrics.headline
+  const headlineDays = headline?.window_days ?? 30
+  const headlineHours = headline?.hours_saved ?? headline?.hours_saved_30d ?? 0
+  const headlineFte = headline?.fte_equivalent ?? headline?.fte_equivalent_30d ?? 0
   const monthly = hoursSavedAvailable && Array.isArray(metrics.monthly) ? metrics.monthly : []
   const monthlyTotals = monthly.reduce(
     (acc, m) => ({
@@ -461,7 +485,7 @@ export default function ValueMetricsPage() {
           style={{ borderColor: 'color-mix(in srgb, var(--color-accent) 35%, var(--color-border))' }}
         >
           <span className="inline-flex items-center gap-2 text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-secondary)]">
-            <Timer className="h-4 w-4" aria-hidden /> Eng-hours saved · last 30 days
+            <Timer className="h-4 w-4" aria-hidden /> <span data-testid="hours-saved-window">Eng-hours saved · last {headlineDays} days</span>
           </span>
           {/* The headline number itself links to the math (AC: credibility
               requires showing the math). */}
@@ -472,11 +496,11 @@ export default function ValueMetricsPage() {
             className="group text-left"
           >
             <span className="text-2xl font-bold tabular-nums text-[var(--color-text)] group-hover:underline decoration-dotted underline-offset-4">
-              {fmtHours(metrics.headline.hours_saved_30d)}h
+              {fmtHours(headlineHours)}h
             </span>
           </button>
           <span className="text-sm text-[var(--color-text-secondary)]">
-            ≈ {fmtFte(metrics.headline.fte_equivalent_30d)} FTE
+            ≈ {fmtFte(headlineFte)} FTE
           </span>
           <button
             type="button"
@@ -485,11 +509,6 @@ export default function ValueMetricsPage() {
           >
             <HelpCircle className="h-3.5 w-3.5" aria-hidden /> How is this calculated?
           </button>
-          {/* The API reports hours saved for a fixed trailing 30 days only
-              (`hours_saved_30d`); the window picker above does not reach it. */}
-          <span className="ml-auto text-xs text-[var(--color-text-faint)]" data-testid="hours-saved-window-note">
-            Fixed 30-day figure: the window picker does not change it.
-          </span>
         </section>
       ) : (
         // Honest empty state: no estimate rather than a misleading "0 hours".

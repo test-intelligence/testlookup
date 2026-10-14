@@ -1072,3 +1072,64 @@ describe('TrendsPage P3: the page template', () => {
     expect(document.querySelectorAll('[data-testid="trends-catalogue"]')).toHaveLength(1)
   })
 })
+
+// TRND-05: the Pass rate tile printed the summary's RELATIVE change as "pp":
+// a window that moved 80 % -> 88 % read "10pp vs prev window". It now prints
+// `pass_rate_delta_pp` and names the window it compares against.
+describe('TrendsPage TRND-05: the pass-rate delta is in percentage points', () => {
+  beforeEach(async () => {
+    analyticsControls.widgetIds = []
+    frames.stacked.length = 0
+    frames.timeSeries.length = 0
+    const { useTimeWindowStore } = await import('@/store/timeWindowStore')
+    useTimeWindowStore.setState({ days: 14 })
+  })
+
+  async function renderWithSummary(summary: Record<string, unknown>) {
+    const { useTrendData, useDashboardSummary, useCoverage } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+    const { shiftDayIso, utcDayIso } = await import('@/utils/calendarDay')
+    const trend = [1, 2, 3].map((back) => ({
+      date: shiftDayIso(utcDayIso(), -back), passed: 22, failed: 3, skipped: 0, broken: 0, total: 25, pass_rate: 88,
+    }))
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: { data: trend }, isLoading: false })
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({ data: summary })
+    ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({ data: { summary: {}, suites: [] } })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    render(
+      <MemoryRouter initialEntries={['/trends']}>
+        <Routes><Route path="/trends" element={<TrendsPage />} /></Routes>
+      </MemoryRouter>,
+    )
+    await screen.findByRole('heading', { name: 'Trends' })
+  }
+
+  const passRateTile = () =>
+    within(screen.getByRole('region', { name: 'Trend metrics' })).getByText('Pass rate').closest('[data-metric-card]') as HTMLElement
+
+  it('reads 80 % -> 88 % as 8 pp against the previous window of the picked length, not the relative 10', async () => {
+    await renderWithSummary({ avg_pass_rate_7d: { value: 88, trend: 10, trend_direction: 'up', pass_rate_delta_pp: 8 } })
+    fireEvent.click(windowOption('30d'))
+
+    const change = passRateTile().querySelector('[data-metric-trend]') as HTMLElement
+    expect(change).toHaveAttribute('data-metric-trend', 'up')
+    expect(change).toHaveTextContent('Up 8 pp vs previous 30 days')
+    expect(change).not.toHaveTextContent('10')
+  })
+
+  it('keeps a fractional move and states a drop as down', async () => {
+    await renderWithSummary({ avg_pass_rate_7d: { value: 71.3, trend: -20.8, trend_direction: 'down', pass_rate_delta_pp: -18.75 } })
+
+    const change = passRateTile().querySelector('[data-metric-trend]') as HTMLElement
+    expect(change).toHaveAttribute('data-metric-trend', 'down')
+    expect(change).toHaveTextContent('Down 18.8 pp vs previous 14 days')
+  })
+
+  it('shows no delta from a payload without points, never the relative trend as pp', async () => {
+    await renderWithSummary({ avg_pass_rate_7d: { value: 88, trend: 10, trend_direction: 'up' } })
+
+    const tile = passRateTile()
+    expect(tile).not.toHaveTextContent(/pp vs/)
+    expect(tile).toHaveTextContent('3 active days')
+  })
+})

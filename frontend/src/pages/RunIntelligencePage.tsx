@@ -51,6 +51,10 @@ import DefectPromotionModal from '@/components/ai/DefectPromotionModal'
 import RunStepFlipCard from '@/components/runs/RunStepFlipCard'
 import { useDecisionReportVersions, useRunIntelligence } from '@/hooks/useRunIntelligence'
 import { usePermissions } from '@/hooks/usePermissions'
+import { useReleaseCouncil } from '@/hooks/useReleaseCouncil'
+import OverrideDecisionForm, { type OverrideRecommendation } from '@/components/release/OverrideDecisionForm'
+import type { ReleaseCouncilDecision } from '@/services/releaseCouncilService'
+import { formatCompactDateTime } from '@/utils/formatCompactDateTime'
 import ReviewBanner from '@/components/reviews/ReviewBanner'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import { onboardingService } from '@/services/onboardingService'
@@ -1275,17 +1279,64 @@ function deriveVerdict(intelligence: RunIntelligence): Verdict {
 }
 
 // ── Verdict banner (above the primary content) ─────────────────────────────
-// Hold / Override / Approve-with-conditions controls are not rendered: there
-// is no gate-decision endpoint to persist them, and a decision kept only in
-// this browser's localStorage is not a decision anyone else sees.
+
+/** A persisted human override of the run's stored release decision. */
+interface PersistedOverride {
+  to: Exclude<Gate, 'PENDING'>
+  by: string | null
+  reason: string
+  at: string | null
+}
+
+const OVERRIDE_GATES: ReadonlySet<string> = new Set(['GO', 'CONDITIONAL_GO', 'NO_GO'])
+
+/**
+ * The override stored on the run's release decision, read from the release
+ * council (`GET /release-readiness/{run}`): its value, and the latest audit
+ * entry's actor, reason and time. Null when no human has overridden it.
+ */
+function persistedOverride(council: ReleaseCouncilDecision | undefined): PersistedOverride | null {
+  if (!council?.human_override || !OVERRIDE_GATES.has(council.recommendation)) return null
+  const audit = council.override_audit ?? []
+  const latest = audit.length > 0 ? audit[audit.length - 1] : null
+  return {
+    to: council.recommendation,
+    by: latest?.actor_name ?? null,
+    reason: latest?.reason ?? council.human_override,
+    at: latest?.timestamp ?? null,
+  }
+}
+
+/**
+ * The gate decisions a QA lead takes from the run page (GATE-01), each one
+ * opening the shared override form on its value. They persist through the
+ * release gate's override (one write path, one audit trail): no decision is
+ * kept in this browser.
+ */
+const GATE_ACTIONS: ReadonlyArray<{ value: OverrideRecommendation; label: string }> = [
+  { value: 'NO_GO', label: 'Hold' },
+  { value: 'CONDITIONAL_GO', label: 'Approve with conditions' },
+  { value: 'GO', label: 'Override → GO' },
+]
+
 function VerdictBanner({
-  verdict, confidencePct, onDecisionTrail,
+  runId, verdict, confidencePct, onDecisionTrail, onOverridden,
 }: {
+  runId: string
   verdict: Verdict
   confidencePct: number
   onDecisionTrail: () => void
+  /** Revalidate what the override changed (the override drops the run's intelligence snapshot). */
+  onOverridden: () => Promise<unknown>
 }) {
-  const t = GATE_THEME[verdict.gate]
+  const { council, isLoading: councilLoading, isError: councilError, refresh: refreshCouncil } = useReleaseCouncil(runId)
+  const { isQaLead } = usePermissions()
+  const [overrideTo, setOverrideTo] = useState<OverrideRecommendation | null>(null)
+
+  // A human override is the decision: it outranks the computed verdict.
+  const override = persistedOverride(council)
+  const gate: Gate = override?.to ?? verdict.gate
+  const t = GATE_THEME[gate]
   const blockers = verdict.decision?.blocking_issues ?? []
   const facts: BannerFact[] = [
     { label: 'Risk', value: verdict.gate === 'PENDING' || verdict.score === null ? '—' : `${verdict.score}/100` },
@@ -1294,13 +1345,22 @@ function VerdictBanner({
   ]
   const lede = verdict.lede
     ?? (verdict.gate === 'PENDING' ? 'Awaiting analysis — no release decision available yet.' : '')
+  // The override needs a stored decision: the API answers 404 without one,
+  // and a synthesised quick-look view has none.
+  const blockedReason = councilLoading
+    ? 'Loading the stored release decision…'
+    : councilError
+      ? 'The stored release decision could not be loaded.'
+      : !council || council.synthesized
+        ? 'Run deep investigation first: there is no stored release decision to override yet.'
+        : null
   return (
     <section aria-label="Release verdict" aria-live="polite" className="space-y-1.5">
       <StatusBanner
         state={t.banner}
         title={
           <>
-            <span style={{ color: t.gate }}>{t.label}</span>
+            <span style={{ color: t.gate }}>{t.label}{override ? ' (overridden)' : ''}</span>
             <span aria-hidden className="mx-1.5 text-[var(--color-text-muted)]">·</span>
             <span>{t.action}</span>
           </>
@@ -1308,6 +1368,14 @@ function VerdictBanner({
         facts={facts}
         action={{ label: 'Decision trail', onClick: onDecisionTrail }}
       />
+      {override && (
+        <p data-verdict-override="" className="m-0 px-1 text-[13px] text-[var(--status-broken)]">
+          Overridden to <strong>{GATE_THEME[override.to].label}</strong>
+          {override.by && <> by <span className="text-[var(--color-text)]">{override.by}</span></>}
+          {' · '}<span className="text-[var(--color-text-secondary)]">{override.reason}</span>
+          {override.at && <span className="text-[var(--color-text-muted)]"> · {formatCompactDateTime(override.at)}</span>}
+        </p>
+      )}
       {lede && <p className="m-0 max-w-[90ch] px-1 text-[13px] text-[var(--color-text-secondary)]">{lede}</p>}
       {blockers.length > 0 && (
         <p className="m-0 flex items-center gap-2 px-1 text-[13px] text-[var(--color-text-secondary)]">
@@ -1320,6 +1388,39 @@ function VerdictBanner({
             <span className="ml-auto text-[var(--color-text-muted)]">{verdict.affectedSuite} suite</span>
           )}
         </p>
+      )}
+      {/* QA lead only: the API refuses an override below QA lead. */}
+      {isQaLead && (
+        <div role="group" aria-label="Gate decision" className="flex flex-wrap items-center gap-2 px-1 pt-0.5">
+          {GATE_ACTIONS.map((action) => (
+            <button
+              key={action.value}
+              type="button"
+              onClick={() => setOverrideTo(action.value)}
+              disabled={blockedReason !== null}
+              title={blockedReason ?? undefined}
+              aria-pressed={overrideTo === action.value}
+              className="btn-secondary text-xs disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {action.label}
+            </button>
+          ))}
+          {blockedReason && !councilLoading && (
+            <span data-gate-blocked="" className="text-xs text-[var(--color-text-muted)]">{blockedReason}</span>
+          )}
+        </div>
+      )}
+      {isQaLead && overrideTo && blockedReason === null && (
+        <OverrideDecisionForm
+          key={overrideTo}
+          runId={runId}
+          initialRecommendation={overrideTo}
+          onApplied={async () => {
+            setOverrideTo(null)
+            await Promise.all([refreshCouncil(), onOverridden()])
+          }}
+          onCancel={() => setOverrideTo(null)}
+        />
       )}
     </section>
   )
@@ -1362,7 +1463,7 @@ export function RunIntelligenceBody({
   /** The host's own section, between What failed and the disclosures. */
   afterPrimary?: ReactNode
 }) {
-  const { intelligence, isLoading, isError } = useRunIntelligence(runId, reportVersion)
+  const { intelligence, isLoading, isError, refresh: refreshIntelligence } = useRunIntelligence(runId, reportVersion)
   const activeProjectId = useProjectStore((s) => s.activeProjectId)
 
   // Auto-complete the "View Run Intelligence" onboarding step the first time
@@ -1426,9 +1527,13 @@ export function RunIntelligenceBody({
   return (
     <div className="space-y-4" data-run-analysis="">
       <VerdictBanner
+        runId={runId}
         verdict={verdict}
         confidencePct={confidencePct}
         onDecisionTrail={() => setDecisionTrailOpen(true)}
+        // The override deletes the run's intelligence snapshot server-side:
+        // re-read it, or the banner keeps the pre-override verdict.
+        onOverridden={() => refreshIntelligence()}
       />
 
       {/* E8.5: the AI report's human-review status (E8.3 envelope). */}

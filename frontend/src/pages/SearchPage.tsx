@@ -1,5 +1,5 @@
 /**
- * Search — hero-first layout: a large search bar leads, index health follows.
+ * Search — hero-first layout: a large search bar leads, searchable data follows.
  *
  * Layout (1320 px max-width, 14 px section gaps):
  *   Header  → the template's `PageHeader` (UX redesign P6: compact, **?** =
@@ -14,7 +14,7 @@
  *             the index-freshness stat.
  *   Body    → 1.65fr | 1fr.
  *     Left  → Recent searches · Saved searches (⌘1-⌘3, only when some exist).
- *     Right → Index health (per entity).
+ *     Right → Searchable data (per entity, plus the semantic index line).
  *
  * Global search is a case-insensitive substring match (SQL ILIKE in
  * global_search_service.py). There is no field:value syntax, no ranking
@@ -677,57 +677,121 @@ function SavedList({
 }
 
 // ── Right rail ──────────────────────────────────────────────────────────
-interface EntityHealth {
+// "Searchable data" (HON-08). It was "Index health": ONE vector-index status,
+// plus a 5-minute staleness rule, copied onto all six entity rows, so an
+// install without ChromaDB (or an idle one) showed Tests, Runs, Suites,
+// Defects, Flaky and Releases all "Down". Five of them have no index at all:
+// global search is a SQL keyword match over each table (global_search_service)
+// and answers whenever the API does. Each row says that, with its row count;
+// the ChromaDB collection, which holds test cases only, gets a line of its own,
+// and an index that has not been written to lately is idle, not down.
+interface SearchableEntity {
   entity: SearchEntityType
   label: string
-  count: number
-  status: 'live' | 'embedding' | 'down'
-  detail: string
   Icon: typeof TestTube
   iconBg: string
   iconFg: string
 }
 
-function buildEntityHealth(indexStatus: IndexStatus | null, entityCounts: Record<SearchEntityType, number>): EntityHealth[] {
-  const lastSync = indexStatus?.last_indexed_at ? Date.now() - new Date(indexStatus.last_indexed_at).getTime() : null
-  const isDown = indexStatus?.status === 'unavailable'
-  const isStale = lastSync != null && lastSync > 5 * 60 * 1000
-  const overall: EntityHealth['status'] = isDown || isStale ? 'down' : 'live'
-  const lastSyncLabel = lastSync == null ? 'unknown'
-    : lastSync < 60_000 ? `${Math.max(1, Math.round(lastSync / 1000))}s`
-    : lastSync < 3_600_000 ? `${Math.round(lastSync / 60_000)}m`
-    : `${Math.round(lastSync / 3_600_000)}h`
+const SEARCHABLE_ENTITIES: SearchableEntity[] = [
+  { entity: 'test_case',  label: 'Tests',    Icon: TestTube,      iconBg: 'color-mix(in srgb, var(--color-accent) 14%, transparent)', iconFg: 'var(--color-accent)' },
+  { entity: 'test_run',   label: 'Runs',     Icon: Zap,           iconBg: 'color-mix(in srgb, var(--status-passed) 14%, transparent)',  iconFg: 'var(--status-passed)' },
+  { entity: 'suite',      label: 'Suites',   Icon: Layers,        iconBg: 'color-mix(in srgb, var(--status-flaky) 14%, transparent)', iconFg: 'var(--status-flaky)' },
+  { entity: 'defect',     label: 'Defects',  Icon: ShieldCheck,   iconBg: 'rgba(236,72,153,0.14)',  iconFg: '#f9a8d4' },
+  { entity: 'flaky_test', label: 'Flaky',    Icon: AlertTriangle, iconBg: 'color-mix(in srgb, var(--status-broken) 14%, transparent)', iconFg: 'var(--status-broken)' },
+  { entity: 'release',    label: 'Releases', Icon: Package,       iconBg: 'var(--color-bg-secondary)', iconFg: 'var(--color-text-muted)' },
+]
 
-  return [
-    { entity: 'test_case',  label: 'Tests',    count: entityCounts.test_case ?? 0,  status: overall, detail: lastSyncLabel, Icon: TestTube,    iconBg: 'color-mix(in srgb, var(--color-accent) 14%, transparent)', iconFg: 'var(--color-accent)' },
-    { entity: 'test_run',   label: 'Runs',     count: entityCounts.test_run ?? 0,   status: overall, detail: lastSyncLabel, Icon: Zap,         iconBg: 'color-mix(in srgb, var(--status-passed) 14%, transparent)',  iconFg: 'var(--status-passed)' },
-    { entity: 'suite',      label: 'Suites',   count: entityCounts.suite ?? 0,      status: overall, detail: lastSyncLabel, Icon: Layers,      iconBg: 'color-mix(in srgb, var(--status-flaky) 14%, transparent)', iconFg: 'var(--status-flaky)' },
-    { entity: 'defect',     label: 'Defects',  count: entityCounts.defect ?? 0,     status: overall, detail: lastSyncLabel, Icon: ShieldCheck, iconBg: 'rgba(236,72,153,0.14)',  iconFg: '#f9a8d4' },
-    { entity: 'flaky_test', label: 'Flaky',    count: entityCounts.flaky_test ?? 0, status: overall, detail: lastSyncLabel, Icon: AlertTriangle, iconBg: 'color-mix(in srgb, var(--status-broken) 14%, transparent)', iconFg: 'var(--status-broken)' },
-    { entity: 'release',    label: 'Releases', count: entityCounts.release ?? 0,    status: overall, detail: lastSyncLabel, Icon: Package,     iconBg: 'var(--color-bg-secondary)', iconFg: 'var(--color-text-muted)' },
-  ]
+/**
+ * `/search/index-status`'s `status`. The backend also answers
+ * `not_configured` (no ChromaDB server at the configured address), which the
+ * shared `IndexStatus` type does not list yet.
+ */
+type SemanticIndexStatus = IndexStatus['status'] | 'not_configured'
+
+interface SemanticIndexLine {
+  /** Short state for the card header and the pill. */
+  label: 'Ready' | 'Not configured' | 'Unavailable' | 'Unknown' | 'Checking'
+  detail: string
+  tone: 'passed' | 'failed' | 'neutral'
 }
 
-function IndexHealthCard({ rows }: { rows: EntityHealth[] }) {
-  const live = rows.filter(r => r.status === 'live').length
+function describeSemanticIndex(indexStatus: IndexStatus | null): SemanticIndexLine {
+  if (!indexStatus) return { label: 'Checking', detail: 'Reading the semantic index status…', tone: 'neutral' }
+  const status = indexStatus.status as SemanticIndexStatus
+  if (status === 'healthy') {
+    const docs = indexStatus.document_count
+    const when = indexStatus.last_indexed_at
+      ? `last indexed ${relativeTime(new Date(indexStatus.last_indexed_at).getTime())}`
+      : 'no indexing time recorded'
+    return {
+      label: 'Ready',
+      detail: `${Intl.NumberFormat().format(docs)} doc${docs === 1 ? '' : 's'} · ${when}`,
+      tone: 'passed',
+    }
+  }
+  if (status === 'not_configured') {
+    return {
+      label: 'Not configured',
+      detail: 'No ChromaDB server answers here. Semantic test search falls back to keyword; this page searches by keyword either way.',
+      tone: 'neutral',
+    }
+  }
+  if (status === 'unavailable') {
+    return {
+      label: 'Unavailable',
+      detail: 'ChromaDB answered with an error. Semantic test search falls back to keyword until it recovers.',
+      tone: 'failed',
+    }
+  }
+  return { label: 'Unknown', detail: 'The semantic index status could not be read.', tone: 'neutral' }
+}
+
+const PILL_TONES: Record<SemanticIndexLine['tone'], { bg: string; bd: string; fg: string }> = {
+  passed: { bg: 'color-mix(in srgb, var(--status-passed) 14%, transparent)', bd: 'color-mix(in srgb, var(--status-passed) 30%, transparent)', fg: 'var(--status-passed)' },
+  failed: { bg: 'color-mix(in srgb, var(--status-failed) 14%, transparent)', bd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)', fg: 'var(--status-failed)' },
+  neutral: { bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)', fg: 'var(--color-text-muted)' },
+}
+
+function StatusPill({ label, tone, ariaLabel }: { label: string; tone: SemanticIndexLine['tone']; ariaLabel: string }) {
+  const palette = PILL_TONES[tone]
+  return (
+    <span
+      className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10.5px] font-semibold whitespace-nowrap"
+      aria-label={ariaLabel}
+      style={{ background: palette.bg, border: `1px solid ${palette.bd}`, color: palette.fg }}
+    >
+      {label}
+    </span>
+  )
+}
+
+function SearchableDataCard({
+  totals, indexStatus,
+}: {
+  /** Project-scoped row counts from /search/entity-counts; null until (or unless) they load. */
+  totals: Record<SearchEntityType, number> | null
+  indexStatus: IndexStatus | null
+}) {
+  const semantic = describeSemanticIndex(indexStatus)
   return (
     <CardShell
       title={
         <span className="inline-flex items-center gap-2">
           <Database className="h-3.5 w-3.5 text-[var(--color-text-muted)]" />
-          Index health
+          Searchable data
         </span>
       }
-      rightSlot={<span>{live} of {rows.length} live</span>}
+      rightSlot={
+        <span data-testid="searchable-data-summary">
+          {SEARCHABLE_ENTITIES.length} entity types · semantic: {semantic.label.toLowerCase()}
+        </span>
+      }
     >
       <div className="px-4 py-3 flex flex-col gap-2">
-        {rows.map(r => {
+        {SEARCHABLE_ENTITIES.map(r => {
           const Icon = r.Icon
-          const statusPalette = r.status === 'live'
-            ? { bg: 'color-mix(in srgb, var(--status-passed) 14%, transparent)', bd: 'color-mix(in srgb, var(--status-passed) 30%, transparent)', fg: 'var(--status-passed)', label: 'Live' }
-            : r.status === 'embedding'
-              ? { bg: 'color-mix(in srgb, var(--status-broken) 14%, transparent)', bd: 'color-mix(in srgb, var(--status-broken) 30%, transparent)', fg: 'var(--status-broken)', label: 'Embedding' }
-              : { bg: 'color-mix(in srgb, var(--status-failed) 14%, transparent)', bd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)', fg: 'var(--status-failed)', label: 'Down' }
+          const count = totals ? Number(totals[r.entity] ?? 0) : null
           return (
             <div
               key={r.entity}
@@ -740,19 +804,24 @@ function IndexHealthCard({ rows }: { rows: EntityHealth[] }) {
               <div className="min-w-0">
                 <div className="text-[12.5px] text-[var(--color-text)] font-medium">{r.label}</div>
                 <div className="text-[10.5px] text-[var(--color-text-muted)] truncate">
-                  {Intl.NumberFormat().format(r.count)} items · last sync {r.detail}
+                  {count === null ? '— rows' : `${Intl.NumberFormat().format(count)} row${count === 1 ? '' : 's'}`} · keyword match
                 </div>
               </div>
-              <span
-                className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10.5px] font-semibold"
-                aria-label={`${r.label} index: ${statusPalette.label}`}
-                style={{ background: statusPalette.bg, border: `1px solid ${statusPalette.bd}`, color: statusPalette.fg }}
-              >
-                {statusPalette.label}
-              </span>
+              <StatusPill label="Keyword" tone="passed" ariaLabel={`${r.label}: keyword search`} />
             </div>
           )
         })}
+        <div
+          className="grid items-start gap-2.5 rounded-md border mt-1"
+          style={{ gridTemplateColumns: '1fr auto', padding: '8px 12px', background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
+          data-testid="semantic-index-line"
+        >
+          <div className="min-w-0">
+            <div className="text-[12.5px] text-[var(--color-text)] font-medium">Semantic index (tests)</div>
+            <div className="text-[10.5px] text-[var(--color-text-muted)]">{semantic.detail}</div>
+          </div>
+          <StatusPill label={semantic.label} tone={semantic.tone} ariaLabel={`Semantic index: ${semantic.label}`} />
+        </div>
       </div>
     </CardShell>
   )
@@ -815,7 +884,7 @@ export default function SearchPage() {
   // adapters bump their per-type cap when narrowed.
   const [indexStatus, setIndexStatus] = useState<IndexStatus | null>(null)
   // Project-scoped totals from /api/v1/search/entity-counts — the
-  // fallback for the chip + Index Health counts when no query is
+  // fallback for the chip counts (and the Searchable data rows) when no query is
   // active. Without this the chips and rows showed 0 forever even
   // though the data was sitting in Postgres.
   const [totalCounts, setTotalCounts] = useState<Record<SearchEntityType, number> | null>(null)
@@ -1082,11 +1151,6 @@ export default function SearchPage() {
     }
   }, [entityCounts, totalIndexed])
 
-  const indexHealthRows = useMemo(
-    () => buildEntityHealth(indexStatus, entityCounts),
-    [indexStatus, entityCounts],
-  )
-
   const projectLabel = project?.name ?? 'All Projects'
 
   // The crumb the old header drew (workspace chip · counts · freshness), as
@@ -1206,9 +1270,9 @@ export default function SearchPage() {
         </CardShell>
       )}
 
-      {/* Browse-mode helper grid — recent/saved searches + index health.
+      {/* Browse-mode helper grid — recent/saved searches + searchable data.
           Visible whenever no query is active, so a user landing at
-          /search with scope=all (browse mode) still sees Index Health
+          /search with scope=all (browse mode) still sees Searchable data
           alongside the auto-loaded results.
           Hidden once the user types a query so the screen focuses on
           their search results. */}
@@ -1227,7 +1291,7 @@ export default function SearchPage() {
             />
           </div>
           <div className="flex flex-col gap-3.5 min-w-0">
-            <IndexHealthCard rows={indexHealthRows} />
+            <SearchableDataCard totals={totalCounts} indexStatus={indexStatus} />
           </div>
         </div>
       )}

@@ -171,15 +171,23 @@ function summary(request: ApiRequest) {
   const points = trendPoints(days)
   const passed = sumOf(points, 'passed')
   const evaluated = passed + sumOf(points, 'failed') + sumOf(points, 'broken')
+  const passRate = Math.round((passed / evaluated) * 1000) / 10
+  // `trend` is the RELATIVE change in percent, as the API sends it.
+  const passTrend = -1.8
   return {
     release_readiness: 'AMBER',
     release_readiness_band: 'orange',
     release_readiness_downgrades: [],
     total_executions_7d: { value: sumOf(points, 'total'), trend: 4.2, trend_direction: 'up' },
     avg_pass_rate_7d: {
-      value: Math.round((passed / evaluated) * 1000) / 10,
-      trend: -1.8,
+      value: passRate,
+      trend: passTrend,
       trend_direction: 'down',
+      // TRND-05: the same move in percentage points, which the API always
+      // sends and the Trends pass-rate tile prints. The previous window's rate
+      // is passRate / (1 + trend / 100): on the 14-day Trends window 88.0 %
+      // against 89.6 %, -1.6 pp.
+      pass_rate_delta_pp: Math.round((passRate - passRate / (1 + passTrend / 100)) * 10) / 10,
       basis: 'executions',
       basis_label: 'per test execution',
     },
@@ -1247,6 +1255,9 @@ const TOP_FAILING = {
     failure_category: category,
     failure_kind: kind,
     last_failed: isoAgo(i === 0 ? 0 : i + 1, 2),
+    // HON-05: the run of this test's last failure (run 0, build 240, FAILED).
+    last_failed_run_id: RUN_ID,
+    last_failed_build: '240',
     failure_step: null,
   })),
 }
@@ -1588,6 +1599,8 @@ export const TOP_FAILING_ROWS = TOP_FAILING_12.map(([test, suite, count], i) => 
   failure_category: i % 3 === 0 ? 'TIMEOUT' : 'ASSERTION',
   failure_kind: i % 3 === 0 ? 'infrastructure' : 'product',
   last_failed: isoAgo(i % 4, 2),
+  last_failed_run_id: RUN_ID,
+  last_failed_build: '240',
   failure_step: null,
 }))
 

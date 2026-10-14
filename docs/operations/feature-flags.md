@@ -79,7 +79,7 @@ Default = the value on a fresh install after `alembic upgrade head`. "Not seeded
 | `rag_faithfulness_gate` | 0069 | **off** | global | Faithfulness scoring of RAG-generated test cases and the auto-accept threshold (`backend/app/services/rag_faithfulness_service.py`). Only meaningful with `knowledge_rag` on. |
 | `test_case_rich_detail` | 0142 | on | project | Versioned test-case detail metadata (definition, provenance, steps, attachments, links) on test-case views (`backend/app/services/runs_service.py`). |
 | `test_case_lifecycle_v2` | 0144 | on | project + user | The governed lifecycle for authored test cases (review and approval states, the Approvals inbox) in the API (`test_case_lifecycle_service.py`, 404 while off) and the UI (`TestManagementPage.tsx`, `inbox/CaseApprovals.tsx`). |
-| `retention_activation_nudge` | 0145 | on | none | Seeded as the kill switch for the first-run prompt that invites an operator to enable data retention. No code evaluates the flag today: the prompt shows until retention is enabled or the user dismisses it, whatever the flag says. |
+| `retention_activation_nudge` | 0145 | on | UI | Kill switch for the first-run prompt on Settings → Retention that invites an operator to enable data retention (`frontend/src/components/retention/RetentionActivationNudge.tsx`, read with `useFeatureFlagStatus` for the active project). Off: the prompt never shows. On: it shows until retention is enabled or the user dismisses it. While the flag is loading, or if reading it fails, the prompt stays hidden. It never enables or disables retention itself. |
 
 ### Agent pipeline stages and background analysis
 

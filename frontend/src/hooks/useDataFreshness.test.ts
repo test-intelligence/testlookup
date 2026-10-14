@@ -61,7 +61,9 @@ describe('no page hardcodes a data-freshness age', () => {
   // Page sources are pulled in through Vite's glob rather than node:fs so this
   // runs under the same tsconfig as the app build (`types: [vite/client]`,
   // no node types).
-  const pageSources = import.meta.glob('../pages/*.tsx', {
+  // Rendered page sources only: a page test asserting the age the page DERIVED
+  // ("last indexed 3h ago" from a fixture timestamp) is not a fabricated claim.
+  const pageSources = import.meta.glob(['../pages/*.tsx', '!../pages/*.test.tsx'], {
     query: '?raw',
     import: 'default',
     eager: true,

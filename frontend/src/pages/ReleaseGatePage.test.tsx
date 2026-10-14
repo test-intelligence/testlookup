@@ -73,9 +73,12 @@ vi.mock('react-hot-toast', () => ({
 // No request leaves the test (src/test/networkGuard.ts): the dimension
 // descriptions, the AI mode, and the telemetry an error boundary sends when a
 // test makes a group throw.
+const { mockUseScoringModel } = vi.hoisted(() => ({
+  mockUseScoringModel: vi.fn(() => ({ scoringModel: undefined, isLoading: false, isError: false, getDescription: () => '' })),
+}))
 vi.mock('@/hooks/useRunIntelligence', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/hooks/useRunIntelligence')>(),
-  useScoringModel: () => ({ scoringModel: undefined, isLoading: false, isError: false, getDescription: () => '' }),
+  useScoringModel: mockUseScoringModel,
 }))
 vi.mock('@/hooks/useAIConfig', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/hooks/useAIConfig')>(),
@@ -84,6 +87,10 @@ vi.mock('@/hooks/useAIConfig', async (importOriginal) => ({
 vi.mock('@/utils/errorReporting', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/utils/errorReporting')>(),
   reportBoundaryError: vi.fn(),
+}))
+// The share dialog's list of the run's links (GATE-06), read only while open.
+vi.mock('@/hooks/useShareLinks', () => ({
+  useShareLinks: () => ({ links: [], isLoading: false, isError: false, refresh: vi.fn() }),
 }))
 
 describe('ReleaseGatePage', () => {
@@ -426,6 +433,16 @@ async function renderGate(decision: ReleaseCouncilDecision) {
 }
 
 describe('ReleaseGatePage — the risk score explains itself', () => {
+  // GATE-05 (wired here): the breakdown's "Why this score?" reads the policy
+  // weights of the DECISION's run, not whatever :runId the URL carries.
+  it("scopes the risk dimension breakdown to the decision's own run", async () => {
+    mockUseScoringModel.mockClear()
+    await renderGate(flooredDecision({ run_id: 'run-of-the-decision' }))
+    expect(await screen.findByText('Risk Dimension Breakdown')).toBeInTheDocument()
+    expect(mockUseScoringModel).toHaveBeenCalledWith({ runId: 'run-of-the-decision' })
+    expect(mockUseScoringModel).not.toHaveBeenCalledWith({ runId: 'run-1' })
+  })
+
   it('discloses that the score came from the pass-rate floor', async () => {
     await renderGate(flooredDecision())
     expect(await screen.findByText(/raised to the NO-GO floor/i)).toBeInTheDocument()
@@ -1024,5 +1041,18 @@ describe('ReleaseGatePage — verdict first (P4 item 6)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
     expect(screen.getByRole('menuitem', { name: /Export PDF/ })).toBeInTheDocument()
     expect(screen.getByRole('menuitem', { name: /Share report/ })).toBeInTheDocument()
+  })
+
+  // GATE-06: Share used to mint an executive 7-day link on the click (and
+  // copy it); it now opens the dialog that chooses both and lists the links.
+  it('Share report opens the share dialog and creates nothing by itself', async () => {
+    await renderAt('/release-gate/run-1', flooredDecision())
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Share report/ }))
+    const dialog = await screen.findByRole('dialog', { name: 'Share report' })
+    expect(within(dialog).getByRole('combobox', { name: 'Link expires after' })).toHaveValue('7')
+    expect(within(dialog).getByRole('radio', { name: 'Executive' })).toBeChecked()
+    expect(within(dialog).getByText('No share links for this run yet.')).toBeInTheDocument()
+    expect(within(dialog).queryByRole('textbox', { name: 'Share URL' })).toBeNull()
   })
 })

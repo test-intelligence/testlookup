@@ -1,6 +1,7 @@
 /** Consumer contract for the Python SDK download exposed by the live guide. */
 import { describe, expect, it } from 'vitest'
 
+import { getInstallSnippet } from '@/components/live/sdkSnippets'
 import pageSource from './LiveExecutionPage.tsx?raw'
 
 describe('LiveExecutionPage — Python SDK download contract', () => {
@@ -10,9 +11,11 @@ describe('LiveExecutionPage — Python SDK download contract', () => {
   })
 
   it('tells users to extract and install the bundled project', () => {
-    expect(pageSource).toContain('Download and extract the Python ZIP')
-    expect(pageSource).toMatch(/cd python\s+pip install "\.\[yaml\]"/)
-    expect(pageSource).not.toMatch(/cd python\s+pip install \.(?:\s|\\n)/)
-    expect(pageSource).not.toContain('Copy the reporter from the SDK Downloads')
+    // The install text moved to components/live/sdkSnippets.ts (HON-03).
+    const install = getInstallSnippet('python')
+    expect(install).toContain('Download and extract the Python ZIP')
+    expect(install).toMatch(/cd python\s+pip install "\.\[yaml\]"/)
+    expect(install).not.toMatch(/cd python\s+pip install \.(?:\s|\\n)/)
+    expect(install).not.toContain('Copy the reporter from the SDK Downloads')
   })
 })

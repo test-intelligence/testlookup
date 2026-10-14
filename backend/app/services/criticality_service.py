@@ -12,7 +12,12 @@ Replaces the inline _WEIGHTS + _compute_dimension_scores in release_risk_agent.p
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from app.models.postgres import FailureCategory
+
+if TYPE_CHECKING:
+    from app.models.postgres import ReleaseGatePolicy
 
 SCORE_MODEL_VERSION = 1
 
@@ -245,24 +250,64 @@ def score_cluster(
     }
 
 
-def get_scoring_model_info() -> dict:
+def _dimensions(weights: dict[str, float]) -> list[dict]:
+    return [
+        {
+            "name": dim,
+            "weight": weight,
+            "description": _DIMENSION_DESCRIPTIONS.get(dim, ""),
+        }
+        for dim, weight in weights.items()
+    ]
+
+
+def get_scoring_model_info(
+    policy: ReleaseGatePolicy | None = None,
+    *,
+    level: str | None = None,
+) -> dict:
     """
     Return the full scoring model metadata.
 
     Served by GET /api/v1/scoring-model.
     Consumed by the frontend CriticalityMatrix "Why this score?" tooltip.
+
+    With no ``level`` this is the deployment's default model (config weights,
+    module thresholds), unchanged for the callers that score clusters.
+
+    With ``level`` (the second value of ``resolve_effective_policy``), it is
+    the model the verdict applies for that project: thresholds and weights are
+    read through the SAME extractors ``evaluate_policy`` uses, so the numbers
+    "Why this score?" shows cannot diverge from the ones that decided. A
+    ``policy`` of ``None`` at level ``hardcoded`` is the config defaults, said
+    so in ``policy``.
     """
-    weights = _weights()
+    if level is None:
+        return {
+            "version": SCORE_MODEL_VERSION,
+            "go_threshold": _GO_THRESHOLD,
+            "no_go_threshold": _NO_GO_THRESHOLD,
+            "dimensions": _dimensions(_weights()),
+        }
+
+    # Late import: policy_evaluator_service imports this module.
+    from app.services.policy_evaluator_service import (  # noqa: PLC0415
+        _extract_thresholds,
+        _extract_weights,
+    )
+
+    thresholds = _extract_thresholds(policy)
     return {
         "version": SCORE_MODEL_VERSION,
-        "go_threshold": _GO_THRESHOLD,
-        "no_go_threshold": _NO_GO_THRESHOLD,
-        "dimensions": [
-            {
-                "name": dim,
-                "weight": weight,
-                "description": _DIMENSION_DESCRIPTIONS.get(dim, ""),
-            }
-            for dim, weight in weights.items()
-        ],
+        "go_threshold": thresholds["go_threshold"],
+        "no_go_threshold": thresholds["no_go_threshold"],
+        "pass_rate_minimum": thresholds["pass_rate_minimum"],
+        "pass_rate_hard_floor_factor": thresholds["pass_rate_hard_floor_factor"],
+        "dimensions": _dimensions(_extract_weights(policy)),
+        "policy": {
+            "policy_id": str(policy.id) if policy is not None and policy.id else None,
+            "name": policy.name if policy is not None else None,
+            "version": policy.version if policy is not None else None,
+            "level": level,
+        },
     }

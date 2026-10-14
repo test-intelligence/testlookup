@@ -760,8 +760,8 @@ interface RowActionHandlers {
   onCreateJira: (row: FailingRow) => void
   createJiraDisabledReason: (row: FailingRow) => string | null
   onShowSuspects: (row: FailingRow) => void
-  /** Set when there is no failed run in the window to attribute commits against. */
-  suspectsDisabledReason: string | null
+  /** Set when the row carries no failing run of its own to attribute commits against. */
+  suspectsDisabledReason: (row: FailingRow) => string | null
 }
 
 function TopFailingTable({
@@ -918,6 +918,7 @@ function FailingRowEl({ row, failedExecutions, actions }: { row: FailingRow; fai
   const sharePct = failedExecutions > 0 ? (test.fail_count / failedExecutions) * 100 : null
   const muteReason = actions.muteDisabledReason(row)
   const jiraReason = actions.createJiraDisabledReason(row)
+  const suspectsReason = actions.suspectsDisabledReason(row)
   const suite = [test.suite_name, test.class_name].filter(Boolean).join(' · ')
   return (
     <tr data-failing-row="" style={{ borderBottom: '1px solid var(--color-border)' }} className="hover:bg-[var(--color-bg-hover)]">
@@ -983,8 +984,8 @@ function FailingRowEl({ row, failedExecutions, actions }: { row: FailingRow; fai
           {/* Epic 8 US-8.2 — the bisect: the suspect commit range for this failure, in a side panel. */}
           <RowAction
             label={`Suspects for ${test.test_name}`}
-            title={actions.suspectsDisabledReason ?? 'Bisect: show the suspect commits between the last green run and this failure'}
-            disabled={Boolean(actions.suspectsDisabledReason)}
+            title={suspectsReason ?? 'Bisect: show the suspect commits between the last green run and this failure'}
+            disabled={Boolean(suspectsReason)}
             onClick={() => actions.onShowSuspects(row)}
           >
             <GitCommit className="h-3 w-3" aria-hidden="true" /> Suspects
@@ -1924,8 +1925,9 @@ export default function FailureAnalysisPage() {
   const { data: compareTrendsData, isLoading: compareLoading } = useTrendData(
     compareDays, suiteFilter,
   )
-  // The most recent failing run: its suite is a banner fact, and it is the
-  // run the Suspects panel attributes commits against.
+  // The most recent failing run: its suite is a banner fact. The Suspects
+  // panel does NOT use it (HON-05): each row attributes commits against the
+  // run of its own last failure, ``last_failed_run_id``.
   const { data: latestFailedRuns } = useRuns({ page: 1, size: 1, days, status: 'FAILED', ...(suiteFilter && { suite_name: suiteFilter }) })
   const latestFailedRun = latestFailedRuns?.items?.[0]
 
@@ -2045,8 +2047,12 @@ export default function FailureAnalysisPage() {
           ? jiraUnavailableCopy(jiraMeta.reason)
           : null,
     onShowSuspects: (row) => setSuspectsFor(row),
-    suspectsDisabledReason: latestFailedRun?.id ? null : 'No failed run in this window to attribute commits against.',
-  }), [project?.id, jiraMeta, latestFailedRun?.id, quarantineOn, isQaLead, isQaEngineer])
+    // Per row: the run that holds THIS test's last failure. A flaky-only row
+    // (no top-failing entry) carries none.
+    suspectsDisabledReason: (row) => row.test.last_failed_run_id
+      ? null
+      : 'No failing run of this test in this window to attribute commits against.',
+  }), [project?.id, jiraMeta, quarantineOn, isQaLead, isQaEngineer])
 
   const openCorrection = useCallback(() => {
     if (!project?.id) {
@@ -2398,13 +2404,27 @@ export default function FailureAnalysisPage() {
 
       {/* Epic 8 US-8.2 — the bisect: the suspect commits for a row's test, beside the table. */}
       <SidePanel
-        open={suspectsFor !== null && Boolean(latestFailedRun?.id)}
+        open={Boolean(suspectsFor?.test.last_failed_run_id)}
         onClose={() => setSuspectsFor(null)}
         title={suspectsFor ? `Suspects: ${suspectsFor.test.test_name}` : 'Suspects'}
         closeLabel="Close suspects"
       >
+        {/* HON-05: name the run the commits are attributed against — this
+            test's own last failure, not the project's newest failed run. */}
+        {suspectsFor?.test.last_failed_run_id && (
+          <p className="m-0 mb-3 text-[12px] text-[var(--color-text-muted)]" data-testid="suspects-run">
+            Commits leading up to this test&apos;s last failure, in run{' '}
+            <Link
+              to={`/runs/${encodeURIComponent(suspectsFor.test.last_failed_run_id)}`}
+              className="font-mono text-[var(--color-accent)] hover:underline"
+            >
+              {suspectsFor.test.last_failed_build || suspectsFor.test.last_failed_run_id.slice(0, 8)}
+            </Link>
+            {suspectsFor.test.last_failed ? ` (${shortAgo(suspectsFor.test.last_failed)})` : ''}.
+          </p>
+        )}
         <SuspectsPanel
-          runId={latestFailedRun?.id ?? null}
+          runId={suspectsFor?.test.last_failed_run_id ?? null}
           fingerprint={suspectsFor?.test.test_fingerprint ?? null}
           panelId="suspects-panel"
         />

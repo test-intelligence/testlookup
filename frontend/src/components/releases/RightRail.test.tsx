@@ -1,7 +1,8 @@
 import { render, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 
-import { CompliancePacks, ShippingThisWeek } from './RightRail'
+import { CompliancePacks, RecentActivity, ShippingThisWeek } from './RightRail'
 import type { DerivedRelease, ReleaseStage } from './types'
 
 /**
@@ -138,5 +139,20 @@ describe('CompliancePacks — no fabricated audit evidence', () => {
   it('still shows an honest empty state', () => {
     render(<CompliancePacks releases={[]} onOpen={vi.fn()} />)
     expect(screen.getByText(/no compliance packs yet/i)).toBeTruthy()
+  })
+})
+
+// HON-09: "View full audit log" pointed at `/audit`, which was never a route
+// (the catch-all sent it to Overview). It opens the Activity feed on its
+// Release category, as an in-app link.
+describe('RecentActivity — the audit link', () => {
+  it('opens /activity on the Release category', () => {
+    render(
+      <MemoryRouter>
+        <RecentActivity releases={[]} />
+      </MemoryRouter>,
+    )
+    const link = screen.getByRole('link', { name: /View full audit log/ })
+    expect(link).toHaveAttribute('href', '/activity?category=release')
   })
 })

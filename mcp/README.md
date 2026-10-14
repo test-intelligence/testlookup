@@ -256,7 +256,7 @@ touched a suite whole, so under a suite filter it differs from
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `check_release_readiness` | `project_id`, `days?` | Project-level GREEN/AMBER/RED rollup over a time window |
+| `check_release_readiness` | `project_id`, `days?`, `release_id?` | Project GREEN/AMBER/RED from the server's policy verdict over a time window, or a release's stored gate decision when `release_id` is given |
 | `check_run_release_readiness` | `run_id` | Single-run GO/CONDITIONAL_GO/NO_GO with risk score and blocking issues |
 | `create_share_link` | `run_id`, `expires_days?`, `layout?` | Time-limited share URL for a run report |
 

@@ -1,10 +1,19 @@
-import type { PaginatedResponse } from '@/types/common'
 import type { LinkedRun, Release, ReleaseDetail, ReleaseOutcome, ReleasePhase } from '@/types/releases'
 import { deleteData, getData, postData, putData } from './http'
 
+/**
+ * `GET /api/v1/releases`: every matching release, unpaged — `{items, total}`,
+ * no `page`/`size`/`pages` (`release_service.list_releases`). The router's
+ * no-membership path answers the same shape (HYG-10).
+ */
+export interface ReleaseList {
+  items: Release[]
+  total: number
+}
+
 export const releasesService = {
   list: (projectId: string | null, status?: string) =>
-    getData<PaginatedResponse<Release>>('/api/v1/releases', {
+    getData<ReleaseList>('/api/v1/releases', {
       params: { ...(projectId ? { project_id: projectId } : {}), ...(status ? { status } : {}) },
     }),
 

@@ -665,3 +665,30 @@ describe('ReleasesPage — one banner above the list, the rest under it (P6)', (
     expect(follows(primary, healthDisclosure())).toBe(true)
   })
 })
+
+// HON-07: the empty state promised "clone from an org template"; no template
+// or clone exists, and an empty project has nothing to clone from.
+describe('ReleasesPage — the empty state promises only what exists (HON-07)', () => {
+  beforeEach(async () => {
+    projectStoreState.activeProjectId = 'proj-1'
+    projectStoreState.activeProject = { id: 'proj-1', name: 'Project One' }
+    projectStoreState.projects = [{ id: 'proj-1', name: 'Project One' }]
+    const { useRelease, useReleases } = await import('@/hooks/useReleases')
+    const { useRuns } = await import('@/hooks/useRuns')
+    ;(useReleases as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false, mutate: vi.fn() })
+    ;(useRelease as ReturnType<typeof vi.fn>).mockReturnValue({ data: undefined, isLoading: false, mutate: vi.fn() })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] } })
+  })
+
+  it('an empty project says "Create your first release", with no template or clone promise', () => {
+    render(
+      <MemoryRouter initialEntries={['/releases']}>
+        <Routes><Route path="/releases" element={<ReleasesPage />} /></Routes>
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('No releases yet')).toBeInTheDocument()
+    expect(screen.getByText('Create your first release')).toBeInTheDocument()
+    expect(screen.queryByText(/template|clone/i)).toBeNull()
+    expect(screen.getByRole('button', { name: /Create release/ })).toBeInTheDocument()
+  })
+})
