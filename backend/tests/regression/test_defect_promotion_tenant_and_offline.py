@@ -42,6 +42,12 @@ class _ScalarsResult:
 
 @pytest.mark.asyncio
 async def test_chroma_dedup_collection_is_per_project():
+    # Patching app.db.chroma.get_chroma_client imports app.db.chroma, which
+    # imports chromadb at module load. Without the package (a dev machine whose
+    # Python lacks it) the test used to pass only because an earlier test left a
+    # module bound to a fake chromadb behind; it skips honestly instead. CI and
+    # every image install chromadb, so it always runs there.
+    pytest.importorskip("chromadb")
     project_id = str(uuid.uuid4())
     open_defect = SimpleNamespace(id=uuid.uuid4(), title="Checkout 500", cluster_id="c1")
 

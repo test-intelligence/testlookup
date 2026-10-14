@@ -2,16 +2,29 @@ import { api } from './api';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
+export type ShareLayout = 'executive' | 'engineering';
+
 export interface ShareLink {
   id: string;
-  token: string;
-  share_url: string;
+  /**
+   * The raw token and URL exist only on the CREATE response: the token is
+   * hashed at rest, so a listed link carries `null` for both (GATE-06).
+   */
+  token: string | null;
+  share_url: string | null;
   report_layout: string;
   expires_at: string;
   created_by_name: string | null;
   access_count: number;
   is_revoked: boolean;
   created_at: string;
+  /**
+   * Create only: whether the run has the intelligence snapshot the recipient
+   * will be served. `null`/absent = not evaluated (the list does not check).
+   */
+  snapshot_ready?: boolean | null;
+  /** Create only: why the link will 404 for now (no snapshot yet). */
+  warning?: string | null;
 }
 
 // ── PDF Export ──────────────────────────────────────────────────────────────
@@ -49,9 +62,12 @@ export async function downloadEvidenceBundle(runId: string): Promise<void> {
 
 // ── Share Links ─────────────────────────────────────────────────────────────
 
+/** The expiries the API accepts are 1-30 days; these are the ones offered. */
+export const SHARE_EXPIRY_DAYS = [1, 7, 14, 30] as const;
+
 export async function createShareLink(
   runId: string,
-  layout: 'executive' | 'engineering',
+  layout: ShareLayout,
   expiryDays: number = 7,
 ): Promise<ShareLink> {
   const { data } = await api.post<ShareLink>(`/api/v1/reports/runs/${runId}/share`, {

@@ -18,7 +18,7 @@ search_type options:
 The response always includes search_type to reflect the mode actually used
 (may fall back to keyword if ChromaDB is unavailable).
 
-Source: [backend/app/routers/search.py:311](../../../backend/app/routers/search.py#L311).
+Source: [backend/app/routers/search.py:318](../../../backend/app/routers/search.py#L318).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -209,7 +209,7 @@ Notes:
     flagged as flaky", not just live quarantines. Released rows are
     excluded since those are no longer flagged-as-flaky.
 
-Source: [backend/app/routers/search.py:143](../../../backend/app/routers/search.py#L143).
+Source: [backend/app/routers/search.py:150](../../../backend/app/routers/search.py#L150).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -315,7 +315,7 @@ project-scoped totals from ``/entity-counts``, and selecting a chip with
 no query should surface real records of that type rather than a blank
 panel. Adapters fall back to "most recent N" when ``q`` is empty.
 
-Source: [backend/app/routers/search.py:440](../../../backend/app/routers/search.py#L440).
+Source: [backend/app/routers/search.py:447](../../../backend/app/routers/search.py#L447).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -483,7 +483,13 @@ Contract limit: at least one response has an unstructured schema. Read the linke
 
 Get Index Status
 
-Return collection health within the caller's active project scope.
+Return the semantic (ChromaDB) index's health within the caller's active project scope.
+
+``status``: ``healthy`` (with ``document_count`` and ``last_indexed_at``),
+``not_configured`` (no ChromaDB server answers at the configured address,
+e.g. a ``make dev`` stack without the ``local-llm`` profile) or
+``unavailable`` (a server answered but the read failed). The index holds
+test cases only; global search is keyword over every entity either way.
 
 Source: [backend/app/routers/search.py:59](../../../backend/app/routers/search.py#L59).
 
@@ -590,7 +596,7 @@ project memberships could queue an instance-wide rebuild.
 * No project named means *every* tenant's index, so that variant is
   ADMIN-only — otherwise a lead in one project rebuilds everyone else's.
 
-Source: [backend/app/routers/search.py:86](../../../backend/app/routers/search.py#L86).
+Source: [backend/app/routers/search.py:93](../../../backend/app/routers/search.py#L93).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -700,7 +706,7 @@ Find Similar Failures
 
 Find similar failures within the source test case's project.
 
-Source: [backend/app/routers/search.py:256](../../../backend/app/routers/search.py#L256).
+Source: [backend/app/routers/search.py:263](../../../backend/app/routers/search.py#L263).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 

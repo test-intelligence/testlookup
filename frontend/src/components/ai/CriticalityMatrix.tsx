@@ -5,21 +5,47 @@
  * cached by useScoringModel) to render a "Why this score?" expandable tooltip
  * per dimension without hardcoding any text in the component.
  *
+ * GATE-05: the model is asked for the run's project, so it carries the weights
+ * that project's release-gate policy applies. The stored dimension rows carry
+ * the default weights (DIMENSION_METADATA) whatever the policy said; when the
+ * scoped model names a policy, its weights are the ones shown and summed here,
+ * which is the composite the verdict computed, and the card says which policy
+ * they came from.
+ *
  * Props:
  *   dimensionScores  — DimensionScore[] from release decision or cluster
  *   title            — optional section heading (default "Risk Dimension Scores")
  *   defaultExpanded  — whether the card starts expanded (default false)
+ *   projectId        — the project whose policy weights apply (preferred)
+ *   runId            — or the run, resolved to its project server-side; when
+ *                      neither is passed, the route's `:runId` is used
  */
 import { useState } from 'react'
+import { useParams } from 'react-router-dom'
 import { ChevronDown, ChevronUp, HelpCircle } from 'lucide-react'
 import { clsx } from 'clsx'
 import { useScoringModel } from '@/hooks/useRunIntelligence'
-import type { DimensionScore } from '@/services/runIntelligenceService'
+import type { DimensionScore, ScoringModel } from '@/services/runIntelligenceService'
 
 interface Props {
   dimensionScores: DimensionScore[]
   title?: string
   defaultExpanded?: boolean
+  projectId?: string | null
+  runId?: string | null
+}
+
+/** Where the weights on this card come from, in words; null when unscoped. */
+function weightSource(model: ScoringModel | undefined): string | null {
+  const policy = model?.policy
+  if (!policy) return null
+  if (policy.level === 'hardcoded' || !policy.name) {
+    return 'Weights: deployment defaults (no active release-gate policy)'
+  }
+  const version = policy.version != null ? ` v${policy.version}` : ''
+  return policy.level === 'system'
+    ? `Weights from the default policy ${policy.name}${version}`
+    : `Weights from policy ${policy.name}${version}`
 }
 
 function scoreColour(score: number): string {
@@ -38,14 +64,31 @@ export default function CriticalityMatrix({
   dimensionScores,
   title = 'Risk Dimension Scores',
   defaultExpanded = false,
+  projectId = null,
+  runId = null,
 }: Props) {
   const [expanded, setExpanded] = useState(defaultExpanded)
   const [openDim, setOpenDim] = useState<string | null>(null)
-  const { getDescription, isLoading: modelLoading } = useScoringModel()
+  const routeRunId = useParams<{ runId?: string }>().runId ?? null
+  const { scoringModel, getDescription, isLoading: modelLoading } = useScoringModel(
+    projectId ? { projectId } : { runId: runId ?? routeRunId },
+  )
 
   if (dimensionScores.length === 0) return null
 
-  const composite = dimensionScores.reduce((sum, d) => sum + d.contribution, 0)
+  // A policy-scoped model's weight wins over the row's stored default weight,
+  // and the contributions are re-summed with it: that is the composite the
+  // verdict computed (``compute_composite(dim_scores, weights=policy)``).
+  const policyWeights = scoringModel?.policy
+    ? new Map(scoringModel.dimensions.map((dim) => [dim.name, dim.weight]))
+    : null
+  const rows = dimensionScores.map((d) => {
+    const weight = policyWeights?.get(d.name) ?? d.weight
+    return { ...d, weight, contribution: policyWeights ? d.score * weight : d.contribution }
+  })
+  const source = weightSource(scoringModel)
+
+  const composite = rows.reduce((sum, d) => sum + d.contribution, 0)
 
   return (
     <div className="card space-y-3">
@@ -75,7 +118,12 @@ export default function CriticalityMatrix({
 
       {expanded && (
         <div className="space-y-3">
-          {dimensionScores.map((d) => {
+          {source && (
+            <p className="text-[11px] text-[var(--color-text-muted)]" data-testid="criticality-weight-source">
+              {source}
+            </p>
+          )}
+          {rows.map((d) => {
             const isOpen = openDim === d.name
             const description = getDescription(d.name)
 
@@ -100,7 +148,7 @@ export default function CriticalityMatrix({
                     <span className={clsx('font-mono font-medium', scoreTextColour(d.score))}>
                       {d.score.toFixed(0)}
                     </span>
-                    <span className="text-[var(--color-text-faint)] text-[10px]">
+                    <span className="text-[var(--color-text-faint)] text-[10px]" data-testid={`criticality-weight-${d.name}`}>
                       ×{(d.weight * 100).toFixed(0)}%
                     </span>
                   </div>
@@ -118,6 +166,11 @@ export default function CriticalityMatrix({
                 {isOpen && description && (
                   <div className="bg-[var(--color-bg-secondary)]/80 border border-[var(--color-border)] rounded-lg px-3 py-2 mt-1">
                     <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">{description}</p>
+                    {source && (
+                      <p className="mt-1 text-[11px] text-[var(--color-text-faint)]" data-testid={`criticality-why-weight-${d.name}`}>
+                        Weight {d.weight.toFixed(2)} · {source}
+                      </p>
+                    )}
                   </div>
                 )}
               </div>

@@ -108,3 +108,15 @@ for (const width of [1280, 1440]) {
     })
   }
 }
+
+// HON-07: the share of defects with no Jira issue was labelled "Escape rate"
+// (defects found after a release shipped, which nothing measures yet: DEF-03).
+// The longer label still fits the tile at 1280 px (the loop above).
+test('/defects names the no-Jira share "Unlinked to Jira", never "Escape rate"', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await PAGES['/defects'](page)
+  await expect(page.locator('#main-content [data-metric-card="compact"]').first()).toBeVisible()
+  const labels = (await readTiles(page)).map((t) => t.label)
+  expect(labels).toContain('Unlinked to Jira')
+  expect(labels.map((label) => label.toLowerCase())).not.toContain('escape rate')
+})

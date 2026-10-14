@@ -1338,6 +1338,7 @@
    "avg_pass_rate_7d": {
     "basis": "executions",
     "basis_label": "per test execution",
+    "pass_rate_delta_pp": -1.9,
     "trend": -2.0,
     "trend_direction": "down",
     "value": 91.7
@@ -1378,6 +1379,7 @@
    "avg_pass_rate_7d": {
     "basis": "executions",
     "basis_label": "per test execution",
+    "pass_rate_delta_pp": null,
     "trend": null,
     "trend_direction": "flat",
     "value": 91.7
@@ -1418,6 +1420,7 @@
    "avg_pass_rate_7d": {
     "basis": "executions",
     "basis_label": "per test execution",
+    "pass_rate_delta_pp": null,
     "trend": null,
     "trend_direction": "flat",
     "value": 93.1
@@ -1458,6 +1461,7 @@
    "avg_pass_rate_7d": {
     "basis": "executions",
     "basis_label": "per test execution",
+    "pass_rate_delta_pp": -1.0,
     "trend": -1.1,
     "trend_direction": "down",
     "value": 92.3
@@ -1498,6 +1502,7 @@
    "avg_pass_rate_7d": {
     "basis": "executions",
     "basis_label": "per test execution",
+    "pass_rate_delta_pp": -1.0,
     "trend": -1.1,
     "trend_direction": "down",
     "value": 92.3
@@ -1538,6 +1543,7 @@
    "avg_pass_rate_7d": {
     "basis": "executions",
     "basis_label": "per test execution",
+    "pass_rate_delta_pp": null,
     "trend": null,
     "trend_direction": "flat",
     "value": 87.8
@@ -1578,6 +1584,7 @@
    "avg_pass_rate_7d": {
     "basis": "executions",
     "basis_label": "per test execution",
+    "pass_rate_delta_pp": null,
     "trend": null,
     "trend_direction": "flat",
     "value": 87.0
@@ -5063,6 +5070,8 @@
      "failure_kind": "product",
      "failure_step": null,
      "last_failed": "2026-09-19T16:03:03.280888+00:00",
+     "last_failed_build": "viz-3043",
+     "last_failed_run_id": "<run:viz-3043>",
      "suite_name": "CheckoutSuite",
      "test_fingerprint": "937b396d0de3cff9",
      "test_name": "testCheckoutCase03"
@@ -5074,6 +5083,8 @@
      "failure_kind": "infrastructure",
      "failure_step": null,
      "last_failed": "2026-09-17T03:26:34.091177+00:00",
+     "last_failed_build": "viz-3041",
+     "last_failed_run_id": "<run:viz-3041>",
      "suite_name": "NotificationSuite",
      "test_fingerprint": "bca8e23ef2c5bc3e",
      "test_name": "testNotificationsCase01"
@@ -5085,6 +5096,8 @@
      "failure_kind": "product",
      "failure_step": null,
      "last_failed": "2026-09-21T11:35:00+00:00",
+     "last_failed_build": "viz-3044",
+     "last_failed_run_id": "<run:viz-3044>",
      "suite_name": "InventorySuite",
      "test_fingerprint": "ed573a90393a8abe",
      "test_name": "testInventoryCase01"
@@ -5096,6 +5109,8 @@
      "failure_kind": "test_code",
      "failure_step": null,
      "last_failed": "2026-09-18T08:22:52.496425+00:00",
+     "last_failed_build": "viz-3042",
+     "last_failed_run_id": "<run:viz-3042>",
      "suite_name": "InventorySuite",
      "test_fingerprint": "74cd38b04975719b",
      "test_name": "testInventoryCase02"
@@ -5107,6 +5122,8 @@
      "failure_kind": "unknown",
      "failure_step": null,
      "last_failed": "2026-09-15T16:49:54.495330+00:00",
+     "last_failed_build": "viz-3040",
+     "last_failed_run_id": "<run:viz-3040>",
      "suite_name": "InventorySuite",
      "test_fingerprint": "d58773b471951219",
      "test_name": "testInventoryCase04"
@@ -5118,6 +5135,8 @@
      "failure_kind": "product",
      "failure_step": null,
      "last_failed": "2026-09-10T12:20:44.184999+00:00",
+     "last_failed_build": "viz-3036",
+     "last_failed_run_id": "<run:viz-3036>",
      "suite_name": "ReportingSuite",
      "test_fingerprint": "7043056b8db9bcf3",
      "test_name": "testReportingCase02"
@@ -5129,6 +5148,8 @@
      "failure_kind": "infrastructure",
      "failure_step": null,
      "last_failed": "2026-09-14T09:37:36.773667+00:00",
+     "last_failed_build": "viz-3039",
+     "last_failed_run_id": "<run:viz-3039>",
      "suite_name": "CheckoutSuite",
      "test_fingerprint": "0340c6f08b524cb4",
      "test_name": "testCheckoutCase02"
@@ -5140,6 +5161,8 @@
      "failure_kind": "test_code",
      "failure_step": null,
      "last_failed": "2026-07-30T07:40:36.828424+00:00",
+     "last_failed_build": "viz-3014",
+     "last_failed_run_id": "<run:viz-3014>",
      "suite_name": "LegacyBatchSuite",
      "test_fingerprint": "26f2f39b51844e62",
      "test_name": "testLegacyBatchCase02"
@@ -5159,6 +5182,8 @@
      "failure_kind": "product",
      "failure_step": null,
      "last_failed": "2026-09-19T16:03:03.280888+00:00",
+     "last_failed_build": "viz-3043",
+     "last_failed_run_id": "<run:viz-3043>",
      "suite_name": "CheckoutSuite",
      "test_fingerprint": "937b396d0de3cff9",
      "test_name": "testCheckoutCase03"
@@ -5170,6 +5195,8 @@
      "failure_kind": "infrastructure",
      "failure_step": null,
      "last_failed": "2026-09-17T03:26:34.091177+00:00",
+     "last_failed_build": "viz-3041",
+     "last_failed_run_id": "<run:viz-3041>",
      "suite_name": "NotificationSuite",
      "test_fingerprint": "bca8e23ef2c5bc3e",
      "test_name": "testNotificationsCase01"
@@ -5181,6 +5208,8 @@
      "failure_kind": "product",
      "failure_step": null,
      "last_failed": "2026-09-21T11:35:00+00:00",
+     "last_failed_build": "viz-3044",
+     "last_failed_run_id": "<run:viz-3044>",
      "suite_name": "InventorySuite",
      "test_fingerprint": "ed573a90393a8abe",
      "test_name": "testInventoryCase01"
@@ -5192,6 +5221,8 @@
      "failure_kind": "test_code",
      "failure_step": null,
      "last_failed": "2026-09-18T08:22:52.496425+00:00",
+     "last_failed_build": "viz-3042",
+     "last_failed_run_id": "<run:viz-3042>",
      "suite_name": "InventorySuite",
      "test_fingerprint": "74cd38b04975719b",
      "test_name": "testInventoryCase02"
@@ -5203,6 +5234,8 @@
      "failure_kind": "unknown",
      "failure_step": null,
      "last_failed": "2026-09-15T16:49:54.495330+00:00",
+     "last_failed_build": "viz-3040",
+     "last_failed_run_id": "<run:viz-3040>",
      "suite_name": "InventorySuite",
      "test_fingerprint": "d58773b471951219",
      "test_name": "testInventoryCase04"
@@ -5214,6 +5247,8 @@
      "failure_kind": "product",
      "failure_step": null,
      "last_failed": "2026-09-10T12:20:44.184999+00:00",
+     "last_failed_build": "viz-3036",
+     "last_failed_run_id": "<run:viz-3036>",
      "suite_name": "ReportingSuite",
      "test_fingerprint": "7043056b8db9bcf3",
      "test_name": "testReportingCase02"
@@ -5225,6 +5260,8 @@
      "failure_kind": "infrastructure",
      "failure_step": null,
      "last_failed": "2026-09-14T09:37:36.773667+00:00",
+     "last_failed_build": "viz-3039",
+     "last_failed_run_id": "<run:viz-3039>",
      "suite_name": "CheckoutSuite",
      "test_fingerprint": "0340c6f08b524cb4",
      "test_name": "testCheckoutCase02"
@@ -5236,6 +5273,8 @@
      "failure_kind": "test_code",
      "failure_step": null,
      "last_failed": "2026-07-30T07:40:36.828424+00:00",
+     "last_failed_build": "viz-3014",
+     "last_failed_run_id": "<run:viz-3014>",
      "suite_name": "LegacyBatchSuite",
      "test_fingerprint": "26f2f39b51844e62",
      "test_name": "testLegacyBatchCase02"
@@ -5255,6 +5294,8 @@
      "failure_kind": "product",
      "failure_step": null,
      "last_failed": "2026-09-19T16:03:03.280888+00:00",
+     "last_failed_build": "viz-3043",
+     "last_failed_run_id": "<run:viz-3043>",
      "suite_name": "InventorySuite",
      "test_fingerprint": "ed573a90393a8abe",
      "test_name": "testInventoryCase01"
@@ -5266,6 +5307,8 @@
      "failure_kind": "product",
      "failure_step": null,
      "last_failed": "2026-09-19T16:03:03.280888+00:00",
+     "last_failed_build": "viz-3043",
+     "last_failed_run_id": "<run:viz-3043>",
      "suite_name": "CheckoutSuite",
      "test_fingerprint": "937b396d0de3cff9",
      "test_name": "testCheckoutCase03"
@@ -5277,6 +5320,8 @@
      "failure_kind": "test_code",
      "failure_step": null,
      "last_failed": "2026-09-18T08:22:52.496425+00:00",
+     "last_failed_build": "viz-3042",
+     "last_failed_run_id": "<run:viz-3042>",
      "suite_name": "InventorySuite",
      "test_fingerprint": "74cd38b04975719b",
      "test_name": "testInventoryCase02"
@@ -5288,6 +5333,8 @@
      "failure_kind": "infrastructure",
      "failure_step": null,
      "last_failed": "2026-09-17T03:26:34.091177+00:00",
+     "last_failed_build": "viz-3041",
+     "last_failed_run_id": "<run:viz-3041>",
      "suite_name": "NotificationSuite",
      "test_fingerprint": "bca8e23ef2c5bc3e",
      "test_name": "testNotificationsCase01"
@@ -5299,6 +5346,8 @@
      "failure_kind": "unknown",
      "failure_step": null,
      "last_failed": "2026-09-15T16:49:54.495330+00:00",
+     "last_failed_build": "viz-3040",
+     "last_failed_run_id": "<run:viz-3040>",
      "suite_name": "InventorySuite",
      "test_fingerprint": "d58773b471951219",
      "test_name": "testInventoryCase04"
@@ -5310,6 +5359,8 @@
      "failure_kind": "infrastructure",
      "failure_step": null,
      "last_failed": "2026-08-29T21:40:17.652616+00:00",
+     "last_failed_build": "viz-3027",
+     "last_failed_run_id": "<run:viz-3027>",
      "suite_name": "CheckoutSuite",
      "test_fingerprint": "0340c6f08b524cb4",
      "test_name": "testCheckoutCase02"
@@ -5321,6 +5372,8 @@
      "failure_kind": "product",
      "failure_step": null,
      "last_failed": "2026-09-10T12:20:44.184999+00:00",
+     "last_failed_build": "viz-3036",
+     "last_failed_run_id": "<run:viz-3036>",
      "suite_name": "ReportingSuite",
      "test_fingerprint": "7043056b8db9bcf3",
      "test_name": "testReportingCase02"
@@ -5340,6 +5393,8 @@
      "failure_kind": "product",
      "failure_step": null,
      "last_failed": "2026-09-19T16:03:03.280888+00:00",
+     "last_failed_build": "viz-3043",
+     "last_failed_run_id": "<run:viz-3043>",
      "suite_name": "CheckoutSuite",
      "test_fingerprint": "937b396d0de3cff9",
      "test_name": "testCheckoutCase03"
@@ -5351,6 +5406,8 @@
      "failure_kind": "infrastructure",
      "failure_step": null,
      "last_failed": "2026-08-29T21:40:17.652616+00:00",
+     "last_failed_build": "viz-3027",
+     "last_failed_run_id": "<run:viz-3027>",
      "suite_name": "CheckoutSuite",
      "test_fingerprint": "0340c6f08b524cb4",
      "test_name": "testCheckoutCase02"
@@ -5370,6 +5427,8 @@
      "failure_kind": "product",
      "failure_step": null,
      "last_failed": "2026-09-19T16:03:03.280888+00:00",
+     "last_failed_build": "viz-3043",
+     "last_failed_run_id": "<run:viz-3043>",
      "suite_name": "CheckoutSuite",
      "test_fingerprint": "937b396d0de3cff9",
      "test_name": "testCheckoutCase03"
@@ -5381,6 +5440,8 @@
      "failure_kind": "infrastructure",
      "failure_step": null,
      "last_failed": "2026-09-14T09:37:36.773667+00:00",
+     "last_failed_build": "viz-3039",
+     "last_failed_run_id": "<run:viz-3039>",
      "suite_name": "CheckoutSuite",
      "test_fingerprint": "0340c6f08b524cb4",
      "test_name": "testCheckoutCase02"
@@ -5392,6 +5453,8 @@
      "failure_kind": "product",
      "failure_step": null,
      "last_failed": "2026-09-21T11:35:00+00:00",
+     "last_failed_build": "viz-3044",
+     "last_failed_run_id": "<run:viz-3044>",
      "suite_name": "InventorySuite",
      "test_fingerprint": "ed573a90393a8abe",
      "test_name": "testInventoryCase01"
@@ -5411,6 +5474,8 @@
      "failure_kind": "product",
      "failure_step": null,
      "last_failed": "2026-09-19T16:03:03.280888+00:00",
+     "last_failed_build": "viz-3043",
+     "last_failed_run_id": "<run:viz-3043>",
      "suite_name": "CheckoutSuite",
      "test_fingerprint": "937b396d0de3cff9",
      "test_name": "testCheckoutCase03"
@@ -5422,6 +5487,8 @@
      "failure_kind": "infrastructure",
      "failure_step": null,
      "last_failed": "2026-09-14T09:37:36.773667+00:00",
+     "last_failed_build": "viz-3039",
+     "last_failed_run_id": "<run:viz-3039>",
      "suite_name": "CheckoutSuite",
      "test_fingerprint": "0340c6f08b524cb4",
      "test_name": "testCheckoutCase02"
@@ -5433,6 +5500,8 @@
      "failure_kind": "product",
      "failure_step": null,
      "last_failed": "2026-09-21T11:35:00+00:00",
+     "last_failed_build": "viz-3044",
+     "last_failed_run_id": "<run:viz-3044>",
      "suite_name": "InventorySuite",
      "test_fingerprint": "ed573a90393a8abe",
      "test_name": "testInventoryCase01"
@@ -5452,6 +5521,8 @@
      "failure_kind": "product",
      "failure_step": null,
      "last_failed": "2026-09-21T11:35:00+00:00",
+     "last_failed_build": "viz-3044",
+     "last_failed_run_id": "<run:viz-3044>",
      "suite_name": "InventorySuite",
      "test_fingerprint": "ed573a90393a8abe",
      "test_name": "testInventoryCase01"
@@ -5463,6 +5534,8 @@
      "failure_kind": "infrastructure",
      "failure_step": null,
      "last_failed": "2026-09-14T09:37:36.773667+00:00",
+     "last_failed_build": "viz-3039",
+     "last_failed_run_id": "<run:viz-3039>",
      "suite_name": "CheckoutSuite",
      "test_fingerprint": "0340c6f08b524cb4",
      "test_name": "testCheckoutCase02"
@@ -5474,6 +5547,8 @@
      "failure_kind": "product",
      "failure_step": null,
      "last_failed": "2026-08-31T05:40:23.876672+00:00",
+     "last_failed_build": "viz-3028",
+     "last_failed_run_id": "<run:viz-3028>",
      "suite_name": "CheckoutSuite",
      "test_fingerprint": "937b396d0de3cff9",
      "test_name": "testCheckoutCase03"
@@ -5485,6 +5560,8 @@
      "failure_kind": "unknown",
      "failure_step": null,
      "last_failed": "2026-08-31T05:40:23.876672+00:00",
+     "last_failed_build": "viz-3028",
+     "last_failed_run_id": "<run:viz-3028>",
      "suite_name": "InventorySuite",
      "test_fingerprint": "d58773b471951219",
      "test_name": "testInventoryCase04"
@@ -5496,6 +5573,8 @@
      "failure_kind": "infrastructure",
      "failure_step": null,
      "last_failed": "2026-07-03T10:10:01.305275+00:00",
+     "last_failed_build": "viz-3005",
+     "last_failed_run_id": "<run:viz-3005>",
      "suite_name": "NotificationSuite",
      "test_fingerprint": "bca8e23ef2c5bc3e",
      "test_name": "testNotificationsCase01"
@@ -5507,6 +5586,8 @@
      "failure_kind": "product",
      "failure_step": null,
      "last_failed": "2026-08-31T05:40:23.876672+00:00",
+     "last_failed_build": "viz-3028",
+     "last_failed_run_id": "<run:viz-3028>",
      "suite_name": "ReportingSuite",
      "test_fingerprint": "7043056b8db9bcf3",
      "test_name": "testReportingCase02"
@@ -5526,6 +5607,8 @@
      "failure_kind": "infrastructure",
      "failure_step": null,
      "last_failed": "2026-09-14T09:37:36.773667+00:00",
+     "last_failed_build": "viz-3039",
+     "last_failed_run_id": "<run:viz-3039>",
      "suite_name": "CheckoutSuite",
      "test_fingerprint": "0340c6f08b524cb4",
      "test_name": "testCheckoutCase02"
@@ -5537,6 +5620,8 @@
      "failure_kind": "product",
      "failure_step": null,
      "last_failed": "2026-08-31T05:40:23.876672+00:00",
+     "last_failed_build": "viz-3028",
+     "last_failed_run_id": "<run:viz-3028>",
      "suite_name": "CheckoutSuite",
      "test_fingerprint": "937b396d0de3cff9",
      "test_name": "testCheckoutCase03"
@@ -5548,6 +5633,8 @@
      "failure_kind": "product",
      "failure_step": null,
      "last_failed": "2026-09-21T11:35:00+00:00",
+     "last_failed_build": "viz-3044",
+     "last_failed_run_id": "<run:viz-3044>",
      "suite_name": "InventorySuite",
      "test_fingerprint": "ed573a90393a8abe",
      "test_name": "testInventoryCase01"

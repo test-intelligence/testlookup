@@ -763,11 +763,45 @@ def _update_cursor(rows, project_id: Optional[str] = None) -> None:
         pass
 
 
+#: chromadb's own wording when its HttpClient gets no answer (it re-raises
+#: httpx.ConnectError as a ValueError while validating the tenant).
+_CHROMA_NO_SERVER = "Could not connect to a Chroma server"
+
+
+def _chroma_unreachable(exc: BaseException) -> bool:
+    """True when nothing answers at the configured ChromaDB address.
+
+    That is how an install without ChromaDB looks (``make dev`` starts none;
+    it is the ``local-llm`` compose profile): there is no switch that says
+    "ChromaDB is off", only a host and port nobody listens on. A server that
+    answered and then failed is a different state, and stays ``unavailable``.
+    """
+    import httpx
+
+    current: BaseException | None = exc
+    for _ in range(6):  # the exception and a few links of its chain
+        if current is None:
+            return False
+        if isinstance(current, (ConnectionError, httpx.ConnectError)):
+            return True
+        if isinstance(current, ValueError) and _CHROMA_NO_SERVER in str(current):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 async def get_index_status(
     project_id: Optional[str] = None,
     allowed_project_ids: Optional[set] = None,
 ) -> dict:
-    """Return ChromaDB health and a scope-filtered document count."""
+    """Return ChromaDB health and a scope-filtered document count.
+
+    ``status`` is ``healthy`` (the collection answered), ``not_configured``
+    (no ChromaDB server answers at the configured address: semantic search is
+    not set up here, and keyword search still covers every entity) or
+    ``unavailable`` (a server answered but the status read failed). HON-08:
+    the /search rail showed both of the last two as every entity "Down".
+    """
     status = {"status": "unknown", "document_count": 0, "last_indexed_at": None}
     try:
         collection = await _get_or_create_collection()
@@ -791,8 +825,12 @@ async def get_index_status(
         status["document_count"] = count
         status["status"] = "healthy"
     except Exception as exc:
-        logger.debug("ChromaDB unavailable for status check: %s", exc)
-        status["status"] = "unavailable"
+        unreachable = _chroma_unreachable(exc)
+        logger.debug(
+            "ChromaDB %s for status check: %s",
+            "not reachable" if unreachable else "unavailable", exc,
+        )
+        status["status"] = "not_configured" if unreachable else "unavailable"
 
     try:
         import redis as _redis

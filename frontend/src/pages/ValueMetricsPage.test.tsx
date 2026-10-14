@@ -32,13 +32,16 @@ import { useTimeWindowStore } from '@/store/timeWindowStore'
 const mockGet = vi.fn()
 const mockGetMethodology = vi.fn()
 const mockPutAssumptions = vi.fn()
+const mockDownloadExport = vi.fn()
+const mockExportErrorMessage = vi.fn()
 
 vi.mock('@/services/valueMetricsService', () => ({
   valueMetricsService: {
     get: (...a: unknown[]) => mockGet(...a),
     getMethodology: (...a: unknown[]) => mockGetMethodology(...a),
     putAssumptions: (...a: unknown[]) => mockPutAssumptions(...a),
-    exportUrl: vi.fn(() => '/api/v1/value-metrics/export?days=30'),
+    downloadExport: (...a: unknown[]) => mockDownloadExport(...a),
+    exportErrorMessage: (...a: unknown[]) => mockExportErrorMessage(...a),
   },
 }))
 
@@ -236,22 +239,41 @@ describe('ValueMetricsPage', () => {
     expect(screen.queryByText(/minutes saved over the last/i)).toBeNull()
   })
 
-  it('labels the hours-saved headline as a fixed last-30-days figure the window picker does not change', async () => {
+  // TRND-05: the headline used to be a fixed trailing 30 days whatever the
+  // picker said (and a note admitted it). It now follows the window.
+  it('follows the window picker: the headline and its label are the picked window', async () => {
+    mockGet.mockImplementation(async (_projectId: string, days: number) =>
+      baseMetrics({
+        period_days: days,
+        headline: {
+          hours_saved: days === 90 ? 127.5 : 42.5,
+          fte_equivalent: days === 90 ? 0.25 : 0.8,
+          window_days: days,
+          hours_saved_30d: 42.5,
+          fte_equivalent_30d: 0.8,
+        },
+      }),
+    )
     await renderPage()
 
     await screen.findByText('42.5h')
-    const note = screen.getByTestId('hours-saved-window-note')
-    expect(note).toHaveTextContent('Fixed 30-day figure: the window picker does not change it.')
+    expect(screen.getByTestId('hours-saved-window')).toHaveTextContent('Eng-hours saved · last 30 days')
+    expect(screen.queryByText(/window picker does not change it/i)).toBeNull()
 
-    // Pick a 90-day window: the page refetches for 90 days, but the headline
-    // still reads the API's fixed 30-day figure and still says so.
     fireEvent.click(screen.getByRole('radio', { name: '90d' }))
-    await waitFor(() => {
-      expect(mockGet.mock.calls.some((call) => call[1] === 90)).toBe(true)
-    })
+    expect(await screen.findByText('128h')).toBeInTheDocument()
+    expect(screen.getByTestId('hours-saved-window')).toHaveTextContent('Eng-hours saved · last 90 days')
+    expect(screen.getByText(/≈ 0\.3 FTE/)).toBeInTheDocument()
+    expect(screen.queryByText('42.5h')).toBeNull()
+  })
+
+  it('labels a payload without window_days as the trailing 30 days, whatever the picker says', async () => {
+    // baseMetrics() carries only the 30-day pair (a pre-TRND-05 payload).
+    useTimeWindowStore.setState({ days: 90 })
+    await renderPage()
+
     expect(await screen.findByText('42.5h')).toBeInTheDocument()
-    expect(screen.getByText(/Eng-Hours Saved · Last 30 Days/i)).toBeInTheDocument()
-    expect(screen.getByTestId('hours-saved-window-note')).toBeInTheDocument()
+    expect(screen.getByTestId('hours-saved-window')).toHaveTextContent('Eng-hours saved · last 30 days')
   })
 
   it('renders the hours-saved headline + FTE equivalent when available', async () => {
@@ -531,8 +553,46 @@ describe('ValueMetricsPage', () => {
     fireEvent.click(within(picker).getByRole('radio', { name: '365d' }))
     await waitFor(() => expect(mockGet.mock.calls.some((call) => call[1] === 365)).toBe(true))
     expect(useTimeWindowStore.getState().days).toBe(365)
-    // Export stays the header's one secondary action.
-    expect(screen.getByRole('link', { name: /Export/ })).toHaveAttribute('download')
+    // Export stays the header's one secondary action: a button now (HON-04), not a bare link.
+    expect(screen.getByTestId('value-metrics-export').tagName).toBe('BUTTON')
+    expect(screen.queryByRole('link', { name: /Export/ })).toBeNull()
+  })
+
+  // HON-04: a bare `<a href download>` navigation carried no Bearer token and
+  // saved the API's 401 body; the export now runs through the service (axios).
+  it('exports the selected project and window through the service, not a bare link', async () => {
+    mockDownloadExport.mockResolvedValue(undefined)
+    await renderPage()
+
+    await screen.findByTestId('monthly-chart')
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('value-metrics-export'))
+    })
+    expect(mockDownloadExport).toHaveBeenCalledWith('proj-1', 30)
+
+    fireEvent.click(screen.getByRole('radio', { name: '90d' }))
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('value-metrics-export'))
+    })
+    expect(mockDownloadExport).toHaveBeenLastCalledWith('proj-1', 90)
+    const toast = (await import('react-hot-toast')).default
+    expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  it('toasts the API refusal when the export fails, and re-enables the button', async () => {
+    const refusal = new Error('Request failed with status code 403')
+    mockDownloadExport.mockRejectedValue(refusal)
+    mockExportErrorMessage.mockResolvedValue('You do not have access to this project')
+    await renderPage()
+
+    await screen.findByTestId('monthly-chart')
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('value-metrics-export'))
+    })
+    const toast = (await import('react-hot-toast')).default
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Export failed: You do not have access to this project'))
+    expect(mockExportErrorMessage).toHaveBeenCalledWith(refusal)
+    expect(screen.getByTestId('value-metrics-export')).not.toBeDisabled()
   })
 
   it('says once that nothing has fired yet, with what fills each counter behind a disclosure', async () => {

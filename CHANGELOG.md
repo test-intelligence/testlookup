@@ -52,6 +52,14 @@ locally by default.
 
 ### Added
 
+- **Release decisions from the run page, policy weights and share links**
+  (deferred-features wave W01): a QA lead can Hold, Approve with conditions or
+  Override to GO from a run's Analysis tab through the existing audited
+  override (GATE-01); "Why this score?" shows the weights of the project's
+  release-gate policy, from `GET /scoring-model?project_id=|run_id=` (GATE-05);
+  Share report lets you choose layout and expiry, lists a run's links and
+  revokes them (GATE-06).
+
 - `NOTICE`, `THIRD_PARTY_NOTICES.md`, `SUPPORT.md`, `GOVERNANCE.md`,
   `MAINTAINERS.md`, `UPGRADING.md`, `RELEASING.md`, a pull-request template and
   issue forms; a configuration reference for every setting
@@ -228,6 +236,41 @@ locally by default.
   the hours-saved figure counted them twice; and actions on a cluster, such
   as promoting it to a defect, failed with "multiple rows". Every reader now
   uses the run's newest analysis; the older sets stay for history.
+- **Placeholders that pretended to work now work, or say what is true**
+  (deferred-features wave W01, branch `feat/df-honest-ui-20261014`):
+  - Test plan items record their execution: the buttons sent POST to a
+    PATCH-only route and always got 405 (HON-01).
+  - The MCP `get_dashboard_metrics` and `check_release_readiness` tools read a
+    key the API never returns (every KPI 0) and invented their own thresholds;
+    they now show the server's values and policy verdict, and the readiness
+    tool can read a release's stored gate decision (HON-02).
+  - `/live` "Connect a test runner" snippets call the JavaScript and Go SDK
+    functions that ship, checked by a symbol list and the quality-gate guard
+    `frontend.sdk-symbols-fresh` (HON-03).
+  - Value Metrics Export downloads with the session token (it saved a 401 body),
+    and the export refuses a project the caller cannot read instead of
+    answering with an empty file (HON-04).
+  - Each failure's Suspects panel attributes commits against that test's own
+    failing run, not the project's newest failed run (HON-05).
+  - The "Pipeline / How this was decided" timelines on seven pages show the
+    records' own times instead of invented 45-second steps, and no longer show
+    invented confidence percentages (HON-06).
+  - Copy that promised missing features is corrected: the Overview verdict
+    describes the readiness band, compliance packs are "tamper-evident", the
+    test-case search matches title, tags and ID as its placeholder says, the
+    Defects "Escape rate" is "Unlinked to Jira", and Releases no longer offers
+    an org template (HON-07).
+  - Search "Index health" becomes "Searchable data": keyword rows per entity
+    and one semantic-index line that says "not configured" instead of "Down"
+    when no ChromaDB answers (HON-08).
+  - Unknown URLs show "Page not found" in the app shell instead of silently
+    opening Overview; the Releases audit-log link (and old `/audit` bookmarks)
+    open Activity filtered to releases (HON-09).
+  - The Trends pass-rate delta is in percentage points, as labelled; the Value
+    Metrics hours-saved headline follows the window picker (TRND-05).
+  - Five stale documentation statements are corrected and `GET /releases`
+    returns one shape (HYG-10).
+
 - **AI defect drafts are saved again, and a failure is logged.** Most runs
   never got their LLM-written defect candidates. The model sometimes wrote a
   ticket field (usually the description) as an object rather than text; the

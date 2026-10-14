@@ -662,6 +662,11 @@ async def get_release_council(
         release_readiness_band=band,
         band_downgrades=band_downgrades,
         rule_evaluations=rule_evaluations,
+        # HON-06: the stored row's own times, so the gate's timeline dates the
+        # decision instead of inventing one. Both the GET and the override
+        # response come through here; a synthesised view never does.
+        created_at=getattr(decision, "created_at", None),
+        updated_at=getattr(decision, "updated_at", None),
     )
 
 

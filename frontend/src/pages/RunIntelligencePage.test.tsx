@@ -9,11 +9,12 @@
  * - Failure cluster cards
  * - Executive summary text from layer1
  */
-import { render, screen, fireEvent, within } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { useEffect, type ReactNode } from 'react'
 import { MemoryRouter, Route, Routes, useLocation, useParams } from 'react-router-dom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FailureClusterIntel, Provenance, RunModeSummary, ScoringModel } from '@/services/runIntelligenceService'
+import { releaseCouncilService, type ReleaseCouncilDecision } from '@/services/releaseCouncilService'
 import { useAuthStore } from '@/store/authStore'
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
@@ -47,6 +48,11 @@ vi.mock('@/hooks/useRunIntelligence', async (importOriginal) => {
     useDecisionReportVersions: mockUseDecisionReportVersions,
   }
 })
+
+// The verdict banner reads the stored release decision for its override state
+// (GATE-01); no request leaves the test (src/test/networkGuard.ts).
+const { mockUseReleaseCouncil } = vi.hoisted(() => ({ mockUseReleaseCouncil: vi.fn() }))
+vi.mock('@/hooks/useReleaseCouncil', () => ({ useReleaseCouncil: mockUseReleaseCouncil }))
 
 vi.mock('@/store/projectStore', () => ({
   ALL_PROJECTS_ID: '__ALL__',
@@ -240,6 +246,13 @@ function mockHooks(overrides?: {
     intelligence: overrides?.intelligence,
     isLoading: overrides?.isLoading ?? false,
     isError: overrides?.isError ?? false,
+    refresh: vi.fn(() => Promise.resolve(undefined)),
+  })
+  mockUseReleaseCouncil.mockReturnValue({
+    council: undefined,
+    isLoading: false,
+    isError: false,
+    refresh: vi.fn(() => Promise.resolve(undefined)),
   })
   mockUseRunModeSummary.mockReturnValue({
     summary: MOCK_MODE_SUMMARY,
@@ -702,7 +715,10 @@ describe('RunIntelligencePage', () => {
   })
 
   // P4 (D2): `/intelligence` redirects to `/runs`, so the page goes there directly.
-  it('renders no Hold / Override / Approve / Undo controls on the verdict', async () => {
+  // GATE-01 put Hold / Approve with conditions / Override back, persisted
+  // through the release gate's override, for a QA lead only: a reader below
+  // QA lead (here the signed-out default) still gets none of them.
+  it('renders no Hold / Override / Approve / Undo controls on the verdict below QA lead', async () => {
     mockHooks({ intelligence: MOCK_INTELLIGENCE })
     renderRunIntel()
 
@@ -1097,5 +1113,162 @@ describe('RunIntelligencePage — File defect is QA engineer and above (E2E 2026
     renderRunIntel()
     expect(screen.getByText(/DB Timeouts/i)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /File defect/i }) !== null).toBe(offered)
+  })
+})
+
+// ── GATE-01: the run page's gate decisions, persisted through the override ──
+describe('RunIntelligenceBody — Hold / Approve with conditions / Override (GATE-01)', () => {
+  function storedCouncil(overrides: Partial<ReleaseCouncilDecision> = {}): ReleaseCouncilDecision {
+    return {
+      run_id: 'run-abc',
+      recommendation: 'NO_GO',
+      risk_score: 68,
+      composite_risk: 68,
+      dimension_scores: [],
+      blocking_issues: [],
+      conditions_for_go: [],
+      reasoning: null,
+      score_model_version: 1,
+      input_snapshot: null,
+      cluster_insights: [],
+      baseline_diff: null,
+      open_defects_by_component: [],
+      human_override: null,
+      overridden_by: null,
+      original_recommendation: null,
+      original_risk_score: null,
+      override_audit: [],
+      pass_rate: 92.5,
+      build_number: '42',
+      policy_id: null,
+      policy_version: null,
+      policy_level: 'project',
+      rule_evaluations: [],
+      synthesized: false,
+      created_at: '2026-10-01T09:30:00Z',
+      ...overrides,
+    }
+  }
+
+  function withCouncil(council: ReleaseCouncilDecision | undefined) {
+    const refreshCouncil = vi.fn(() => Promise.resolve(undefined))
+    const refreshIntelligence = vi.fn(() => Promise.resolve(undefined))
+    mockHooks({ intelligence: MOCK_INTELLIGENCE })
+    mockUseRunIntelligence.mockReturnValue({
+      intelligence: MOCK_INTELLIGENCE,
+      isLoading: false,
+      isError: false,
+      refresh: refreshIntelligence,
+    })
+    mockUseReleaseCouncil.mockReturnValue({ council, isLoading: false, isError: false, refresh: refreshCouncil })
+    return { refreshCouncil, refreshIntelligence }
+  }
+
+  function renderBody() {
+    return render(
+      <MemoryRouter initialEntries={['/runs/run-abc?tab=analysis']}>
+        <Routes><Route path="/runs/:runId" element={<RunIntelligenceBody runId="run-abc" />} /></Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  const asRole = (role: string) => useAuthStore.setState({ user: { id: 'u', role } as never })
+  const decisionGroup = () => screen.queryByRole('group', { name: 'Gate decision' })
+
+  beforeEach(() => {
+    mockCompleteStep.mockReset()
+    mockCompleteStep.mockResolvedValue(undefined)
+    mockProjectState.activeProjectId = 'proj-1'
+  })
+  afterEach(() => {
+    useAuthStore.setState({ user: null } as never)
+    vi.restoreAllMocks()
+  })
+
+  it('a QA engineer sees no gate-decision actions (the API refuses below QA lead)', () => {
+    asRole('QA_ENGINEER')
+    withCouncil(storedCouncil())
+    renderBody()
+    expect(screen.getByRole('region', { name: 'Release verdict' })).toBeInTheDocument()
+    expect(decisionGroup()).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Hold' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Approve with conditions' })).toBeNull()
+  })
+
+  it('Hold opens the shared form on NO GO and posts NO_GO with the reason, then re-reads the council and the analysis', async () => {
+    asRole('QA_LEAD')
+    const { refreshCouncil, refreshIntelligence } = withCouncil(storedCouncil({ recommendation: 'GO' }))
+    const override = vi.spyOn(releaseCouncilService, 'override').mockResolvedValue(storedCouncil())
+    renderBody()
+
+    const group = decisionGroup() as HTMLElement
+    expect(within(group).getAllByRole('button').map((b) => b.textContent)).toEqual(['Hold', 'Approve with conditions', 'Override → GO'])
+    fireEvent.click(within(group).getByRole('button', { name: 'Hold' }))
+    expect(screen.getByRole('heading', { name: 'QA Lead Override' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'NO GO' })).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Reason for override' }), { target: { value: '  perf soak pending  ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Apply Override' }))
+
+    await waitFor(() => expect(override).toHaveBeenCalledWith('run-abc', 'NO_GO', 'perf soak pending'))
+    await waitFor(() => expect(refreshCouncil).toHaveBeenCalled())
+    // The override drops the intelligence snapshot: the banner must re-read it.
+    expect(refreshIntelligence).toHaveBeenCalled()
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'QA Lead Override' })).toBeNull())
+  })
+
+  it('Approve with conditions opens the form on CONDITIONAL GO', () => {
+    asRole('QA_LEAD')
+    withCouncil(storedCouncil())
+    renderBody()
+    fireEvent.click(screen.getByRole('button', { name: 'Approve with conditions' }))
+    expect(screen.getByRole('button', { name: 'CONDITIONAL GO' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('a refused override is said in the form, not lost', async () => {
+    asRole('QA_LEAD')
+    withCouncil(storedCouncil())
+    vi.spyOn(releaseCouncilService, 'override').mockRejectedValue({
+      response: { status: 403, data: { detail: 'Override reason must be at least 20 characters' } },
+    })
+    renderBody()
+    fireEvent.click(screen.getByRole('button', { name: 'Hold' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Reason for override' }), { target: { value: 'short' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Apply Override' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Override reason must be at least 20 characters')
+  })
+
+  it('with no stored decision (a synthesised quick look) the actions are disabled, with the reason', () => {
+    asRole('QA_LEAD')
+    withCouncil(storedCouncil({ synthesized: true, created_at: null }))
+    const override = vi.spyOn(releaseCouncilService, 'override')
+    renderBody()
+    for (const name of ['Hold', 'Approve with conditions', 'Override → GO']) {
+      expect(screen.getByRole('button', { name })).toBeDisabled()
+    }
+    expect(screen.getByText(/Run deep investigation first: there is no stored release decision to override yet/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Hold' }))
+    expect(screen.queryByRole('heading', { name: 'QA Lead Override' })).toBeNull()
+    expect(override).not.toHaveBeenCalled()
+  })
+
+  it('a persisted override is the verdict: the banner says overridden, by whom, why and when', () => {
+    asRole('QA_ENGINEER')
+    withCouncil(storedCouncil({
+      recommendation: 'CONDITIONAL_GO',
+      human_override: 'perf soak pending',
+      original_recommendation: 'NO_GO',
+      override_audit: [{
+        timestamp: '2026-10-02T11:15:00Z', actor_id: 'u-1', actor_name: 'priya',
+        before_recommendation: 'NO_GO', before_risk_score: 68, after_recommendation: 'CONDITIONAL_GO',
+        reason: 'perf soak pending', policy_id: null, policy_version: null,
+      }],
+    }))
+    const { container } = renderBody()
+    // The intelligence payload still says NO_GO; the stored override wins.
+    expect(container.querySelector('[data-status-banner]')).toHaveAttribute('data-status-banner', 'conditional')
+    expect(screen.getByText('Conditional Go (overridden)')).toBeInTheDocument()
+    const line = container.querySelector('[data-verdict-override]') as HTMLElement
+    expect(line).toHaveTextContent(/^Overridden to Conditional Go by priya · perf soak pending · Oct 2, \d\d:15$/)
   })
 })

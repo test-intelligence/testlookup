@@ -9,13 +9,17 @@
  *   "Open in full docs" goes to the same topic on `/docs`.
  * - The rail collapses to 64 px, the page widens, and the choice survives a
  *   reload.
+ * - HON-09: an unknown path is "Page not found" inside the shell (it used to
+ *   redirect to /overview), and the /releases rail's audit link (and the old
+ *   `/audit` it pointed at) opens Activity on its Release category.
  *
  * Fail-closed harness: `tests/lib/production-pages.ts`; helpers: `rollout.ts`.
  */
 import { expect, test, type Page } from '@playwright/test'
-import { landmark, openProductionPage } from '../lib/production-pages'
-import { networkQuiet, openRollout } from '../lib/rollout'
-import { FAILURES_ON, NOW, PROJECT_ID, USER } from '../visual/production/fixtures'
+import { landmark, openProductionPage, type ApiHandlers } from '../lib/production-pages'
+import { networkQuiet, openRollout, requestsTo } from '../lib/rollout'
+import { FAILURES_ON, LAYOUT, NOW, PROJECT_ID, USER } from '../visual/production/fixtures'
+import { RELEASES_PAGE } from '../visual/production/fixtures-pages'
 
 const ready = (p: Page) => landmark(p, 'Failure verdict')
 const navIds = (p: Page) => p.locator('[data-nav-id]').evaluateAll((els) => els.map((el) => el.getAttribute('data-nav-id')))
@@ -97,6 +101,84 @@ test('the rail collapses to 64 px, the page widens, and it stays collapsed after
   await page.reload()
   await expect(ready(page)).toBeVisible()
   await expect(aside).toHaveAttribute('data-sidebar', 'collapsed')
+  await networkQuiet(page, api)
+  expect(api.unhandled).toEqual([])
+  expect(errors).toEqual([])
+})
+
+// ── HON-09: no silent catch-all; /releases' audit link lands somewhere real ──
+
+/** The Activity feed's registry and one release event (`/activity` reads both). */
+const ACTIVITY: ApiHandlers = [
+  [
+    '/api/v1/activity/event-types',
+    () => ({ categories: ['runs', 'release', 'configuration'], actor_types: ['user', 'system'], entity_types: ['release'], events: {} }),
+  ],
+  [
+    /^\/api\/v1\/projects\/[^/]+\/activity$/,
+    () => ({
+      items: [
+        {
+          id: 'ev-1',
+          project_id: PROJECT_ID,
+          release_id: null,
+          occurred_at: NOW.toISOString(),
+          category: 'release',
+          event_type: 'release.created',
+          actor: { type: 'user', id: null, name: 'Dana Lead', ref: 'dana' },
+          entity: { type: 'release', id: 'rel-1', label: '2026.10', href: null },
+          target: null,
+          summary: 'Release 2026.10 created',
+          context: null,
+          has_diff: false,
+          source: null,
+          group_key: null,
+        },
+      ],
+      next_cursor: null,
+      ledger_started_at: '2026-09-01T00:00:00Z',
+      window: { since: null, until: null },
+    }),
+  ],
+]
+
+test('an unknown path is "Page not found" inside the shell, and the URL stays as typed', async ({ page }) => {
+  const { api, errors } = await openRollout(page, '/this-route-does-not-exist', {
+    handlers: LAYOUT,
+    ready: (p) => p.getByRole('heading', { level: 1, name: 'Page not found' }),
+  })
+  await expect(page).toHaveURL(/\/this-route-does-not-exist$/)
+  await expect(page.getByText('This page does not exist.')).toBeVisible()
+  await expect(page.getByTestId('not-found-path')).toHaveText('/this-route-does-not-exist')
+  // The shell stays: the sidebar's places and the top bar's help button.
+  await expect(page.locator('[data-nav-id="home"]')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Help', exact: true })).toBeVisible()
+  await expect(page).toHaveTitle('Page not found · TestLookup')
+  const links = page.getByRole('navigation', { name: 'Where to go instead' }).getByRole('link')
+  await expect(links).toHaveText(['Overview', 'Search', 'Activity'])
+  await networkQuiet(page, api)
+  expect(api.unhandled).toEqual([])
+  expect(errors).toEqual([])
+})
+
+test('/releases "View full audit log" opens Activity on its Release category, and so does the old /audit', async ({ page }) => {
+  const { api, errors } = await openRollout(page, '/releases', {
+    handlers: [...ACTIVITY, ...RELEASES_PAGE],
+    ready: (p) => p.getByRole('heading', { level: 1, name: 'Releases' }),
+  })
+  await page.getByRole('link', { name: /View full audit log/ }).click()
+  await expect(page).toHaveURL(/\/activity\?category=release$/)
+  await expect(page.getByRole('heading', { level: 1, name: 'Activity' })).toBeVisible()
+  await expect(page.getByRole('combobox', { name: 'Filter by category' })).toHaveValue('release')
+  await expect(page.getByText('Release 2026.10 created')).toBeVisible()
+  await expect.poll(() => requestsTo(api, /\/activity$/).some((line) => line.includes('category=release'))).toBe(true)
+  // The feed was never asked for unfiltered on the way.
+  expect(requestsTo(api, /\/activity$/).every((line) => line.includes('category=release'))).toBe(true)
+
+  // A bookmark of the old href (it was linked, never routed) forwards the same way.
+  await page.goto('/audit')
+  await expect(page).toHaveURL(/\/activity\?category=release$/)
+  await expect(page.getByRole('combobox', { name: 'Filter by category' })).toHaveValue('release')
   await networkQuiet(page, api)
   expect(api.unhandled).toEqual([])
   expect(errors).toEqual([])

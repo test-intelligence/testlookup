@@ -18,15 +18,15 @@ import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
 import Disclosure from '@/components/ui/Disclosure'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import { useReleaseCouncil } from '@/hooks/useReleaseCouncil'
+import OverrideDecisionForm from '@/components/release/OverrideDecisionForm'
+import ShareReportDialog from '@/components/reports/ShareReportDialog'
 import { useAIConfig, isLLMAvailable } from '@/hooks/useAIConfig'
 import { usePermissions } from '@/hooks/usePermissions'
-import { releaseCouncilService } from '@/services/releaseCouncilService'
 import type { OverrideAuditEntry, ReleaseCouncilDecision } from '@/services/releaseCouncilService'
 import { useRuns } from '@/hooks/useRuns'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { buildReleaseGateWorkflow } from '@/components/workflow/workflowPresets'
 import { useProjectChangeRedirect } from '@/hooks/useProjectChange'
-import { copyTextToClipboard } from '@/utils/clipboard'
 import { isRunInProgress } from '@/utils/runPassRate'
 import RingGauge from '@/components/charts/RingGauge'
 import { bandsTone, formatGaugeNumber, type GaugeBands } from '@/components/charts/gaugeBar.model'
@@ -149,9 +149,8 @@ export default function ReleaseGatePage() {
   // (`POST /release-readiness/{run}/override`); every role was offered it.
   const { isQaLead: canOverride } = usePermissions()
   const [overrideMode, setOverrideMode] = useState(false)
-  const [overrideRec, setOverrideRec] = useState<Recommendation>('GO')
-  const [overrideReason, setOverrideReason] = useState('')
-  const [submitting, setSubmitting] = useState(false)
+  // GATE-06: Share opens a dialog (layout, expiry, the run's links, revoke).
+  const [shareOpen, setShareOpen] = useState(false)
   const workflow = decision ? buildReleaseGateWorkflow(decision) : null
 
   useProjectChangeRedirect('/release-gate', Boolean(runId))
@@ -309,25 +308,6 @@ export default function ReleaseGatePage() {
     ? { label: 'Top blockers', items: blockers }
     : conditions.length > 0 ? { label: 'Conditions for GO', items: conditions } : null
 
-  const handleOverride = async () => {
-    if (!overrideReason.trim()) {
-      toast.error('Please provide a reason for the override')
-      return
-    }
-    setSubmitting(true)
-    try {
-      await releaseCouncilService.override(runId, overrideRec, overrideReason)
-      toast.success('Release decision overridden')
-      setOverrideMode(false)
-      setOverrideReason('')
-      await refresh()
-    } catch {
-      toast.error('Override failed — QA Lead role required')
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
   // Linked cluster insights, placed under the Context group whose share chart
   // summarises them.
   const clustersCard = decision.cluster_insights.length > 0 && (
@@ -385,18 +365,12 @@ export default function ReleaseGatePage() {
           {
             label: 'Share report',
             icon: <Share2 className="h-3.5 w-3.5" />,
-            onClick: async () => {
-              const { createShareLink } = await import('@/services/reportExportService')
-              try {
-                const link = await createShareLink(runId, 'executive')
-                const ok = await copyTextToClipboard(link.share_url)
-                if (ok) toast.success('Share link copied to clipboard')
-                else toast.error('Clipboard access denied — copy manually')
-              } catch { toast.error('Share failed') }
-            },
+            onClick: () => setShareOpen(true),
           },
         ]}
       />
+
+      {shareOpen && <ShareReportDialog runId={runId} open onClose={() => setShareOpen(false)} />}
 
       {decision.synthesized && (
         // Quick-look notice — the backend synthesised this view from
@@ -525,55 +499,18 @@ export default function ReleaseGatePage() {
           )}
         </div>
 
+        {/* The shared override control (GATE-01): the run page's Analysis
+            banner renders the same form, through the same endpoint. */}
         {overrideMode && canOverride && (
-          <div className="mt-3 space-y-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)] p-3">
-            <h3 className="flex items-center gap-2 text-sm font-semibold text-[var(--color-text)]">
-              <Shield className="w-4 h-4 text-[var(--color-text-muted)]" />
-              QA Lead Override
-            </h3>
-            <div className="flex gap-2">
-              {(['GO', 'CONDITIONAL_GO', 'NO_GO'] as Recommendation[]).map(rec => (
-                <button
-                  key={rec}
-                  type="button"
-                  onClick={() => setOverrideRec(rec)}
-                  className={clsx(
-                    'px-3 py-1.5 rounded text-xs font-medium transition-colors',
-                    overrideRec === rec
-                      ? clsx(REC_CONFIG[rec].colour, 'bg-[var(--color-bg-hover)]')
-                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
-                  )}
-                >
-                  {REC_CONFIG[rec].label}
-                </button>
-              ))}
-            </div>
-            <textarea
-              value={overrideReason}
-              onChange={e => setOverrideReason(e.target.value)}
-              placeholder="Reason for override (required)…"
-              aria-label="Reason for override"
-              rows={3}
-              className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:outline-none focus:border-[var(--color-border)] resize-none"
-            />
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={handleOverride}
-                disabled={submitting}
-                className="px-4 py-1.5 bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] text-sm rounded-lg disabled:opacity-50"
-              >
-                {submitting ? 'Saving…' : 'Apply Override'}
-              </button>
-              <button
-                type="button"
-                onClick={() => { setOverrideMode(false); setOverrideReason('') }}
-                className="px-4 py-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-sm"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
+          <OverrideDecisionForm
+            className="mt-3"
+            runId={runId}
+            onApplied={async () => {
+              setOverrideMode(false)
+              await refresh()
+            }}
+            onCancel={() => setOverrideMode(false)}
+          />
         )}
       </div>
 
@@ -680,6 +617,10 @@ export default function ReleaseGatePage() {
               dimensionScores={decision.dimension_scores}
               title="Risk Dimension Breakdown"
               defaultExpanded={false}
+              // The decision's own run (GATE-05): "Why this score?" reads
+              // that run's project policy weights, even when the URL has
+              // no :runId to fall back on.
+              runId={decision.run_id}
             />
           )}
         </div>

@@ -184,8 +184,11 @@ async def list_releases(
                 status_code=403, detail="You do not have access to this project"
             )
     elif accessible is not None and not accessible:
-        # Non-admin with no memberships, all-projects view → nothing to show.
-        return []
+        # Non-admin with no memberships, all-projects view → nothing to show,
+        # in the same ``{items, total}`` shape as every other answer. A bare
+        # ``[]`` here was the one answer of another shape: the client reads
+        # ``data.items`` / ``data.total`` and got ``undefined`` off it.
+        return {"items": [], "total": 0}
     # Pass the accessible set so the service confines results to the caller's
     # projects (fan-out in all-projects mode; defence-in-depth when pinned).
     return await release_service.list_releases(

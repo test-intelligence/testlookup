@@ -139,8 +139,12 @@ export const testManagementService = {
   removePlanItem: (planId: string, itemId: string): Promise<void> =>
     deleteData(`/api/v1/test-management/plans/${planId}/items/${itemId}`),
 
+  // The backend registers only PATCH on this path
+  // (test_management_plans.record_execution); a POST here was a 405 on every
+  // "passed/failed/blocked" click. backend/tests/regression/
+  // test_plan_item_execute_verb.py pins the server half of the contract.
   executeItem: (planId: string, itemId: string, data: { execution_status: string; execution_notes?: string; actual_duration_minutes?: number }): Promise<TestPlanItem> =>
-    postData(`/api/v1/test-management/plans/${planId}/items/${itemId}/execute`, data),
+    patchData(`/api/v1/test-management/plans/${planId}/items/${itemId}/execute`, data),
 
   aiCreatePlan: (data: { project_id: string; plan_name?: string; constraints?: string }): Promise<TestPlan> =>
     postData('/api/v1/test-management/plans/ai-create', data),

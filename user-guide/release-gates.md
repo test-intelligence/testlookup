@@ -17,7 +17,7 @@ When signals disagree, the gate takes the *worse* answer.
 
 ## Configuring policies
 
-**Releases → Gate policies** (`/policies`). Each project resolves to one *effective* policy: its own active policy, or the system default. **Creating, editing, publishing, deactivating and simulating policies need an administrator**; QA leads can read them. (The page shows the editing controls to QA leads too, but the API refuses their changes.)
+**Releases → Gate policies** (`/policies`). Each project resolves to one *effective* policy: its own active policy, or the system default. **Creating, editing, publishing, deactivating and simulating policies need an administrator**; QA leads can read them: for them the page is read-only (it says so), **New Policy** and the simulator's **Simulate** are disabled, and policies open in **View** with no **Deactivate**.
 
 **New Policy** opens the editor. A policy has:
 

@@ -171,6 +171,25 @@ def _suite_match_clause(suite_name: SuiteArg):
     return row_or_live_label_clause(suite_name)
 
 
+#: TRND-05: the dashboard summary's payload shape, part of the cache key of the
+#: routes that carry ``meta`` (``get_dashboard_summary``). Bump it when a field
+#: those pages read is added, so an entry cached before it is never served.
+SUMMARY_SHAPE_VERSION = 2
+
+
+def pass_rate_delta_pp(cur: dict, prev: dict) -> Optional[float]:
+    """TRND-05: the pass rate's move between two windows, in percentage points.
+
+    ``trend`` beside it is the RELATIVE change, ``(cur - prev) / prev * 100``,
+    which the Trends tile used to print as "pp": 80 % -> 88 % read "10pp"
+    where the move is 8 pp. ``None`` when either window has no executions,
+    because a 0 % read off an empty window is not a pass rate.
+    """
+    if not cur.get("total_executions") or not prev.get("total_executions"):
+        return None
+    return round(float(cur["pass_rate"]) - float(prev["pass_rate"]), 1)
+
+
 async def get_dashboard_summary(
     db: AsyncSession,
     project_id: str | None,
@@ -234,6 +253,10 @@ async def get_dashboard_summary(
         # Conditional, like ``release`` above: a caller without ``meta`` keeps
         # the pre-VIZ-204 key and payload shape.
         release_key["schema"] = META_SCHEMA_VERSION
+        # TRND-05: the payload grew ``avg_pass_rate_7d.pass_rate_delta_pp``,
+        # which the pages behind this route (``meta``) read. An entry cached
+        # before it carries no delta, so it is never served to them.
+        release_key["shape"] = SUMMARY_SHAPE_VERSION
     # Read ONCE, before the query, and reuse for cache_set (VIZ-212).
     epoch = await get_analytics_epoch(project_id)
     cached: dict[str, Any] | None = await cache_get(
@@ -270,6 +293,7 @@ async def get_dashboard_summary(
     pass_rate = cur["pass_rate"]
     prev_pass_rate = prev["pass_rate"]
     pass_trend = trend(pass_rate, prev_pass_rate)
+    pass_delta_pp = pass_rate_delta_pp(cur, prev)
 
     # ``total_exec`` stays a RUN count: it is the "is there any evidence"
     # gate below (``if total_exec <= 0``) and the first argument of
@@ -407,8 +431,11 @@ async def get_dashboard_summary(
         },
         "avg_pass_rate_7d": {
             "value": round(pass_rate, 1),
+            # ``trend`` stays the RELATIVE change in percent (other consumers
+            # read it); a pass rate's move is told in percentage points.
             "trend": pass_trend,
             "trend_direction": direction(pass_trend),
+            "pass_rate_delta_pp": pass_delta_pp,
             # F-067. This dashboard and the Summary Report legitimately compute
             # different pass rates — 81.0% here vs 83.3% there on the same
             # window — because they measure different populations. Both are

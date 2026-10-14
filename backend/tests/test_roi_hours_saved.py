@@ -323,7 +323,10 @@ class TestHoursSavedModel:
         assert model["available"] is False
         assert model["insufficient_data_reason"] == "fewer than 14 days of ingested runs"
         # Headline zeroed when gated — even though raw counts existed.
-        assert model["headline"] == {"hours_saved_30d": 0.0, "fte_equivalent_30d": 0.0}
+        assert model["headline"] == {
+            "hours_saved": 0.0, "fte_equivalent": 0.0, "window_days": 30,
+            "hours_saved_30d": 0.0, "fte_equivalent_30d": 0.0,
+        }
 
     async def test_no_project_returns_unavailable_model(self):
         db = MagicMock()

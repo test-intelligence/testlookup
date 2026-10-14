@@ -709,6 +709,7 @@ jobs:
           tests/integration/test_viz_seed_postgres.py
           tests/integration/test_seeded_test_case_times_postgres.py
           tests/integration/test_failures_headline_counts_postgres.py
+          tests/integration/test_top_failing_last_failed_run_postgres.py
           tests/integration/test_assignee_and_user_list_postgres.py
           tests/integration/test_defects_list_fields_postgres.py
           tests/integration/test_analytics_scope_postgres.py

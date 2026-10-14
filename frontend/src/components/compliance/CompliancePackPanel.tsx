@@ -14,8 +14,10 @@ interface Props {
 /**
  * Release compliance export pack panel — Tier 1 item 4.
  *
- * QA Lead + generates a signed ZIP that reconstructs the full release
- * decision for regulated customers. The panel shows:
+ * QA Lead + generates a ZIP that reconstructs the full release decision for
+ * regulated customers, sealed with a tamper-evident SHA-256 manifest. HON-07:
+ * it is not SIGNED (no HMAC, no PKI: ``compliance_pack_service``), so the copy
+ * says "tamper-evident", never "signed". The panel shows:
  *
  * * A generate button that triggers ``POST /releases/{id}/compliance-pack``.
  * * A history list of every pack ever generated for this release, with
@@ -71,10 +73,10 @@ export default function CompliancePackPanel({ releaseId, releaseName }: Props) {
       </header>
 
       <p className="text-xs text-[var(--color-text-muted)]">
-        Generate a signed ZIP that reconstructs the full release decision
-        (run snapshot, release gate policy, AI decision trail, clusters,
-        defects, and audit events). Each pack is retained for seven years
-        and has a SHA-256 manifest for tamper detection.
+        Generate a ZIP that reconstructs the full release decision (run
+        snapshot, release gate policy, AI decision trail, clusters, defects,
+        and audit events), sealed with a tamper-evident SHA-256 manifest. Each
+        pack is retained for seven years.
       </p>
 
       {canGenerate && (

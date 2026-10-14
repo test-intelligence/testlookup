@@ -860,10 +860,11 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
 
     expect(await screen.findByRole('button', { name: 'Mute test checkout_flow' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Create Jira issue for checkout_flow' })).toBeInTheDocument()
-    // No failed run in the window: nothing to attribute commits against, said in the tooltip.
+    // The row names no failing run of its own: nothing to attribute commits
+    // against, said in the tooltip.
     const suspects = screen.getByRole('button', { name: 'Suspects for checkout_flow' })
     expect(suspects).toBeDisabled()
-    expect(suspects).toHaveAttribute('title', expect.stringMatching(/No failed run in this window/))
+    expect(suspects).toHaveAttribute('title', expect.stringMatching(/No failing run of this test in this window/))
   })
 
   // Docs pass 2026-10-11: Mute proposes a quarantine (POST /quarantine, QA
@@ -896,11 +897,11 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
   })
 
   it('Suspects opens the ranked suspect commits in a side panel beside the table, and closes it', async () => {
-    await seedFailingScenario()
-    const { useRuns } = await import('@/hooks/useRuns')
-    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({
-      data: { items: [{ id: 'run-9', primary_suite_name: 'Checkout', suite_names: ['Checkout'] }] },
-      isLoading: false,
+    await seedFailingScenario({
+      topFailingItem: {
+        test_name: 'checkout_flow', fail_count: 4, test_fingerprint: 'fp-top', suite_name: 'Checkout',
+        last_failed_run_id: 'run-9',
+      } as never,
     })
     const { useSuspects } = await import('@/hooks/useCommitAttribution')
     renderPage()
@@ -920,6 +921,54 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
 
     fireEvent.click(within(panel).getByRole('button', { name: 'Close suspects' }))
     await waitFor(() => expect(document.querySelector('[data-side-panel]')).toBeNull())
+  })
+
+  // HON-05: every row's panel used the project's newest FAILED run (useRuns
+  // size 1), so a test whose last failure was in an older run was shown the
+  // commit range of a run it did not fail in.
+  it("each row's Suspects asks for the run of that test's own last failure, not the newest failed run", async () => {
+    await seedFailingScenario()
+    const { useTopFailing } = await import('@/hooks/useMetrics')
+    ;(useTopFailing as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        items: [
+          {
+            test_name: 'checkout_flow', fail_count: 4, test_fingerprint: 'fp-top',
+            last_failed_run_id: 'run-older', last_failed_build: 'build-41',
+          },
+          { test_name: 'login_flow', fail_count: 2, test_fingerprint: 'fp-login', last_failed_run_id: 'run-newest' },
+          { test_name: 'no_run_flow', fail_count: 1, test_fingerprint: 'fp-none' },
+        ],
+      },
+      isLoading: false,
+    })
+    const { useRuns } = await import('@/hooks/useRuns')
+    // The project's newest failed run — what every row used to get.
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [{ id: 'run-newest', primary_suite_name: 'Login', suite_names: ['Login'] }] },
+      isLoading: false,
+    })
+    const { useSuspects } = await import('@/hooks/useCommitAttribution')
+    renderPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Suspects for checkout_flow' }))
+    const first = await screen.findByRole('complementary', { name: 'Suspects: checkout_flow' })
+    expect(useSuspects).toHaveBeenLastCalledWith('run-older', { fingerprint: 'fp-top' })
+    // The panel names that run (its build), linked to it.
+    const runLine = within(first).getByTestId('suspects-run')
+    expect(runLine).toHaveTextContent(/in run build-41/)
+    expect(within(runLine).getByRole('link', { name: 'build-41' })).toHaveAttribute('href', '/runs/run-older')
+    fireEvent.click(within(first).getByRole('button', { name: 'Close suspects' }))
+    await waitFor(() => expect(document.querySelector('[data-side-panel]')).toBeNull())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Suspects for login_flow' }))
+    await screen.findByRole('complementary', { name: 'Suspects: login_flow' })
+    expect(useSuspects).toHaveBeenLastCalledWith('run-newest', { fingerprint: 'fp-login' })
+
+    // A row without a run of its own is disabled per row, not by the page.
+    const none = screen.getByRole('button', { name: 'Suspects for no_run_flow' })
+    expect(none).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Suspects for checkout_flow' })).toBeEnabled()
   })
 
   // Browser E2E pass (2026-10-08): every quarantine endpoint answers 503 while

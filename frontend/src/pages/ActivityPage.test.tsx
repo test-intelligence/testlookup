@@ -260,3 +260,56 @@ describe('ActivityPage — a failed page must not discard the loaded ones', () =
     expect(await screen.findByText(/Activity is unavailable/i)).toBeInTheDocument()
   })
 })
+
+// HON-09: the /releases rail's "View full audit log" (and the old `/audit`
+// bookmark) open /activity?category=release. The page read only `?event=`
+// from the URL, so the link could not pre-filter it.
+describe('ActivityPage — ?category= pre-selects the filter', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(listActivityEventTypes).mockResolvedValue({
+      categories: ['runs', 'release', 'configuration'],
+      actor_types: ['user', 'system'],
+      entity_types: ['run', 'release'],
+      events: {},
+    })
+    vi.mocked(listActivity).mockResolvedValue(page([event({ category: 'release', summary: 'Release 2026.10 created' })]))
+    useProjectStore.setState({ activeProjectId: PROJECT_ID })
+  })
+
+  function renderAt(entry: string) {
+    return render(
+      <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
+        <MemoryRouter initialEntries={[entry]}>
+          <ActivityPage />
+        </MemoryRouter>
+      </SWRConfig>,
+    )
+  }
+
+  it('selects the Release category and asks the API for it, never for the unfiltered feed first', async () => {
+    renderAt('/activity?category=release')
+
+    await screen.findByRole('feed')
+    expect(screen.getByRole('combobox', { name: 'Filter by category' })).toHaveValue('release')
+    const calls = vi.mocked(listActivity).mock.calls
+    expect(calls.length).toBeGreaterThan(0)
+    for (const [, params] of calls) expect(params).toMatchObject({ category: ['release'] })
+  })
+
+  it('drops a category the registry does not list (the API would 422), and loads the whole feed', async () => {
+    renderAt('/activity?category=nonsense')
+
+    await screen.findByRole('feed')
+    expect(screen.getByRole('combobox', { name: 'Filter by category' })).toHaveValue('')
+    for (const [, params] of vi.mocked(listActivity).mock.calls) expect(params).not.toHaveProperty('category')
+  })
+
+  it('still loads the feed, unfiltered, when the registry itself fails', async () => {
+    vi.mocked(listActivityEventTypes).mockRejectedValue(new Error('registry down'))
+    renderAt('/activity?category=release')
+
+    await screen.findByRole('feed')
+    for (const [, params] of vi.mocked(listActivity).mock.calls) expect(params).not.toHaveProperty('category')
+  })
+})

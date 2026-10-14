@@ -69,7 +69,8 @@ DEFAULT_DEFECT_FILING_MINUTES = 15.0
 
 # Availability gate (US-12.2): the headline stays hidden until the project
 # has at least this many days between first and last ingested run AND at
-# least one nonzero leg in the last 30 days.
+# least one nonzero leg in the headline window. That window is the page's
+# (TRND-05); ``HEADLINE_WINDOW_DAYS`` is its default and the digests' window.
 MIN_HISTORY_DAYS = 14
 HEADLINE_WINDOW_DAYS = 30
 
@@ -407,16 +408,29 @@ def resolve_availability(
     first_run_at: Optional[datetime],
     last_run_at: Optional[datetime],
     hours_total_30d: float,
+    window_days: int = HEADLINE_WINDOW_DAYS,
 ) -> tuple[bool, Optional[str]]:
     """US-12.2 gate: hide the headline until there's enough data to be
-    honest about. Returns ``(available, insufficient_data_reason)``."""
+    honest about. Returns ``(available, insufficient_data_reason)``.
+
+    ``hours_total_30d`` is the headline window's total; TRND-05 made that
+    window the page's (``window_days``), 30 days by default and for digests.
+    """
     if first_run_at is None or last_run_at is None:
         return False, "no runs ingested yet"
     if (last_run_at - first_run_at) < timedelta(days=MIN_HISTORY_DAYS):
         return False, f"fewer than {MIN_HISTORY_DAYS} days of ingested runs"
     if hours_total_30d <= 0:
-        return False, f"no automation signal in the last {HEADLINE_WINDOW_DAYS} days"
+        return False, f"no automation signal in the last {window_days} days"
     return True, None
+
+
+def fte_equivalent(hours: float, window_days: int) -> float:
+    """Hours over ``window_days`` as full-time engineers: ``FTE_HOURS_PER_MONTH``
+    pro-rated to the window (a 30-day window is one month). Without the
+    pro-rating a year's hours divided by one month's would read 12x high."""
+    months = window_days / HEADLINE_WINDOW_DAYS
+    return round(hours / FTE_HOURS_PER_MONTH / months, 3)
 
 
 def _month_floor(dt: datetime) -> datetime:
@@ -470,11 +484,23 @@ async def _run_span(
     return (row[0], row[1]) if row else (None, None)
 
 
-def _empty_model(reason: str, assumptions: EffectiveAssumptions) -> dict:
+def _empty_headline(window_days: int) -> dict:
+    return {
+        "hours_saved": 0.0,
+        "fte_equivalent": 0.0,
+        "window_days": window_days,
+        "hours_saved_30d": 0.0,
+        "fte_equivalent_30d": 0.0,
+    }
+
+
+def _empty_model(
+    reason: str, assumptions: EffectiveAssumptions, window_days: int = HEADLINE_WINDOW_DAYS,
+) -> dict:
     return {
         "available": False,
         "insufficient_data_reason": reason,
-        "headline": {"hours_saved_30d": 0.0, "fte_equivalent_30d": 0.0},
+        "headline": _empty_headline(window_days),
         "monthly": [],
         "assumptions": assumptions.as_dict(),
         "assumptions_source": assumptions.source,
@@ -486,23 +512,39 @@ async def get_hours_saved_model(
     db: AsyncSession,
     project_id: Optional[uuid.UUID],
     months: int = 6,
+    headline_days: int = HEADLINE_WINDOW_DAYS,
 ) -> dict:
     """The engineer-hours-saved model for a project: availability gate,
-    last-30-day headline, monthly trend, effective assumptions.
+    headline over the last ``headline_days``, monthly trend, effective
+    assumptions.
 
-    Cached in Redis for ~10 minutes; the assumptions fingerprint is part of
-    the cache key so a PUT takes effect on the next read.
+    TRND-05: the headline follows the page's window. ``headline.hours_saved``
+    / ``fte_equivalent`` / ``window_days`` are that window's; the gate's
+    "nonzero leg" test reads the same window. ``hours_saved_30d`` /
+    ``fte_equivalent_30d`` keep their meaning (the trailing 30 days, gated on
+    those 30 days) for the digest and older API readers; with the default
+    window they are the same figures.
+
+    Cached in Redis for ~10 minutes; the assumptions fingerprint and the
+    headline window are part of the cache key, so a PUT takes effect on the
+    next read and one window is never served for another.
     """
     from app.services.cache_service import cache_get, cache_set, get_analytics_epoch
 
+    headline_days = max(1, int(headline_days))
     assumptions = await get_effective_assumptions(db, project_id)
     if project_id is None:
         # The model is deliberately project-scoped (assumptions are per
         # project); an all-projects aggregate would mix rate cards.
-        return _empty_model("select a project to compute the hours-saved model", assumptions)
+        return _empty_model(
+            "select a project to compute the hours-saved model", assumptions, headline_days
+        )
 
     months = max(1, min(int(months), 24))
-    cache_kwargs = {"months": months, "a": assumptions.fingerprint(), "v": METHODOLOGY_VERSION}
+    cache_kwargs = {
+        "months": months, "a": assumptions.fingerprint(), "v": METHODOLOGY_VERSION,
+        "w": headline_days,
+    }
     # Read ONCE, before the query, and reuse for cache_set (VIZ-212).
     epoch = await get_analytics_epoch(project_id)
     cached = await cache_get("value_metrics_hours", str(project_id), epoch=epoch, **cache_kwargs)
@@ -513,11 +555,19 @@ async def get_hours_saved_model(
     first_run_at, last_run_at = await _run_span(db, project_id)
 
     headline_counts: dict = {k: 0 for k in _LEG_COUNT_KEYS}
+    counts_30d: dict = headline_counts
     monthly_rows: list[dict] = []
     if first_run_at is not None:
-        window_start = now - timedelta(days=HEADLINE_WINDOW_DAYS)
+        window_start = now - timedelta(days=headline_days)
         gathered = await _gather_leg_counts(db, project_id, window_start, monthly=False)
         headline_counts.update(gathered.get(_TOTAL_KEY) or {})
+        if headline_days != HEADLINE_WINDOW_DAYS:
+            # The 30-day compatibility figures need their own window.
+            counts_30d = {k: 0 for k in _LEG_COUNT_KEYS}
+            gathered_30d = await _gather_leg_counts(
+                db, project_id, now - timedelta(days=HEADLINE_WINDOW_DAYS), monthly=False
+            )
+            counts_30d.update(gathered_30d.get(_TOTAL_KEY) or {})
 
         monthly_since = _months_back(now, months - 1)
         counts_by_month = await _gather_leg_counts(db, project_id, monthly_since, monthly=True)
@@ -525,16 +575,24 @@ async def get_hours_saved_model(
 
     headline_hours = compute_leg_hours(headline_counts, assumptions)
     available, reason = resolve_availability(
-        first_run_at, last_run_at, headline_hours["hours_total"]
+        first_run_at, last_run_at, headline_hours["hours_total"], headline_days
     )
+    hours_window = headline_hours["hours_total"] if available else 0.0
 
-    hours_30d = headline_hours["hours_total"] if available else 0.0
+    total_30d = compute_leg_hours(counts_30d, assumptions)["hours_total"]
+    available_30d, _ = resolve_availability(first_run_at, last_run_at, total_30d)
+    hours_30d = total_30d if available_30d else 0.0
     model = {
         "available": available,
         "insufficient_data_reason": reason,
         "headline": {
+            "hours_saved": hours_window,
+            "fte_equivalent": fte_equivalent(hours_window, headline_days) if available else 0.0,
+            "window_days": headline_days,
             "hours_saved_30d": hours_30d,
-            "fte_equivalent_30d": round(hours_30d / FTE_HOURS_PER_MONTH, 3) if available else 0.0,
+            "fte_equivalent_30d": (
+                fte_equivalent(hours_30d, HEADLINE_WINDOW_DAYS) if available_30d else 0.0
+            ),
         },
         "monthly": monthly_rows,
         "assumptions": assumptions.as_dict(),
@@ -629,10 +687,12 @@ def get_methodology() -> dict:
             "deliberately far below that anchor.",
             "Interruption studies put the refocus/context-switch cost at 15–25 minutes; "
             "the triage_minutes_per_failure default of 20 sits inside that band.",
-            f"FTE equivalence uses {FTE_HOURS_PER_MONTH} engineer-hours per month.",
-            "The headline is hidden until the project has at least "
-            f"{MIN_HISTORY_DAYS} days between first and last ingested run and at "
-            f"least one nonzero leg in the last {HEADLINE_WINDOW_DAYS} days.",
+            f"FTE equivalence uses {FTE_HOURS_PER_MONTH} engineer-hours per month, "
+            f"pro-rated to the selected window ({HEADLINE_WINDOW_DAYS} days = one month).",
+            "The headline covers the selected window and is hidden until the project "
+            f"has at least {MIN_HISTORY_DAYS} days between first and last ingested run "
+            "and at least one nonzero leg in that window. Digests always report the "
+            f"last {HEADLINE_WINDOW_DAYS} days.",
         ],
     }
 
@@ -843,5 +903,6 @@ async def get_value_metrics(
         "intelligence_reports_generated": intelligence_reports,
     }
 
-    model = await get_hours_saved_model(db, project_id, months=months)
+    # TRND-05: the hours-saved headline covers the same window as the counters.
+    model = await get_hours_saved_model(db, project_id, months=months, headline_days=days)
     return {**legacy, **model}

@@ -69,7 +69,7 @@ Administrative actions and decision overrides are recorded, append-only. A corre
 
 ## Limitations
 
-- TestLookup does not scan or redact test output. If your tests print secrets, those secrets are stored.
+- Redaction is best-effort. Free text such as error messages and stack traces is redacted at named boundaries — when it is stored, logged, put into an AI prompt, or written into a report — by matching common shapes (email addresses, phone numbers, card numbers, IP addresses, tokens and passwords) and sensitive key names. It will miss secrets in unusual forms and sometimes hides text you wanted to keep. Keep secrets out of test output rather than relying on it.
 - Isolation is per project. A user in two projects sees both.
 - Shared reports are as protected as the link.
 

@@ -13,7 +13,7 @@
  *             health score, this week's net change. "All releases" when a
  *             release is picked in the top bar (defects are per project).
  *   KPIs    → `KpiStrip` ("Defect KPIs"): Open · P0 / P1 open · MTTR ·
- *             Escape rate · Oldest open P0 (its one real gauge).
+ *             Unlinked to Jira · Oldest open P0 (its one real gauge).
  *   PRIMARY → the defects table (`data-primary`): Key · Title · Severity ·
  *             Status · Jira · Age · Actions, filtered by the status tabs (the
  *             `Tabs` primitive since P6; state in localStorage and saved
@@ -526,7 +526,10 @@ const OLDEST_P0_BANDS: GaugeBands = { direction: 'lower-is-better', thresholds: 
  */
 export function DefectKpiStrip({ model }: { model: QueueModel }) {
   const oldestP0Days = model.oldestP0 ? Math.floor(model.oldestP0.ageMs / 86400000) : null
-  const escapeRate = model.total > 0 ? Math.round((model.unlinkedTotal / model.total) * 100) : 0
+  // HON-07: this was labelled "Escape rate", but it is the share of defects
+  // with no Jira issue, not defects found after a release shipped (DEF-03
+  // owns a real escape metric).
+  const unlinkedShare = model.total > 0 ? Math.round((model.unlinkedTotal / model.total) * 100) : 0
   const oldestP0Gauge = oldestP0Days != null ? (
     <GaugeBar
       value={oldestP0Days}
@@ -552,7 +555,14 @@ export function DefectKpiStrip({ model }: { model: QueueModel }) {
             hint="Mean time to resolve, over the defects resolved"
             metric={{ value: model.mttrDays != null ? `${model.mttrDays.toFixed(1)}d` : '—' }}
           />,
-          <MetricCard key="escape" compact icon={null} title="Escape rate" metric={{ value: `${escapeRate}%` }} />,
+          <MetricCard
+            key="unlinked"
+            compact
+            icon={null}
+            title="Unlinked to Jira"
+            hint="Share of defects (any status) with no Jira issue"
+            metric={{ value: `${unlinkedShare}%` }}
+          />,
           <MetricCard
             key="oldest"
             compact

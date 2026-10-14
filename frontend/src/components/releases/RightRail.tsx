@@ -9,6 +9,7 @@
  * portfolio list uses. No new endpoints needed.
  */
 import { clsx } from 'clsx'
+import { Link } from 'react-router-dom'
 import { useNow } from '@/hooks/useNow'
 import {
   ArrowRight,
@@ -268,6 +269,9 @@ export function CompliancePacks({
 
 // ── Recent activity ────────────────────────────────────────────────────────
 
+/** The project's release events in the Activity feed (`?category=` seeds its filter). */
+const RELEASE_ACTIVITY_HREF = '/activity?category=release'
+
 export function RecentActivity({ releases }: { releases: DerivedRelease[] }) {
   const now = useNow()  // captured at mount — avoids impure Date.now() in render
   const items = releases
@@ -313,9 +317,15 @@ export function RecentActivity({ releases }: { releases: DerivedRelease[] }) {
         </ul>
       )}
       <div className="px-3.5 py-2 border-t text-center text-[11px]" style={{ borderColor: 'var(--color-border)' }}>
-        <a href="/audit" className="text-[var(--color-accent)] hover:underline inline-flex items-center gap-1">
+        {/* HON-09: `/audit` was never a route (the catch-all sent it to
+            Overview). The release events live in the Activity feed, opened
+            on its Release category; an in-app link keeps the SPA session. */}
+        <Link
+          to={RELEASE_ACTIVITY_HREF}
+          className="text-[var(--color-accent)] hover:underline inline-flex items-center gap-1"
+        >
           View full audit log <ArrowRight className="h-3 w-3" />
-        </a>
+        </Link>
       </div>
     </PanelShell>
   )

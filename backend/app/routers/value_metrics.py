@@ -2,12 +2,12 @@
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.analytics_errors import analytics_error_contract
-from app.core.deps import get_accessible_project_ids, get_current_active_user
+from app.core.deps import get_current_active_user
 from app.db.postgres import get_db
 from app.models.postgres import User
 from app.services.analytics_meta import build_meta, ignored, with_meta
@@ -15,14 +15,6 @@ from app.services.analytics_scope import AnalyticsScope, ScopePolicy, analytics_
 from app.services.value_metrics_service import get_methodology, get_value_metrics
 
 router = APIRouter(prefix="/api/v1/value-metrics", tags=["Value Metrics"])
-
-
-def _project_in_scope(project_id: str, accessible: set) -> bool:
-    """True when ``project_id`` is one the caller may access."""
-    try:
-        return uuid.UUID(str(project_id)) in accessible
-    except (ValueError, TypeError):
-        return False
 
 
 #: VIZ-201/202: the shared scope. A non-admin who names no project, or one
@@ -122,16 +114,23 @@ async def export_metrics(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Export value metrics as a downloadable JSON report."""
-    accessible = await get_accessible_project_ids(db, current_user)
-    if accessible is not None and (not project_id or not _project_in_scope(project_id, accessible)):
-        return Response(
-            content='{"report_type": "value_metrics"}',
-            media_type="application/json",
-            headers={"Content-Disposition": f"attachment; filename=value-metrics-{days}d.json"},
+    """Export value metrics as a downloadable JSON report.
+
+    HON-04: the scope is ``resolve_project_scope``'s, as on ``/by-team``. A
+    project the caller cannot read is a 403. It used to be a 200 carrying a
+    one-key ``{"report_type": "value_metrics"}`` stub, which the browser saved
+    as if it were the report. A non-admin who names no project is refused
+    too: the unpinned export is the every-project aggregate, which spans
+    tenants, so only an admin may take it.
+    """
+    from app.core.deps import resolve_project_scope
+    pid, allowed = await resolve_project_scope(db, current_user, project_id)
+    if allowed is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Select a project to export its value metrics",
         )
     import json
-    pid = uuid.UUID(project_id) if project_id else None
     metrics = await get_value_metrics(db, project_id=pid, days=days)
     content = json.dumps({"report_type": "value_metrics", **metrics}, indent=2, default=str)
     return Response(

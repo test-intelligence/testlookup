@@ -172,6 +172,42 @@ const RUN_SUMMARY = {
   review: null,
 }
 
+/**
+ * The run's stored release decision (`GET /release-readiness/{run}`), not
+ * overridden: the Analysis banner reads it for the override state and the QA
+ * lead's Hold / Approve with conditions / Override actions (GATE-01). The same
+ * verdict as the run intelligence's `release_decision` (a conditional go at 58).
+ */
+export const RUN_RELEASE_DECISION = {
+  run_id: RUN_ID,
+  recommendation: 'CONDITIONAL_GO',
+  risk_score: 58,
+  composite_risk: 58,
+  dimension_scores: [],
+  blocking_issues: [],
+  conditions_for_go: ['Re-run the Payments suite after the gateway fix'],
+  reasoning: 'Infrastructure failures dominate; product risk is contained to one suite.',
+  score_model_version: 1,
+  input_snapshot: null,
+  cluster_insights: [],
+  baseline_diff: null,
+  open_defects_by_component: [],
+  human_override: null,
+  overridden_by: null,
+  original_recommendation: null,
+  original_risk_score: null,
+  override_audit: [],
+  pass_rate: RUN.pass_rate,
+  build_number: String(RUN.build_number),
+  policy_id: null,
+  policy_version: null,
+  policy_level: 'hardcoded',
+  rule_evaluations: [],
+  synthesized: false,
+  created_at: isoAgo(0, 1.1),
+  updated_at: isoAgo(0, 1.1),
+}
+
 /** Everything `/runs/:runId` asks for, on every tab. */
 export const RUN_PAGE: ApiHandlers = [
   ...LAYOUT,
@@ -182,6 +218,8 @@ export const RUN_PAGE: ApiHandlers = [
   ...RUNS,
   // Analysis + Evidence: run intelligence (its LAYOUT duplicates are harmless: first match wins).
   ...RUN_INTELLIGENCE,
+  // Analysis: the stored release decision the verdict banner's override reads (GATE-01).
+  [/^\/api\/v1\/release-readiness\/[^/]+$/, () => RUN_RELEASE_DECISION],
   // Analysis: the deep investigation's clusters, findings and pipeline status.
   ...DEEP_INVESTIGATION.filter(([matcher]) => String(matcher).includes('deep-investigate') || String(matcher).includes('pipeline-status')),
   // Evidence: the run's AI pipeline and its report.

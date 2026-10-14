@@ -25,6 +25,7 @@ import {
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import EmptyState from '@/components/ui/EmptyState'
+import { formatCompactDateTime } from '@/utils/formatCompactDateTime'
 
 export interface WorkflowStageNode {
   stage_name: string
@@ -53,7 +54,8 @@ export interface WorkflowEventNode {
   event_type: string
   stage_name?: string | null
   test_case_id?: string | null
-  timestamp: string
+  /** The event's recorded time. Null/unparseable renders no date line. */
+  timestamp: string | null
   detail?: Record<string, unknown>
 }
 
@@ -402,7 +404,20 @@ function eventLabel(event: WorkflowEventNode): string {
   if (event.event_type === 'cache_hit') return `Cache hit in ${event.stage_name ? stageDisplayName(event.stage_name) : 'workflow'}`
   if (event.event_type === 'checkpoint_restored') return `Checkpoint restored in ${event.stage_name ? stageDisplayName(event.stage_name) : 'workflow'}`
   if (event.event_type === 'pipeline_completed') return 'Pipeline completed'
+  if (event.event_type === 'decision_overridden') return 'Decision overridden'
+  if (event.event_type === 'audit_recorded') return formatValue(detail['action'] ?? 'Audit event')
+  if (event.event_type === 'subscription_created') return 'Subscription created'
+  if (event.event_type === 'baseline_created') return 'Baseline created'
+  if (event.event_type === 'model_registered') return 'Model version registered'
   return event.event_type.replace(/_/g, ' ')
+}
+
+/** The event's own time, or null when it has none (never "Invalid Date"). */
+function eventTime(timestamp: string | null): { text: string; iso: string } | null {
+  if (!timestamp) return null
+  const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) return null
+  return { text: formatCompactDateTime(date), iso: date.toISOString() }
 }
 
 function EventIcon({ event }: { event: WorkflowEventNode }) {
@@ -415,6 +430,7 @@ function EventIcon({ event }: { event: WorkflowEventNode }) {
   if (type === 'tool_invoked') return <Cpu className="h-3.5 w-3.5 text-[var(--color-accent)]" />
   if (type === 'cache_hit') return <Database className="h-3.5 w-3.5 text-[var(--status-passed)]" />
   if (type === 'checkpoint_restored') return <Shield className="h-3.5 w-3.5 text-[var(--status-broken)]" />
+  if (type === 'decision_overridden') return <UserRound className="h-3.5 w-3.5 text-[var(--status-broken)]" />
   return <AlertCircle className="h-3.5 w-3.5 text-[var(--color-text-muted)]" />
 }
 
@@ -514,17 +530,23 @@ function WorkflowEventFeed({ events }: { events: WorkflowEventNode[] }) {
 
   return (
     <div className="space-y-2">
-      {events.slice(0, 24).map((event, index) => (
-        <div key={`${event.event_type}-${event.stage_name ?? 'none'}-${event.timestamp}-${index}`} className="flex gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)]/30 px-3 py-2">
+      {events.slice(0, 24).map((event, index) => {
+        const time = eventTime(event.timestamp)
+        return (
+        <div key={`${event.event_type}-${event.stage_name ?? 'none'}-${event.timestamp ?? 'undated'}-${index}`} className="flex gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)]/30 px-3 py-2">
           <EventIcon event={event} />
           <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
                 <p className="text-sm text-[var(--color-text)]">{eventLabel(event)}</p>
                 {event.stage_name && <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">{stageDisplayName(event.stage_name)}</span>}
               </div>
-            <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-              {new Date(event.timestamp).toLocaleString()}
-            </p>
+            {/* The record's own time; an undated event shows no date line
+                rather than an invented or "Invalid Date" one (HON-06). */}
+            {time && (
+              <p className="text-xs text-[var(--color-text-muted)] mt-0.5" data-event-time={time.iso} title={time.iso}>
+                <time dateTime={time.iso}>{time.text}</time>
+              </p>
+            )}
             {event.detail && Object.keys(event.detail).length > 0 && (
               <div className="mt-1 text-xs text-[var(--color-text-muted)] space-y-0.5">
                 {Object.entries(event.detail).slice(0, 3).map(([key, value]) => (
@@ -537,7 +559,8 @@ function WorkflowEventFeed({ events }: { events: WorkflowEventNode[] }) {
             )}
           </div>
         </div>
-      ))}
+        )
+      })}
     </div>
   )
 }
