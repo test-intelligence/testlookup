@@ -20,7 +20,7 @@ legitimately unscoped; the defect was that non-admins were unscoped too.
 ``defects.project_id`` is indexed (``ix_defects_project_id``), so the schema
 already anticipated this filter.
 
-Source: [backend/app/routers/deep_investigation.py:432](../../../backend/app/routers/deep_investigation.py#L432).
+Source: [backend/app/routers/deep_investigation.py:431](../../../backend/app/routers/deep_investigation.py#L431).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -126,7 +126,7 @@ Approve or reject a defect that is pending review (QA Lead+ only).
 
 When approved with a Jira project key, the Jira ticket is created.
 
-Source: [backend/app/routers/deep_investigation.py:334](../../../backend/app/routers/deep_investigation.py#L334).
+Source: [backend/app/routers/deep_investigation.py:333](../../../backend/app/routers/deep_investigation.py#L333).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -234,7 +234,7 @@ Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_curren
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-run_id: uuid.UUID, body: TriggerDeepRequest, current_user: User=Depends(require_role(UserRole.QA_ENGINEER)), _: User=Depends(require_run_access())
+run_id: uuid.UUID, body: TriggerDeepRequest, current_user: User=Depends(require_role(UserRole.QA_ENGINEER)), _: User=Depends(require_run_access()), db: AsyncSession=Depends(get_db)
 ```
 
 Direct handler error branches (dependency/service errors can add others):
@@ -334,7 +334,7 @@ Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_curren
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-run_id: uuid.UUID, current_user: User=Depends(require_run_access())
+run_id: uuid.UUID, current_user: User=Depends(require_run_access()), db: AsyncSession=Depends(get_db)
 ```
 
 ### Declared wire contract
@@ -412,7 +412,7 @@ Get Ranked Clusters
 
 Return failure clusters ranked by impact score for triage prioritization.
 
-Source: [backend/app/routers/deep_investigation.py:276](../../../backend/app/routers/deep_investigation.py#L276).
+Source: [backend/app/routers/deep_investigation.py:275](../../../backend/app/routers/deep_investigation.py#L275).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -598,7 +598,7 @@ Check if a cluster likely duplicates an existing open defect.
 Returns duplicate info without creating anything.
 P3-9: Business logic extracted to cluster_service.
 
-Source: [backend/app/routers/deep_investigation.py:311](../../../backend/app/routers/deep_investigation.py#L311).
+Source: [backend/app/routers/deep_investigation.py:310](../../../backend/app/routers/deep_investigation.py#L310).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -814,7 +814,7 @@ Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_curren
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-run_id: uuid.UUID, current_user: User=Depends(require_run_access())
+run_id: uuid.UUID, current_user: User=Depends(require_run_access()), db: AsyncSession=Depends(get_db)
 ```
 
 ### Declared wire contract

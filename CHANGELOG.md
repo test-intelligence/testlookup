@@ -264,6 +264,12 @@ locally by default.
   - Five stale documentation statements are corrected and `GET /releases`
     returns one shape (HYG-10).
 
+- **Opening several runs' Analysis tabs no longer stalls the backend.** The
+  tab's failure-cluster and findings requests (and the deep-investigation
+  trigger and promote actions) opened a second database session while the
+  request's own session was still open, so each needed two of a worker's
+  three connections. A few at once left a worker waiting 30 seconds and
+  answering 500. They now use the request's session.
 - **No more random "Token revocation status cannot be verified" errors.**
   Opening a run's AI summary with nothing cached wrote its defect candidates
   with up to five LLM calls inside the request, holding two database
