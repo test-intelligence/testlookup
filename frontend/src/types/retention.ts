@@ -36,6 +36,15 @@ export interface RetentionPolicy {
   runs_days: number
   artifacts_days: number
   audit_days: number
+  /**
+   * W03 AIH-06: AI-history caps. Stored AI versions kept per run (per kind) and
+   * per test result; the oldest are pruned first, version 1 and any version cited
+   * by a published decision report never. Applied whenever a version is stored,
+   * whether or not scheduled purging is enabled. Absent on an older server
+   * (render "not reported"; never send them back).
+   */
+  ai_versions_per_run?: number
+  ai_versions_per_test?: number
   source: RetentionPolicySource
   last_purge: RetentionLastPurge | null
 }
@@ -50,6 +59,9 @@ export interface RetentionPolicyWrite {
   runs_days?: number
   artifacts_days?: number
   audit_days?: number
+  /** W03 AIH-06: 1-100. There is no null reset: send 20 / 10 to restore the defaults. */
+  ai_versions_per_run?: number
+  ai_versions_per_test?: number
 }
 
 /** POST …/preview response — cutoff timestamps per data class. */
@@ -81,6 +93,12 @@ export interface RetentionPreviewCandidates {
    */
   analysis_cache_entries: number | null
   search_index_documents: number | null
+  /**
+   * W03 AIH-06: stored AI versions the purge would remove (those of purged runs,
+   * the per-test rows their delete cascades, and every version over a cap).
+   * Absent on an older server: render "not measured", never 0.
+   */
+  ai_history_versions?: number
 }
 
 export interface RetentionPreview {
@@ -115,6 +133,15 @@ export const RETENTION_BOUNDS: Record<RetentionDayField, { min: number; max: num
     audit_days: { min: 365, max: 3650 },
   })
 
+/** The two AI-history caps (W03 AIH-06): versions kept, not days. */
+export type RetentionCapField = 'ai_versions_per_run' | 'ai_versions_per_test'
+
+/** Inclusive bounds of the AI-history caps (the backend validates them too, 422). */
+export const CAP_BOUNDS: Record<RetentionCapField, { min: number; max: number }> = Object.freeze({
+  ai_versions_per_run: { min: 1, max: 100 },
+  ai_versions_per_test: { min: 1, max: 100 },
+})
+
 /** Contract defaults returned by the backend when unconfigured. */
 export const DEFAULT_RETENTION_POLICY: RetentionPolicy = Object.freeze({
   enabled: false,
@@ -122,6 +149,8 @@ export const DEFAULT_RETENTION_POLICY: RetentionPolicy = Object.freeze({
   runs_days: 365,
   artifacts_days: 180,
   audit_days: 2555,
+  ai_versions_per_run: 20,
+  ai_versions_per_test: 10,
   source: 'default',
   last_purge: null,
 })

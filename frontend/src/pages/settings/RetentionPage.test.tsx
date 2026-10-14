@@ -14,7 +14,10 @@
  *     confirmation_name; "Purge now" is disabled while the policy is disabled.
  *   - Failed GET → error state, NO form/Save (never render defaults over a
  *     failed fetch).
- *   - last_purge summary renders (when / mode / counts).
+ *   - last_purge summary renders (when / mode / counts), nested counts as text.
+ *   - W03 AIH-06 AI-history caps: defaults 20/10 and the summary line, bounds
+ *     1–100, only a changed cap is sent, an older server's missing caps are
+ *     "not reported" and never sent; the preview's "AI history versions" row.
  *
  * The service layer and project store are mocked; the REAL SWR hook runs
  * under an isolated SWRConfig so seeding/revalidation behaviour is covered.
@@ -116,10 +119,18 @@ function basePolicy(overrides: Partial<RetentionPolicy> = {}): RetentionPolicy {
     runs_days: 365,
     artifacts_days: 180,
     audit_days: 2555,
+    ai_versions_per_run: 20,
+    ai_versions_per_test: 10,
     source: 'default',
     last_purge: null,
     ...overrides,
   }
+}
+
+/** A policy read from a server that predates the W03 AI-history caps. */
+function olderServerPolicy(overrides: Partial<RetentionPolicy> = {}): RetentionPolicy {
+  const { ai_versions_per_run: _run, ai_versions_per_test: _test, ...rest } = basePolicy(overrides)
+  return rest
 }
 
 function dayInput(field: string): HTMLInputElement {
@@ -346,6 +357,7 @@ describe('RetentionPage', () => {
         memory_entries_expired: 4,
         analysis_cache_entries: null,
         search_index_documents: null,
+        ai_history_versions: 3,
       },
       unmeasured: ['analysis_cache_entries', 'search_index_documents'],
     })
@@ -383,6 +395,7 @@ describe('RetentionPage', () => {
         memory_entries_expired: 4,
         analysis_cache_entries: 0,
         search_index_documents: 0,
+        ai_history_versions: 0,
       },
       unmeasured: [],
     })
@@ -530,5 +543,159 @@ describe('RetentionPage', () => {
     expect(screen.getByText('(scheduled)')).toBeTruthy()
     expect(screen.getByText('test_runs')).toBeTruthy()
     expect(screen.getByText('minio_objects')).toBeTruthy()
+  })
+
+  it('renders the purge counts the server nests by store as text, never "[object Object]"', async () => {
+    mockGet.mockResolvedValue(
+      basePolicy({
+        enabled: true,
+        last_purge: {
+          at: '2026-07-30T02:00:00Z',
+          mode: 'execute',
+          counts: {
+            postgres: { runs: 3, test_case_audit_rows: 1200 },
+            ai_history: { analysis_versions_cascaded: 40, analysis_versions_over_cap: 2, run_versions_over_cap: 1 },
+            analysis_cache: { redis: null, semantic: 4 },
+            minio: {},
+          },
+        },
+      }),
+    )
+    const { container } = await renderPage()
+    await waitFor(() => expect(screen.getByText(/Last purge:/)).toBeTruthy())
+    expect(container.textContent).not.toContain('[object Object]')
+    const items = Array.from(container.querySelectorAll('li')).map((li) => li.textContent)
+    expect(items).toContain('postgres: runs: 3, test_case_audit_rows: 1,200')
+    expect(items).toContain('ai_history: analysis_versions_cascaded: 40, analysis_versions_over_cap: 2, run_versions_over_cap: 1')
+    expect(items).toContain('analysis_cache: redis: not measured, semantic: 4')
+    expect(items).toContain('minio: none')
+  })
+
+  // ── W03 AIH-06: the AI-history caps ─────────────────────────────────────
+  it('shows the AI-history caps (defaults 20 / 10) and says what they keep', async () => {
+    const { container } = await renderPage()
+    await waitFor(() => expect(screen.getByText('Save policy')).toBeTruthy())
+
+    expect(container.querySelector('[data-retention-ai-summary]')?.textContent).toBe(
+      'AI history: keep 20 versions per run, 10 per test.',
+    )
+    expect(dayInput('ai_versions_per_run').value).toBe('20')
+    expect(dayInput('ai_versions_per_test').value).toBe('10')
+    expect(dayInput('ai_versions_per_run').min).toBe('1')
+    expect(dayInput('ai_versions_per_run').max).toBe('100')
+    expect(screen.getByText('AI versions kept per run (per kind)')).toBeTruthy()
+    expect(screen.getByText('AI versions kept per test result')).toBeTruthy()
+    expect(
+      screen.getByText(
+        'Oldest are pruned first; version 1 and any version cited by a published decision report are never pruned.',
+      ),
+    ).toBeTruthy()
+    // The caps never depend on scheduled purging being on.
+    expect(screen.getByText(/even while scheduled purging is off/)).toBeTruthy()
+  })
+
+  it('bounds each cap to 1–100 whole versions and blocks Save outside them', async () => {
+    await renderPage()
+    await waitFor(() => expect(screen.getByText('Save policy')).toBeTruthy())
+
+    for (const bad of ['0', '101', '2.5']) {
+      fireEvent.change(dayInput('ai_versions_per_run'), { target: { value: bad } })
+      expect(
+        screen.getByText(
+          bad === '2.5'
+            ? 'AI versions kept per run (per kind) must be a whole number of versions'
+            : 'AI versions kept per run (per kind) must be between 1 and 100 versions',
+        ),
+      ).toBeTruthy()
+      expect(saveButton().disabled).toBe(true)
+    }
+    fireEvent.click(saveButton())
+    expect(mockUpdate).not.toHaveBeenCalled()
+
+    fireEvent.change(dayInput('ai_versions_per_run'), { target: { value: '1' } })
+    fireEvent.change(dayInput('ai_versions_per_test'), { target: { value: '100' } })
+    expect(screen.queryByText(/must be between 1 and 100 versions/)).toBeNull()
+    expect(saveButton().disabled).toBe(false)
+  })
+
+  it('PUTs only the cap that changed', async () => {
+    mockUpdate.mockResolvedValue(basePolicy({ ai_versions_per_run: 3, source: 'custom' }))
+    const { container } = await renderPage()
+    await waitFor(() => expect(screen.getByText('Save policy')).toBeTruthy())
+
+    fireEvent.change(dayInput('ai_versions_per_run'), { target: { value: '3' } })
+    await act(async () => {
+      fireEvent.click(saveButton())
+    })
+
+    expect(mockUpdate).toHaveBeenCalledTimes(1)
+    expect(mockUpdate.mock.calls[0][1]).toEqual({ ai_versions_per_run: 3 })
+    // The summary reads the SAVED policy.
+    await waitFor(() =>
+      expect(container.querySelector('[data-retention-ai-summary]')?.textContent).toBe(
+        'AI history: keep 3 versions per run, 10 per test.',
+      ),
+    )
+  })
+
+  it('an older server without caps: "not reported", the inputs disabled, the caps never sent', async () => {
+    mockGet.mockResolvedValue(olderServerPolicy())
+    mockUpdate.mockResolvedValue(olderServerPolicy({ runs_days: 400, source: 'custom' }))
+    const { container } = await renderPage()
+    await waitFor(() => expect(screen.getByText('Save policy')).toBeTruthy())
+
+    expect(container.querySelector('[data-retention-ai-summary]')?.textContent).toBe(
+      'AI history caps: not reported by this server.',
+    )
+    expect(dayInput('ai_versions_per_run').disabled).toBe(true)
+    expect(dayInput('ai_versions_per_run').value).toBe('')
+    expect(dayInput('ai_versions_per_test').disabled).toBe(true)
+    // Nothing reported is nothing changed: no spurious Save.
+    expect(saveButton().disabled).toBe(true)
+
+    fireEvent.change(dayInput('runs_days'), { target: { value: '400' } })
+    await act(async () => {
+      fireEvent.click(saveButton())
+    })
+    expect(mockUpdate.mock.calls[0][1]).toEqual({ runs_days: 400 })
+  })
+
+  it('the preview lists the AI history versions, and "not measured" from an older server', async () => {
+    const PREVIEW = {
+      cutoffs: {
+        raw_events: '2026-05-04T00:00:00Z',
+        runs: '2025-08-02T00:00:00Z',
+        artifacts: '2026-02-03T00:00:00Z',
+        audit: '2019-08-05T00:00:00Z',
+      },
+      candidates: {
+        runs: 1, test_cases: 2, mongo_docs: {}, minio_objects: 3, event_archive_rows: 4, audit_rows: 5,
+        provenance_rows: 6, compliance_packs_expired: 7, evidence_artifact_rows: 8, memory_entries_expired: 9,
+        analysis_cache_entries: 10, search_index_documents: 11, ai_history_versions: 12,
+      },
+      unmeasured: [],
+    }
+    mockPreview.mockResolvedValue(PREVIEW)
+    const first = await renderPage()
+    await waitFor(() => expect(screen.getByText('Preview purge')).toBeTruthy())
+    await act(async () => {
+      fireEvent.click(screen.getByText('Preview purge'))
+    })
+    await waitFor(() => expect(screen.getByText('AI history versions')).toBeTruthy())
+    const row = screen.getByText('AI history versions').closest('tr') as HTMLElement
+    expect(row.textContent).toBe('AI history versions12')
+    first.unmount()
+
+    const { ai_history_versions: _dropped, ...older } = PREVIEW.candidates
+    mockPreview.mockResolvedValue({ ...PREVIEW, candidates: older })
+    await renderPage()
+    await waitFor(() => expect(screen.getByText('Preview purge')).toBeTruthy())
+    await act(async () => {
+      fireEvent.click(screen.getByText('Preview purge'))
+    })
+    await waitFor(() => expect(screen.getByText('AI history versions')).toBeTruthy())
+    expect((screen.getByText('AI history versions').closest('tr') as HTMLElement).textContent).toBe(
+      'AI history versionsnot measured',
+    )
   })
 })
