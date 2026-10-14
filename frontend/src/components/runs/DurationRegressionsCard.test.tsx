@@ -155,3 +155,21 @@ describe('describeReason', () => {
     expect(describeReason(null)).toBe('Not evaluated for this run yet.')
   })
 })
+
+describe('DurationRegressionsCard — fed by the Timing tab (EXEC-04)', () => {
+  it('draws the findings it is handed and asks for nothing', () => {
+    hook.useDurationRegressions.mockReturnValue({ data: undefined, error: undefined, isLoading: false })
+    render(<DurationRegressionsCard runId="run-1" findings={findings({ spikes: [spike(1)], spike_count: 1 })} />)
+    expect(card()).toHaveTextContent('checkout::test_1')
+    // The hook is called with no run (SWR's null key: no request).
+    expect(hook.useDurationRegressions).toHaveBeenCalledWith(null)
+    expect(hook.useDurationRegressions).not.toHaveBeenCalledWith('run-1')
+  })
+
+  it('null findings: the card reads the run itself, as on the Changes tab', () => {
+    hook.useDurationRegressions.mockReturnValue({ data: findings(), error: undefined, isLoading: false })
+    render(<DurationRegressionsCard runId="run-1" findings={null} />)
+    expect(hook.useDurationRegressions).toHaveBeenCalledWith('run-1')
+    expect(card()).toHaveTextContent('No test or suite is slower than its baseline.')
+  })
+})

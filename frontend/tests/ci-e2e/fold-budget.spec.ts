@@ -124,8 +124,9 @@ const ROUTES: FoldRoute[] = [
     handlers: () => TEST_CASE,
     ready: (p) => p.getByRole('heading', { level: 1, name: TEST_CASE_NAME }),
     settle: (p) => expect(p.locator('[data-primary]').getByText(TEST_CASE_ROOT_CAUSE)).toBeVisible(),
-    // 1,877 / 1,887 (single-entity page).
-    budget: 1_900,
+    // 1,877 / 1,887 (single-entity page); 1,910 with EXEC-04's "Duration across runs"
+    // on the History tab, collapsed to its one stats line (the chart opens on demand).
+    budget: 1_920,
     table: false,
   },
   {

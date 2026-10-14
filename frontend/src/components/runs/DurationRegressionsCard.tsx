@@ -1,5 +1,5 @@
 /**
- * EXEC-05: "Did anything get slower?" on the run's Changes tab.
+ * EXEC-05: "Did anything get slower?" on the run's Changes and Timing tabs.
  *
  * Two checks, from `GET /api/v1/runs/{run_id}/duration-regressions`:
  *  - tests slower than their baseline: "Slower than baseline: checkout::test_pay
@@ -17,6 +17,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useDurationRegressions } from '@/hooks/useDurationRegressions'
 import type {
   DurationCheck,
+  DurationRegressions,
   DurationSpike,
   SuiteDurationRegression,
 } from '@/services/durationRegressionsService'
@@ -83,8 +84,20 @@ function Unmeasured({ label, check }: { label: string; check: DurationCheck }) {
   )
 }
 
-export default function DurationRegressionsCard({ runId }: { runId: string }) {
-  const { data, error, isLoading } = useDurationRegressions(runId)
+export default function DurationRegressionsCard({
+  runId,
+  findings,
+}: {
+  runId: string
+  /**
+   * EXEC-04: the same body, already read — the Timing tab passes
+   * `timing.duration_findings`, so the card asks for nothing more. Absent or
+   * `null`: the card reads `/duration-regressions` itself.
+   */
+  findings?: DurationRegressions | null
+}) {
+  const own = useDurationRegressions(findings ? null : runId)
+  const { data, error, isLoading } = findings ? { data: findings, error: undefined, isLoading: false } : own
 
   return (
     <section aria-label="Duration regressions" data-duration-regressions="" className="card">

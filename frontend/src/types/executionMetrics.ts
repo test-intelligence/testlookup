@@ -218,7 +218,8 @@ export interface ExecutionSuiteRow {
 
 export interface SuiteRegressionItem {
   suite_key: string
-  suite_name: string
+  /** null when no row of the suite carried a name; show `suite_key` then. */
+  suite_name: string | null
   branch: string | null
   metric: 'wall' | 'summed'
   ratio: number
@@ -295,6 +296,36 @@ export interface ExecutionMetrics extends Measured {
   /** TRND-09 (VIZ-406): absent on a server older than the histogram. */
   duration_histogram?: DurationHistogram
   meta?: Record<string, unknown>
+}
+
+/**
+ * EXEC-03 §4: the timing of one point of `GET /runs/{run_id}/tests/{test_id}/history` (additive fields on
+ * `TestCaseHistoryPoint`). Optional: a server older than EXEC-03 does not send them; null = the format carried none.
+ */
+export interface TestHistoryPointTiming {
+  started_at?: string | null
+  finished_at?: string | null
+  setup_ms?: number | null
+  call_ms?: number | null
+  teardown_ms?: number | null
+  worker_id?: string | null
+  timing_source?: TestTimingSource | null
+}
+
+/** EXEC-03 §4: the test's duration percentiles over the history window (every execution, not only the points). */
+export interface TestDurationStats extends Measured {
+  window_days: number
+  n: number
+  p50_ms: number | null
+  p95_ms: number | null
+  max_ms: number | null
+}
+
+/** EXEC-03 §4: the additive fields of the test history response. Absent on an older server. */
+export interface TestHistoryDurationFields {
+  duration_stats?: TestDurationStats | null
+  /** null = the test has no `perf_baselines` row in this project. */
+  baseline?: DurationBaseline | null
 }
 
 export interface ExecutionScope {

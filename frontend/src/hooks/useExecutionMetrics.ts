@@ -26,7 +26,7 @@ export function useSuiteExecutionHistory(
   scope: ExecutionScope & { suiteName: string | null | undefined; limit?: number },
 ) {
   const { projectId, suiteName, days, branch, releaseIds, limit } = scope
-  const { data, error, isLoading } = useSWR<SuiteExecutionHistory>(
+  const { data, error, isLoading, mutate } = useSWR<SuiteExecutionHistory>(
     projectId && suiteName
       ? ['suite-execution-history', projectId, suiteName, days ?? null, branch ?? null, (releaseIds ?? []).join(','), limit ?? null]
       : null,
@@ -36,12 +36,12 @@ export function useSuiteExecutionHistory(
       }),
     { revalidateOnFocus: false },
   )
-  return { data, error: error as unknown, isLoading }
+  return { data, error: error as unknown, isLoading, mutate }
 }
 
 export function useExecutionMetrics(scope: ExecutionScope & { top?: number; suiteLimit?: number }) {
   const { projectId, days, branch, releaseIds, suiteNames, top, suiteLimit } = scope
-  const { data, error, isLoading } = useSWR<ExecutionMetrics>(
+  const { data, error, isLoading, mutate } = useSWR<ExecutionMetrics>(
     projectId
       ? [
           'execution-metrics', projectId, days ?? null, branch ?? null, (releaseIds ?? []).join(','),
@@ -51,5 +51,5 @@ export function useExecutionMetrics(scope: ExecutionScope & { top?: number; suit
     () => executionMetricsService.projectMetrics({ projectId, days, branch, releaseIds, suiteNames, top, suiteLimit }),
     { revalidateOnFocus: false },
   )
-  return { data, error: error as unknown, isLoading }
+  return { data, error: error as unknown, isLoading, mutate }
 }
