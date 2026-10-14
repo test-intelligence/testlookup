@@ -175,6 +175,10 @@ async def test_process_sentinel_parses_testng_with_its_timing(monkeypatch):
         async def rollback(self):
             return None
 
+        def begin_nested(self):
+            # The savepoint the sentinel path wraps the suite rows and the duration check in.
+            return self
+
     xml = (FIXTURES / "testng-results-config.xml").read_bytes()
 
     async def _list(prefix):
@@ -197,6 +201,14 @@ async def test_process_sentinel_parses_testng_with_its_timing(monkeypatch):
     monkeypatch.setattr(ingestion, "_update_run_aggregates", AsyncMock())
     monkeypatch.setattr("app.services.run_downstream_outbox.stage_finalize_operations", AsyncMock())
     monkeypatch.setattr(cache_service, "invalidate_analytics_cache", AsyncMock())
+    timings_seen: list[dict] = []
+
+    async def _suite_rows(_db, run_id, report_timings):
+        timings_seen.append(report_timings)
+
+    monkeypatch.setattr("app.services.suite_execution_service.upsert_for_run", _suite_rows)
+    duration_check = AsyncMock()
+    monkeypatch.setattr("app.services.duration_regression_service.evaluate_duration_regressions", duration_check)
 
     await ingestion.process_sentinel(
         SentinelFile(project_id=str(project_id), build_number="b1", ocp_pod_name=None,
@@ -207,8 +219,13 @@ async def test_process_sentinel_parses_testng_with_its_timing(monkeypatch):
     by_name = {case["test_name"]: case for case in upserted}
     assert set(by_name) == {"addsItem", "appliesCoupon", "paysByCard", "paysByVoucher"}
     assert (by_name["addsItem"]["started_at"], by_name["addsItem"]["setup_ms"]) == (_at(1), 120)
-    timing_logs = [c for c in log.info.call_args_list if c.args and c.args[0] == "sentinel_report_timings"]
-    assert len(timing_logs) == 1 and timing_logs[0].kwargs["suites"] == 1
+    # The report's run and suite timing reach the suite rows (EXEC-02), once, and the duration check runs after them.
+    # (This used to look for a "sentinel_report_timings" log line no version of process_sentinel ever wrote.)
+    assert len(timings_seen) == 1
+    assert len(timings_seen[0]["suites"]) == 1  # TestNG has suite clocks, no run clock: the run's wall clock is derived
+    duration_check.assert_awaited_once()
+    failed = [c.args[0] for c in log.warning.call_args_list if c.args and "sentinel_" in str(c.args[0])]
+    assert failed == []
 
 
 # ── Upload worker dispatch ─────────────────────────────────────────────────

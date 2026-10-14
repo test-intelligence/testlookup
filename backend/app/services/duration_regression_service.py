@@ -600,8 +600,10 @@ async def evaluate_duration_regressions(
         measured=findings["measured"],
         spikes=findings["spike_count"],
         suites=findings["suite_regression_count"],
-        notified_tests=len(findings["notified"]["tests"]),
-        notified_suites=len(findings["notified"]["suites"]),
+        # Announced, not delivered: a message is staged only per subscribed channel, and a
+        # project with none still announces (the stored ``notified`` lists the same keys).
+        announced_tests=len(findings["notified"]["tests"]),
+        announced_suites=len(findings["notified"]["suites"]),
         first_evaluation=first_evaluation,
     )
     return public_findings(findings, stored=True)
