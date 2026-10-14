@@ -29,6 +29,10 @@ class _Result:
     def __init__(self, rows):
         self._rows = rows
 
+    def all(self):
+        # The sweep selects columns (with the run's project_id), not entities.
+        return list(self._rows)
+
     def scalars(self):
         return SimpleNamespace(all=lambda: list(self._rows))
 

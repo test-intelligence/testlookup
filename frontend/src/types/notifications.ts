@@ -16,6 +16,9 @@ export type NotificationEventType =
   // Quarantine lifecycle events (PMF US-5.4 / US-5.5)
   | 'test.quarantine_stale'
   | 'test.ready_to_unquarantine'
+  // Duration regressions (EXEC-05): a test or suite BECAME slower than its baseline
+  | 'test.newly_slow'
+  | 'suite.newly_slow'
 
 export interface NotificationPreference {
   id: string

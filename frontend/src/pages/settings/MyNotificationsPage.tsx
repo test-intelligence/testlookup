@@ -50,9 +50,23 @@ const EVENT_LABELS: Record<NotificationEventType, string> = {
   // Quarantine lifecycle events (US-5.4 / US-5.5)
   'test.quarantine_stale': 'Quarantine past its SLA (lifecycle)',
   'test.ready_to_unquarantine': 'Quarantined test ready to release (lifecycle)',
+  // Duration regressions (EXEC-05): one toggle below stands for both.
+  'test.newly_slow': 'A test or suite became slower',
+  'suite.newly_slow': 'A test or suite became slower',
 }
 
-const ALL_EVENTS: NotificationEventType[] = Object.keys(EVENT_LABELS) as NotificationEventType[]
+/**
+ * One checkbox per option. An option may stand for several events: "A test
+ * or suite became slower" subscribes to `test.newly_slow` and
+ * `suite.newly_slow` together, as one message names both.
+ */
+const SLOW_EVENTS: NotificationEventType[] = ['test.newly_slow', 'suite.newly_slow']
+const EVENT_OPTIONS: { key: string; label: string; events: NotificationEventType[] }[] = [
+  ...(Object.keys(EVENT_LABELS) as NotificationEventType[])
+    .filter(ev => !SLOW_EVENTS.includes(ev))
+    .map(ev => ({ key: ev, label: EVENT_LABELS[ev], events: [ev] })),
+  { key: 'became-slower', label: EVENT_LABELS['test.newly_slow'], events: SLOW_EVENTS },
+]
 
 const CHANNEL_META: Record<NotificationChannel, { label: string; icon: React.ElementType; colour: string; placeholder: string }> = {
   email: {
@@ -88,21 +102,28 @@ function EventCheckboxes({
   selected: NotificationEventType[]
   onChange: (v: NotificationEventType[]) => void
 }) {
-  const toggle = (e: NotificationEventType) =>
-    onChange(selected.includes(e) ? selected.filter(x => x !== e) : [...selected, e])
+  // An option is on when any of its events is (a preference saved through the
+  // API may hold one of a pair); toggling it sets or clears all of them.
+  const isOn = (events: NotificationEventType[]) => events.some(e => selected.includes(e))
+  const toggle = (events: NotificationEventType[]) =>
+    onChange(
+      isOn(events)
+        ? selected.filter(x => !events.includes(x))
+        : [...selected, ...events.filter(e => !selected.includes(e))],
+    )
 
   return (
     <div className="grid grid-cols-2 gap-2">
-      {ALL_EVENTS.map(ev => (
-        <label key={ev} className="flex items-center gap-2 cursor-pointer group">
+      {EVENT_OPTIONS.map(option => (
+        <label key={option.key} className="flex items-center gap-2 cursor-pointer group">
           <input
             type="checkbox"
             className="w-4 h-4 rounded border-[var(--color-border-light)] bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)] focus:ring-[var(--color-ring)]"
-            checked={selected.includes(ev)}
-            onChange={() => toggle(ev)}
+            checked={isOn(option.events)}
+            onChange={() => toggle(option.events)}
           />
           <span className="text-sm text-[var(--color-text-secondary)] group-hover:text-[var(--color-text)] transition-colors">
-            {EVENT_LABELS[ev]}
+            {option.label}
           </span>
         </label>
       ))}

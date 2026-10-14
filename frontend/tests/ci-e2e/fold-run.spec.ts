@@ -53,7 +53,7 @@ const RUN = `/api/v1/runs/${RUN_ID}`
 /** What only the non-default tabs ask for. */
 const TAB_ONLY = {
   analysis: [new RegExp(`^${RUN}/intelligence$`), /^\/api\/v1\/deep-investigate\//],
-  changes: [new RegExp(`^${RUN}/regression-diff$`)],
+  changes: [new RegExp(`^${RUN}/regression-diff$`), new RegExp(`^${RUN}/duration-regressions$`)],
   evidence: [/^\/api\/v1\/agents\/pipelines/, /^\/api\/v1\/agents\/runs\/[^/]+\/summary$/],
 }
 

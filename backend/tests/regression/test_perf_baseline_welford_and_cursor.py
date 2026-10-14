@@ -113,6 +113,10 @@ async def test_refresh_baselines_is_incremental_and_advances_cursor():
     captured_sql: list[str] = []
 
     class _Result:
+        def all(self):
+            # The sweep selects columns (with the run's project_id), not entities.
+            return rows
+
         def scalars(self):
             return SimpleNamespace(all=lambda: rows)
 

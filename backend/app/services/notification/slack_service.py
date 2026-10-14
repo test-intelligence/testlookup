@@ -21,6 +21,9 @@ _EVENT_EMOJI = {
     # Quarantine lifecycle events (PMF US-5.4 / US-5.5)
     "test.quarantine_stale": ":alarm_clock:",
     "test.ready_to_unquarantine": ":white_check_mark:",
+    # Duration regressions (EXEC-05)
+    "test.newly_slow": ":turtle:",
+    "suite.newly_slow": ":turtle:",
 }
 
 _EVENT_COLOUR = {
@@ -39,6 +42,9 @@ _EVENT_COLOUR = {
     # Quarantine lifecycle events (PMF US-5.4 / US-5.5)
     "test.quarantine_stale": "#f59e0b",
     "test.ready_to_unquarantine": "#22c55e",
+    # Duration regressions (EXEC-05)
+    "test.newly_slow": "#f59e0b",
+    "suite.newly_slow": "#f59e0b",
 }
 
 

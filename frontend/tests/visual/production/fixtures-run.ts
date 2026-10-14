@@ -14,7 +14,7 @@
  *   Tests     the run, its tests, its attribution verdicts, the suite's runs
  *   Analysis  run intelligence (+ decision reports, step flips, onboarding)
  *             and the deep investigation's clusters, findings and status
- *   Changes   the regression diff
+ *   Changes   the regression diff and the duration regressions (EXEC-05)
  *   Evidence  run intelligence (decision report) and the run's AI pipeline:
  *             pipelines, the newest one's stages and timeline, the AI report
  */
@@ -92,6 +92,58 @@ const REGRESSION_DIFF = {
     { sha: 'a1b2c3d', message: 'Shorten the session token TTL', author: 'dev-one', timestamp: isoAgo(0, 5) },
     { sha: 'e4f5a6b', message: 'Move MFA to the new provider', author: 'dev-two', timestamp: isoAgo(0, 7) },
   ],
+}
+
+/**
+ * Changes: the run's duration regressions (EXEC-05) -- one Auth test 4x its
+ * baseline, new on this run, and the suite 1.8x slower than its previous 20
+ * runs.
+ */
+export const DURATION_REGRESSIONS = {
+  run_id: RUN_ID,
+  schema_version: 1,
+  measured: true,
+  reason: null,
+  stored: true,
+  evaluated_at: isoAgo(0, 1.2),
+  spikes: [
+    {
+      test_fingerprint: 'fp-auth-token-refresh',
+      test_name: 'auth::token::test_refresh_rotates',
+      suite_name: 'Auth',
+      observed_ms: 400,
+      baseline_mean_ms: 100,
+      baseline_stddev_ms: 73.2,
+      baseline_p95_ms: 220.4,
+      sample_count: 34,
+      sigma: 4.1,
+      delta_ms: 300,
+      ratio: 4,
+      previous_ms: 104,
+      was_slow_before: false,
+      new: true,
+    },
+  ],
+  spike_count: 1,
+  suites: [
+    {
+      suite_name: 'Auth',
+      suite_key: 'auth',
+      metric: 'wall',
+      ratio: 1.8,
+      recent_median_ms: 9000,
+      baseline_median_ms: 5000,
+      recent_runs: 5,
+      baseline_runs: 20,
+      observed_ms: 9400,
+      was_slow_before: false,
+      new: true,
+    },
+  ],
+  suite_regression_count: 1,
+  test_check: { measured: true, reason: null, considered: 180, judged: 172, history: 34, required_history: 10, sigma: 3 },
+  suite_check: { measured: true, reason: null, evaluated: 1, history: 25, required_history: 15, recent_runs: 5, baseline_runs: 20, ratio: 1.5 },
+  notified: { tests: ['fp-auth-token-refresh'], suites: ['auth'] },
 }
 
 const PIPELINE_ID = '77777777-7777-4777-8777-777777777777'
@@ -215,6 +267,7 @@ export const RUN_PAGE: ApiHandlers = [
   [`/api/v1/runs/${RUN_ID}/tests`, testList],
   [`/api/v1/runs/${RUN_ID}/attribution`, () => ({ items: [], total: 0 })],
   [`/api/v1/runs/${RUN_ID}/regression-diff`, () => REGRESSION_DIFF],
+  [`/api/v1/runs/${RUN_ID}/duration-regressions`, () => DURATION_REGRESSIONS],
   ...RUNS,
   // Analysis + Evidence: run intelligence (its LAYOUT duplicates are harmless: first match wins).
   ...RUN_INTELLIGENCE,

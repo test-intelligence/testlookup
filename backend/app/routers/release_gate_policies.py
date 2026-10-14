@@ -393,6 +393,13 @@ async def simulate_policy(
         # budgets conservatively excuse nothing.
         "failure_kind_confidences": snapshot.get("failure_kind_confidences"),
     }
+    # EXEC-05 — the run's stored duration findings, for a perf_regression
+    # rule. Absent for a run that was not evaluated: the rule then reports
+    # "not measured" and never blocks.
+    if run is not None and isinstance(getattr(run, "duration_findings", None), dict):
+        from app.services.duration_regression_service import policy_summary
+
+        context["duration_regressions"] = policy_summary(run.duration_findings)
 
     # Build a mock policy object for the evaluator
     mock_policy = ReleaseGatePolicy(
@@ -456,6 +463,29 @@ async def simulate_policy(
     )
 
 
+def _validate_perf_regression_params(params: dict) -> None:
+    """``perf_regression`` params (EXEC-05): counts are whole numbers >= 0,
+    ``min_sigma`` >= 0, ``suite_ratio`` >= 1, ``action`` BLOCK | WARN | INFO.
+    A wrong value is a 422 naming the field, not a rule that never fires."""
+    def refuse(detail: str) -> None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"perf_regression: {detail}",
+        )
+
+    for key in ("max_spikes", "max_suite_regressions"):
+        value = params.get(key, 0)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            refuse(f"{key} must be a whole number of 0 or more (got {value!r})")
+    for key, floor in (("min_sigma", 0.0), ("suite_ratio", 1.0)):
+        value = params.get(key, floor)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < floor:
+            refuse(f"{key} must be a number of {floor:g} or more (got {value!r})")
+    action = params.get("action", "BLOCK")
+    if action not in ("BLOCK", "WARN", "INFO"):
+        refuse(f"action must be BLOCK, WARN or INFO (got {action!r})")
+
+
 def _validate_policy_document(doc: PolicyDocument) -> None:
     """Validate a policy document for business rule correctness."""
     # Thresholds: go < no_go
@@ -478,14 +508,23 @@ def _validate_policy_document(doc: PolicyDocument) -> None:
             detail=f"Dimension weights must sum to 1.0 (got {total:.4f})",
         )
 
-    # Validate rule types
-    valid_types = {"flaky_recurrence", "open_defect_limit", "dimension_ceiling", "override_rules"}
+    # Validate rule types. Every type here must have an evaluator (or be
+    # override_rules, applied at override time): a type the editor offers and
+    # this set refuses is a save that fails with a 422 the page never shows.
+    valid_types = {
+        "flaky_recurrence", "open_defect_limit", "dimension_ceiling", "override_rules",
+        # EXEC-05 (D44): opt-in duration regression rule.
+        "perf_regression",
+    }
     for rule in doc.rules:
         if rule.type not in valid_types:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Unknown rule type '{rule.type}'. Valid: {', '.join(sorted(valid_types))}",
             )
+
+        if rule.type == "perf_regression":
+            _validate_perf_regression_params(rule.params)
 
         # Validate dimension_ceiling params
         if rule.type == "dimension_ceiling":

@@ -628,11 +628,94 @@ def _eval_dimension_ceiling(rule: dict, context: dict, dim_scores: dict) -> Rule
     )
 
 
+def _plural(count: int, word: str) -> str:
+    return f"{count} {word}{'' if count == 1 else 's'}"
+
+
+def _eval_perf_regression(rule: dict, context: dict, dim_scores: dict) -> RuleEvaluation:
+    """Duration regressions of the run (EXEC-05 / owner decision D44).
+
+    STRICTLY OPT-IN: it runs only when a policy lists a ``perf_regression``
+    rule, and no policy does until someone adds one, so every existing
+    verdict is unchanged. It reads ``context["duration_regressions"]``, the
+    run's stored findings (``duration_regression_service.policy_summary``).
+
+    params: ``max_spikes`` (tests slower than baseline allowed, default 0),
+    ``min_sigma`` (a spike counts from this many sigma, default 3.0 -- the
+    detector's own floor, so a lower value changes nothing),
+    ``suite_ratio`` (a suite regression counts from this ratio, default 1.5,
+    the detector's floor), ``max_suite_regressions`` (default 0) and
+    ``action`` (BLOCK | WARN | INFO, default BLOCK).
+
+    A run whose durations were not measured (flag off, not enough history,
+    not evaluated) passes with the reason: an unmeasured run must not block a
+    release, and the trail says it was not checked rather than "0 slower".
+    """
+    params = rule.get("params", {}) or {}
+    max_spikes = int(params.get("max_spikes", 0) or 0)
+    min_sigma = float(params.get("min_sigma", 3.0) or 0.0)
+    suite_ratio = float(params.get("suite_ratio", 1.5) or 0.0)
+    max_suites = int(params.get("max_suite_regressions", 0) or 0)
+    action = params.get("action", "BLOCK")
+    findings = context.get("duration_regressions")
+    base = {
+        "rule_id": rule["id"],
+        "rule_name": rule["name"],
+        "rule_type": "perf_regression",
+        "action": action,
+        "threshold_value": max_spikes,
+    }
+    if not isinstance(findings, dict) or not findings.get("measured"):
+        reason = (findings or {}).get("reason") if isinstance(findings, dict) else None
+        return RuleEvaluation(
+            passed=True,
+            message=(
+                "Duration regressions were not measured for this run"
+                + (f" ({reason})" if reason else " (not evaluated)")
+                + " — rule not applied"
+            ),
+            actual_value=None,
+            **base,
+        )
+    spikes = [
+        s for s in findings.get("spikes") or []
+        if isinstance(s, dict) and float(s.get("sigma") or 0.0) >= min_sigma
+    ]
+    suites = [
+        s for s in findings.get("suites") or []
+        if isinstance(s, dict) and float(s.get("ratio") or 0.0) >= suite_ratio
+    ]
+    # The stored lists are capped; when nothing is filtered out the counts
+    # (uncapped) are the truth.
+    spike_count = len(spikes)
+    if spike_count == len(findings.get("spikes") or []):
+        spike_count = max(spike_count, int(findings.get("spike_count") or 0))
+    suite_count = len(suites)
+    if suite_count == len(findings.get("suites") or []):
+        suite_count = max(suite_count, int(findings.get("suite_regression_count") or 0))
+    passed = spike_count <= max_spikes and suite_count <= max_suites
+    found = []
+    if spike_count:
+        found.append(f"{_plural(spike_count, 'test')} slower than baseline")
+    if suite_count:
+        found.append(f"{_plural(suite_count, 'suite')} slower than its history")
+    summary = " and ".join(found) or "No test or suite slower than its baseline"
+    limits = f"limit: {max_spikes} test(s), {max_suites} suite(s)"
+    return RuleEvaluation(
+        passed=passed,
+        message=f"{summary} ({limits})",
+        actual_value=spike_count + suite_count,
+        **base,
+    )
+
+
 # Registry of rule evaluators (override_rules handled separately at override time)
 _RULE_EVALUATORS: dict = {
     "flaky_recurrence": _eval_flaky_recurrence,
     "open_defect_limit": _eval_open_defect_limit,
     "dimension_ceiling": _eval_dimension_ceiling,
+    # EXEC-05: opt-in, absent from every policy until added (D44).
+    "perf_regression": _eval_perf_regression,
 }
 
 

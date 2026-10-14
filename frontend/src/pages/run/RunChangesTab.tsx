@@ -5,13 +5,15 @@
  * Compare (`/runs/compare`) for a side-by-side of two runs.
  *
  * Mounted only while the tab is open, so the diff is asked for then and not
- * at page load (the same rule the collapsed card had).
+ * at page load (the same rule the collapsed card had). The same holds for the
+ * duration regressions under it (EXEC-05, `DurationRegressionsCard`).
  */
 import { Link } from 'react-router-dom'
 import { GitCommit, GitCompare } from 'lucide-react'
 import useSWR from 'swr'
 import { clsx } from 'clsx'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import DurationRegressionsCard from '@/components/runs/DurationRegressionsCard'
 import { api } from '@/services/api'
 import type { TestRun } from '@/types/runs'
 import { buildCompareWithPreviousHref } from '@/utils/runComparisons'
@@ -125,6 +127,9 @@ export default function RunChangesTab({
           </div>
         )}
       </section>
+
+      {/* EXEC-05: tests slower than their baseline, suites slower than their history. */}
+      <DurationRegressionsCard runId={runId} />
 
       <section aria-label="Compare" className="flex flex-wrap items-center gap-2">
         {baselineHref && (

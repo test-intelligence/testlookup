@@ -20,6 +20,7 @@ from app.models.postgres import LaunchStatus, Project, TestCase, TestRun, User, 
 from app.models.schemas import (
     DeleteRunAcceptedResponse,
     DeleteRunRequest,
+    DurationRegressionsResponse,
     EnrichedTestCaseDetailResponse,
     TestCaseHistoryResponse,
     TestCaseListResponse,
@@ -521,6 +522,44 @@ async def get_regression_diff(
         }
 
     return await compute_regression_diff(run, db)
+
+
+@router.get(
+    "/{run_id}/duration-regressions",
+    response_model=DurationRegressionsResponse,
+)
+async def get_run_duration_regressions(
+    run_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: Any = Depends(require_run_access()),
+):
+    """EXEC-05: tests slower than their baseline and suites slower than their
+    history, for the run page's Changes tab.
+
+    The findings stored when the run was evaluated on ingest, else the same
+    checks computed now without writing anything (``stored: false``).
+    ``measured: false`` with a ``reason`` ("not enough history (4 of 10)",
+    "duration regression detection is off for this project") when neither
+    check could be made -- an empty list never stands in for "no
+    regressions". A live run still streaming answers the same way instead of
+    404, as ``/regression-diff`` does.
+    """
+    from app.services.duration_regression_service import get_duration_regressions
+
+    findings = await get_duration_regressions(db, run_id)
+    if findings is None:
+        from app.models.postgres import LiveSession
+        live = (
+            await db.execute(select(LiveSession.id).where(LiveSession.id == run_id))
+        ).scalar_one_or_none()
+        if live is None:
+            raise HTTPException(status_code=404, detail="Test run not found")
+        return DurationRegressionsResponse(
+            run_id=run_id,
+            measured=False,
+            reason="this run is still streaming; it is evaluated once it finalises",
+        )
+    return DurationRegressionsResponse(run_id=run_id, **findings)
 
 
 @router.post("/{run_id}/release")

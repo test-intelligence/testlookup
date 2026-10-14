@@ -230,6 +230,7 @@ class ReleaseRiskAgent(BaseAgent):
             "failure_kind_counts": self._failure_kind_counts(analyses),
             "failure_kind_confidences": self._failure_kind_confidences(analyses),
         }
+        await self._attach_duration_regressions(state, policy_context)
         try:
             from app.services.policy_evaluator_service import evaluate_policy
             async with AsyncSessionLocal() as policy_db:
@@ -363,6 +364,25 @@ class ReleaseRiskAgent(BaseAgent):
                 )
 
         return result
+
+    @staticmethod
+    async def _attach_duration_regressions(state: dict, policy_context: dict) -> None:
+        """Add the run's stored duration findings for the opt-in
+        ``perf_regression`` policy rule (EXEC-05). Only when the run was
+        evaluated, so a run without findings -- and every policy without the
+        rule -- sees exactly the context it saw before. Own session, and never
+        raises: a failed read cannot poison the policy evaluation's session,
+        it only leaves the rule reporting "not measured"."""
+        try:
+            from app.services.duration_regression_service import load_policy_summary
+
+            async with AsyncSessionLocal() as db:
+                summary = await load_policy_summary(db, state.get("test_run_id"))
+        except Exception as exc:  # noqa: BLE001 -- the gate must still evaluate
+            logger.warning("duration_regressions_context_failed", error=str(exc))
+            return
+        if summary is not None:
+            policy_context["duration_regressions"] = summary
 
     @staticmethod
     def _failure_kind_counts(analyses: dict) -> dict[str, int]:
