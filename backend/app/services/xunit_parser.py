@@ -51,13 +51,34 @@ column is fronted by a strict enum that silently 422s reads on drift.
 
 Malformed input returns an empty list rather than raising — ingestion tasks
 are fire-and-forget; one bad upload must not wedge the worker.
+
+Timing (EXEC-01, contract in ``report_timings``): xUnit.net v2 has NO per-test
+clock or phase split, so a result carries none of the optional timing keys.
+What the format has is suite and run timing: each ``<collection time>`` is its
+suite's wall time (no start); each ``<assembly>`` starts at ``start-rtf``
+(newer runners) or ``run-date`` + ``run-time`` (the runner's local clock, read
+as UTC) and lasts ``time``; ``<assemblies start-rtf finish-rtf>`` is the run
+when stated, else the span of the assemblies. ``parse_xunit_xml`` keeps
+returning ``list[dict]``; ``parse_xunit_xml_with_timings`` also returns the
+``ReportTimings``.
 """
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import List, Optional
 
 import defusedxml.ElementTree as ET
+
+from app.services.report_timings import (
+    ReportTimings,
+    add_suite_timing,
+    empty_timings,
+    finish_from_duration,
+    parse_report_time,
+    seconds_to_ms,
+    wall_ms_between,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -159,11 +180,29 @@ def _assembly_label(assembly_el) -> Optional[str]:
     return name.replace("\\", "/").rsplit("/", 1)[-1] or None
 
 
-def _parse_assembly(assembly_el, run_id: str, out: List[dict]) -> None:
+def _assembly_span(assembly_el) -> tuple[Optional[datetime], Optional[datetime]]:
+    """(started_at, finished_at) of one ``<assembly>``, from what it states."""
+    started, _ = parse_report_time(assembly_el.get("start-rtf"))
+    if started is None and _clean(assembly_el.get("run-date")):
+        clock = f"{_clean(assembly_el.get('run-date'))}T{_clean(assembly_el.get('run-time')) or '00:00:00'}"
+        started, _ = parse_report_time(clock)
+    finished, _ = parse_report_time(assembly_el.get("finish-rtf"))
+    if finished is None:
+        finished = finish_from_duration(started, seconds_to_ms(assembly_el.get("time")))
+    return started, finished
+
+
+def _parse_assembly(
+    assembly_el, run_id: str, out: List[dict], timings: Optional[ReportTimings] = None,
+) -> None:
     assembly_name = _assembly_label(assembly_el)
     for collection in assembly_el.findall("collection"):
         collection_name = _clean(collection.get("name")) or None
         suite_name = collection_name or assembly_name or "Unknown Suite"
+        if timings is not None:
+            # Collections of one assembly run in parallel by default, so only
+            # each collection's own ``time`` is its wall; it states no start.
+            add_suite_timing(timings, {"name": suite_name, "wall_ms": seconds_to_ms(collection.get("time"))})
         for test_el in collection.findall("test"):
             display_name = test_el.get("name") or "Unknown"
             class_name = _clean(test_el.get("type")) or None
@@ -200,12 +239,22 @@ def parse_xunit_xml(content: str, test_run_id: str) -> List[dict]:
     the downstream ``_upsert_test_case`` pipeline is unchanged. Malformed
     input logs and returns ``[]``.
     """
+    return _parse(content, test_run_id)[0]
+
+
+def parse_xunit_xml_with_timings(content: str, test_run_id: str) -> tuple[List[dict], ReportTimings]:
+    """:func:`parse_xunit_xml`, plus the report's run and suite timing (``ReportTimings``)."""
+    return _parse(content, test_run_id)
+
+
+def _parse(content: str, test_run_id: str) -> tuple[List[dict], ReportTimings]:
     results: List[dict] = []
+    timings = empty_timings()
     try:
         root = ET.fromstring(content)
     except Exception as exc:
         logger.warning("Failed to parse xUnit XML: %s", exc)
-        return results
+        return results, timings
 
     if root.tag == "assemblies":
         assemblies = root.findall("assembly")
@@ -213,9 +262,27 @@ def parse_xunit_xml(content: str, test_run_id: str) -> List[dict]:
         assemblies = [root]
     else:
         logger.warning("xUnit XML root must be <assemblies> or <assembly>, got <%s>", root.tag)
-        return results
+        return results, timings
 
     for assembly in assemblies:
-        _parse_assembly(assembly, test_run_id, results)
+        _parse_assembly(assembly, test_run_id, results, timings)
 
-    return results
+    run_started, _ = parse_report_time(root.get("start-rtf")) if root.tag == "assemblies" else (None, False)
+    run_finished, _ = parse_report_time(root.get("finish-rtf")) if root.tag == "assemblies" else (None, False)
+    if run_started is None or run_finished is None:
+        # Not stated for the run: the span of the assemblies, only when every
+        # assembly states both ends (a partial span would understate it).
+        spans = [_assembly_span(assembly) for assembly in assemblies]
+        starts = [start for start, _ in spans if start is not None]
+        ends = [end for _, end in spans if end is not None]
+        if spans and len(starts) == len(spans) and len(ends) == len(spans):
+            run_started, run_finished = min(starts), max(ends)
+        else:
+            run_started = run_finished = None
+    timings["run_started_at"] = run_started
+    timings["run_finished_at"] = run_finished
+    timings["run_wall_ms"] = wall_ms_between(run_started, run_finished)
+    if timings["run_wall_ms"] is None and len(assemblies) == 1:
+        timings["run_wall_ms"] = seconds_to_ms(assemblies[0].get("time"))
+
+    return results, timings

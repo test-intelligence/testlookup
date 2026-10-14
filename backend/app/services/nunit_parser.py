@@ -53,13 +53,31 @@ fronted by a strict enum that silently 422s reads on drift.
 
 Malformed input returns an empty list rather than raising — ingestion tasks
 are fire-and-forget; one bad upload must not wedge the worker.
+
+Timing (EXEC-01, contract in ``report_timings``): each ``<test-case>``'s
+``start-time`` / ``end-time`` become ``started_at`` / ``finished_at`` (NUnit
+writes UTC with a ``Z``; a clock without one is read as UTC and flagged
+``timing_tz=assumed_utc``). NUnit reports no per-test setup/teardown split. The
+suite timing is the ``start-time`` / ``end-time`` / ``duration`` of the element
+that names the cases' suite (the TestFixture, else the assembly); the run timing
+is ``<test-run>``'s. ``parse_nunit_xml`` keeps returning ``list[dict]``;
+``parse_nunit_xml_with_timings`` also returns the ``ReportTimings``.
 """
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import defusedxml.ElementTree as ET
+
+from app.services.report_timings import (
+    ReportTimings,
+    add_suite_timing,
+    apply_case_clock,
+    empty_timings,
+    parse_report_time,
+    seconds_to_ms,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -159,13 +177,27 @@ def _case_error(case_el, status: str) -> tuple:
 def _walk_suites(
     suite_el, run_id: str, out: List[dict],
     assembly_name: Optional[str], fixture_fullname: Optional[str],
+    suite_sources: Optional[Dict[str, list]] = None,
+    named_by=None,
 ) -> None:
+    """Collect the ``<test-case>`` leaves under ``suite_el`` into ``out``.
+
+    ``suite_sources`` (when given) maps each ``suite_name`` handed to a case to
+    the ``<test-suite>`` element(s) that named it, so their timing can become
+    that suite's; ``named_by`` is the element behind the current name.
+    """
     suite_type = _clean(suite_el.get("type")).lower()
     if suite_type == "assembly":
         # Assembly name attr is the dll basename; fullname is the full path.
-        assembly_name = _clean(suite_el.get("name")) or assembly_name
+        if _clean(suite_el.get("name")):
+            assembly_name = _clean(suite_el.get("name"))
+            if not fixture_fullname:
+                named_by = suite_el
     elif suite_type == "testfixture":
-        fixture_fullname = _clean(suite_el.get("fullname")) or _clean(suite_el.get("name")) or fixture_fullname
+        own_name = _clean(suite_el.get("fullname")) or _clean(suite_el.get("name"))
+        if own_name:
+            fixture_fullname = own_name
+            named_by = suite_el
 
     for case_el in suite_el.findall("test-case"):
         name = case_el.get("name") or "Unknown"
@@ -184,7 +216,7 @@ def _walk_suites(
             steps.append(_outcome_step("SKIPPED", "skipped", error_message, None))
 
         suite_name = fixture_fullname or assembly_name or "Unknown Suite"
-        out.append({
+        case = {
             "test_run_id": run_id,
             "test_name": name,
             "full_name": fullname or (f"{classname}.{name}" if classname else name),
@@ -199,10 +231,23 @@ def _walk_suites(
             "tags": _collect_tags(case_el),
             "steps": steps,
             "framework": "nunit",
-        })
+        }
+        apply_case_clock(case, case_el.get("start-time"), case_el.get("end-time"))
+        out.append(case)
+        if suite_sources is not None and named_by is not None and suite_name != "Unknown Suite":
+            bucket = suite_sources.setdefault(suite_name, [])
+            if not any(element is named_by for element in bucket):
+                bucket.append(named_by)
 
     for child in suite_el.findall("test-suite"):
-        _walk_suites(child, run_id, out, assembly_name, fixture_fullname)
+        _walk_suites(child, run_id, out, assembly_name, fixture_fullname, suite_sources, named_by)
+
+
+def _element_timing(element) -> tuple:
+    """(started_at, finished_at, wall_ms) of a ``<test-run>`` / ``<test-suite>``."""
+    started, _ = parse_report_time(element.get("start-time"))
+    finished, _ = parse_report_time(element.get("end-time"))
+    return started, finished, seconds_to_ms(element.get("duration"))
 
 
 def parse_nunit_xml(content: str, test_run_id: str) -> List[dict]:
@@ -212,18 +257,37 @@ def parse_nunit_xml(content: str, test_run_id: str) -> List[dict]:
     the downstream ``_upsert_test_case`` pipeline is unchanged. Malformed
     input logs and returns ``[]``.
     """
+    return _parse(content, test_run_id)[0]
+
+
+def parse_nunit_xml_with_timings(content: str, test_run_id: str) -> tuple[List[dict], ReportTimings]:
+    """:func:`parse_nunit_xml`, plus the report's run and suite timing (``ReportTimings``)."""
+    return _parse(content, test_run_id)
+
+
+def _parse(content: str, test_run_id: str) -> tuple[List[dict], ReportTimings]:
     results: List[dict] = []
+    timings = empty_timings()
     try:
         root = ET.fromstring(content)
     except Exception as exc:
         logger.warning("Failed to parse NUnit XML: %s", exc)
-        return results
+        return results, timings
 
     if root.tag != "test-run":
         logger.warning("NUnit XML root must be <test-run>, got <%s>", root.tag)
-        return results
+        return results, timings
 
+    suite_sources: Dict[str, list] = {}
     for suite in root.findall("test-suite"):
-        _walk_suites(suite, test_run_id, results, None, None)
+        _walk_suites(suite, test_run_id, results, None, None, suite_sources)
 
-    return results
+    timings["run_started_at"], timings["run_finished_at"], timings["run_wall_ms"] = _element_timing(root)
+    for suite_name, elements in suite_sources.items():
+        for element in elements:
+            started, finished, wall = _element_timing(element)
+            add_suite_timing(timings, {
+                "name": suite_name, "started_at": started, "finished_at": finished, "wall_ms": wall,
+            })
+
+    return results, timings

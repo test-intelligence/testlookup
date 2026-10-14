@@ -243,7 +243,11 @@ def _run_upload(parsed_results: list[dict]) -> SimpleNamespace:
     with (
         patch.object(tasks, "_run_async", side_effect=asyncio.run),
         patch.object(tasks, "_archive_raw_upload", new=AsyncMock(return_value=None)),
-        patch.object(tasks, "_parse_file_to_results", return_value=parsed_results),
+        # EXEC-01: the task parses through the timing twin (results + ReportTimings).
+        patch.object(
+            tasks, "_parse_file_to_results_with_timings",
+            return_value=(parsed_results, {"run_wall_ms": None, "suites": []}),
+        ),
         patch.object(ingestion_pipeline, "create_run_from_payload", new=create),
         patch.object(ingestion_pipeline, "ingest_test_results", new=ingest),
         patch.object(ingestion_pipeline, "finalize_run", new=AsyncMock()),

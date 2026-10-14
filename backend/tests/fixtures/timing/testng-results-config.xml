@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testng-results ignored="0" total="4" passed="2" failed="1" skipped="1">
+  <reporter-output>
+  </reporter-output>
+  <suite started-at="2026-10-14T10:00:00 UTC" name="Checkout Suite" finished-at="2026-10-14T10:00:09 UTC" duration-ms="9000">
+    <groups>
+    </groups>
+    <test started-at="2026-10-14T10:00:00 UTC" name="Checkout Tests" finished-at="2026-10-14T10:00:09 UTC" duration-ms="9000">
+      <class name="com.shop.checkout.CartTest">
+        <test-method is-config="true" signature="startBrowser()[pri:0, instance:com.shop.checkout.CartTest@6d4b1c02]" started-at="2026-10-14T10:00:00 UTC" name="startBrowser" is-before-class="true" finished-at="2026-10-14T10:00:01 UTC" duration-ms="900" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method>
+        <test-method is-config="true" signature="openCart()[pri:0, instance:com.shop.checkout.CartTest@6d4b1c02]" started-at="2026-10-14T10:00:01 UTC" name="openCart" is-before-method="true" finished-at="2026-10-14T10:00:01 UTC" duration-ms="120" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method>
+        <test-method signature="addsItem()[pri:0, instance:com.shop.checkout.CartTest@6d4b1c02]" started-at="2026-10-14T10:00:01 UTC" name="addsItem" finished-at="2026-10-14T10:00:03 UTC" duration-ms="1600" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method>
+        <test-method is-config="true" signature="clearCart()[pri:0, instance:com.shop.checkout.CartTest@6d4b1c02]" started-at="2026-10-14T10:00:03 UTC" name="clearCart" is-after-method="true" finished-at="2026-10-14T10:00:03 UTC" duration-ms="80" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method>
+        <test-method is-config="true" signature="openCart()[pri:0, instance:com.shop.checkout.CartTest@6d4b1c02]" started-at="2026-10-14T10:00:03 UTC" name="openCart" is-before-method="true" finished-at="2026-10-14T10:00:03 UTC" duration-ms="110" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method>
+        <test-method signature="appliesCoupon()[pri:0, instance:com.shop.checkout.CartTest@6d4b1c02]" started-at="2026-10-14T10:00:03 UTC" name="appliesCoupon" finished-at="2026-10-14T10:00:06 UTC" duration-ms="2400" status="FAIL">
+          <exception class="java.lang.AssertionError">
+            <message>
+              <![CDATA[expected [10.00] but found [12.00]]]>
+            </message>
+            <full-stacktrace>
+              <![CDATA[java.lang.AssertionError: expected [10.00] but found [12.00]
+	at org.testng.Assert.fail(Assert.java:110)
+	at com.shop.checkout.CartTest.appliesCoupon(CartTest.java:41)
+]]>
+            </full-stacktrace>
+          </exception>
+          <reporter-output>
+          </reporter-output>
+        </test-method>
+        <test-method is-config="true" signature="clearCart()[pri:0, instance:com.shop.checkout.CartTest@6d4b1c02]" started-at="2026-10-14T10:00:06 UTC" name="clearCart" is-after-method="true" finished-at="2026-10-14T10:00:06 UTC" duration-ms="70" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method>
+        <test-method is-config="true" signature="quitBrowser()[pri:0, instance:com.shop.checkout.CartTest@6d4b1c02]" started-at="2026-10-14T10:00:06 UTC" name="quitBrowser" is-after-class="true" finished-at="2026-10-14T10:00:06 UTC" duration-ms="300" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method>
+      </class>
+      <class name="com.shop.checkout.PaymentTest">
+        <test-method signature="paysByCard()[pri:0, instance:com.shop.checkout.PaymentTest@3f2a3a5]" started-at="2026-10-14T10:00:07 UTC" name="paysByCard" finished-at="2026-10-14T10:00:08 UTC" duration-ms="1000" status="PASS">
+          <reporter-output>
+          </reporter-output>
+        </test-method>
+        <test-method signature="paysByVoucher()[pri:0, instance:com.shop.checkout.PaymentTest@3f2a3a5]" started-at="2026-10-14T10:00:08 UTC" name="paysByVoucher" finished-at="2026-10-14T10:00:08 UTC" duration-ms="0" status="SKIP">
+          <reporter-output>
+          </reporter-output>
+        </test-method>
+      </class>
+    </test>
+  </suite>
+</testng-results>

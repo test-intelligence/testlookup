@@ -1,0 +1,58 @@
+{
+  "created": 1791972012.5,
+  "duration": 12.5,
+  "exitcode": 1,
+  "root": "/repo",
+  "environment": { "Python": "3.11.9", "Platform": "Linux-6.8-x86_64" },
+  "summary": { "passed": 1, "failed": 1, "error": 1, "skipped": 1, "total": 4, "collected": 4 },
+  "collectors": [],
+  "tests": [
+    {
+      "nodeid": "tests/test_orders.py::TestOrders::test_create",
+      "lineno": 10,
+      "outcome": "passed",
+      "keywords": ["test_create", "TestOrders", "test_orders.py"],
+      "setup": { "duration": 0.12, "outcome": "passed" },
+      "call": { "duration": 1.6, "outcome": "passed" },
+      "teardown": { "duration": 0.08, "outcome": "passed" }
+    },
+    {
+      "nodeid": "tests/test_orders.py::TestOrders::test_refund",
+      "lineno": 22,
+      "outcome": "failed",
+      "keywords": ["test_refund", "TestOrders", "test_orders.py"],
+      "setup": { "duration": 0.003, "outcome": "passed" },
+      "call": {
+        "duration": 2.25,
+        "outcome": "failed",
+        "crash": { "path": "/repo/tests/test_orders.py", "lineno": 30, "message": "AssertionError: refund total" },
+        "longrepr": "tests/test_orders.py:30: in test_refund\n    assert refund.total == 10\nE   AssertionError: refund total"
+      },
+      "teardown": { "duration": 0.5, "outcome": "passed" }
+    },
+    {
+      "nodeid": "tests/test_db.py::test_migrate",
+      "lineno": 5,
+      "outcome": "error",
+      "keywords": ["test_migrate", "test_db.py"],
+      "setup": {
+        "duration": 0.75,
+        "outcome": "failed",
+        "longrepr": "conftest.py:12: in db\n    raise RuntimeError('no DB')\nE   RuntimeError: no DB"
+      },
+      "teardown": { "duration": 0.002, "outcome": "passed" }
+    },
+    {
+      "nodeid": "tests/test_db.py::test_backup",
+      "lineno": 14,
+      "outcome": "skipped",
+      "keywords": ["test_backup", "test_db.py"],
+      "setup": {
+        "duration": 0.0004,
+        "outcome": "skipped",
+        "longrepr": "('tests/test_db.py', 14, 'Skipped: needs S3')"
+      },
+      "teardown": { "duration": 0.0001, "outcome": "passed" }
+    }
+  ]
+}

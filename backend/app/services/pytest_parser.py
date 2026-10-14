@@ -21,11 +21,22 @@ richer ``pytest-json-report`` plugin output, a single JSON document:
 One normalized case per test. ``nodeid`` → file (suite) + class + name; outcome
 → status; duration = setup+call+teardown (s → ms); the failing phase's
 ``longrepr`` → error_message. Never raises — returns [] on malformed input.
+
+Timing (EXEC-01): each reported phase's duration also lands on the case as
+``setup_ms`` / ``call_ms`` / ``teardown_ms`` (a phase pytest did not report
+leaves its key out). The format has no per-test start, so ``started_at`` /
+``finished_at`` stay absent. The report's own ``created`` (written when the
+session finished, epoch seconds) and ``duration`` (the session's seconds) give
+the run timing returned by :func:`parse_pytest_json_with_timings`.
 """
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+from datetime import timedelta
+from typing import List, Optional, Tuple
+
+from app.services.parser_timing import set_case_timing
+from app.services.report_timings import ReportTimings, empty_timings, seconds_to_ms, to_utc
 
 logger = logging.getLogger(__name__)
 
@@ -42,23 +53,44 @@ _OUTCOME_MAP = {
 
 def parse_pytest_json(content: str, test_run_id: str) -> List[dict]:
     """Parse ``pytest --json-report`` output into normalized cases."""
+    return _parse(content, test_run_id)[0]
+
+
+def parse_pytest_json_with_timings(content: str, test_run_id: str) -> Tuple[List[dict], ReportTimings]:
+    """The cases of :func:`parse_pytest_json` plus the run timing the report states."""
+    return _parse(content, test_run_id)
+
+
+def _parse(content: str, test_run_id: str) -> Tuple[List[dict], ReportTimings]:
     import json
     try:
         payload = json.loads(content)
     except (ValueError, TypeError) as exc:
         logger.warning("Failed to parse pytest JSON — invalid JSON: %s", exc)
-        return []
+        return [], empty_timings()
     if not isinstance(payload, dict):
-        return []
+        return [], empty_timings()
     tests = payload.get("tests")
     if not isinstance(tests, list):
-        return []
+        return [], empty_timings()
     out: List[dict] = []
     for t in tests:
         case = _normalize(t, test_run_id)
         if case is not None:
             out.append(case)
-    return out
+    return out, _run_timings(payload)
+
+
+def _run_timings(payload: dict) -> ReportTimings:
+    """``created`` is stamped at session finish; ``duration`` is the session's length in seconds."""
+    finished = to_utc(payload.get("created"))
+    wall_ms = seconds_to_ms(payload.get("duration"))
+    started = finished - timedelta(milliseconds=wall_ms) if finished is not None and wall_ms is not None else None
+    timings = empty_timings()
+    timings["run_started_at"] = started
+    timings["run_finished_at"] = finished
+    timings["run_wall_ms"] = wall_ms
+    return timings
 
 
 def _normalize(t: object, test_run_id: str) -> Optional[dict]:
@@ -91,7 +123,7 @@ def _normalize(t: object, test_run_id: str) -> Optional[dict]:
                 error_message = str(lr)[:2000]
                 break
 
-    return {
+    case = {
         "test_run_id": test_run_id,
         "test_name": test_name,
         "full_name": nodeid,
@@ -109,6 +141,18 @@ def _normalize(t: object, test_run_id: str) -> Optional[dict]:
         "steps": _phase_steps(t),
         "framework": "pytest",
     }
+    # The phase split the report carries, on the case itself (each key only when pytest reported that phase).
+    phase_ms = {
+        phase: seconds_to_ms(t[phase].get("duration"))
+        for phase in ("setup", "call", "teardown")
+        if isinstance(t.get(phase), dict)
+    }
+    return set_case_timing(
+        case,
+        setup_ms=phase_ms.get("setup"),
+        call_ms=phase_ms.get("call"),
+        teardown_ms=phase_ms.get("teardown"),
+    )
 
 
 def _phase_steps(t: dict) -> List[dict]:

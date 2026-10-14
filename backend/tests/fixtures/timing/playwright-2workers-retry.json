@@ -1,0 +1,271 @@
+{
+  "config": {
+    "version": "1.48.2",
+    "workers": 2,
+    "rootDir": "/app/tests/e2e",
+    "projects": [{ "name": "chromium", "retries": 1 }]
+  },
+  "suites": [
+    {
+      "title": "runs.spec.ts",
+      "file": "runs.spec.ts",
+      "line": 0,
+      "column": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "Runs page",
+          "file": "runs.spec.ts",
+          "line": 3,
+          "column": 6,
+          "specs": [
+            {
+              "title": "shows the run list",
+              "ok": true,
+              "tags": [],
+              "file": "runs.spec.ts",
+              "line": 4,
+              "column": 3,
+              "id": "a1-shows-the-run-list",
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "status": "expected",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 1,
+                      "status": "passed",
+                      "duration": 1800,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-14T10:00:01.250Z",
+                      "attachments": [],
+                      "steps": [
+                        {
+                          "title": "Before Hooks",
+                          "category": "hook",
+                          "startTime": "2026-10-14T10:00:01.250Z",
+                          "duration": 120,
+                          "steps": [
+                            { "title": "fixture: page", "category": "fixture", "startTime": "2026-10-14T10:00:01.260Z", "duration": 95 }
+                          ]
+                        },
+                        { "title": "open /runs", "category": "test.step", "startTime": "2026-10-14T10:00:01.370Z", "duration": 1500 },
+                        { "title": "After Hooks", "category": "hook", "startTime": "2026-10-14T10:00:02.970Z", "duration": 80 }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "filters runs by branch",
+              "ok": true,
+              "tags": [],
+              "file": "runs.spec.ts",
+              "line": 12,
+              "column": 3,
+              "id": "a1-filters-runs-by-branch",
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "status": "expected",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 1,
+                      "status": "passed",
+                      "duration": 3400,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-14T10:00:03.060Z",
+                      "attachments": [],
+                      "steps": [
+                        { "title": "pick branch main", "duration": 3100 }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "title": "exports the run as CSV",
+              "ok": true,
+              "tags": [],
+              "file": "runs.spec.ts",
+              "line": 20,
+              "column": 3,
+              "id": "a1-exports-the-run-as-csv",
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "status": "expected",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 1,
+                      "status": "passed",
+                      "duration": 3500,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-10-14T10:00:06.470Z",
+                      "attachments": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "auth.spec.ts",
+      "file": "auth.spec.ts",
+      "line": 0,
+      "column": 0,
+      "specs": [
+        {
+          "title": "logs in",
+          "ok": true,
+          "tags": [],
+          "file": "auth.spec.ts",
+          "line": 3,
+          "column": 5,
+          "id": "b2-logs-in",
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "status": "expected",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 2900,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-14T10:00:01.020Z",
+                  "attachments": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "uploads an avatar",
+          "ok": true,
+          "tags": [],
+          "file": "auth.spec.ts",
+          "line": 11,
+          "column": 5,
+          "id": "b2-uploads-an-avatar",
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "status": "flaky",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 200,
+                  "error": { "message": "Error: upload timed out", "stack": "Error: upload timed out\n    at auth.spec.ts:14:11" },
+                  "errors": [{ "message": "Error: upload timed out", "stack": "Error: upload timed out\n    at auth.spec.ts:14:11" }],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-14T10:00:03.930Z",
+                  "attachments": []
+                },
+                {
+                  "workerIndex": 2,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 2900,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 1,
+                  "startTime": "2026-10-14T10:00:04.140Z",
+                  "attachments": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "logs out",
+          "ok": true,
+          "tags": [],
+          "file": "auth.spec.ts",
+          "line": 19,
+          "column": 5,
+          "id": "b2-logs-out",
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "chromium",
+              "projectName": "chromium",
+              "status": "expected",
+              "results": [
+                {
+                  "workerIndex": 2,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 2900,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-10-14T10:00:07.050Z",
+                  "attachments": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-10-14T10:00:01.000Z",
+    "duration": 9000,
+    "expected": 5,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 1
+  }
+}

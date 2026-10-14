@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<robot generator="Robot 7.0.1 (Python 3.12.2 on linux)" generated="2026-10-14T10:00:04.000000" rpa="false" schemaversion="5">
+<suite id="s1" name="Shop" source="/tests">
+<suite id="s1-s1" name="Cart" source="/tests/cart.robot">
+<setup name="Open Browser" owner="SeleniumLibrary">
+<arg>https://shop.example.test</arg>
+<status status="PASS" start="2026-10-14T10:00:00.100000" elapsed="0.500000"/>
+</setup>
+<test id="s1-s1-t1" name="Add Item" line="10">
+<setup name="Reset Cart" owner="Shop">
+<status status="PASS" start="2026-10-14T10:00:00.700000" elapsed="0.120000"/>
+</setup>
+<kw name="Add To Cart" owner="Shop">
+<arg>apple</arg>
+<status status="PASS" start="2026-10-14T10:00:00.820000" elapsed="1.600000"/>
+</kw>
+<teardown name="Capture Page Screenshot" owner="SeleniumLibrary">
+<status status="PASS" start="2026-10-14T10:00:02.420000" elapsed="0.080000"/>
+</teardown>
+<tag>smoke</tag>
+<status status="PASS" start="2026-10-14T10:00:00.700000" elapsed="1.800000"/>
+</test>
+<test id="s1-s1-t2" name="Remove Item" line="16">
+<kw name="Remove From Cart" owner="Shop">
+<arg>pear</arg>
+<msg time="2026-10-14T10:00:03.090000" level="FAIL">Item 'pear' not found</msg>
+<status status="FAIL" start="2026-10-14T10:00:02.600000" elapsed="0.500000">Item 'pear' not found</status>
+</kw>
+<status status="FAIL" start="2026-10-14T10:00:02.600000" elapsed="0.500000">Item 'pear' not found</status>
+</test>
+<teardown name="Close Browser" owner="SeleniumLibrary">
+<status status="PASS" start="2026-10-14T10:00:03.200000" elapsed="0.250000"/>
+</teardown>
+<status status="FAIL" start="2026-10-14T10:00:00.050000" elapsed="3.400000"/>
+</suite>
+<status status="FAIL" start="2026-10-14T10:00:00.000000" elapsed="3.500000"/>
+</suite>
+<statistics>
+<total>
+<stat pass="1" fail="1" skip="0">All Tests</stat>
+</total>
+<tag>
+<stat pass="1" fail="0" skip="0">smoke</stat>
+</tag>
+<suite>
+<stat name="Shop" id="s1" pass="1" fail="1" skip="0">Shop</stat>
+<stat name="Cart" id="s1-s1" pass="1" fail="1" skip="0">Shop.Cart</stat>
+</suite>
+</statistics>
+<errors>
+</errors>
+</robot>

@@ -1,7 +1,33 @@
-"""Allure JSON result file parser."""
+"""Allure JSON result file parser.
+
+Timing (EXEC-01):
+
+* Each ``*-result.json`` states ``start`` / ``stop`` (epoch ms) → the case's
+  ``started_at`` / ``finished_at`` (``timing_source='report'``). The result's own
+  span is the test body; fixtures live in containers.
+* In a results directory (:func:`parse_allure_zip_with_timings`), a
+  ``*-container.json`` with exactly ONE child is that test's own fixture set
+  (allure-pytest function fixtures, JUnit 5 ``@BeforeEach``, TestNG
+  ``@BeforeMethod``): its ``befores`` / ``afters`` durations become the test's
+  ``setup_ms`` / ``teardown_ms``, ``call_ms`` is the result's own span, and the
+  source is ``derived`` (attributed through ``children``). A container with
+  several children is a shared fixture (class / module / suite): its fixture
+  time goes to the suite timing of those children when they all share one
+  suite, never onto each test (that would count it once per child).
+"""
 import json
 import posixpath
-from typing import Optional
+from typing import Optional, Tuple
+
+from app.services.parser_timing import set_case_timing
+from app.services.report_timings import (
+    TIMING_SOURCE_DERIVED,
+    ReportTimings,
+    add_suite_timing,
+    empty_timings,
+    non_negative_ms,
+    to_utc,
+)
 
 # Allure step/test status → TestLookup status vocab (PASSED/FAILED/SKIPPED/
 # BROKEN/UNKNOWN). The granular ``test_steps.status`` column is fronted by the
@@ -207,7 +233,7 @@ def parse_allure_result(data: dict, test_run_id: str, s3_key: str) -> Optional[d
         or data.get("reporterVersion")
         or data.get("version")
     )
-    return {
+    case: dict = {
         "allure_uuid": data.get("uuid"),
         "source_uuid": _source_value(data.get("uuid")),
         "source_history_id": _source_value(data.get("historyId")),
@@ -245,6 +271,7 @@ def parse_allure_result(data: dict, test_run_id: str, s3_key: str) -> Optional[d
         "steps_present": bool(steps),
         "minio_s3_prefix": s3_key.rsplit("/", 1)[0] + "/",
     }
+    return set_case_timing(case, started_at=to_utc(data.get("start")), finished_at=to_utc(data.get("stop")))
 
 
 def _calc_duration(start: Optional[int], stop: Optional[int]) -> Optional[int]:
@@ -269,6 +296,23 @@ def parse_allure_zip(
         per-(run, fingerprint) upsert would otherwise silently keep an arbitrary
         attempt and lose the flaky signal.
     """
+    return _parse_zip(files, test_run_id, s3_prefix)[0]
+
+
+def parse_allure_zip_with_timings(
+    files: dict[str, bytes],
+    test_run_id: str,
+    s3_prefix: str = "uploads",
+) -> Tuple[list[dict], ReportTimings]:
+    """The results of :func:`parse_allure_zip` plus the suite fixture timing its containers state."""
+    return _parse_zip(files, test_run_id, s3_prefix)
+
+
+def _parse_zip(
+    files: dict[str, bytes],
+    test_run_id: str,
+    s3_prefix: str,
+) -> Tuple[list[dict], ReportTimings]:
     parsed: list[dict] = []
     containers: list[dict] = []
 
@@ -291,7 +335,65 @@ def parse_allure_zip(
             containers.append(doc)
 
     _enrich_suites_from_containers(parsed, containers)
-    return _collapse_retries(parsed)
+    timings = empty_timings()
+    _attach_container_fixtures(parsed, containers, timings)
+    return _collapse_retries(parsed), timings
+
+
+def _fixtures_ms(fixtures: object) -> Optional[int]:
+    """Summed ``stop - start`` of a container's ``befores`` / ``afters``; None when it lists no timed fixture."""
+    if not isinstance(fixtures, list):
+        return None
+    total: Optional[int] = None
+    for fixture in fixtures:
+        if not isinstance(fixture, dict):
+            continue
+        start, stop = fixture.get("start"), fixture.get("stop")
+        if isinstance(start, (int, float)) and isinstance(stop, (int, float)):
+            ms = non_negative_ms(stop - start)
+            if ms is not None:
+                total = (total or 0) + ms
+    return total
+
+
+def _attach_container_fixtures(parsed: list[dict], containers: list[dict], timings: ReportTimings) -> None:
+    """Fixture time from containers: a one-child container onto that test, a shared one onto its suite."""
+    if not containers:
+        return
+    by_uuid = {res["allure_uuid"]: res for res in parsed if isinstance(res.get("allure_uuid"), str)}
+    own: dict[str, tuple[int, int]] = {}
+    for container in containers:
+        setup = _fixtures_ms(container.get("befores"))
+        teardown = _fixtures_ms(container.get("afters"))
+        children = container.get("children")
+        if (setup is None and teardown is None) or not isinstance(children, list):
+            continue
+        matched = [by_uuid[c] for c in children if isinstance(c, str) and c in by_uuid]
+        if not matched:
+            continue
+        if len(children) == 1:
+            prior_setup, prior_teardown = own.get(children[0], (0, 0))
+            own[children[0]] = (prior_setup + (setup or 0), prior_teardown + (teardown or 0))
+            continue
+        suite_names = {res.get("suite_name") for res in matched}
+        suite_name = next(iter(suite_names)) if len(suite_names) == 1 else None
+        if suite_name:
+            add_suite_timing(timings, {
+                "name": str(suite_name),
+                "started_at": to_utc(container.get("start")),
+                "finished_at": to_utc(container.get("stop")),
+                "setup_ms": setup,
+                "teardown_ms": teardown,
+            })
+    for uuid, (setup_total, teardown_total) in own.items():
+        res = by_uuid[uuid]
+        set_case_timing(
+            res,
+            setup_ms=setup_total,
+            call_ms=res.get("duration_ms"),
+            teardown_ms=teardown_total,
+            source=TIMING_SOURCE_DERIVED,
+        )
 
 
 def _enrich_suites_from_containers(parsed: list[dict], containers: list[dict]) -> None:

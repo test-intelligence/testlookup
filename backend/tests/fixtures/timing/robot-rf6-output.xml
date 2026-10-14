@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<robot generator="Robot 6.1.1 (Python 3.11.4 on linux)" generated="20261014 10:00:04.000" rpa="false" schemaversion="4">
+<suite id="s1" name="Shop" source="/tests">
+<suite id="s1-s1" name="Cart" source="/tests/cart.robot">
+<kw name="Open Browser" library="SeleniumLibrary" type="SETUP">
+<arg>https://shop.example.test</arg>
+<status status="PASS" starttime="20261014 10:00:00.100" endtime="20261014 10:00:00.600"/>
+</kw>
+<test id="s1-s1-t1" name="Add Item" line="10">
+<kw name="Reset Cart" library="Shop" type="SETUP">
+<status status="PASS" starttime="20261014 10:00:00.700" endtime="20261014 10:00:00.820"/>
+</kw>
+<kw name="Add To Cart" library="Shop">
+<arg>apple</arg>
+<status status="PASS" starttime="20261014 10:00:00.820" endtime="20261014 10:00:02.420"/>
+</kw>
+<kw name="Capture Page Screenshot" library="SeleniumLibrary" type="TEARDOWN">
+<status status="PASS" starttime="20261014 10:00:02.420" endtime="20261014 10:00:02.500"/>
+</kw>
+<tag>smoke</tag>
+<status status="PASS" starttime="20261014 10:00:00.700" endtime="20261014 10:00:02.500"/>
+</test>
+<test id="s1-s1-t2" name="Remove Item" line="16">
+<kw name="Remove From Cart" library="Shop">
+<arg>pear</arg>
+<msg timestamp="20261014 10:00:03.090" level="FAIL">Item 'pear' not found</msg>
+<status status="FAIL" starttime="20261014 10:00:02.600" endtime="20261014 10:00:03.100">Item 'pear' not found</status>
+</kw>
+<status status="FAIL" starttime="20261014 10:00:02.600" endtime="20261014 10:00:03.100">Item 'pear' not found</status>
+</test>
+<kw name="Close Browser" library="SeleniumLibrary" type="TEARDOWN">
+<status status="PASS" starttime="20261014 10:00:03.200" endtime="20261014 10:00:03.450"/>
+</kw>
+<status status="FAIL" starttime="20261014 10:00:00.050" endtime="20261014 10:00:03.450"/>
+</suite>
+<status status="FAIL" starttime="20261014 10:00:00.000" endtime="20261014 10:00:03.500"/>
+</suite>
+<statistics>
+<total>
+<stat pass="1" fail="1" skip="0">All Tests</stat>
+</total>
+<tag>
+<stat pass="1" fail="0" skip="0">smoke</stat>
+</tag>
+<suite>
+<stat pass="1" fail="1" skip="0" id="s1" name="Shop">Shop</stat>
+<stat pass="1" fail="1" skip="0" id="s1-s1" name="Cart">Shop.Cart</stat>
+</suite>
+</statistics>
+<errors>
+</errors>
+</robot>

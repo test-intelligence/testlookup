@@ -52,11 +52,39 @@ Key nuances:
   ``is_flaky`` so the downstream flaky detector can pick it up.
 * Playwright uses ``timedOut`` for its own timeout exception. We map
   that to ``BROKEN`` (infra/test-setup problem) rather than ``FAILED``.
+
+Timing (EXEC-01), all from the final attempt (the one ``duration_ms`` and the
+status describe):
+
+* ``results[].startTime`` → ``started_at``; ``finished_at`` = start +
+  ``duration`` (the format states no end, so ``timing_source='derived'``).
+* ``parallelIndex`` (the worker slot, stable across worker restarts; falls
+  back to ``workerIndex``) → ``worker_id``.
+* Top-level hook steps ("Before Hooks" / "After Hooks", or any top-level step
+  with ``category == "hook"``) → ``setup_ms`` / ``teardown_ms``, and
+  ``call_ms`` = duration − hooks. The stock JSON reporter keeps only
+  ``test.step`` steps, so most reports carry no hooks and these keys stay
+  absent; reports that serialize every step carry them.
+* A step's ``startTime`` (when present) → its ``start_ms`` (epoch ms, as in
+  the Allure parser).
+* ``stats.startTime`` / ``stats.duration`` → the run timing returned by
+  :func:`parse_playwright_json_with_timings`. The format has no suite timing.
 """
 from __future__ import annotations
 
 import logging
-from typing import Any, Iterable, List, Optional
+from typing import Any, Iterable, List, Optional, Tuple
+
+from app.services.parser_timing import epoch_ms, set_case_timing
+from app.services.report_timings import (
+    TIMING_SOURCE_DERIVED,
+    TIMING_SOURCE_REPORT,
+    ReportTimings,
+    empty_timings,
+    finish_from_duration,
+    non_negative_ms,
+    to_utc,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +200,7 @@ def _parse_pw_steps(
             "name": str(node.get("title") or "step"),
             "keyword": (str(node["category"]) if node.get("category") else None),
             "status": _map_step_status(None, has_error=bool(err_fields)),
-            "start_ms": None,
+            "start_ms": epoch_ms(node.get("startTime")),
             "duration_ms": int(dur) if isinstance(dur, (int, float)) else None,
             "assertion_message": err_fields.get("assertion_message"),
             "assertion_trace": err_fields.get("assertion_trace"),
@@ -249,21 +277,42 @@ def parse_playwright_json(content: str, test_run_id: str) -> List[dict]:
         list on malformed input — never raises. One entry per (spec,
         projectName) pair.
     """
+    return _parse(content, test_run_id)[0]
+
+
+def parse_playwright_json_with_timings(content: str, test_run_id: str) -> Tuple[List[dict], ReportTimings]:
+    """The cases of :func:`parse_playwright_json` plus the run timing in ``stats``."""
+    return _parse(content, test_run_id)
+
+
+def _run_timings(payload: dict) -> ReportTimings:
+    raw_stats = payload.get("stats")
+    stats: dict = raw_stats if isinstance(raw_stats, dict) else {}
+    started = to_utc(stats.get("startTime"))
+    wall_ms = non_negative_ms(stats.get("duration"))
+    timings = empty_timings()
+    timings["run_started_at"] = started
+    timings["run_finished_at"] = finish_from_duration(started, wall_ms)
+    timings["run_wall_ms"] = wall_ms
+    return timings
+
+
+def _parse(content: str, test_run_id: str) -> Tuple[List[dict], ReportTimings]:
     import json
     try:
         payload = json.loads(content)
     except (ValueError, TypeError) as exc:
         logger.warning("Failed to parse Playwright JSON — invalid JSON: %s", exc)
-        return []
+        return [], empty_timings()
 
     if not isinstance(payload, dict):
         logger.warning("Playwright JSON root must be an object, got %s", type(payload).__name__)
-        return []
+        return [], empty_timings()
 
     top_suites = payload.get("suites") or []
     if not isinstance(top_suites, list):
         logger.warning("Playwright JSON 'suites' is not a list — skipping")
-        return []
+        return [], empty_timings()
 
     config = payload.get("config") if isinstance(payload.get("config"), dict) else {}
     parser_version = config.get("version") or payload.get("version")
@@ -290,7 +339,7 @@ def parse_playwright_json(content: str, test_run_id: str) -> List[dict]:
                 )
                 if case is not None:
                     normalized.append(case)
-    return normalized
+    return normalized, _run_timings(payload)
 
 
 def _walk_suites(suites: list, parents: tuple[str, ...]) -> Iterable[dict]:
@@ -391,7 +440,7 @@ def _normalize_test(
     full_name = f"{spec_file}:{spec_line}" if spec_file and spec_line else spec_title
 
     steps = _result_step_tree(final_result if isinstance(final_result, dict) else None)
-    return {
+    case = {
         "test_run_id": test_run_id,
         "test_name": test_name,
         "full_name": full_name,
@@ -414,3 +463,60 @@ def _normalize_test(
         "parser_format": "playwright",
         "parser_version": parser_version,
     }
+    if isinstance(final_result, dict):
+        _attach_attempt_timing(case, final_result, duration_ms)
+    return case
+
+
+def _worker_slot(result: dict) -> Optional[int]:
+    """The worker slot of an attempt: ``parallelIndex`` (stable across worker restarts), else ``workerIndex``."""
+    for key in ("parallelIndex", "workerIndex"):
+        value = result.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            return value
+    return None
+
+
+def _hook_split(result: dict) -> Tuple[Optional[int], Optional[int]]:
+    """(setup_ms, teardown_ms) from the attempt's top-level hook steps; (None, None) when it carries none."""
+    steps = result.get("steps")
+    if not isinstance(steps, list):
+        return None, None
+    setup: Optional[int] = None
+    teardown: Optional[int] = None
+    for node in steps:
+        if not isinstance(node, dict):
+            continue
+        title = str(node.get("title") or "")
+        if node.get("category") != "hook" and title not in ("Before Hooks", "After Hooks"):
+            continue
+        ms = non_negative_ms(node.get("duration"))
+        if ms is None:
+            continue
+        lowered = title.lower()
+        if lowered.startswith("before"):
+            setup = (setup or 0) + ms
+        elif lowered.startswith("after"):
+            teardown = (teardown or 0) + ms
+    return setup, teardown
+
+
+def _attach_attempt_timing(case: dict, result: dict, duration_ms: Optional[int]) -> None:
+    started = to_utc(result.get("startTime"))
+    setup, teardown = _hook_split(result)
+    call: Optional[int] = None
+    if setup is not None or teardown is not None:
+        setup, teardown = setup or 0, teardown or 0
+        if duration_ms is not None:
+            call = max(0, duration_ms - setup - teardown)
+    derived = started is not None or setup is not None
+    set_case_timing(
+        case,
+        started_at=started,
+        finished_at=finish_from_duration(started, duration_ms),
+        setup_ms=setup,
+        call_ms=call,
+        teardown_ms=teardown,
+        worker_id=_worker_slot(result),
+        source=TIMING_SOURCE_DERIVED if derived else TIMING_SOURCE_REPORT,
+    )

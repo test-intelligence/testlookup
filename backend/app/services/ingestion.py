@@ -29,8 +29,9 @@ from app.models.postgres import (
 )
 from app.models.schemas import SentinelFile
 from app.services.allure_parser import parse_allure_result
+from app.services.report_timings import ReportTimings, case_timing_columns, empty_timings, merge_timings
 from app.services.run_status import terminal_run_status
-from app.services.testng_parser import parse_testng_xml
+from app.services.testng_parser import parse_testng_xml_with_timings
 from app.services.ocp_client import get_pod_metadata
 
 logger = structlog.get_logger("services.ingestion")
@@ -206,20 +207,24 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
             testng_objects = await storage.list_objects(testng_prefix)
             xml_files = [obj for obj in testng_objects if obj["Key"].endswith(".xml")]
 
-            async def _fetch_testng(obj: dict) -> list:
+            async def _fetch_testng(obj: dict) -> tuple[list, ReportTimings]:
                 async with sem:
                     try:
                         content = await storage.get_object_content(obj["Key"])
-                        return parse_testng_xml(content.decode("utf-8"), str(run.id))
+                        return parse_testng_xml_with_timings(content.decode("utf-8"), str(run.id))
                     except Exception as e:
                         logger.warning(
                             "testng_parse_failed",
                             object_key=obj["Key"],
                             error=str(e),
                         )
-                        return []
+                        return [], empty_timings()
 
-            testng_results = await asyncio.gather(*[_fetch_testng(obj) for obj in xml_files])
+            testng_parsed = await asyncio.gather(*[_fetch_testng(obj) for obj in xml_files])
+            testng_results = [cases for cases, _ in testng_parsed]
+            # EXEC-01: each XML file's run/suite timing, merged for the run.
+            # Allure results carry their own start/stop on each result dict.
+            report_timings = merge_timings([timing for cases, timing in testng_parsed if cases])
             # Dedup by fingerprint (test_name + class_name), NOT bare test_name:
             # two distinct tests with the same method name in different classes
             # are different tests and must both survive — the same multi-class
@@ -284,6 +289,33 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
 
             # ── Update run aggregates ──────────────────────
             await _update_run_aggregates(db, run.id)
+            # EXEC-02: this path finalizes inline (not through finalize_run),
+            # so it records the suite executions itself, from the XML reports'
+            # run and suite timing. A savepoint keeps a failure here from
+            # poisoning the ingest; the structlog logger takes kwargs only.
+            try:
+                from app.services.suite_execution_service import upsert_for_run
+
+                async with db.begin_nested():
+                    await upsert_for_run(db, run.id, report_timings)
+            except Exception as suite_exec_err:
+                logger.warning(
+                    "sentinel_suite_executions_failed",
+                    run_id=str(run.id),
+                    error=str(suite_exec_err),
+                )
+            # EXEC-05: the duration check finalize_run runs, after the suite rows.
+            try:
+                from app.services.duration_regression_service import evaluate_duration_regressions
+
+                async with db.begin_nested():
+                    await evaluate_duration_regressions(db, run.id)
+            except Exception as duration_err:
+                logger.warning(
+                    "sentinel_duration_regressions_failed",
+                    run_id=str(run.id),
+                    error=str(duration_err),
+                )
 
             # ── Sync suite membership traceability (TS-2) ──
             # NOTE: this module binds a STRUCTLOG logger (line 32).
@@ -492,9 +524,19 @@ async def _upsert_test_case(
         bounded = value[:100] if isinstance(value, list) else dict(list(value.items())[:100])
         return _redact_dict_or_list(bounded, redact_dict)
 
+    # EXEC-01: start / finish / phase split / worker, bounded for their columns
+    # and all None for a format that carries none (``timing_source`` too). Read
+    # from ``case_data``, not the sanitized copy: the sanitizer redacts any
+    # non-JSON value, and a parser's ``started_at`` is a datetime.
+    timing = case_timing_columns(case_data)
+
     if existing:
         existing.status = status
         existing.duration_ms = case_data.get("duration_ms")
+        # Same rule as duration_ms: the row describes the latest write, so a
+        # re-ingest without timing clears the timing it no longer reports.
+        for column, value in timing.items():
+            setattr(existing, column, value)
         existing.error_message = _safe_error
         source_uuid = case_data.get("source_uuid") or case_data.get("allure_uuid")
         if source_uuid is not None:
@@ -552,6 +594,7 @@ async def _upsert_test_case(
             source_extensions=_bounded_source_metadata(case_data.get("source_extensions")),
             service_name=(str(case_data["service_name"])[:255] if case_data.get("service_name") is not None else None),
             component_names=_bounded_source_metadata(case_data.get("component_names")),
+            **timing,
         )
         db.add(tc)
 

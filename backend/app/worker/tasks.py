@@ -12,6 +12,11 @@ from structlog.contextvars import bind_contextvars, clear_contextvars
 
 from app.worker.celery_app import celery_app
 
+import typing as _typing
+
+if _typing.TYPE_CHECKING:
+    from app.services.report_timings import ReportTimings
+
 #: Digest schedules driven by a run landing, rather than by the clock.
 #:
 #: Derived from nothing — spelled here and asserted against ``DigestSchedule``
@@ -560,6 +565,7 @@ def persist_live_session(
         )
         from app.services.run_status import terminal_run_status
         from app.services.ingestion_sanitization import sanitize_test_result_payload
+        from app.services.live_session_drainer import live_timing_columns
 
         # Project through the shared durable drainer before terminal state is
         # materialised. Only that service may ACK or trim evidence because it
@@ -834,6 +840,12 @@ def persist_live_session(
                     "error_message": safe_event.get("error_message"),
                     "stack_trace": safe_event.get("stack_trace"),
                     "tags": safe_event.get("tags"),
+                    # EXEC-01: the same bounded live clock + phase columns the drainer writes.
+                    **live_timing_columns(
+                        safe_event,
+                        session_started_at=getattr(run, "start_time", None),
+                        now=now,
+                    ),
                 })
             if rows:
                 from sqlalchemy.dialects.postgresql import insert as _pg_insert
@@ -1282,7 +1294,9 @@ def ingest_uploaded_file(
         from app.services.safe_archive import UnsafeZipError
         from app.services.upload_limits import TooManyResults, enforce_result_limit
         try:
-            results = _parse_file_to_results(
+            # EXEC-01: the result dicts carry each test's own timing keys; the
+            # report's run and suite timing comes back beside them.
+            results, report_timings = _parse_file_to_results_with_timings(
                 file_content, file_format, file_name, run_id, disabled_formats=disabled_formats,
             )
             # Re-audit M5: the exact cap, on what was actually parsed.
@@ -1378,6 +1392,13 @@ def ingest_uploaded_file(
                 await db.rollback()
                 raise
 
+        # EXEC-01 -> EXEC-02: ``report_timings`` (the report's run and suite
+        # timing) goes to finalize, whose suite-execution step records it.
+        logger.info(
+            "[Task %s] Report timing: run_wall_ms=%s suites=%d",
+            task_id, report_timings.get("run_wall_ms"), len(report_timings.get("suites") or []),
+        )
+
         # Finalize even an all-rejected run so aggregates stamp end_time and
         # release linking makes its incomplete evidence visible to the gate.
         # AI analysis has no stored test row to inspect in that case.
@@ -1387,6 +1408,7 @@ def ingest_uploaded_file(
             build_number=build_number,
             release_name=release_name,
             run_ai=run_ai if count > 0 else False,
+            report_timings=report_timings,
         )
 
         # All rows failed to upsert despite a non-empty parse — surface as a
@@ -1471,11 +1493,32 @@ def _parse_archive_to_results(
     feature flags) are skipped in tier 2 so zipping a gated report can't bypass
     the admin's flag.
     """
+    return _parse_archive(
+        b64_content, filename, run_id, disabled_formats=disabled_formats, with_timings=False,
+    )[0]
+
+
+def _parse_archive_to_results_with_timings(
+    b64_content: str, filename: str, run_id: str, disabled_formats: list | None = None,
+) -> tuple[list[dict], "ReportTimings"]:
+    """``_parse_archive_to_results`` plus the archive's timing: each entry's
+    ``ReportTimings`` merged by ``report_timings.merge_timings`` (EXEC-01)."""
+    return _parse_archive(
+        b64_content, filename, run_id, disabled_formats=disabled_formats, with_timings=True,
+    )
+
+
+def _parse_archive(
+    b64_content: str, filename: str, run_id: str, disabled_formats: list | None = None,
+    *, with_timings: bool,
+) -> tuple[list[dict], "ReportTimings"]:
+    """The one archive dispatch behind ``_parse_archive_to_results`` and its twin."""
     import base64
     import posixpath
 
     from app.core.config import settings
-    from app.services.allure_parser import parse_allure_zip
+    from app.services import allure_parser
+    from app.services.report_timings import empty_timings, merge_timings
     from app.services.safe_archive import safe_extract_zip
     from app.services.upload_limits import TooManyResults, enforce_result_limit
 
@@ -1498,16 +1541,22 @@ def _parse_archive_to_results(
     del raw  # free the compressed copy; the decompressed map is bounded by limits
 
     gated_hit: set = set()  # formats skipped purely because their flag is off
+    timings = empty_timings()
 
     # Tier 1 — Allure results directory.
     if any(_basename(n).lower().endswith("-result.json") for n in files):
-        results = parse_allure_zip(files, run_id, s3_prefix=f"uploads/{run_id}")
+        zip_twin = getattr(allure_parser, "parse_allure_zip_with_timings", None) if with_timings else None
+        if zip_twin is not None:
+            results, timings = zip_twin(files, run_id, s3_prefix=f"uploads/{run_id}")
+        else:
+            results = allure_parser.parse_allure_zip(files, run_id, s3_prefix=f"uploads/{run_id}")
     else:
         # Tier 2 — heterogeneous archive: detect + parse each entry.
         from app.routers.ingest import _detect_format  # lazy: avoid import cycle
 
         disabled = set(disabled_formats or [])
         results = []
+        entry_timings = []
         for name, data in files.items():
             base = _basename(name)
             try:
@@ -1518,7 +1567,12 @@ def _parse_archive_to_results(
                     logger.warning("archive_entry_format_disabled entry=%s fmt=%s", base, entry_fmt)
                     continue
                 text = data.decode("utf-8", errors="replace")
-                results.extend(_parse_file_to_results(text, entry_fmt, base, run_id))
+                entry_results, entry_timing = _parse_report(
+                    text, entry_fmt, base, run_id, with_timings=with_timings,
+                )
+                results.extend(entry_results)
+                if entry_results:
+                    entry_timings.append(entry_timing)
                 # Re-audit M5: the cap covers the whole upload, not each entry.
                 enforce_result_limit(len(results))
             except TooManyResults:
@@ -1527,6 +1581,8 @@ def _parse_archive_to_results(
             except Exception as exc:  # noqa: BLE001 — one bad entry must not fail all
                 logger.warning("archive_entry_parse_failed entry=%s error=%s", base, exc)
                 continue
+        # One upload, many files: earliest start, latest finish, every suite.
+        timings = merge_timings(entry_timings)
 
     if files and not results:
         # A zip whose only candidates were admin-disabled formats gets a message
@@ -1542,7 +1598,7 @@ def _parse_archive_to_results(
             f"Archive contained {len(files)} file(s) but none could be parsed as a "
             "supported report (JUnit/TestNG XML, or Allure/Playwright/Cypress JSON)."
         )
-    return results
+    return results, timings
 
 
 async def _archive_raw_upload(
@@ -1614,10 +1670,55 @@ def _parse_file_to_results(
     For ``fmt == "archive"`` ``content`` is a base64-encoded zip (Celery's JSON
     serializer can't carry raw bytes); see ``_parse_archive_to_results``.
     """
+    return _parse_report(content, fmt, filename, run_id, disabled_formats, with_timings=False)[0]
+
+
+def _parse_file_to_results_with_timings(
+    content: str, fmt: str, filename: str, run_id: str, disabled_formats: list | None = None,
+) -> tuple[list[dict], "ReportTimings"]:
+    """``_parse_file_to_results`` plus the report's run and suite timing (EXEC-01).
+
+    The same dispatch, through each parser's ``parse_*_with_timings`` twin, so
+    the result dicts are identical; the ``ReportTimings`` beside them is what
+    the report said about the run and its suites (an archive's files merged by
+    ``report_timings.merge_timings``). ``ingest_uploaded_file`` uses this one.
+    """
+    return _parse_report(content, fmt, filename, run_id, disabled_formats, with_timings=True)
+
+
+#: Single-file formats: ``fmt`` -> (parser module, its ``parse_*`` returning
+#: ``list[dict]``). Each module also has the ``<parse_*>_with_timings`` twin
+#: returning ``(results, ReportTimings)``. An unlisted format parses as
+#: ``junit``: the TestNG parser reads standard JUnit / surefire XML too.
+#: Resolved by name at call time, so a test patching a parser still patches it.
+_REPORT_PARSERS: dict[str, tuple[str, str]] = {
+    "testng": ("app.services.testng_parser", "parse_testng_xml"),
+    "junit": ("app.services.testng_parser", "parse_testng_xml"),
+    "cypress": ("app.services.cypress_parser", "parse_cypress_json"),
+    "playwright": ("app.services.playwright_parser", "parse_playwright_json"),
+    "pytest": ("app.services.pytest_parser", "parse_pytest_json"),
+    "robot": ("app.services.robot_parser", "parse_robot_xml"),
+    "cucumber": ("app.services.cucumber_parser", "parse_cucumber_json"),
+    "nunit": ("app.services.nunit_parser", "parse_nunit_xml"),
+    "trx": ("app.services.trx_parser", "parse_trx_xml"),
+    "xunit": ("app.services.xunit_parser", "parse_xunit_xml"),
+}
+
+
+def _parse_report(
+    content: str, fmt: str, filename: str, run_id: str, disabled_formats: list | None = None,
+    *, with_timings: bool,
+) -> tuple[list[dict], "ReportTimings"]:
+    """The one dispatch behind ``_parse_file_to_results`` and its ``_with_timings`` twin."""
+    import importlib
     import json as _json
 
+    from app.services.report_timings import empty_timings
+
     if fmt == "archive":
-        return _parse_archive_to_results(content, filename, run_id, disabled_formats=disabled_formats)
+        return _parse_archive(
+            content, filename, run_id, disabled_formats=disabled_formats, with_timings=with_timings,
+        )
 
     # Re-audit M5: a report so far over the result cap that parsing it would
     # itself exhaust the worker is refused on a cheap count, unparsed.
@@ -1639,47 +1740,17 @@ def _parse_file_to_results(
             parsed = parse_allure_result(item, run_id, filename)
             if parsed:
                 results.append(parsed)
-        return results
+        # A lone result file states no suite or run timing: each result's own
+        # start/stop rides on the result dict.
+        return results, empty_timings()
 
-    if fmt == "testng":
-        from app.services.testng_parser import parse_testng_xml
-        return parse_testng_xml(content, run_id)
-
-    if fmt == "cypress":
-        from app.services.cypress_parser import parse_cypress_json
-        return parse_cypress_json(content, run_id)
-
-    if fmt == "playwright":
-        from app.services.playwright_parser import parse_playwright_json
-        return parse_playwright_json(content, run_id)
-
-    if fmt == "pytest":
-        from app.services.pytest_parser import parse_pytest_json
-        return parse_pytest_json(content, run_id)
-
-    if fmt == "robot":
-        from app.services.robot_parser import parse_robot_xml
-        return parse_robot_xml(content, run_id)
-
-    if fmt == "cucumber":
-        from app.services.cucumber_parser import parse_cucumber_json
-        return parse_cucumber_json(content, run_id)
-
-    if fmt == "nunit":
-        from app.services.nunit_parser import parse_nunit_xml
-        return parse_nunit_xml(content, run_id)
-
-    if fmt == "trx":
-        from app.services.trx_parser import parse_trx_xml
-        return parse_trx_xml(content, run_id)
-
-    if fmt == "xunit":
-        from app.services.xunit_parser import parse_xunit_xml
-        return parse_xunit_xml(content, run_id)
-
-    # junit (default) — reuse testng_parser which handles standard JUnit XML too
-    from app.services.testng_parser import parse_testng_xml
-    return parse_testng_xml(content, run_id)
+    module_name, function_name = _REPORT_PARSERS.get(fmt, _REPORT_PARSERS["junit"])
+    module = importlib.import_module(module_name)
+    if with_timings:
+        twin = getattr(module, f"{function_name}_with_timings", None)
+        if twin is not None:
+            return cast("tuple[list[dict], ReportTimings]", twin(content, run_id))
+    return getattr(module, function_name)(content, run_id), empty_timings()
 
 
 @celery_app.task(
@@ -5022,6 +5093,99 @@ def backfill_placeholder_test_cases(self, max_runs_per_project: int = 500) -> di
         "[Task %s] backfill_placeholder_test_cases done: %s",
         self.request.id, result,
     )
+    return result
+
+
+@celery_app.task(
+    name="app.worker.tasks.backfill_suite_executions",
+    bind=True,
+    queue="default",
+    max_retries=0,
+    soft_time_limit=540,
+    time_limit=600,
+)
+def backfill_suite_executions(
+    self,
+    chunk_size: int = 500,
+    max_chunks: int = 40,
+    time_budget_s: float = 300.0,
+) -> dict:
+    """EXEC-02: time every run that predates ``suite_executions`` -- one-shot, chunked, re-entrant.
+
+    A chunk is ``chunk_size`` runs in ``(created_at, id)`` order after the Redis
+    cursor ``suite_exec.backfill_cursor``, written by
+    ``suite_execution_service.backfill_chunk`` and committed on its own; then
+    the cursor advances. A run that already has a ``timing_source`` (a finalize
+    timed it) is skipped, so a pass never overwrites report timing and
+    re-running from any cursor is idempotent (the rows upsert on
+    ``(test_run_id, suite_key)``). A pass stops after ``max_chunks`` chunks,
+    ``time_budget_s`` seconds, or once its own RSS grew by
+    ``BACKFILL_RSS_GROWTH_CAP_BYTES`` (bulk work in one process OOMed the API
+    before, so this runs in the worker and bounds itself); the beat entry
+    ``backfill-suite-executions`` resumes it. A short chunk marks the cursor
+    ``done``, after which every tick returns at once. Deleting the Redis key
+    runs it again from the oldest run.
+    """
+    from app.db.postgres import AsyncSessionLocal
+    from app.db.redis_client import get_redis
+    from app.services import suite_execution_service as ses
+    from app.services.cache_service import bump_analytics_epochs
+
+    owner = str(self.request.id or uuid.uuid4())
+
+    def _totals(state: dict) -> dict:
+        return {key: int(state.get(key) or 0) for key in ("scanned", "written", "skipped")}
+
+    async def _run() -> dict:
+        if await _is_duplicate(ses.BACKFILL_LOCK_KEY, ttl=900, owner=owner):
+            return {"status": "locked"}
+        try:
+            redis = get_redis()
+            state = await ses.load_backfill_state(redis)
+            if state.get("done"):
+                return {"status": "done", "chunks": 0, **_totals(state)}
+            started = time.monotonic()
+            baseline_rss = ses.current_rss_bytes()
+            chunks = 0
+            stopped = "max_chunks"
+            while chunks < max_chunks:
+                chunk_started = time.monotonic()
+                async with AsyncSessionLocal() as db:
+                    try:
+                        chunk = await ses.backfill_chunk(db, ses.cursor_from_state(state), chunk_size)
+                        await db.commit()
+                    except Exception:
+                        await db.rollback()
+                        raise
+                # The run timing columns and suite rows are analytics inputs (execution metrics).
+                await bump_analytics_epochs(chunk.project_ids)
+                chunks += 1
+                state = ses.advance_state(state, chunk)
+                await ses.save_backfill_state(redis, state)
+                logger.info(
+                    "suite_exec_backfill_chunk scanned=%s written=%s skipped=%s elapsed_ms=%s",
+                    chunk.scanned, chunk.written, chunk.skipped,
+                    int((time.monotonic() - chunk_started) * 1000),
+                )
+                if chunk.done:
+                    stopped = "done"
+                    break
+                if time.monotonic() - started > time_budget_s:
+                    stopped = "time_budget"
+                    break
+                rss = ses.current_rss_bytes()
+                if (
+                    baseline_rss is not None and rss is not None
+                    and rss - baseline_rss > ses.BACKFILL_RSS_GROWTH_CAP_BYTES
+                ):
+                    stopped = "rss_cap"
+                    break
+            return {"status": stopped, "chunks": chunks, **_totals(state)}
+        finally:
+            await _release_duplicate_lock(ses.BACKFILL_LOCK_KEY, owner)
+
+    result = cast(dict[str, Any], _run_async(_run()))
+    logger.info("[Task %s] backfill_suite_executions: %s", self.request.id, result)
     return result
 
 

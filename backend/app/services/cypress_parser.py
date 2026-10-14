@@ -51,11 +51,34 @@ Key nuances:
   ``SKIPPED`` per Mocha convention.
 * Stack traces come back in ``err.estack`` when available.
 * Duration is already in milliseconds.
+
+Timing (EXEC-01): Mochawesome carries no start time per test, so cases get no
+timing keys. :func:`parse_cypress_json_with_timings` returns what the report
+does state:
+
+* run: ``stats.start`` / ``stats.end``; the wall is end − start (``stats.duration``
+  only when one end is missing — a merged report may sum its files' durations);
+* per suite (keyed by the ``suite_name`` its cases carry): the suite's
+  ``duration`` (Mochawesome's sum of that suite's own test durations — a spec's
+  tests run serially, so this is the suite's wall minus its hooks) and the
+  ``beforeHooks`` / ``afterHooks`` durations as suite setup / teardown. Mocha
+  reuses one hook object per ``beforeEach``, so its duration is the LAST run's,
+  not a per-test figure — which is why hooks stay suite-level. A suite with no
+  tests of its own (only nested suites) carries no timing.
 """
 from __future__ import annotations
 
 import logging
-from typing import Any, Iterable, List, Optional
+from typing import Any, Iterable, List, Optional, Tuple
+
+from app.services.report_timings import (
+    ReportTimings,
+    add_suite_timing,
+    empty_timings,
+    non_negative_ms,
+    to_utc,
+    wall_ms_between,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -131,23 +154,33 @@ def parse_cypress_json(content: str, test_run_id: str) -> List[dict]:
         tasks are fire-and-forget; we log and move on so one bad upload can't
         wedge the worker.
     """
+    return _parse(content, test_run_id)[0]
+
+
+def parse_cypress_json_with_timings(content: str, test_run_id: str) -> Tuple[List[dict], ReportTimings]:
+    """The cases of :func:`parse_cypress_json` plus the run and suite timing the report states."""
+    return _parse(content, test_run_id)
+
+
+def _parse(content: str, test_run_id: str) -> Tuple[List[dict], ReportTimings]:
     import json
     try:
         payload = json.loads(content)
     except (ValueError, TypeError) as exc:
         logger.warning("Failed to parse Cypress JSON — invalid JSON: %s", exc)
-        return []
+        return [], empty_timings()
 
     if not isinstance(payload, dict):
         logger.warning("Cypress JSON root must be an object, got %s", type(payload).__name__)
-        return []
+        return [], empty_timings()
 
     top_results = payload.get("results") or []
     if not isinstance(top_results, list):
         logger.warning("Cypress JSON 'results' is not a list — skipping")
-        return []
+        return [], empty_timings()
 
     normalized: List[dict] = []
+    timings = empty_timings()
     for result in top_results:
         if not isinstance(result, dict):
             continue
@@ -155,6 +188,7 @@ def parse_cypress_json(content: str, test_run_id: str) -> List[dict]:
         for suite in _iter_suites(result.get("suites") or [], parents=()):
             suite_title_path = suite["parents"] + (suite["title"],)
             suite_name = _build_suite_name(spec_file, suite_title_path)
+            produced = 0
             for test in suite.get("tests") or []:
                 case = _normalize_test(
                     test,
@@ -164,12 +198,16 @@ def parse_cypress_json(content: str, test_run_id: str) -> List[dict]:
                 )
                 if case is not None:
                     normalized.append(case)
+                    produced += 1
+            if produced:
+                _add_suite_timing(timings, suite_name, suite["raw"])
 
         # Some reports place ``tests`` at the top-level of a file entry with
         # no wrapping suite. Handle that shape too.
         top_tests = result.get("tests")
         if isinstance(top_tests, list) and top_tests:
             suite_name = _build_suite_name(spec_file, ())
+            produced = 0
             for test in top_tests:
                 case = _normalize_test(
                     test,
@@ -179,8 +217,47 @@ def parse_cypress_json(content: str, test_run_id: str) -> List[dict]:
                 )
                 if case is not None:
                     normalized.append(case)
+                    produced += 1
+            if produced:
+                _add_suite_timing(timings, suite_name, result)
 
-    return normalized
+    _add_run_timing(timings, payload)
+    return normalized, timings
+
+
+def _hooks_ms(hooks: Any) -> Optional[int]:
+    """Summed duration of a Mochawesome ``beforeHooks`` / ``afterHooks`` list; None when it lists no timed hook."""
+    if not isinstance(hooks, list):
+        return None
+    total: Optional[int] = None
+    for hook in hooks:
+        if isinstance(hook, dict):
+            ms = non_negative_ms(hook.get("duration"))
+            if ms is not None:
+                total = (total or 0) + ms
+    return total
+
+
+def _add_suite_timing(timings: ReportTimings, suite_name: str, raw: dict) -> None:
+    add_suite_timing(timings, {
+        "name": suite_name,
+        "wall_ms": non_negative_ms(raw.get("duration")),
+        "setup_ms": _hooks_ms(raw.get("beforeHooks")),
+        "teardown_ms": _hooks_ms(raw.get("afterHooks")),
+    })
+
+
+def _add_run_timing(timings: ReportTimings, payload: dict) -> None:
+    raw_stats = payload.get("stats")
+    stats: dict = raw_stats if isinstance(raw_stats, dict) else {}
+    started = to_utc(stats.get("start"))
+    finished = to_utc(stats.get("end"))
+    wall_ms = wall_ms_between(started, finished)
+    if wall_ms is None:
+        wall_ms = non_negative_ms(stats.get("duration"))
+    timings["run_started_at"] = started
+    timings["run_finished_at"] = finished
+    timings["run_wall_ms"] = wall_ms
 
 
 def _iter_suites(suites: list, parents: tuple[str, ...]) -> Iterable[dict]:
@@ -189,7 +266,7 @@ def _iter_suites(suites: list, parents: tuple[str, ...]) -> Iterable[dict]:
         if not isinstance(suite, dict):
             continue
         title = str(suite.get("title") or "")
-        yield {"title": title, "parents": parents, "tests": suite.get("tests") or []}
+        yield {"title": title, "parents": parents, "tests": suite.get("tests") or [], "raw": suite}
         child = suite.get("suites")
         if isinstance(child, list) and child:
             yield from _iter_suites(child, parents + (title,))

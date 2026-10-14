@@ -109,6 +109,12 @@ def to_live_event(event: dict) -> LiveEvent:
         class_name=_text(event.get("class_name"), 500),
         tags=[str(tag) for tag in tags] if isinstance(tags, list) else None,
         timestamp_ms=_count(event.get("timestamp_ms")),
+        # EXEC-01: the per-test timing the HTTP path already accepts.
+        started_at_ms=_count(event.get("started_at_ms")),
+        setup_ms=_count(event.get("setup_ms")),
+        call_ms=_count(event.get("call_ms")),
+        teardown_ms=_count(event.get("teardown_ms")),
+        worker_id=_text(event.get("worker_id"), 64),
         metadata=metadata if isinstance(metadata, dict) else None,
     )
 

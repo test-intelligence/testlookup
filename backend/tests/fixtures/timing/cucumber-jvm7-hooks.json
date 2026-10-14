@@ -1,0 +1,122 @@
+[
+  {
+    "line": 1,
+    "elements": [
+      {
+        "line": 3,
+        "name": "",
+        "description": "",
+        "type": "background",
+        "keyword": "Background",
+        "steps": [
+          {
+            "result": { "duration": 200000000, "status": "passed" },
+            "line": 4,
+            "name": "a logged in shopper",
+            "match": { "location": "shop.steps.LoginSteps.loggedIn()" },
+            "keyword": "Given "
+          }
+        ]
+      },
+      {
+        "start_timestamp": "2026-10-14T10:00:01.250Z",
+        "before": [
+          {
+            "result": { "duration": 120000000, "status": "passed" },
+            "match": { "location": "shop.hooks.Hooks.openBrowser(io.cucumber.java.Scenario)" }
+          }
+        ],
+        "line": 6,
+        "name": "Add an item",
+        "description": "",
+        "id": "cart;add-an-item",
+        "after": [
+          {
+            "result": { "duration": 80000000, "status": "passed" },
+            "match": { "location": "shop.hooks.Hooks.closeBrowser(io.cucumber.java.Scenario)" }
+          }
+        ],
+        "type": "scenario",
+        "keyword": "Scenario",
+        "steps": [
+          {
+            "result": { "duration": 1300000000, "status": "passed" },
+            "before": [
+              { "result": { "duration": 50000000, "status": "passed" }, "match": { "location": "shop.hooks.Hooks.beforeStep()" } }
+            ],
+            "line": 7,
+            "name": "I add an apple to the cart",
+            "match": { "location": "shop.steps.CartSteps.add(java.lang.String)" },
+            "after": [
+              { "result": { "duration": 50000000, "status": "passed" }, "match": { "location": "shop.hooks.Hooks.afterStep()" } }
+            ],
+            "keyword": "When "
+          }
+        ],
+        "tags": [{ "name": "@smoke" }]
+      },
+      {
+        "line": 3,
+        "name": "",
+        "description": "",
+        "type": "background",
+        "keyword": "Background",
+        "steps": [
+          {
+            "result": { "duration": 200000000, "status": "passed" },
+            "line": 4,
+            "name": "a logged in shopper",
+            "match": { "location": "shop.steps.LoginSteps.loggedIn()" },
+            "keyword": "Given "
+          }
+        ]
+      },
+      {
+        "start_timestamp": "2026-10-14T10:00:03.100Z",
+        "line": 10,
+        "name": "Remove an item",
+        "description": "",
+        "id": "cart;remove-an-item",
+        "type": "scenario",
+        "keyword": "Scenario",
+        "steps": [
+          {
+            "result": {
+              "duration": 700000000,
+              "status": "failed",
+              "error_message": "java.lang.AssertionError: expected 0 items but was 1\n\tat shop.steps.CartSteps.assertEmpty(CartSteps.java:41)"
+            },
+            "line": 11,
+            "name": "the cart is empty",
+            "match": { "location": "shop.steps.CartSteps.assertEmpty()" },
+            "keyword": "Then "
+          }
+        ],
+        "tags": []
+      }
+    ],
+    "name": "Cart",
+    "description": "",
+    "id": "cart",
+    "keyword": "Feature",
+    "uri": "classpath:features/cart.feature",
+    "tags": []
+  },
+  {
+    "keyword": "Feature",
+    "name": "Search",
+    "uri": "features/search.feature",
+    "elements": [
+      {
+        "keyword": "Scenario",
+        "type": "scenario",
+        "name": "Find by keyword",
+        "id": "search;find-by-keyword",
+        "steps": [
+          { "keyword": "When ", "name": "I search for apples", "result": { "status": "passed", "duration": 400000000 } },
+          { "keyword": "Then ", "name": "I see 3 results", "result": { "status": "passed", "duration": 100000000 } }
+        ]
+      }
+    ]
+  }
+]

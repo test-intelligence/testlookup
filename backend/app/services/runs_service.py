@@ -1010,6 +1010,20 @@ def _safe_source_extensions(value: object) -> dict:
     return redact_dict(dict(list(value.items())[:100])) or {}
 
 
+_EXECUTION_TIMING_FIELDS = (
+    "started_at", "finished_at", "setup_ms", "call_ms", "teardown_ms", "worker_id", "timing_source",
+)
+
+
+def _execution_timing(test_case: TestCase) -> dict:
+    """EXEC-01 timing columns for the hand-built detail contract (getattr: older rows and fakes lack them)."""
+    out: dict = {}
+    for field in _EXECUTION_TIMING_FIELDS:
+        value = getattr(test_case, field, None)
+        out[field] = value.isoformat() if hasattr(value, "isoformat") else value
+    return out
+
+
 def build_enriched_test_case_detail(test_case: TestCase, step_tree: dict) -> dict:
     """Build the versioned additive read contract from existing rows.
 
@@ -1036,6 +1050,9 @@ def build_enriched_test_case_detail(test_case: TestCase, step_tree: dict) -> dic
         "class_name": test_case.class_name,
         "status": test_case.status,
         "duration_ms": test_case.duration_ms,
+        # EXEC-01: when the test ran and how its time split (None when the
+        # report or live stream did not say; never 0 for "unknown").
+        **_execution_timing(test_case),
         "severity": test_case.severity,
         "feature": test_case.feature,
         "failure_category": test_case.failure_category,
@@ -1101,6 +1118,7 @@ def build_enriched_test_case_detail(test_case: TestCase, step_tree: dict) -> dic
         "execution": {
             "status": test_case.status,
             "duration_ms": test_case.duration_ms,
+            **_execution_timing(test_case),
             "retry_count": getattr(test_case, "retry_count", None),
             "is_flaky_run": getattr(test_case, "is_flaky_run", None),
             "step_count": getattr(test_case, "step_count", None),
