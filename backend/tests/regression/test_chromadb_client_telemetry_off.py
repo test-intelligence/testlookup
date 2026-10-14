@@ -58,15 +58,28 @@ def _install_fake_chromadb(monkeypatch):
     return http_client, _FakeSettings
 
 
-def _load_helper():
-    # Fresh import so the helper binds to the (possibly faked) chromadb.
-    sys.modules.pop("app.db.chroma", None)
+def _load_helper(monkeypatch):
+    # Fresh import so the helper binds to the (possibly faked) chromadb. Through
+    # monkeypatch, so the ORIGINAL app.db.chroma goes back into sys.modules when
+    # the test ends: the re-imported one keeps the fake Settings it bound at
+    # import time, and every later test importing get_chroma_client got a client
+    # built with that fake (the HON-08 real-client test then saw "unavailable").
+    # The import also rebinds the package attribute ``app.db.chroma``, which
+    # ``from app.db import chroma`` reads first, so that goes back too.
+    import app.db as db_pkg
+
+    # setitem records the prior value (the module, or "absent") for undo;
+    # delitem(raising=False) records nothing when the key is absent, which left
+    # the re-imported module behind whenever no earlier test had imported it.
+    monkeypatch.setitem(sys.modules, "app.db.chroma", sys.modules.get("app.db.chroma"))
+    del sys.modules["app.db.chroma"]
+    monkeypatch.setattr(db_pkg, "chroma", getattr(db_pkg, "chroma", None), raising=False)
     return importlib.import_module("app.db.chroma")
 
 
 def test_get_chroma_client_disables_telemetry(monkeypatch):
     http_client, _ = _install_fake_chromadb(monkeypatch)
-    chroma = _load_helper()
+    chroma = _load_helper(monkeypatch)
 
     chroma.get_chroma_client()
 
@@ -78,7 +91,7 @@ def test_get_chroma_client_disables_telemetry(monkeypatch):
 
 def test_get_chroma_client_passes_host_and_port(monkeypatch):
     http_client, _ = _install_fake_chromadb(monkeypatch)
-    chroma = _load_helper()
+    chroma = _load_helper(monkeypatch)
 
     chroma.get_chroma_client(host="chroma.example", port=1234)
 
@@ -92,7 +105,7 @@ def test_get_chroma_client_passes_host_and_port(monkeypatch):
 async def test_configured_client_consumes_persisted_host_and_port(monkeypatch):
     """The Storage settings authority, not process-start env, selects Chroma."""
     http_client, _ = _install_fake_chromadb(monkeypatch)
-    chroma = _load_helper()
+    chroma = _load_helper(monkeypatch)
     from app.services import storage_config_service
 
     monkeypatch.setattr(
