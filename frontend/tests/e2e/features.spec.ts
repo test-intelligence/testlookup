@@ -228,10 +228,13 @@ test.describe('Unknown route', () => {
     await performRealLogin(page);
   });
 
-  test('redirects unknown routes without crashing', async ({ page }) => {
+  test('shows "Page not found" inside the shell for an unknown route, with the URL kept', async ({ page }) => {
     await page.goto('/this-route-does-not-exist');
-    // Either the app redirects to /overview or shows a not-found page —
-    // both are acceptable, but the auth shell must remain.
+    // HON-09: no silent redirect to /overview any more. The shell stays and
+    // the page says the route does not exist, naming the path it was given.
     await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('heading', { level: 1, name: 'Page not found' })).toBeVisible();
+    await expect(page.getByTestId('not-found-path')).toHaveText('/this-route-does-not-exist');
+    await expect(page).toHaveURL(/\/this-route-does-not-exist$/);
   });
 });

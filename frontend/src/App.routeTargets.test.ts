@@ -2,11 +2,13 @@
  * Every route literal a Playwright suite navigates to must be a route this app
  * actually declares.
  *
- * `App.tsx` ends with `<Route path="*" element={<Navigate to="/overview" />} />`,
- * so an undeclared path does not 404 — it silently lands on the dashboard. A
- * sweep that visits one therefore asserts "the page is not an error boundary,
- * not an empty shell" against **Overview**, passes, and reports coverage for a
- * page it never opened.
+ * `App.tsx` used to end with `<Route path="*" element={<Navigate to="/overview" />} />`,
+ * so an undeclared path did not 404 — it silently landed on the dashboard. A
+ * sweep that visited one therefore asserted "the page is not an error boundary,
+ * not an empty shell" against **Overview**, passed, and reported coverage for a
+ * page it never opened. Since HON-09 the in-shell catch-all renders "Page not
+ * found" (`routing/legacyRedirects.UnmatchedPath`), which a sweep would at
+ * least see; this test still catches the typo before any browser runs.
  *
  * That is exactly what `tests/probe-route-sweep.spec.ts` did with
  * `/failure-analysis`: the declared route is `/failures` (App.tsx) and the
@@ -101,8 +103,12 @@ const NON_ROUTE_PREFIXES = [
   '/app-icon',
 ]
 
-/** Paths a spec visits precisely BECAUSE they are undeclared (the catch-all test). */
-const DELIBERATELY_UNDECLARED = new Set(['/this-route-does-not-exist'])
+/**
+ * Paths a spec visits precisely BECAUSE they are undeclared: the catch-all's
+ * not-found page, and `/audit`, a forwarding address the catch-all redirects
+ * to Activity (HON-09: linked by /releases, never routed; bookmarks exist).
+ */
+const DELIBERATELY_UNDECLARED = new Set(['/this-route-does-not-exist', '/audit'])
 
 function isNonRoute(path: string): boolean {
   return (
@@ -154,8 +160,21 @@ describe('Playwright route targets resolve to declared routes', () => {
     }
     expect(
       offenders.sort(),
-      'these paths are not declared in App.tsx, so the SPA catch-all sends them ' +
-        'to /overview and the spec asserts against the wrong page',
+      'these paths are not declared in App.tsx, so the SPA catch-all renders ' +
+        '"Page not found" for them and the spec asserts against the wrong page',
     ).toEqual([])
+  })
+})
+
+describe('the in-shell catch-all (HON-09)', () => {
+  it('renders the not-found page, not a redirect to /overview', () => {
+    // Exactly one `path="*"` route renders UnmatchedPath (inside AppLayout).
+    expect(APP_SOURCE.match(/<Route path="\*" element=\{<UnmatchedPath \/>\} \/>/g)).toHaveLength(1)
+    // The outer, out-of-shell catch-all may still redirect; the in-shell one
+    // may not. Every unknown path is matched by `/*` (AppLayout) first, so a
+    // second `*` → /overview inside it would be the old behaviour back.
+    const inShell = APP_SOURCE.slice(APP_SOURCE.indexOf('<Route path="/*" element={<AppLayout />}>'))
+    const shellBody = inShell.slice(0, inShell.indexOf('</Route>'))
+    expect(shellBody).not.toMatch(/path="\*" element=\{<Navigate to="\/overview"/)
   })
 })
