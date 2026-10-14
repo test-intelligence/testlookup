@@ -14,8 +14,8 @@
  */
 import { expect, test, type Page } from '@playwright/test'
 import { landmark } from '../lib/production-pages'
-import { MAIN, networkQuiet, openRollout } from '../lib/rollout'
-import { FAILURES_ON } from '../visual/production/fixtures'
+import { MAIN, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
+import { FAILURES_ON, TOP_FAILING_PATH } from '../visual/production/fixtures'
 
 /** The fold budget of the page template (§2): primary content top, px below the scroller's top. */
 const FOLD_BUDGET_PX = 300
@@ -96,3 +96,50 @@ for (const width of [1280, 1440]) {
     expect(errors).toEqual([])
   })
 }
+
+// HON-05: every row's Suspects panel used to ask for the project's newest
+// FAILED run (`useRuns({size: 1, status: 'FAILED'})`), so a test whose last
+// failure was in an older run was shown the commit range of a run it did not
+// fail in. Each row now carries `last_failed_run_id`, and its panel asks for
+// that run and names its build.
+const ROWS_WITH_RUNS = [
+  ['card declined shows reason', 'Payments', 9, 'run-newest', 'build-130'],
+  ['checkout total includes tax', 'Checkout', 7, 'run-older', 'build-127'],
+  ['search paginates', 'Search', 3, null, null],
+].map(([test, suite, count, runId, build], i) => ({
+  test_name: test,
+  fail_count: count,
+  test_fingerprint: `fp-hon05-${i}`,
+  suite_name: suite,
+  class_name: `${suite}Spec`,
+  failure_category: 'ASSERTION',
+  failure_kind: 'product',
+  last_failed: null,
+  last_failed_run_id: runId,
+  last_failed_build: build,
+  failure_step: null,
+}))
+
+const SUSPECTS = /^\/api\/v1\/runs\/[^/]+\/suspects$/
+
+test("a row's Suspects asks for the run of that test's own last failure", async ({ page }) => {
+  const { api, errors } = await openRollout(page, '/failures', {
+    handlers: [[TOP_FAILING_PATH, () => ({ items: ROWS_WITH_RUNS })], ...FAILURES_ON],
+    ready,
+  })
+  await networkQuiet(page, api)
+  const table = page.locator('[data-primary]').getByRole('table', { name: 'Top failing tests' })
+
+  await table.getByRole('button', { name: 'Suspects for checkout total includes tax' }).click()
+  const panel = page.getByRole('complementary', { name: 'Suspects: checkout total includes tax' })
+  await expect(panel.getByTestId('suspects-run')).toContainText('in run build-127')
+  await expect(panel.getByRole('link', { name: 'build-127' })).toHaveAttribute('href', '/runs/run-older')
+  await expect.poll(() => requestsTo(api, SUSPECTS)).toEqual([
+    'GET /api/v1/runs/run-older/suspects?fingerprint=fp-hon05-1',
+  ])
+
+  // A row with no failing run of its own is disabled, not given someone else's.
+  await expect(table.getByRole('button', { name: 'Suspects for search paginates' })).toBeDisabled()
+  expect(api.unhandled).toEqual([])
+  expect(errors).toEqual([])
+})

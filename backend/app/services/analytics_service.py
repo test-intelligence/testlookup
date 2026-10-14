@@ -492,6 +492,16 @@ async def top_failing_tests(
             MAX(tc.failure_category) AS failure_category,
             COUNT(*) AS fail_count,
             MAX(tc.created_at)  AS last_failed,
+            -- The run holding that last failure (HON-05): the Suspects panel
+            -- asked the newest FAILED run of the whole project instead, which
+            -- for any other test named commits from the wrong range. Same
+            -- order as MAX(created_at) above, so it is the same row; the run's
+            -- own time breaks a tie. Scoped by the tenant filter below. Its
+            -- build number names the run in the panel (same ORDER BY).
+            (ARRAY_AGG(tc.test_run_id ORDER BY tc.created_at DESC, tr.created_at DESC, tc.test_run_id DESC))[1]
+                AS last_failed_run_id,
+            (ARRAY_AGG(tr.build_number ORDER BY tc.created_at DESC, tr.created_at DESC, tc.test_run_id DESC))[1]
+                AS last_failed_build,
             -- Over every failing test, before LIMIT: /failures read the
             -- top-N list's length as "Repeat failures" (15, the default
             -- limit, for a project with more; browser E2E pass, 2026-10-08).
@@ -526,6 +536,12 @@ async def top_failing_tests(
     for i in items:
         i.pop("failing_total", None)
         i.pop("repeat_total", None)
+        # A UUID from asyncpg; the payload is cached and embedded in reports
+        # as JSON, so it travels as a string. ``.get``: a hand-built stand-in
+        # row may not carry the column.
+        run_id = i.get("last_failed_run_id")
+        i["last_failed_run_id"] = str(run_id) if run_id is not None else None
+        i.setdefault("last_failed_build", None)
 
     # Derived failure kind (US-9.1). Category-only fidelity: this query
     # aggregates per fingerprint (no per-row status survives MAX()), so the

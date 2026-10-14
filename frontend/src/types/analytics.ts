@@ -133,6 +133,14 @@ export interface TopFailingItem {
   /** ISO timestamp of the most recent failure in the window. */
   last_failed?: string | null
   /**
+   * The run holding that most recent failure (HON-05). The row's Suspects
+   * panel attributes commits against it; it used to take the project's newest
+   * FAILED run, which for any other test is a run it did not fail in.
+   */
+  last_failed_run_id?: string | null
+  /** That run's build number, to name it in the Suspects panel (HON-05). */
+  last_failed_build?: string | null
+  /**
    * FAILURE LOCATION (Phase 5): name of the first FAILED/BROKEN granular step
    * for this test, read from the LATEST-RUN-ONLY snapshot. Optional + may be
    * null when the test has no captured step data (or in unscoped/multi-tenant
