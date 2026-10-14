@@ -85,7 +85,12 @@ export const dayTimeAgo = (dayOnly?: string | null): string => {
  */
 export const formatDuration = (ms?: number | null): string => {
   if (ms == null || Number.isNaN(ms) || ms < 0) return '—'
-  if (ms < 1000) return `${ms}ms`
+  if (ms < 1000 && Number.isInteger(ms)) return `${ms}ms`
+  // A fractional value (an interpolated p95) read "923.75ms": below 10 ms three
+  // significant figures still say something (a 0.001 ms bucket edge), above it
+  // the fraction is noise.
+  if (ms < 10) return `${Number(ms.toPrecision(3))}ms`
+  if (ms < 999.5) return `${Math.round(ms)}ms`
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
   if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ${Math.floor((ms % 60_000) / 1000)}s`
   return `${Math.floor(ms / 3_600_000)}h ${Math.floor((ms % 3_600_000) / 60_000)}m`

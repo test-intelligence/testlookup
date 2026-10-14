@@ -308,9 +308,13 @@ function Suites({ timing }: { timing: RunTiming }) {
   )
 }
 
-/** The baseline of a slow test, in words: "mean 900ms over 14 runs". */
+/**
+ * The baseline of a slow test, in words: "today's mean 900ms over 14 runs". It is the test's CURRENT baseline, which
+ * on an older run already holds that run and the ones after it; the regressions card below judged the run against
+ * the baseline before it, so the two numbers differ and each says which one it is.
+ */
 function baselineText(baseline: DurationBaseline): string {
-  return `mean ${msText(baseline.mean_ms)} over ${formatNumber(baseline.sample_count)} runs`
+  return `today's mean ${msText(baseline.mean_ms)} over ${formatNumber(baseline.sample_count)} runs`
 }
 
 /** The duration as a bar against the slowest, with a tick where the baseline mean sits. */
@@ -400,7 +404,8 @@ function Slowest({ timing, onSelect }: { timing: RunTiming; onSelect: (testId: s
           </Table>
           <p className={`${NOTE} mt-2`}>
             The {formatNumber(slowest.items.length)} longest of {formatNumber(slowest.total)}{' '}
-            {slowest.total === 1 ? 'test' : 'tests'} with a duration. The tick on each bar is the test's baseline mean.
+            {slowest.total === 1 ? 'test' : 'tests'} with a duration. The tick on each bar is the test's baseline mean
+            as it stands today; &ldquo;Did anything get slower?&rdquo; judged this run against the baseline before it.
           </p>
         </>
       )}

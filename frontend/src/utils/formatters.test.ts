@@ -95,6 +95,17 @@ describe('formatDuration', () => {
     expect(formatDuration(999)).toBe('999ms')
   })
 
+  it('rounds a fractional duration (an interpolated percentile) instead of printing "923.75ms"', () => {
+    // Regression: Trends > Execution time's slowest-tests list printed the p95 as "923.75ms".
+    expect(formatDuration(923.75)).toBe('924ms')
+    expect(formatDuration(12.5)).toBe('13ms')
+    expect(formatDuration(10 / 3)).toBe('3.33ms')
+    expect(formatDuration(2.25)).toBe('2.25ms')
+    expect(formatDuration(0.001)).toBe('0.001ms')
+    expect(formatDuration(999.6)).toBe('1.0s')
+    expect(formatDuration(1234.5)).toBe('1.2s')
+  })
+
   it('renders sub-minute durations in seconds to one decimal', () => {
     expect(formatDuration(1000)).toBe('1.0s')
     expect(formatDuration(1500)).toBe('1.5s')

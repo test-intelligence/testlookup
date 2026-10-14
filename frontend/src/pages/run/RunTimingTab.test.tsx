@@ -187,7 +187,8 @@ describe('RunTimingTab — a timed run', () => {
     expect(pay).toHaveTextContent('test_pay')
     expect(pay).toHaveTextContent('1.8s')
     expect(pay).toHaveTextContent('2× baseline')
-    expect(pay).toHaveTextContent('mean 900ms over 14 runs')
+    // Today's baseline, named as such: on an older run it differs from the regressions card's at-the-time baseline.
+    expect(pay).toHaveTextContent("today's mean 900ms over 14 runs")
     expect(pay).toHaveTextContent('120ms · 1.6s · 80ms')
     expect(pay.querySelector('[data-timing-baseline-tick]')).not.toBeNull()
     const other = slow.querySelector('[data-timing-slow-test="t-1-0"]') as HTMLElement

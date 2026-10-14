@@ -429,7 +429,11 @@ export function slowestToChartSeries(model: SlowestTestsModel): SeriesChart {
  */
 export function durationTickLabel(value: number, axis: Pick<NiceScale, 'domain' | 'step'> | null): string {
   const top = axis?.domain[1] ?? 0
-  if (top < 1000) return formatDuration(value)
+  if (top < 1000) {
+    // A fractional millisecond step (2.5) keeps its places: `formatDuration` rounds 12.5 to "13ms".
+    const places = tickDecimals(axis?.step ?? 1)
+    return places > 0 && value !== 0 ? `${value.toFixed(places)}ms` : formatDuration(value)
+  }
   if (value === 0) return '0s'
   if (top >= 60_000) return formatDuration(value)
   const places = Math.max(1, tickDecimals((axis?.step ?? 1000) / 1000))

@@ -83,6 +83,12 @@ describe('R2-17: every duration tick is printed in the axis\'s unit', () => {
     expect(axis?.ticks.map((value) => durationTickLabel(value, axis))).toEqual(['0ms', '100ms', '200ms', '300ms', '400ms'])
   })
 
+  it('durationTickLabel: a fractional millisecond step keeps its places, no tick rounds to a value it is not', () => {
+    // formatDuration rounds a fractional ms value from 10 ms up (an interpolated p95); a 2.5 ms step must not.
+    const axis = { domain: [0, 20] as [number, number], step: 2.5 }
+    expect([0, 2.5, 10, 12.5].map((value) => durationTickLabel(value, axis))).toEqual(['0ms', '2.5ms', '10.0ms', '12.5ms'])
+  })
+
   it('durationTickLabel: a seconds axis with sub-second steps prints seconds to the step\'s precision', () => {
     const half = durationAxis(1_873)
     expect(half?.ticks.map((value) => durationTickLabel(value, half))).toEqual(['0s', '0.5s', '1.0s', '1.5s', '2.0s'])
