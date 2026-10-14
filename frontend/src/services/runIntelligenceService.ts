@@ -450,11 +450,33 @@ export interface ScoringDimension {
   description: string
 }
 
+/**
+ * GATE-05: which policy a project-scoped scoring model came from. `level` is
+ * `project` (the project's active policy), `system` (the deployment default
+ * policy) or `hardcoded` (no active policy: config defaults, name null).
+ */
+export interface ScoringModelPolicy {
+  policy_id: string | null
+  name: string | null
+  version: number | null
+  level: 'project' | 'system' | 'hardcoded'
+}
+
 export interface ScoringModel {
   version: number
   go_threshold: number
   no_go_threshold: number
   dimensions: ScoringDimension[]
+  /** Present only when the model was asked for a project or run. */
+  pass_rate_minimum?: number
+  pass_rate_hard_floor_factor?: number
+  policy?: ScoringModelPolicy
+}
+
+/** Whose verdict the model should describe: a project, or a run's project. */
+export interface ScoringModelScope {
+  projectId?: string | null
+  runId?: string | null
 }
 
 export const runIntelligenceService = {
@@ -483,8 +505,21 @@ export const runIntelligenceService = {
     return data
   },
 
-  async getScoringModel(): Promise<ScoringModel> {
-    const { data } = await api.get<ScoringModel>('/api/v1/scoring-model')
+  /**
+   * The risk scoring model. Scoped to a project (or a run's project), it is the
+   * model that project's verdict applies: its active release-gate policy's
+   * weights and thresholds, and which policy that is. Unscoped, the
+   * deployment default.
+   */
+  async getScoringModel(scope: ScoringModelScope = {}): Promise<ScoringModel> {
+    const params = scope.projectId
+      ? { project_id: scope.projectId }
+      : scope.runId
+        ? { run_id: scope.runId }
+        : null
+    const { data } = params
+      ? await api.get<ScoringModel>('/api/v1/scoring-model', { params })
+      : await api.get<ScoringModel>('/api/v1/scoring-model')
     return data
   },
 
