@@ -94,7 +94,9 @@ Every group has `--help`, for example `testlookup upload file --help`.
 | `runs` | `list`, `get <run-id>`, `timing <run-id>` | List runs (`--project`, `--status`, `--page`, `--size`), show one run; how long a run took and where the time went (see [Execution time](#execution-time)) |
 | `tests` | `list <run-id>`, `get <run-id> <test-id>` | List a run's test cases (`--status`, `--suite`, `--page`, `--size`); show one test case, with `--show-steps` to summarise its step tree |
 | `search` | (none; run `testlookup search "<query>"`) | Global search across tests, runs, suites, defects and more (`--types`, `--project`) |
-| `intelligence` | `show <run-id>`, `refresh <run-id>` | Run intelligence summary (status, pass rate, release recommendation, executive summary); force a refresh |
+| `intelligence` | `show <run-id>`, `refresh <run-id>`, `history <run-id>` | Run intelligence summary (status, pass rate, release recommendation, executive summary); force a refresh; the run's stored AI versions (same as `ai-history`) |
+| `ai-history` | (top-level command; `ai-history <run-id>`) | A run's stored AI analysis versions, and the diff of two (`--diff 1..latest`) (see [AI history](#ai-history)) |
+| `compare-ai` | (top-level command; `compare-ai <run-id>`) | A run's AI analysis against the previous run's (same suite and branch, or `--baseline`); `--fail-on-verdict-regression` for CI (see [AI history](#ai-history)) |
 | `deep` | `start`, `status`, `clusters`, `findings` (each takes `<run-id>`) | Queue a deep investigation, check its pipeline status, list failure clusters and findings |
 | `reports` | `pdf <run-id>`, `share <run-id>` | Download a PDF report (`--out`, `--layout executive\|engineering`); create a time-limited share link (`--expires` 1-30 days) |
 | `reviews` | `list <project-id>`, `accept <review-id>`, `reject <review-id>` | Human review of AI-generated reports: list the queue (`--state`, `--limit`), accept (`--notes`), reject (`--reason`, `--notes`) |
@@ -255,12 +257,32 @@ duration regression and `0` otherwise, including when the run could not be
 judged (that is printed as a warning). The per-test CSV is the API's
 `GET /api/v1/runs/{run_id}/timing.csv` (the Timing tab's Export CSV).
 
+## AI history
+
+Every AI analysis of a run is kept as a version (a re-analysis no longer
+overwrites the last one), and a run's analysis can be compared with the
+previous run's:
+
+```bash
+testlookup ai-history "$RUN_ID"                       # one row per stored version
+testlookup ai-history "$RUN_ID" --diff 1..latest      # what changed between two versions
+testlookup compare-ai "$RUN_ID" --fail-on-verdict-regression   # CI: exit 8 when the AI verdict got worse
+```
+
+`compare-ai` picks the previous run of the same primary suite on the same
+branch (`--baseline <run-id>` overrides it) and prints the verdict change, new
+and resolved root causes and the tests whose AI category changed. Without a
+reachable LLM the summary is the deterministic one, and it says so.
+`--fail-on-verdict-regression` exits `8` only when the verdict got worse; a
+comparison it cannot judge prints a warning and exits `0`. Both commands take
+`--json` (or `-o json`) for the REST body.
+
 ## Output and exit codes
 
 Commands that print data take `-o`/`--output`: `table` (default) or `json`, and
 most also accept `yaml`. Exceptions: `reports pdf` uses `-o` for the output
 file path, `analytics trends` and `analytics chart` take `table|csv|json`,
-`runs timing` and `analytics execution` take `table|json` (or `--json`), and `intelligence refresh`,
+`runs timing`, `analytics execution`, `ai-history` and `compare-ai` take `table|json` (or `--json`), and `intelligence refresh`,
 `deep start` and `keys revoke` print only a confirmation. Errors and warnings
 go to stderr, so `-o json | jq` sees only the JSON document.
 
@@ -280,6 +302,7 @@ Apart from `ci-verdict` (above), failures map to stable exit codes:
 | `5` | Not found (HTTP 404) |
 | `6` | Timed out (HTTP 408/504, or a client-side timeout) |
 | `7` | `runs timing --fail-on-regression` only: the run has duration regressions |
+| `8` | `compare-ai --fail-on-verdict-regression` only: the AI verdict got worse than the baseline's |
 
 ## CI context and commit ranges
 
