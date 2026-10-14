@@ -62,7 +62,14 @@ async def get_index_status(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Return collection health within the caller's active project scope."""
+    """Return the semantic (ChromaDB) index's health within the caller's active project scope.
+
+    ``status``: ``healthy`` (with ``document_count`` and ``last_indexed_at``),
+    ``not_configured`` (no ChromaDB server answers at the configured address,
+    e.g. a ``make dev`` stack without the ``local-llm`` profile) or
+    ``unavailable`` (a server answered but the read failed). The index holds
+    test cases only; global search is keyword over every entity either way.
+    """
     from app.services.semantic_search import get_index_status as _get_index_status
 
     scoped_project_id, allowed_project_ids = await resolve_project_scope(
