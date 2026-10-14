@@ -1020,7 +1020,7 @@ def _execution_timing(test_case: TestCase) -> dict:
     out: dict = {}
     for field in _EXECUTION_TIMING_FIELDS:
         value = getattr(test_case, field, None)
-        out[field] = value.isoformat() if hasattr(value, "isoformat") else value
+        out[field] = value.isoformat() if isinstance(value, datetime) else value
     return out
 
 
