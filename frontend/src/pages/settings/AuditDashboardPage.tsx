@@ -184,7 +184,8 @@ export default function AuditDashboardPage() {
       )}
 
       {/* The audit stage flow, built from the events and metrics above:
-          collapsed at the bottom of the page. */}
+          collapsed at the bottom of the page. The feed lists the newest audit
+          rows at their own recorded times (HON-06). */}
       <Disclosure title="Pipeline" defaultOpen={false}>
         <WorkflowTimeline
           title="Tenant audit flow"
@@ -193,6 +194,7 @@ export default function AuditDashboardPage() {
           events={workflow.events}
           stageOrder={workflow.stageOrder}
           showInspector
+          showEventFeed
         />
       </Disclosure>
     </div>

@@ -3645,6 +3645,12 @@ class ReleaseCouncilResponse(BaseModel):
     review: Optional[ReviewBlock] = None
     review_gate_enforced: bool = False
     draft_recommendation: Optional[str] = None
+    # HON-06: when the stored ``ReleaseDecision`` row was written and last
+    # changed. The gate's "How this was decided" timeline dates the decision
+    # from these instead of inventing a time. ``None`` on a synthesised
+    # quick-look view: no decision has been stored, so there is no time.
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
 class ReleaseCouncilOverrideRequest(BaseModel):
