@@ -94,7 +94,10 @@ def test_the_enums_are_exactly_the_story_s() -> None:
         "duration_total",
         # Wave 3 (VIZ-208, OD-20): failed + broken, what every drill level charts.
         "failures",
+        # EXEC-03: a run's wall clock, run grain only.
+        "wall_clock_total", "wall_clock_p50", "wall_clock_p95",
     }
+    assert svc.RUN_ONLY == {"wall_clock_total", "wall_clock_p50", "wall_clock_p95"}
     assert set(svc.DIMENSIONS) == {
         "day", "week", "project", "release", "suite", "status",
         "failure_category", "branch", "environment", "ingestion_source", "test",
@@ -145,6 +148,8 @@ def test_a_group_by_value_never_reaches_the_sql() -> None:
         for dim in svc.DIMENSIONS:
             if dim == "test":
                 continue
+            if metric in svc.RUN_ONLY and svc.DIMENSIONS[dim].row_level:
+                continue  # refused (run_only_metric), pinned in test_chart_data_exec_metrics
             spec = svc.parse_chart_spec(metric, [dim], None, scope=_scope())
             sql, _params = svc.build_statement(spec, _scope())
             fragment = svc.DIMENSIONS[dim].sql

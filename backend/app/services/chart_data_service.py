@@ -228,6 +228,12 @@ class MetricDef:
     #: nobody tested, which reads as "everything was instant" / "everything
     #: failed".
     zero_fill: bool = True
+    #: ``True`` for a figure that only exists per RUN (EXEC-03: a run's wall
+    #: clock). ``row_sql`` is ``None`` and, unlike a rate, cannot be derived
+    #: from rows: a request that would force the row grain (a row-level
+    #: dimension or a suite filter) is refused with ``run_only_metric``
+    #: rather than answered from the wrong population.
+    run_only: bool = False
 
 
 _EVALUATED_ROW = (
@@ -254,6 +260,18 @@ def _percentile(fraction: str) -> str:
     return (
         f"PERCENTILE_CONT({fraction}) WITHIN GROUP (ORDER BY tc.duration_ms) "
         "FILTER (WHERE tc.duration_ms IS NOT NULL)"
+    )
+
+
+#: The runs of the bucket that carry a wall clock (EXEC-03's run-only sample).
+_TIMED_RUN = "COUNT(tr.wall_clock_ms)"
+
+
+def _run_percentile(fraction: str) -> str:
+    # A run with no wall clock is not a 0 ms run: FILTER keeps it out.
+    return (
+        f"PERCENTILE_CONT({fraction}) WITHIN GROUP (ORDER BY tr.wall_clock_ms) "
+        "FILTER (WHERE tr.wall_clock_ms IS NOT NULL)"
     )
 
 
@@ -322,10 +340,31 @@ METRICS: dict[str, MetricDef] = {
     "duration_total": MetricDef(
         "COALESCE(SUM(tc.duration_ms), 0)", None, _TIMED_ROW, _TIMED_ROW, True
     ),
+    # EXEC-03: the run's wall clock (``test_runs.wall_clock_ms``, EXEC-02), on
+    # the run grain only. A run without one is left out -- SUM/percentile of
+    # nothing is NULL, so a bucket whose runs carry none is measured:false,
+    # never 0 -- and ``n`` is the runs that carry one.
+    "wall_clock_total": MetricDef(
+        None, "SUM(tr.wall_clock_ms)", _TIMED_RUN, _TIMED_RUN, True, run_only=True,
+    ),
+    "wall_clock_p50": MetricDef(
+        None, _run_percentile("0.5"), _TIMED_RUN, _TIMED_RUN, False,
+        integer=False, zero_fill=False, run_only=True,
+    ),
+    "wall_clock_p95": MetricDef(
+        None, _run_percentile("0.95"), _TIMED_RUN, _TIMED_RUN, False,
+        integer=False, zero_fill=False, run_only=True,
+    ),
 }
 
 #: The metrics whose numbers only exist per execution row.
-_ROW_ONLY = frozenset(name for name, m in METRICS.items() if m.run_sql is None and not m.rate)
+_ROW_ONLY = frozenset(
+    name for name, m in METRICS.items() if m.run_sql is None and not m.rate and not m.run_only
+)
+#: The metrics whose numbers only exist per run (EXEC-03).
+RUN_ONLY = frozenset(name for name, m in METRICS.items() if m.run_only)
+#: The dimensions that read ``test_cases`` and so force the row grain.
+ROW_LEVEL_DIMENSIONS = tuple(name for name, d in DIMENSIONS.items() if d.row_level)
 
 
 # ── The parsed request ─────────────────────────────────────────────────────
@@ -436,7 +475,33 @@ def parse_chart_spec(
             param="group_by",
             allowed={"requires": ["exactly one suite_name", "top_n"]},
         )
+    refuse_row_grain_for_run_only(metric, dims, scope)
     return ChartSpec(metric=metric, group_by=tuple(dims), top_n=parsed_top_n)
+
+
+def refuse_row_grain_for_run_only(
+    metric: str, group_by: Sequence[str], scope: AnalyticsScope
+) -> None:
+    """422 ``run_only_metric`` for a run-only metric (EXEC-03's wall clock) on
+    a request that would force the row grain: a row-level dimension or a
+    suite filter. Checked LAST in :func:`parse_chart_spec`, so every other
+    refusal keeps its precedence, and again by :func:`build_statement` for a
+    spec that did not come through the parser."""
+    if not METRICS[metric].run_only:
+        return
+    if any(DIMENSIONS[dim].row_level for dim in group_by) or suite_keys(scope.suite_names):
+        raise AnalyticsQueryError(
+            "run_only_metric",
+            "this metric exists per run (a run's wall clock), so it cannot be "
+            "grouped by a per-test dimension or filtered by suite; a suite's "
+            "wall clock is on /analytics/execution-metrics",
+            param="metric",
+            allowed={
+                "run_only": True,
+                "row_level_dimensions": list(ROW_LEVEL_DIMENSIONS),
+                "suite_filter": False,
+            },
+        )
 
 
 def _parse_top_n(top_n: Any, dims: Sequence[str]) -> Optional[int]:
@@ -649,6 +714,7 @@ def build_statement(
     of 8 series, and a real suite would return ~1.4M ``Cell`` tuples per
     request. ``LIMIT :chart_row_cap`` is the hard ceiling under all of it.
     """
+    refuse_row_grain_for_run_only(spec.metric, spec.group_by, scope)
     grain = grain_for(spec, scope)
     metric = METRICS[spec.metric]
     params: dict[str, Any] = {"period_start": window_start(scope.window_days, now=now)}
@@ -933,6 +999,8 @@ _NOT_COMBINABLE = {
     "unique_tests": "distinct tests cannot be summed across groups without double counting",
     "flaky_tests": "distinct flaky tests cannot be summed across groups without double counting",
     "run_count": "one run can appear in several groups, so runs cannot be summed across them",
+    "wall_clock_p50": "a median cannot be combined across groups; ask for these groups directly",
+    "wall_clock_p95": "a 95th percentile cannot be combined across groups; ask for these groups directly",
 }
 
 
@@ -1616,6 +1684,16 @@ def definitions(
         ) + (
             " percentile_cont on live SQL." if spec.metric != "duration_total" else ""
         )
+    if spec.metric in RUN_ONLY:
+        out[spec.metric] = (
+            "Milliseconds of wall clock per run (test_runs.wall_clock_ms: how long "
+            "the run took on the clock, not the sum of its test durations), on the "
+            "run grain only. A run whose report carried no wall clock is left out "
+            "and not counted in n; n is the runs that carry one. A bucket where no "
+            "run carries one is null with measured:false, never 0."
+        ) + (
+            " percentile_cont on live SQL." if spec.metric != "wall_clock_total" else ""
+        )
     if "branch" in spec.group_by:
         out["branch"] = (
             f"The run's branch exactly as it was recorded. It is often absent "
@@ -1780,6 +1858,8 @@ __all__ = [
     "MIN_RATE_SAMPLE",
     "NO_VALUE",
     "OTHER_KEY",
+    "ROW_LEVEL_DIMENSIONS",
+    "RUN_ONLY",
     "SINGLE_SERIES_KEY",
     "assemble",
     "build_chart_data",
@@ -1790,6 +1870,7 @@ __all__ = [
     "grain_forced_by",
     "parse_chart_spec",
     "partial_bucket",
+    "refuse_row_grain_for_run_only",
     "request_clock",
     "time_buckets",
     "window_start",

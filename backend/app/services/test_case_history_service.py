@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from sqlalchemy import func as sa_func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -83,6 +84,8 @@ async def get_test_case_history(
     history = await _history_timeline(db, project_id, fingerprint)
     flakiness = await _flakiness_in_window(db, project_id, fingerprint)
     metadata = await _metadata(db, project_id, fingerprint, tc, run)
+    duration_stats = await _duration_stats_in_window(db, project_id, fingerprint)
+    baseline = await _baseline(db, project_id, fingerprint)
 
     return {
         "run_id": str(run_id),
@@ -92,6 +95,8 @@ async def get_test_case_history(
         "history": history,
         "flakiness": flakiness,
         "metadata": metadata,
+        "duration_stats": duration_stats,
+        "baseline": baseline,
     }
 
 
@@ -124,6 +129,7 @@ async def _history_timeline(
     ranked = (
         select(
             TestCaseHistory.test_run_id.label("run_id"),
+            TestCaseHistory.test_case_id.label("test_case_id"),
             TestCaseHistory.status.label("status"),
             TestCaseHistory.duration_ms.label("duration_ms"),
             TestCaseHistory.created_at.label("created_at"),
@@ -159,6 +165,8 @@ async def _history_timeline(
         except Exception:
             seq_map = {}
 
+    timings = await _point_timings(db, [getattr(r, "test_case_id", None) for r in rows])
+
     timeline: list[dict] = []
     for r in rows:
         rid = str(r.run_id) if r.run_id else None
@@ -175,8 +183,137 @@ async def _history_timeline(
             "status": str(r.status),
             "duration_ms": r.duration_ms,
             "created_at": r.created_at,
+            # EXEC-03: the row's execution timing; every key None when the
+            # format carried none (never 0).
+            **timings.get(getattr(r, "test_case_id", None), _NO_TIMING),
         })
     return timeline
+
+
+#: The timing keys of a history point whose row carries none.
+_NO_TIMING: dict = {
+    "started_at": None,
+    "finished_at": None,
+    "setup_ms": None,
+    "call_ms": None,
+    "teardown_ms": None,
+    "worker_id": None,
+    "timing_source": None,
+}
+
+
+async def _point_timings(db: AsyncSession, test_case_ids: list) -> dict:
+    """EXEC-03: the execution timing of each history point's own ``test_cases``
+    row, by primary key -- at most ``_HISTORY_LIMIT`` ids, already project-
+    scoped by the timeline query that produced them."""
+    ids = [i for i in test_case_ids if i is not None]
+    if not ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(
+                TestCase.id,
+                TestCase.started_at,
+                TestCase.finished_at,
+                TestCase.setup_ms,
+                TestCase.call_ms,
+                TestCase.teardown_ms,
+                TestCase.worker_id,
+                TestCase.timing_source,
+            ).where(TestCase.id.in_(ids))
+        )
+    ).all()
+    return {
+        row.id: {
+            "started_at": row.started_at,
+            "finished_at": row.finished_at,
+            "setup_ms": row.setup_ms,
+            "call_ms": row.call_ms,
+            "teardown_ms": row.teardown_ms,
+            "worker_id": row.worker_id,
+            "timing_source": row.timing_source,
+        }
+        for row in rows
+    }
+
+
+#: The executions a test's duration percentiles are taken over: the population
+#: its ``perf_baselines`` row learns from (PASSED and FAILED, a positive
+#: duration), so the window figures and the baseline compare like with like.
+_DURATION_STATUSES = ("PASSED", "FAILED")
+
+
+async def _duration_stats_in_window(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    fingerprint: str | None,
+) -> dict:
+    """EXEC-03: p50 / p95 / max duration of the test over the 30-day history
+    window -- every execution in it, not only the 50 points the timeline
+    returns. Project-scoped through ``test_runs`` (fingerprints are not
+    salted). ``measured: False`` with a reason when nothing carried one."""
+    out: dict[str, Any] = {
+        "window_days": _FLAKY_WINDOW_DAYS,
+        "n": 0,
+        "p50_ms": None,
+        "p95_ms": None,
+        "max_ms": None,
+        "measured": False,
+        "reason": "no execution in the window carried a duration",
+    }
+    if not fingerprint:
+        return out
+    cutoff = datetime.now(timezone.utc) - timedelta(days=_FLAKY_WINDOW_DAYS)
+    row = (
+        await db.execute(
+            select(
+                sa_func.count(TestCaseHistory.duration_ms).label("n"),
+                sa_func.percentile_cont(0.5)
+                .within_group(TestCaseHistory.duration_ms.asc())
+                .label("p50"),
+                sa_func.percentile_cont(0.95)
+                .within_group(TestCaseHistory.duration_ms.asc())
+                .label("p95"),
+                sa_func.max(TestCaseHistory.duration_ms).label("max_ms"),
+            )
+            .join(TestRun, TestRun.id == TestCaseHistory.test_run_id)
+            .where(
+                TestRun.project_id == project_id,
+                TestCaseHistory.test_fingerprint == fingerprint,
+                TestCaseHistory.created_at >= cutoff,
+                TestCaseHistory.duration_ms > 0,
+                TestCaseHistory.status.in_(_DURATION_STATUSES),
+            )
+        )
+    ).first()
+    n = int(getattr(row, "n", 0) or 0) if row is not None else 0
+    p50 = getattr(row, "p50", None)
+    if row is None or n <= 0 or p50 is None:
+        return out
+    p95 = getattr(row, "p95", None)
+    max_ms = getattr(row, "max_ms", None)
+    out.update({
+        "n": n,
+        "p50_ms": round(float(p50), 2),
+        "p95_ms": round(float(p95), 2) if p95 is not None else None,
+        "max_ms": int(max_ms) if max_ms is not None else None,
+        "measured": True,
+        "reason": None,
+    })
+    return out
+
+
+async def _baseline(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    fingerprint: str | None,
+) -> dict | None:
+    """EXEC-03: the test's ``perf_baselines`` row in THIS project, or None."""
+    if not fingerprint:
+        return None
+    from app.services.execution_metrics_service import load_baselines
+
+    return (await load_baselines(db, project_id, [fingerprint])).get(fingerprint)
 
 
 # Auto-detector flaky ratio band, copied verbatim from

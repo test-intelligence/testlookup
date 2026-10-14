@@ -126,6 +126,11 @@ ROW_PREDICATES: dict[str, str] = {
     "duration_p50": "tc.duration_ms IS NOT NULL",
     "duration_p95": "tc.duration_ms IS NOT NULL",
     "duration_total": "tc.duration_ms IS NOT NULL",
+    # EXEC-03: a run's wall clock stands on the runs that carry one; the drill
+    # lists those runs' executions (the metric is per run, the rows per test).
+    "wall_clock_total": "tr.wall_clock_ms IS NOT NULL",
+    "wall_clock_p50": "tr.wall_clock_ms IS NOT NULL",
+    "wall_clock_p95": "tr.wall_clock_ms IS NOT NULL",
 }
 
 #: What the selected rows reconcile with: ``(mark field, measure)``. The
@@ -149,6 +154,11 @@ RECONCILIATION: dict[str, tuple[str, str]] = {
     "duration_p50": ("n", "rows"),
     "duration_p95": ("n", "rows"),
     "duration_total": ("n", "rows"),
+    # ``n`` of a wall-clock mark is the runs carrying one: the distinct runs
+    # of the selected rows (a run with no per-test rows cannot be listed).
+    "wall_clock_total": ("n", "distinct_runs"),
+    "wall_clock_p50": ("n", "distinct_runs"),
+    "wall_clock_p95": ("n", "distinct_runs"),
 }
 
 _ROW_TEXT = {
@@ -160,6 +170,7 @@ _ROW_TEXT = {
         "the evaluated executions (passed, failed, broken): the rate's denominator"
     ),
     "tc.duration_ms IS NOT NULL": "the executions that carry a duration",
+    "tr.wall_clock_ms IS NOT NULL": "the executions of the runs that carry a wall clock",
 }
 
 #: The effective suite as DISPLAY text (the ingested spelling), ``NULL`` when
