@@ -586,7 +586,38 @@ class TestRunSummary(BaseModel):
     broken_tests: int
     unknown_tests: int = 0
     pass_rate: Optional[float] = None
-    duration_ms: Optional[int] = None
+    duration_ms: Optional[int] = Field(
+        None,
+        description=(
+            "Test time (summed): the sum of the run's test durations, not how "
+            "long the run took. Parallel tests make it larger than wall_clock_ms."
+        ),
+    )
+    # EXEC-02 (migration 0203): how long the run took on the clock.
+    wall_clock_ms: Optional[int] = Field(
+        None,
+        description=(
+            "Wall clock: how long the run took, start to finish. NULL when no "
+            "report or test timestamps state it (timing_source 'derived_sum' "
+            "or not timed yet) -- never the summed time passed off as a wall "
+            "clock. Parallelism = duration_ms / wall_clock_ms."
+        ),
+    )
+    exec_started_at: Optional[datetime] = Field(
+        None, description="When the run's tests started executing (not the ingest time)."
+    )
+    exec_finished_at: Optional[datetime] = Field(
+        None, description="When the run's tests finished executing (not the finalize time)."
+    )
+    timing_source: Optional[str] = Field(
+        None,
+        description=(
+            "Where wall_clock_ms came from: 'report' (the report stated it), "
+            "'derived' (the union of the suites' start/finish spans) or "
+            "'derived_sum' (no wall clock known; only the summed time). "
+            "NULL = not timed yet."
+        ),
+    )
     ocp_pod_name: Optional[str] = None
     ocp_namespace: Optional[str] = None
     primary_suite_name: Optional[str] = None
@@ -671,6 +702,18 @@ class TestCaseDetail(TestCaseSummary):
     tags: Optional[List[str]] = None
     error_message: Optional[str] = None
     minio_s3_prefix: Optional[str] = None
+    # Execution timing (EXEC-01, migration 0202): what the report or live
+    # stream said about when the test ran. All None when the format carries
+    # none of it (JUnit XML, xUnit) -- "not reported", never zero.
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    setup_ms: Optional[int] = None
+    call_ms: Optional[int] = None
+    teardown_ms: Optional[int] = None
+    worker_id: Optional[str] = None
+    # report | derived | live (``report_timings.TIMING_SOURCES``); plain str so
+    # a value outside the set cannot 422 the detail read.
+    timing_source: Optional[str] = None
 
 
 class TestCaseListResponse(BaseModel):
@@ -785,6 +828,14 @@ class TestCaseExecutionSection(BaseModel):
     error_message: Optional[str] = None
     stack_trace: Optional[str] = None
     parameters: List[Dict[str, Any]] = Field(default_factory=list)
+    # Execution timing (EXEC-01): see TestCaseDetail. None = not reported.
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    setup_ms: Optional[int] = None
+    call_ms: Optional[int] = None
+    teardown_ms: Optional[int] = None
+    worker_id: Optional[str] = None
+    timing_source: Optional[str] = None
 
 
 class TestCaseProvenanceSection(BaseModel):
@@ -1630,6 +1681,70 @@ class NotificationTransitionPolicyResponse(BaseModel):
     is_default: bool = False
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ── Duration regressions (EXEC-05) ────────────────────────────────────────────
+# ``GET /api/v1/runs/{run_id}/duration-regressions``: the stored
+# ``test_runs.duration_findings`` (``services/duration_regression_service``).
+# Vocabulary fields stay ``str`` -- a strict enum over a stored JSON value
+# 422s silently when the producer grows a value.
+
+
+class DurationSpikeResponse(BaseModel):
+    """A PASSED test slower than its Welford baseline (>= 3 sigma, >= 10 samples)."""
+    test_fingerprint: str
+    test_name: Optional[str] = None
+    suite_name: Optional[str] = None
+    observed_ms: int
+    baseline_mean_ms: float
+    baseline_stddev_ms: float = 0.0
+    baseline_p95_ms: float = 0.0
+    sample_count: int = 0
+    sigma: float
+    delta_ms: Optional[int] = None
+    ratio: Optional[float] = None
+    previous_ms: Optional[int] = None
+    #: The previous run of the test was already this slow (no notification).
+    was_slow_before: bool = False
+    new: bool = False
+
+
+class SuiteDurationRegressionResponse(BaseModel):
+    """A suite whose median over its last 5 runs is >= 1.5x the 20 before."""
+    suite_name: Optional[str] = None
+    suite_key: str
+    metric: str = "summed"  # "wall" | "summed"
+    ratio: Optional[float] = None
+    recent_median_ms: Optional[float] = None
+    baseline_median_ms: Optional[float] = None
+    recent_runs: int = 0
+    baseline_runs: int = 0
+    observed_ms: Optional[int] = None
+    was_slow_before: bool = False
+    new: bool = False
+
+
+class DurationRegressionsResponse(BaseModel):
+    """A run's duration regressions. ``measured: false`` + ``reason`` when
+    neither check could be made -- never an empty list read as "no
+    regressions". ``stored: false`` = computed at read time for a run that
+    was not evaluated on ingest (nothing was written)."""
+    run_id: uuid.UUID
+    schema_version: int = 1
+    measured: bool
+    reason: Optional[str] = None
+    stored: bool = False
+    evaluated_at: Optional[datetime] = None
+    spikes: List[DurationSpikeResponse] = Field(default_factory=list)
+    spike_count: int = 0
+    suites: List[SuiteDurationRegressionResponse] = Field(default_factory=list)
+    suite_regression_count: int = 0
+    #: ``{measured, reason, considered, judged, history, required_history, sigma}``
+    test_check: dict[str, Any] = Field(default_factory=dict)
+    #: ``{measured, reason, evaluated, history, required_history, recent_runs, baseline_runs, ratio}``
+    suite_check: dict[str, Any] = Field(default_factory=dict)
+    #: Fingerprints / suite keys this run's "became slower" message named.
+    notified: dict[str, Any] = Field(default_factory=dict)
 
 
 # ── Agent Pipeline Schemas ─────────────────────────────────────
@@ -3067,6 +3182,55 @@ class LiveEvent(BaseModel):
     # Client-side unix epoch ms — preserved for ordering; falls back to server time if absent
     timestamp_ms: Optional[int] = None
     metadata: Optional[dict] = None
+    # EXEC-01: optional execution timing on a ``test_result``. The server stores ``timestamp_ms`` as the test's
+    # finish and ``started_at_ms`` (or a ``test_start`` of the same test in the same batch) as its start, both
+    # bounded against the session's server-side clock. A value the server cannot use is dropped, never a 422:
+    # a bad timing figure must not cost the batch its results. Unset, they are left out of ``model_dump()``, so an
+    # event without timing keeps exactly the stored payload — and batch-admission digest — it had before.
+    started_at_ms: Optional[int] = Field(
+        None,
+        description="Client epoch ms when the test started (its setup included), sent on test_result.",
+        exclude_if=lambda value: value is None,
+    )
+    setup_ms: Optional[int] = Field(
+        None,
+        description="Fixture / before-hook time of this test, ms (0..24 h).",
+        exclude_if=lambda value: value is None,
+    )
+    call_ms: Optional[int] = Field(
+        None,
+        description="The test body's own time, ms (0..24 h).",
+        exclude_if=lambda value: value is None,
+    )
+    teardown_ms: Optional[int] = Field(
+        None,
+        description="Fixture / after-hook time of this test, ms (0..24 h).",
+        exclude_if=lambda value: value is None,
+    )
+    worker_id: Optional[str] = Field(
+        None,
+        description="The parallel worker / runner slot that ran the test (at most 64 characters).",
+        exclude_if=lambda value: value is None,
+    )
+
+    @field_validator("started_at_ms", "setup_ms", "call_ms", "teardown_ms", mode="before")
+    @classmethod
+    def _usable_ms_or_none(cls, value: Any, info: Any) -> Optional[int]:
+        if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        if value != value or value in (float("inf"), float("-inf")):  # NaN / infinity
+            return None
+        ms = int(round(value))
+        upper = 9_007_199_254_740_991 if info.field_name == "started_at_ms" else 86_400_000
+        return ms if 0 <= ms <= upper else None
+
+    @field_validator("worker_id", mode="before")
+    @classmethod
+    def _worker_text_or_none(cls, value: Any) -> Optional[str]:
+        if value is None or isinstance(value, bool) or not isinstance(value, (str, int)):
+            return None
+        text = str(value).strip()[:64]
+        return text or None
 
 
 class LiveEventBatch(_NulFreeInput):
@@ -3159,6 +3323,14 @@ class IngestTestResult(BaseModel):
     stack_trace: Optional[str] = None
     tags: Optional[List[str]] = None
     metadata: Optional[Dict[str, Any]] = None
+    # EXEC-01: optional execution timing. The write side bounds the values and
+    # parses ISO text, so a value the store cannot hold becomes NULL.
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    setup_ms: Optional[int] = Field(None, ge=0)
+    call_ms: Optional[int] = Field(None, ge=0)
+    teardown_ms: Optional[int] = Field(None, ge=0)
+    worker_id: Optional[str] = Field(None, max_length=64)
 
 
 class IngestPayload(_NulFreeInput):
@@ -4127,7 +4299,12 @@ class PolicyRule(BaseModel):
     """A single rule within a release gate policy."""
     id: str = Field(..., min_length=1, max_length=100)
     name: str = Field(..., min_length=1, max_length=255)
-    type: str  # flaky_recurrence | open_defect_limit | dimension_ceiling | override_rules
+    # flaky_recurrence | open_defect_limit | dimension_ceiling | override_rules
+    # | perf_regression (EXEC-05, opt-in: absent from every policy unless
+    # added; params ``{max_spikes, min_sigma, suite_ratio,
+    # max_suite_regressions, action}`` over the run's stored duration
+    # findings; an unmeasured run never trips it).
+    type: str
     enabled: bool = True
     params: dict = Field(default_factory=dict)
 

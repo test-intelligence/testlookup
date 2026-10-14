@@ -152,6 +152,13 @@ class NotificationEventType(str, PyEnum):
     # from flaky_quarantine_service hook points, same as the two above.
     TEST_QUARANTINE_STALE = "test.quarantine_stale"
     TEST_READY_TO_UNQUARANTINE = "test.ready_to_unquarantine"
+    # ── Duration regressions (EXEC-05) — fire when a test or suite BECOMES
+    # slower than its baseline (the first slow run, not every slow run),
+    # staged by services/duration_regression_service.py. Opt-in: no default
+    # preference subscribes to them. The delivery relay converts every staged
+    # row through this enum, so a value missing here fails its delivery.
+    TEST_NEWLY_SLOW = "test.newly_slow"
+    SUITE_NEWLY_SLOW = "suite.newly_slow"
 
 
 # ── Models ───────────────────────────────────────────────────
@@ -415,7 +422,20 @@ class TestRun(Base):
     # an uninterpretable result was invisible in every breakdown.
     unknown_tests: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     pass_rate: Mapped[Optional[float]] = mapped_column(Float)
+    # The SUM of the run's test durations ("Test time (summed)"), not how long
+    # the run took: parallel tests make it larger than the wall clock below.
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer)
+
+    # Execution wall clock (EXEC-02, migration 0203), written by
+    # ``suite_execution_service.upsert_for_run``. ``timing_source`` says where
+    # the wall clock came from: ``report`` (the report stated it), ``derived``
+    # (the union of the suites' start/finish spans) or ``derived_sum`` (no wall
+    # clock is known; only the summed time exists and ``wall_clock_ms`` stays
+    # NULL). NULL ``timing_source`` = not timed yet (the backfill reaches it).
+    exec_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    exec_finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    wall_clock_ms: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    timing_source: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
 
     # OpenShift metadata
     ocp_pod_name: Mapped[Optional[str]] = mapped_column(String(255))
@@ -440,6 +460,15 @@ class TestRun(Base):
     # runs whose archive has been purged after the 15-day window.
     event_archive: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
     event_archive_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Duration regressions of this run (EXEC-05, migration 0204):
+    # ``{measured, reason, spikes[], suites[], ...}`` written once by
+    # ``duration_regression_service.evaluate_duration_regressions``. NULL means
+    # "not evaluated" (a run from before the column, or a finalize that has not
+    # reached the step), never "no regressions". Read by the run page, the
+    # release gate's opt-in ``perf_regression`` rule and the nightly baseline
+    # sweep (``baseline_fed_through``: rows it must not feed twice).
+    duration_findings: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
 
     start_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     end_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
@@ -733,6 +762,12 @@ class TestCase(Base):
             "ix_test_cases_assignee_triage",
             "assigned_to_user_id", "triage_status",
         ),
+        # "Slowest N tests of this run" and the run timing breakdown without
+        # sorting the whole run (migration 0202, built CONCURRENTLY).
+        Index(
+            "ix_test_cases_run_duration",
+            "test_run_id", text("duration_ms DESC NULLS LAST"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -835,6 +870,20 @@ class TestCase(Base):
     # from a sparse/malformed report. It is non-null so clients never need to
     # infer presence from the legacy nullable ``step_count`` field.
     steps_present: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+
+    # ── Execution timing (migration 0202, EXEC-01) ──────────────────
+    # What the report (or live stream) said about WHEN the test ran; every
+    # column NULL when the format does not carry it (JUnit, xUnit). UTC.
+    # ``duration_ms`` keeps its meaning: the total the framework reported.
+    # ``timing_source`` is ``report`` | ``derived`` | ``live``
+    # (``app.services.report_timings.TIMING_SOURCES``).
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    setup_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    call_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    teardown_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    worker_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    timing_source: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
 
     # S3 reference
     minio_s3_prefix: Mapped[Optional[str]] = mapped_column(String(1000))
@@ -952,6 +1001,68 @@ class SuiteRunReview(Base):
 
 
 SUITE_REVIEW_STATES = ("pending", "confirmed", "acknowledged", "review_later")
+
+
+class SuiteExecution(Base):
+    """How long one suite of one run took (EXEC-02, migration 0203).
+
+    One row per run per EFFECTIVE suite (``analytics_scope.effective_suite_sql``),
+    keyed by ``suite_key`` = ``run_compare_service.normalize_suite_name`` of it,
+    so a re-finalize or a live re-drain upserts the same row. Written by
+    ``suite_execution_service.upsert_for_run`` and the one-shot backfill.
+
+    ``summed_ms`` is the sum of the suite's test durations; ``wall_ms`` is how
+    long it took on the clock, from ``source``: ``report`` (the report stated
+    it), ``derived`` (earliest case start to latest case finish) or
+    ``derived_sum`` (no wall clock known: ``wall_ms`` and ``parallelism`` stay
+    NULL rather than repeat the sum). ``setup_ms`` / ``teardown_ms`` are
+    suite-level fixtures (before-all / after-all) as the report states them.
+    ``run_created_at`` and ``branch`` are copied from the run because derived
+    rows have no ``started_at`` and history reads window on the run's time.
+    Deleted with its run (CASCADE).
+    """
+    __tablename__ = "suite_executions"
+    __table_args__ = (
+        UniqueConstraint("test_run_id", "suite_key", name="uq_suite_executions_run_suite"),
+        Index("ix_suite_executions_project_suite_run", "project_id", "suite_key", "run_created_at"),
+        Index("ix_suite_executions_test_run_id", "test_run_id"),
+        CheckConstraint(
+            "source IN ('report', 'derived', 'derived_sum')", name="ck_suite_executions_source"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    test_run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    suite_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    suite_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    wall_ms: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    summed_ms: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    setup_ms: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    teardown_ms: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    test_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # Tests carrying both a start and a finish (the ones a derived wall clock spans).
+    timed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    passed: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    broken: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    skipped: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    unknown: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # summed_ms / wall_ms, 2 places; NULL when the wall clock is unknown.
+    parallelism: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    run_created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    branch: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), onupdate=func.now(), server_default=func.now()
+    )
 
 
 class TestExecutionReview(Base):
