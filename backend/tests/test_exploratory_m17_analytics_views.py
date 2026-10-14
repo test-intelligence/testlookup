@@ -270,5 +270,11 @@ def test_file_and_unified_ingestion_invalidate_analytics_only_after_commit():
         assert commit < invalidate
 
     terminal_activation = unified_source.index("await _activate_finalize_children")
-    assert unified_source.count("await invalidate_analytics_cache") == 2
+    # Three: after step 1's commit; EXEC-02's, only once the isolated suite_executions
+    # step has committed its rows (the call sits under `if await _run_isolated(...)`,
+    # which is True only after that step's own commit); and the terminal one.
+    assert unified_source.count("await invalidate_analytics_cache") == 3
+    suite_step = unified_source.index('if await _run_isolated(\n        "suite_executions"')
+    middle = unified_source.index("await invalidate_analytics_cache", unified_source.index("await invalidate_analytics_cache") + 1)
+    assert suite_step < middle < unified_source.index("evaluate_duration_regressions")
     assert terminal_activation < unified_source.rindex("await invalidate_analytics_cache")
