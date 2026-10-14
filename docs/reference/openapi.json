@@ -20009,6 +20009,18 @@
             "title": "Conditions For Go",
             "type": "array"
           },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
           "dimension_scores": {
             "default": [],
             "items": {
@@ -20222,6 +20234,18 @@
             "default": false,
             "title": "Synthesized",
             "type": "boolean"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
           }
         },
         "required": [
@@ -63017,9 +63041,45 @@
     },
     "/api/v1/scoring-model": {
       "get": {
-        "description": "Return the current risk scoring model.\n\nResponse shape:\n{\n  \"version\": 1,\n  \"go_threshold\": 20,\n  \"no_go_threshold\": 55,\n  \"dimensions\": [\n    { \"name\": \"user_impact\", \"weight\": 0.25, \"description\": \"...\" },\n    ...\n  ]\n}",
+        "description": "Return the risk scoring model.\n\nResponse shape:\n{\n  \"version\": 1,\n  \"go_threshold\": 20,\n  \"no_go_threshold\": 55,\n  \"dimensions\": [\n    { \"name\": \"user_impact\", \"weight\": 0.25, \"description\": \"...\" },\n    ...\n  ]\n}\n\nScoped (``project_id`` or ``run_id``), it adds ``pass_rate_minimum``,\n``pass_rate_hard_floor_factor`` and ``policy`` =\n``{policy_id, name, version, level}`` where ``level`` is ``project``,\n``system`` or ``hardcoded`` (no active policy: config defaults).",
         "operationId": "get_scoring_model_api_v1_scoring_model_get",
         "parameters": [
+          {
+            "description": "Return the model this project's verdict applies (its active release-gate policy's thresholds and weights). 403 without access.",
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Return the model this project's verdict applies (its active release-gate policy's thresholds and weights). 403 without access.",
+              "title": "Project Id"
+            }
+          },
+          {
+            "description": "As project_id, for the run's project. 404 for a run you cannot read.",
+            "in": "query",
+            "name": "run_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "As project_id, for the run's project. 404 for a run you cannot read.",
+              "title": "Run Id"
+            }
+          },
           {
             "in": "header",
             "name": "X-API-Key",
@@ -63480,7 +63540,7 @@
     },
     "/api/v1/search/index-status": {
       "get": {
-        "description": "Return collection health within the caller's active project scope.",
+        "description": "Return the semantic (ChromaDB) index's health within the caller's active project scope.\n\n``status``: ``healthy`` (with ``document_count`` and ``last_indexed_at``),\n``not_configured`` (no ChromaDB server answers at the configured address,\ne.g. a ``make dev`` stack without the ``local-llm`` profile) or\n``unavailable`` (a server answered but the read failed). The index holds\ntest cases only; global search is keyword over every entity either way.",
         "operationId": "get_index_status_api_v1_search_index_status_get",
         "parameters": [
           {
@@ -72670,7 +72730,7 @@
     },
     "/api/v1/value-metrics/export": {
       "get": {
-        "description": "Export value metrics as a downloadable JSON report.",
+        "description": "Export value metrics as a downloadable JSON report.\n\nHON-04: the scope is ``resolve_project_scope``'s, as on ``/by-team``. A\nproject the caller cannot read is a 403. It used to be a 200 carrying a\none-key ``{\"report_type\": \"value_metrics\"}`` stub, which the browser saved\nas if it were the report. A non-admin who names no project is refused\ntoo: the unpinned export is the every-project aggregate, which spans\ntenants, so only an admin may take it.",
         "operationId": "export_metrics_api_v1_value_metrics_export_get",
         "parameters": [
           {

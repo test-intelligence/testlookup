@@ -21477,6 +21477,18 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Conditions For Go",
       "type": "array"
     },
+    "created_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Created At"
+    },
     "dimension_scores": {
       "default": [],
       "items": {
@@ -21690,6 +21702,18 @@ These are the full generated JSON Schema definitions, including required fields,
       "default": false,
       "title": "Synthesized",
       "type": "boolean"
+    },
+    "updated_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Updated At"
     }
   },
   "required": [
