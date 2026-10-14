@@ -91,14 +91,14 @@ Every group has `--help`, for example `testlookup upload file --help`.
 | `doctor` | (none; run `testlookup doctor`) | One-shot setup check: profile, server reachability and build, credentials |
 | `health` | (none; run `testlookup health`) | Server readiness from `GET /health/ready`, with per-dependency detail |
 | `projects` | `list`, `get <project-id>` | List accessible projects, show one project |
-| `runs` | `list`, `get <run-id>` | List runs (`--project`, `--status`, `--page`, `--size`), show one run |
+| `runs` | `list`, `get <run-id>`, `timing <run-id>` | List runs (`--project`, `--status`, `--page`, `--size`), show one run; how long a run took and where the time went (see [Execution time](#execution-time)) |
 | `tests` | `list <run-id>`, `get <run-id> <test-id>` | List a run's test cases (`--status`, `--suite`, `--page`, `--size`); show one test case, with `--show-steps` to summarise its step tree |
 | `search` | (none; run `testlookup search "<query>"`) | Global search across tests, runs, suites, defects and more (`--types`, `--project`) |
 | `intelligence` | `show <run-id>`, `refresh <run-id>` | Run intelligence summary (status, pass rate, release recommendation, executive summary); force a refresh |
 | `deep` | `start`, `status`, `clusters`, `findings` (each takes `<run-id>`) | Queue a deep investigation, check its pipeline status, list failure clusters and findings |
 | `reports` | `pdf <run-id>`, `share <run-id>` | Download a PDF report (`--out`, `--layout executive\|engineering`); create a time-limited share link (`--expires` 1-30 days) |
 | `reviews` | `list <project-id>`, `accept <review-id>`, `reject <review-id>` | Human review of AI-generated reports: list the queue (`--state`, `--limit`), accept (`--notes`), reject (`--reason`, `--notes`) |
-| `analytics` | `trends`, `chart` | The chart data the UI draws, as a table, CSV or JSON (see [Chart data](#chart-data)) |
+| `analytics` | `trends`, `chart`, `execution` | The chart data the UI draws, as a table, CSV or JSON (see [Chart data](#chart-data)); a project's execution time per suite and its duration regressions (see [Execution time](#execution-time)) |
 | `keys` | `create`, `list`, `revoke <key-id>` | Create a personal API key (`--name`), list keys, revoke one (`--yes` skips the prompt) |
 | `upload` | `file <path>`, `dir <directory>` | Upload one report file, or every `.xml`, `.json` and `.trx` file in a directory (see [Uploading results](#uploading-results)) |
 | `ci-verdict` | (top-level command) | Quarantine-aware CI gate: exit 0 when every failure in a run is quarantined (see [Gating CI with ci-verdict](#gating-ci-with-ci-verdict)) |
@@ -220,11 +220,47 @@ but its pass-rate trend card reads `/metrics/trends`, which counts every run
 that touched a suite whole, so under `--suite` that card and these commands
 differ. The server allows 120 chart-data requests a minute per user.
 
+## Execution time
+
+```bash
+testlookup runs timing "$RUN_ID"                         # KPI line, suites, the 10 slowest tests, regressions
+testlookup runs timing "$RUN_ID" --slowest 25 --json     # the REST body
+testlookup runs timing "$RUN_ID" --fail-on-regression    # CI: exit 7 when the run got slower
+testlookup analytics execution --project "$PROJECT_ID" --days 30 --branch main --suite checkout
+```
+
+`runs timing` reads `GET /api/v1/runs/{run_id}/timing` and prints a line such
+as `Wall clock 9.0 s · Test time 17.4 s · Parallelism 1.9×`: the wall clock is
+how long the run took on the clock, the test time is the sum of the test
+durations, and parallelism is their ratio. Then the setup / test body /
+teardown totals, the suites, the slowest `--slowest` tests (default 10, 1-100)
+against their duration baselines, and the run's duration regressions (tests
+slower than their baseline, suites slower than their history).
+
+`analytics execution` reads `GET /api/v1/analytics/execution-metrics`, the
+endpoint the UI's Trends > Execution time and MCP's `get_execution_metrics`
+read. It needs `--project` and takes `--days` (default 30, compared with the
+window of the same length before it), `--branch`, `--top` (1-100) and the
+repeatable `--release` and `--suite`. It prints the totals, wall clock and
+test time p50/p95 per suite with their change, the suite and test duration
+regressions, and the slowest tests by p95.
+
+A figure the test report did not carry is `not reported` (or `-` in a table),
+never 0: a JUnit file has no timestamps, so a JUnit run has a test time but no
+wall clock. A block the server could not judge prints its reason ("not enough
+history (4 of 10)"). Both commands take `--json` (or `-o json`) for the REST
+body. Slowness never changes the exit code unless you pass
+`--fail-on-regression`, which exits `7` when the run has at least one
+duration regression and `0` otherwise, including when the run could not be
+judged (that is printed as a warning). The per-test CSV is the API's
+`GET /api/v1/runs/{run_id}/timing.csv` (the Timing tab's Export CSV).
+
 ## Output and exit codes
 
 Commands that print data take `-o`/`--output`: `table` (default) or `json`, and
 most also accept `yaml`. Exceptions: `reports pdf` uses `-o` for the output
-file path, `analytics` takes `table|csv|json`, and `intelligence refresh`,
+file path, `analytics trends` and `analytics chart` take `table|csv|json`,
+`runs timing` and `analytics execution` take `table|json` (or `--json`), and `intelligence refresh`,
 `deep start` and `keys revoke` print only a confirmation. Errors and warnings
 go to stderr, so `-o json | jq` sees only the JSON document.
 
@@ -243,6 +279,7 @@ Apart from `ci-verdict` (above), failures map to stable exit codes:
 | `4` | Permission denied (HTTP 403) |
 | `5` | Not found (HTTP 404) |
 | `6` | Timed out (HTTP 408/504, or a client-side timeout) |
+| `7` | `runs timing --fail-on-regression` only: the run has duration regressions |
 
 ## CI context and commit ranges
 

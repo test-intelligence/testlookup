@@ -1,10 +1,16 @@
-"""Tools: list_test_runs, get_run_details, list_test_cases, get_test_case."""
+"""Tools: list_test_runs, get_run_details, list_test_cases, get_test_case,
+get_test_step_flips, get_run_timing."""
 
 from __future__ import annotations
 
 from typing import Optional
 
 import client as api  # type: ignore[import]
+import execution_format  # type: ignore[import]
+
+#: ``get_run_timing``: slowest tests listed by default, and the route's cap.
+RUN_TIMING_DEFAULT_SLOWEST = 10
+RUN_TIMING_MAX_SLOWEST = 100
 
 _STATUS_EMOJI = {
     "PASSED": "✅",
@@ -362,3 +368,55 @@ def register(mcp) -> None:  # noqa: ANN001
         if not isinstance(payload, dict):
             return "No step-flip report available for this test."
         return _render_step_flips(payload)
+
+    @mcp.tool()
+    async def get_run_timing(run_id: str, slowest: int = RUN_TIMING_DEFAULT_SLOWEST) -> dict:
+        """
+        How long ONE test run took and where the time went: its wall clock
+        (how long it took on the clock), its test time (the sum of the test
+        durations) and their ratio, the parallelism; setup / test body /
+        teardown totals; each suite's wall clock and test time; the slowest
+        tests against their duration baselines; and the run's duration
+        regressions (tests slower than their baseline, suites slower than
+        their history). Read-only.
+
+        Returns {ok, summary, has_duration_regressions, timing}: `summary` is
+        compact markdown, `timing` the REST body of
+        GET /api/v1/runs/{run_id}/timing (the waterfall's bars left out).
+        Reading it: a null figure means the test report did not carry it --
+        "not reported", NEVER 0 (a JUnit run has no timestamps, so no wall
+        clock and no parallelism). A block with `measured: false` says why in
+        `reason`; do not read it as "nothing got slower". Durations are
+        milliseconds. For a project's trend over many runs, per suite, use
+        `get_execution_metrics`.
+
+        Errors come back as {ok: false, status_code, detail}: an unknown run,
+        or one you cannot read, is a 404.
+
+        Args:
+            run_id: Test run UUID (from list_test_runs).
+            slowest: How many slowest tests to list (1-100, default 10).
+        """
+        slowest = max(1, min(int(slowest), RUN_TIMING_MAX_SLOWEST))
+        try:
+            body = await api.get(
+                f"/api/v1/runs/{run_id}/timing",
+                params={"slowest": slowest, "timeline_limit": 1},
+            )
+        except Exception as exc:
+            return api.error_payload(exc)
+        if not isinstance(body, dict):
+            return {"ok": False, "error": "unexpected response from the timing endpoint"}
+        timing = {key: value for key, value in body.items() if key != "timeline"}
+        timeline = body.get("timeline") if isinstance(body.get("timeline"), dict) else {}
+        timing["timeline"] = {
+            key: timeline.get(key) for key in ("measured", "reason", "total", "origin", "end")
+        }
+        return {
+            "ok": True,
+            "summary": execution_format.run_timing_markdown(body),
+            "has_duration_regressions": execution_format.has_duration_findings(
+                body.get("duration_findings")
+            ),
+            "timing": timing,
+        }

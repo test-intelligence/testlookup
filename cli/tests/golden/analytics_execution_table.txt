@@ -1,0 +1,31 @@
+Execution time, last 30 days · branch main
+Runs 40 · Wall clock 6 min 0 s (25 of 40 runs) · Test time 11 min 40 s · Parallelism 1.9×
+
+                                                     Suites
+┏━━━━━━━━━┳━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━┓
+┃Suite    ┃ Runs ┃ Wall p50 ┃ Wall p95 ┃ Wall p50 change ┃ Test time p50 ┃ Test time p95 ┃ Test time p50 change┃
+┡━━━━━━━━━╇━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━┩
+│Checkout │   20 │    5.0 s │    6.1 s │          +12.5% │         9.0 s │         9.9 s │               +12.5%│
+│Cart     │   20 │        - │        - │               - │        800 ms │        950 ms │                    -│
+└─────────┴──────┴──────────┴──────────┴─────────────────┴───────────────┴───────────────┴─────────────────────┘
+         - = not reported by the test report · change is against the previous window of the same length
+
+                             Suite regressions (1)
+┏━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━┓
+┃Suite    ┃ Branch ┃ Metric     ┃ Recent median ┃ Baseline median ┃ Ratio ┃ New┃
+┡━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━┩
+│Checkout │ main   │ wall clock │        10.0 s │           5.0 s │  2.0× │ yes│
+└─────────┴────────┴────────────┴───────────────┴─────────────────┴───────┴────┘
+            median of the last 5 runs vs the 20 before, same branch
+
+Test regressions: not measured (no test in this project has a duration baseline of at least 10 samples)
+
+                   Slowest 1 test (by p95)
+┏━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━┳━━━━━━━┳━━━━━━━┳━━━━━━┓
+┃Test               ┃ Suite    ┃ Runs ┃   p50 ┃   p95 ┃   Max┃
+┡━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━╇━━━━━━━╇━━━━━━━╇━━━━━━┩
+│checkout::test_pay │ Checkout │    6 │ 1.7 s │ 1.8 s │ 1.8 s│
+└───────────────────┴──────────┴──────┴───────┴───────┴──────┘
+
+Project: Checkout · Release: All releases · Test Suite: All suites · Window: 2026-09-15 – 2026-10-14 UTC (30 days) ·
+Generated: 2026-10-14 10:00 UTC

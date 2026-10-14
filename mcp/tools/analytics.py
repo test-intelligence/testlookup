@@ -1,10 +1,13 @@
 """Tools: get_flaky_tests, get_failure_categories, get_top_failing_tests,
-get_coverage_report, get_defects, get_ai_analysis_summary, get_chart_data.
+get_coverage_report, get_defects, get_ai_analysis_summary, get_chart_data,
+get_execution_metrics.
 
 The leaderboard tools answer project-wide. ``get_chart_data`` (VIZ-211) is the
 one that takes a release and a suite: it reads ``/api/v1/analytics/chart-data``
 with the REST parameter names, so an agent, the CLI and the UI's charts get the
-same series for the same scope.
+same series for the same scope. ``get_execution_metrics`` (EXEC-06) does the
+same for execution time: ``/api/v1/analytics/execution-metrics``, the endpoint
+the UI's Trends > Execution time and ``testlookup analytics execution`` read.
 """
 
 from __future__ import annotations
@@ -14,6 +17,7 @@ from typing import Any, Optional
 import httpx
 
 import client as api  # type: ignore[import]
+import execution_format  # type: ignore[import]
 
 _CATEGORY_ICON = {
     "PRODUCT_BUG": "🐛",
@@ -51,6 +55,9 @@ CHART_METRICS: tuple[str, ...] = (
     "skipped",
     "unique_tests",
     "unknown",
+    "wall_clock_p50",
+    "wall_clock_p95",
+    "wall_clock_total",
 )
 
 #: The ``group_by`` values chart-data accepts (``chart_data_service.DIMENSIONS``).
@@ -434,7 +441,14 @@ def register(mcp) -> None:  # noqa: ANN001
             metric: What to measure (default executions). One of: broken,
                 duration_p50, duration_p95, duration_total, executions, failed,
                 failure_rate, failures, flaky_tests, pass_rate, passed,
-                retried_tests, run_count, skipped, unique_tests, unknown.
+                retried_tests, run_count, skipped, unique_tests, unknown,
+                wall_clock_p50, wall_clock_p95, wall_clock_total.
+                The three wall_clock_* metrics are how long whole RUNS took
+                on the clock (ms; a run that did not report one is left out,
+                never counted as 0). They are run-level only, not per suite:
+                group_by suite, status, failure_category or test, or any
+                suite_name, is refused with 422 run_only_metric. For a
+                suite's wall clock use get_execution_metrics.
             project_id: Project UUID. Omit for every project you can read.
             release_id: Release UUIDs, or "unattributed" for runs no release
                 claims (OR, at most 20).
@@ -469,3 +483,68 @@ def register(mcp) -> None:  # noqa: ANN001
             return await api.get("/api/v1/analytics/chart-data", params=params)
         except Exception as exc:
             return _analytics_error(exc)
+
+    @mcp.tool()
+    async def get_execution_metrics(
+        project_id: str,
+        days: int = 30,
+        suite_name: Optional[list[str]] = None,
+        release_id: Optional[list[str]] = None,
+        branch: Optional[str] = None,
+        top: Optional[int] = None,
+    ) -> dict:
+        """
+        How long a project's test runs and suites take, and what got slower:
+        wall clock (how long runs took on the clock) and test time (the sum of
+        test durations) per suite as p50/p95 for this window against the
+        previous window of the same length, suites whose recent runs got
+        slower (median of the last 5 runs vs the 20 before, same branch),
+        tests slower than their duration baseline, the slowest tests by p95,
+        and a histogram of test durations. Use it for "how long does the
+        checkout suite take?" or "what got slower this week?" (pass
+        suite_name=["checkout"]). Read-only.
+
+        Returns {ok, summary, metrics}: `summary` is compact markdown,
+        `metrics` the REST body of GET /api/v1/analytics/execution-metrics
+        verbatim (with `meta`). Reading it: a null figure means the test
+        reports did not carry it -- "not reported", NEVER 0 (JUnit reports
+        have no timestamps, so their suites have a test time but no wall
+        clock). A block with `measured: false` says why in `reason` ("not
+        enough history (7 of 15)"); do not read it as "nothing got slower".
+        Durations are milliseconds, `*_change_pct` percent. A project you
+        cannot read answers the empty shape (measured: false), never its data.
+        For one run's breakdown use `get_run_timing`.
+
+        Args:
+            project_id: Project UUID (required: one project).
+            days: Window in days ending now, UTC (1-365, default 30).
+            suite_name: Suite names, matched case-insensitively (OR, at most
+                50). Narrows every block to those suites.
+            release_id: Release UUIDs, or "unattributed" (OR, at most 20).
+            branch: Only runs of this branch (exact). Omit for every branch.
+            top: Rows in each regressions list and the slowest tests (1-100,
+                default 20).
+
+        Errors come back as {ok: false, status_code, detail} plus `code`,
+        `param` and `allowed` from the server (a 422 names the parameter and
+        what it accepts), and `retry_after` on a 429.
+        """
+        params = {
+            "project_id": project_id,
+            "days": days,
+            "suite_name": suite_name,
+            "release_id": release_id,
+            "branch": branch,
+            "top": top,
+        }
+        try:
+            body = await api.get("/api/v1/analytics/execution-metrics", params=params)
+        except Exception as exc:
+            return _analytics_error(exc)
+        if not isinstance(body, dict):
+            return {"ok": False, "error": "unexpected response from the execution-metrics endpoint"}
+        return {
+            "ok": True,
+            "summary": execution_format.execution_metrics_markdown(body),
+            "metrics": body,
+        }
