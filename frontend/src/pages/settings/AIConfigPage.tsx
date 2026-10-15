@@ -80,8 +80,9 @@ const FAITHFULNESS_EVALUATORS: { value: RagFaithfulnessEvaluator; label: string;
     value: 'ragas',
     label: 'Ragas',
     desc:
-      'The Ragas faithfulness metric. It calls the hosted LLM Ragas is set up with, outside this ' +
-      'deployment’s LLM cost cap. Needs offline mode off and the ragas package installed.',
+      'The Ragas faithfulness metric, judged by the configured LLM provider. It makes several calls ' +
+      'per case, each counted against the project’s LLM cost cap. Needs offline mode off and the ' +
+      'ragas package (an image built with INSTALL_RAGAS=1).',
   },
 ]
 
@@ -94,11 +95,14 @@ function evaluatorOverrideNote(form: AIConfigUpdate, config: AIConfigRead): stri
   if ((form.rag_faithfulness_evaluator ?? config.rag_faithfulness_evaluator) !== 'ragas') return null
   if (form.ai_offline_mode ?? config.ai_offline_mode) {
     return config.ai_offline_mode_env_pinned
-      ? 'Offline mode is pinned on by AI_OFFLINE_MODE, so the single-prompt judge runs: Ragas calls a hosted LLM.'
-      : 'With offline mode on, the single-prompt judge runs: Ragas calls a hosted LLM. Ragas applies once offline mode is off.'
+      ? 'Offline mode is pinned on by AI_OFFLINE_MODE, so the single-prompt judge runs: Ragas stays off offline.'
+      : 'With offline mode on, the single-prompt judge runs: Ragas stays off offline. Ragas applies once offline mode is off.'
   }
   if (config.rag_faithfulness_evaluator_reason === 'ragas_not_installed') {
-    return 'The ragas package is not installed in this deployment’s backend, so the single-prompt judge runs.'
+    return (
+      'The ragas package is not installed in this deployment’s backend, so the single-prompt judge runs. ' +
+      'Build the backend image with INSTALL_RAGAS=1 to add it.'
+    )
   }
   return null
 }

@@ -1,0 +1,28 @@
+# Optional: the Ragas RAG-faithfulness evaluator (Settings > AI Configuration).
+#
+# NOT installed by default. Build the backend image with
+#   --build-arg INSTALL_RAGAS=1
+# or, outside Docker, `pip install -r requirements-ragas.txt` after
+# requirements.txt. Without it, a stored "ragas" runs the single-prompt judge
+# and the settings page reports `ragas_not_installed`.
+#
+# Ragas judges with the LLM configured in Settings > AI, through get_llm(): the
+# provider allowlist and the per-project cost cap apply. Its usage telemetry is
+# switched off at run time (RAGAS_DO_NOT_TRACK). It never runs in offline mode,
+# so the air-gapped bundle does not need it.
+#
+# Constrained by requirements.txt: the shared packages keep the versions the
+# backend is tested with (langchain-core stays on 0.3.x). The app uses the
+# per-sample metric API from ragas 0.2; `ragas.metrics.Faithfulness` is
+# deprecated in 0.4 and goes in 1.0, hence the pin.
+#
+# Open advisories with no fixed release (Trivy runs --ignore-unfixed):
+#   ragas      CVE-2026-6587   SSRF in the multi-modal faithfulness collections
+#                              module; the app uses the text Faithfulness metric.
+#   diskcache  CVE-2025-69872  pickle load from a writable cache directory;
+#                              only ragas's DiskCacheBackend imports it, and
+#                              the app gives ragas no cache.
+-c requirements.txt
+ragas==0.4.3
+datasets==5.1.0
+langchain-community==0.3.27

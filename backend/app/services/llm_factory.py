@@ -12,6 +12,8 @@ import time
 from typing import TYPE_CHECKING, Any, Optional
 
 from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables import Runnable
 
 from app.core.config import settings
@@ -619,6 +621,11 @@ class BudgetedLLM:
         model into a chain (``create_react_agent``, ``prompt | llm``)."""
         return BudgetedRunnable(self)
 
+    def as_chat_model(self) -> "BudgetedChatModel":
+        """This wrapper as a LangChain ``BaseChatModel``, for a library that
+        drives the model through ``agenerate_prompt`` (Ragas)."""
+        return BudgetedChatModel(budgeted=self)
+
     def bind_tools(self, *args, **kwargs):
         """Tool binding that stays inside the gates.
 
@@ -668,6 +675,58 @@ class BudgetedRunnable(Runnable[Any, Any]):
 
     async def ainvoke(self, input: Any, config: Any = None, **kwargs: Any) -> Any:
         return await self._llm.ainvoke(input, **kwargs)
+
+
+class BudgetedChatModel(BaseChatModel):
+    """A ``BudgetedLLM`` that LangChain accepts as a ``BaseChatModel``.
+
+    Ragas's ``LangchainLLMWrapper`` calls ``agenerate_prompt`` on the model it
+    is given. Handed a ``BudgetedLLM``, that name resolves through
+    ``__getattr__`` to the inner provider model: a call with no budget check,
+    cost reservation, circuit breaker or cluster slot. Here every generation
+    is one ``BudgetedLLM.ainvoke`` (``invoke`` when called synchronously), so
+    all of them apply.
+
+    No ``temperature`` or ``n`` field, on purpose: Ragas sets them on the model
+    when it finds them. The judge keeps the Settings > AI temperature, and
+    ``n`` completions arrive as ``n`` separate gated calls.
+    """
+
+    budgeted: Any
+
+    @property
+    def _llm_type(self) -> str:
+        return f"budgeted-{self.budgeted.provider_name}"
+
+    @staticmethod
+    def _call_kwargs(stop: Optional[list[str]], kwargs: dict) -> dict:
+        return {**kwargs, "stop": stop} if stop is not None else dict(kwargs)
+
+    @staticmethod
+    def _result(message: Any) -> ChatResult:
+        if not isinstance(message, BaseMessage):
+            message = AIMessage(content=str(getattr(message, "content", message)))
+        return ChatResult(generations=[ChatGeneration(message=message)])
+
+    def _generate(
+        self,
+        messages: list[BaseMessage],
+        stop: Optional[list[str]] = None,
+        run_manager: Any = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        return self._result(self.budgeted.invoke(messages, **self._call_kwargs(stop, kwargs)))
+
+    async def _agenerate(
+        self,
+        messages: list[BaseMessage],
+        stop: Optional[list[str]] = None,
+        run_manager: Any = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        return self._result(
+            await self.budgeted.ainvoke(messages, **self._call_kwargs(stop, kwargs))
+        )
 
 
 def _budgeted(

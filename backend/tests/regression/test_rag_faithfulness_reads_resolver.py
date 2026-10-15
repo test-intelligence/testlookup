@@ -14,13 +14,11 @@ swallowed:
 
 Its tests patched ``_resolve_backend`` and ``_active_llm_provider`` out, so
 nothing ran the lookup. These drive the real resolver from a stored
-``ai_config`` row. The Ragas tests pin the result read that became reachable
-with the fix: ragas 0.2+ returns an ``EvaluationResult`` with no ``.get``.
+``ai_config`` row. How the Ragas strategy scores, and with which LLM, is
+pinned in test_ragas_judges_with_the_configured_llm.py.
 """
 from __future__ import annotations
 
-import sys
-import types
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -92,67 +90,8 @@ async def test_evaluate_labels_the_stored_provider(stored_ai_config, monkeypatch
 
 @pytest.mark.asyncio
 async def test_stored_offline_override_keeps_ragas_off(stored_ai_config):
-    # The env permits egress; the stored override does not. Ragas calls a
-    # hosted LLM, so the effective flag wins over the evaluator setting.
+    # The env permits egress; the stored override does not. Offline mode keeps
+    # Ragas off, so the effective flag wins over the evaluator setting.
     stored_ai_config({"ai_offline_mode": True, "rag_faithfulness_evaluator": "ragas"})
 
     assert await svc._resolve_backend() == "ollama"
-
-
-# ── Ragas result shapes ───────────────────────────────────────────────────
-
-
-class _EvaluationResult:
-    """ragas 0.2+: no ``.get``; the metric maps to one score per sample."""
-
-    def __init__(self, scores):
-        self._scores = scores
-
-    def __getitem__(self, key):
-        return {"faithfulness": self._scores}[key]
-
-
-@pytest.fixture
-def fake_ragas(monkeypatch):
-    """Install stand-ins for ``ragas`` and ``datasets`` for one test."""
-
-    def _install(result):
-        ragas = types.ModuleType("ragas")
-        ragas.evaluate = MagicMock(return_value=result)
-        metrics = types.ModuleType("ragas.metrics")
-        metrics.faithfulness = object()
-        datasets = types.ModuleType("datasets")
-        datasets.Dataset = MagicMock()
-        monkeypatch.setitem(sys.modules, "ragas", ragas)
-        monkeypatch.setitem(sys.modules, "ragas.metrics", metrics)
-        monkeypatch.setitem(sys.modules, "datasets", datasets)
-
-    return _install
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "result, expected",
-    [
-        (_EvaluationResult([0.8]), 0.8),   # ragas 0.2+
-        ({"faithfulness": 0.6}, 0.6),       # ragas 0.1 dict-like Result
-    ],
-)
-async def test_ragas_score_is_read_from_either_result_shape(fake_ragas, result, expected):
-    fake_ragas(result)
-
-    score, reason = await svc._evaluate_via_ragas("case", ["citation"])
-
-    assert score == pytest.approx(expected)
-    assert reason.startswith("ragas faithfulness metric")
-
-
-@pytest.mark.asyncio
-async def test_ragas_nan_score_fails_closed(fake_ragas):
-    # A failed ragas judgement is NaN; clamped, it would read as 1.0 and pass.
-    fake_ragas(_EvaluationResult([float("nan")]))
-
-    score, reason = await svc._evaluate_via_ragas("case", ["citation"])
-
-    assert score == 0.0
-    assert "no faithfulness score" in reason

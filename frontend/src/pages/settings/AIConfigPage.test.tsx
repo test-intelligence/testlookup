@@ -664,7 +664,21 @@ describe('AIConfigPage — faithfulness evaluator', () => {
 
     const note = await screen.findByTestId('faithfulness-evaluator-note')
     expect(note).toHaveTextContent(/ragas package is not installed/)
+    expect(note).toHaveTextContent('INSTALL_RAGAS=1')
     expect(screen.getByTestId('faithfulness-evaluator-in-use')).toHaveTextContent('In use: Single-prompt judge')
+  })
+
+  it('says Ragas judges with the configured provider, inside the cost cap', async () => {
+    // It used to say "outside this deployment's LLM cost cap": Ragas judged
+    // with its own default model until the backend handed it get_llm()'s.
+    mockGetAIConfig.mockResolvedValue(baseConfig({ rag_faithfulness_gate_enabled: true }))
+    await renderPage()
+    await waitFor(() => expect(judgeRadio()).toBeChecked())
+
+    const option = ragasRadio().closest('label') as HTMLElement
+    expect(option).toHaveTextContent('judged by the configured LLM provider')
+    expect(option).toHaveTextContent('counted against the project’s LLM cost cap')
+    expect(option).not.toHaveTextContent(/outside/i)
   })
 })
 

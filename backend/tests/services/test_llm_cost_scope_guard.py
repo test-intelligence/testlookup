@@ -75,6 +75,12 @@ SCOPED: dict[str, tuple[str, ...]] = {
     "services/rag_faithfulness_service.py::_evaluate_via_ollama": (
         f"{_ENTRY}::test_the_faithfulness_judge_runs_inside_the_cases_project_scope",
     ),
+    # Ragas's calls reach BudgetedLLM through as_chat_model(); the test records
+    # the scope in force at each reservation.
+    "services/rag_faithfulness_service.py::_evaluate_via_ragas": (
+        "tests/regression/test_ragas_judges_with_the_configured_llm.py"
+        "::test_ragas_judges_with_the_configured_provider_inside_the_cost_cap",
+    ),
     "services/retro_digest_service.py::_compose_narrative": (
         f"{_ENTRY}::test_the_retro_narrative_runs_inside_its_projects_scope",
     ),

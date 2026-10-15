@@ -41,9 +41,17 @@ ENV PIP_CERT=/etc/ssl/certs/ca-certificates.crt \
     SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 # Install Python dependencies
-COPY requirements.txt .
+COPY requirements.txt requirements-ragas.txt ./
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
+
+# Optional: the Ragas RAG-faithfulness evaluator (Settings > AI Configuration).
+# Off by default; it adds ~30 packages (pandas, pyarrow, datasets) that every
+# other deployment would carry for nothing. --build-arg INSTALL_RAGAS=1 adds
+# it. Without it, choosing Ragas runs the single-prompt judge and the settings
+# page says why.
+ARG INSTALL_RAGAS=0
+RUN if [ "$INSTALL_RAGAS" = "1" ]; then pip install --no-cache-dir -r requirements-ragas.txt; fi
 
 # ── Development stage ────────────────────────────────────────
 FROM base AS development
