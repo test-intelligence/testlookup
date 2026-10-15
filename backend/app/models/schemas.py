@@ -3940,6 +3940,15 @@ class AIConfigRead(BaseModel):
     ai_timeout_seconds: int
     deep_investigation_enabled: bool
     finetune_enabled: bool
+    # AIC-04 / AIC-01 provenance, same vocabulary as
+    # ai_confidence_threshold_source: "ai_config" (a valid value is stored
+    # here and the runtime obeys it) | "env_default" (the deployment default
+    # is in force). Resolved by ai_config_resolver.stored_or_default, the same
+    # helper the runtime uses, so this page and the runtime cannot disagree.
+    analysis_mode_source: str = "env_default"
+    ai_timeout_seconds_source: str = "env_default"
+    deep_investigation_enabled_source: str = "env_default"
+    finetune_enabled_source: str = "env_default"
     openai_key_set: bool
     google_key_set: bool
     anthropic_key_set: bool = False                   # LP-3: Anthropic/Claude support
@@ -3950,6 +3959,9 @@ class AIConfigRead(BaseModel):
     ml_model_available: bool = False                  # True if a trained ML model exists
     ml_model_accuracy: Optional[float] = None         # last known accuracy (0-1)
     ml_training_sample_count: int = 0                 # total labeled samples available
+    # AIC-05: the training floor (settings.ML_MIN_TRAINING_SAMPLES) so the page
+    # stops hard-coding "/ 200".
+    ml_min_training_samples: int = 200
     # AI-F1 label integrity — honest learning-loop status
     ml_human_label_count: int = 0                     # human-provenance labels (feedback/corrections)
     ml_human_label_floor: int = 50                    # below this, ML is bootstrap (LLM-imitating)
@@ -3973,7 +3985,10 @@ class AIConfigUpdate(BaseModel):
     embedding_provider: Optional[str] = None
     embedding_model: Optional[str] = None
     ai_confidence_threshold: Optional[int] = Field(None, ge=0, le=100)
-    ai_timeout_seconds: Optional[int] = Field(None, ge=30, le=1800)
+    # AIC-02: floor 5 s (was 30) so a short LLM timeout can be set and seen to
+    # degrade to the deterministic fallback; ai_config_resolver.valid_timeout_seconds
+    # accepts the same 5..1800 range.
+    ai_timeout_seconds: Optional[int] = Field(None, ge=5, le=1800)
     deep_investigation_enabled: Optional[bool] = None
     finetune_enabled: Optional[bool] = None
     openai_api_key: Optional[str] = Field(None, max_length=500)
@@ -5987,6 +6002,18 @@ class LlmUsageRead(BaseModel):
     hard_cap_usd: Optional[float] = None
     utilization_pct: Optional[float] = None  # total_cost_usd / hard_cap_usd * 100
     status: Optional[str] = None  # OK | SOFT_WARN | CAPPED
+    # AIC-06 overage (derived, display only; never enforced). None = not
+    # computed: no enabled quota, or no included allowance (included_usd <= 0).
+    overage_rate_usd: Optional[float] = None            # echoed whenever an enabled quota exists
+    covered_usd: Optional[float] = None                 # min(spend, included)
+    overage_usd: Optional[float] = None                 # max(0, spend - included)
+    overage_charge_usd: Optional[float] = None          # overage_usd * overage_rate_usd
+    projected_period_cost_usd: Optional[float] = None   # spend / elapsed_fraction
+    projected_overage_usd: Optional[float] = None       # max(0, projected - included)
+    projected_overage_charge_usd: Optional[float] = None  # projected_overage_usd * rate
+    # "linear_elapsed_days" | "insufficient_elapsed_time" | "no_spend" | None.
+    # Plain str, not a Literal.
+    projection_basis: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -6006,6 +6033,18 @@ class BillingOverviewProject(BaseModel):
     utilization_pct: Optional[float] = None
     status: str  # OK | SOFT_WARN | CAPPED | UNLIMITED
     cap_hits: int
+    # AIC-06: the same derived overage fields as LlmUsageRead (all None for a
+    # project without an enabled quota), plus included_usd, which this model
+    # did not carry before.
+    included_usd: Optional[float] = None
+    overage_rate_usd: Optional[float] = None
+    covered_usd: Optional[float] = None
+    overage_usd: Optional[float] = None
+    overage_charge_usd: Optional[float] = None
+    projected_period_cost_usd: Optional[float] = None
+    projected_overage_usd: Optional[float] = None
+    projected_overage_charge_usd: Optional[float] = None
+    projection_basis: Optional[str] = None
 
 
 class BillingOverviewResponse(BaseModel):

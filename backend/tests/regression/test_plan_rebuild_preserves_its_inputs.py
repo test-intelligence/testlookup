@@ -123,7 +123,36 @@ def test_the_plan_records_the_specialist_flags():
         "change_ownership": True,
         # Not passed by this test, so it records the default — off.
         "defect_commander": False,
+        # W04 AGT-16: deep plans only; default off.
+        "gap_refinement": False,
     }
+
+
+def test_offline_plans_do_not_record_the_gap_refinement_flag():
+    """Written for deep plans only, so offline/live plan hashes stay unchanged."""
+    plan = build_workflow_plan(workflow_type="offline", failed_test_ids=["t1"], analyses={})
+
+    assert "gap_refinement" not in plan["specialist_flags"]
+
+
+@pytest.mark.parametrize("stage", ["gap_detection", "report_refinement"])
+def test_the_gap_refinement_flag_survives_the_rebuild(stage):
+    """W04 AGT-16: without threading it through, the rebuilt plan said the
+    stages were off while they had just run (the #839 shape again)."""
+    on = _entry(_rebuilt(_built(gap_refinement_enabled=True)), stage)
+    off = _entry(_rebuilt(_built(gap_refinement_enabled=False)), stage)
+
+    assert on["planned"] is True, on["rationale"]
+    assert "flag is off" not in on["rationale"]
+    assert off["planned"] is False
+    assert off["rationale"] == "AIQ gap/refinement feature flag is off for this project"
+
+
+def test_the_gap_refinement_flag_participates_in_the_plan_digest():
+    assert (
+        _built(gap_refinement_enabled=True)["plan_sha256"]
+        != _built(gap_refinement_enabled=False)["plan_sha256"]
+    )
 
 
 def test_the_rebuild_preserves_threshold_and_graph_budget():

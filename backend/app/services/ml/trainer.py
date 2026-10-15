@@ -28,9 +28,12 @@ Training pipeline:
   8. If accuracy >= threshold: save model + update metadata (incl. composition)
   9. If accuracy < threshold: keep previous model, log warning
 
-Triggered by:
-  - Celery beat task (nightly at 03:00 UTC)
-  - Manual trigger via POST /api/v1/settings/ai/ml/retrain
+Triggered by (W04 AIC-05; both run the Celery task
+``app.worker.tasks.train_ml_classifier`` through ``services/ml/training_job``):
+  - Celery beat entry ``nightly-ml-classifier-training`` (nightly at 03:10 UTC;
+    skipped when ``ML_RETRAIN_ENABLED`` is false)
+  - Manual trigger via POST /api/v1/settings/ai/ml/retrain (ADMIN; Settings >
+    AI "Train now"; ignores ``ML_RETRAIN_ENABLED``)
 
 Usage:
     from app.services.ml.trainer import train_classifier
@@ -448,6 +451,12 @@ async def _gather_training_data() -> tuple[list[dict], list[str], list[str]]:
     labels: list[str] = []
     provenances: list[str] = []
 
+    # ``test_runs`` has ``start_time``, never ``started_at``. Both queries
+    # selected the run's ``started_at``, Postgres refused them, the ``except`` below
+    # logged it and returned no samples, so every training run on a real
+    # database ended "insufficient_data, have 0" whatever the label count. It
+    # went unseen because the image had no scikit-learn and the trainer had no
+    # caller (W04 AIC-05; tests/integration/test_ml_training_postgres.py).
     try:
         from app.db.postgres import AsyncSessionLocal
         from sqlalchemy import text
@@ -469,7 +478,7 @@ async def _gather_training_data() -> tuple[list[dict], list[str], list[str]]:
                     tr.pass_rate AS run_pass_rate,
                     tr.total_tests,
                     tr.failed_tests AS run_failed_tests,
-                    tr.started_at AS run_started_at
+                    tr.start_time AS run_started_at
                 FROM ai_feedback fb
                 JOIN ai_analysis ai ON ai.id = fb.analysis_id
                 JOIN test_cases tc ON tc.id = fb.test_case_id
@@ -496,7 +505,7 @@ async def _gather_training_data() -> tuple[list[dict], list[str], list[str]]:
                     tr.pass_rate AS run_pass_rate,
                     tr.total_tests,
                     tr.failed_tests AS run_failed_tests,
-                    tr.started_at AS run_started_at
+                    tr.start_time AS run_started_at
                 FROM ai_analysis ai
                 JOIN test_cases tc ON tc.id = ai.test_case_id
                 JOIN test_runs tr ON tr.id = tc.test_run_id

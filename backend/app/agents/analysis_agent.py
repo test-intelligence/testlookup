@@ -27,6 +27,8 @@ import json
 import time
 import uuid
 from datetime import datetime, timezone
+from typing import Any
+
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -102,6 +104,18 @@ def _hash_text(value: object) -> str | None:
 def _hash_json(value: object) -> str:
     payload = json.dumps(value, sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _frozen_model_field(state: dict, key: str, default: Any) -> Any:
+    """``provider``/``model`` from the pipeline's frozen mode snapshot.
+
+    W04 AIC-04: the snapshot records the EFFECTIVE values (Settings > AI over
+    env). A state without one (direct callers, unit harnesses) keeps the env
+    value it always recorded.
+    """
+    resolution = state.get("analysis_mode_resolution") if isinstance(state, dict) else None
+    value = resolution.get(key) if isinstance(resolution, dict) else None
+    return value if isinstance(value, str) and value else default
 
 
 def _metadata_cache_key(tc_ids: list[str]) -> str:
@@ -405,6 +419,10 @@ class AnalysisAgent(BaseAgent):
         retried = 0
         low_confidence = 0
         error_count = 0
+        # W04 AIC-03: the threshold the pipeline froze at start.
+        from app.services.pipeline_ai_scope import state_confidence_threshold
+
+        low_confidence_threshold = state_confidence_threshold(state)[0]
         from app.services.privacy_service import sanitize_for_logging
         for tc_id, result in zip(prioritized_ids, results_list):
             if isinstance(result, BaseException):
@@ -447,7 +465,7 @@ class AnalysisAgent(BaseAgent):
                     error_count += 1
                 if analysis.get("retry_count", 0) > 0:
                     retried += 1
-                if analysis.get("confidence_score", 0) < settings.AI_CONFIDENCE_THRESHOLD:
+                if analysis.get("confidence_score", 0) < low_confidence_threshold:
                     low_confidence += 1
 
         # P2-4: Explicit error propagation — determine stage quality
@@ -816,6 +834,13 @@ class AnalysisAgent(BaseAgent):
                 # Tiered model path: SLM owns category/confidence. The richer
                 # ReAct LLM explanation runs only for low-confidence or
                 # multi-artifact evidence cases.
+                # W04 AIC-02: the Settings > AI timeout frozen at pipeline
+                # start, tightened by an explicit project override for this agent.
+                from app.services.pipeline_ai_scope import effective_llm_timeout
+
+                llm_timeout = effective_llm_timeout(
+                    state, agent_id="agent.root_cause_analysis.v1"
+                )
                 try:
                     from app.services.analysis_router import classify_root_cause_tiered
 
@@ -863,16 +888,24 @@ class AnalysisAgent(BaseAgent):
                         )
                     analysis = await asyncio.wait_for(
                         operation,
-                        timeout=settings.AI_TIMEOUT_SECONDS,
+                        timeout=llm_timeout,
                     )
                 except asyncio.TimeoutError:
                     logger.warning(
                         "react_agent_timeout",
-                        timeout_seconds=settings.AI_TIMEOUT_SECONDS,
+                        timeout_seconds=llm_timeout,
                         test_case_id=tc_id,
                         fallback="progressive",
                     )
-                    analysis = await self._build_progressive_fallback(tc_id, meta)
+                    analysis = await self._build_progressive_fallback(
+                        tc_id, meta, timeout=llm_timeout
+                    )
+                    analysis = self._record_llm_timeout_routing(
+                        analysis,
+                        timeout=llm_timeout,
+                        mode_requested=state.get("analysis_mode_requested"),
+                        mode_resolved=mode,
+                    )
                 except Exception as exc:
                     logger.error(
                         "react_agent_failed",
@@ -980,9 +1013,11 @@ class AnalysisAgent(BaseAgent):
                     ),
                     "analysis_agent": "agents.analysis_agent:v2",
                 },
+                # W04 AIC-04: the EFFECTIVE provider/model frozen in the
+                # pipeline's mode snapshot (stored Settings > AI over env).
                 "model_config_snapshot": {
-                    "provider": settings.LLM_PROVIDER,
-                    "model": settings.LLM_MODEL,
+                    "provider": _frozen_model_field(state, "provider", settings.LLM_PROVIDER),
+                    "model": _frozen_model_field(state, "model", settings.LLM_MODEL),
                     "temperature": settings.LLM_TEMPERATURE,
                     "max_tokens": settings.LLM_MAX_TOKENS,
                 },
@@ -1297,16 +1332,23 @@ class AnalysisAgent(BaseAgent):
         return normalize_category_in_analysis(analysis)
 
     async def _build_progressive_fallback(
-        self, tc_id: str, meta: dict
+        self, tc_id: str, meta: dict, *, timeout: int | None = None
     ) -> dict:
         """
         3-tier progressive fallback when the full ReAct agent fails:
           Tier 1: Try FastClassifier (single LLM call, ~200ms)
           Tier 2: Pattern-based heuristic from error message
           Tier 3: Generic unknown fallback
+
+        ``timeout`` is the LLM timeout that just expired (W04 AIC-02); tier 1
+        gets ``min(30, timeout // 2)`` of it.
         """
         error_msg = meta.get("error_message") or ""
         test_name = meta.get("test_name") or tc_id
+        if timeout is None:
+            from app.services.pipeline_ai_scope import effective_llm_timeout
+
+            timeout = effective_llm_timeout(None, agent_id="agent.root_cause_analysis.v1")
 
         # Tier 1: Fast classifier
         try:
@@ -1317,7 +1359,7 @@ class AnalysisAgent(BaseAgent):
                     error_message=error_msg,
                     stack_trace=meta.get("stack_trace") or "",
                 ),
-                timeout=min(30, settings.AI_TIMEOUT_SECONDS // 2),
+                timeout=max(1, min(30, int(timeout) // 2)),
             )
             if quick is not None:
                 quick["fallback_tier"] = 1
@@ -1340,7 +1382,7 @@ class AnalysisAgent(BaseAgent):
             return heuristic
 
         # Tier 3: Generic fallback
-        fallback = self._build_timeout_analysis()
+        fallback = self._build_timeout_analysis(timeout)
         fallback["fallback_tier"] = 3
         fallback["fallback_reason"] = "timeout_generic"
         return fallback
@@ -1453,8 +1495,38 @@ class AnalysisAgent(BaseAgent):
             "tools_used": [],
         }
 
-    def _build_timeout_analysis(self) -> dict:
-        timeout = settings.AI_TIMEOUT_SECONDS
+    @staticmethod
+    def _record_llm_timeout_routing(
+        analysis: dict,
+        *,
+        timeout: int,
+        mode_requested: Any,
+        mode_resolved: Any,
+    ) -> dict:
+        """Record an LLM timeout as an engine fallback (W04 AIC-02).
+
+        The progressive fallback's own ``fallback_reason`` (``timeout_*``) sits
+        on the analysis dict, not in ``_routing``, so ``_audit.fallback_from``
+        stayed null, the ``analysis_engine_fallback`` decision never fired and
+        the stage's ``fallback_count`` missed it. Tier 1 is still an LLM call
+        (``mode_used="llm"``); tiers 2-3 are deterministic (``"rules"``).
+        """
+        routing = dict(analysis.get("_routing") or {})
+        routing.update({
+            "mode_requested": mode_requested,
+            "mode_resolved": mode_resolved,
+            "mode_used": "llm" if analysis.get("fallback_tier") == 1 else "rules",
+            "fallback_from": "llm",
+            "fallback_reason": f"llm_timeout: LLM timed out after {int(timeout)} s",
+        })
+        analysis["_routing"] = routing
+        return analysis
+
+    def _build_timeout_analysis(self, timeout: int | None = None) -> dict:
+        if timeout is None:
+            from app.services.pipeline_ai_scope import effective_llm_timeout
+
+            timeout = effective_llm_timeout(None, agent_id="agent.root_cause_analysis.v1")
         return {
             "root_cause_summary": f"Analysis timed out after {timeout}s. Manual review required.",
             "failure_category": self.UNKNOWN_CATEGORY,

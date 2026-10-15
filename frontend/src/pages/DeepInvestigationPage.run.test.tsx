@@ -36,6 +36,11 @@ vi.mock('@/hooks/useDeepInvestigation', () => ({
   usePipelineStatus: hooks.usePipelineStatus,
 }))
 vi.mock('@/hooks/useRuns', () => ({ useRuns: hooks.useRuns, useRun: hooks.useRun }))
+// W04 AIC-01: the deep triggers read `/settings/ai/mode`; Auto with deep on offers them.
+vi.mock('@/hooks/useAIConfig', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/useAIConfig')>()),
+  useAIConfig: vi.fn(() => ({ data: { analysis_mode: 'auto', ai_offline_mode: false, deep_investigation_enabled: true } })),
+}))
 vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => permissions }))
 vi.mock('@/services/deepInvestigationService', () => ({ deepInvestigationService: { triggerDeep } }))
 vi.mock('react-hot-toast', () => ({ default: { success: vi.fn(), error: vi.fn() } }))
@@ -95,7 +100,8 @@ describe('RunDeepClusters — the run\'s clusters on the Analysis tab', () => {
     expect(within(section).getByText('DB Timeouts')).toBeInTheDocument()
     expect(hooks.useFailureClusters).toHaveBeenCalledWith('run-1')
     expect(hooks.useDeepFindings).toHaveBeenCalledWith('run-1')
-    expect(hooks.usePipelineStatus).toHaveBeenCalledWith('run-1', 'deep')
+    // (third argument: W04 AGT-04's follow-while-retrying option)
+    expect(hooks.usePipelineStatus).toHaveBeenCalledWith('run-1', 'deep', expect.anything())
     // Nothing project-wide (recent runs) is asked for.
     expect(hooks.useRuns).not.toHaveBeenCalled()
     // No "View all failures" link: the run's tests are a tab away on the same page.

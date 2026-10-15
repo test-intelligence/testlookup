@@ -518,3 +518,177 @@ async def test_resolve_offline_mode_helper_is_a_pure_or(monkeypatch):
     assert resolver.resolve_offline_mode(False) == (False, resolver.OFFLINE_SOURCE_NONE)
     assert resolver.resolve_offline_mode(None) == (False, resolver.OFFLINE_SOURCE_NONE)
     assert resolver.env_offline_pinned() is False
+
+
+# ── W04: analysis_mode / deep / finetune / timeout follow DB -> env, with provenance ─
+
+
+def test_the_cache_key_is_versioned():
+    """An old-build pod keeps writing the v1 key without the W04 fields; the
+    new code must never read it."""
+    assert _CACHE_KEY == "config:ai_effective:v2"
+    assert "config:ai_effective" in resolver._LEGACY_CACHE_KEYS
+
+
+@pytest.mark.asyncio
+async def test_a_v1_cache_entry_is_never_read(monkeypatch, fake_redis):
+    _set_env_defaults(monkeypatch)
+    await fake_redis.set("config:ai_effective", json.dumps({"provider": "v1-pod", "model": "old"}))
+    _patch_redis(monkeypatch, fake_redis)
+    row = MagicMock()
+    row.value = {"llm_provider": "openai", "deep_investigation_enabled": False}
+    _patch_db(monkeypatch, _make_db(row=row))
+    _patch_secrets(monkeypatch)
+
+    cfg = await get_effective_ai_config()
+
+    assert cfg["provider"] == "openai"
+    assert cfg["deep_investigation_enabled"] is False
+    assert await fake_redis.get("config:ai_effective:v2") is not None
+
+
+@pytest.mark.asyncio
+async def test_invalidate_deletes_v2_v1_and_the_mode_accelerator(monkeypatch, fake_redis):
+    for key in ("config:ai_effective:v2", "config:ai_effective", "config:analysis_mode"):
+        await fake_redis.set(key, "x")
+    _patch_redis(monkeypatch, fake_redis)
+
+    await invalidate_ai_config_cache()
+
+    for key in ("config:ai_effective:v2", "config:ai_effective", "config:analysis_mode"):
+        assert await fake_redis.get(key) is None, key
+
+
+@pytest.mark.asyncio
+async def test_the_four_settings_default_to_env_with_env_default_source(monkeypatch, fake_redis):
+    _set_env_defaults(monkeypatch)
+    monkeypatch.setattr(resolver.settings, "ANALYSIS_MODE", "LLM")
+    monkeypatch.setattr(resolver.settings, "DEEP_INVESTIGATION_ENABLED", True)
+    monkeypatch.setattr(resolver.settings, "FINETUNE_ENABLED", False)
+    _patch_redis(monkeypatch, fake_redis)
+    _patch_db(monkeypatch, _make_db(row=None))
+    _patch_secrets(monkeypatch)
+
+    cfg = await get_effective_ai_config()
+
+    assert (cfg["analysis_mode"], cfg["analysis_mode_source"]) == ("llm", "env_default")
+    assert (cfg["deep_investigation_enabled"], cfg["deep_investigation_enabled_source"]) == (True, "env_default")
+    assert (cfg["finetune_enabled"], cfg["finetune_enabled_source"]) == (False, "env_default")
+    assert (cfg["timeout_seconds"], cfg["timeout_seconds_source"]) == (300, "env_default")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("env_value", [True, False])
+async def test_a_stored_toggle_overrides_env_in_both_directions(monkeypatch, fake_redis, env_value):
+    _set_env_defaults(monkeypatch)
+    monkeypatch.setattr(resolver.settings, "DEEP_INVESTIGATION_ENABLED", env_value)
+    monkeypatch.setattr(resolver.settings, "FINETUNE_ENABLED", env_value)
+    _patch_redis(monkeypatch, fake_redis)
+    row = MagicMock()
+    row.value = {
+        "deep_investigation_enabled": not env_value,
+        "finetune_enabled": not env_value,
+        "analysis_mode": "rules",
+        "ai_timeout_seconds": 5,
+    }
+    _patch_db(monkeypatch, _make_db(row=row))
+    _patch_secrets(monkeypatch)
+
+    cfg = await get_effective_ai_config()
+
+    assert (cfg["deep_investigation_enabled"], cfg["deep_investigation_enabled_source"]) == (not env_value, "ai_config")
+    assert (cfg["finetune_enabled"], cfg["finetune_enabled_source"]) == (not env_value, "ai_config")
+    assert (cfg["analysis_mode"], cfg["analysis_mode_source"]) == ("rules", "ai_config")
+    assert (cfg["timeout_seconds"], cfg["timeout_seconds_source"]) == (5, "ai_config")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("key", "junk"),
+    [
+        ("deep_investigation_enabled", "false"),
+        ("deep_investigation_enabled", 0),
+        ("finetune_enabled", "true"),
+        ("finetune_enabled", 1),
+        ("analysis_mode", "turbo"),
+        ("analysis_mode", 3),
+        ("ai_timeout_seconds", 4),
+        ("ai_timeout_seconds", 1801),
+        ("ai_timeout_seconds", True),
+        ("ai_timeout_seconds", "60"),
+    ],
+)
+async def test_an_invalid_stored_value_is_ignored(monkeypatch, fake_redis, key, junk):
+    _set_env_defaults(monkeypatch)
+    monkeypatch.setattr(resolver.settings, "ANALYSIS_MODE", "auto")
+    monkeypatch.setattr(resolver.settings, "DEEP_INVESTIGATION_ENABLED", True)
+    monkeypatch.setattr(resolver.settings, "FINETUNE_ENABLED", False)
+    _patch_redis(monkeypatch, fake_redis)
+    row = MagicMock()
+    row.value = {key: junk}
+    _patch_db(monkeypatch, _make_db(row=row))
+    _patch_secrets(monkeypatch)
+
+    cfg = await get_effective_ai_config()
+
+    runtime_key = "timeout_seconds" if key == "ai_timeout_seconds" else key
+    expected = {
+        "deep_investigation_enabled": True,
+        "finetune_enabled": False,
+        "analysis_mode": "auto",
+        "timeout_seconds": 300,
+    }[runtime_key]
+    assert cfg[runtime_key] == expected
+    assert cfg[f"{runtime_key}_source"] == "env_default"
+
+
+def test_stored_or_default_is_the_one_shared_rule():
+    from app.services.ai_config_resolver import (
+        stored_or_default,
+        valid_analysis_mode,
+        valid_bool,
+        valid_timeout_seconds,
+    )
+
+    assert stored_or_default({"k": False}, "k", True, valid_bool) == (False, "ai_config")
+    assert stored_or_default({"k": "false"}, "k", True, valid_bool) == (True, "env_default")
+    assert stored_or_default({}, "k", True, valid_bool) == (True, "env_default")
+    assert stored_or_default(None, "k", "auto", valid_analysis_mode) == ("auto", "env_default")
+    assert stored_or_default({"k": " Rules "}, "k", "auto", valid_analysis_mode) == ("rules", "ai_config")
+    assert stored_or_default({"k": 5}, "k", 300, valid_timeout_seconds) == (5, "ai_config")
+    assert stored_or_default({"k": 1800}, "k", 300, valid_timeout_seconds) == (1800, "ai_config")
+    assert stored_or_default({"k": 4}, "k", 300, valid_timeout_seconds) == (300, "env_default")
+    assert resolver.CONFIDENCE_SOURCE_AI_CONFIG == resolver.SOURCE_AI_CONFIG == "ai_config"
+    assert resolver.CONFIDENCE_SOURCE_ENV_DEFAULT == resolver.SOURCE_ENV_DEFAULT == "env_default"
+
+
+@pytest.mark.asyncio
+async def test_the_settings_page_and_the_runtime_agree_on_every_source(monkeypatch, fake_redis):
+    """``_load_ai_config`` (GET /settings/ai) and the resolver use the same helper."""
+    from app.routers.app_settings import _load_ai_config
+
+    _set_env_defaults(monkeypatch)
+    _patch_redis(monkeypatch, fake_redis)
+    stored = {"analysis_mode": "ml", "deep_investigation_enabled": "false", "ai_timeout_seconds": 45}
+    row = MagicMock()
+    row.value = stored
+    db = _make_db(row=row)
+    _patch_db(monkeypatch, db)
+    _patch_secrets(monkeypatch)
+
+    runtime = await get_effective_ai_config(db=db, fresh=True)
+    page = await _load_ai_config(db)
+
+    assert (page["analysis_mode"], page["analysis_mode_source"]) == (
+        runtime["analysis_mode"], runtime["analysis_mode_source"],
+    )
+    assert (page["deep_investigation_enabled"], page["deep_investigation_enabled_source"]) == (
+        runtime["deep_investigation_enabled"], runtime["deep_investigation_enabled_source"],
+    )
+    assert (page["finetune_enabled"], page["finetune_enabled_source"]) == (
+        runtime["finetune_enabled"], runtime["finetune_enabled_source"],
+    )
+    assert (page["ai_timeout_seconds"], page["ai_timeout_seconds_source"]) == (
+        runtime["timeout_seconds"], runtime["timeout_seconds_source"],
+    )
+    assert page["ai_timeout_seconds"] == 45 and page["analysis_mode"] == "ml"

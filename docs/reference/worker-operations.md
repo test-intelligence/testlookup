@@ -21,7 +21,7 @@ Static declarations, not observations of running consumers. Deployment profiles 
 ## beat_schedule
 
 ```python
-{'daily-coverage-snapshot': {'task': 'app.worker.tasks.take_coverage_snapshot', 'schedule': crontab(hour=0, minute=5)}, 'daily-agent-eval': {'task': 'app.worker.tasks.run_scheduled_agent_eval', 'schedule': crontab(hour=4, minute=0), 'options': {'queue': 'default'}}, 'weekly-agent-quality-drift': {'task': 'app.worker.tasks.run_weekly_agent_quality_drift', 'schedule': crontab(hour=6, minute=0, day_of_week='monday'), 'options': {'queue': 'default'}}, 'nightly-retention-purge': {'task': 'app.worker.tasks.run_retention_purges', 'schedule': crontab(hour=2, minute=0)}, 'nightly-report-export-sweep': {'task': 'app.worker.tasks.sweep_report_exports', 'schedule': crontab(hour=1, minute=15)}, 'weekly-training-export': {'task': 'app.worker.training_tasks.export_training_data', 'schedule': crontab(hour=2, minute=0, day_of_week='sunday')}, 'daily-finetune-trigger-check': {'task': 'app.worker.training_tasks.check_finetune_trigger', 'schedule': crontab(hour=3, minute=0)}, 'hourly-search-reindex': {'task': 'app.worker.tasks.reindex_search', 'schedule': crontab(minute=30)}, 'daily-digest-dispatch': {'task': 'app.worker.tasks.dispatch_scheduled_digests', 'schedule': crontab(hour=7, minute=0)}, 'integration-health-probes': {'task': 'app.worker.tasks.run_integration_health_probes', 'schedule': crontab(minute='*/15')}, 'jira-defect-status-sync': {'task': 'app.worker.tasks.sync_jira_defect_statuses', 'schedule': crontab(minute='5-59/15')}, 'knowledge-source-resync': {'task': 'app.worker.tasks.resync_stale_knowledge_sources', 'schedule': crontab(minute=0, hour='*/4')}, 'reconcile-active-releases': {'task': 'app.worker.tasks.reconcile_active_releases', 'schedule': crontab(minute=20)}, 'reconcile-primary-releases': {'task': 'app.worker.tasks.reconcile_primary_releases', 'schedule': crontab(minute=50)}, 'reconcile-release-sort-keys': {'task': 'app.worker.tasks.reconcile_release_sort_keys', 'schedule': crontab(minute=35)}, 'nightly-flaky-confidence-training': {'task': 'app.worker.tasks.train_flaky_confidence_model', 'schedule': crontab(hour=3, minute=30)}, 'close-stale-live-sessions': {'task': 'app.worker.tasks.close_stale_live_sessions', 'schedule': crontab(minute='*/2'), 'kwargs': {'idle_minutes': 5}}, 'reap-stuck-agent-pipelines': {'task': 'app.worker.tasks.reap_stuck_agent_pipelines', 'schedule': crontab(minute='*/10')}, 'relay-agent-child-dispatch-outbox': {'task': 'app.worker.tasks.relay_agent_child_dispatch_outbox', 'schedule': crontab(minute='*')}, 'process-decision-report-supersessions': {'task': 'app.worker.tasks.process_decision_report_supersessions', 'schedule': crontab(minute='*')}, 'relay-agent-action-dispatch-outbox': {'task': 'app.worker.tasks.relay_agent_action_dispatch_outbox', 'schedule': crontab(minute='*')}, 'relay-run-downstream-outbox': {'task': 'app.worker.tasks.relay_run_downstream_outbox', 'schedule': crontab(minute='*')}, 'relay-queued-criteria-deletions': {'task': 'app.worker.tasks.relay_queued_criteria_deletions', 'schedule': crontab(minute='*')}, 'recover-waiting-run-finalizations': {'task': 'app.worker.tasks.recover_waiting_run_finalizations', 'schedule': crontab(minute='*')}, 'relay-pending-webhook-deliveries': {'task': 'app.worker.tasks.relay_pending_webhook_deliveries', 'schedule': crontab(minute='*')}, 'relay-pending-notification-deliveries': {'task': 'app.worker.tasks.relay_pending_notification_deliveries', 'schedule': crontab(minute='*')}, 'nightly-flaky-quarantine-maintenance': {'task': 'app.worker.tasks.run_flaky_quarantine_maintenance', 'schedule': crontab(hour=4, minute=0)}, 'nightly-perf-baseline-refresh': {'task': 'app.worker.tasks.refresh_perf_baselines', 'schedule': crontab(hour=4, minute=30)}, 'monday-weekly-retro-digests': {'task': 'app.worker.tasks.dispatch_scheduled_digests', 'schedule': crontab(hour=7, minute=5, day_of_week='monday')}, 'monday-weekly-flaky-debt-reviews': {'task': 'app.worker.tasks.dispatch_weekly_flaky_debt_reviews', 'schedule': crontab(hour=7, minute=10, day_of_week='monday')}, 'daily-fixer-runs': {'task': 'app.worker.tasks.dispatch_scheduled_fixer_runs', 'schedule': crontab(hour=6, minute=0), 'args': ('daily',)}, 'weekly-fixer-runs': {'task': 'app.worker.tasks.dispatch_scheduled_fixer_runs', 'schedule': crontab(hour=6, minute=15, day_of_week='monday'), 'args': ('weekly',)}, 'poll-fixer-pr-outcomes': {'task': 'app.worker.tasks.poll_fixer_pr_outcomes', 'schedule': crontab(minute='*/30')}, 'nightly-orphan-test-suite-flag': {'task': 'app.worker.tasks.flag_orphan_test_suites', 'schedule': crontab(hour=5, minute=0)}, 'nightly-canonical-deletion-reconcile': {'task': 'app.worker.tasks.reconcile_canonical_deletions', 'schedule': crontab(hour=5, minute=30)}, 'nightly-flaky-classifier-calibration': {'task': 'app.worker.tasks.calibrate_flaky_classifiers', 'schedule': crontab(hour=5, minute=45)}, 'nightly-flaky-score-recompute': {'task': 'app.worker.tasks.recompute_flaky_scores', 'schedule': crontab(hour=6, minute=10)}, 'nightly-systemic-cluster-recompute': {'task': 'app.worker.tasks.recompute_systemic_clusters', 'schedule': crontab(hour=6, minute=40)}, 'screen-new-test-fingerprints': {'task': 'app.worker.tasks.screen_new_test_fingerprints', 'schedule': crontab(minute='*/30')}, 'nightly-flaky-detection-sweep': {'task': 'app.worker.tasks.sweep_flaky_detection', 'schedule': crontab(hour=6, minute=55)}, 'backfill-unassigned-failures': {'task': 'app.worker.tasks.backfill_unassigned_failures', 'schedule': crontab(minute='*/15')}, 'drain-active-live-sessions': {'task': 'app.worker.tasks.drain_active_live_sessions', 'schedule': timedelta(seconds=30)}, 'backfill-placeholder-test-cases': {'task': 'app.worker.tasks.backfill_placeholder_test_cases', 'schedule': crontab(minute=10)}, 'backfill-suite-executions': {'task': 'app.worker.tasks.backfill_suite_executions', 'schedule': crontab(minute='*/10')}, 'backfill-ai-run-versions': {'task': 'app.worker.tasks.backfill_ai_run_versions', 'schedule': crontab(minute='5,15,25,35,45,55')}, 'auto-recover-completed-live-runs': {'task': 'app.worker.tasks.auto_recover_completed_live_runs', 'schedule': timedelta(minutes=2)}, 'nightly-duplicate-detection': {'task': 'app.worker.tasks.run_duplicate_detection', 'schedule': crontab(hour=6, minute=0)}}
+{'daily-coverage-snapshot': {'task': 'app.worker.tasks.take_coverage_snapshot', 'schedule': crontab(hour=0, minute=5)}, 'daily-agent-eval': {'task': 'app.worker.tasks.run_scheduled_agent_eval', 'schedule': crontab(hour=4, minute=0), 'options': {'queue': 'default'}}, 'weekly-agent-quality-drift': {'task': 'app.worker.tasks.run_weekly_agent_quality_drift', 'schedule': crontab(hour=6, minute=0, day_of_week='monday'), 'options': {'queue': 'default'}}, 'nightly-retention-purge': {'task': 'app.worker.tasks.run_retention_purges', 'schedule': crontab(hour=2, minute=0)}, 'nightly-report-export-sweep': {'task': 'app.worker.tasks.sweep_report_exports', 'schedule': crontab(hour=1, minute=15)}, 'weekly-training-export': {'task': 'app.worker.training_tasks.export_training_data', 'schedule': crontab(hour=2, minute=0, day_of_week='sunday')}, 'daily-finetune-trigger-check': {'task': 'app.worker.training_tasks.check_finetune_trigger', 'schedule': crontab(hour=3, minute=0)}, 'nightly-ml-classifier-training': {'task': 'app.worker.tasks.train_ml_classifier', 'schedule': crontab(hour=3, minute=10), 'kwargs': {'triggered_by': 'beat'}}, 'hourly-search-reindex': {'task': 'app.worker.tasks.reindex_search', 'schedule': crontab(minute=30)}, 'daily-digest-dispatch': {'task': 'app.worker.tasks.dispatch_scheduled_digests', 'schedule': crontab(hour=7, minute=0)}, 'integration-health-probes': {'task': 'app.worker.tasks.run_integration_health_probes', 'schedule': crontab(minute='*/15')}, 'jira-defect-status-sync': {'task': 'app.worker.tasks.sync_jira_defect_statuses', 'schedule': crontab(minute='5-59/15')}, 'knowledge-source-resync': {'task': 'app.worker.tasks.resync_stale_knowledge_sources', 'schedule': crontab(minute=0, hour='*/4')}, 'reconcile-active-releases': {'task': 'app.worker.tasks.reconcile_active_releases', 'schedule': crontab(minute=20)}, 'reconcile-primary-releases': {'task': 'app.worker.tasks.reconcile_primary_releases', 'schedule': crontab(minute=50)}, 'reconcile-release-sort-keys': {'task': 'app.worker.tasks.reconcile_release_sort_keys', 'schedule': crontab(minute=35)}, 'nightly-flaky-confidence-training': {'task': 'app.worker.tasks.train_flaky_confidence_model', 'schedule': crontab(hour=3, minute=30)}, 'close-stale-live-sessions': {'task': 'app.worker.tasks.close_stale_live_sessions', 'schedule': crontab(minute='*/2'), 'kwargs': {'idle_minutes': 5}}, 'reap-stuck-agent-pipelines': {'task': 'app.worker.tasks.reap_stuck_agent_pipelines', 'schedule': crontab(minute='*/10')}, 'relay-agent-child-dispatch-outbox': {'task': 'app.worker.tasks.relay_agent_child_dispatch_outbox', 'schedule': crontab(minute='*')}, 'process-decision-report-supersessions': {'task': 'app.worker.tasks.process_decision_report_supersessions', 'schedule': crontab(minute='*')}, 'relay-agent-action-dispatch-outbox': {'task': 'app.worker.tasks.relay_agent_action_dispatch_outbox', 'schedule': crontab(minute='*')}, 'relay-run-downstream-outbox': {'task': 'app.worker.tasks.relay_run_downstream_outbox', 'schedule': crontab(minute='*')}, 'relay-queued-criteria-deletions': {'task': 'app.worker.tasks.relay_queued_criteria_deletions', 'schedule': crontab(minute='*')}, 'recover-waiting-run-finalizations': {'task': 'app.worker.tasks.recover_waiting_run_finalizations', 'schedule': crontab(minute='*')}, 'relay-pending-webhook-deliveries': {'task': 'app.worker.tasks.relay_pending_webhook_deliveries', 'schedule': crontab(minute='*')}, 'relay-pending-notification-deliveries': {'task': 'app.worker.tasks.relay_pending_notification_deliveries', 'schedule': crontab(minute='*')}, 'nightly-flaky-quarantine-maintenance': {'task': 'app.worker.tasks.run_flaky_quarantine_maintenance', 'schedule': crontab(hour=4, minute=0)}, 'nightly-perf-baseline-refresh': {'task': 'app.worker.tasks.refresh_perf_baselines', 'schedule': crontab(hour=4, minute=30)}, 'monday-weekly-retro-digests': {'task': 'app.worker.tasks.dispatch_scheduled_digests', 'schedule': crontab(hour=7, minute=5, day_of_week='monday')}, 'monday-weekly-flaky-debt-reviews': {'task': 'app.worker.tasks.dispatch_weekly_flaky_debt_reviews', 'schedule': crontab(hour=7, minute=10, day_of_week='monday')}, 'daily-fixer-runs': {'task': 'app.worker.tasks.dispatch_scheduled_fixer_runs', 'schedule': crontab(hour=6, minute=0), 'args': ('daily',)}, 'weekly-fixer-runs': {'task': 'app.worker.tasks.dispatch_scheduled_fixer_runs', 'schedule': crontab(hour=6, minute=15, day_of_week='monday'), 'args': ('weekly',)}, 'poll-fixer-pr-outcomes': {'task': 'app.worker.tasks.poll_fixer_pr_outcomes', 'schedule': crontab(minute='*/30')}, 'nightly-orphan-test-suite-flag': {'task': 'app.worker.tasks.flag_orphan_test_suites', 'schedule': crontab(hour=5, minute=0)}, 'nightly-canonical-deletion-reconcile': {'task': 'app.worker.tasks.reconcile_canonical_deletions', 'schedule': crontab(hour=5, minute=30)}, 'nightly-flaky-classifier-calibration': {'task': 'app.worker.tasks.calibrate_flaky_classifiers', 'schedule': crontab(hour=5, minute=45)}, 'nightly-flaky-score-recompute': {'task': 'app.worker.tasks.recompute_flaky_scores', 'schedule': crontab(hour=6, minute=10)}, 'nightly-systemic-cluster-recompute': {'task': 'app.worker.tasks.recompute_systemic_clusters', 'schedule': crontab(hour=6, minute=40)}, 'screen-new-test-fingerprints': {'task': 'app.worker.tasks.screen_new_test_fingerprints', 'schedule': crontab(minute='*/30')}, 'nightly-flaky-detection-sweep': {'task': 'app.worker.tasks.sweep_flaky_detection', 'schedule': crontab(hour=6, minute=55)}, 'backfill-unassigned-failures': {'task': 'app.worker.tasks.backfill_unassigned_failures', 'schedule': crontab(minute='*/15')}, 'drain-active-live-sessions': {'task': 'app.worker.tasks.drain_active_live_sessions', 'schedule': timedelta(seconds=30)}, 'backfill-placeholder-test-cases': {'task': 'app.worker.tasks.backfill_placeholder_test_cases', 'schedule': crontab(minute=10)}, 'backfill-suite-executions': {'task': 'app.worker.tasks.backfill_suite_executions', 'schedule': crontab(minute='*/10')}, 'backfill-ai-run-versions': {'task': 'app.worker.tasks.backfill_ai_run_versions', 'schedule': crontab(minute='5,15,25,35,45,55')}, 'auto-recover-completed-live-runs': {'task': 'app.worker.tasks.auto_recover_completed_live_runs', 'schedule': timedelta(minutes=2)}, 'nightly-duplicate-detection': {'task': 'app.worker.tasks.run_duplicate_detection', 'schedule': crontab(hour=6, minute=0)}}
 ```
 
 ## worker_prefetch_multiplier
@@ -612,9 +612,31 @@ celery_app.task(name='app.worker.tasks.train_flaky_confidence_model', queue='def
 train_flaky_confidence_model(self)
 ```
 
+## train_ml_classifier
+
+[backend/app/worker/tasks.py:4172](../../backend/app/worker/tasks.py#L4172)
+
+Train the failure classifier once (``services/ml/trainer.train_classifier``).
+
+Nightly at 03:10 UTC from beat (``triggered_by="beat"``, gated by
+``ML_RETRAIN_ENABLED``) and on "Train now" (``POST
+/api/v1/settings/ai/ml/retrain``, ``triggered_by="user:<name>"``, which
+took ``ml:retrain:lock`` under this task's id before queueing it). The job
+never raises: below the sample floor, below the accuracy threshold or
+without scikit-learn it records the outcome in ``ml:retrain:last`` and
+keeps the previous model. A trained model is published to the object store
+so every pod picks it up, and audited here as ``ml_classifier / trained``
+(the task owns the commit; the job service never commits). CPU-bound and
+local: no outbound call, so ``AI_OFFLINE_MODE`` does not apply.
+
+```python
+celery_app.task(name='app.worker.tasks.train_ml_classifier', queue='default', bind=True, max_retries=0, time_limit=1800, soft_time_limit=1500)
+train_ml_classifier(self, triggered_by: str='beat')
+```
+
 ## run_integration_health_probes
 
-[backend/app/worker/tasks.py:4222](../../backend/app/worker/tasks.py#L4222)
+[backend/app/worker/tasks.py:4284](../../backend/app/worker/tasks.py#L4284)
 
 Periodic task: probe all configured integrations and record health status.
 
@@ -625,7 +647,7 @@ run_integration_health_probes(self)
 
 ## sync_jira_defect_statuses
 
-[backend/app/worker/tasks.py:4250](../../backend/app/worker/tasks.py#L4250)
+[backend/app/worker/tasks.py:4312](../../backend/app/worker/tasks.py#L4312)
 
 Periodic task: mirror Jira issue status onto linked OPEN defects.
 
@@ -642,7 +664,7 @@ sync_jira_defect_statuses(self)
 
 ## dispatch_scheduled_digests
 
-[backend/app/worker/tasks.py:4283](../../backend/app/worker/tasks.py#L4283)
+[backend/app/worker/tasks.py:4345](../../backend/app/worker/tasks.py#L4345)
 
 Periodic task: find all digest subscriptions due for delivery and dispatch.
 
@@ -657,7 +679,7 @@ dispatch_scheduled_digests(self)
 
 ## dispatch_weekly_flaky_debt_reviews
 
-[backend/app/worker/tasks.py:4672](../../backend/app/worker/tasks.py#L4672)
+[backend/app/worker/tasks.py:4734](../../backend/app/worker/tasks.py#L4734)
 
 Weekly beat (Mondays 07:10 UTC): send each channel-mapped team its
 flaky-debt review draft through its team notification channel. Teams
@@ -677,7 +699,7 @@ dispatch_weekly_flaky_debt_reviews(self)
 
 ## close_stale_live_sessions
 
-[backend/app/worker/tasks.py:4708](../../backend/app/worker/tasks.py#L4708)
+[backend/app/worker/tasks.py:4770](../../backend/app/worker/tasks.py#L4770)
 
 Periodic safety net for live sessions whose clients forget to send a
 ``run_complete`` event.
@@ -703,7 +725,7 @@ close_stale_live_sessions(self, idle_minutes: int=15)
 
 ## reap_stuck_agent_pipelines
 
-[backend/app/worker/tasks.py:4827](../../backend/app/worker/tasks.py#L4827)
+[backend/app/worker/tasks.py:4889](../../backend/app/worker/tasks.py#L4889)
 
 Reclaim pipelines whose worker stopped renewing its lease (E7.3).
 
@@ -733,7 +755,7 @@ reap_stuck_agent_pipelines(self, stale_minutes: int=30)
 
 ## flag_orphan_test_suites
 
-[backend/app/worker/tasks.py:4988](../../backend/app/worker/tasks.py#L4988)
+[backend/app/worker/tasks.py:5050](../../backend/app/worker/tasks.py#L5050)
 
 Detect and structured-log orphan ``TestSuite`` rows for ops review.
 
@@ -763,7 +785,7 @@ flag_orphan_test_suites(self, min_age_minutes: int=60)
 
 ## reconcile_canonical_deletions
 
-[backend/app/worker/tasks.py:5087](../../backend/app/worker/tasks.py#L5087)
+[backend/app/worker/tasks.py:5149](../../backend/app/worker/tasks.py#L5149)
 
 Nightly safety net for canonical-deletion detection (Phase I follow-up).
 
@@ -790,7 +812,7 @@ reconcile_canonical_deletions(self)
 
 ## drain_active_live_sessions
 
-[backend/app/worker/tasks.py:5170](../../backend/app/worker/tasks.py#L5170)
+[backend/app/worker/tasks.py:5232](../../backend/app/worker/tasks.py#L5232)
 
 Phase 4.5 — drain every active live session's Redis event buffer
 into Postgres ``test_cases`` rows.
@@ -812,7 +834,7 @@ drain_active_live_sessions(self)
 
 ## backfill_placeholder_test_cases
 
-[backend/app/worker/tasks.py:5201](../../backend/app/worker/tasks.py#L5201)
+[backend/app/worker/tasks.py:5263](../../backend/app/worker/tasks.py#L5263)
 
 Retroactively synthesize placeholder TestCase rows.
 
@@ -836,7 +858,7 @@ backfill_placeholder_test_cases(self, max_runs_per_project: int=500)
 
 ## backfill_suite_executions
 
-[backend/app/worker/tasks.py:5257](../../backend/app/worker/tasks.py#L5257)
+[backend/app/worker/tasks.py:5319](../../backend/app/worker/tasks.py#L5319)
 
 EXEC-02: time every run that predates ``suite_executions`` -- one-shot, chunked, re-entrant.
 
@@ -861,7 +883,7 @@ backfill_suite_executions(self, chunk_size: int=500, max_chunks: int=40, time_bu
 
 ## backfill_ai_run_versions
 
-[backend/app/worker/tasks.py:5441](../../backend/app/worker/tasks.py#L5441)
+[backend/app/worker/tasks.py:5503](../../backend/app/worker/tasks.py#L5503)
 
 AIH-01: give every run analysed before AI history existed its first versions -- one-shot,
 chunked, re-entrant.
@@ -887,7 +909,7 @@ backfill_ai_run_versions(self, chunk_size: int=100, max_chunks: int=40, time_bud
 
 ## auto_recover_completed_live_runs
 
-[backend/app/worker/tasks.py:5478](../../backend/app/worker/tasks.py#L5478)
+[backend/app/worker/tasks.py:5540](../../backend/app/worker/tasks.py#L5540)
 
 Recover REAL per-test rows from ``TestRun.event_archive`` for
 completed live_stream runs whose ``test_cases`` table is empty.
@@ -912,7 +934,7 @@ auto_recover_completed_live_runs(self, lookback_hours: int=24, max_runs: int=100
 
 ## backfill_unassigned_failures
 
-[backend/app/worker/tasks.py:5549](../../backend/app/worker/tasks.py#L5549)
+[backend/app/worker/tasks.py:5611](../../backend/app/worker/tasks.py#L5611)
 
 Retroactively assign FAILED/BROKEN TestCases left unassigned.
 
@@ -937,7 +959,7 @@ backfill_unassigned_failures(self, max_runs_per_project: int=200)
 
 ## notify_test_suite_owner
 
-[backend/app/worker/tasks.py:5673](../../backend/app/worker/tasks.py#L5673)
+[backend/app/worker/tasks.py:5735](../../backend/app/worker/tasks.py#L5735)
 
 Dispatch the "test is failing repeatedly" notification email.
 
@@ -952,7 +974,7 @@ notify_test_suite_owner(self, *, to_email: str, owner_name: str, test_name: str,
 
 ## run_duplicate_detection
 
-[backend/app/worker/tasks.py:5772](../../backend/app/worker/tasks.py#L5772)
+[backend/app/worker/tasks.py:5834](../../backend/app/worker/tasks.py#L5834)
 
 Phase 4 — tiered duplicate authored-test-case detection per project.
 
@@ -981,7 +1003,7 @@ run_duplicate_detection(self, project_id: str | None=None, enable_semantic: bool
 
 ## persist_ai_eval_shadow_pair
 
-[backend/app/worker/tasks.py:6015](../../backend/app/worker/tasks.py#L6015)
+[backend/app/worker/tasks.py:6077](../../backend/app/worker/tasks.py#L6077)
 
 Persist one sampled live pair as a pending labelling candidate.
 
@@ -992,7 +1014,7 @@ persist_ai_eval_shadow_pair(self, *, project_id: str, agent_id: str, sample_key:
 
 ## run_scheduled_agent_eval
 
-[backend/app/worker/tasks.py:6060](../../backend/app/worker/tasks.py#L6060)
+[backend/app/worker/tasks.py:6122](../../backend/app/worker/tasks.py#L6122)
 
 Evaluate the agent stack against the golden datasets, on a schedule (F-11).
 
@@ -1016,7 +1038,7 @@ run_scheduled_agent_eval(self, change_id: str | None=None)
 
 ## run_weekly_agent_quality_drift
 
-[backend/app/worker/tasks.py:6151](../../backend/app/worker/tasks.py#L6151)
+[backend/app/worker/tasks.py:6213](../../backend/app/worker/tasks.py#L6213)
 
 Run G5 and commit capability review pins once each Monday.
 
@@ -1027,7 +1049,7 @@ run_weekly_agent_quality_drift(self)
 
 ## generate_report_export
 
-[backend/app/worker/tasks.py:6173](../../backend/app/worker/tasks.py#L6173)
+[backend/app/worker/tasks.py:6235](../../backend/app/worker/tasks.py#L6235)
 
 VIZ-607: render one background report export and store the file.
 
@@ -1045,7 +1067,7 @@ generate_report_export(export_id: str)
 
 ## sweep_report_exports
 
-[backend/app/worker/tasks.py:6189](../../backend/app/worker/tasks.py#L6189)
+[backend/app/worker/tasks.py:6251](../../backend/app/worker/tasks.py#L6251)
 
 VIZ-607: delete report export files and rows past their 7 days.
 
@@ -1058,7 +1080,7 @@ sweep_report_exports()
 
 ## run_retention_purges
 
-[backend/app/worker/tasks.py:6209](../../backend/app/worker/tasks.py#L6209)
+[backend/app/worker/tasks.py:6271](../../backend/app/worker/tasks.py#L6271)
 
 Nightly retention purge sweep (02:00 UTC beat), or a single-project
 execute-mode purge when enqueued from the router with ``project_id``.
@@ -1074,7 +1096,7 @@ run_retention_purges(self, project_id: str | None=None)
 
 ## calibrate_flaky_classifiers
 
-[backend/app/worker/tasks.py:6233](../../backend/app/worker/tasks.py#L6233)
+[backend/app/worker/tasks.py:6295](../../backend/app/worker/tasks.py#L6295)
 
 Measure how well the flaky classifier actually works, per project.
 
@@ -1093,7 +1115,7 @@ calibrate_flaky_classifiers(self, project_id: str | None=None)
 
 ## recompute_flaky_scores
 
-[backend/app/worker/tasks.py:6307](../../backend/app/worker/tasks.py#L6307)
+[backend/app/worker/tasks.py:6369](../../backend/app/worker/tasks.py#L6369)
 
 Recompute the continuous flakiness score per project (roadmap Phase 2).
 
@@ -1111,7 +1133,7 @@ recompute_flaky_scores(self, project_id: str | None=None)
 
 ## recompute_systemic_clusters
 
-[backend/app/worker/tasks.py:6372](../../backend/app/worker/tasks.py#L6372)
+[backend/app/worker/tasks.py:6434](../../backend/app/worker/tasks.py#L6434)
 
 Rebuild systemic co-failure clusters per project (roadmap Phase 3).
 
@@ -1128,7 +1150,7 @@ recompute_systemic_clusters(self, project_id: str | None=None)
 
 ## screen_new_test_fingerprints
 
-[backend/app/worker/tasks.py:6453](../../backend/app/worker/tasks.py#L6453)
+[backend/app/worker/tasks.py:6515](../../backend/app/worker/tasks.py#L6515)
 
 Tier 1 of roadmap Phase 6: screen the new and directly-modified.
 
@@ -1150,7 +1172,7 @@ screen_new_test_fingerprints(self, project_id: str | None=None)
 
 ## sweep_flaky_detection
 
-[backend/app/worker/tasks.py:6536](../../backend/app/worker/tasks.py#L6536)
+[backend/app/worker/tasks.py:6598](../../backend/app/worker/tasks.py#L6598)
 
 Tier 2 of roadmap Phase 6: the continuous whole-corpus pass.
 
@@ -1173,7 +1195,7 @@ sweep_flaky_detection(self, project_id: str | None=None)
 
 ## delete_run_everywhere
 
-[backend/app/worker/tasks.py:6617](../../backend/app/worker/tasks.py#L6617)
+[backend/app/worker/tasks.py:6679](../../backend/app/worker/tasks.py#L6679)
 
 Delete ONE run across all five stores. Irreversible.
 
@@ -1203,7 +1225,7 @@ delete_run_everywhere(self, run_id: str, job_id: str | None=None, reason: str=''
 
 ## execute_criteria_deletion_task
 
-[backend/app/worker/tasks.py:6739](../../backend/app/worker/tasks.py#L6739)
+[backend/app/worker/tasks.py:6801](../../backend/app/worker/tasks.py#L6801)
 
 Replay a frozen candidate set, one run at a time.
 
@@ -1225,7 +1247,7 @@ execute_criteria_deletion_task(self, job_id: str, project_id: str, requested_by_
 
 ## reconcile_active_releases
 
-[backend/app/worker/tasks.py:6882](../../backend/app/worker/tasks.py#L6882)
+[backend/app/worker/tasks.py:6944](../../backend/app/worker/tasks.py#L6944)
 
 Sweep for projects with no active release, repair them, and REPORT.
 
@@ -1253,7 +1275,7 @@ reconcile_active_releases(self)
 
 ## reconcile_primary_releases
 
-[backend/app/worker/tasks.py:6974](../../backend/app/worker/tasks.py#L6974)
+[backend/app/worker/tasks.py:7036](../../backend/app/worker/tasks.py#L7036)
 
 Repair drift between ``test_runs.primary_release_id`` and the link table.
 
@@ -1275,7 +1297,7 @@ reconcile_primary_releases(self)
 
 ## reconcile_release_sort_keys
 
-[backend/app/worker/tasks.py:7061](../../backend/app/worker/tasks.py#L7061)
+[backend/app/worker/tasks.py:7123](../../backend/app/worker/tasks.py#L7123)
 
 Fill in ``releases.sort_key`` for rows that have none.
 
@@ -1298,7 +1320,7 @@ reconcile_release_sort_keys(self)
 
 ## run_agent_invocation
 
-[backend/app/worker/tasks.py:7130](../../backend/app/worker/tasks.py#L7130)
+[backend/app/worker/tasks.py:7192](../../backend/app/worker/tasks.py#L7192)
 
 Run one agent invoked through ``POST /api/v1/agents/{agent_id}/invoke`` (E1.2).
 
@@ -1315,7 +1337,7 @@ run_agent_invocation(self, invocation_id: str)
 
 ## export_training_data
 
-[backend/app/worker/training_tasks.py:36](../../backend/app/worker/training_tasks.py#L36)
+[backend/app/worker/training_tasks.py:51](../../backend/app/worker/training_tasks.py#L51)
 
 Weekly task: export verified training examples to MinIO for all three tracks.
 After export, checks if any track has crossed its fine-tuning trigger threshold.
@@ -1327,7 +1349,7 @@ export_training_data(self)
 
 ## check_finetune_trigger
 
-[backend/app/worker/training_tasks.py:63](../../backend/app/worker/training_tasks.py#L63)
+[backend/app/worker/training_tasks.py:78](../../backend/app/worker/training_tasks.py#L78)
 
 Daily task: check if enough new verified feedback has accumulated
 to trigger an incremental fine-tuning run.
@@ -1339,7 +1361,7 @@ check_finetune_trigger()
 
 ## run_finetune_pipeline
 
-[backend/app/worker/training_tasks.py:78](../../backend/app/worker/training_tasks.py#L78)
+[backend/app/worker/training_tasks.py:93](../../backend/app/worker/training_tasks.py#L93)
 
 Run the complete fine-tuning pipeline for one track:
   1. Find the latest training JSONL in MinIO

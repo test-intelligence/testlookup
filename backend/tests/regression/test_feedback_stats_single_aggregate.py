@@ -68,10 +68,16 @@ async def test_get_training_status_collapses_counts():
         FINETUNE_INCREMENTAL_TRIGGER=25,
     )
 
+    # W04 AIC-01: finetune_enabled is the EFFECTIVE switch from the resolver (a
+    # cached read), not one of the counted aggregate queries.
+    effective = AsyncMock(return_value={"finetune_enabled": True, "finetune_enabled_source": "ai_config"})
     with patch("app.services.model_registry.ModelRegistry.get_all_status",
-               AsyncMock(return_value={})):
+               AsyncMock(return_value={})), \
+         patch("app.services.ai_config_resolver.get_effective_ai_config", effective):
         out = await svc.get_training_status(db, settings)
 
     assert db.execute.await_count == 1  # was 2
     assert out["feedback"] == {"total": 10, "unexported": 4}
     assert out["finetune_enabled"] is True
+    assert out["finetune_enabled_source"] == "ai_config"
+    effective.assert_awaited_once_with(db=db)  # the request session, never a second one

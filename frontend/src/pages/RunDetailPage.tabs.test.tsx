@@ -21,7 +21,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import RunDetailPage from './RunDetailPage'
 
-const { mockProjectState, hooks } = vi.hoisted(() => ({
+const { mockProjectState, hooks, aiMode } = vi.hoisted(() => ({
+  aiMode: {
+    current: { analysis_mode: 'ml', ai_offline_mode: true, deep_investigation_enabled: true } as {
+      analysis_mode: string
+      ai_offline_mode: boolean
+      deep_investigation_enabled?: boolean
+    },
+  },
   mockProjectState: {
     activeProjectId: 'proj-1',
     activeProject: { id: 'proj-1', name: 'Project One' },
@@ -66,8 +73,12 @@ vi.mock('@/hooks/useAgentRuns', () => ({
   useRunSummary: hooks.useRunSummary,
   useActiveLiveRuns: vi.fn(() => ({ data: [] })),
 }))
-vi.mock('@/hooks/useAIConfig', () => ({
-  useAIConfig: vi.fn(() => ({ data: { analysis_mode: 'rules' } })),
+// W04 AIC-01: the deep triggers follow `/settings/ai/mode` (the toggle and the
+// mode). ML mode offers deep investigation and no LLM-only chrome, the state
+// these tests were written against; `aiMode.current` is switched per test.
+vi.mock('@/hooks/useAIConfig', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/useAIConfig')>()),
+  useAIConfig: vi.fn(() => ({ data: aiMode.current })),
 }))
 vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: vi.fn(() => ({ isQaEngineer: true })),
@@ -167,6 +178,7 @@ const PIPELINE = {
 
 beforeEach(() => {
   for (const fn of Object.values(hooks)) fn.mockReset()
+  aiMode.current = { analysis_mode: 'ml', ai_offline_mode: true, deep_investigation_enabled: true }
   hooks.useRun.mockReturnValue({ data: RUN })
   hooks.useRuns.mockReturnValue({ data: { items: [] }, isLoading: false })
   hooks.useTestCases.mockReturnValue({ data: { items: TESTS, pages: 1, total: TESTS.length }, isLoading: false, error: undefined })
@@ -427,6 +439,29 @@ describe('Run page — one header', () => {
     // region is in the DOM: under a loaded full suite the bare read saw the old URL.
     await waitFor(() => expect(location).toBe('/runs/run-1?tab=analysis'))
     trigger.mockRestore()
+  })
+
+  it.each([
+    ['deep investigation is off in Settings › AI', { analysis_mode: 'auto', ai_offline_mode: false, deep_investigation_enabled: false }, 'Deep investigation is turned off in Settings › AI.'],
+    ['the mode is Rules', { analysis_mode: 'rules', ai_offline_mode: true, deep_investigation_enabled: true }, 'Deep investigation needs LLM or Auto mode (current mode: Rules).'],
+  ])('W04 AIC-01: when %s, the ⋯ menu has no "Deep investigation" and the Analysis tab shows why instead of "Analyze failures"', (_why, mode, note) => {
+    aiMode.current = mode
+    renderAt('/runs/run-1?tab=analysis')
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    const items = screen.getAllByRole('menuitem').map((item) => item.textContent)
+    expect(items).not.toContain('Deep investigation')
+    // Only that item goes: the standard pipeline trigger stays.
+    expect(items).toContain('Trigger pipeline')
+    const deep = screen.getByRole('region', { name: 'Deep investigation' })
+    expect(within(deep).queryByRole('button', { name: /Analyze failures/ })).toBeNull()
+    expect(within(deep).getByTestId('deep-disabled-note')).toHaveTextContent(note)
+  })
+
+  it('W04 AIC-01: while the AI mode is loading the deep item is offered, as before', () => {
+    aiMode.current = undefined as unknown as typeof aiMode.current
+    renderAt('/runs/run-1')
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toContain('Deep investigation')
   })
 
   it('"Export AI history" downloads through the authed service with the run\'s build (W03 AIH-06)', async () => {

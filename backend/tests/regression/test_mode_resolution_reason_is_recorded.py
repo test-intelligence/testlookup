@@ -30,9 +30,13 @@ pytestmark = pytest.mark.regression
 
 @pytest.fixture(autouse=True)
 def _clear_mode_cache(monkeypatch):
-    """get_analysis_mode caches the configured mode for 30s in-process."""
+    """get_analysis_mode keeps the last refreshed configured mode (no expiry)
+    and the effective provider/model in-process; start every test clean."""
     monkeypatch.setattr(router, "_cached_mode", None, raising=False)
     monkeypatch.setattr(router, "_cached_mode_ts", 0.0, raising=False)
+    monkeypatch.setattr(router, "_effective_provider", None, raising=False)
+    monkeypatch.setattr(router, "_effective_model", None, raising=False)
+    monkeypatch.setattr(router, "_effective_base_url", None, raising=False)
 
 
 def _resolve(monkeypatch, *, mode="auto", provider="ollama", ollama_ok=None, ml=False):

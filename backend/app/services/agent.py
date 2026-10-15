@@ -26,7 +26,7 @@ from app.services.input_sanitizer import (
     sanitize_service_name,
     sanitize_stack_trace,
 )
-from app.services.llm_factory import get_llm
+from app.services.llm_factory import get_llm, llm_call_timeout
 from app.services.agent_config_resolver import ResolvedEndpoint
 from app.services.pipeline_event_log import emit_event as _emit_event
 from app.services.prompt_registry import get_prompt_text
@@ -394,6 +394,10 @@ async def run_triage_agent(
     # (homelab ai_analysis routing 2026-09-11: "llm_error: TypeError: Expected
     # a Runnable ..."). as_runnable() keeps every call inside its gates.
     react_llm = llm.as_runnable() if hasattr(llm, "as_runnable") else llm
+    # AIC-02: the whole ReAct loop is bounded by the Settings > AI timeout the
+    # model was built with (the frozen pipeline value when triage runs inside
+    # one, else the live effective config), not the environment default.
+    max_execution_seconds = llm_call_timeout(llm)
 
     def _build_executor() -> Any:
         agent = create_react_agent(
@@ -406,7 +410,7 @@ async def run_triage_agent(
             max_iterations=6,
             handle_parsing_errors=True,
             return_intermediate_steps=True,
-            max_execution_time=settings.AI_TIMEOUT_SECONDS,
+            max_execution_time=max_execution_seconds,
             early_stopping_method="force",
         )
 

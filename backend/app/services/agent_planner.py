@@ -13,7 +13,6 @@ import uuid
 from decimal import Decimal, ROUND_DOWN
 from typing import Any, Iterable, Mapping
 
-from app.core.config import settings
 from app.services.agent_capability_registry import get_capability
 
 
@@ -55,7 +54,8 @@ _DEEP_STAGES = (
 _FAILURE_ONLY_STAGES = {"anomaly_detection", "failure_clustering", "root_cause_analysis"}
 _CORE_STAGES = {"ingestion", "summary", "decision_report", "decision_report_critic"}
 # AIQ-P4 optional stages: present in the deep topology but only execute when
-# AIQ_GAP_REFINEMENT_ENABLED is on; otherwise they early-return a skip delta.
+# the per-project ``aiq_gap_refinement`` flag (frozen at pipeline start, W04
+# AGT-16) is on; otherwise they are planned off and skipped with that reason.
 _GAP_REFINEMENT_STAGES = {"gap_detection", "report_refinement"}
 _CLUSTER_CHILD_STAGES = {
     "cluster_investigation_dispatch", "cluster_investigation_join",
@@ -114,6 +114,16 @@ def invocation_stage_closure(workflow_type: str, stage_name: str) -> list[str]:
         needed.add(stage)
         pending.extend(get_capability(stage).dependencies)
     return [stage for stage in order if stage in needed]
+
+
+def agent_disabled_rationale(agent_id: str) -> str:
+    """Why a stage the planner selected does not run: its agent is switched off.
+
+    A mutating agent (``defect_commander``) starts disabled in shadow mode, so
+    its feature flag alone never runs it; the plan said "flag enabled" while
+    the stage was skipped, and the run page repeated that as the skip reason.
+    """
+    return f"agent {agent_id} is disabled in this project's agent configuration (Settings › AI agents)"
 
 
 def compute_workflow_plan_hash(plan: dict[str, Any]) -> str:
@@ -750,12 +760,21 @@ def build_workflow_plan(
     regression_watchman_enabled: bool = False,
     change_ownership_enabled: bool = False,
     defect_commander_enabled: bool = False,
+    gap_refinement_enabled: bool = False,
     invocation_stage: str | None = None,
 ) -> dict[str, Any]:
-    """Build the minimal useful agent path for the currently known state."""
+    """Build the minimal useful agent path for the currently known state.
+
+    ``threshold`` defaults to the configured env default
+    (``confidence_gate.env_default_threshold()``); a pipeline passes the
+    Settings > AI value it froze at start (W04 AIC-03).
+    """
     if invocation_stage is not None and invocation_stage not in _stage_order(workflow_type):
         raise ValueError(f"invocation_stage {invocation_stage!r} is not a {workflow_type} stage")
-    threshold = threshold if threshold is not None else settings.AI_CONFIDENCE_THRESHOLD
+    if threshold is None:
+        from app.services.confidence_gate import env_default_threshold
+
+        threshold = env_default_threshold()
     if not isinstance(cluster_children_enabled, bool):
         raise ValueError("cluster_children_enabled must be a boolean")
     if not isinstance(contract_validation_enabled, bool):
@@ -768,6 +787,8 @@ def build_workflow_plan(
         raise ValueError("change_ownership_enabled must be a boolean")
     if not isinstance(defect_commander_enabled, bool):
         raise ValueError("defect_commander_enabled must be a boolean")
+    if not isinstance(gap_refinement_enabled, bool):
+        raise ValueError("gap_refinement_enabled must be a boolean")
     graph_budget = (
         _nonnegative_budget_snapshot(decision_graph_aggregate_budget)
         if decision_graph_aggregate_budget is not None
@@ -895,11 +916,11 @@ def build_workflow_plan(
                 planned = False
                 rationale = "all-green run has no failed tests to promote"
         elif stage in _GAP_REFINEMENT_STAGES:
-            if settings.AIQ_GAP_REFINEMENT_ENABLED:
+            if gap_refinement_enabled:
                 rationale = "AIQ-P4 gap/refinement stage enabled by feature flag"
             else:
                 planned = False
-                rationale = "AIQ_GAP_REFINEMENT_ENABLED is off — stage skipped"
+                rationale = "AIQ gap/refinement feature flag is off for this project"
         elif stage in _FAILURE_ONLY_STAGES and all_green:
             planned = False
             rationale = "all-green run has no failed tests for this specialist stage"
@@ -962,6 +983,16 @@ def build_workflow_plan(
                 item["planned"] = False
                 item["rationale"] = f"not needed for the invoked agent {invoked_id}"
 
+    specialist_flags: dict[str, bool] = {
+        "contract_validation": contract_validation_enabled,
+        "log_intelligence": log_intelligence_enabled,
+        "regression_watchman": regression_watchman_enabled,
+        "change_ownership": change_ownership_enabled,
+        "defect_commander": defect_commander_enabled,
+    }
+    if workflow_type == "deep":
+        # Deep plans only: the offline/live plan hashes stay byte-identical.
+        specialist_flags["gap_refinement"] = gap_refinement_enabled
     plan = {
         "schema_version": PLANNER_SCHEMA_VERSION,
         "planner_version": PLANNER_VERSION,
@@ -977,13 +1008,7 @@ def build_workflow_plan(
         # explained plan with the SAME inputs. Without these the rebuild fell
         # back to the kwarg defaults (all False) and reported every specialist
         # as "feature flag is off" even while the agent had just run.
-        "specialist_flags": {
-            "contract_validation": contract_validation_enabled,
-            "log_intelligence": log_intelligence_enabled,
-            "regression_watchman": regression_watchman_enabled,
-            "change_ownership": change_ownership_enabled,
-            "defect_commander": defect_commander_enabled,
-        },
+        "specialist_flags": specialist_flags,
         "stages": stages,
     }
     if invocation_stage is not None:
@@ -1112,6 +1137,7 @@ def attach_workflow_plan_and_verification(
         regression_watchman_enabled=bool(specialist_flags.get("regression_watchman")),
         change_ownership_enabled=bool(specialist_flags.get("change_ownership")),
         defect_commander_enabled=bool(specialist_flags.get("defect_commander")),
+        gap_refinement_enabled=bool(specialist_flags.get("gap_refinement")),
         invocation_stage=plan_inputs.get("invocation_stage"),
     )
     state["initial_workflow_plan"] = initial_plan

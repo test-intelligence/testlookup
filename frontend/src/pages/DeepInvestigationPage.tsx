@@ -61,7 +61,15 @@ import { usePageSuiteFilter } from '@/hooks/usePageSuiteFilter'
 import { scopeKey } from '@/lib/scopeParams'
 import { suiteMatchesValue } from '@/utils/suiteFilters'
 import { usePermissions } from '@/hooks/usePermissions'
-import { deepInvestigationService } from '@/services/deepInvestigationService'
+import { deepInvestigationAvailability, useAIConfig } from '@/hooks/useAIConfig'
+import agentService from '@/services/agentService'
+import { deepInvestigationService, type PipelineStatus } from '@/services/deepInvestigationService'
+import {
+  conflictText,
+  deepRetryOutcomeText,
+  pipelineActionError,
+  readPipelineActionConflict,
+} from '@/services/pipelineActions'
 import type { FailureCluster, DeepFinding } from '@/types/deep-investigation'
 import type { DecisionTrailResponse } from '@/types/decisionTrail'
 import type { IntegrationStatus } from '@/services/integrationHealthService'
@@ -248,14 +256,15 @@ function testResultsSource(hasRuns: boolean): EvidenceSource {
 
 // ── Atoms ────────────────────────────────────────────────────────────────
 function PrimaryBtn({
-  children, onClick, title, disabled,
-}: { children: React.ReactNode; onClick?: () => void; title?: string; disabled?: boolean }) {
+  children, onClick, title, disabled, testId,
+}: { children: React.ReactNode; onClick?: () => void; title?: string; disabled?: boolean; testId?: string }) {
   return (
     <button
       type="button"
       onClick={onClick}
       title={title}
       disabled={disabled}
+      data-testid={testId}
       className="inline-flex items-center gap-1.5 font-medium rounded-md transition-colors disabled:opacity-50 px-3 py-1.5 text-[13px]"
       style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
       onMouseEnter={(e) => !disabled && (e.currentTarget.style.background = 'var(--color-btn-primary-hover)')}
@@ -263,6 +272,196 @@ function PrimaryBtn({
     >
       {children}
     </button>
+  )
+}
+
+function SecondaryBtn({
+  children, onClick, title, disabled, testId,
+}: { children: React.ReactNode; onClick?: () => void; title?: string; disabled?: boolean; testId?: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      disabled={disabled}
+      data-testid={testId}
+      className="inline-flex items-center gap-1.5 font-medium rounded-md border border-[var(--color-border)] transition-colors disabled:opacity-50 px-3 py-1.5 text-[13px] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] disabled:hover:bg-transparent"
+    >
+      {children}
+    </button>
+  )
+}
+
+/**
+ * W04 AIC-01: what replaces a deep-investigation trigger when Settings › AI
+ * has deep investigation off, or the mode is Rules (the server would refuse
+ * it with 422). Not a disabled button: the reader is told why.
+ */
+function DeepDisabledNote({ message }: { message: string | null }) {
+  return (
+    <span data-testid="deep-disabled-note" className="text-[12px] text-[var(--color-text-muted)]">
+      {message}
+    </span>
+  )
+}
+
+// ── Retry from the last successful stage (W04 AGT-04) ───────────────────
+type DeepRetryNote = { tone: 'ok' | 'error'; text: string }
+
+interface DeepRetryState {
+  /** The run this state belongs to: a run picked later starts clean. */
+  runId: string
+  pending: 'retry' | 'start' | null
+  note: DeepRetryNote | null
+  offerNewRun: boolean
+  /** The failed pipeline a retry was accepted for, until the status shows it moved. */
+  awaiting: { id: string; completedAt: string | null } | null
+}
+
+/** Still the same failed pipeline the retry was accepted for (the worker has not claimed it yet). */
+function stillAwaiting(status: PipelineStatus | null | undefined, awaiting: DeepRetryState['awaiting']): boolean {
+  return awaiting != null
+    && status?.pipeline_run_id === awaiting.id
+    && status.status === 'failed'
+    && (status.completed_at ?? null) === awaiting.completedAt
+}
+
+/**
+ * The deep pipeline status of a run, and "Retry from last successful stage".
+ *
+ * The SERVER decides resume (same pipeline, completed stages kept) or rerun
+ * (configuration changed: it has already queued a fresh deep run), so the page
+ * never triggers a second one: it shows the outcome and revalidates the
+ * status, which keys on the run + workflow type and so picks up a new
+ * pipeline id by itself. Until the retried pipeline moves, the status keeps
+ * polling and the button stays disabled (a second click would queue a
+ * second resume). A 409 shows the server's message and, when the server
+ * offers one (`links.rerun`), "Start a new run".
+ */
+function useDeepRetry(runId: string | null) {
+  const [state, setState] = useState<DeepRetryState | null>(null)
+  const current = runId != null && state?.runId === runId ? state : null
+  const awaiting = current?.awaiting ?? null
+  const { data, mutate } = usePipelineStatus(runId, 'deep', {
+    follow: (d) => stillAwaiting(d, awaiting),
+  })
+  const pipelineStatus = data ?? null
+  const waiting = stillAwaiting(pipelineStatus, awaiting)
+  // Optional call: page tests mock the status hook without `mutate`.
+  const refreshStatus = () => { void mutate?.() }
+
+  async function retry() {
+    const pipelineRunId = pipelineStatus?.pipeline_run_id
+    if (!runId || !pipelineRunId) return
+    const base = { runId, offerNewRun: false, awaiting: null }
+    setState({ ...base, pending: 'retry', note: null })
+    try {
+      const res = await agentService.retryPipeline(pipelineRunId)
+      setState({
+        ...base,
+        pending: null,
+        note: { tone: 'ok', text: deepRetryOutcomeText(res) },
+        awaiting: { id: pipelineRunId, completedAt: pipelineStatus?.completed_at ?? null },
+      })
+    } catch (err: unknown) {
+      const conflict = readPipelineActionConflict(err)
+      setState({
+        ...base,
+        pending: null,
+        note: { tone: 'error', text: conflict ? conflictText(conflict) : pipelineActionError(err, 'Retry failed') },
+        offerNewRun: Boolean(conflict?.links?.rerun),
+      })
+    } finally {
+      refreshStatus()
+    }
+  }
+
+  async function startNewRun() {
+    if (!runId) return
+    const pipelineRunId = pipelineStatus?.pipeline_run_id ?? null
+    setState({ runId, pending: 'start', note: current?.note ?? null, offerNewRun: true, awaiting: null })
+    try {
+      await deepInvestigationService.triggerDeep(runId, 'deep')
+      toast.success('Deep analysis queued')
+      setState({
+        runId,
+        pending: null,
+        note: null,
+        offerNewRun: false,
+        awaiting: pipelineRunId ? { id: pipelineRunId, completedAt: pipelineStatus?.completed_at ?? null } : null,
+      })
+    } catch (err: unknown) {
+      setState({
+        runId,
+        pending: null,
+        note: { tone: 'error', text: pipelineActionError(err, 'Trigger failed') },
+        offerNewRun: true,
+        awaiting: null,
+      })
+    } finally {
+      refreshStatus()
+    }
+  }
+
+  return {
+    pipelineStatus,
+    refreshStatus,
+    pending: current?.pending ?? null,
+    waiting,
+    note: current?.note ?? null,
+    offerNewRun: current?.offerNewRun ?? false,
+    retry,
+    startNewRun,
+  }
+}
+
+type DeepRetry = ReturnType<typeof useDeepRetry>
+
+/** The "Retry from last successful stage" button (primary on the verdict card, secondary beside "Analyze failures"). */
+function DeepRetryButton({ retry, isQaEngineer, secondary = false }: { retry: DeepRetry; isQaEngineer: boolean; secondary?: boolean }) {
+  const Btn = secondary ? SecondaryBtn : PrimaryBtn
+  return (
+    <Btn
+      testId="deep-retry"
+      onClick={() => void retry.retry()}
+      disabled={!isQaEngineer || retry.pending !== null || retry.waiting}
+      title={!isQaEngineer
+        ? 'QA Engineer role required'
+        : 'Resume the failed investigation from its last completed stage (a new run starts instead if the configuration changed)'}
+    >
+      <Play className="h-3.5 w-3.5" />
+      {retry.pending === 'retry' ? 'Retrying…' : 'Retry from last successful stage'}
+    </Btn>
+  )
+}
+
+/** The retry's outcome (or the server's refusal) and, when offered, "Start a new run". */
+function DeepRetryOutcome({ retry, isQaEngineer }: { retry: DeepRetry; isQaEngineer: boolean }) {
+  if (!retry.note && !retry.offerNewRun) return null
+  return (
+    <>
+      {retry.note && (
+        <span
+          data-testid="deep-retry-note"
+          data-tone={retry.note.tone}
+          role="status"
+          className="text-[12px]"
+          style={{ color: retry.note.tone === 'error' ? 'var(--status-failed)' : 'var(--color-text-secondary)' }}
+        >
+          {retry.note.text}
+        </span>
+      )}
+      {retry.offerNewRun && (
+        <SecondaryBtn
+          testId="deep-start-new-run"
+          onClick={() => void retry.startNewRun()}
+          disabled={!isQaEngineer || retry.pending !== null}
+        >
+          <Bot className="h-3.5 w-3.5" />
+          {retry.pending === 'start' ? 'Queuing…' : 'Start a new run'}
+        </SecondaryBtn>
+      )}
+    </>
   )
 }
 
@@ -559,7 +758,7 @@ function pickVerdict(model: DeepModel, pipelineStatus: { status: string } | null
 
 // ── Verdict card ────────────────────────────────────────────────────────
 function VerdictCard({
-  model, verdict, headline, lede, onRunAll, isQaEngineer,
+  model, verdict, headline, lede, onRunAll, isQaEngineer, retry, offerRetry, unavailableMessage,
 }: {
   model: DeepModel
   verdict: Verdict
@@ -567,6 +766,12 @@ function VerdictCard({
   lede: React.ReactNode
   onRunAll: () => void
   isQaEngineer: boolean
+  /** W04 AGT-04: the FAILED card's "Retry from last successful stage" and its outcome. */
+  retry: DeepRetry
+  /** The last deep run failed and has an id to retry: the CTA is the retry, not a fresh run. */
+  offerRetry: boolean
+  /** W04 AIC-01: set when deep investigation is not offered (toggle off / Rules mode). */
+  unavailableMessage: string | null
 }) {
   const t = VERDICT_THEME[verdict]
   return (
@@ -640,16 +845,26 @@ function VerdictCard({
           />
         </div>
 
-        {/* CTAs */}
+        {/* CTAs. A failed run is retried (the server resumes it, or reruns
+            it when the configuration changed) — never a second fresh run.
+            The retry is a resume, not a new investigation, so the AIC-01
+            note does not replace it. */}
         <div className="flex items-center gap-2 flex-wrap">
-          <PrimaryBtn
-            onClick={onRunAll}
-            disabled={!isQaEngineer || verdict === 'NO_FAILURES' || verdict === 'NO_SOURCES'}
-            title={isQaEngineer ? `Run on all ${model.eligibleFailures} failures` : 'QA Engineer role required'}
-          >
-            <Play className="h-3.5 w-3.5" />
-            Run on all {model.eligibleFailures} failure{model.eligibleFailures === 1 ? '' : 's'}
-          </PrimaryBtn>
+          {offerRetry ? (
+            <DeepRetryButton retry={retry} isQaEngineer={isQaEngineer} />
+          ) : unavailableMessage != null ? (
+            <DeepDisabledNote message={unavailableMessage} />
+          ) : (
+            <PrimaryBtn
+              onClick={onRunAll}
+              disabled={!isQaEngineer || verdict === 'NO_FAILURES' || verdict === 'NO_SOURCES'}
+              title={isQaEngineer ? `Run on all ${model.eligibleFailures} failures` : 'QA Engineer role required'}
+            >
+              <Play className="h-3.5 w-3.5" />
+              Run on all {model.eligibleFailures} failure{model.eligibleFailures === 1 ? '' : 's'}
+            </PrimaryBtn>
+          )}
+          <DeepRetryOutcome retry={retry} isQaEngineer={isQaEngineer} />
         </div>
       </div>
 
@@ -1372,7 +1587,12 @@ export function RunDeepClusters({ runId, run }: { runId: string; run: TestRun | 
   const { isQaEngineer } = usePermissions()
   const { data: clusters = [] } = useFailureClusters(runId)
   const { data: findings = [] } = useDeepFindings(runId)
-  const { data: pipelineStatus = null, mutate: refreshStatus } = usePipelineStatus(runId, 'deep')
+  // W04 AGT-04: the deep status and "Retry from last successful stage".
+  const retry = useDeepRetry(runId)
+  const { pipelineStatus, refreshStatus } = retry
+  // W04 AIC-01: no "Analyze failures" while deep investigation is off or the mode is Rules.
+  const { data: aiMode } = useAIConfig()
+  const availability = deepInvestigationAvailability(aiMode)
   const [queuing, setQueuing] = useState(false)
   const model = useMemo(
     () => buildModel({
@@ -1396,7 +1616,7 @@ export function RunDeepClusters({ runId, run }: { runId: string; run: TestRun | 
     try {
       await deepInvestigationService.triggerDeep(runId, 'deep')
       toast.success('Deep analysis queued')
-      void refreshStatus()
+      refreshStatus()
     } catch {
       toast.error('Trigger failed')
     } finally {
@@ -1404,6 +1624,7 @@ export function RunDeepClusters({ runId, run }: { runId: string; run: TestRun | 
     }
   }
 
+  const failed = pipelineStatus?.status === 'failed'
   return (
     <section aria-label="Deep investigation" data-run-deep-clusters="">
       <ProposedClustersCard
@@ -1412,18 +1633,30 @@ export function RunDeepClusters({ runId, run }: { runId: string; run: TestRun | 
         action={
           <>
             {running && <span className="text-[var(--color-accent)]">investigation running</span>}
-            {pipelineStatus?.status === 'failed' && <span className="text-[var(--status-broken)]">last investigation failed</span>}
-            <PrimaryBtn
-              onClick={() => void onAnalyze()}
-              disabled={Boolean(blocked) || queuing}
-              title={blocked ?? 'Cluster this run\'s failures and find their root causes (deep investigation)'}
-            >
-              <Bot className="h-3.5 w-3.5" />
-              {queuing ? 'Queuing…' : 'Analyze failures'}
-            </PrimaryBtn>
+            {failed && <span className="text-[var(--status-broken)]">last investigation failed</span>}
+            {failed && pipelineStatus?.pipeline_run_id && (
+              <DeepRetryButton retry={retry} isQaEngineer={isQaEngineer} secondary />
+            )}
+            {availability.available ? (
+              <PrimaryBtn
+                onClick={() => void onAnalyze()}
+                disabled={Boolean(blocked) || queuing}
+                title={blocked ?? 'Cluster this run\'s failures and find their root causes (deep investigation)'}
+              >
+                <Bot className="h-3.5 w-3.5" />
+                {queuing ? 'Queuing…' : 'Analyze failures'}
+              </PrimaryBtn>
+            ) : (
+              <DeepDisabledNote message={availability.message} />
+            )}
           </>
         }
       />
+      {(retry.note || retry.offerNewRun) && (
+        <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+          <DeepRetryOutcome retry={retry} isQaEngineer={isQaEngineer} />
+        </div>
+      )}
     </section>
   )
 }
@@ -1505,9 +1738,16 @@ export default function DeepInvestigationPage() {
   const { data: clusters = [] } = useFailureClusters(runId ?? null)
   const { data: findings = [] } = useDeepFindings(runId ?? null)
 
-  // Pipeline status fetched declaratively via SWR (refreshes on focus); null
-  // while loading, before a run is selected, or on a failed load.
-  const { data: pipelineStatus = null } = usePipelineStatus(runId ?? null, 'deep')
+  // Pipeline status fetched declaratively via SWR (refreshes on focus, polls
+  // while in progress); null while loading, before a run is selected, or on a
+  // failed load. W04 AGT-04: with the FAILED card's "Retry from last
+  // successful stage" (`useDeepRetry`).
+  const deepRetry = useDeepRetry(runId ?? null)
+  const { pipelineStatus } = deepRetry
+  // W04 AIC-01: the deep triggers follow the Settings › AI toggle and the mode
+  // (`/settings/ai/mode`, which every role may read).
+  const { data: aiMode } = useAIConfig()
+  const deepAvailability = deepInvestigationAvailability(aiMode)
 
   // Evidence-source health — real integration probes plus the intrinsic
   // "test results" source (live whenever runs exist in the workspace). The
@@ -1657,14 +1897,18 @@ export default function DeepInvestigationPage() {
               options={suiteOptions}
               allLabel="All suites"
             />
-            <PrimaryBtn
-              onClick={onRunAll}
-              disabled={!isQaEngineer || verdict === 'NO_FAILURES' || verdict === 'NO_SOURCES' || !runId}
-              title={isQaEngineer ? 'Trigger a deep investigation now' : 'QA Engineer role required'}
-            >
-              <Bot className="h-3.5 w-3.5" />
-              Run Deep Analysis
-            </PrimaryBtn>
+            {deepAvailability.available ? (
+              <PrimaryBtn
+                onClick={onRunAll}
+                disabled={!isQaEngineer || verdict === 'NO_FAILURES' || verdict === 'NO_SOURCES' || !runId}
+                title={isQaEngineer ? 'Trigger a deep investigation now' : 'QA Engineer role required'}
+              >
+                <Bot className="h-3.5 w-3.5" />
+                Run Deep Analysis
+              </PrimaryBtn>
+            ) : (
+              <DeepDisabledNote message={deepAvailability.message} />
+            )}
           </div>
         }
       />
@@ -1676,6 +1920,9 @@ export default function DeepInvestigationPage() {
         lede={lede}
         onRunAll={onRunAll}
         isQaEngineer={isQaEngineer}
+        retry={deepRetry}
+        offerRetry={verdict === 'FAILED' && Boolean(pipelineStatus?.pipeline_run_id)}
+        unavailableMessage={deepAvailability.available ? null : deepAvailability.message}
       />
 
       {/* AI-1 Investigator cockpit — hypothesis-loop agent (shadow mode).

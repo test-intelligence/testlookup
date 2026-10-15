@@ -33,10 +33,9 @@ from app.models.schemas import (
     DefectPromotionRequest,
     DefectPromotionResponse,
 )
-from app.core.config import settings
 from app.services.action_policy import ActionStatus, approve_action, reject_action
-from app.services.analysis_router import get_analysis_mode
 from app.services.cluster_ranking_service import rank_clusters
+from app.services.deep_investigation_gate import require_deep_investigation
 from app.services.defect_promotion_service import get_defect_candidate, promote_cluster
 from app.worker.tasks import run_agent_pipeline
 from app.services.cluster_snapshot import is_current_snapshot
@@ -101,17 +100,11 @@ async def trigger_deep_investigation(
     Uses workflow_type="deep" which adds failure clustering, flaky sentinel,
     test health analysis, and release risk on top of the standard 5-stage pipeline.
     """
-    if not settings.DEEP_INVESTIGATION_ENABLED:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Deep investigation is disabled. Enable it in Settings > AI Configuration.",
-        )
-    current_mode = get_analysis_mode()
-    if current_mode == "rules":
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Deep investigation requires LLM or Auto mode. Current mode: rules.",
-        )
+    # AIC-01 / AIC-04: Settings > AI (over env, both directions) decides, through
+    # the request session only. It used to read the env flag and the in-process
+    # mode, which fell back to env after 30 s, so a stored "off" or "rules" did
+    # nothing here.
+    await require_deep_investigation(db)
 
     result = await db.execute(select(TestRun).where(TestRun.id == run_id))
     run = result.scalar_one_or_none()

@@ -34,7 +34,21 @@ than mysterious:
   ``offline_mode_source``     "env" | "override" | "not_offline"
   ``offline_mode_env_pinned`` True when the environment forces offline
 
-Results are cached in Redis for 60 seconds to avoid per-request DB queries.
+Stored settings the runtime obeys (AIC-04 / AIC-01 / AIC-02)
+------------------------------------------------------------
+``analysis_mode``, ``deep_investigation_enabled``, ``finetune_enabled`` and
+``timeout_seconds`` follow DB -> env in BOTH directions (a stored ``False``
+overrides an env ``True`` and vice versa). Each comes with a ``*_source``
+("ai_config" | "env_default") decided by ONE pure helper,
+:func:`stored_or_default`, which ``routers/app_settings._load_ai_config`` uses
+too, so ``GET /settings/ai`` and the runtime can never disagree. An invalid
+stored value (``"false"``, ``0``, ``"turbo"``, a timeout outside 5..1800) is
+ignored: the env default wins and the source says ``env_default``.
+
+Results are cached in Redis for 60 seconds to avoid per-request DB queries,
+under a VERSIONED key (``config:ai_effective:v2``): an old-build pod keeps
+writing the v1 key without the new fields during a rolling deploy, and the new
+code must never read such an entry.
 
 Usage:
     from app.services.ai_config_resolver import get_effective_ai_config, invalidate_ai_config_cache
@@ -43,14 +57,36 @@ Usage:
 """
 import json
 import structlog
-from typing import Any
+from typing import Any, Callable, Mapping, TypeVar
 
 from app.core.config import settings
 
 logger = structlog.get_logger("services.ai_config_resolver")
 
-_CACHE_KEY = "config:ai_effective"
+# v2 (W04): the payload gained analysis_mode / deep_investigation_enabled /
+# finetune_enabled and four ``*_source`` keys. A pod on the previous build keeps
+# writing the v1 key without them during a rolling deploy, so the new code
+# reads and writes only v2, and invalidation deletes both.
+_CACHE_KEY = "config:ai_effective:v2"
+_LEGACY_CACHE_KEYS: tuple[str, ...] = ("config:ai_effective",)
 _CACHE_TTL = 60  # seconds
+
+# The non-expiring accelerator for the CONFIGURED analysis mode (AIC-04). Only
+# a value that came from the stored row is ever written here (by
+# ``PUT /settings/ai`` and by ``analysis_router.resolve_configured_analysis_mode``
+# on a miss), so a hit always means "stored". Deleted by
+# :func:`invalidate_ai_config_cache`.
+ANALYSIS_MODE_CACHE_KEY = "config:analysis_mode"
+
+# ONE provenance vocabulary for every ``*_source`` field of the effective config.
+SOURCE_AI_CONFIG = "ai_config"      # a valid value is stored in app_settings["ai_config"]
+SOURCE_ENV_DEFAULT = "env_default"  # nothing valid stored; the Settings default applies
+
+ANALYSIS_MODES: tuple[str, ...] = ("llm", "ml", "rules", "auto")
+TIMEOUT_SECONDS_MIN = 5
+TIMEOUT_SECONDS_MAX = 1800
+
+_T = TypeVar("_T")
 
 # Provenance values for ``offline_mode_source``.
 OFFLINE_SOURCE_ENV = "env"              # forced by AI_OFFLINE_MODE in the environment
@@ -60,9 +96,89 @@ OFFLINE_SOURCE_NONE = "not_offline"     # egress permitted
 # Provenance values for ``confidence_threshold_source`` (US-15.2). Duplicated
 # as literals rather than imported from ``confidence_gate`` — that module
 # imports this one, and a module-level import back would be circular. The
-# values are asserted equal in tests/test_ai_trust_provenance.py.
-CONFIDENCE_SOURCE_AI_CONFIG = "ai_config"
-CONFIDENCE_SOURCE_ENV_DEFAULT = "env_default"
+# values are asserted equal in tests/test_ai_trust_provenance.py. Aliases of
+# the shared vocabulary above.
+CONFIDENCE_SOURCE_AI_CONFIG = SOURCE_AI_CONFIG
+CONFIDENCE_SOURCE_ENV_DEFAULT = SOURCE_ENV_DEFAULT
+
+
+# ── stored value or env default (one helper for the runtime AND the API) ─────
+
+
+def valid_analysis_mode(value: Any) -> str | None:
+    """A stored analysis mode, normalised, or None when it is not one of ANALYSIS_MODES."""
+    if not isinstance(value, str):
+        return None
+    mode = value.strip().lower()
+    return mode if mode in ANALYSIS_MODES else None
+
+
+def valid_bool(value: Any) -> bool | None:
+    """A real ``bool`` only. ``"false"`` and ``0`` are NOT booleans: a hand-edited
+    row holding the string "false" would otherwise read as truthy."""
+    return value if isinstance(value, bool) else None
+
+
+def valid_timeout_seconds(value: Any) -> int | None:
+    """An ``int`` (not a ``bool``) in TIMEOUT_SECONDS_MIN..TIMEOUT_SECONDS_MAX."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if TIMEOUT_SECONDS_MIN <= value <= TIMEOUT_SECONDS_MAX else None
+
+
+def stored_or_default(
+    overrides: Mapping[str, Any] | None,
+    key: str,
+    default: _T,
+    validate: Callable[[Any], _T | None],
+) -> tuple[_T, str]:
+    """``(value, source)`` for one stored setting.
+
+    A valid stored value wins (source ``ai_config``); an absent or INVALID one
+    is ignored and ``default`` applies (source ``env_default``). Precedence is
+    DB -> env in both directions: a stored ``False`` overrides an env ``True``.
+    """
+    if overrides and key in overrides:
+        value = validate(overrides[key])
+        if value is not None:
+            return value, SOURCE_AI_CONFIG
+    return default, SOURCE_ENV_DEFAULT
+
+
+def env_default_analysis_mode() -> str:
+    """``settings.ANALYSIS_MODE`` normalised; ``"auto"`` when it is not a valid mode."""
+    return valid_analysis_mode(settings.ANALYSIS_MODE) or "auto"
+
+
+def resolve_stored_toggles(overrides: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The four AIC-04/01/02 settings and their sources, keyed by their STORED
+    (``app_settings["ai_config"]``) names. Shared by the runtime resolver and
+    ``routers/app_settings._load_ai_config``."""
+    mode, mode_source = stored_or_default(
+        overrides, "analysis_mode", env_default_analysis_mode(), valid_analysis_mode
+    )
+    timeout, timeout_source = stored_or_default(
+        overrides, "ai_timeout_seconds", settings.AI_TIMEOUT_SECONDS, valid_timeout_seconds
+    )
+    deep, deep_source = stored_or_default(
+        overrides,
+        "deep_investigation_enabled",
+        bool(settings.DEEP_INVESTIGATION_ENABLED),
+        valid_bool,
+    )
+    finetune, finetune_source = stored_or_default(
+        overrides, "finetune_enabled", bool(settings.FINETUNE_ENABLED), valid_bool
+    )
+    return {
+        "analysis_mode": mode,
+        "analysis_mode_source": mode_source,
+        "ai_timeout_seconds": timeout,
+        "ai_timeout_seconds_source": timeout_source,
+        "deep_investigation_enabled": deep,
+        "deep_investigation_enabled_source": deep_source,
+        "finetune_enabled": finetune,
+        "finetune_enabled_source": finetune_source,
+    }
 
 
 def env_offline_pinned() -> bool:
@@ -148,11 +264,18 @@ async def get_effective_ai_config(
 
 
 async def invalidate_ai_config_cache() -> None:
-    """Bust the Redis cache so the next get_effective_ai_config() reloads from DB."""
+    """Bust the Redis caches so the next read reloads from DB.
+
+    Deletes the v2 effective-config key, the legacy v1 key (an old-build pod
+    may still be serving it) and the analysis-mode accelerator, which never
+    expires on its own: every application write path that changes
+    ``ai_config`` calls this, and ``PUT /settings/ai`` re-seeds the mode right
+    after.
+    """
     try:
         from app.db.redis_client import get_redis
         redis = get_redis()
-        await redis.delete(_CACHE_KEY)
+        await redis.delete(_CACHE_KEY, *_LEGACY_CACHE_KEYS, ANALYSIS_MODE_CACHE_KEY)
         logger.info("ai_config_cache_invalidated")
     except Exception:
         pass
@@ -186,6 +309,21 @@ async def _load_from_db_and_env(*, db: Any = None) -> dict[str, Any]:
         "openrouter_api_key": getattr(settings, "OPENROUTER_API_KEY", None),
     }
 
+    def _apply_stored_toggles(overrides: Mapping[str, Any] | None) -> None:
+        toggles = resolve_stored_toggles(overrides)
+        config["analysis_mode"] = toggles["analysis_mode"]
+        config["analysis_mode_source"] = toggles["analysis_mode_source"]
+        config["timeout_seconds"] = toggles["ai_timeout_seconds"]
+        config["timeout_seconds_source"] = toggles["ai_timeout_seconds_source"]
+        config["deep_investigation_enabled"] = toggles["deep_investigation_enabled"]
+        config["deep_investigation_enabled_source"] = toggles["deep_investigation_enabled_source"]
+        config["finetune_enabled"] = toggles["finetune_enabled"]
+        config["finetune_enabled_source"] = toggles["finetune_enabled_source"]
+
+    # analysis_mode / timeout / deep / finetune + their sources: env defaults
+    # first (also what a DB failure leaves in force).
+    _apply_stored_toggles(None)
+
     async def _merge_from_db(session: Any) -> None:
         # Load DB overrides
         result = await session.execute(
@@ -200,7 +338,8 @@ async def _load_from_db_and_env(*, db: Any = None) -> dict[str, Any]:
             config["max_tokens"] = overrides.get("llm_max_tokens", config["max_tokens"])
             config["base_url"] = overrides.get("base_url", config["base_url"])
             config["offline_mode"] = overrides.get("ai_offline_mode", config["offline_mode"])
-            config["timeout_seconds"] = overrides.get("ai_timeout_seconds", config["timeout_seconds"])
+            # Validated, DB -> env in both directions, with provenance.
+            _apply_stored_toggles(overrides)
             from app.services.confidence_gate import normalize_threshold
 
             stored_threshold = normalize_threshold(overrides.get("ai_confidence_threshold"))

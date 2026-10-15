@@ -69,6 +69,26 @@ const MODEL_STATUS = {
   checked_at: '2026-09-18T00:00:00+00:00',
 }
 
+const ML_STATUS = {
+  model_available: false,
+  version: null,
+  accuracy: null,
+  trained_at: null,
+  model_sample_count: null,
+  available_samples: 12,
+  min_training_samples: 200,
+  human_labels: 0,
+  human_label_floor: 50,
+  maturity: 'not_trained',
+  deps_installed: true,
+  retrain_enabled: true,
+  can_train: false,
+  cannot_train_reason: 'insufficient_samples',
+  cannot_train_message: 'Need 200 labelled samples, have 12.',
+  training: { state: 'idle', task_id: null, queued_at: null, started_at: null, triggered_by: null },
+  last_run: null,
+}
+
 const STORAGE = {
   storage_backend: 'minio',
   postgres_connected: true,
@@ -126,6 +146,8 @@ const HANDLERS: ApiHandlers = [
   // Before LAYOUT: the AI page reads the full config, the chrome a subset.
   ['/api/v1/settings/ai', () => AI_CONFIG],
   ['/api/v1/settings/ai/model-status', () => MODEL_STATUS],
+  // W04 AIC-05: the ML card under the mode radios reads its own status.
+  ['/api/v1/settings/ai/ml/status', () => ML_STATUS],
   ['/api/v1/settings/storage', () => STORAGE],
   ['/api/v1/settings/mfa-policy', () => MFA_POLICY],
   [`/api/v1/projects/${PROJECT_ID}/retention-policy`, () => RETENTION_POLICY],

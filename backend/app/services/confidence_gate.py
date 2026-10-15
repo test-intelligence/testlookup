@@ -93,11 +93,26 @@ def passes(observed_confidence: Optional[int], threshold: int) -> bool:
 async def resolve_confidence_threshold() -> tuple[int, str]:
     """Return ``(threshold, source)`` for the effective confidence gate.
 
-    Reads through ``get_effective_ai_config()`` so it shares that resolver's
-    Redis cache (60s) and its DB-failure fallback. Never raises — a settings
-    outage degrades to the env default rather than opening or closing every
-    gate unpredictably.
+    Inside a pipeline (``pipeline_ai_scope``, W04 AIC-03) the value FROZEN at
+    pipeline start wins, so every ``check_confidence()`` in the graph (router
+    ``threshold_check``, ``action_policy``, triage) agrees with the plan and a
+    resume replays the same number. Outside a pipeline it reads through
+    ``get_effective_ai_config()`` so it shares that resolver's Redis cache
+    (60s) and its DB-failure fallback. Never raises — a settings outage
+    degrades to the env default rather than opening or closing every gate
+    unpredictably.
     """
+    try:
+        from app.services.pipeline_ai_scope import current_ai_scope
+
+        scope = current_ai_scope()
+        if scope is not None:
+            frozen = normalize_threshold(scope.get("confidence_threshold"))
+            frozen_source = scope.get("confidence_threshold_source")
+            if frozen is not None and frozen_source in (SOURCE_AI_CONFIG, SOURCE_ENV_DEFAULT):
+                return frozen, str(frozen_source)
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("confidence_threshold_scope_read_failed", error=str(exc))
     try:
         from app.services.ai_config_resolver import get_effective_ai_config
 

@@ -95,6 +95,21 @@ def _no_registry(monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _effective_config(monkeypatch):
+    """W04 AIC-01: ``finetune_enabled`` is the EFFECTIVE switch (Settings > AI
+    over env), read from the resolver -- a cached read, not one of the
+    aggregate queries this file counts. Answered here so the counts below stay
+    about the aggregate and no test touches a real Redis/DB."""
+    from app.services import ai_config_resolver
+
+    monkeypatch.setattr(
+        ai_config_resolver,
+        "get_effective_ai_config",
+        AsyncMock(return_value={"finetune_enabled": False, "finetune_enabled_source": "env_default"}),
+    )
+
+
 def _no_model(monkeypatch):
     from app.services.ml import classifier
 

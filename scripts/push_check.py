@@ -140,6 +140,11 @@ KNOWN_LOCAL_FAILURES: dict[str, str] = {
             "test_a_tool_with_several_arguments_takes_the_json_the_model_writes",
         )
     },
+    # W04 (2026-10-15): the LLM-mode threshold case runs the real analysis
+    # agent, whose ReAct path needs create_react_agent; 22/22 of its file pass
+    # under .venv311 (CI's pin). The rules-mode cases in the file stay covered.
+    "tests/test_confidence_threshold_freeze.py::"
+    "test_an_llm_analysis_records_the_frozen_threshold_check": _LANGCHAIN,
     "tests/test_rag_services.py::TestDocumentConnectorInternals::"
     "test_extract_docx_preserves_mixed_block_order_and_formatting": (
         "docx extraction differs under the local python-docx build"

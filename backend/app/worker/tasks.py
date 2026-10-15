@@ -4158,6 +4158,68 @@ def train_flaky_confidence_model(self) -> dict:
     return cast(dict[str, Any], _run_async(_run()))
 
 
+# ── AIC-05: ML classifier training (nightly + "Train now") ──────────────────
+
+
+@celery_app.task(
+    name="app.worker.tasks.train_ml_classifier",
+    queue="default",
+    bind=True,
+    max_retries=0,
+    time_limit=1800,
+    soft_time_limit=1500,
+)
+def train_ml_classifier(self, triggered_by: str = "beat") -> dict:
+    """Train the failure classifier once (``services/ml/trainer.train_classifier``).
+
+    Nightly at 03:10 UTC from beat (``triggered_by="beat"``, gated by
+    ``ML_RETRAIN_ENABLED``) and on "Train now" (``POST
+    /api/v1/settings/ai/ml/retrain``, ``triggered_by="user:<name>"``, which
+    took ``ml:retrain:lock`` under this task's id before queueing it). The job
+    never raises: below the sample floor, below the accuracy threshold or
+    without scikit-learn it records the outcome in ``ml:retrain:last`` and
+    keeps the previous model. A trained model is published to the object store
+    so every pod picks it up, and audited here as ``ml_classifier / trained``
+    (the task owns the commit; the job service never commits). CPU-bound and
+    local: no outbound call, so ``AI_OFFLINE_MODE`` does not apply.
+    """
+    task_id = str(self.request.id or f"local-{uuid.uuid4()}")
+
+    async def _run():
+        from app.services.ml.training_job import run_training_job
+
+        with _beat_span("train_ml_classifier") as span:
+            outcome = await run_training_job(task_id=task_id, triggered_by=triggered_by)
+            result = outcome.result
+            span.set_attribute("result.status", str(result.get("status")))
+            span.set_attribute("result.triggered_by", triggered_by)
+            if outcome.audit is not None:
+                from app.db.postgres import AsyncSessionLocal
+                from app.services.settings_audit_service import log_settings_change
+
+                audit = outcome.audit
+                try:
+                    async with AsyncSessionLocal() as db:
+                        await log_settings_change(
+                            db, audit["setting_key"], audit["action"], None, audit["changed_fields"],
+                        )
+                        await db.commit()
+                except Exception:  # noqa: BLE001 -- the model is trained and published either way
+                    logger.warning("[Task %s] ml_classifier audit row not written", task_id, exc_info=True)
+            logger.info(
+                "[Task %s] ML classifier training: status=%s version=%s accuracy=%s samples=%s triggered_by=%s",
+                task_id,
+                result.get("status"),
+                result.get("version"),
+                result.get("accuracy"),
+                result.get("sample_count"),
+                triggered_by,
+            )
+            return result
+
+    return cast(dict[str, Any], _run_async(_run()))
+
+
 # ── DLQ helper ────────────────────────────────────────────────────────────────
 
 async def _send_to_dlq(

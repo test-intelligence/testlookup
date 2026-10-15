@@ -62,6 +62,48 @@ describe('usePipelineStatus', () => {
     expect(deepInvestigationService.getPipelineStatus).not.toHaveBeenCalled()
   })
 
+  // W04 AGT-04: a resumed run is followed without a manual reload.
+  it('polls (ACTIVE tier) while the pipeline is in progress, and stops once it has finished', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const { deepInvestigationService } = await import('@/services/deepInvestigationService')
+      const get = deepInvestigationService.getPipelineStatus as ReturnType<typeof vi.fn>
+      get.mockResolvedValueOnce(STATUS).mockResolvedValue({ ...STATUS, status: 'completed' })
+
+      const { usePipelineStatus } = await import('./useDeepInvestigation')
+      const { result } = renderHook(() => usePipelineStatus('run-1', 'deep'), { wrapper })
+      await waitFor(() => expect(result.current.data?.status).toBe('running'))
+      await vi.advanceTimersByTimeAsync(15_500)
+      await waitFor(() => expect(result.current.data?.status).toBe('completed'))
+      const asked = get.mock.calls.length
+      await vi.advanceTimersByTimeAsync(120_000)
+      expect(get.mock.calls.length, 'a finished pipeline is not polled').toBe(asked)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps polling a failed pipeline while the caller follows it (a retry not yet picked up)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      const { deepInvestigationService } = await import('@/services/deepInvestigationService')
+      const get = deepInvestigationService.getPipelineStatus as ReturnType<typeof vi.fn>
+      const failed = { ...STATUS, status: 'failed' }
+      get.mockResolvedValue(failed)
+
+      const { usePipelineStatus } = await import('./useDeepInvestigation')
+      const follow = vi.fn((d?: { status?: string }) => d?.status === 'failed')
+      const { result } = renderHook(() => usePipelineStatus('run-2', 'deep', { follow }), { wrapper })
+      await waitFor(() => expect(result.current.data?.status).toBe('failed'))
+      const asked = get.mock.calls.length
+      await vi.advanceTimersByTimeAsync(15_500)
+      await waitFor(() => expect(get.mock.calls.length).toBeGreaterThan(asked))
+      expect(follow).toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('surfaces an error with no data when the status load fails', async () => {
     const { deepInvestigationService } = await import('@/services/deepInvestigationService')
     ;(deepInvestigationService.getPipelineStatus as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('boom'))
