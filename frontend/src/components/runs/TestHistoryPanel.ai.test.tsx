@@ -89,7 +89,7 @@ describe('TestHistoryPanel — AI analysis across runs', () => {
     expect(strip).not.toBeNull()
     expect(Array.from(strip.querySelectorAll('[data-test-ai-chip]')).map((c) => c.getAttribute('data-run-id'))).toEqual(['run-2', 'run-4'])
     expect(strip.querySelector('[data-test-ai-change]')?.textContent).toBe(
-      'AI changed its mind on Run #4: INFRASTRUCTURE → PRODUCT_BUG (confidence 40% → 85%)',
+      'Category changed on Run #4: INFRASTRUCTURE → PRODUCT_BUG (confidence 40% → 85%)',
     )
     const dots = Array.from(container.querySelectorAll('p')).find((p) => p.textContent === 'Recent runs (oldest → newest)') as HTMLElement
     const duration = container.querySelector('[data-duration-history]') as HTMLElement

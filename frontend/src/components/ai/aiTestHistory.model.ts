@@ -94,14 +94,15 @@ export function versionSummary(versions: readonly AITestVersion[]): string {
 /** The marker sentence of one change. */
 export function changeText(change: TestHistoryAIChange): string {
   const label = change.run_label?.trim() || (change.run_id ? change.run_id.slice(0, 8) : 'a run')
+  // Neutral: the latest analysis may be a person's correction, not the AI's (the run's versions say who).
   if (change.kinds.includes('category')) {
     const confidence =
-      change.from_confidence != null && change.to_confidence != null
+      change.from_confidence != null && change.to_confidence != null && change.from_confidence !== change.to_confidence
         ? ` (confidence ${change.from_confidence}% → ${change.to_confidence}%)`
         : ''
-    return `AI changed its mind on ${label}: ${categoryText(change.from_category)} → ${categoryText(change.to_category)}${confidence}`
+    return `Category changed on ${label}: ${categoryText(change.from_category)} → ${categoryText(change.to_category)}${confidence}`
   }
-  if (change.kinds.includes('root_cause')) return `AI reworded its root cause on ${label}`
+  if (change.kinds.includes('root_cause')) return `Root cause reworded on ${label}`
   return `AI analysis changed on ${label}`
 }
 

@@ -4,7 +4,7 @@
  *
  *  - "AI analysis across runs": one chip per analysed run, oldest -> newest,
  *    between the pass/fail dots and the duration section;
- *  - the marker "AI changed its mind on Run #60: INFRASTRUCTURE → PRODUCT_BUG"
+ *  - the marker "Category changed on Run #60: INFRASTRUCTURE → PRODUCT_BUG"
  *    and the rewording on #57;
  *  - the #60 chip opens its versions: "v1 rules · v2 LLM · v3 human correction
  *    (anna)", read once, only when opened; the #57 chip (no version stored)
@@ -31,7 +31,7 @@ test.use({ viewport: { width: 1440, height: 900 }, timezoneId: 'UTC', locale: 'e
 const strip = (page: Page) => page.locator('[data-test-ai-strip]')
 const chip = (page: Page, runId: string) => strip(page).locator(`[data-test-ai-chip][data-run-id="${runId}"]`)
 
-test('the History tab shows the AI category per run and where the AI changed its mind', async ({ page }) => {
+test('the History tab shows the AI category per run and where the category changed', async ({ page }) => {
   const { api, errors } = await openRollout(page, TEST_CASE_PATH, {
     handlers: WITH_AI_TEST_HISTORY,
     ready: (p) => p.locator('[data-test-ai-strip] [data-test-ai-chip]').first(),
@@ -51,8 +51,8 @@ test('the History tab shows the AI category per run and where the AI changed its
 
   const markers = strip(page).locator('[data-test-ai-change]')
   await expect(markers).toHaveText([
-    'AI changed its mind on Run #60: INFRASTRUCTURE → PRODUCT_BUG (confidence 40% → 85%)',
-    'AI reworded its root cause on Run #57',
+    'Category changed on Run #60: INFRASTRUCTURE → PRODUCT_BUG (confidence 40% → 85%)',
+    'Root cause reworded on Run #57',
   ])
 
   // Between the pass/fail dots and the duration section.

@@ -115,14 +115,22 @@ describe('the words for missing values', () => {
 
 describe('changeText', () => {
   it('names the category change, with the confidence when both sides have one', () => {
-    expect(changeText(change(60))).toBe('AI changed its mind on Run #60: INFRASTRUCTURE → PRODUCT_BUG (confidence 40% → 85%)')
-    expect(changeText(change(60, { from_confidence: null }))).toBe('AI changed its mind on Run #60: INFRASTRUCTURE → PRODUCT_BUG')
+    expect(changeText(change(60))).toBe('Category changed on Run #60: INFRASTRUCTURE → PRODUCT_BUG (confidence 40% → 85%)')
+    expect(changeText(change(60, { from_confidence: null }))).toBe('Category changed on Run #60: INFRASTRUCTURE → PRODUCT_BUG')
     expect(changeText(change(60, { from_category: null }))).toContain('uncategorized → PRODUCT_BUG')
   })
 
+  it('does not credit the AI (a person may have corrected it) nor print an unchanged confidence', () => {
+    // Regression (W03 local walk): a QA lead's correction FLAKY -> PRODUCT_BUG read
+    // "AI changed its mind on Run #14: ... (confidence 50% → 50%)".
+    const text = changeText(change(14, { from_category: 'FLAKY', from_confidence: 50, to_confidence: 50 }))
+    expect(text).toBe('Category changed on Run #14: FLAKY → PRODUCT_BUG')
+    expect(text).not.toMatch(/AI/)
+  })
+
   it('a root-cause-only change reads as a rewording; both kinds read as the category change', () => {
-    expect(changeText(change(58, { kinds: ['root_cause'] }))).toBe('AI reworded its root cause on Run #58')
-    expect(changeText(change(58, { kinds: ['category', 'root_cause'] }))).toMatch(/^AI changed its mind on Run #58/)
+    expect(changeText(change(58, { kinds: ['root_cause'] }))).toBe('Root cause reworded on Run #58')
+    expect(changeText(change(58, { kinds: ['category', 'root_cause'] }))).toMatch(/^Category changed on Run #58/)
     expect(changeText(change(58, { kinds: [] }))).toBe('AI analysis changed on Run #58')
   })
 })

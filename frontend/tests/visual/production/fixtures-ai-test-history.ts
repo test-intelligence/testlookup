@@ -11,7 +11,7 @@
  *  - #53: INFRASTRUCTURE 45% by rules (one backfilled version);
  *  - #57: INFRASTRUCTURE 40% by rules, the root cause reworded (no version stored yet);
  *  - #60: PRODUCT_BUG 85% by the LLM after a human correction: v1 rules,
- *    v2 LLM, v3 human correction (anna). The AI changed its mind on #60.
+ *    v2 LLM, v3 human correction (anna). The category changed on #60.
  */
 import { type ApiHandlers } from '../../lib/production-pages'
 import { isoAgo, RUN_ID } from './fixtures'

@@ -1,8 +1,8 @@
 /**
  * W03 AIH-05: "AI analysis across runs" on the test History tab (contract W03
  * §9.8): one chip per run whose result has an AI analysis, oldest -> newest,
- * coloured by category; the markers say where the AI changed its mind
- * ("AI changed its mind on Run #60: INFRASTRUCTURE → PRODUCT_BUG") or only
+ * coloured by category; the markers say where the category changed
+ * ("Category changed on Run #60: INFRASTRUCTURE → PRODUCT_BUG") or only
  * reworded its root cause. A chip opens that run's stored versions.
  *
  * Everything comes from the ONE history read the panel already made (`ai` per

@@ -1,7 +1,7 @@
 /**
  * W03 AIH-05: the History tab's "AI analysis across runs" strip (contract §9.8):
  * a chip per analysed run oldest -> newest, coloured by category, the markers
- * where the AI changed its mind, a chip opening that run's versions, and no
+ * where the category changed, a chip opening that run's versions, and no
  * request until a popover opens.
  */
 import { fireEvent, render, screen, within } from '@testing-library/react'
@@ -96,7 +96,7 @@ describe('TestAIHistoryStrip', () => {
     expect(all[2].title).toBe('Run #4 - PRODUCT_BUG 85% - LLM llama3.1')
     expect(all[2].className).toContain('text-[var(--status-failed)]') // categoryColor(PRODUCT_BUG)
     expect(all[0].className).toContain('text-[var(--status-broken)]') // categoryColor(INFRASTRUCTURE)
-    // The page's own run is outlined; the run where the AI changed its mind is ringed.
+    // The page's own run is outlined; the run where the category changed is ringed.
     expect(all[2]).toHaveAttribute('data-current-run')
     expect(all[2]).toHaveAttribute('data-changed', 'category')
     expect(all[0]).not.toHaveAttribute('data-changed')
@@ -104,14 +104,14 @@ describe('TestAIHistoryStrip', () => {
     expect(hookCalls).toEqual([])
   })
 
-  it('says where the AI changed its mind, and that a root-cause-only change is a rewording', () => {
+  it('says where the category changed, and that a root-cause-only change is a rewording', () => {
     const { container } = renderStrip({
       changes: [change(2, { kinds: ['root_cause'] }), change(4, { from_confidence: 40, to_confidence: 85 })],
     })
     const markers = Array.from(container.querySelectorAll('[data-test-ai-change]')).map((m) => m.textContent)
     expect(markers).toEqual([
-      'AI changed its mind on Run #4: INFRASTRUCTURE → PRODUCT_BUG (confidence 40% → 85%)',
-      'AI reworded its root cause on Run #2',
+      'Category changed on Run #4: INFRASTRUCTURE → PRODUCT_BUG (confidence 40% → 85%)',
+      'Root cause reworded on Run #2',
     ])
   })
 
