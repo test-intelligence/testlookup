@@ -253,10 +253,79 @@ const INBOX_STATS = {
   re_quarantined: 0, released: 0, rejected: 0, expired: 0, total_live: 3,
 }
 
-/** Fresh state per test: a decision taken in one test never leaks into the next. */
-export function inboxHandlers(): ApiHandlers {
+/** W06 DEF-06: the one promoted defect waiting for a QA lead (Inbox › Approvals › Defects). */
+export const PENDING_DEFECT_ID = '00000000-0000-4000-8000-000000000801'
+export const PENDING_DEFECT_TITLE = 'Card retry charges the customer twice'
+/** The run the defect was promoted from (`Open run`). */
+export const PENDING_DEFECT_RUN_ID = '00000000-0000-4000-8000-000000000500'
+
+/** `PendingDefectItem` (W06 contract §1.4): a HIGH promotion that names a Jira project, so approving it files there. */
+function pendingDefect() {
+  return {
+    defect_id: PENDING_DEFECT_ID,
+    project_id: P,
+    title: PENDING_DEFECT_TITLE,
+    severity: 'HIGH',
+    component: 'payments-api',
+    owner_team: 'payments-team',
+    created_at: isoAgo(2),
+    policy_reasons: ['Jira ticket creation requires human approval', 'Severity HIGH requires human review'],
+    jira_project_key: 'QA',
+    run_id: PENDING_DEFECT_RUN_ID,
+    cluster_id: 'cluster-card-retry',
+    ai_confidence_score: 74,
+  }
+}
+
+/** One write the inbox answered: `METHOD path` and its JSON body. */
+export interface InboxWrite {
+  line: string
+  body: unknown
+}
+
+/**
+ * Fresh state per test: a decision taken in one test never leaks into the
+ * next. `writes` records the defect reviews it answered (W06 DEF-06).
+ */
+export function inboxHandlers(writes: InboxWrite[] = []): ApiHandlers {
   let reviewState = 'pending_review'
+  let defectPending = true
   return [
+    // W06 DEF-06: the defect approval queue, a QA lead's (the fixture user is one). Approve answers what an
+    // offline install does (committed, Jira not filed); reject closes it. Either way it leaves the queue.
+    [
+      '/api/v1/deep-investigate/defects/pending-review',
+      ({ url }) => {
+        const items = defectPending && url.searchParams.get('project_id') === P ? [pendingDefect()] : []
+        return { items, total: items.length, page: 1, page_size: Number(url.searchParams.get('page_size') ?? 100) }
+      },
+    ],
+    [
+      /^\/api\/v1\/deep-investigate\/defects\/[^/]+\/review$/,
+      ({ path, route }) => {
+        const body = route.request().postDataJSON() as { action?: string; reason?: string } | null
+        writes.push({ line: `POST ${path}`, body })
+        const id = path.split('/')[5]
+        if (id !== PENDING_DEFECT_ID || !defectPending) return respond(404, { detail: 'Defect not found' })
+        if (body?.action === 'reject') {
+          if (!body.reason?.trim()) return respond(422, { detail: 'Rejection reason is required.' })
+          defectPending = false
+          return { defect_id: id, approval_status: 'rejected', message: `Defect rejected: ${body.reason}`, jira_ticket: null, jira_url: null }
+        }
+        defectPending = false
+        return {
+          defect_id: id,
+          approval_status: 'approved',
+          message: 'Defect approved successfully.',
+          jira_ticket: null,
+          jira_url: null,
+          jira_status: 'not_filed',
+          jira_reason: 'offline_mode',
+          jira_error: null,
+        }
+      },
+      'POST',
+    ],
     ...LAYOUT,
     ['/api/v1/me/assigned-failures', () => ASSIGNED],
     [

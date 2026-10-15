@@ -653,47 +653,273 @@ export const TRENDS: ApiHandlers = [...LAYOUT, ...RUNS, ...ANALYTICS]
  * The page derives severity from category + AI confidence (a product bug at
  * >= 80% is a P0), so the queue has two open P0s (the older 4 days old: the
  * "Oldest open P0" bar sits past the 2-day warn threshold), P1s, an infra
- * P2, a flaky P3 and three resolved rows for the MTTR.
+ * P2, a flaky P3 and three closed rows for the MTTR.
+ *
+ * W06 (`docs/deferred-scope-2026-10-13/work/W06-contract.md` §1.2, §4.6): every
+ * row carries its project and the server's `priority` (the same P0-P3 the
+ * page's fallback rule derives, so a row reads the same either way); owners
+ * of every kind (an assignee with a team, the defect's own team, a team from
+ * the ownership rules, the component map and a test's owner label, and
+ * nobody); the third closed row is `INVALID` (the Closed tab's "Invalid": no
+ * writer produces the legacy word CLOSED); and one approved, unlinked row
+ * whose Jira filing was not attempted because of offline mode.
  */
-const DEFECT_SPECS: {
+interface DefectSpec {
   test: string
   suite: string
   category: string
   confidence: number
   status: string
+  priority: string
   ageDays: number
   resolvedAfterDays?: number
   jira?: string
-}[] = [
-  { test: 'checkout total includes tax', suite: 'Checkout', category: 'PRODUCT_BUG', confidence: 92, status: 'OPEN', ageDays: 4, jira: 'SHOP-812' },
-  { test: 'card declined shows reason', suite: 'Payments', category: 'PRODUCT_BUG', confidence: 88, status: 'IN_PROGRESS', ageDays: 1 },
-  { test: 'login rejects bad password', suite: 'Auth', category: 'PRODUCT_BUG', confidence: 61, status: 'OPEN', ageDays: 2, jira: 'SHOP-799' },
-  { test: 'search paginates', suite: 'Search', category: 'PRODUCT_BUG', confidence: 55, status: 'OPEN', ageDays: 6 },
-  { test: 'refund webhook retried', suite: 'Payments', category: 'INFRASTRUCTURE', confidence: 70, status: 'OPEN', ageDays: 3 },
-  { test: 'token refresh', suite: 'Auth', category: 'FLAKY', confidence: 64, status: 'OPEN', ageDays: 8 },
-  { test: 'apply coupon', suite: 'Checkout', category: 'PRODUCT_BUG', confidence: 84, status: 'RESOLVED', ageDays: 9, resolvedAfterDays: 2, jira: 'SHOP-760' },
-  { test: 'address autocomplete', suite: 'Checkout', category: 'PRODUCT_BUG', confidence: 72, status: 'CLOSED', ageDays: 12, resolvedAfterDays: 4, jira: 'SHOP-741' },
-  { test: 'email receipt sent', suite: 'Notifications', category: 'INFRASTRUCTURE', confidence: 66, status: 'RESOLVED', ageDays: 6, resolvedAfterDays: 1 },
+  ownerTeam?: string
+  ownerSource?: string
+  assignee?: { id: string; name: string }
+  approval?: string
+  filing?: { status: string; reason: string }
+}
+
+/** Dana Whitfield, a member of the project (`RELEASE_PEOPLE.dana` in `fixtures-pages.ts`, which imports this file). */
+const DEFECT_ASSIGNEE = { id: '00000000-0000-4000-8000-0000000000b2', name: 'Dana Whitfield' }
+
+const DEFECT_SPECS: DefectSpec[] = [
+  { test: 'checkout total includes tax', suite: 'Checkout', category: 'PRODUCT_BUG', confidence: 92, status: 'OPEN', priority: 'P0', ageDays: 4, jira: 'SHOP-812', ownerTeam: 'checkout-team', ownerSource: 'defect', assignee: DEFECT_ASSIGNEE },
+  { test: 'card declined shows reason', suite: 'Payments', category: 'PRODUCT_BUG', confidence: 88, status: 'IN_PROGRESS', priority: 'P0', ageDays: 1, ownerTeam: 'payments-team', ownerSource: 'rule' },
+  { test: 'login rejects bad password', suite: 'Auth', category: 'PRODUCT_BUG', confidence: 61, status: 'OPEN', priority: 'P1', ageDays: 2, jira: 'SHOP-799', ownerTeam: 'identity-team', ownerSource: 'component_map' },
+  { test: 'search paginates', suite: 'Search', category: 'PRODUCT_BUG', confidence: 55, status: 'OPEN', priority: 'P1', ageDays: 6 },
+  { test: 'refund webhook retried', suite: 'Payments', category: 'INFRASTRUCTURE', confidence: 70, status: 'OPEN', priority: 'P2', ageDays: 3, ownerTeam: 'payments-team', ownerSource: 'defect', approval: 'approved', filing: { status: 'not_filed', reason: 'offline_mode' } },
+  { test: 'token refresh', suite: 'Auth', category: 'FLAKY', confidence: 64, status: 'OPEN', priority: 'P3', ageDays: 8, ownerTeam: 'auth-squad', ownerSource: 'test_label' },
+  { test: 'apply coupon', suite: 'Checkout', category: 'PRODUCT_BUG', confidence: 84, status: 'RESOLVED', priority: 'P0', ageDays: 9, resolvedAfterDays: 2, jira: 'SHOP-760', ownerTeam: 'checkout-team', ownerSource: 'defect' },
+  { test: 'address autocomplete', suite: 'Checkout', category: 'PRODUCT_BUG', confidence: 72, status: 'INVALID', priority: 'P1', ageDays: 12, resolvedAfterDays: 4, jira: 'SHOP-741' },
+  { test: 'email receipt sent', suite: 'Notifications', category: 'INFRASTRUCTURE', confidence: 66, status: 'RESOLVED', priority: 'P2', ageDays: 6, resolvedAfterDays: 1 },
 ]
 
-function defects() {
-  const items = DEFECT_SPECS.map((d, i) => ({
-    id: `77777777-7777-4777-8777-${String(100000000000 + i)}`,
-    jira_ticket_id: d.jira,
-    jira_ticket_url: d.jira ? `https://jira.example.test/browse/${d.jira}` : undefined,
-    jira_status: d.jira ? (d.status === 'OPEN' ? 'To Do' : 'Done') : undefined,
+/** The id of the `i`-th defect row. */
+export const defectId = (i: number) => `77777777-7777-4777-8777-${String(100000000000 + i)}`
+
+/** The rows' ids by their test, for the specs (`?defect=`, the PATCH path). */
+export const DEFECT_ID = {
+  checkoutTotal: defectId(0),
+  cardDeclined: defectId(1),
+  loginRejects: defectId(2),
+  searchPaginates: defectId(3),
+  refundWebhook: defectId(4),
+  tokenRefresh: defectId(5),
+} as const
+
+/** One `DefectItem` (`analytics_service.list_defects`, contract §1.2). */
+export type DefectRowFixture = ReturnType<typeof defectRows>[number]
+
+/** The nine rows, fresh per call (a spec that changes one never changes the next spec's). */
+export function defectRows() {
+  return DEFECT_SPECS.map((d, i) => ({
+    id: defectId(i),
+    project_id: PROJECT_ID,
+    title: null as string | null,
+    severity: null as string | null,
+    component: null as string | null,
+    priority: d.priority,
+    jira_ticket_id: d.jira ?? null,
+    jira_ticket_url: d.jira ? `https://jira.example.test/browse/${d.jira}` : null,
+    jira_status: d.jira ? (d.status === 'OPEN' ? 'To Do' : 'Done') : null,
     external_status_at: null,
     external_status_conflict: false,
     failure_category: d.category,
     resolution_status: d.status,
     ai_confidence_score: d.confidence,
     created_at: isoAgo(d.ageDays, 3),
-    resolved_at: d.resolvedAfterDays != null ? isoAgo(d.ageDays - d.resolvedAfterDays, 3) : undefined,
+    resolved_at: d.resolvedAfterDays != null ? isoAgo(d.ageDays - d.resolvedAfterDays, 3) : null,
     test_name: d.test,
     suite_name: d.suite,
+    release_name: null as string | null,
+    owner_team: d.ownerTeam ?? null,
+    owner_source: d.ownerSource ?? null,
+    assignee_user_id: d.assignee?.id ?? null,
+    assignee_name: d.assignee?.name ?? null,
+    approval_status: d.approval ?? null,
+    jira_filing_status: d.filing?.status ?? null,
+    jira_filing_reason: d.filing?.reason ?? null,
   }))
-  return { ...page(items, 20), total: items.length }
 }
+
+/** The statuses still live (`defect_status.ACTIVE_STATUSES`): they block the gate and count as open. */
+export const isActiveDefect = (row: { resolution_status: string }) =>
+  row.resolution_status === 'OPEN' || row.resolution_status === 'IN_PROGRESS'
+
+/** `GET /analytics/defects`: one page holds every row (the page asks `size=100`). */
+export function defectList(items: DefectRowFixture[], meta?: Record<string, unknown>) {
+  return { ...page(items, 100), total: items.length, ...(meta ? { meta } : {}) }
+}
+
+function defects() {
+  return defectList(defectRows())
+}
+
+/**
+ * `meta` of a defect answer (`build_meta`): the project, the releases in
+ * scope (the "Affecting {release}" chip reads the first one's name) and the
+ * window, when the answer has one.
+ */
+export function defectMeta(days: number | null, releases: { id: string; name: string; status: string }[] = []) {
+  return {
+    schema_version: 1,
+    scope: {
+      projects: [{ id: PROJECT_ID, name: 'Checkout' }],
+      releases,
+      suites: [],
+      window: days ? { from: daysAgo(days - 1), to: daysAgo(0), days, timezone: 'UTC' } : null,
+    },
+    totals: { matched_runs: 0, total_runs: 0, matched_executions: 0, total_executions: 0 },
+    pass_rate_basis: null,
+    ignored_filters: [],
+    truncated: false,
+    truncated_total: null,
+    measured: true,
+    reason: null,
+    includes_in_progress: 0,
+    partial_day: days ? daysAgo(0) : null,
+    generated_at: NOW.toISOString(),
+    as_of: NOW.toISOString(),
+  }
+}
+
+/**
+ * The trend's defects opened and closed per UTC day, `n` days before today, on
+ * a 14-day cycle that nets to zero (so a 90-day backlog never goes negative):
+ * this week +6 / −4 (Net this week **+2**), the week before +4 / −6. `HI` is
+ * the P0 / P1 share of each.
+ */
+const TREND_OPENED = [1, 2, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1]
+const TREND_CLOSED = [0, 1, 1, 0, 1, 1, 0, 1, 1, 0, 1, 1, 1, 1]
+const TREND_HI_OPENED = [1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0]
+const TREND_HI_CLOSED = [0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1]
+const cycle = (values: readonly number[], n: number) => values[n % values.length]
+/** How long each defect closed on day `n` took to resolve, days. */
+const resolveDays = (n: number) => 1.5 + (n % 4) * 0.5
+
+/** What the trend's totals count today: the active defects and their P0s / P1s. */
+export interface DefectTrendTotalsSpec {
+  open: number
+  p0: number
+  p1: number
+  closedWithoutTime?: number
+}
+
+/** The base fixture's totals: its six active rows (two P0, two P1). */
+export const DEFECT_TREND_TOTALS: DefectTrendTotalsSpec = { open: 6, p0: 2, p1: 2 }
+
+/** The totals of a set of rows (the trend counts every defect in scope, here the rows themselves). */
+export function trendTotalsOf(rows: readonly DefectRowFixture[]): DefectTrendTotalsSpec {
+  const active = rows.filter(isActiveDefect)
+  return {
+    open: active.length,
+    p0: active.filter((r) => r.priority === 'P0').length,
+    p1: active.filter((r) => r.priority === 'P1').length,
+  }
+}
+
+/** The 7-day-mean time to resolve over days `from` .. `to - 1` before today (`null`: nothing closed). */
+function meanResolve(from: number, to: number): number | null {
+  let count = 0
+  let sum = 0
+  for (let n = from; n < to; n++) {
+    count += cycle(TREND_CLOSED, n)
+    sum += cycle(TREND_CLOSED, n) * resolveDays(n)
+  }
+  return count === 0 ? null : Math.round((sum / count) * 100) / 100
+}
+
+/**
+ * `GET /analytics/defects/trend?days=` (contract §2.4): exactly `days` UTC
+ * days, oldest first, ending today; the backlog walked back from the totals so
+ * the newest point's `open_backlog` IS `totals.open` (the endpoint's invariant).
+ */
+export function defectTrendBody(days: number, totals: DefectTrendTotalsSpec = DEFECT_TREND_TOTALS) {
+  const backlog: { open: number; hi: number }[] = []
+  let open = totals.open
+  let hi = totals.p0 + totals.p1
+  for (let n = 0; n < days; n++) {
+    backlog.push({ open, hi })
+    open += cycle(TREND_CLOSED, n) - cycle(TREND_OPENED, n)
+    hi += cycle(TREND_HI_CLOSED, n) - cycle(TREND_HI_OPENED, n)
+  }
+  const points = Array.from({ length: days }, (_, i) => {
+    const n = days - 1 - i
+    return {
+      date: daysAgo(n),
+      opened: cycle(TREND_OPENED, n),
+      closed: cycle(TREND_CLOSED, n),
+      open_backlog: backlog[n].open,
+      p0p1_open: backlog[n].hi,
+      mttr_days: meanResolve(n, Math.min(n + 7, days)),
+    }
+  })
+  const sum = (values: readonly number[], to: number) => Array.from({ length: to }, (_, n) => cycle(values, n)).reduce((a, b) => a + b, 0)
+  const week = Math.min(7, days)
+  const openedWeek = sum(TREND_OPENED, week)
+  const closedWeek = sum(TREND_CLOSED, week)
+  return {
+    points,
+    totals: {
+      open: totals.open,
+      p0_open: totals.p0,
+      p1_open: totals.p1,
+      mttr_days: meanResolve(0, days),
+      resolved_in_window: sum(TREND_CLOSED, days),
+      opened_in_window: sum(TREND_OPENED, days),
+      closed_in_window: sum(TREND_CLOSED, days),
+      opened_last_7d: openedWeek,
+      closed_last_7d: closedWeek,
+      net_last_7d: openedWeek - closedWeek,
+      closed_without_time: totals.closedWithoutTime ?? 0,
+    },
+    window_days: days,
+    meta: defectMeta(days),
+  }
+}
+
+/**
+ * `GET /analytics/defects/escape-rate?days=` (contract §2.7). Measured: 5 of
+ * the 12 defects reported in the window that affect a shipped release were
+ * filed after it shipped (41.7%). Below the floor: 3 attributed, so "Not
+ * measured" with the server's reason (never 0%).
+ */
+export function defectEscapeBody(days: number, measured = true) {
+  if (!measured) {
+    return {
+      rate: null,
+      escaped: 1,
+      attributed: 3,
+      in_window: 9,
+      measured: false,
+      reason: `3 defect(s) reported in the last ${days} days affect a release that has shipped; 5 are needed.`,
+      sample_floor: 5,
+      window_days: days,
+      outcomes: { incidents: 0, rollbacks: 0, releases: 1 },
+      meta: { ...defectMeta(days), measured: false, reason: `3 defect(s) reported in the last ${days} days affect a release that has shipped; 5 are needed.` },
+    }
+  }
+  return {
+    rate: 41.7,
+    escaped: 5,
+    attributed: 12,
+    in_window: 18,
+    measured: true,
+    reason: null,
+    sample_floor: 5,
+    window_days: days,
+    outcomes: { incidents: 1, rollbacks: 1, releases: 2 },
+    meta: defectMeta(days),
+  }
+}
+
+/** The handlers of the two aggregates over the base rows: the window is the request's `days` (default 30). */
+const DEFECT_AGGREGATES: ApiHandlers = [
+  ['/api/v1/analytics/defects/trend', (request) => defectTrendBody(intParam(request, 'days', 30))],
+  ['/api/v1/analytics/defects/escape-rate', (request) => defectEscapeBody(intParam(request, 'days', 30))],
+]
 
 const INTEGRATIONS = {
   jira_enabled: false,
@@ -719,11 +945,21 @@ const INTEGRATIONS = {
   github_token_set: false,
 }
 
+/**
+ * `/defects` with every request it makes on load answered (fail closed): the
+ * list, the trend and the escape rate (W06 DEF-04 / DEF-03), the runs its suite
+ * select reads its options from (DEF-05), and the integrations card.
+ */
 export const DEFECTS: ApiHandlers = [
   ...LAYOUT,
   ['/api/v1/analytics/defects', defects],
+  ...DEFECT_AGGREGATES,
+  ...RUNS,
   ['/api/v1/settings/integrations', () => INTEGRATIONS],
 ]
+
+/** The integrations card's answer (Jira off), for the W06 defect fixtures (`fixtures-defects.ts`). */
+export const DEFECT_INTEGRATIONS = INTEGRATIONS
 
 // ── Deep investigation (/deep-investigate/<run>) ───────────────────────────
 

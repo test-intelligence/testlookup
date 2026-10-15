@@ -79,7 +79,9 @@ A failure becomes a tracked **defect** in one of three ways (all need `QA_ENGINE
 
 1. **From a cluster** — on a run's **Analysis** tab, **File defect** on a cluster opens **Promote to Defect**: title, severity (pre-filled from the cluster's risk: **CRITICAL** at 70 or above, **HIGH** at 50, **MEDIUM** at 30, otherwise **LOW**), component, owner team, labels, description, and an optional Jira project key (leave it blank for a defect recorded only in TestLookup). The cluster's evidence travels with the defect.
 2. **From a failing test** — **Jira** on the Failures page, or **File Jira** on a quarantined test, opens **Create Jira issue**. The summary and description are filled in by the server (test or cluster, failure message, stack trace, first and last seen, failing-run count, branch and build, a link back, and the AI's suggested root cause clearly labelled as AI). Choose the **Jira project**, **Issue type** and an optional **Comment**, then **Create issue**. Nothing is filed until you confirm.
-3. **By hand** — **Defects → New defect**: title, severity (**P0 — Blocker** to **P3 — Low**), failure category, component, and optionally the test, suite, an existing Jira ticket URL and a description.
+3. **By hand** — **Defects → New defect**: title, severity (**P0 — Blocker** to **P3 — Low**), failure category, component, and optionally the test, suite, the release it **affects** (**Affects release**; a defect filed against a release that has already shipped counts toward the escape rate), an existing Jira ticket URL and a description.
+
+A promotion that names a Jira project key, is **CRITICAL** or **HIGH**, or has low AI confidence comes back as **Defect created — awaiting approval**. A QA lead decides it in [Inbox › Approvals](/docs/inbox#defects) (source **Defects**): **Approve** makes it effective and, when a Jira project key was given and Jira is reachable, files the ticket on that defect; **Reject** (with a reason) closes it as **Invalid**.
 
 If an open defect is already linked to Jira for the same failure, **Create Jira issue** does not file a duplicate: the button reads **Note recurrence**, and the existing issue gets a "recurred" comment instead. With no Jira, the same dialog can **Deliver via** **Webhook event**, which sends the filled-in issue to your own system as an outbound webhook (an administrator sets that up).
 
@@ -91,11 +93,24 @@ Jira ticket creation needs Jira to be configured and offline mode to be off. A d
 
 **Failures → Defects** (`/defects`) is the project's defect queue.
 
-- **The verdict banner**: **Release blocked** (any P0 open), **Queue healthy**, **At risk** or **Pending**, with how many defects have no Jira ticket and the oldest open P0.
-- **KPIs**: **Open defects**, **P0 / P1 open**, **Time to resolve**, **Escape rate** (here, the share of defects with no Jira link) and **Oldest open P0**.
-- **All defects**: filter by status (**All**, **Open**, **In progress**, **Resolved**, **Closed**) or search titles and Jira keys. Severity shows as **P0**–**P3** (critical to low). **Open** goes to the Jira issue.
+- **The verdict banner**: **Release blocked** (any P0 open), **Queue healthy**, **At risk** or **Pending**, with how many defects have no Jira ticket, the oldest open P0 (or, with none open, **Net this week**: the last seven days' opened minus closed) and the queue health.
+- **KPIs**: **Open defects**, **P0 / P1 open** and **Time to resolve**, each with a sparkline over the window (**7d**, **30d** or **90d** in the header; hover a point for that day's opened and closed defects), **Escape rate** and **Oldest open P0**. The values count every defect in scope, not only the rows the table loads.
+- **Escape rate** is the share of the defects reported in the window that were filed after a release they affect had shipped. With fewer than 5 such defects it reads **Not measured** and says why, never 0 %. Its hover adds the incidents and rollbacks marked on releases in the window.
+- **All defects**: filter by status (**All**, **Open**, **In progress**, **Resolved**, **Closed**; **Closed** holds the **Invalid** ones) or search titles, Jira keys and owners. Severity shows as **P0**–**P3** (critical to low). **Owner** is the assigned person (with their team), else the defect's team, else the team the project's ownership rules give it (marked *from ownership rules*, *from the component map* or *from the test's owner label*), else **Unassigned**. **Open** goes to the Jira issue. A defect approved while Jira was off reads **not filed (offline)** in the Jira column.
+- **Only this release** (in the header, with one release picked in the top bar) narrows the table, the tiles and the sparklines to the defects that affect that release, by the release gate's own rule: the releases a defect says it affects, else the one it was found in. The banner then reads **Affecting {release}**. The suite select narrows to defects whose failing test ran in that suite. Both are kept in the URL and in saved views.
 - **Jira status** is mirrored from Jira about every 15 minutes. **closed in Jira but still failing** marks a defect whose Jira issue is done while the same test kept failing in the last 7 days.
 - Tabs: **Where defects live** (by component) and **Jira bridge** (how the defects map to Jira).
+- **How queue health is computed** weighs four dimensions: P0 throughput, Jira coverage, fix velocity and **Ownership** (20 %: open defects with an assignee or a team).
+
+### Triaging a defect
+
+QA engineers, QA leads and administrators get a **⋯ Defect actions** menu on each row (viewers and testers do not):
+
+- **Change status…** — **Open**, **In progress**, **Resolved** or **Invalid**, with an optional note for the activity log. A defect **In progress** still blocks the release gate. Re-opening a defect whose test already has an open one is refused and names it.
+- **Assign…** — a person of the project and a **Team**. Service accounts and deactivated users are not offered.
+- **Link Jira issue…** — an issue key such as `ABC-123`; TestLookup builds the link from the configured Jira domain. Once linked the item reads **Change Jira issue…** and offers **Remove link**.
+
+Every change is recorded in the [activity log](/docs/administration#activity-log) and the row updates in place. While offline mode is on (the default) or Jira is not set up, all three still work: a key is saved without a check ("saved locally"), and nothing is sent to Jira. With Jira reachable, a key is checked against Jira before it is saved, and changing the status of a linked defect moves its Jira issue to the matching status (To Do, In Progress or Done); if Jira refuses the move, the status is still saved and a second message says so.
 
 ## Root cause (AI): deep investigation
 

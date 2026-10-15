@@ -109,14 +109,20 @@ for (const width of [1280, 1440]) {
   }
 }
 
-// HON-07: the share of defects with no Jira issue was labelled "Escape rate"
-// (defects found after a release shipped, which nothing measures yet: DEF-03).
-// The longer label still fits the tile at 1280 px (the loop above).
-test('/defects names the no-Jira share "Unlinked to Jira", never "Escape rate"', async ({ page }) => {
+// HON-07 relabelled the share of defects with no Jira issue, which was called
+// "Escape rate", "Unlinked to Jira". W06 DEF-03 measures the real escape rate
+// (defects filed after a release they affect had shipped) and its tile REPLACES
+// that one (the strip holds five tiles); the unlinked count stays in the
+// banner's "No Jira ticket" fact. The label fits at 1280 px (the loop above).
+test('/defects shows the real "Escape rate" from its endpoint, and no "Unlinked to Jira" tile', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 })
   await PAGES['/defects'](page)
   await expect(page.locator('#main-content [data-metric-card="compact"]').first()).toBeVisible()
   const labels = (await readTiles(page)).map((t) => t.label)
-  expect(labels).toContain('Unlinked to Jira')
-  expect(labels.map((label) => label.toLowerCase())).not.toContain('escape rate')
+  expect(labels).toContain('Escape rate')
+  expect(labels).not.toContain('Unlinked to Jira')
+  // The endpoint's fixture: 5 of 12 attributed defects escaped.
+  const escape = page.locator('#main-content [data-metric-card="compact"]').filter({ hasText: 'Escape rate' })
+  await expect(escape.locator('p.tabular-nums')).toHaveText('41.7%')
+  await expect(landmark(page, 'Defect queue verdict').locator('[data-banner-fact]').filter({ hasText: 'No Jira ticket' })).toBeVisible()
 })

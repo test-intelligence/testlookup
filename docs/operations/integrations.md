@@ -15,9 +15,11 @@ TestLookup talks to **Jira Cloud** through REST API v3 with basic authentication
 
 **What uses it**
 
-- The one-click "Create Jira issue" on a defect, with recurrence de-duplication (a recurring failure adds a comment to the open issue instead of filing a new one) and a status sync that mirrors Jira status onto linked open defects every 15 minutes. Usage is described in [user-guide/defects.md](../../user-guide/defects.md).
+- The one-click "Create Jira issue" on a defect, with recurrence de-duplication (a recurring failure adds a comment to the open issue instead of filing a new one) and a status sync that mirrors Jira status onto linked open (and in-progress) defects every 15 minutes. Usage is described in [user-guide/defects.md](../../user-guide/defects.md).
+- Triage on the Defects page (`PATCH /api/v1/projects/{project_id}/defects/{defect_id}`): a Jira key a person links is **checked** against Jira (`GET /rest/api/3/issue/{key}`), and a status change on a linked defect is **written back** by moving the issue to a status in the matching category (`GET .../transitions`, then `POST .../transitions`; nothing is sent when the issue is already in that category or no transition leads there). The link itself is always built by the server from the configured domain (`https://<JIRA_DOMAIN>/browse/<KEY>`).
+- Approving a promoted defect in Inbox › Approvals: when the promotion named a Jira project key, the approval files the ticket on that defect, or links it to the open issue already filed for the same failure (the one-click flow's de-duplication and claim, so the two paths never file one failure twice).
 - Jira as a knowledge source (`knowledge_rag` flag) and the Jira fix-version release sync.
-- Tickets filed by the AI pipeline's triage stage, by the `defect_commander` stage (flag), by defect promotion and by `POST /api/v1/integrations/jira`.
+- Tickets filed by the AI pipeline's triage stage and by `POST /api/v1/integrations/jira`. The `defect_commander` stage (flag) and defect promotion never file at once: a promotion that names a Jira project waits for approval, and the ticket is filed when it is approved.
 
 **Set it up**
 
@@ -26,9 +28,11 @@ TestLookup talks to **Jira Cloud** through REST API v3 with basic authentication
 3. Set `AI_OFFLINE_MODE=false` (Jira is off-box).
 4. Check `/settings/integration-health`, which probes Jira with the stored configuration.
 
-**Which configuration applies.** The one-click issue, the knowledge connector and the release sync use the configuration saved in the UI, falling back to the environment. The triage stage, the `defect_commander` stage, defect promotion and `POST /api/v1/integrations/jira` read **only** the environment variables. Set both to the same values, or use the environment only.
+**Which configuration applies.** The one-click issue, the Defects-page link check and write-back, the approval filing, the knowledge connector and the release sync use the configuration saved in the UI, falling back to the environment. The triage stage and `POST /api/v1/integrations/jira` read **only** the environment variables. Set both to the same values, or use the environment only.
 
-**Offline mode.** With `AI_OFFLINE_MODE=true` the one-click issue answers 503 ("outbound Jira calls are blocked") and defect promotion skips the ticket. Use the one-click flow's `target="webhook"` instead: it emits the [`defect.create_requested`](#outbound-webhooks) event with the full prefilled ticket so your own automation can file it. Known gap: the AI triage stage and `POST /api/v1/integrations/jira` do not check offline mode; leave `JIRA_ENABLED=false` in the environment if a sealed install must never reach Jira.
+**Offline mode.** With `AI_OFFLINE_MODE=true` the one-click issue answers 503 ("outbound Jira calls are blocked"). The Defects-page link check, the write-back and the approval filing are gated by the same rule (Jira configured, enabled, and offline mode off) and make **no** call while it fails: a linked key is saved without a check (`saved_locally`, reason `offline_mode`, `disabled` or `not_configured`), a status change is saved without moving the Jira issue (`write_back: not_sent`), and an approval is committed with "Jira not filed" (`jira_status: not_filed`). Use the one-click flow's `target="webhook"` instead: it emits the [`defect.create_requested`](#outbound-webhooks) event with the full prefilled ticket so your own automation can file it. Known gap: the AI triage stage and `POST /api/v1/integrations/jira` do not check offline mode; leave `JIRA_ENABLED=false` in the environment if a sealed install must never reach Jira.
+
+**Online behaviour of the Defects-page calls.** The link check answers 422 for an issue Jira does not have (`Jira has no issue ABC-999.`) and 502 when Jira answers another error or cannot be reached; in both cases nothing is saved. The write-back runs after the change is committed and never undoes it: a refused transition (for example a workflow screen with required fields, HTTP 400) is returned as `write_back.status = "failed"` and shown to the person, with no retry. The account needs, in addition to the permissions above, "Transition issues" in the target projects. Every call has the client's 15-second timeout.
 
 ### Jira resolution webhook
 
@@ -153,7 +157,7 @@ Outbound webhooks send TestLookup events to your own HTTPS endpoint. They are **
 | `release.decided` | The release-risk agent wrote a decision at the end of a deep investigation, or a QA lead overrode one. Carries the recommendation (`GO`, `NO_GO`, `CONDITIONAL_GO`, or `PENDING_REVIEW` while `REVIEW_GATE_ENFORCED` holds an unreviewed AI decision), risk score, blocking issues and review state. | yes |
 | `flaky.quarantined` | A QA lead approved a quarantine request (needs `flaky_auto_quarantine`). | yes |
 | `quota.exceeded` | A project hit its LLM cost hard cap (needs `llm_cost_budget`). | yes |
-| `defect.promoted` | Listed in the catalogue and accepted in subscriptions, but no code emits it in this release. | no |
+| `defect.promoted` | A defect promoted from a failure cluster took effect: at promotion when no approval was needed, or when a QA lead approved it in Inbox › Approvals. `data` carries `defect_id`, `project_id`, `cluster_id`, `run_id`, `title`, `severity`, `jira_key` and `jira_url` (`null` until a ticket exists), `approval_status`, `deep_link` and `promoted_at`; no description, evidence or owner. Exactly one delivery per subscription per defect, however often an approval is retried. | yes |
 
 **Request format.** Each delivery is an HTTP `POST` with a JSON body:
 
@@ -201,7 +205,7 @@ def verify(secret: str, raw_body: bytes, header_value: str) -> bool:
 | LLM calls | Only local providers whose endpoint resolves to loopback or private addresses (checked again at connect time). `AI_LLM_PROVIDER_ALLOWLIST` and `AI_LLM_ALLOWED_BASE_URLS` can restrict further. |
 | ChromaDB embedder | May not download model weights; point `CHROMA_ONNX_MODEL_DIR` at a side-loaded copy or semantic features fall back to keyword search. |
 | Outbound webhooks, GitHub checks and PR comments, GitLab, the Fixer | Off. |
-| Jira one-click issue, defect-promotion tickets, external knowledge sync, Splunk, OpenShift | Off (unless the host is on-box, for Splunk and OpenShift). |
+| Jira one-click issue, the Defects-page link check and status write-back, the ticket filed on approving a promoted defect, external knowledge sync, Splunk, OpenShift | Off (unless the host is on-box, for Splunk and OpenShift). A linked key is saved without a check, a status change and an approval are saved without a Jira call. |
 | Deployment-wide Slack/Teams webhooks and the SMTP relay | Allowed when on-box, or when the host is listed in `OFFLINE_NOTIFICATION_ALLOWED_HOSTS` (comma-separated; `.example.com` matches subdomains). Email additionally obeys `OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS`. A refused delivery is recorded as blocked, and the API logs each refused configured destination at startup. |
 | Team and personal Slack/Teams webhooks | Allowed only when on-box; the host allow-list does not apply (it would admit every tenant on a shared host such as `hooks.slack.com`). |
 
