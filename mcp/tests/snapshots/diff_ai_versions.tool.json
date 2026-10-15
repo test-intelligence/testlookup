@@ -1,0 +1,34 @@
+{
+  "description": "\n        What changed between two stored versions of ONE run's AI analysis:\n        provenance first (engine, model, fallback), then the release verdict,\n        failure categories, failure clusters (added / removed / resized),\n        tests whose category, confidence or flakiness changed, and actions.\n        Read-only.\n\n        Returns {ok, summary, diff}: `summary` is compact markdown, `diff` the\n        REST body of GET /api/v1/runs/{run_id}/ai-history/diff. Reading it:\n        when `diff.provenance.changed` is true the two versions were made by\n        different engines (rules vs LLM) and category changes may reflect the\n        engine, not the product. Root-cause text is AI text; a reworded root\n        cause alone is not a material change. `identical: true` means the same\n        content.\n\n        Errors come back as {ok: false, ...}: a version number that is not\n        stored for this run is {ok: false, error, stored_versions} (no diff is\n        attempted); an unknown run is a 404.\n\n        Args:\n            run_id: Test run UUID (from list_test_runs).\n            from_version: The older version number (1, 2, ... from get_ai_history).\n            to_version: The newer version: a number, \"latest\" (the newest\n                stored version, default) or \"live\" (the run's current data).\n        ",
+  "inputSchema": {
+    "properties": {
+      "from_version": {
+        "title": "From Version",
+        "type": "integer"
+      },
+      "run_id": {
+        "title": "Run Id",
+        "type": "string"
+      },
+      "to_version": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "string"
+          }
+        ],
+        "default": "latest",
+        "title": "To Version"
+      }
+    },
+    "required": [
+      "run_id",
+      "from_version"
+    ],
+    "title": "diff_ai_versionsArguments",
+    "type": "object"
+  },
+  "name": "diff_ai_versions"
+}

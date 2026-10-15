@@ -110,9 +110,51 @@ def _durable_required() -> bool:
 class RevocationUnavailable(RuntimeError):
     """The revocation store could not be consulted for this request.
 
-    Raised by the read path only. Callers must translate this into a 503 —
-    it means "unknown", never "not revoked".
+    Raised by the read path (and by a write that must not be lost). Callers
+    must translate this into a 503 — it means "unknown", never "not revoked".
+
+    ``store`` names what failed: ``"database"`` (the durable PostgreSQL table)
+    or ``"cache"`` (Redis, the legacy fallback). ``pool_exhausted`` is set when
+    the database never answered because the worker had no free connection --
+    the homelab's "revocation store unavailable" 503s of 2026-10-13 were
+    exactly that, with PostgreSQL and Redis both healthy, and the old message
+    sent the investigation to Redis.
     """
+
+    def __init__(self, message: str, *, store: str = "database", pool_exhausted: bool = False) -> None:
+        super().__init__(message)
+        self.store = store
+        self.pool_exhausted = pool_exhausted
+
+
+def _is_pool_timeout(exc: Optional[BaseException]) -> bool:
+    """SQLAlchemy's QueuePool timeout: no connection was free in time."""
+    from sqlalchemy.exc import TimeoutError as PoolTimeout
+
+    return isinstance(exc, PoolTimeout)
+
+
+def _store_of(exc: BaseException) -> str:
+    """``database`` for a SQLAlchemy/driver failure, ``cache`` for anything else
+    (Redis errors, an unparseable legacy marker)."""
+    from sqlalchemy.exc import SQLAlchemyError
+
+    return "database" if isinstance(exc, SQLAlchemyError) else "cache"
+
+
+def unavailable_detail(exc: RevocationUnavailable, subject: str = "Token") -> str:
+    """The 503 body for a revocation check that could not be made: what failed,
+    in words a user can pass on, and that it is not their credentials."""
+    if exc.pool_exhausted:
+        cause = "the server is overloaded and had no free database connection"
+    elif exc.store == "cache":
+        cause = "the server could not reach its token cache"
+    else:
+        cause = "the server could not reach its database"
+    return (
+        f"{subject} revocation status cannot be verified right now: {cause}. "
+        "This is a server-side problem, not a credential problem — retry shortly."
+    )
 
 
 def _count(reason: str) -> None:
@@ -124,34 +166,52 @@ def _count(reason: str) -> None:
         pass
 
 
-def _unavailable(operation: str, exc: Optional[Exception] = None) -> bool:
+def _unavailable(operation: str, exc: Optional[Exception] = None, *, store: str) -> bool:
     """Handle an unreachable revocation store on the READ path.
 
     Returns ``False`` (fail open) only under the explicit environment
     escape hatch; otherwise raises so the caller can answer 503.
     """
     _count("revocation_unavailable")
+    pool_exhausted = _is_pool_timeout(exc)
+    if pool_exhausted:
+        remedy = (
+            "The worker had no free database connection (QueuePool timeout): look "
+            "for requests holding connections, not at PostgreSQL itself."
+        )
+    elif store == "cache":
+        remedy = "Restore Redis."
+    else:
+        remedy = "Check PostgreSQL (the durable auth_token_revocations table)."
     if settings.AUTH_REVOCATION_FAIL_OPEN:
         logger.error(
             "token_revocation_failed_open",
             operation=operation,
+            store=store,
+            pool_exhausted=pool_exhausted,
             error=str(exc) if exc else "revocation store unreachable",
             detail=(
-                "AUTH_REVOCATION_FAIL_OPEN=true — a revoked token may be honoured "
-                "until Redis recovers. Unset this to fail closed."
+                f"AUTH_REVOCATION_FAIL_OPEN=true — a revoked token may be honoured "
+                f"until the {store} recovers. Unset this to fail closed."
             ),
         )
         return False
     logger.error(
         "token_revocation_unavailable",
         operation=operation,
+        store=store,
+        pool_exhausted=pool_exhausted,
         error=str(exc) if exc else "revocation store unreachable",
         detail=(
-            "Revocation status cannot be verified; rejecting with 503. Restore Redis, "
-            "or set AUTH_REVOCATION_FAIL_OPEN=true to accept unenforced revocation."
+            f"Revocation status cannot be verified; rejecting with 503. {remedy} "
+            "Or set AUTH_REVOCATION_FAIL_OPEN=true to accept unenforced revocation."
         ),
     )
-    raise RevocationUnavailable(f"revocation store unavailable during {operation}")
+    raise RevocationUnavailable(
+        f"revocation {store} unavailable during {operation}",
+        store=store,
+        pool_exhausted=pool_exhausted,
+    )
 
 
 async def _redis():
@@ -181,7 +241,11 @@ async def revoke_jti(jti: str, ttl_seconds: int) -> None:
     except Exception as exc:
         logger.error("durable_revocation_unavailable", operation="revoke_jti", error=str(exc))
         if _durable_required():
-            raise RevocationUnavailable("durable revocation store unavailable") from exc
+            raise RevocationUnavailable(
+                "durable revocation store unavailable",
+                store="database",
+                pool_exhausted=_is_pool_timeout(exc),
+            ) from exc
     redis = await _redis()
     if redis is None:
         # Loud, not silent: the caller's logout LOOKS successful but this
@@ -217,24 +281,27 @@ async def is_jti_revoked(jti: str) -> bool:
             return True
         redis = await _redis()
         if redis is None:
-            return _unavailable("is_jti_revoked") if _durable_required() else False
+            return _unavailable("is_jti_revoked", store="cache") if _durable_required() else False
         legacy = (await redis.get(_JTI_KEY.format(jti=jti))) is not None
         if legacy:
             # Bounded migration: import a legacy marker while its natural TTL remains.
             await _durable_execute("INSERT INTO auth_token_revocations (jti, expires_at) VALUES (:jti, now() + (:ttl * interval '1 second')) ON CONFLICT (jti) DO NOTHING", {"jti": jti, "ttl": settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60})
         return legacy
+    except RevocationUnavailable:
+        raise  # already names its store; do not relabel it here
     except Exception as exc:
         logger.error("durable_revocation_unavailable", operation="is_jti_revoked", error=str(exc))
         if _durable_required():
-            return _unavailable("is_jti_revoked", exc)
+            # The block also reads the legacy Redis marker: name the store that failed.
+            return _unavailable("is_jti_revoked", exc, store=_store_of(exc))
     redis = await _redis()
     if redis is None:
-        return _unavailable("is_jti_revoked")
+        return _unavailable("is_jti_revoked", store="cache")
     try:
         val = await redis.get(_JTI_KEY.format(jti=jti))
         return val is not None
     except Exception as exc:  # noqa: BLE001
-        return _unavailable("is_jti_revoked", exc)
+        return _unavailable("is_jti_revoked", exc, store="cache")
 
 
 async def revoke_all_user_tokens(user_id: uuid.UUID, db=None) -> None:
@@ -259,7 +326,11 @@ async def revoke_all_user_tokens(user_id: uuid.UUID, db=None) -> None:
     except Exception as exc:
         logger.error("durable_revocation_unavailable", operation="revoke_all_user_tokens", error=str(exc))
         if _durable_required():
-            raise RevocationUnavailable("durable revocation store unavailable") from exc
+            raise RevocationUnavailable(
+                "durable revocation store unavailable",
+                store="database",
+                pool_exhausted=_is_pool_timeout(exc),
+            ) from exc
     # A caller-owned transaction can still roll back. Publishing its cutoff to
     # Redis here would let the legacy-cache migration path resurrect a cutoff
     # whose password change never committed. PostgreSQL is queried first on
@@ -323,14 +394,17 @@ async def is_token_before_cutoff(user_id: uuid.UUID, token_iat: Optional[float])
         precise_cutoff = float(legacy)
         await _durable_execute("INSERT INTO auth_token_revocations (jti, user_id, valid_from) VALUES (:jti, :uid, to_timestamp(:cutoff)) ON CONFLICT (jti) DO NOTHING", {"jti": f"cutoff:{user_id}", "uid": user_id, "cutoff": precise_cutoff})
         return token_iat is None or token_iat <= precise_cutoff
+    except RevocationUnavailable:
+        raise  # already names its store; do not relabel it here
     except Exception as exc:
         logger.error("durable_revocation_unavailable", operation="is_token_before_cutoff", error=str(exc))
         if _durable_required():
-            return _unavailable("is_token_before_cutoff", exc)
+            # The block also reads the legacy Redis marker: name the store that failed.
+            return _unavailable("is_token_before_cutoff", exc, store=_store_of(exc))
     # Redis fallback is used only while an older installation is migrating.
     redis = await _redis()
     if redis is None:
-        return _unavailable("is_token_before_cutoff")
+        return _unavailable("is_token_before_cutoff", store="cache")
     try:
         cutoff_str = await redis.get(_USER_CUTOFF_KEY.format(user_id=str(user_id)))
         if cutoff_str is None:
@@ -345,4 +419,4 @@ async def is_token_before_cutoff(user_id: uuid.UUID, token_iat: Optional[float])
             return True  # legacy token, any cutoff invalidates it
         return token_iat <= cutoff
     except Exception as exc:  # noqa: BLE001
-        return _unavailable("is_token_before_cutoff", exc)
+        return _unavailable("is_token_before_cutoff", exc, store="cache")

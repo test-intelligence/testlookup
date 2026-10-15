@@ -15,6 +15,13 @@ from pydantic import (
 )
 
 from app.core.config import MAX_RESULTS_PER_INGEST
+# W03 (AI history): the types live in their own module; the existing models
+# below only gain optional fields of these types.
+from app.models.ai_history_schemas import (
+    AIAnalysisDiffBrief,
+    TestHistoryAI,
+    TestHistoryAIChange,
+)
 from app.models.postgres import (
     FailureCategory,
     IdentityEventType,
@@ -3933,6 +3940,15 @@ class AIConfigRead(BaseModel):
     ai_timeout_seconds: int
     deep_investigation_enabled: bool
     finetune_enabled: bool
+    # AIC-04 / AIC-01 provenance, same vocabulary as
+    # ai_confidence_threshold_source: "ai_config" (a valid value is stored
+    # here and the runtime obeys it) | "env_default" (the deployment default
+    # is in force). Resolved by ai_config_resolver.stored_or_default, the same
+    # helper the runtime uses, so this page and the runtime cannot disagree.
+    analysis_mode_source: str = "env_default"
+    ai_timeout_seconds_source: str = "env_default"
+    deep_investigation_enabled_source: str = "env_default"
+    finetune_enabled_source: str = "env_default"
     openai_key_set: bool
     google_key_set: bool
     anthropic_key_set: bool = False                   # LP-3: Anthropic/Claude support
@@ -3943,6 +3959,9 @@ class AIConfigRead(BaseModel):
     ml_model_available: bool = False                  # True if a trained ML model exists
     ml_model_accuracy: Optional[float] = None         # last known accuracy (0-1)
     ml_training_sample_count: int = 0                 # total labeled samples available
+    # AIC-05: the training floor (settings.ML_MIN_TRAINING_SAMPLES) so the page
+    # stops hard-coding "/ 200".
+    ml_min_training_samples: int = 200
     # AI-F1 label integrity — honest learning-loop status
     ml_human_label_count: int = 0                     # human-provenance labels (feedback/corrections)
     ml_human_label_floor: int = 50                    # below this, ML is bootstrap (LLM-imitating)
@@ -3977,7 +3996,10 @@ class AIConfigUpdate(BaseModel):
     embedding_provider: Optional[str] = None
     embedding_model: Optional[str] = None
     ai_confidence_threshold: Optional[int] = Field(None, ge=0, le=100)
-    ai_timeout_seconds: Optional[int] = Field(None, ge=30, le=1800)
+    # AIC-02: floor 5 s (was 30) so a short LLM timeout can be set and seen to
+    # degrade to the deterministic fallback; ai_config_resolver.valid_timeout_seconds
+    # accepts the same 5..1800 range.
+    ai_timeout_seconds: Optional[int] = Field(None, ge=5, le=1800)
     deep_investigation_enabled: Optional[bool] = None
     finetune_enabled: Optional[bool] = None
     openai_api_key: Optional[str] = Field(None, max_length=500)
@@ -4400,6 +4422,9 @@ class TestCaseHistoryPointResponse(BaseModel):
     teardown_ms: Optional[int] = None
     worker_id: Optional[str] = None
     timing_source: Optional[str] = None
+    # AIH-05 (additive): the AI analysis of this point's test result; null
+    # when it has none (a passed test) or an older server answered.
+    ai: Optional[TestHistoryAI] = None
 
 
 class TestCaseDurationStatsResponse(BaseModel):
@@ -4468,6 +4493,9 @@ class TestCaseHistoryResponse(BaseModel):
     duration_stats: Optional[TestCaseDurationStatsResponse] = None
     #: Null when the test has no duration baseline in this project.
     baseline: Optional[TestDurationBaselineResponse] = None
+    #: AIH-05 (additive): points where the AI changed its category or root
+    #: cause versus the previous point that had an analysis (oldest -> newest).
+    ai_changes: List[TestHistoryAIChange] = []
 
 
 # ── SSO / SAML / SCIM Schemas (ENT-01) ──────────────────────────────────────
@@ -5986,6 +6014,18 @@ class LlmUsageRead(BaseModel):
     hard_cap_usd: Optional[float] = None
     utilization_pct: Optional[float] = None  # total_cost_usd / hard_cap_usd * 100
     status: Optional[str] = None  # OK | SOFT_WARN | CAPPED
+    # AIC-06 overage (derived, display only; never enforced). None = not
+    # computed: no enabled quota, or no included allowance (included_usd <= 0).
+    overage_rate_usd: Optional[float] = None            # echoed whenever an enabled quota exists
+    covered_usd: Optional[float] = None                 # min(spend, included)
+    overage_usd: Optional[float] = None                 # max(0, spend - included)
+    overage_charge_usd: Optional[float] = None          # overage_usd * overage_rate_usd
+    projected_period_cost_usd: Optional[float] = None   # spend / elapsed_fraction
+    projected_overage_usd: Optional[float] = None       # max(0, projected - included)
+    projected_overage_charge_usd: Optional[float] = None  # projected_overage_usd * rate
+    # "linear_elapsed_days" | "insufficient_elapsed_time" | "no_spend" | None.
+    # Plain str, not a Literal.
+    projection_basis: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -6005,6 +6045,18 @@ class BillingOverviewProject(BaseModel):
     utilization_pct: Optional[float] = None
     status: str  # OK | SOFT_WARN | CAPPED | UNLIMITED
     cap_hits: int
+    # AIC-06: the same derived overage fields as LlmUsageRead (all None for a
+    # project without an enabled quota), plus included_usd, which this model
+    # did not carry before.
+    included_usd: Optional[float] = None
+    overage_rate_usd: Optional[float] = None
+    covered_usd: Optional[float] = None
+    overage_usd: Optional[float] = None
+    overage_charge_usd: Optional[float] = None
+    projected_period_cost_usd: Optional[float] = None
+    projected_overage_usd: Optional[float] = None
+    projected_overage_charge_usd: Optional[float] = None
+    projection_basis: Optional[str] = None
 
 
 class BillingOverviewResponse(BaseModel):
@@ -6445,6 +6497,9 @@ class RunCompareAIReport(BaseModel):
     confidence_reason: str = ""
     fallback_used: bool = False
     message: Optional[str] = None
+    # AIH-03 (run_compare_v2): what changed between the two runs' AI analyses,
+    # computed deterministically server-side (never the model's own list).
+    ai_changes: List[str] = Field(default_factory=list)
 
 
 class RunCompareTestDelta(BaseModel):
@@ -6533,6 +6588,10 @@ class RunCompareResponse(BaseModel):
     suite_name: Optional[str] = None
     selection: Optional[RunCompareSelection] = None
     ai_report: Optional[RunCompareAIReport] = None
+    # AIH-03 (additive): the AI-analysis diff of the two runs (left =
+    # baseline, right = current); {"available": false, "reason": ...} when it
+    # could not be built. Absent from callers that do not ask for it.
+    ai_analysis_diff: Optional[AIAnalysisDiffBrief] = None
     # Aggregate deltas (right - left).
     delta_total: int = 0
     delta_passed: int = 0
@@ -6700,6 +6759,11 @@ class RetentionPolicyWrite(BaseModel):
     runs_days: Optional[int] = Field(None, ge=30, le=3650)
     artifacts_days: Optional[int] = Field(None, ge=7, le=3650)
     audit_days: Optional[int] = Field(None, ge=365, le=3650)
+    # AIH-06 (D41): AI history versions kept per run (per kind) and per test
+    # result. Omitted = keep the current value; send 20 / 10 to restore the
+    # defaults (there is no null-reset).
+    ai_versions_per_run: Optional[int] = Field(None, ge=1, le=100)
+    ai_versions_per_test: Optional[int] = Field(None, ge=1, le=100)
 
 
 class RetentionLastPurge(BaseModel):
@@ -6718,6 +6782,9 @@ class RetentionPolicyRead(BaseModel):
     runs_days: int
     artifacts_days: int
     audit_days: int
+    # AIH-06: the effective caps (code defaults when the row holds NULL).
+    ai_versions_per_run: int = 20
+    ai_versions_per_test: int = 10
     source: str = "default"
     last_purge: Optional[RetentionLastPurge] = None
 
@@ -6759,6 +6826,10 @@ class RetentionPreviewCandidates(BaseModel):
     # response's ``unmeasured`` list names which.
     analysis_cache_entries: Optional[int] = None
     search_index_documents: Optional[int] = None
+    #: AIH-06: AI history versions the purge would remove (ai_run_versions of
+    #: purged runs + ai_analysis_versions their delete cascades + the
+    #: over-cap versions of the sweep).
+    ai_history_versions: int = 0
 
 
 class RetentionPreviewResponse(BaseModel):

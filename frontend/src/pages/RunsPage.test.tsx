@@ -21,13 +21,14 @@
  * the UX redesign P3 template.
  */
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { SWRConfig } from 'swr'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { TestRun } from '@/types/runs'
 import { useRuns } from '@/hooks/useRuns'
 import agentService from '@/services/agentService'
+import { aiHistoryService } from '@/services/aiHistoryService'
 import { getData } from '@/services/http'
 import toast from 'react-hot-toast'
 import { useTimeWindowStore } from '@/store/timeWindowStore'
@@ -69,6 +70,8 @@ vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => perms }))
 vi.mock('@/components/runs/UploadReportModal', () => ({
   default: () => <div data-testid="upload-report-modal" />,
 }))
+// W03 (D42): the per-row "Compare to previous run" asks the server.
+vi.mock('@/services/aiHistoryService', () => ({ aiHistoryService: { getPreviousRun: vi.fn() } }))
 vi.mock('@/services/agentService', () => ({
   default: {
     triggerPipeline: vi.fn(async () => ({})),
@@ -784,5 +787,79 @@ describe('RunsPage — the AI-verdict column (P4, D2)', () => {
     expect(within(primary()).queryByRole('link', { name: /Intel/ })).toBeNull()
     const hrefs = Array.from(primary().querySelectorAll('a'), (a) => a.getAttribute('href') ?? '')
     expect(hrefs.filter((h) => /\/intelligence(\?|$)/.test(h))).toEqual([])
+  })
+})
+
+// W03 (D42): the per-row "Compare to previous run" asks the SERVER for the
+// previous run (same suite AND branch) instead of picking from the runs loaded
+// on the page, so it opens the same pair as the run page and its Analysis tab.
+describe('RunsPage — Compare to previous run is the server\'s rule', () => {
+  function renderWithLocation(runs: TestRun[]) {
+    vi.mocked(useRuns).mockReturnValue({
+      data: { items: runs, total: runs.length, page: 1, size: 500, pages: 1 },
+      isLoading: false,
+      error: undefined,
+      mutate: vi.fn(),
+    } as never)
+    const seen: string[] = []
+    function Probe() {
+      const where = useLocation()
+      seen.push(`${where.pathname}${where.search}`)
+      return null
+    }
+    render(
+      <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0, shouldRetryOnError: false }}>
+        <MemoryRouter initialEntries={['/runs']}>
+          <Routes>
+            <Route path="*" element={<><RunsPage /><Probe /></>} />
+          </Routes>
+        </MemoryRouter>
+      </SWRConfig>,
+    )
+    return seen
+  }
+
+  const last = (seen: string[]) => seen[seen.length - 1]
+  const compareButton = (runId: string) =>
+    within(document.querySelector(`#run-row-${runId}`) as HTMLElement).getByTitle('Compare to the previous run of "Auth"')
+
+  const suiteRuns = () => newestFirst([
+    run(1, { status: 'PASSED', primary_suite_name: 'Auth', branch: 'release', created_at: hoursAgo(30) }),
+    run(2, { status: 'FAILED', primary_suite_name: 'Auth', branch: 'main', created_at: hoursAgo(2) }),
+  ])
+
+  beforeEach(() => {
+    vi.mocked(aiHistoryService.getPreviousRun).mockReset()
+    vi.mocked(toast).mockClear()
+  })
+
+  it('opens the pair the server names (here a run that is not even on the page)', async () => {
+    vi.mocked(aiHistoryService.getPreviousRun).mockResolvedValue({
+      run_id: 'run-2', rule: null, current: null, reason: null, message: null,
+      baseline: { run_id: 'run-from-server', build_number: '99', run_seq: 9, branch: 'main', primary_suite_name: 'Auth', status: 'PASSED', created_at: null, finished_at: null },
+    } as never)
+    const seen = renderWithLocation(suiteRuns())
+    fireEvent.click(compareButton('run-2'))
+    await waitFor(() => expect(last(seen)).toBe('/runs/compare?mode=manual&left=run-from-server&right=run-2&suite=Auth'))
+    expect(aiHistoryService.getPreviousRun).toHaveBeenCalledWith('run-2')
+  })
+
+  it('no previous run on this branch: the server\'s sentence, no navigation', async () => {
+    const message = 'No earlier completed run of "Auth" on branch "main" found.'
+    vi.mocked(aiHistoryService.getPreviousRun).mockResolvedValue({
+      run_id: 'run-2', rule: null, current: null, baseline: null, reason: 'no_previous_run', message,
+    } as never)
+    const seen = renderWithLocation(suiteRuns())
+    fireEvent.click(compareButton('run-2'))
+    await waitFor(() => expect(toast).toHaveBeenCalledWith(message, expect.anything()))
+    expect(last(seen)).toBe('/runs')
+  })
+
+  it('a failed lookup says so and stays', async () => {
+    vi.mocked(aiHistoryService.getPreviousRun).mockRejectedValue(new Error('503'))
+    const seen = renderWithLocation(suiteRuns())
+    fireEvent.click(compareButton('run-2'))
+    await waitFor(() => expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Could not look up the previous run — try again in a moment.'))
+    expect(last(seen)).toBe('/runs')
   })
 })

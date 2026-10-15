@@ -15,7 +15,6 @@ import structlog
 
 from app.agents.base import BaseAgent
 from app.agents.evidence import EvidenceRef
-from app.core.config import settings
 from app.models.agent_contracts import (
     GapDetectionAgentOutput,
     GapItem,
@@ -57,7 +56,11 @@ class GapDetectionAgent(BaseAgent):
             analyses = raw_analyses if isinstance(raw_analyses, dict) else {}
             analysis_keys = {str(k): v for k, v in analyses.items()}
 
-            threshold = settings.AI_CONFIDENCE_THRESHOLD
+            # W04 AIC-03: the threshold the pipeline froze at start (the one
+            # triage routed on), else the scope's, else the env default.
+            from app.services.pipeline_ai_scope import state_confidence_threshold
+
+            threshold = state_confidence_threshold(state)[0]
             gaps: list[GapItem] = []
             analyzed_count = 0
             skipped_count = 0

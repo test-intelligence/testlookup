@@ -1,0 +1,29 @@
+{
+  "description": "\n        What changed in a run's AI analysis since the previous run of the\n        same suite on the same branch (or since `baseline_run_id`): the\n        release verdict, new and resolved root causes, tests whose category\n        changed, and a summary. Use it for \"what changed in the AI analysis\n        since the previous checkout run?\". Read-only.\n\n        Returns {ok, summary, verdict_regressed, compare}: `summary` is compact\n        markdown, `compare` the REST body of GET /api/v1/runs/{run_id}/ai-compare,\n        `verdict_regressed` true when the AI verdict got worse, false when it\n        did not, null when it cannot be judged. Reading it: the summary is\n        labelled \"deterministic summary\" when no LLM wrote it (offline or\n        over the cost cap) and \"AI narrative\" when one did; root causes are AI\n        text. An engine change (rules vs LLM) between the runs is not a\n        product change (`diff.provenance.note`). `reason` \"baseline_not_analysed\"\n        or \"current_not_analysed\" means NOT COMPARED, which is not \"no change\";\n        \"no_previous_run\" means there is no earlier completed run of the suite\n        on the branch.\n\n        Errors come back as {ok: false, status_code, detail}: an unknown run,\n        or a baseline in another project, is a 404.\n\n        Args:\n            run_id: Test run UUID (from list_test_runs).\n            baseline_run_id: Compare with this run instead of the previous run\n                of the same suite and branch (same project).\n        ",
+  "inputSchema": {
+    "properties": {
+      "baseline_run_id": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Baseline Run Id"
+      },
+      "run_id": {
+        "title": "Run Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "run_id"
+    ],
+    "title": "compare_ai_with_previousArguments",
+    "type": "object"
+  },
+  "name": "compare_ai_with_previous"
+}

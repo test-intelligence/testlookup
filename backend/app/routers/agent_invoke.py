@@ -400,10 +400,19 @@ async def _run_label(db: AsyncSession, test_run_id: Any) -> str:
     return f"Build {build}" if build else str(test_run_id)
 
 
-async def _current_mode_snapshot() -> dict[str, Any]:
+async def _current_mode_snapshot(db: AsyncSession) -> dict[str, Any]:
     from app.agents.workflow import _resolve_analysis_mode_snapshot  # noqa: PLC0415
 
-    return await _resolve_analysis_mode_snapshot()
+    # The REQUEST session: a second one inside this handler starves the 2+1 pool.
+    return await _resolve_analysis_mode_snapshot(db)
+
+
+async def _current_ai_config(db: AsyncSession) -> dict[str, Any]:
+    """The live threshold / timeout, compared with the frozen ones (W04 §1.3) as /agents/pipelines retry does."""
+    from app.services.ai_config_resolver import get_effective_ai_config  # noqa: PLC0415
+    from app.services.pipeline_ai_scope import build_ai_config_snapshot  # noqa: PLC0415
+
+    return dict(build_ai_config_snapshot(await get_effective_ai_config(db=db, fresh=True), {}))
 
 
 async def _invocation_config_changed(db: AsyncSession, invocation: Any) -> bool:
@@ -740,7 +749,11 @@ async def retry_invocation(
                     "links": rerun,
                 },
             )
-        plan = decide_retry_mode(pipeline.execution_metadata, await _current_mode_snapshot())
+        plan = decide_retry_mode(
+            pipeline.execution_metadata,
+            await _current_mode_snapshot(db),
+            current_ai_config=await _current_ai_config(db),
+        )
         if plan.is_rerun:
             raise HTTPException(
                 status_code=409,

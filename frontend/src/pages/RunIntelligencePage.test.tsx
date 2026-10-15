@@ -69,6 +69,23 @@ vi.mock('@/hooks/useRuns', async (importOriginal) => ({
 vi.mock('@/hooks/useDecisionTrail', () => ({
   useDecisionTrail: () => ({ data: undefined, error: undefined, isLoading: false }),
 }))
+// W03 AIH-04: the AI history on top of the body (its own tests sit beside the
+// components in components/ai/): no stored version, the comparison still loading.
+vi.mock('@/hooks/useAIHistory', () => {
+  const idle = () => ({ data: undefined, error: undefined, isLoading: true, mutate: () => Promise.resolve(undefined) })
+  return {
+    useAIHistory: () => ({
+      data: { run_id: 'run-abc', kind: 'analysis_digest', total: 0, limit: 100, truncated: false, latest_version: null, live: { available: true }, versions: [] },
+      error: undefined,
+      isLoading: false,
+      mutate: () => Promise.resolve(undefined),
+    }),
+    useAIVersion: idle,
+    useAIVersionDiff: idle,
+    useAICompare: idle,
+    usePreviousRun: idle,
+  }
+})
 
 const { mockCompleteStep } = vi.hoisted(() => ({ mockCompleteStep: vi.fn() }))
 

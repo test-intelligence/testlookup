@@ -157,6 +157,13 @@ class WorkflowState(TypedDict):
     analysis_mode_requested: str  # configured value at pipeline start (env/UI)
     analysis_mode_resolved: str   # effective engine frozen for this pipeline
     analysis_mode_resolution: dict  # probe/config snapshot for audit replay
+    # W04 AIC-02/AIC-03/AGT-16: the Settings > AI values frozen at pipeline
+    # start (services/pipeline_ai_scope.AIConfigSnapshot). Plain fields: set
+    # once in the initial state, replayed verbatim on a same-id resume.
+    ai_config_snapshot: dict
+    confidence_threshold: int          # frozen confidence threshold (0..100)
+    llm_timeout_seconds: int           # frozen global LLM call timeout (seconds)
+    gap_refinement_enabled: bool       # frozen project feature-flag snapshot (aiq_gap_refinement)
     _cost_budget_prechecked: bool  # one pipeline-wide cap decision was persisted
     _cost_budget_action: Optional[str]
     _cost_budget_rationale: Optional[str]

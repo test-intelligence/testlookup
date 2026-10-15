@@ -298,6 +298,54 @@ async def _is_duplicate(key: str, ttl: int = 3600, owner: str | None = None) -> 
     return True
 
 
+PIPELINE_ADMISSION_TTL = 7200
+REQUESTED_PIPELINE_ADMISSION_TTL = 120
+
+
+async def _pipeline_admission_duplicate(
+    dedup_key: str, *, owner: str, requested_by: str | None,
+) -> bool:
+    """Is this pipeline delivery a duplicate to drop?
+
+    An automatic trigger (ingest, webhook, debounce) collapses behind the
+    run's 2-hour admission key, as before. A person's trigger
+    (``POST /agents/pipelines/trigger`` passes ``requested_by``) does not: it
+    used to hit that key and was dropped silently for two hours after any
+    analysis while the API said "Pipeline queued", so a deliberate
+    re-analysis never ran (and, since W03, never became a new AI version).
+    The router's state machine already refuses a trigger while a pipeline of
+    the run is in progress; here only a double submit by the same person
+    within two minutes collapses, and the run's key is still set so automatic
+    triggers keep collapsing behind it.
+    """
+    if not requested_by:
+        return await _is_duplicate(dedup_key, ttl=PIPELINE_ADMISSION_TTL, owner=owner)
+    duplicate = await _is_duplicate(
+        _requested_admission_key(dedup_key, requested_by), ttl=REQUESTED_PIPELINE_ADMISSION_TTL, owner=owner,
+    )
+    if not duplicate:
+        await _is_duplicate(dedup_key, ttl=PIPELINE_ADMISSION_TTL, owner=owner)
+    return duplicate
+
+
+def _requested_admission_key(dedup_key: str, requested_by: str) -> str:
+    return f"{dedup_key}:requested:{requested_by}"
+
+
+async def _release_requested_admission(dedup_key: str, *, owner: str, requested_by: str | None) -> None:
+    """End a person's double-submit guard when their pipeline ends.
+
+    The two-minute key only has to cover the moments before the pipeline row
+    exists (after that the router refuses a trigger while one is in progress).
+    Kept past the end of a short pipeline, it dropped the same person's next
+    "Trigger pipeline" (say, after changing the confidence threshold) while
+    the API answered "Pipeline queued". Owner-checked, so a newer task's key
+    is never removed.
+    """
+    if requested_by:
+        await _release_duplicate_lock(_requested_admission_key(dedup_key, requested_by), owner)
+
+
 async def _release_duplicate_lock(key: str, owner: str) -> None:
     """Release a dedup lock only if it is still owned by this task."""
     from app.db.redis_client import get_redis
@@ -2006,6 +2054,86 @@ def dispatch_transition_notifications(self, run_id: str):
         raise self.retry(exc=exc)
 
 
+async def _capture_ai_history(
+    task_id: Any,
+    test_run_id: str,
+    project_id: str,
+    final_state: dict,
+) -> dict:
+    """AIH-01/AIH-03 pipeline success hook (W03 contract §5.7).
+
+    1. Record this pipeline's analysis digest as a new ``ai_run_versions``
+       version (``capture_analysis_digest``; an idempotent replay of the same
+       pipeline records nothing new) and commit the activity rows it staged.
+    2. Only for a NEW version: re-enqueue the AI compare report of this run
+       against its D42 previous run. ``generate_run_compare_report``
+       regenerates unconditionally, unlike the ingest-time precompute that
+       skips an already-ready report -- so a report cached BEFORE this
+       analysis existed does not stay AI-less. Skipped without a primary suite
+       or a previous run.
+    """
+    from app.db.mongo import get_mongo_db
+    from app.db.postgres import AsyncSessionLocal
+    from app.models.postgres import TestRun
+    from app.services import ai_history_read_service, ai_history_service
+
+    pipeline_run_id = final_state.get("pipeline_run_id")
+    if not pipeline_run_id:
+        logger.info("[Task %s] AI history capture skipped: the pipeline state has no pipeline_run_id", task_id)
+        return {"status": "skipped", "reason": "no_pipeline_run_id"}
+    run_uuid = uuid.UUID(str(test_run_id))
+    async with AsyncSessionLocal() as db:
+        result = await ai_history_service.capture_analysis_digest(
+            db,
+            get_mongo_db(),
+            run_id=run_uuid,
+            pipeline_run_id=uuid.UUID(str(pipeline_run_id)),
+            stage_quality=final_state.get("stage_quality"),
+        )
+        await db.commit()
+        recorded = result.version
+        if recorded is None or not recorded.created:
+            return {"status": "not_new", "reason": result.skipped_reason or "replay"}
+        run = await db.get(TestRun, run_uuid)
+        suite_name = run.primary_suite_name if run is not None else None
+        if not suite_name:
+            return {"status": "captured", "version": recorded.version, "compare": "no_primary_suite"}
+        previous = await ai_history_read_service.resolve_previous_run(db, run=run)
+        if previous.baseline is None:
+            return {"status": "captured", "version": recorded.version, "compare": previous.reason}
+        baseline_id = str(previous.baseline.id)
+    try:
+        generate_run_compare_report.delay(
+            project_id=project_id,
+            left_run_id=baseline_id,
+            right_run_id=str(test_run_id),
+            suite_name=suite_name,
+        )
+    except Exception as exc:  # noqa: BLE001 -- a broker hiccup must not fail a finished pipeline
+        logger.warning(
+            "[Task %s] AI compare report enqueue failed (non-blocking, %s)", task_id, type(exc).__name__,
+        )
+        return {"status": "captured", "version": recorded.version, "compare": "enqueue_failed"}
+    return {"status": "captured", "version": recorded.version, "compare": "enqueued"}
+
+
+def _capture_ai_history_after_pipeline(
+    task_id: Any,
+    test_run_id: str,
+    project_id: str,
+    final_state: dict,
+) -> dict | None:
+    """Run :func:`_capture_ai_history` synchronously. NEVER raises: the pipeline
+    already succeeded, so a Mongo or Postgres fault here is logged and dropped."""
+    try:
+        return cast(dict, _run_async(_capture_ai_history(task_id, test_run_id, project_id, final_state)))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "[Task %s] AI history capture failed (non-blocking, %s)", task_id, type(exc).__name__,
+        )
+        return None
+
+
 @celery_app.task(
     name="app.worker.tasks.run_agent_pipeline",
     base=DownstreamTrackedTask,
@@ -2094,7 +2222,9 @@ def run_agent_pipeline(
         # treating it as such would let DownstreamTrackedTask close the outbox
         # without any matching AgentPipelineRun. Direct callers retain the
         # short-lived Redis admission guard.
-        if not source_outbox_id and await _is_duplicate(dedup_key, ttl=7200, owner=dedup_owner):
+        if not source_outbox_id and await _pipeline_admission_duplicate(
+            dedup_key, owner=dedup_owner, requested_by=requested_by,
+        ):
             logger.info(
                 "[Task %s] Skipping duplicate pipeline for run=%s type=%s",
                 self.request.id, test_run_id, workflow_type,
@@ -2152,6 +2282,11 @@ def run_agent_pipeline(
             self.request.id, stages_done, len(errors),
         )
 
+        # AIH-01/03: keep this analysis as an immutable version and refresh the
+        # AI compare report against the previous run. Never fails the pipeline.
+        if not final_state.get("duplicate"):
+            _capture_ai_history_after_pipeline(self.request.id, test_run_id, project_id, final_state)
+
         # BL-03: Invalidate cached intelligence snapshot so next read recomputes
         try:
             import uuid as _uuid
@@ -2169,6 +2304,16 @@ def run_agent_pipeline(
                 type(inv_exc).__name__,
             )
 
+        if not final_state.get("duplicate"):
+            try:
+                _run_async(_release_requested_admission(
+                    dedup_key, owner=dedup_owner, requested_by=requested_by,
+                ))
+            except Exception as release_exc:  # noqa: BLE001 -- the key expires by itself
+                logger.warning(
+                    "[Task %s] Failed to release the requested-pipeline key (%s)",
+                    self.request.id, type(release_exc).__name__,
+                )
         return {"completed_stages": stages_done, "error_count": len(errors)}
     except Exception as exc:
         safe_error = f"{type(exc).__name__}: agent pipeline failed"
@@ -2213,6 +2358,9 @@ def run_agent_pipeline(
         # DLQ, and let the exception propagate as a real task failure.
         try:
             _run_async(_release_duplicate_lock(dedup_key, dedup_owner))
+            _run_async(_release_requested_admission(
+                dedup_key, owner=dedup_owner, requested_by=requested_by,
+            ))
         except Exception as release_exc:
             logger.warning(
                 "[Task %s] Failed to release pipeline dedup lock after error (%s)",
@@ -2890,6 +3038,7 @@ def generate_run_compare_report(
                 right,
                 suite_name=suite_name,
                 selection=selection,
+                include_ai_analysis=True,
             )
             try:
                 report = await run_compare_ai_service.generate_and_save_report(
@@ -3045,6 +3194,7 @@ def precompute_suite_comparisons_for_run(self, test_run_id: str, project_id: str
                         latest.id,
                         suite_name=suite,
                         selection=selection,
+                        include_ai_analysis=True,
                     )
                     # Re-evaluate immediately before each possible LLM call.
                     # A run may contain many suites, and usage from this or a
@@ -4002,6 +4152,68 @@ def train_flaky_confidence_model(self) -> dict:
                 result.get("status"),
                 result.get("auc"),
                 result.get("sample_count", 0),
+            )
+            return result
+
+    return cast(dict[str, Any], _run_async(_run()))
+
+
+# ── AIC-05: ML classifier training (nightly + "Train now") ──────────────────
+
+
+@celery_app.task(
+    name="app.worker.tasks.train_ml_classifier",
+    queue="default",
+    bind=True,
+    max_retries=0,
+    time_limit=1800,
+    soft_time_limit=1500,
+)
+def train_ml_classifier(self, triggered_by: str = "beat") -> dict:
+    """Train the failure classifier once (``services/ml/trainer.train_classifier``).
+
+    Nightly at 03:10 UTC from beat (``triggered_by="beat"``, gated by
+    ``ML_RETRAIN_ENABLED``) and on "Train now" (``POST
+    /api/v1/settings/ai/ml/retrain``, ``triggered_by="user:<name>"``, which
+    took ``ml:retrain:lock`` under this task's id before queueing it). The job
+    never raises: below the sample floor, below the accuracy threshold or
+    without scikit-learn it records the outcome in ``ml:retrain:last`` and
+    keeps the previous model. A trained model is published to the object store
+    so every pod picks it up, and audited here as ``ml_classifier / trained``
+    (the task owns the commit; the job service never commits). CPU-bound and
+    local: no outbound call, so ``AI_OFFLINE_MODE`` does not apply.
+    """
+    task_id = str(self.request.id or f"local-{uuid.uuid4()}")
+
+    async def _run():
+        from app.services.ml.training_job import run_training_job
+
+        with _beat_span("train_ml_classifier") as span:
+            outcome = await run_training_job(task_id=task_id, triggered_by=triggered_by)
+            result = outcome.result
+            span.set_attribute("result.status", str(result.get("status")))
+            span.set_attribute("result.triggered_by", triggered_by)
+            if outcome.audit is not None:
+                from app.db.postgres import AsyncSessionLocal
+                from app.services.settings_audit_service import log_settings_change
+
+                audit = outcome.audit
+                try:
+                    async with AsyncSessionLocal() as db:
+                        await log_settings_change(
+                            db, audit["setting_key"], audit["action"], None, audit["changed_fields"],
+                        )
+                        await db.commit()
+                except Exception:  # noqa: BLE001 -- the model is trained and published either way
+                    logger.warning("[Task %s] ml_classifier audit row not written", task_id, exc_info=True)
+            logger.info(
+                "[Task %s] ML classifier training: status=%s version=%s accuracy=%s samples=%s triggered_by=%s",
+                task_id,
+                result.get("status"),
+                result.get("version"),
+                result.get("accuracy"),
+                result.get("sample_count"),
+                triggered_by,
             )
             return result
 
@@ -5186,6 +5398,136 @@ def backfill_suite_executions(
 
     result = cast(dict[str, Any], _run_async(_run()))
     logger.info("[Task %s] backfill_suite_executions: %s", self.request.id, result)
+    return result
+
+
+#: AIH-01 backfill: the Redis cursor and the per-pass lock (the W02 precedent's shape).
+AI_HISTORY_BACKFILL_CURSOR_KEY = "ai_history.backfill_cursor"
+AI_HISTORY_BACKFILL_LOCK_KEY = "ai_history.backfill_lock"
+
+
+async def _load_ai_history_backfill_state(redis: Any) -> dict:
+    import json as _json
+
+    raw = await redis.get(AI_HISTORY_BACKFILL_CURSOR_KEY)
+    if not raw:
+        return {}
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", errors="ignore")
+    try:
+        value = _json.loads(raw)
+    except ValueError:
+        logger.warning("ai_history backfill cursor unreadable; starting from the oldest run")
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+async def _backfill_ai_run_versions_pass(
+    owner: str,
+    *,
+    chunk_size: int,
+    max_chunks: int,
+    time_budget_s: float,
+) -> dict:
+    """One pass of :func:`backfill_ai_run_versions` (an awaitable, so it is testable on one loop)."""
+    import json as _json
+
+    from app.db.mongo import get_mongo_db
+    from app.db.postgres import AsyncSessionLocal
+    from app.db.redis_client import get_redis
+    from app.services import ai_history_service as ahs
+    # The keyset cursor and RSS helpers are generic (any chunk with scanned/
+    # written/skipped/done/last_created_at/last_id); only the keys differ.
+    from app.services import suite_execution_service as ses
+
+    def _totals(state: dict) -> dict:
+        return {key: int(state.get(key) or 0) for key in ("scanned", "written", "skipped")}
+
+    if await _is_duplicate(AI_HISTORY_BACKFILL_LOCK_KEY, ttl=900, owner=owner):
+        return {"status": "locked"}
+    try:
+        redis = get_redis()
+        state = await _load_ai_history_backfill_state(redis)
+        if state.get("done"):
+            return {"status": "done", "chunks": 0, **_totals(state)}
+        started = time.monotonic()
+        baseline_rss = ses.current_rss_bytes()
+        chunks = 0
+        stopped = "max_chunks"
+        while chunks < max_chunks:
+            chunk_started = time.monotonic()
+            async with AsyncSessionLocal() as db:
+                try:
+                    chunk = await ahs.backfill_chunk(
+                        db, get_mongo_db(), ses.cursor_from_state(state), chunk_size,
+                    )
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    raise
+            chunks += 1
+            # advance_state reads only the fields both BackfillChunk classes share.
+            state = ses.advance_state(state, cast(Any, chunk))
+            await redis.set(AI_HISTORY_BACKFILL_CURSOR_KEY, _json.dumps(state, sort_keys=True))
+            logger.info(
+                "ai_history_backfill_chunk scanned=%s written=%s skipped=%s elapsed_ms=%s",
+                chunk.scanned, chunk.written, chunk.skipped,
+                int((time.monotonic() - chunk_started) * 1000),
+            )
+            if chunk.done:
+                stopped = "done"
+                break
+            if time.monotonic() - started > time_budget_s:
+                stopped = "time_budget"
+                break
+            rss = ses.current_rss_bytes()
+            if (
+                baseline_rss is not None and rss is not None
+                and rss - baseline_rss > ses.BACKFILL_RSS_GROWTH_CAP_BYTES
+            ):
+                stopped = "rss_cap"
+                break
+        return {"status": stopped, "chunks": chunks, **_totals(state)}
+    finally:
+        await _release_duplicate_lock(AI_HISTORY_BACKFILL_LOCK_KEY, owner)
+
+
+@celery_app.task(
+    name="app.worker.tasks.backfill_ai_run_versions",
+    bind=True,
+    queue="default",
+    max_retries=0,
+    soft_time_limit=540,
+    time_limit=600,
+)
+def backfill_ai_run_versions(
+    self,
+    chunk_size: int = 100,
+    max_chunks: int = 40,
+    time_budget_s: float = 300.0,
+) -> dict:
+    """AIH-01: give every run analysed before AI history existed its first versions -- one-shot,
+    chunked, re-entrant.
+
+    A chunk is ``chunk_size`` runs in ``(created_at, id)`` order after the Redis
+    cursor ``ai_history.backfill_cursor``: ``ai_history_service.backfill_chunk``
+    records a ``run_summary`` version from ``run_summaries`` and an
+    ``analysis_digest`` version from the run's current analysis, each only
+    when the run has none of that kind yet (a run a live pipeline already
+    versioned is skipped, so re-running from any cursor is idempotent). Each
+    chunk runs on its own session, committed on its own; then the cursor
+    advances. A pass stops after ``max_chunks`` chunks, ``time_budget_s``
+    seconds, or once its own RSS grew by 256 MiB; the beat entry
+    ``backfill-ai-run-versions`` resumes it. A short chunk marks the cursor
+    ``done``, after which every tick is one Redis read. Deleting the Redis key
+    runs it again from the oldest run. ``ai_analysis_versions`` needs no
+    backfill here: migration 0205 wrote it.
+    """
+    owner = str(self.request.id or uuid.uuid4())
+    result = cast(dict[str, Any], _run_async(_backfill_ai_run_versions_pass(
+        owner, chunk_size=chunk_size, max_chunks=max_chunks, time_budget_s=time_budget_s,
+    )))
+    logger.info("[Task %s] backfill_ai_run_versions: %s", self.request.id, result)
     return result
 
 

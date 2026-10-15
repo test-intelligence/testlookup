@@ -69,6 +69,7 @@ from app.models.postgres import AgentInvocation, AgentPipelineRun, AgentStageRes
 from app.services.agent_planner import (
     _DEEP_STAGES as _PLANNER_DEEP_STAGES,
     _LIVE_STAGES as _PLANNER_LIVE_STAGES,
+    agent_disabled_rationale,
     attach_workflow_plan_and_verification,
     build_workflow_plan,
     compute_workflow_behavior_plan_hash,
@@ -245,44 +246,51 @@ def _prompt_registry_versions() -> dict[str, str]:
         return {}
 
 
-async def _resolve_analysis_mode_snapshot() -> dict[str, Any]:
-    """Resolve analysis mode once so a pipeline is reproducible end-to-end."""
+async def _resolve_analysis_mode_snapshot(db: Any = None) -> dict[str, Any]:
+    """Resolve analysis mode once so a pipeline is reproducible end-to-end.
+
+    W04 AIC-04: the CONFIGURED mode comes from the stored Settings > AI value
+    (Redis only accelerates it), and the provider/model/offline recorded here
+    are the EFFECTIVE ones (stored over env), not the environment's. With
+    ``db`` given (a request handler) that session is the only one used, by
+    every read below: a second session inside a guarded handler stalls the
+    2+1 pool.
+    """
+    from app.services.ai_config_resolver import get_effective_ai_config
     from app.services.analysis_router import (
         refresh_analysis_mode_from_cache,
         resolve_analysis_mode_with_reason,
+        resolve_configured_analysis_mode,
     )
 
-    requested = settings.ANALYSIS_MODE.lower()
-    try:
-        from app.db.redis_client import get_redis  # noqa: PLC0415
-
-        redis = get_redis()
-        cached = await redis.get("config:analysis_mode")
-        if isinstance(cached, bytes):
-            cached = cached.decode("utf-8", errors="ignore")
-        if cached in ("llm", "ml", "rules", "auto"):
-            requested = cached
-    except Exception:
-        pass
-
-    await refresh_analysis_mode_from_cache()
-    resolved, resolution_reason = resolve_analysis_mode_with_reason()
+    cfg = await get_effective_ai_config(db=db, fresh=True)
+    # Ollama probe + ML model sync for the effective target, then the
+    # configured mode with its source (a Redis hit once refresh re-seeded it).
+    await refresh_analysis_mode_from_cache(db)
+    requested = await resolve_configured_analysis_mode(db)
+    resolved, resolution_reason = resolve_analysis_mode_with_reason(
+        configured=requested.mode,
+        provider=cfg.get("provider"),
+        model=cfg.get("model"),
+    )
     return {
-        "requested": requested,
+        "requested": requested.mode,
+        "requested_source": requested.source,
         "resolved": resolved,
         # Why this mode and not another. Previously this only ever reached a log
         # line, so a trail showing requested=auto / resolved=rules could not say
         # whether the LLM was unreachable, unconfigured, or simply out-ranked by
         # a trained ML model.
         "resolution_reason": resolution_reason,
-        "provider": settings.LLM_PROVIDER,
-        "model": settings.LLM_MODEL,
+        "provider": cfg.get("provider"),
+        "model": cfg.get("model"),
         # E7.4: recorded so a manual retry can SEE an AI_OFFLINE_MODE flip.
         # Without it, ``pipeline_retry_config`` compares the frozen snapshot
         # against the live setting for this field and they trivially agree --
         # the one config change most likely to motivate a retry would be the
-        # one change it could not detect.
-        "offline": bool(settings.AI_OFFLINE_MODE),
+        # one change it could not detect. W04: the EFFECTIVE value (a stored
+        # ai_offline_mode=true counts), not the env flag alone.
+        "offline": bool(cfg.get("offline_mode")),
         "analysis_mode_env": settings.ANALYSIS_MODE,
         "resolved_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -325,8 +333,92 @@ async def analysis_node(state: WorkflowState) -> dict:
     return await _analysis.run(cast(dict[str, Any], state))
 
 
+def _frozen_confidence_threshold(state: Any) -> tuple[int, str]:
+    """The pipeline's frozen ``(threshold, source)`` (W04 AIC-03).
+
+    ``state["confidence_threshold"]`` (frozen at pipeline start) wins; a state
+    without it (legacy graphs, unit harnesses) falls back to the scope, then to
+    ``confidence_gate.env_default_threshold()``.
+    """
+    from app.services.pipeline_ai_scope import state_confidence_threshold
+
+    return state_confidence_threshold(state if isinstance(state, dict) else None)
+
+
+def _plan_has_triage_stage(state: Any) -> bool:
+    plan = state.get("initial_workflow_plan") or state.get("workflow_plan") or {}
+    if not isinstance(plan, dict):
+        return False
+    workflow_id = plan.get("workflow_id")
+    if workflow_id is not None and workflow_id not in ("offline", "deep"):
+        # Custom workflows route on their own published conditions; the
+        # built-in summary->triage decision text would describe a branch
+        # they may not have.
+        return False
+    return any(
+        isinstance(item, dict)
+        and item.get("stage") == "triage"
+        and item.get("planned", True) is not False
+        for item in plan.get("stages") or []
+    )
+
+
+def _emit_summary_route_decision(state: WorkflowState) -> None:
+    """Record the production summary->triage branch decision (W04 AIC-03).
+
+    The compiled graph routes on ``triageable_analysis_count > 0``
+    (``workflow_compiler._project_state``), and ``_branch_router`` records no
+    decision, so the trail could not say why triage did or did not run. The
+    same predicate and the frozen threshold are used here, so the recorded
+    reason is the one the router acts on.
+    """
+    from app.agents.workflow_compiler import count_triageable_analyses
+
+    workflow_type = str(state.get("workflow_type") or "")
+    if workflow_type not in ("offline", "deep") or not _plan_has_triage_stage(state):
+        return
+    analyses = state.get("analyses") or {}
+    threshold, source = _frozen_confidence_threshold(state)
+    triageable = count_triageable_analyses(analyses, threshold)
+    deep = workflow_type == "deep"
+    decision_point = "route_after_summary_deep" if deep else "route_after_summary"
+    context = {
+        "analyses_count": len(analyses) if isinstance(analyses, dict) else 0,
+        "threshold": threshold,
+        "threshold_source": source,
+    }
+    if not triageable:
+        _emit_route_decision(
+            state,
+            decision_point=decision_point,
+            chosen="failure_clustering" if deep else "end",
+            rationale=(
+                f"no analyses above confidence threshold {threshold} — skipping triage"
+                + (", continuing to specialist stages" if deep else "")
+            ),
+            alternatives=["triage"],
+            context=context,
+        )
+        return
+    _emit_route_decision(
+        state,
+        decision_point=decision_point,
+        chosen="triage",
+        rationale=_meet_confidence_text(triageable, threshold),
+        alternatives=["failure_clustering" if deep else "end"],
+        context=context,
+    )
+
+
 async def summary_node(state: WorkflowState) -> dict:
-    return await _summary.run(cast(dict[str, Any], state))
+    result = await _summary.run(cast(dict[str, Any], state))
+    # After the stage (it may raise); a stage restored from its checkpoint never
+    # reaches this function, so the decision is not re-emitted on resume.
+    try:
+        _emit_summary_route_decision(state)
+    except Exception as exc:  # noqa: BLE001 — a trail entry must never fail the stage
+        logger.warning("summary_route_decision_failed", error_type=type(exc).__name__)
+    return result
 
 
 async def triage_node(state: WorkflowState) -> dict:
@@ -556,13 +648,17 @@ async def change_ownership_node(state: WorkflowState) -> dict:
 async def gap_detection_node(state: WorkflowState) -> dict:
     # AIQ-P4 optional stage. The node is always present so the graph topology is
     # identical whether the flag is on or off; when off it early-returns a skip
-    # delta and the deterministic agent never runs.
-    if not settings.AIQ_GAP_REFINEMENT_ENABLED:
+    # delta and the deterministic agent never runs. W04 AGT-16: the switch is
+    # the per-project ``aiq_gap_refinement`` flag frozen at pipeline start
+    # (``state["gap_refinement_enabled"]``), not the environment.
+    if not state.get("gap_refinement_enabled"):
         pipeline_run_id = state.get("pipeline_run_id", "")
         await _write_stage_skipped(
             pipeline_run_id,
             "gap_detection",
-            skipped_reason="AIQ_GAP_REFINEMENT_ENABLED is off — gap detection not run",
+            skipped_reason=(
+                "aiq_gap_refinement feature flag is off for this project — gap detection not run"
+            ),
             execution_path=ExecutionPath.CONDITIONAL_SKIP,
         )
         return {
@@ -575,12 +671,14 @@ async def gap_detection_node(state: WorkflowState) -> dict:
 
 async def report_refinement_node(state: WorkflowState) -> dict:
     # AIQ-P4 optional stage. See gap_detection_node for the flag-gate rationale.
-    if not settings.AIQ_GAP_REFINEMENT_ENABLED:
+    if not state.get("gap_refinement_enabled"):
         pipeline_run_id = state.get("pipeline_run_id", "")
         await _write_stage_skipped(
             pipeline_run_id,
             "report_refinement",
-            skipped_reason="AIQ_GAP_REFINEMENT_ENABLED is off — report refinement not run",
+            skipped_reason=(
+                "aiq_gap_refinement feature flag is off for this project — report refinement not run"
+            ),
             execution_path=ExecutionPath.CONDITIONAL_SKIP,
         )
         return {
@@ -627,6 +725,12 @@ def _append_route_decision(state: WorkflowState, payload: dict[str, Any]) -> Non
     decisions = state.setdefault("_workflow_route_decisions", [])  # type: ignore[typeddict-unknown-key]
     if isinstance(decisions, list):
         decisions.append(payload)
+
+
+def _meet_confidence_text(count: int, threshold: Any) -> str:
+    """The triage route's rationale: "1 analysis meets ..." / "3 analyses meet ..."."""
+    noun, verb = ("analysis", "meets") if count == 1 else ("analyses", "meet")
+    return f"{count} {noun} {verb} confidence ≥ {threshold}"
 
 
 def _emit_route_decision(
@@ -716,7 +820,8 @@ def _route_after_summary(state: WorkflowState) -> str:
     Used by the offline pipeline only.
     """
     analyses = state.get("analyses", {})
-    threshold = settings.AI_CONFIDENCE_THRESHOLD
+    # W04 AIC-03: the frozen pipeline threshold, else the env default.
+    threshold = _frozen_confidence_threshold(state)[0]
     triageable = [
         tc_id for tc_id, a in analyses.items()
         if a.get("confidence_score", 0) >= threshold and not a.get("is_flaky", False)
@@ -740,7 +845,7 @@ def _route_after_summary(state: WorkflowState) -> str:
         state,
         decision_point="route_after_summary",
         chosen="triage",
-        rationale=f"{len(triageable)} analyses meet confidence ≥ {threshold}",
+        rationale=_meet_confidence_text(len(triageable), threshold),
     )
     return "triage"
 
@@ -754,7 +859,8 @@ def _route_after_summary_deep(state: WorkflowState) -> str:
     Never returns END so all specialist stages are guaranteed to run.
     """
     analyses = state.get("analyses", {})
-    threshold = settings.AI_CONFIDENCE_THRESHOLD
+    # W04 AIC-03: the frozen pipeline threshold, else the env default.
+    threshold = _frozen_confidence_threshold(state)[0]
     triageable = [
         tc_id for tc_id, a in analyses.items()
         if a.get("confidence_score", 0) >= threshold and not a.get("is_flaky", False)
@@ -779,7 +885,7 @@ def _route_after_summary_deep(state: WorkflowState) -> str:
         state,
         decision_point="route_after_summary_deep",
         chosen="triage",
-        rationale=f"{len(triageable)} analyses meet confidence ≥ {threshold}",
+        rationale=_meet_confidence_text(len(triageable), threshold),
     )
     return "triage"
 
@@ -1345,7 +1451,7 @@ def _build_deep_graph() -> StateGraph:
     # (specialist stages always run in the deep pipeline). AIQ-P4 inserts
     # gap_detection → report_refinement ahead of flaky_sentinel; both are
     # flag-gated optional stages that early-return a skip delta when off, so the
-    # topology is identical whether AIQ_GAP_REFINEMENT_ENABLED is on or off.
+    # topology is identical whether the aiq_gap_refinement flag is on or off.
     graph.add_conditional_edges(
         "summary",
         _route_after_summary_deep,
@@ -1854,6 +1960,14 @@ async def _claim_pipeline_resume(
             "log_intelligence_settings": metadata.get("log_intelligence_settings") or {"enabled": False},
             "regression_watchman_settings": metadata.get("regression_watchman_settings") or {"enabled": False},
             "change_ownership_settings": metadata.get("change_ownership_settings") or {"enabled": False},
+            # Dropped before W04: a resumed deep pipeline ran with
+            # defect_commander_enabled=False although its plan said planned.
+            "defect_commander_settings": metadata.get("defect_commander_settings") or {"enabled": False},
+            # W04 AIC-02/03/AGT-16: the frozen AI config and gap/refinement
+            # flag. ``None`` on a pre-W04 row; run_* then takes the
+            # ``resumed_legacy`` path (and persists what it built).
+            "ai_config_snapshot": metadata.get("ai_config_snapshot"),
+            "gap_refinement_settings": metadata.get("gap_refinement_settings"),
             "analysis_mode_resolution": mode_snapshot,
             "cost_budget_decision": metadata.get("cost_budget_decision") or {},
             "resume_attempt": resume_attempt,
@@ -1890,12 +2004,91 @@ async def resume_pipeline(
         pipeline_run_id=pipeline_run_id,
         expected_attempt=expected_attempt,
     )
+
+
+def _plan_gap_refinement_planned(plan: Any) -> bool:
+    """What a (possibly pre-W04) frozen plan decided for the gap/refinement stages."""
+    if not isinstance(plan, dict):
+        return False
+    flags = plan.get("specialist_flags")
+    if isinstance(flags, dict) and isinstance(flags.get("gap_refinement"), bool):
+        return bool(flags["gap_refinement"])
+    for item in plan.get("stages") or []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("stage") == "gap_detection" or item.get("capability_id") == "agent.gap_detection.v1":
+            return item.get("planned") is True
+    return False
+
+
+async def _pipeline_ai_context(
+    pipeline_setup: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any] | None]:
+    """The frozen AI config + gap/refinement flag for this attempt (W04 P4/P5).
+
+    Returns ``(snapshot, gap_refinement_settings, to_persist)``. A pipeline
+    created by W04 code carries both in its setup and nothing is persisted. A
+    pre-W04 row (rolling deploy, legacy resume) has neither: the snapshot is
+    built from the live effective config with ``origin="resumed_legacy"`` and
+    the flag from what its frozen plan decided, and ``to_persist`` carries them
+    so ``_persist_execution_context`` writes them in the same commit as the
+    mode snapshot: the NEXT resume replays them instead of re-resolving.
+    """
+    from app.services.pipeline_ai_scope import (  # noqa: PLC0415
+        ORIGIN_RESUMED_LEGACY,
+        build_ai_config_snapshot,
+    )
+
+    to_persist: dict[str, Any] = {}
+    snapshot = pipeline_setup.get("ai_config_snapshot")
+    if not isinstance(snapshot, dict) or not snapshot.get("schema"):
+        effective: dict[str, Any] = {}
+        try:
+            from app.services.ai_config_resolver import get_effective_ai_config  # noqa: PLC0415
+
+            effective = await get_effective_ai_config(fresh=True)
+        except Exception as exc:  # noqa: BLE001 — the env defaults are a valid snapshot
+            logger.warning("legacy_ai_config_snapshot_resolve_failed", error_type=type(exc).__name__)
+        snapshot = dict(build_ai_config_snapshot(effective, {}, origin=ORIGIN_RESUMED_LEGACY))
+        to_persist["ai_config_snapshot"] = snapshot
+    gap = pipeline_setup.get("gap_refinement_settings")
+    if not isinstance(gap, dict) or not isinstance(gap.get("enabled"), bool):
+        # Only deep plans hold the two stages, so offline/live resolve False.
+        gap = {"enabled": _plan_gap_refinement_planned(pipeline_setup.get("initial_workflow_plan"))}
+        to_persist["gap_refinement_settings"] = gap
+    return dict(snapshot), {"enabled": bool(gap["enabled"])}, (to_persist or None)
+
+
+def _frozen_ai_state(
+    snapshot: dict[str, Any], gap_refinement_settings: dict[str, Any]
+) -> dict[str, Any]:
+    """The four ``WorkflowState`` fields carrying the frozen AI config."""
+    from app.services.confidence_gate import env_default_threshold, normalize_threshold  # noqa: PLC0415
+    from app.services.pipeline_ai_scope import effective_llm_timeout  # noqa: PLC0415
+
+    threshold = normalize_threshold(snapshot.get("confidence_threshold"))
+    return {
+        "ai_config_snapshot": snapshot,
+        "confidence_threshold": threshold if threshold is not None else env_default_threshold(),
+        "llm_timeout_seconds": effective_llm_timeout(
+            {"llm_timeout_seconds": snapshot.get("llm_timeout_seconds")}
+        ),
+        "gap_refinement_enabled": bool(gap_refinement_settings.get("enabled")),
+    }
+
+
 async def _persist_execution_context(
     pipeline_run_id: str,
     mode_snapshot: dict[str, Any],
     cost_budget_snapshot: dict[str, Any] | None = None,
+    *,
+    ai_context: dict[str, Any] | None = None,
 ) -> None:
-    """Persist mode routing before graph execution can fail."""
+    """Persist mode routing before graph execution can fail.
+
+    ``ai_context`` (W04 P5): the ``ai_config_snapshot`` / ``gap_refinement_settings``
+    a legacy resume had to build, written in the same commit.
+    """
     if not pipeline_run_id or not isinstance(mode_snapshot, dict):
         return
     try:
@@ -1916,6 +2109,10 @@ async def _persist_execution_context(
             })
             if cost_budget_snapshot is not None:
                 metadata["cost_budget_decision"] = cost_budget_snapshot
+            if ai_context:
+                for key in ("ai_config_snapshot", "gap_refinement_settings"):
+                    if isinstance(ai_context.get(key), dict):
+                        metadata[key] = ai_context[key]
             pipeline.execution_metadata = metadata
             await db.commit()
     except Exception as exc:
@@ -1934,6 +2131,7 @@ async def _prepare_pipeline_cost_budget(
     pipeline_setup: dict[str, Any],
     mode_snapshot: dict[str, Any],
     cost_budget_mode_override: str | None,
+    ai_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Resolve and durably persist one cost decision for the whole pipeline."""
     persisted = pipeline_setup.get("cost_budget_decision")
@@ -1963,7 +2161,12 @@ async def _prepare_pipeline_cost_budget(
             "utilization_pct": decision.utilization_pct,
         }
 
-    await _persist_execution_context(pipeline_run_id, mode_snapshot, snapshot)
+    if ai_context:
+        await _persist_execution_context(
+            pipeline_run_id, mode_snapshot, snapshot, ai_context=ai_context
+        )
+    else:
+        await _persist_execution_context(pipeline_run_id, mode_snapshot, snapshot)
     return snapshot
 
 
@@ -2507,12 +2710,18 @@ async def run_offline_pipeline(
             mode_snapshot = dict(pipeline_setup["analysis_mode_resolution"])
         else:
             mode_snapshot = await _resolve_analysis_mode_snapshot()
+        # W04 AIC-02/03, AGT-16: the AI config + gap/refinement flag frozen at
+        # pipeline start (a pre-W04 row builds and persists them here, P5).
+        ai_snapshot, gap_refinement_settings, ai_context = await _pipeline_ai_context(
+            pipeline_setup
+        )
         cost_budget_snapshot = await _prepare_pipeline_cost_budget(
             pipeline_run_id=pipeline_run_id,
             project_id=project_id,
             pipeline_setup=pipeline_setup,
             mode_snapshot=mode_snapshot,
             cost_budget_mode_override=cost_budget_mode_override,
+            ai_context=ai_context,
         )
 
         initial_state: WorkflowState = {
@@ -2581,6 +2790,7 @@ async def run_offline_pipeline(
             "analysis_mode_requested": mode_snapshot["requested"],
             "analysis_mode_resolved": mode_snapshot["resolved"],
             "analysis_mode_resolution": mode_snapshot,
+            **_frozen_ai_state(ai_snapshot, gap_refinement_settings),
             "_workflow_route_decisions": [],
             "_workflow_loop_iterations": {},
             "_workflow_step_llm_budgets": {},
@@ -2650,7 +2860,13 @@ async def run_offline_pipeline(
 
         # Re-audit M13: every LLM call in this graph reserves against this
         # project's monthly cap at the invocation boundary.
-        with cost_budget_scope(cast(dict[str, Any], initial_state).get("project_id")):
+        from app.services.pipeline_ai_scope import pipeline_ai_scope
+
+        # W04 AIC-02/03: helpers with no state in hand (confidence_gate,
+        # get_llm) see the values frozen at pipeline start.
+        with pipeline_ai_scope(ai_snapshot), cost_budget_scope(
+            cast(dict[str, Any], initial_state).get("project_id")
+        ):
             final_state = await cast(Any, app).ainvoke(initial_state)
         final_state = attach_workflow_plan_and_verification(
             cast(dict[str, Any], final_state),
@@ -2794,12 +3010,18 @@ async def run_deep_pipeline(
             mode_snapshot = dict(pipeline_setup["analysis_mode_resolution"])
         else:
             mode_snapshot = await _resolve_analysis_mode_snapshot()
+        # W04 AIC-02/03, AGT-16: the AI config + gap/refinement flag frozen at
+        # pipeline start (a pre-W04 row builds and persists them here, P5).
+        ai_snapshot, gap_refinement_settings, ai_context = await _pipeline_ai_context(
+            pipeline_setup
+        )
         cost_budget_snapshot = await _prepare_pipeline_cost_budget(
             pipeline_run_id=pipeline_run_id,
             project_id=project_id,
             pipeline_setup=pipeline_setup,
             mode_snapshot=mode_snapshot,
             cost_budget_mode_override=cost_budget_mode_override,
+            ai_context=ai_context,
         )
 
         initial_state: WorkflowState = {
@@ -2866,6 +3088,7 @@ async def run_deep_pipeline(
             "analysis_mode_requested": mode_snapshot["requested"],
             "analysis_mode_resolved": mode_snapshot["resolved"],
             "analysis_mode_resolution": mode_snapshot,
+            **_frozen_ai_state(ai_snapshot, gap_refinement_settings),
             "_workflow_route_decisions": [],
             "_workflow_loop_iterations": {},
             "_workflow_step_llm_budgets": {},
@@ -2929,7 +3152,13 @@ async def run_deep_pipeline(
         from app.services.llm_cost_reservation import cost_budget_scope
 
         # Re-audit M13: as the standard graph above.
-        with cost_budget_scope(cast(dict[str, Any], initial_state).get("project_id")):
+        from app.services.pipeline_ai_scope import pipeline_ai_scope
+
+        # W04 AIC-02/03: helpers with no state in hand (confidence_gate,
+        # get_llm) see the values frozen at pipeline start.
+        with pipeline_ai_scope(ai_snapshot), cost_budget_scope(
+            cast(dict[str, Any], initial_state).get("project_id")
+        ):
             final_state = await cast(Any, app).ainvoke(initial_state)
         final_state = attach_workflow_plan_and_verification(
             cast(dict[str, Any], final_state),
@@ -3337,6 +3566,12 @@ async def _create_pipeline_run(
         change_ownership_enabled = await is_enabled("change_ownership", db=db, project_id=authority_project_id, fresh=True)
         # MUTATING stage — a missing flag row evaluates False, so absent = off.
         defect_commander_enabled = await is_enabled("defect_commander", db=db, project_id=authority_project_id, fresh=True)
+        # W04 AGT-16: the deterministic gap-detection / report-refinement stages
+        # (deep only). Frozen like the other stage flags; the legacy env var
+        # AIQ_GAP_REFINEMENT_ENABLED is only the fallback while no row exists.
+        gap_refinement_enabled = await is_enabled(
+            "aiq_gap_refinement", db=db, project_id=authority_project_id, fresh=True
+        ) if workflow_type == "deep" else False
 
         policy = await get_effective_policy(db, authority_project_id)
         run_budget = run_budget_from_policy(policy)
@@ -3420,8 +3655,18 @@ async def _create_pipeline_run(
                     frozen_config.timeout_seconds,
                 ),
             }
+        # W04 AIC-02/AIC-03: freeze the Settings > AI confidence threshold and
+        # LLM timeout ONCE, from the config resolved above, after every
+        # accepted agent snapshot is in place. The plan is built with the same
+        # threshold, so plan, routing and stages agree and a resume replays it.
+        from app.services.pipeline_ai_scope import build_ai_config_snapshot
+
+        frozen_ai_config = build_ai_config_snapshot(global_ai_config, resolved_agent_configs)
+        ai_config_snapshot = dict(frozen_ai_config)
         initial_plan = build_workflow_plan(
             workflow_type=workflow_type,
+            threshold=frozen_ai_config["confidence_threshold"],
+            gap_refinement_enabled=bool(gap_refinement_enabled),
             cluster_children_enabled=bool(cluster_settings["enabled"]),
             cluster_children_aggregate_budget=dict(
                 cluster_settings["aggregate_budget"]
@@ -3448,13 +3693,15 @@ async def _create_pipeline_run(
         for step in body.steps:
             capability_stage = step.agent_id.removeprefix("agent.").removesuffix(".v1")
             planned = dict(by_capability.get(capability_stage) or {})
+            agent_enabled = bool(workflow_agent_configs[step.agent_id]["enabled"])
+            if bool(planned.get("planned", True)) and not agent_enabled:
+                planned["rationale"] = agent_disabled_rationale(step.agent_id)
             planned.update({
                 "stage": step.id,
                 "capability_id": step.agent_id,
                 "tools": list(step.tools),
                 "dependencies": incoming[step.id],
-                "planned": bool(planned.get("planned", True))
-                and bool(workflow_agent_configs[step.agent_id]["enabled"]),
+                "planned": bool(planned.get("planned", True)) and agent_enabled,
                 "required": bool(planned.get("required", False)),
             })
             selected_plan.append(planned)
@@ -3553,6 +3800,8 @@ async def _create_pipeline_run(
                 "regression_watchman_settings": {"enabled": regression_watchman_enabled},
                 "change_ownership_settings": {"enabled": change_ownership_enabled},
                 "defect_commander_settings": {"enabled": defect_commander_enabled},
+                "ai_config_snapshot": ai_config_snapshot,
+                "gap_refinement_settings": {"enabled": bool(gap_refinement_enabled)},
                 "run_budget": run_budget,
                 "agent_config_versions": agent_config_versions,
                 "resolved_agent_configs": resolved_agent_configs,
@@ -3622,6 +3871,8 @@ async def _create_pipeline_run(
                 "regression_watchman_settings": {"enabled": regression_watchman_enabled},
                 "change_ownership_settings": {"enabled": change_ownership_enabled},
                 "defect_commander_settings": {"enabled": defect_commander_enabled},
+                "ai_config_snapshot": ai_config_snapshot,
+                "gap_refinement_settings": {"enabled": bool(gap_refinement_enabled)},
         }
 
 
@@ -3902,6 +4153,13 @@ async def _mark_pipeline_done(
                     ),
                     "defect_commander_settings": prior_metadata.get(
                         "defect_commander_settings", {}
+                    ),
+                    # W04 P3: the frozen AI config and gap/refinement flag. From
+                    # prior_metadata, never final_state: a later degraded-
+                    # completed retry must replay what the run started with.
+                    "ai_config_snapshot": prior_metadata.get("ai_config_snapshot"),
+                    "gap_refinement_settings": prior_metadata.get(
+                        "gap_refinement_settings"
                     ),
                     "cluster_investigation_plan": sanitize_persistence_payload(
                         final_state.get("cluster_investigation_plan")

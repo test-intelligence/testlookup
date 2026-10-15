@@ -51,6 +51,11 @@ from pathlib import Path
 # Services that have been fully converted to stage-only. A future commit
 # of ``await db.commit()`` in any of these would regress item #2.
 STAGE_ONLY_SERVICES: frozenset[str] = frozenset({
+    # W03 AI history: the writers' transactions and the worker hook commit; these only stage.
+    "ai_history_core.py",
+    "ai_history_service.py",
+    "ai_history_retention.py",
+    "ai_history_read_service.py",
     "chat_service.py",
     "release_service.py",
     "release_council_service.py",

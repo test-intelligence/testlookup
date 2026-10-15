@@ -21,7 +21,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import RunDetailPage from './RunDetailPage'
 
-const { mockProjectState, hooks } = vi.hoisted(() => ({
+const { mockProjectState, hooks, aiMode } = vi.hoisted(() => ({
+  aiMode: {
+    current: { analysis_mode: 'ml', ai_offline_mode: true, deep_investigation_enabled: true } as {
+      analysis_mode: string
+      ai_offline_mode: boolean
+      deep_investigation_enabled?: boolean
+    },
+  },
   mockProjectState: {
     activeProjectId: 'proj-1',
     activeProject: { id: 'proj-1', name: 'Project One' },
@@ -66,8 +73,12 @@ vi.mock('@/hooks/useAgentRuns', () => ({
   useRunSummary: hooks.useRunSummary,
   useActiveLiveRuns: vi.fn(() => ({ data: [] })),
 }))
-vi.mock('@/hooks/useAIConfig', () => ({
-  useAIConfig: vi.fn(() => ({ data: { analysis_mode: 'rules' } })),
+// W04 AIC-01: the deep triggers follow `/settings/ai/mode` (the toggle and the
+// mode). ML mode offers deep investigation and no LLM-only chrome, the state
+// these tests were written against; `aiMode.current` is switched per test.
+vi.mock('@/hooks/useAIConfig', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/useAIConfig')>()),
+  useAIConfig: vi.fn(() => ({ data: aiMode.current })),
 }))
 vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: vi.fn(() => ({ isQaEngineer: true })),
@@ -83,6 +94,7 @@ vi.mock('@/services/onboardingService', () => ({
   onboardingService: { completeStep: vi.fn(() => Promise.resolve()) },
 }))
 vi.mock('swr', () => ({ default: hooks.useSWR, mutate: vi.fn() }))
+vi.mock('react-hot-toast', () => ({ default: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() }) }))
 
 const RUN = {
   id: 'run-1',
@@ -166,6 +178,7 @@ const PIPELINE = {
 
 beforeEach(() => {
   for (const fn of Object.values(hooks)) fn.mockReset()
+  aiMode.current = { analysis_mode: 'ml', ai_offline_mode: true, deep_investigation_enabled: true }
   hooks.useRun.mockReturnValue({ data: RUN })
   hooks.useRuns.mockReturnValue({ data: { items: [] }, isLoading: false })
   hooks.useTestCases.mockReturnValue({ data: { items: TESTS, pages: 1, total: TESTS.length }, isLoading: false, error: undefined })
@@ -405,6 +418,7 @@ describe('Run page — one header', () => {
       'Refresh AI analysis',
       'Export PDF',
       'Download evidence bundle',
+      'Export AI history',
       'Compare to previous run',
       'Release gate',
     ])
@@ -425,6 +439,80 @@ describe('Run page — one header', () => {
     // region is in the DOM: under a loaded full suite the bare read saw the old URL.
     await waitFor(() => expect(location).toBe('/runs/run-1?tab=analysis'))
     trigger.mockRestore()
+  })
+
+  it.each([
+    ['deep investigation is off in Settings › AI', { analysis_mode: 'auto', ai_offline_mode: false, deep_investigation_enabled: false }, 'Deep investigation is turned off in Settings › AI.'],
+    ['the mode is Rules', { analysis_mode: 'rules', ai_offline_mode: true, deep_investigation_enabled: true }, 'Deep investigation needs LLM or Auto mode (current mode: Rules).'],
+  ])('W04 AIC-01: when %s, the ⋯ menu has no "Deep investigation" and the Analysis tab shows why instead of "Analyze failures"', (_why, mode, note) => {
+    aiMode.current = mode
+    renderAt('/runs/run-1?tab=analysis')
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    const items = screen.getAllByRole('menuitem').map((item) => item.textContent)
+    expect(items).not.toContain('Deep investigation')
+    // Only that item goes: the standard pipeline trigger stays.
+    expect(items).toContain('Trigger pipeline')
+    const deep = screen.getByRole('region', { name: 'Deep investigation' })
+    expect(within(deep).queryByRole('button', { name: /Analyze failures/ })).toBeNull()
+    expect(within(deep).getByTestId('deep-disabled-note')).toHaveTextContent(note)
+  })
+
+  it('W04 AIC-01: while the AI mode is loading the deep item is offered, as before', () => {
+    aiMode.current = undefined as unknown as typeof aiMode.current
+    renderAt('/runs/run-1')
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toContain('Deep investigation')
+  })
+
+  it('"Export AI history" downloads through the authed service with the run\'s build (W03 AIH-06)', async () => {
+    const { aiHistoryService } = await import('@/services/aiHistoryService')
+    const download = vi.spyOn(aiHistoryService, 'downloadExport').mockResolvedValue(true)
+    renderAt('/runs/run-1')
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Export AI history' }))
+    await waitFor(() => expect(download).toHaveBeenCalledWith('run-1', '42'))
+    download.mockRestore()
+  })
+
+  it('"Compare to previous run" opens the SERVER\'s previous run (D42), not a pick from a page of runs', async () => {
+    hooks.useSWR.mockImplementation((key: unknown) => ({
+      data: Array.isArray(key) && key[0] === 'run-previous' && key[1] === 'run-1'
+        ? {
+            run_id: 'run-1',
+            rule: { scope: 'project+primary_suite+branch', suite_name: 'Checkout', branch: 'main', candidate_status: '', order: '' },
+            current: { run_id: 'run-1', build_number: '42', run_seq: 7, branch: 'main', primary_suite_name: 'Checkout', status: 'FAILED', created_at: null, finished_at: null },
+            baseline: { run_id: 'run-0', build_number: '41', run_seq: 6, branch: 'main', primary_suite_name: 'Checkout', status: 'PASSED', created_at: null, finished_at: null },
+            reason: null,
+            message: null,
+          }
+        : undefined,
+      isLoading: false,
+      error: undefined,
+    }))
+    renderAt('/runs/run-1')
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Compare to previous run' }))
+    await waitFor(() => expect(location).toBe('/runs/compare?mode=manual&left=run-0&right=run-1&suite=Checkout'))
+    // The server was asked (the SWR key), and the old 50-run client pool is gone.
+    expect(hooks.useSWR.mock.calls.some((c) => Array.isArray(c[0]) && c[0][0] === 'run-previous' && c[0][1] === 'run-1')).toBe(true)
+    expect(hooks.useRuns.mock.calls.some((c) => (c[0] as { size?: number } | undefined)?.size === 50)).toBe(false)
+  })
+
+  it('"Compare to previous run" says why when the server has no previous run on this branch', async () => {
+    const toast = (await import('react-hot-toast')).default
+    const message = 'No earlier completed run of "Checkout" on branch "main" found.'
+    hooks.useSWR.mockImplementation((key: unknown) => ({
+      data: Array.isArray(key) && key[0] === 'run-previous'
+        ? { run_id: 'run-1', rule: null, current: null, baseline: null, reason: 'no_previous_run', message }
+        : undefined,
+      isLoading: false,
+      error: undefined,
+    }))
+    renderAt('/runs/run-1')
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Compare to previous run' }))
+    await waitFor(() => expect(toast).toHaveBeenCalledWith(message, expect.anything()))
+    expect(location).toBe('/runs/run-1')
   })
 
   it.each(['tests', 'analysis', 'changes', 'evidence', 'timing'])('links nowhere old on the %s tab', (tab) => {

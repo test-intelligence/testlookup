@@ -1,5 +1,22 @@
-import type { ActiveLiveRun, AgentPipelineRun, AgentStageResult, PipelineTimeline, RunSummary } from '@/types/agent'
+import type {
+  ActiveLiveRun,
+  AgentPipelineRun,
+  AgentStageResult,
+  CancelPipelineResponse,
+  PipelineActionConflict,
+  PipelineTimeline,
+  RetryPipelineResponse,
+  RunSummary,
+} from '@/types/agent'
 import { getData, postData } from './http'
+
+/** What `POST /agents/pipelines/trigger` answers: 202 queued, or 200 when one is already in progress. */
+export interface TriggerPipelineResponse {
+  message: string
+  task_id?: string
+  run_id: string
+  pipeline_run_id?: string
+}
 
 const agentService = {
   listPipelines: (runId?: string, projectId?: string, status?: string, limit = 20) =>
@@ -16,15 +33,36 @@ const agentService = {
   getTimeline: (pipelineId: string) =>
     getData<PipelineTimeline>(`/api/v1/agents/pipelines/${pipelineId}/timeline`),
 
-  triggerPipeline: (testRunId: string) =>
-    postData<{ message: string; task_id: string; run_id: string }, { test_run_id: string }>(
+  /** Queue a pipeline for a run. `workflowId` is sent only when given (W04 AGT-04:
+   *  "Start a new run" of a deep pipeline must ask for `deep`, not the default). */
+  triggerPipeline: (testRunId: string, workflowId?: 'offline' | 'deep') =>
+    postData<TriggerPipelineResponse, { test_run_id: string; workflow_id?: 'offline' | 'deep' }>(
       '/api/v1/agents/pipelines/trigger',
-      { test_run_id: testRunId },
+      workflowId ? { test_run_id: testRunId, workflow_id: workflowId } : { test_run_id: testRunId },
+    ),
+
+  /** W04 AGT-04: retry a failed (or degraded) run. The SERVER decides resume
+   *  (same id, completed stages kept) or rerun (a new run, already queued).
+   *  The caller renders the outcome and the 409 itself, so no global toast. */
+  retryPipeline: (pipelineId: string) =>
+    postData<RetryPipelineResponse>(
+      `/api/v1/agents/pipelines/${encodeURIComponent(pipelineId)}/retry`,
+      undefined,
+      { suppressToast: true },
+    ),
+
+  /** W04 AGT-04: stop a run. Terminal now (pending/retry_wait) or asked to stop
+   *  at the next stage boundary (running). The caller renders the 409 itself. */
+  cancelPipeline: (pipelineId: string) =>
+    postData<CancelPipelineResponse>(
+      `/api/v1/agents/pipelines/${encodeURIComponent(pipelineId)}/cancel`,
+      undefined,
+      { suppressToast: true },
     ),
 
   /** Trigger the deep-investigation pipeline (failure clustering + flaky
    *  sentinel + test health + release risk) for an existing run. The
-   *  endpoint enforces DEEP_INVESTIGATION_ENABLED and rejects 'rules' mode. */
+   *  endpoint enforces the Settings › AI deep toggle and rejects 'rules' mode. */
   triggerDeepPipeline: (testRunId: string) =>
     postData<
       { task_id: string; pipeline_run_id: string; message: string; run_id: string },
@@ -55,4 +93,13 @@ const agentService = {
 }
 
 export default agentService
-export type { ActiveLiveRun, AgentPipelineRun, AgentStageResult, PipelineTimeline, RunSummary }
+export type {
+  ActiveLiveRun,
+  AgentPipelineRun,
+  AgentStageResult,
+  CancelPipelineResponse,
+  PipelineActionConflict,
+  PipelineTimeline,
+  RetryPipelineResponse,
+  RunSummary,
+}

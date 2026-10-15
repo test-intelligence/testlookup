@@ -13,19 +13,36 @@ Two rules hold everywhere:
 
 | Card | What you set |
 |---|---|
-| **Analysis Engine** | **Auto** (ML when a trained model exists, else the language model when reachable, else rules), **LLM (AI Agent)**, **Machine Learning** or **Rules-Based**. Each option shows whether it is ready: the language model's reachability, and the ML model's state (**Not Trained**, **Ready (N% accuracy)**, or **Bootstrap (LLM-imitating)**) |
+| **Analysis Engine** | **Auto** (ML when a trained model exists, else the language model when reachable, else rules), **LLM (AI Agent)**, **Machine Learning** or **Rules-Based**. Each option shows whether it is ready: the language model's reachability, and the ML model's state (**Not Trained**, **Ready (N% accuracy)**, or **Bootstrap (LLM-imitating)**). Under the options, the **ML classifier** card: labelled samples against the floor, the model in service, and **Train now** ([how the ML classifier activates](#how-the-ml-classifier-activates)) |
 | **Model Availability & Fallback Chain** | Read-only: offline mode, provider, mode, whether Ollama answers, whether each **Required model** is **Installed** or **Missing**, and the order the engines will be tried. **Re-check** probes again |
 | **LLM Provider** | **Provider** (`ollama`, `lmstudio`, `localai`, `vllm`, `openai`, `gemini`, `anthropic`, `openrouter`), **Model**, **Temperature** and **Max Tokens** |
 | **Embedding** | The embedding provider and model used for semantic search and knowledge-grounded generation |
-| **Pipeline Settings** | **Confidence Threshold (0-100)**, **Timeout (seconds)**, **Offline Mode** (shows **Pinned by environment** when the server pins it), **Deep Investigation**, **Fine-Tuning Pipeline** |
+| **Pipeline Settings** | **Confidence Threshold (0-100)**, **Timeout (seconds)** (5 to 1800), **Offline Mode** (shows **Pinned by environment** when the server pins it), **Deep Investigation**, **Fine-Tuning Pipeline** |
 | **Knowledge-Grounded Generation** | **Enable Knowledge RAG** for [test generation from your documents](knowledge-base.md); while the `rag_faithfulness_gate` flag is on, **Faithfulness evaluator** picks the single-prompt judge or Ragas and shows which one is in use |
 | **Cloud API Keys** | OpenAI, Google, Anthropic and OpenRouter keys, stored encrypted. Only used when offline mode is off |
 
 Defaults on a new install: provider `ollama`, model `qwen2.5:7b-instruct`, embedding model `nomic-embed-text:v1.5`, confidence threshold 80, offline mode on, analysis mode **Auto**. The server-side settings behind these (`LLM_PROVIDER`, `LLM_MODEL`, `EMBEDDING_MODEL`, the provider base URLs and allow-lists, `LLM_PRICE_OVERRIDES`) are listed in the [configuration reference](../docs/operations/configuration.md). Getting the models onto an air-gapped host is the [Offline model pack](offline-model-pack.md).
 
-> **Deep investigation is switched by the server.** The **Deep Investigation** checkbox is stored with the configuration, but starting an investigation is governed by the server setting `DEEP_INVESTIGATION_ENABLED` (default on). Investigations are also refused when the analysis mode resolves to **Rules**.
+**What you save here is what runs.** Each value on the page says where it comes from: **Set here** (stored on this page) or **Server default** (nothing stored; the server's environment value applies, for example `DEEP_INVESTIGATION_ENABLED` or `AI_TIMEOUT_SECONDS`). A stored value wins over the environment in both directions; only **Offline Mode** is different (the environment can pin it on, and this page can then not turn it off). The form saves every field, so after the first **Save Configuration** every value reads **Set here**. A change applies on every server within a minute; pipelines already running keep the values they started with.
+
+- **Analysis mode** is kept until you change it: a cache restart or the passing of time never sends the app back to the server default.
+- **Deep Investigation** off: the deep-investigation buttons (**Run Deep Analysis** on `/deep-investigate`, **Analyze failures** on the run's Analysis tab, **Deep investigation** in the run's ⋯ menu) are replaced by *Deep investigation is turned off in Settings › AI.*, and a direct API call answers `422` *Deep investigation is disabled in Settings › AI. Ask an administrator to enable it.* Investigations are also refused while the analysis mode resolves to **Rules** (*Deep investigation needs LLM or Auto mode*). Resuming a failed investigation (**Retry from last successful stage**) is not a new investigation and stays allowed, unless the configuration changed since it started (the retry then starts a new run, which the switch refuses).
+- **Fine-Tuning Pipeline** switches fine-tuning on and off: the daily trigger check, the trigger after a training export, and the fine-tuning run itself. The weekly training-data export always runs. Fine-tuning itself needs a GPU or a hosted provider.
+- **Timeout (seconds)** bounds every language-model call: the analysis stages, the summary, release-risk and regression-watchman stages, Ask AI's history compression and knowledge-grounded generation. A project's agent configuration may set a lower limit for one agent, and a few stages have a lower ceiling of their own (summary 120 s, release risk and regression watchman 90 s). A pipeline keeps the timeout it started with. An analysis that times out falls back to a faster classifier, then to rules, and records `llm_timeout: LLM timed out after N s` in its decision trail. A very low value on a slow model also counts against the language model's circuit breaker, which then pauses calls for a while.
 
 **Settings → AI → AI evaluation** (`/settings/ai-eval`) measures the AI tier itself; see [AI evaluation](#ai-evaluation) below.
+
+### How the ML classifier activates
+
+The ML tier is a classifier trained on your own labelled failures. It needs no language model, runs on the CPU, and makes no outbound call.
+
+- **Samples.** A labelled sample is a failure your team confirmed or corrected (on the run's Analysis tab, or through Jira resolutions), or a high-confidence AI verdict nobody has reviewed (capped, and weighted lower, so human labels dominate). Training needs at least **200** (`ML_MIN_TRAINING_SAMPLES`).
+- **When it trains.** Nightly at 03:10 UTC (switch the nightly run off with `ML_RETRAIN_ENABLED=false`), or now: an administrator presses **Train now** on the ML classifier card. Below 200 samples the button is disabled and says how many are missing. While a run is queued or going the button reads **Training…**, and the card shows the new model when it finishes, usually within a minute.
+- **What it keeps.** A model is put in service only when its accuracy on held-out samples reaches `ML_ACCURACY_THRESHOLD` (0.80). Otherwise the previous model stays and the card shows the attempt (*Last attempt …: Accuracy 0.61 is below the deployment threshold 0.80; the previous model is kept.*). Every model put in service is recorded in the settings audit log (`ml_classifier`, `trained`, with its version, accuracy, sample count and who triggered it).
+- **What uses it.** In **Auto** mode a trained model is preferred over the language model; the pipeline's decision trail says *auto: trained ML model available — preferred over LLM*. **Machine Learning** mode uses it always. Until your team has confirmed or corrected 50 verdicts (`ML_HUMAN_LABEL_FLOOR`), the model is marked **Bootstrap (LLM-imitating)**: it mostly reproduces the AI's own verdicts.
+- **Several servers.** The model is trained by a worker and shared with every server through object storage (`ML_MODEL_SYNC_ENABLED`, on by default). If the store is unreachable, each server keeps the model it has.
+
+The card reads `GET /api/v1/settings/ai/ml/status` (QA lead and above); **Train now** is `POST /api/v1/settings/ai/ml/retrain` (administrators, not API keys; pressing it again while a run is going joins that run).
 
 ## What confidence scores actually mean
 
@@ -43,7 +60,7 @@ Each check is recorded (`{threshold, observed_confidence, passed, source}`, wher
 
 > **This is a policy dial, not a calibration.** "Confidence ≥ 80" means the engine *claimed* at least 80, not that it is right 80% of the time. Raising the gate buys caution, not accuracy.
 
-Some pipeline stages read the server default `AI_CONFIDENCE_THRESHOLD` directly rather than the stored value, so if you change the threshold on the page, set the environment value to the same number.
+Every pipeline stage that routes on confidence (the plan, triage, gap detection, the per-analysis check) uses the threshold stored on the page, taken once when the pipeline starts: a running or resumed pipeline keeps the number it started with, and **Retry** after you changed it starts a new run instead of resuming. When nothing qualifies, the decision trail says so (*no analyses above confidence threshold 95 — skipping triage*).
 
 Two thresholds are deliberately not wired to this dial: the display floor for kind labels on pull-request comments (60), and the Fixer's candidate selection, which uses only deterministic inputs.
 
@@ -69,15 +86,17 @@ A provider that cannot take tool calls still answers, from the latest-runs data 
 
 **Settings → AI → LLM cost budget** (`/settings/billing`) caps what each project spends on language-model calls.
 
-> **Off by default.** Enforcement is behind the `llm_cost_budget` feature flag, which ships **off**. With it off, no usage is recorded and no cap applies; the page still opens and shows zero spend and **UNLIMITED**. Turn the flag on under **Settings → System → Feature flags** ([feature-flag reference](../docs/operations/feature-flags.md)).
+> **On for a new install.** Enforcement is behind the `llm_cost_budget` feature flag, which is on for a new install; an install upgraded from an earlier version keeps the state it had (off unless an administrator turned it on). With it off, no usage is recorded and no cap applies; the page still opens and shows zero spend and **UNLIMITED**. Turn the flag on or off under **Settings → System → Feature flags** ([feature-flag reference](../docs/operations/feature-flags.md)).
 
-The page shows the current period's **Total spend**, **LLM calls** and **Projects over soft-warn**, and a row per project with spend, cap, utilisation, status (**OK**, **SOFT_WARN**, **CAPPED** or **UNLIMITED**) and cap hits. Administrators edit a project's budget (**Edit**); others can **View** it:
+The page shows the current period's **Total spend**, **LLM calls**, **Projects over soft-warn** and **Projected overage charge**, and a row per project with spend, **Covered**, **Overage**, **Charge** (with a month-end projection under it, *proj. $X by month end*), cap, utilisation, status (**OK**, **SOFT_WARN**, **CAPPED** or **UNLIMITED**) and cap hits. Administrators edit a project's budget (**Edit**); others can **View** it:
+
+**Included per month**: spend up to this amount is covered; spend above it is overage. **Overage rate**: the overage is multiplied by this to give the charge. The table shows Covered, Overage, Charge and a month-end projection. The projection is linear (spend so far divided by the share of the month that has passed) and appears once a day of the month has passed and something was spent. A project with no included amount (0, the form's default) or no enabled budget shows **—** in the three columns: no charge is computed for a project that only set a cap. The overage figures are for the billing view; they never limit spend (the hard cap does).
 
 | Field | Meaning |
 |---|---|
-| **Included per month ($)** | Spend covered before overage applies |
+| **Included per month ($)** | Spend up to this amount is covered; spend above it is overage |
 | **Hard cap ($)** | The ceiling for the month |
-| **Overage rate ($/$)** | How spend above the included amount is counted |
+| **Overage rate ($/$)** | The overage is multiplied by this to give the charge |
 | **Soft-warn threshold (%)** | The utilisation at which the at-cap action starts |
 | **At-cap action** | **Soft warn** (log only), **Auto-downgrade to ML**, **Auto-downgrade to rules**, or **Hard block** |
 | **Budget enforcement enabled** | Per-project on/off |
@@ -112,6 +131,18 @@ Whether an unreviewed report may leave the app is the server setting **`REVIEW_G
 
 Run with it `false` for a while, read the would-refuse audit rows, make sure reviewers are keeping up with the Approvals queue, then turn it on.
 
+## AI history: every analysis is kept
+
+A run can be analysed more than once (a re-triggered pipeline, a different engine or model, a correction). Each analysis is kept as an immutable **version** instead of overwriting the previous one, with its provenance (rules, ML or a language model, which model, whether it fell back):
+
+- **Per run**: a digest of each pipeline's analysis (verdict and risk, categories, failure clusters, each analysed test's category, confidence and suggested root cause) and the run summary written with it. The run's Analysis tab lists them (**v2 · LLM llama3.1 · about 2 hours ago**), shows an older one read-only and diffs any two; the Evidence tab's decision-report version follows the same choice. In-app: `/docs/runs#ai-history`.
+- **Per test result**: every pipeline analysis, single-test re-analysis, human correction and bulk reclassification of that result, shown on the test's History tab.
+- **vs previous run**: the Analysis tab and Run Compare also diff a run's AI analysis with another run's. The default baseline is the previous run of the same suite **on the same branch** (the newest that finished before this run, any outcome); **Compare to previous run** on the Runs list and the run's ⋯ menu use the same server rule, so they open the same pair (they used to pick from the runs loaded on the page, on any branch). When the two analyses came from different engines, the diff says so first, so an engine change is not read as a product change.
+
+The diff itself never needs a language model. Its one-paragraph narrative is written by the language model when one is reachable and the project's cost budget allows (labelled **AI narrative**); otherwise it is built from the diff and labelled **deterministic summary**. Viewing the history makes no model call.
+
+How many versions are kept (by default 20 per run and kind, 10 per test result; version 1 and any version cited by a published decision report are never pruned) is part of the project's retention policy: see [Administration & settings](administration.md). **Export AI history** in a run's ⋯ menu downloads them as JSON; like other AI report exports it goes through the [human review gate](#the-human-review-gate-for-ai-reports) (`409` while enforced and unreviewed).
+
 ## How the ML classifier learns
 
 The local ML classifier trains on two kinds of labels, and the difference is tracked end to end.
@@ -127,6 +158,7 @@ Below **50 human labels** (`ML_HUMAN_LABEL_FLOOR`) the ML tier reports itself as
 |---|---|---|
 | Failure categories, clusters, flaky scores, release verdicts | Yes | — |
 | A run's Analysis tab | Yes (rules and ML content) | Richer narratives |
+| AI history, version diffs, "vs previous run" | Yes, with a **deterministic summary** | The **AI narrative** of a run-to-run comparison |
 | Root cause (AI) deep investigation | Yes, clustering and evidence (not in **Rules** mode) | Richer per-cluster analysis |
 | Ask AI | — | Yes |
 | Generated test cases (knowledge base) | A stub | Yes |

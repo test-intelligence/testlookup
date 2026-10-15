@@ -25,8 +25,6 @@ from __future__ import annotations
 
 import structlog
 
-from app.core.config import settings
-
 logger = structlog.get_logger("services.confidence_validation")
 
 UNKNOWN_CATEGORY = "UNKNOWN"
@@ -249,22 +247,21 @@ def validate_confidence(analysis: dict) -> dict:
     # capped) confidence, reusing the threshold + source the router already
     # resolved, so routing_metadata never records a check against a number
     # that was subsequently adjusted. No stored check (legacy path, direct
-    # ReAct calls) → fall back to the env default, preserving the previous
-    # behaviour exactly.
+    # ReAct calls) → the threshold the running pipeline froze (W04 AIC-03),
+    # else the env default with source ``env_default``.
     routing = analysis.get("_routing")
     prior_check = (routing or {}).get("threshold_check") or {}
     from app.services.confidence_gate import (
-        SOURCE_ENV_DEFAULT,
         build_threshold_check,
         gate_status,
         is_low_confidence,
     )
+    from app.services.pipeline_ai_scope import current_confidence_threshold
 
     threshold = prior_check.get("threshold")
     source = prior_check.get("source")
     if not isinstance(threshold, int) or source not in ("ai_config", "env_default"):
-        threshold = settings.AI_CONFIDENCE_THRESHOLD
-        source = SOURCE_ENV_DEFAULT
+        threshold, source = current_confidence_threshold()
     check = build_threshold_check(confidence, threshold, source)
     if isinstance(routing, dict):
         routing["threshold_check"] = check

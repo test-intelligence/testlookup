@@ -294,11 +294,20 @@ Four retention classes, each with its own clock (days):
 | Class | Default | What it covers |
 |---|---|---|
 | Raw events | 90 | Live-stream event archives on runs (`event_archive`), raw ingest payloads (Allure/TestNG/REST) and live event documents in MongoDB. |
-| Runs | 365 | Test runs and everything that hangs off them in PostgreSQL (test cases, analyses, clusters, decisions — the full cascade), plus run-scoped MongoDB documents (execution logs, pod events, run summaries, AI analysis traces). |
+| Runs | 365 | Test runs and everything that hangs off them in PostgreSQL (test cases, analyses and their versions, clusters, decisions — the full cascade), plus run-scoped MongoDB documents (execution logs, pod events, run summaries and their versions, AI analysis traces). |
 | Artifacts | 180 | Object storage: raw report uploads under the run's prefix and pipeline intermediate artifacts. |
 | Audit | 2555 (~7 y) | Access/test-management audit rows, AI provenance records, the immutable pipeline event log, and **expired** compliance packs. Must be ≥ the runs window. |
 
 Bounds: raw events/artifacts 7–3650, runs 30–3650, audit 365–3650 days.
+
+**AI history.** Every re-analysis of a run keeps the earlier answers as versions: the run's analysis digest and run summary (MongoDB `ai_run_versions`) and each test result's analysis (PostgreSQL `ai_analysis_versions`). They are on the **runs** clock — they go when their run goes, by the policy purge or a single-run delete. Two caps bound them on the runs you keep:
+
+| Cap | Default | Bounds | What it limits |
+|---|---|---|---|
+| `ai_versions_per_run` | 20 | 1–100 | Versions kept per run, per kind (analysis digest, run summary) |
+| `ai_versions_per_test` | 10 | 1–100 | Versions kept per test result |
+
+When a cap is exceeded the **oldest** versions go first, with two exceptions that are never pruned: **version 1** (the first answer) and **any version a published decision report cites**. If the decision reports cannot be read at that moment, nothing is pruned (the next sweep tries again). The caps apply as versions are written, whether or not the policy is enabled; the nightly sweep (enabled projects only) catches up on versions over the cap, for example after you lower one. The preview counts them as **AI history versions**: the versions of runs past the runs window, plus the versions over a cap. Set a cap back to 20 / 10 to restore the defaults.
 
 **Preview-first workflow (recommended):**
 1. **Preview purge** (`POST .../retention-policy/preview`) — a dry run returning the per-class cutoffs and exactly what a purge would delete now. It works while the policy is still disabled and writes nothing.

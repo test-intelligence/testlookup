@@ -153,7 +153,12 @@ def test_pipeline_dedup_allows_same_owner_retry_and_releases_on_failure():
     assert "await redis.expire(key, ttl)" in is_duplicate
     assert "await redis.delete(key)" in release_lock
     assert "dedup_owner = str(self.request.id)" in run_pipeline
-    assert "_is_duplicate(dedup_key, ttl=7200, owner=dedup_owner)" in tasks
+    # Admission goes through one helper with the same owner (a person's trigger has its own
+    # short key, W03); an automatic trigger still holds the run's 2-hour key.
+    admission = _function_source("app/worker/tasks.py", "_pipeline_admission_duplicate")
+    assert "_pipeline_admission_duplicate(\n            dedup_key, owner=dedup_owner, requested_by=requested_by," in run_pipeline
+    assert "_is_duplicate(dedup_key, ttl=PIPELINE_ADMISSION_TTL, owner=owner)" in admission
+    assert "PIPELINE_ADMISSION_TTL = 7200" in tasks
     assert "_release_duplicate_lock(dedup_key, dedup_owner)" in run_pipeline
 
 
@@ -237,9 +242,16 @@ def test_summary_semantic_enrichment_has_deadline_and_fallback():
     source = _read("app/agents/summary_agent.py")
     fetch_similar = _function_source("app/agents/summary_agent.py", "_fetch_similar_failures")
 
-    assert "_SIMILAR_FAILURES_TIMEOUT_SECONDS" in source
+    timeouts = _function_source("app/agents/summary_agent.py", "summary_timeouts")
+
+    # AIC-02: the deadline is computed per run from the frozen Settings > AI
+    # timeout (timeout // 30, kept within 2..10 s), not at import from env.
+    assert "_SIMILAR_FAILURES_CAP = 10" in source
+    assert "_SIMILAR_FAILURES_FLOOR = 2" in source
+    assert "effective_llm_timeout(state, agent_id=_AGENT_ID)" in timeouts
+    assert "effective // 30" in timeouts
     assert "asyncio.wait_for" in fetch_similar
-    assert "timeout=_SIMILAR_FAILURES_TIMEOUT_SECONDS" in fetch_similar
+    assert "timeout=similar_timeout" in fetch_similar
     assert "except asyncio.TimeoutError" in fetch_similar
     assert "return []" in fetch_similar
 

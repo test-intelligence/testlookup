@@ -198,3 +198,34 @@ class TestTheDecisionIsRecorded:
         _route_after_summary_deep(state)
 
         assert len(state["_workflow_route_decisions"]) == 2
+
+
+class TestTheFrozenThreshold:
+    """W04 AIC-03: a pipeline carries the Settings > AI threshold it froze at
+    start (``state["confidence_threshold"]``); the routers take it, and fall
+    back to the env default only for a state without one."""
+
+    @pytest.mark.parametrize("router", [_route_after_summary, _route_after_summary_deep])
+    def test_a_stored_95_keeps_a_90_out_of_triage(self, router):
+        state = {**_state({"tc-1": _analysis(90)}), "confidence_threshold": 95}
+        assert router(state) != "triage"
+
+    @pytest.mark.parametrize("router", [_route_after_summary, _route_after_summary_deep])
+    def test_a_stored_40_lets_a_45_into_triage(self, router):
+        state = {**_state({"tc-1": _analysis(45)}), "confidence_threshold": 40}
+        assert router(state) == "triage"
+
+    def test_the_recorded_rationale_names_the_frozen_value(self):
+        state = {**_state({"tc-1": _analysis(90)}, pipeline_run_id="run-1"), "confidence_threshold": 95}
+
+        _route_after_summary(state)
+
+        decision = state["_workflow_route_decisions"][0]
+        assert decision["rationale"] == "no analyses above confidence threshold 95 — skipping triage"
+        assert decision["context"]["threshold"] == 95
+
+    @pytest.mark.parametrize("junk", [None, True, 101, "95"])
+    def test_an_unusable_frozen_value_falls_back_to_the_env_default(self, junk):
+        state = {**_state({"tc-1": _analysis(THRESHOLD)}), "confidence_threshold": junk}
+        assert _route_after_summary(state) == "triage"
+

@@ -16,7 +16,7 @@ import json
 import structlog
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any, Literal, Mapping, Optional
 
 from pydantic import BaseModel
 
@@ -46,6 +46,7 @@ from app.services.evidence_catalogue import (
 from app.services.llm_factory import get_llm
 from app.services.llm_json_parser import parse_llm_json
 from app.services.model_router import choose_model, decide_escalation, provenance
+from app.services.pipeline_ai_scope import effective_llm_timeout
 from app.services.pipeline_budget_service import (
     get_pipeline_budget_context,
     remaining_cost_usd,
@@ -63,11 +64,30 @@ logger = structlog.get_logger("agents.summary")
 
 # Max tokens for context sent to LLM (reserve overhead for prompt template)
 _MAX_CONTEXT_TOKENS = max(512, settings.LLM_MAX_TOKENS - 1500)
-# Timeout for individual LLM layer calls
-_LAYER_TIMEOUT_SECONDS = min(120, settings.AI_TIMEOUT_SECONDS)
+# AIC-02: the call timeouts are computed PER RUN from the Settings > AI
+# "Timeout (seconds)" frozen into the pipeline (``effective_llm_timeout``), not
+# at import from the environment. These are this stage's own caps on it.
+_AGENT_ID = "agent.summary.v1"
+# Each LLM layer call: at most 120 s, never more than the configured timeout.
+_LAYER_TIMEOUT_CAP = 120
 # Semantic enrichment is useful but non-critical; keep summary generation moving
-# if vector search or embedding infrastructure is slow.
-_SIMILAR_FAILURES_TIMEOUT_SECONDS = min(10, max(2, settings.AI_TIMEOUT_SECONDS // 30))
+# if vector search or embedding infrastructure is slow: timeout // 30, kept
+# between 2 and 10 s.
+_SIMILAR_FAILURES_CAP = 10
+_SIMILAR_FAILURES_FLOOR = 2
+
+
+def summary_timeouts(state: Optional[Mapping[str, Any]] = None) -> tuple[int, int]:
+    """``(layer_timeout, similar_failures_timeout)`` for one summary run.
+
+    ``state`` is the pipeline state (its frozen ``llm_timeout_seconds`` and any
+    explicit project override for this agent); without one, the pipeline scope
+    or the env default applies.
+    """
+    effective = effective_llm_timeout(state, agent_id=_AGENT_ID)
+    layer = effective_llm_timeout(state, agent_id=_AGENT_ID, cap=_LAYER_TIMEOUT_CAP)
+    similar = min(_SIMILAR_FAILURES_CAP, max(_SIMILAR_FAILURES_FLOOR, effective // 30))
+    return layer, similar
 # Registry-derived version tags (AI-F2): v<version>:<hash12> of the exact
 # prompt bytes in use — recorded in summary provenance.
 _SUMMARY_PROMPT_VERSIONS = {
@@ -216,6 +236,10 @@ class SummaryAgent(BaseAgent):
         # which is how 765 "Event loop is closed" rows accumulated on the
         # homelab with no way to tell WHICH await raised.
         current_op = "read_state"
+        # AIC-02: this run's call timeouts, from the timeout frozen into the
+        # pipeline (and an explicit project override for this agent), computed
+        # once and handed to every helper that waits on the LLM or the search.
+        layer_timeout, similar_timeout = summary_timeouts(state)
         step_budget: StepLLMBudget | None = None
         if state.get("step_llm_budget") is not None:
             try:
@@ -236,6 +260,7 @@ class SummaryAgent(BaseAgent):
                 run_data=run_data,
                 analyses=analyses,
                 state=state,
+                similar_timeout=similar_timeout,
             )
             current_op = "build_provenance"
             summary_provenance = self._build_summary_provenance(
@@ -246,6 +271,8 @@ class SummaryAgent(BaseAgent):
                 similar_failures=similar_failures,
                 stage_quality=stage_quality,
                 stage_errors=stage_errors,
+                layer_timeout=layer_timeout,
+                similar_timeout=similar_timeout,
             )
 
             fallback_reason: str | None = None
@@ -280,6 +307,7 @@ class SummaryAgent(BaseAgent):
                         tier_override=(
                             "llm" if state.get("model_tier_override") == "llm" else None
                         ),
+                        layer_timeout=layer_timeout,
                     )
                     summary_provenance.update(routing_provenance)
                 except Exception as exc:
@@ -565,8 +593,13 @@ class SummaryAgent(BaseAgent):
         similar_failures: list[dict] | None = None,
         stage_quality: str = "normal",
         stage_errors: dict[str, list[str]] | None = None,
+        layer_timeout: int | None = None,
+        similar_timeout: int | None = None,
     ) -> dict[str, Any]:
         """Build deterministic fingerprints for replaying summary generation."""
+        default_layer, default_similar = summary_timeouts(None)
+        layer_timeout = layer_timeout if layer_timeout is not None else default_layer
+        similar_timeout = similar_timeout if similar_timeout is not None else default_similar
         context = self._build_context(
             run_data,
             anomaly_summary,
@@ -608,8 +641,8 @@ class SummaryAgent(BaseAgent):
                 "temperature": settings.LLM_TEMPERATURE,
                 "max_tokens": settings.LLM_MAX_TOKENS,
                 "context_token_budget": _MAX_CONTEXT_TOKENS,
-                "layer_timeout_seconds": _LAYER_TIMEOUT_SECONDS,
-                "similar_failures_timeout_seconds": _SIMILAR_FAILURES_TIMEOUT_SECONDS,
+                "layer_timeout_seconds": layer_timeout,
+                "similar_failures_timeout_seconds": similar_timeout,
             },
             "stage_quality": stage_quality,
             "stage_errors_sha256": _hash_json(stage_errors or {}),
@@ -717,6 +750,7 @@ class SummaryAgent(BaseAgent):
         failed_test_ids: list[str],
         step_budget: StepLLMBudget | None = None,
         tier_override: Literal["llm"] | None = None,
+        layer_timeout: int | None = None,
     ) -> tuple[dict, dict[str, Any]]:
         """Run summary on SLM, repair once, then escalate or fall back."""
         from app.services.tier_comparison_service import enqueue_shadow_pair  # noqa: PLC0415
@@ -762,6 +796,7 @@ class SummaryAgent(BaseAgent):
             pipeline_run_id=pipeline_run_id,
             llm=llm,
             validation_failures=validation_failures,
+            layer_timeout=layer_timeout,
         )
         failures = self._report_failures(
             structured,
@@ -794,6 +829,7 @@ class SummaryAgent(BaseAgent):
                 validation_failures=validation_failures,
                 repair_instruction="Correct these validation failures: "
                 + "; ".join(failures)[:1500],
+                layer_timeout=layer_timeout,
             )
             failures = self._report_failures(
                 structured,
@@ -856,6 +892,7 @@ class SummaryAgent(BaseAgent):
             llm=llm,
             validation_failures=llm_validation_failures,
             repair_instruction="Replace the invalid SLM result with a contract-valid report.",
+            layer_timeout=layer_timeout,
         )
         llm_failures = self._report_failures(
             llm_structured,
@@ -903,7 +940,10 @@ class SummaryAgent(BaseAgent):
         llm: Any | None = None,
         validation_failures: list[str] | None = None,
         repair_instruction: str | None = None,
+        layer_timeout: int | None = None,
     ) -> dict:
+        if layer_timeout is None:
+            layer_timeout = summary_timeouts(None)[0]
         # F-3: one catalogue per run, built ONCE and shared by every layer call.
         # The three layers are separate invocations; a catalogue rebuilt per call
         # could renumber and silently turn a correct citation into a wrong one.
@@ -928,12 +968,12 @@ class SummaryAgent(BaseAgent):
                 llm.ainvoke(
                     _EXEC_SUMMARY_PROMPT.format(system=_SYSTEM_PROMPT, context=safe_context)
                 ),
-                timeout=_LAYER_TIMEOUT_SECONDS,
+                timeout=layer_timeout,
             )
             layer1 = _extract_text(exec_resp)
         except asyncio.TimeoutError:
-            logger.warning("Executive summary LLM call timed out", timeout=_LAYER_TIMEOUT_SECONDS)
-            layer1_error = f"executive summary timed out after {_LAYER_TIMEOUT_SECONDS}s"
+            logger.warning("Executive summary LLM call timed out", timeout=layer_timeout)
+            layer1_error = f"executive summary timed out after {layer_timeout}s"
             layer1 = "Executive summary generation timed out. Please refer to the detailed breakdown below."
         except Exception as exc:
             # An invoke-level failure — model not pulled, provider unreachable,
@@ -976,6 +1016,7 @@ class SummaryAgent(BaseAgent):
                 layer_name="incident_view",
                 pipeline_run_id=pipeline_run_id,
                 validation_failures=validation_failures,
+                layer_timeout=layer_timeout,
             ),
             self._call_json_layer(
                 llm, _EVIDENCE_PACK_PROMPT, context,
@@ -983,6 +1024,7 @@ class SummaryAgent(BaseAgent):
                 layer_name="evidence_pack",
                 pipeline_run_id=pipeline_run_id,
                 validation_failures=validation_failures,
+                layer_timeout=layer_timeout,
             ),
             self._call_json_layer(
                 llm, _ACTION_PLAN_PROMPT, context,
@@ -990,6 +1032,7 @@ class SummaryAgent(BaseAgent):
                 layer_name="action_plan",
                 pipeline_run_id=pipeline_run_id,
                 validation_failures=validation_failures,
+                layer_timeout=layer_timeout,
             ),
         )
 
@@ -1126,6 +1169,7 @@ class SummaryAgent(BaseAgent):
         layer_name: str,
         pipeline_run_id: str | None,
         expected_keys: list[str] | None = None,
+        layer_timeout: int | None = None,
     ) -> dict | None:
         """Ask the provider to return the schema directly. None = fall back.
 
@@ -1147,9 +1191,11 @@ class SummaryAgent(BaseAgent):
             )
             return None
 
+        if layer_timeout is None:
+            layer_timeout = summary_timeouts(None)[0]
         try:
             result = await asyncio.wait_for(
-                structured_llm.ainvoke(prompt), timeout=_LAYER_TIMEOUT_SECONDS
+                structured_llm.ainvoke(prompt), timeout=layer_timeout
             )
         except Exception as exc:  # noqa: BLE001 — includes TimeoutError
             logger.warning(
@@ -1212,6 +1258,7 @@ class SummaryAgent(BaseAgent):
         layer_name: str = "unknown",
         pipeline_run_id: str | None = None,
         validation_failures: list[str] | None = None,
+        layer_timeout: int | None = None,
     ) -> dict:
         """Call LLM with a JSON-requesting prompt. Returns parsed dict or error stub.
 
@@ -1250,6 +1297,8 @@ class SummaryAgent(BaseAgent):
             )
         prompt = prompt_template.format(system=_SYSTEM_PROMPT, context=safe_context)
         schema_model = self._LAYER_SCHEMAS.get(layer_name)
+        if layer_timeout is None:
+            layer_timeout = summary_timeouts(None)[0]
 
         if schema_model is not None:
             structured = await self._try_structured_layer(
@@ -1259,6 +1308,7 @@ class SummaryAgent(BaseAgent):
                 layer_name,
                 pipeline_run_id,
                 expected_keys,
+                layer_timeout=layer_timeout,
             )
             if structured is not None:
                 return structured
@@ -1266,7 +1316,7 @@ class SummaryAgent(BaseAgent):
         try:
             resp = await asyncio.wait_for(
                 llm.ainvoke(prompt),
-                timeout=_LAYER_TIMEOUT_SECONDS,
+                timeout=layer_timeout,
             )
             raw = _extract_text(resp)
             parsed, error = parse_llm_json(
@@ -1312,7 +1362,7 @@ class SummaryAgent(BaseAgent):
                 validation_failures.append(f"{layer_name}:{failure}")
             return parsed
         except asyncio.TimeoutError:
-            logger.warning("JSON layer call timed out", layer=layer_name, timeout=_LAYER_TIMEOUT_SECONDS)
+            logger.warning("JSON layer call timed out", layer=layer_name, timeout=layer_timeout)
             if validation_failures is not None:
                 validation_failures.append(f"{layer_name}:timeout")
             return {}
@@ -1327,8 +1377,11 @@ class SummaryAgent(BaseAgent):
         run_data: dict,
         analyses: dict,
         state: dict,
+        similar_timeout: int | None = None,
     ) -> list[dict]:
         """Retrieve similar historical failures via semantic search (blocks before LLM)."""
+        if similar_timeout is None:
+            similar_timeout = summary_timeouts(state)[1]
         top_error = ""
         for _tc_id, analysis in self._sorted_analyses(analyses)[:5]:
             root_cause = _usable_root_cause(analysis)
@@ -1357,7 +1410,7 @@ class SummaryAgent(BaseAgent):
                                 entity_type="analysis",
                                 limit=5,
                             ),
-                            timeout=_SIMILAR_FAILURES_TIMEOUT_SECONDS,
+                            timeout=similar_timeout,
                         )
                     except (TypeError, ValueError):
                         memory_matches = []
@@ -1373,13 +1426,13 @@ class SummaryAgent(BaseAgent):
                         project_id=state.get("project_id"),
                         status=TestStatus.FAILED.value,
                     ),
-                    timeout=_SIMILAR_FAILURES_TIMEOUT_SECONDS,
+                    timeout=similar_timeout,
                 )
             return items
         except asyncio.TimeoutError:
             logger.debug(
                 "similar_failures_retrieval_timed_out",
-                timeout_seconds=_SIMILAR_FAILURES_TIMEOUT_SECONDS,
+                timeout_seconds=similar_timeout,
             )
             return []
         except Exception as exc:
@@ -1638,6 +1691,31 @@ class SummaryAgent(BaseAgent):
         # whose own text said the LLM had been unavailable.
         fallback_used = bool(summary_provenance.get("fallback_used", False))
 
+        # The content fields, built once: the ``$set`` below keeps them as the
+        # LATEST summary (the fast read), and AIH-01 appends the same dict as
+        # an immutable ``run_summary`` version (W03 contract section 1.4).
+        payload = {
+            # Layer 1: backward-compat field
+            "executive_summary": structured.get("layer1_executive_summary"),
+            # Legacy markdown report built from all layers
+            "markdown_report": self._build_markdown(structured),
+            # All 4 layers stored independently for structured API access
+            "layer1_executive_summary": structured.get("layer1_executive_summary"),
+            "layer2_incident_view": structured.get("layer2_incident_view"),
+            "layer3_evidence_pack": structured.get("layer3_evidence_pack"),
+            "layer4_action_plan": structured.get("layer4_action_plan"),
+            # Structured executive panel (ES-2)
+            "executive_panel": structured.get("executive_panel"),
+            # Pipeline metadata
+            "anomaly_count": len(state.get("anomalies") or []),
+            "is_regression": state.get("is_regression", False),
+            "analysis_count": len(state.get("analyses") or {}),
+            # Epic 6 additions
+            "fallback_used": fallback_used,
+            "citations": citations,
+            "summary_provenance": summary_provenance,
+        }
+
         await db[Collections.RUN_SUMMARIES].update_one(
             {"test_run_id": test_run_id},
             {
@@ -1645,27 +1723,9 @@ class SummaryAgent(BaseAgent):
                     "test_run_id": test_run_id,
                     "project_id": state.get("project_id"),
                     "build_number": state.get("build_number"),
-                    # Layer 1: backward-compat field
-                    "executive_summary": structured.get("layer1_executive_summary"),
-                    # Legacy markdown report built from all layers
-                    "markdown_report": self._build_markdown(structured),
-                    # All 4 layers stored independently for structured API access
-                    "layer1_executive_summary": structured.get("layer1_executive_summary"),
-                    "layer2_incident_view": structured.get("layer2_incident_view"),
-                    "layer3_evidence_pack": structured.get("layer3_evidence_pack"),
-                    "layer4_action_plan": structured.get("layer4_action_plan"),
-                    # Structured executive panel (ES-2)
-                    "executive_panel": structured.get("executive_panel"),
-                    # Pipeline metadata
-                    "anomaly_count": len(state.get("anomalies") or []),
-                    "is_regression": state.get("is_regression", False),
-                    "analysis_count": len(state.get("analyses") or {}),
+                    **payload,
                     "generated_at": now,
                     "schema_version": 4,  # v4 = v3 + executive_panel
-                    # Epic 6 additions
-                    "fallback_used": fallback_used,
-                    "citations": citations,
-                    "summary_provenance": summary_provenance,
                     "provenance": {
                         "schema_version": 4,
                         "data_sources_used": data_sources,
@@ -1676,6 +1736,17 @@ class SummaryAgent(BaseAgent):
                 }
             },
             upsert=True,
+        )
+        # AIH-01: the immutable version. Never raises: the summary is stored.
+        from app.services.ai_history_service import record_run_summary_version
+
+        await record_run_summary_version(
+            mongo=db,
+            test_run_id=test_run_id,
+            project_id=state.get("project_id"),
+            pipeline_run_id=state.get("pipeline_run_id"),
+            payload=payload,
+            generated_at=now,
         )
 
 

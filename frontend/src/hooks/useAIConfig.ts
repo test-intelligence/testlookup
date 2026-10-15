@@ -1,10 +1,10 @@
-import useSWR from 'swr'
+import useSWR, { useSWRConfig } from 'swr'
 import {
   appSettingsService,
-  type AIConfigRead,
   type AIModeRead,
   type AIModelStatusRead,
   type FallbackChainEntry,
+  type MLStatusRead,
 } from '@/services/appSettingsService'
 import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 
@@ -65,8 +65,72 @@ export function isLLMAvailable(config: Pick<AIModeRead, 'analysis_mode'> | undef
   return config.analysis_mode === 'llm' || config.analysis_mode === 'auto'
 }
 
-/** True when deep investigation can be triggered. */
-export function isDeepEnabled(config: AIConfigRead | undefined): boolean {
-  if (!config) return true
-  return config.deep_investigation_enabled && config.analysis_mode !== 'rules'
+/**
+ * ML classifier status for the Settings › AI card (W04 AIC-05; QA lead and above).
+ *
+ * Polls every 3 s while a training job is queued or running, so "Training…"
+ * flips to the new model line without a reload; otherwise the BACKGROUND tier.
+ * No fast poll while there is no data (loading or an error): an unreachable
+ * status route must not be hammered every 3 s.
+ */
+export const ML_STATUS_TRAINING_REFRESH_MS = 3000
+
+export function mlStatusRefreshInterval(data: MLStatusRead | undefined): number {
+  return data && data.training.state !== 'idle'
+    ? ML_STATUS_TRAINING_REFRESH_MS
+    : REFRESH_INTERVALS.BACKGROUND
+}
+
+const ML_STATUS_KEY = 'settings/ai-ml-status'
+
+export function useMLStatus() {
+  // A NUMBER derived from the cached status, not SWR's function form: SWR
+  // re-reads a function only when its pending timer fires, so after "Train now"
+  // the 60 s idle timer stayed armed and the 3 s polling began up to a minute
+  // late (the card sat on "Training…"). New data re-renders this hook, the
+  // number changes, and SWR re-arms its timer at once.
+  const { cache } = useSWRConfig()
+  const cached = cache.get(ML_STATUS_KEY)?.data as MLStatusRead | undefined
+  return useSWR<MLStatusRead>(
+    ML_STATUS_KEY,
+    () => appSettingsService.getMLStatus(),
+    { refreshInterval: mlStatusRefreshInterval(cached), revalidateOnFocus: false },
+  )
+}
+
+export type DeepUnavailableReason = 'disabled' | 'rules_mode'
+
+export interface DeepInvestigationAvailability {
+  available: boolean
+  reason: DeepUnavailableReason | null
+  message: string | null
+}
+
+export const DEEP_DISABLED_MESSAGE = 'Deep investigation is turned off in Settings › AI.'
+export const DEEP_RULES_MODE_MESSAGE = 'Deep investigation needs LLM or Auto mode (current mode: Rules).'
+
+/**
+ * Whether the deep-investigation CTAs are offered, and the note that replaces
+ * them when they are not (W04 contract §4.5). Mirrors the server's gate
+ * (`services/deep_investigation_gate.py`): the Settings › AI toggle wins over
+ * the mode, and only Rules mode refuses (ML and Auto are allowed).
+ *
+ * While the mode is loading it answers "available", so the CTAs render as they
+ * always did. A missing `deep_investigation_enabled` (a pod of the previous
+ * build) also means "available": the server still answers 422 if it is off.
+ */
+export function deepInvestigationAvailability(config?: AIModeRead): DeepInvestigationAvailability {
+  if (!config) return { available: true, reason: null, message: null }
+  if (config.deep_investigation_enabled === false) {
+    return { available: false, reason: 'disabled', message: DEEP_DISABLED_MESSAGE }
+  }
+  if (config.analysis_mode === 'rules') {
+    return { available: false, reason: 'rules_mode', message: DEEP_RULES_MODE_MESSAGE }
+  }
+  return { available: true, reason: null, message: null }
+}
+
+/** True when deep investigation can be triggered (the toggle is on and the mode is not Rules). */
+export function isDeepEnabled(config?: AIModeRead): boolean {
+  return deepInvestigationAvailability(config).available
 }

@@ -1,93 +1,27 @@
 /**
- * Tests for ``findPreviousRunOfSuite`` and ``buildCompareWithPreviousHref``
- * — the two pure helpers behind the "Compare with previous run" CTAs
- * on /runs (per-row icon) and /runs/<id> (header action).
+ * Tests for ``buildCompareWithPreviousHref``, the pure helper behind the
+ * "Compare to previous run" CTAs on /runs (per-row icon) and /runs/<id>
+ * (⋯ menu) and the Analysis tab's "vs previous run" card.
  *
- * The same helper pair powers both surfaces, so pinning the URL +
- * lookup contract here lets the page-level tests stay focused on
- * wiring instead of duplicating the logic in two places.
+ * W03 (D42): which run is "previous" is the server's rule now
+ * (`GET /runs/{id}/previous`: same suite AND branch, by finish time), so the
+ * client-side pick (``findPreviousRunOfSuite``) and its tests are gone; the
+ * pages' tests pin that they ask the server.
  */
 import { describe, expect, it } from 'vitest'
 
-import {
-  buildCompareWithPreviousHref,
-  findPreviousRunOfSuite,
-} from './runComparisons'
+import { buildCompareWithPreviousHref } from './runComparisons'
 
 function _run(overrides: Partial<{
   id: string
-  created_at: string
   primary_suite_name: string | null
 }>) {
   return {
     id: '00000000-0000-0000-0000-000000000000',
-    created_at: '2026-05-16T00:00:00Z',
     primary_suite_name: 'payments-e2e',
     ...overrides,
   }
 }
-
-describe('findPreviousRunOfSuite', () => {
-  it('returns null when the current run has no suite attribution', () => {
-    // Without a suite we can't filter — partial-overlap suite_names is
-    // intentionally not consulted (see helper docstring).
-    const current = _run({ id: 'cur', primary_suite_name: null })
-    const candidates = [
-      _run({ id: 'a', primary_suite_name: 'payments-e2e', created_at: '2026-05-15T00:00:00Z' }),
-    ]
-    expect(findPreviousRunOfSuite(current, candidates)).toBeNull()
-  })
-
-  it('returns null when no candidate is older than the current run', () => {
-    const current = _run({ id: 'cur', created_at: '2026-05-10T00:00:00Z' })
-    const candidates = [
-      _run({ id: 'a', created_at: '2026-05-11T00:00:00Z' }), // newer
-      _run({ id: 'b', created_at: '2026-05-12T00:00:00Z' }), // newer
-    ]
-    expect(findPreviousRunOfSuite(current, candidates)).toBeNull()
-  })
-
-  it('returns null when older candidates exist but none match the suite', () => {
-    const current = _run({ id: 'cur', primary_suite_name: 'auth-api' })
-    const candidates = [
-      _run({ id: 'a', primary_suite_name: 'payments-e2e', created_at: '2026-05-15T00:00:00Z' }),
-    ]
-    expect(findPreviousRunOfSuite(current, candidates)).toBeNull()
-  })
-
-  it('picks the chronologically immediately preceding same-suite run', () => {
-    const current = _run({ id: 'cur', created_at: '2026-05-16T12:00:00Z' })
-    const candidates = [
-      _run({ id: 'older',   created_at: '2026-05-14T12:00:00Z' }),
-      _run({ id: 'newest_before', created_at: '2026-05-16T08:00:00Z' }),
-      _run({ id: 'oldest',  created_at: '2026-05-10T12:00:00Z' }),
-    ]
-    expect(findPreviousRunOfSuite(current, candidates)?.id).toBe('newest_before')
-  })
-
-  it('excludes the current run itself even if it appears in the candidate pool', () => {
-    // Pages routinely pass the full ``runs`` array which includes the
-    // current row; the helper must not return the row to itself.
-    const current = _run({ id: 'cur', created_at: '2026-05-16T12:00:00Z' })
-    const candidates = [
-      current,
-      _run({ id: 'older', created_at: '2026-05-15T12:00:00Z' }),
-    ]
-    expect(findPreviousRunOfSuite(current, candidates)?.id).toBe('older')
-  })
-
-  it('breaks same-timestamp ties deterministically by id', () => {
-    // Two runs at exactly the same created_at would otherwise produce
-    // a non-deterministic order across renders / re-fetches. Tie-break
-    // by id (lexicographic) so unit tests + user behaviour line up.
-    const current = _run({ id: 'cur', created_at: '2026-05-16T12:00:00Z' })
-    const candidates = [
-      _run({ id: 'zzz', created_at: '2026-05-15T12:00:00Z' }),
-      _run({ id: 'aaa', created_at: '2026-05-15T12:00:00Z' }),
-    ]
-    expect(findPreviousRunOfSuite(current, candidates)?.id).toBe('aaa')
-  })
-})
 
 describe('buildCompareWithPreviousHref', () => {
   it('returns null when there is no previous run', () => {
@@ -140,5 +74,15 @@ describe('buildCompareWithPreviousHref', () => {
     expect(href).not.toBeNull()
     if (href === null) throw new Error('buildCompareWithPreviousHref returned null')
     expect(href).toMatch(/suite=Realistic[+%20]TestNG[+%20]client[+%20]examples/)
+  })
+
+  it('takes the server\'s run brief mapped to { id, primary_suite_name }', () => {
+    // `GET /runs/{id}/previous` answers a RunBrief keyed `run_id`; the callers map it.
+    const brief = { run_id: 'prev', primary_suite_name: 'payments-e2e' }
+    const href = buildCompareWithPreviousHref(
+      _run({ id: 'cur' }),
+      { id: brief.run_id, primary_suite_name: brief.primary_suite_name },
+    )
+    expect(href).toBe('/runs/compare?mode=manual&left=prev&right=cur&suite=payments-e2e')
   })
 })

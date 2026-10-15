@@ -14,6 +14,7 @@ Generating a pack for a release captures, as of that moment:
 - **Failure clusters** — what was failing and how it grouped.
 - **Defects** — the tracked bugs linked to the release.
 - **Audit events** — the who-did-what around the release (overrides, quarantine decisions, admin actions).
+- **AI history** (`ai_history.json`) — every stored version of the decided run's AI analysis (the newest 20 analysis digests and run summaries), the diff between each consecutive pair, the per-test analysis versions (who or which pipeline produced each, by which engine and model), and whether a person has reviewed the AI content. It shows how the AI's verdict and categories evolved before the decision, not only where they ended. Like every file, it is hashed in `manifest.json`.
 
 The pack is self-contained and reproducible: because the policy and decision are snapshotted, a pack means the same thing a year later even if your policies have changed since.
 
@@ -29,7 +30,9 @@ The same is available programmatically — the MCP server exposes `list_complian
 
 ## Resilience by design
 
-Pack assembly is deliberately fault-tolerant: the decision-trail and audit-event sections **self-guard** — if one can't be gathered, it embeds an error note in the pack rather than failing the whole generation. You get the pack you can get, with gaps marked, instead of nothing.
+Pack assembly is deliberately fault-tolerant: the decision-trail, audit-event and AI-history sections **self-guard** — if one can't be gathered, it embeds an error note in the pack rather than failing the whole generation. You get the pack you can get, with gaps marked, instead of nothing. For AI history the note is `{"available": false, "error": "ai_history_unavailable"}`: the history store could not be read when the pack was generated, which is not the same as "this run has no history".
+
+A run's AI history can also be downloaded on its own: on the run page, **⋯ → Export AI history** (`GET /api/v1/runs/{run_id}/ai-history/export`) saves `run-<build>-ai-history.json`, up to 100 versions per kind and 1,000 per-test rows. The download goes through the same review policy as the intelligence export and is recorded in the distribution audit.
 
 ## The governance surround
 

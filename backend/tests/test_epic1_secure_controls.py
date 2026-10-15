@@ -236,8 +236,10 @@ class TestSettingsSchemaValidation:
 
         with pytest.raises(ValidationError):
             AIConfigUpdate(llm_temperature=5.0)
+        # W04 AIC-02: floor 5 s; 10 s is now a valid timeout.
+        AIConfigUpdate(ai_timeout_seconds=10)
         with pytest.raises(ValidationError):
-            AIConfigUpdate(ai_timeout_seconds=10)
+            AIConfigUpdate(ai_timeout_seconds=4)
 
     def test_storage_config_update_validates_port(self):
         from app.models.schemas import StorageConfigUpdate

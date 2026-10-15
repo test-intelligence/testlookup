@@ -119,10 +119,14 @@ class TestAIConfigUpdate:
         from app.models.schemas import AIConfigUpdate
         from pydantic import ValidationError
 
-        AIConfigUpdate(ai_timeout_seconds=30)  # min OK
+        # W04 AIC-02: the floor is 5 s (was 30) so a short timeout can be set.
+        AIConfigUpdate(ai_timeout_seconds=5)  # min OK
+        AIConfigUpdate(ai_timeout_seconds=10)  # was "too low" before W04
         AIConfigUpdate(ai_timeout_seconds=1800)  # max OK
         with pytest.raises(ValidationError):
-            AIConfigUpdate(ai_timeout_seconds=10)  # too low
+            AIConfigUpdate(ai_timeout_seconds=4)  # too low
+        with pytest.raises(ValidationError):
+            AIConfigUpdate(ai_timeout_seconds=1801)  # too high
 
     def test_empty_update_produces_no_fields(self):
         from app.models.schemas import AIConfigUpdate

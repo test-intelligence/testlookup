@@ -1,5 +1,6 @@
 import type { AxiosResponse } from 'axios'
 import { api } from './api'
+import { getData, postData } from './http'
 
 export interface SmtpConfigRead {
   enabled: boolean
@@ -32,11 +33,25 @@ export interface SmtpTestResult {
 
 export type AnalysisMode = 'llm' | 'ml' | 'rules' | 'auto'
 
+/**
+ * Where a Settings › AI value comes from (W04 AIC-01/02/04): `'ai_config'` = a
+ * valid value is stored on this page ("Set here"); `'env_default'` = nothing
+ * valid is stored and the server's environment default applies. A string, not a
+ * union: an unknown value renders as "Server default", never as a crash.
+ */
+export type ConfigSource = 'ai_config' | 'env_default' | string
+
 /** `GET /settings/ai/mode`: what every role's screens branch on, and nothing else of the config. */
 export interface AIModeRead {
   analysis_mode: AnalysisMode
   /** Effective offline ceiling: true when AI stays on this deployment. */
   ai_offline_mode: boolean
+  /**
+   * EFFECTIVE Deep Investigation toggle (the stored value over the env default,
+   * both ways). Optional: a pod of the previous build does not send it, and a
+   * missing value means "offered" (W04 contract R-8).
+   */
+  deep_investigation_enabled?: boolean
 }
 
 export interface AIConfigRead {
@@ -56,15 +71,22 @@ export interface AIConfigRead {
   embedding_provider: string
   embedding_model: string
   ai_confidence_threshold: number
+  ai_confidence_threshold_source: ConfigSource
   ai_timeout_seconds: number
+  ai_timeout_seconds_source: ConfigSource
   deep_investigation_enabled: boolean
+  deep_investigation_enabled_source: ConfigSource
   finetune_enabled: boolean
+  finetune_enabled_source: ConfigSource
   openai_key_set: boolean
   google_key_set: boolean
   anthropic_key_set: boolean
   openrouter_key_set: boolean
   // Analysis mode — LLM-free operation
   analysis_mode: AnalysisMode
+  analysis_mode_source: ConfigSource
+  /** `settings.ML_MIN_TRAINING_SAMPLES`: the labelled-sample floor before ML can train. */
+  ml_min_training_samples: number
   ml_model_available: boolean
   ml_model_accuracy: number | null
   ml_training_sample_count: number
@@ -95,6 +117,7 @@ export interface AIConfigUpdate {
   embedding_provider?: string
   embedding_model?: string
   ai_confidence_threshold?: number
+  /** 5..1800 (the floor was 30 before W04 AIC-02). */
   ai_timeout_seconds?: number
   deep_investigation_enabled?: boolean
   finetune_enabled?: boolean
@@ -159,6 +182,74 @@ export interface AIModelStatusRead {
   llm_provider: string
   analysis_mode: AnalysisMode | string
   checked_at: string
+}
+
+// ── ML classifier training (W04 AIC-05) ─────────────────────
+// Mirrors backend/app/models/ml_training_schemas.py. Every enum-like field is a
+// string: an unknown status renders, it does not throw. `null` = not known.
+
+export interface MLTrainingState {
+  /** 'idle' | 'queued' | 'running' */
+  state: 'idle' | 'queued' | 'running' | string
+  task_id: string | null
+  queued_at: string | null
+  started_at: string | null
+  /** 'user:<username>' | 'beat' */
+  triggered_by: string | null
+}
+
+export interface MLLastRun {
+  /** trained | insufficient_data | insufficient_class_diversity | below_threshold | disabled | skipped_running | error */
+  status: string
+  message: string | null
+  finished_at: string
+  triggered_by: string
+  /** 0..1 */
+  accuracy: number | null
+  version: string | null
+  sample_count: number | null
+}
+
+export interface MLStatusRead {
+  model_available: boolean
+  /** 'YYYYMMDD_HHMMSS' */
+  version: string | null
+  /** 0..1 holdout accuracy */
+  accuracy: number | null
+  trained_at: string | null
+  /** Samples the CURRENT model was trained on. */
+  model_sample_count: number | null
+  /** Usable labels now: feedback rows + high-confidence pseudo-labels. */
+  available_samples: number
+  min_training_samples: number
+  human_labels: number
+  human_label_floor: number
+  maturity: 'not_trained' | 'bootstrap_llm_imitating' | 'human_calibrated' | string
+  deps_installed: boolean
+  /** ML_RETRAIN_ENABLED: gates the NIGHTLY run only; Train now ignores it. */
+  retrain_enabled: boolean
+  can_train: boolean
+  /** insufficient_samples | deps_missing | status_unavailable | null */
+  cannot_train_reason: string | null
+  cannot_train_message: string | null
+  training: MLTrainingState
+  last_run: MLLastRun | null
+}
+
+export interface MLRetrainAccepted {
+  task_id: string
+  /** 'queued' | 'running' */
+  state: string
+  already_running: boolean
+}
+
+/** The `detail` of a 409 from `POST /settings/ai/ml/retrain`. */
+export interface MLRetrainRefused {
+  /** 'insufficient_samples' | 'deps_missing' */
+  code: string
+  message: string
+  have: number
+  need: number
 }
 
 // ── Integrations Configuration ──────────────────────────────
@@ -259,6 +350,18 @@ export const appSettingsService = {
   },
   getAIModelStatus(): Promise<AIModelStatusRead> {
     return api.get<AIModelStatusRead>('/api/v1/settings/ai/model-status').then(r => r.data)
+  },
+  /** ML classifier status: samples, the current model, the retrain lock, the last attempt (QA lead+). */
+  getMLStatus(): Promise<MLStatusRead> {
+    return getData<MLStatusRead>('/api/v1/settings/ai/ml/status')
+  },
+  /**
+   * "Train now" (ADMIN). 202 even when a run is already going (same task id,
+   * `already_running: true`). No global toast: the ML card renders a 409's
+   * `detail.message` itself (insufficient samples / dependencies missing).
+   */
+  retrainML(): Promise<MLRetrainAccepted> {
+    return postData<MLRetrainAccepted>('/api/v1/settings/ai/ml/retrain', undefined, { suppressToast: true })
   },
 
   // Integrations

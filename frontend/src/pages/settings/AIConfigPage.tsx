@@ -13,10 +13,12 @@ import {
   type RagFaithfulnessEvaluator,
 } from '@/services/appSettingsService'
 import { usePermissions } from '@/hooks/usePermissions'
-import { activeTier, useAIModelStatus } from '@/hooks/useAIConfig'
+import { activeTier, useAIModelStatus, useMLStatus } from '@/hooks/useAIConfig'
 import { appMutate } from '@/utils/swrCacheMutate'
 import Field from '@/components/ui/Field'
 import { helpTopicParam } from '@/components/help/helpTopics'
+import ConfigSourceHint from '@/components/settings/ConfigSourceHint'
+import MLTrainingCard from '@/components/settings/MLTrainingCard'
 
 const HELP_TOPIC = helpTopicParam('/settings/ai')
 
@@ -51,6 +53,17 @@ const OFFLINE_PINNED_REASON =
   'Pinned by AI_OFFLINE_MODE in this deployment’s environment — offline mode cannot be ' +
   'turned off from this page. Set AI_OFFLINE_MODE=false in the backend environment and ' +
   'restart to permit cloud LLM egress.'
+
+// When each Settings › AI value takes effect (W04 AIC-01/02/03). The runtime now
+// obeys the stored value; these say how soon, beside "Set here" / "Server default".
+export const DEEP_TOGGLE_NOTE = 'Applies within a minute.'
+export const FINETUNE_TOGGLE_NOTE =
+  'Applies within a minute. Switches the export-triggered tasks only; training itself needs a GPU or a hosted provider.'
+export const THRESHOLD_NOTE = 'Applies to new pipelines.'
+export const TIMEOUT_NOTE =
+  'Applies to every LLM call; an agent may set a lower limit. Applies to new pipelines; a running pipeline keeps its value.'
+/** The Timeout floor (`AIConfigUpdate.ai_timeout_seconds` is `ge=5, le=1800` since W04 AIC-02). */
+export const TIMEOUT_MIN_SECONDS = 5
 
 /**
  * The RAG faithfulness gate's two strategies (rag_faithfulness_service). Each
@@ -305,6 +318,7 @@ export default function AIConfigPage() {
     isLoading: modelStatusLoading,
     mutate: refreshModelStatus,
   } = useAIModelStatus()
+  const { data: mlStatus, mutate: refreshMLStatus } = useMLStatus()
   const [config, setConfig] = useState<AIConfigRead | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -353,7 +367,7 @@ export default function AIConfigPage() {
       // Converting the page to useAIConfig is the convention-correct fix and a
       // larger refactor of this form; invalidating is what stops the surfaces
       // disagreeing today.
-      await Promise.all([appMutate('settings/ai-mode'), refreshModelStatus()])
+      await Promise.all([appMutate('settings/ai-mode'), refreshModelStatus(), refreshMLStatus()])
       toast.success('AI configuration saved')
     } catch {
       toast.error('Failed to save AI configuration')
@@ -372,6 +386,14 @@ export default function AIConfigPage() {
 
   const llmTier = modelStatus?.fallback_chain.find(e => e.mode === 'llm')
   const offlinePinned = config.ai_offline_mode_env_pinned === true
+  // The ML card's live status wins over the page-load snapshot of GET
+  // /settings/ai: after "Train now" the radio badge and the bootstrap caveat
+  // must agree with the card, not keep saying "Not Trained" until a reload.
+  const mlAvailable = mlStatus ? mlStatus.model_available : config.ml_model_available
+  const mlAccuracy = mlStatus ? mlStatus.accuracy : config.ml_model_accuracy
+  const mlMaturity = mlStatus ? mlStatus.maturity : config.ml_maturity
+  const mlHumanLabels = mlStatus ? mlStatus.human_labels : config.ml_human_label_count
+  const mlHumanFloor = mlStatus ? mlStatus.human_label_floor : config.ml_human_label_floor
   const evaluatorNote = evaluatorOverrideNote(form, config)
   const evaluatorInUse = FAITHFULNESS_EVALUATORS.find(
     (e) => e.value === config.rag_faithfulness_evaluator_effective,
@@ -432,17 +454,17 @@ export default function AIConfigPage() {
                         Ready
                       </span>
                     )}
-                    {mode.value === 'ml' && !config.ml_model_available && (
+                    {mode.value === 'ml' && !mlAvailable && (
                       <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--status-broken-bg)]/20 text-[var(--status-broken)]">
                         Not Trained
                       </span>
                     )}
-                    {mode.value === 'ml' && config.ml_model_available && (
+                    {mode.value === 'ml' && mlAvailable && (
                       <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--status-passed-bg)]/20 text-[var(--status-passed)]">
-                        Ready ({((config.ml_model_accuracy ?? 0) * 100).toFixed(0)}% accuracy)
+                        Ready ({((mlAccuracy ?? 0) * 100).toFixed(0)}% accuracy)
                       </span>
                     )}
-                    {mode.value === 'ml' && config.ml_model_available && config.ml_maturity !== 'human_calibrated' && (
+                    {mode.value === 'ml' && mlAvailable && mlMaturity !== 'human_calibrated' && (
                       <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--status-broken-bg)]/20 text-[var(--status-broken)]">
                         Bootstrap (LLM-imitating)
                       </span>
@@ -452,26 +474,21 @@ export default function AIConfigPage() {
                 </label>
               ))}
             </div>
-            {/* ML Model Status Banner */}
-            {form.analysis_mode === 'ml' && !config.ml_model_available && (
-              <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-[var(--status-broken-bg)]/10 border border-[var(--status-broken-bd)]/20 text-xs text-[var(--status-broken)]">
-                <span className="font-medium">ML model not yet trained.</span>
-                <span className="text-[var(--color-text-muted)]">
-                  Need {config.ml_training_sample_count} / 200 labeled samples.
-                  The system will use Rules mode as fallback until a model is trained.
-                </span>
-              </div>
-            )}
+            <ConfigSourceHint configKey="analysis_mode" source={config.analysis_mode_source} />
+            {/* AIC-05: samples against the floor, the model in service, Train now.
+                Replaces a banner that hard-coded "/ 200" and implied a model
+                would train by itself (nothing ever called the trainer). */}
+            <MLTrainingCard isAdmin={isAdmin} />
             {/* AI-F1 honesty caveat: below the human-label floor, ML mode imitates
                 the LLM's own labels — do not claim it learns from corrections. */}
             {(form.analysis_mode === 'ml' || form.analysis_mode === 'auto') &&
-              config.ml_model_available && config.ml_maturity !== 'human_calibrated' && (
+              mlAvailable && mlMaturity !== 'human_calibrated' && (
               <div className="flex flex-col gap-1 px-3 py-2 rounded-lg bg-[var(--status-broken-bg)]/10 border border-[var(--status-broken-bd)]/20 text-xs text-[var(--status-broken)]">
                 <span className="font-medium">ML classifier is in bootstrap mode (LLM-imitating).</span>
                 <span className="text-[var(--color-text-muted)]">
                   The current model was trained mostly on the LLM&apos;s own high-confidence
                   verdicts, not on human-verified labels
-                  ({config.ml_human_label_count} of {config.ml_human_label_floor} human
+                  ({mlHumanLabels} of {mlHumanFloor} human
                   labels needed). Until your team confirms or corrects more AI verdicts,
                   ML mode largely reproduces the LLM&apos;s behavior rather than learning
                   from your corrections. Label composition is tracked per model on the
@@ -558,8 +575,10 @@ export default function AIConfigPage() {
           {/* Pipeline Settings */}
           <div className="card space-y-4">
             <h3 className="text-sm font-semibold text-[var(--color-text)]">Pipeline Settings</h3>
-            {/* items-end: in a half-width card (P5) a wrapped label keeps the inputs level. */}
-            <div className="grid grid-cols-2 items-end gap-4">
+            {/* items-end: in a half-width card (P5) a wrapped label keeps the inputs level.
+                The source hints sit in their own row (self-start), so a long hint
+                under one input cannot push the other input out of line. */}
+            <div className="grid grid-cols-2 items-end gap-x-4 gap-y-1">
               <div>
                 <Field label="Confidence Threshold (0-100)" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
                   {id => (
@@ -572,14 +591,29 @@ export default function AIConfigPage() {
               <div>
                 <Field label="Timeout (seconds)" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
                   {id => (
-                    <input id={id} type="number" min="30" max="1800" value={form.ai_timeout_seconds ?? 300} disabled={!isAdmin}
+                    <input id={id} type="number" min={String(TIMEOUT_MIN_SECONDS)} max="1800" value={form.ai_timeout_seconds ?? 300} disabled={!isAdmin}
                       onChange={e => upd('ai_timeout_seconds', parseInt(e.target.value))}
                       className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
                   )}
                 </Field>
               </div>
+              <div className="self-start">
+                <ConfigSourceHint
+                  configKey="ai_confidence_threshold"
+                  source={config.ai_confidence_threshold_source}
+                  note={THRESHOLD_NOTE}
+                />
+              </div>
+              <div className="self-start">
+                <ConfigSourceHint
+                  configKey="ai_timeout_seconds"
+                  source={config.ai_timeout_seconds_source}
+                  note={TIMEOUT_NOTE}
+                  testId="timeout-hint"
+                />
+              </div>
             </div>
-            <div className="flex flex-wrap gap-6">
+            <div className="flex flex-wrap items-start gap-6">
               {/* AI_OFFLINE_MODE in the environment is a hard ceiling on outbound
                   LLM egress: this toggle can tighten it, never loosen it. When the
                   env pins it on, the control is disabled and says why — silently
@@ -601,18 +635,32 @@ export default function AIConfigPage() {
                   </span>
                 )}
               </label>
-              <label className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)] cursor-pointer">
-                <input type="checkbox" checked={form.deep_investigation_enabled ?? true} disabled={!isAdmin}
-                  onChange={e => upd('deep_investigation_enabled', e.target.checked)}
-                  className="rounded bg-[var(--color-bg-secondary)] border-[var(--color-border-light)]" />
-                Deep Investigation
-              </label>
-              <label className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)] cursor-pointer">
-                <input type="checkbox" checked={form.finetune_enabled ?? false} disabled={!isAdmin}
-                  onChange={e => upd('finetune_enabled', e.target.checked)}
-                  className="rounded bg-[var(--color-bg-secondary)] border-[var(--color-border-light)]" />
-                Fine-Tuning Pipeline
-              </label>
+              <div className="max-w-xs">
+                <label className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)] cursor-pointer">
+                  <input type="checkbox" checked={form.deep_investigation_enabled ?? true} disabled={!isAdmin}
+                    onChange={e => upd('deep_investigation_enabled', e.target.checked)}
+                    className="rounded bg-[var(--color-bg-secondary)] border-[var(--color-border-light)]" />
+                  Deep Investigation
+                </label>
+                <ConfigSourceHint
+                  configKey="deep_investigation_enabled"
+                  source={config.deep_investigation_enabled_source}
+                  note={DEEP_TOGGLE_NOTE}
+                />
+              </div>
+              <div className="max-w-xs">
+                <label className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)] cursor-pointer">
+                  <input type="checkbox" checked={form.finetune_enabled ?? false} disabled={!isAdmin}
+                    onChange={e => upd('finetune_enabled', e.target.checked)}
+                    className="rounded bg-[var(--color-bg-secondary)] border-[var(--color-border-light)]" />
+                  Fine-Tuning Pipeline
+                </label>
+                <ConfigSourceHint
+                  configKey="finetune_enabled"
+                  source={config.finetune_enabled_source}
+                  note={FINETUNE_TOGGLE_NOTE}
+                />
+              </div>
             </div>
             {offlinePinned && (
               <p

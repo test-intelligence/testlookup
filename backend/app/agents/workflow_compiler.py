@@ -232,24 +232,46 @@ def _condition_errors(
     return errors, 1
 
 
+def count_triageable_analyses(analyses: Any, threshold: float) -> int:
+    """Analyses with ``confidence_score >= threshold`` that are not flaky.
+
+    The one predicate behind the summary->triage branch: the compiled router
+    (``triageable_analysis_count``) and the route decision ``summary_node``
+    records (W04 AIC-03) both call it, so the trail states the reason the
+    router acted on.
+    """
+    if not isinstance(analyses, Mapping):
+        return 0
+    return sum(
+        1
+        for analysis in analyses.values()
+        if isinstance(analysis, Mapping)
+        and isinstance(analysis.get("confidence_score", 0), (int, float))
+        and analysis.get("confidence_score", 0) >= threshold
+        and not analysis.get("is_flaky", False)
+    )
+
+
+def _frozen_confidence_threshold(state: Mapping[str, Any]) -> int | None:
+    """The Settings > AI threshold the pipeline froze at start, if it carries one."""
+    value = state.get("confidence_threshold")
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if 0 <= value <= 100 else None
+
+
 def _project_state(state: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
     projected = {name: state.get(name) for name in _STATE_FIELDS}
     analyses = state.get("analyses")
-    threshold_found, threshold = _value_at(config, "thresholds.confidence_min")
-    if not threshold_found or not isinstance(threshold, (int, float)) or isinstance(threshold, bool):
-        threshold = 0.7
-    projected["triageable_analysis_count"] = (
-        sum(
-            1
-            for analysis in analyses.values()
-            if isinstance(analysis, Mapping)
-            and isinstance(analysis.get("confidence_score", 0), (int, float))
-            and analysis.get("confidence_score", 0) >= threshold
-            and not analysis.get("is_flaky", False)
-        )
-        if isinstance(analyses, Mapping)
-        else 0
-    )
+    # W04 AIC-03: a pipeline that froze the Settings > AI threshold routes on
+    # it. The step's own ``thresholds.confidence_min`` (a leaked agent default)
+    # only applies to states without one (custom fixtures, unit harnesses).
+    threshold: Any = _frozen_confidence_threshold(state)
+    if threshold is None:
+        threshold_found, threshold = _value_at(config, "thresholds.confidence_min")
+        if not threshold_found or not isinstance(threshold, (int, float)) or isinstance(threshold, bool):
+            threshold = 0.7
+    projected["triageable_analysis_count"] = count_triageable_analyses(analyses, threshold)
     review = state.get("review_verdict")
     if isinstance(review, Mapping):
         projected["review_verdict"] = review.get("verdict")
@@ -737,5 +759,5 @@ def compile_workflow(
 
 __all__ = [
     "CompiledWorkflow", "END_STEP", "WorkflowCompileError", "WorkflowValidation",
-    "compile_workflow", "evaluate_condition", "validate_workflow",
+    "compile_workflow", "count_triageable_analyses", "evaluate_condition", "validate_workflow",
 ]

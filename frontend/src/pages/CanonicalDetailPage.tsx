@@ -9,10 +9,13 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import PromotionAction from '@/components/testManagement/PromotionAction'
 import TransitionReasonDialog from '@/components/testManagement/TransitionReasonDialog'
 import TestHistoryTimeline from '@/components/suites/TestHistoryTimeline'
+import { AICategoryChip, AIConfidence } from '@/components/ai/AICategoryChip'
+import { engineText } from '@/components/ai/aiTestHistory.model'
 import { refreshSuites, useCanonicalCase, useCanonicalRuns, useSuite } from '@/hooks/useSuites'
 import { usePermissions } from '@/hooks/usePermissions'
 import { suitesService } from '@/services/suitesService'
 import { formatDateTime, formatDuration, fromNow } from '@/utils/formatters'
+import type { CanonicalRunAI } from '@/types/aiTestHistory'
 
 // Status pill color map — mirrors the one in SuiteCasesPage so the two views
 // render the same canonical lifecycle states identically. Keep in sync if
@@ -61,6 +64,36 @@ function RunStatusPill({ status }: { status: string }) {
     >
       {status || 'unknown'}
     </span>
+  )
+}
+
+/**
+ * W03 AIH-05: that run's AI category for this test (chip + confidence; the
+ * title names the engine and model). "—" when the run's result has no AI
+ * analysis (a passed run) or lies beyond the newest rows the server looked up.
+ * The category and model are untrusted text: rendered as React text.
+ */
+function AICell({ ai }: { ai: CanonicalRunAI | null | undefined }) {
+  if (!ai) {
+    return (
+      <td data-canonical-ai="" className="px-4 py-2 text-[var(--color-text-muted)]">
+        —
+      </td>
+    )
+  }
+  const title = [
+    engineText(ai.analysis_mode, ai.model),
+    ai.requires_human_review ? 'needs human review' : null,
+  ]
+    .filter(Boolean)
+    .join(' - ')
+  return (
+    <td data-canonical-ai={ai.category ?? 'uncategorized'} className="px-4 py-2" title={title}>
+      <span className="inline-flex items-center gap-1.5 text-xs">
+        <AICategoryChip category={ai.category} />
+        <AIConfidence confidence={ai.confidence} />
+      </span>
+    </td>
   )
 }
 
@@ -246,6 +279,7 @@ export default function CanonicalDetailPage() {
                   <th className="px-4 py-2 font-medium">Status</th>
                   <th className="px-4 py-2 font-medium">Run</th>
                   <th className="px-4 py-2 font-medium">Duration</th>
+                  <th className="px-4 py-2 font-medium">AI category</th>
                   <th className="px-4 py-2 font-medium">Suite</th>
                   <th className="px-4 py-2 font-medium">When</th>
                 </tr>
@@ -277,6 +311,7 @@ export default function CanonicalDetailPage() {
                       <td className="px-4 py-2 text-[var(--color-text-muted)]">
                         {formatDuration(r.duration_ms)}
                       </td>
+                      <AICell ai={r.ai} />
                       <td className="px-4 py-2 text-[var(--color-text-muted)]">
                         {r.suite_name ?? '—'}
                       </td>
@@ -292,6 +327,11 @@ export default function CanonicalDetailPage() {
               </tbody>
             </table>
           </div>
+        )}
+        {runHistory?.ai_truncated && runs.length > 0 && (
+          <p data-canonical-ai-truncated="" className="mt-2 text-xs text-[var(--color-text-muted)]">
+            AI category is shown for the newest 2,000 runs only; older runs read “—”.
+          </p>
         )}
       </section>
 

@@ -6,12 +6,27 @@ Beat schedule (auto-configured in celery_app.py):
   check_finetune_trigger  — daily (03:00 UTC)  checks if enough new examples
 
 Manual triggers available via POST /api/v1/training/export and /finetune.
+
+AIC-01: the fine-tuning tasks obey the Settings > AI "Fine-Tuning Pipeline"
+checkbox (``finetune_enabled``, stored over env ``FINETUNE_ENABLED`` in both
+directions), not the environment alone. ``export_training_data`` itself stays
+ungated: it is the operator path that collects verified examples, and it only
+QUEUES fine-tuning through ``_maybe_trigger_finetune``, which is gated.
 """
 import logging
 
 from app.worker.celery_app import celery_app
 
 logger = logging.getLogger("training.tasks")
+
+
+async def _finetune_enabled() -> bool:
+    """The EFFECTIVE fine-tuning switch (Settings > AI over env), read fresh so a
+    task never acts on a toggle flipped within the resolver's 60 s cache."""
+    from app.services.ai_config_resolver import get_effective_ai_config
+
+    cfg = await get_effective_ai_config(fresh=True)
+    return bool(cfg.get("finetune_enabled"))
 
 
 def _run_async(coro):
@@ -85,10 +100,11 @@ def run_finetune_pipeline(self, track: str):
       5. Promote if evaluation passes, retire old version
       6. Persist ModelVersion record
     """
-    from app.core.config import settings
-
-    if not settings.FINETUNE_ENABLED:
-        logger.info("[Task %s] FINETUNE_ENABLED=false — skipping track=%s", self.request.id, track)
+    if not _run_async(_finetune_enabled()):
+        logger.info(
+            "[Task %s] fine-tuning is off (Settings > AI / FINETUNE_ENABLED) — skipping track=%s",
+            self.request.id, track,
+        )
         return {"skipped": True, "reason": "finetune_disabled"}
 
     logger.info("[Task %s] Fine-tuning pipeline started: track=%s", self.request.id, track)
@@ -107,7 +123,7 @@ async def _maybe_trigger_finetune(export_counts: dict[str, int]) -> None:
     """Trigger fine-tuning for tracks that crossed their minimum threshold."""
     from app.core.config import settings
 
-    if not settings.FINETUNE_ENABLED:
+    if not await _finetune_enabled():
         return
 
     thresholds = {
@@ -131,7 +147,7 @@ async def _check_incremental_trigger() -> None:
     from app.db.postgres import AsyncSessionLocal
     from app.models.postgres import AIFeedback
 
-    if not settings.FINETUNE_ENABLED:
+    if not await _finetune_enabled():
         return
 
     async with AsyncSessionLocal() as db:

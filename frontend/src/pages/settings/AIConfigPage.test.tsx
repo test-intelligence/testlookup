@@ -23,7 +23,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SWRConfig } from 'swr'
 
-import type { AIConfigRead, AIModelStatusRead } from '@/services/appSettingsService'
+import type { AIConfigRead, AIModelStatusRead, MLStatusRead } from '@/services/appSettingsService'
 import { helpTopicParam } from '@/components/help/helpTopics'
 
 // ── mocks ───────────────────────────────────────────────────────────────────
@@ -31,12 +31,16 @@ import { helpTopicParam } from '@/components/help/helpTopics'
 const mockGetAIConfig = vi.fn()
 const mockUpdateAIConfig = vi.fn()
 const mockGetModelStatus = vi.fn()
+const mockGetMLStatus = vi.fn()
+const mockRetrainML = vi.fn()
 
 vi.mock('@/services/appSettingsService', () => ({
   appSettingsService: {
     getAIConfig: () => mockGetAIConfig(),
     updateAIConfig: (p: unknown) => mockUpdateAIConfig(p),
     getAIModelStatus: () => mockGetModelStatus(),
+    getMLStatus: () => mockGetMLStatus(),
+    retrainML: () => mockRetrainML(),
   },
 }))
 
@@ -75,14 +79,20 @@ function baseConfig(overrides: Partial<AIConfigRead> = {}): AIConfigRead {
     embedding_provider: 'ollama',
     embedding_model: 'nomic-embed-text',
     ai_confidence_threshold: 80,
+    ai_confidence_threshold_source: 'env_default',
     ai_timeout_seconds: 300,
+    ai_timeout_seconds_source: 'env_default',
     deep_investigation_enabled: true,
+    deep_investigation_enabled_source: 'env_default',
     finetune_enabled: false,
+    finetune_enabled_source: 'env_default',
     openai_key_set: false,
     google_key_set: false,
-  anthropic_key_set: false,
-  openrouter_key_set: false,
+    anthropic_key_set: false,
+    openrouter_key_set: false,
     analysis_mode: 'auto',
+    analysis_mode_source: 'env_default',
+    ml_min_training_samples: 200,
     ml_model_available: false,
     ml_model_accuracy: null,
     ml_training_sample_count: 12,
@@ -94,6 +104,29 @@ function baseConfig(overrides: Partial<AIConfigRead> = {}): AIConfigRead {
     rag_faithfulness_evaluator_effective: 'ollama',
     rag_faithfulness_evaluator_reason: 'configured',
     rag_faithfulness_gate_enabled: false,
+    ...overrides,
+  }
+}
+
+function mlStatus(overrides: Partial<MLStatusRead> = {}): MLStatusRead {
+  return {
+    model_available: false,
+    version: null,
+    accuracy: null,
+    trained_at: null,
+    model_sample_count: null,
+    available_samples: 142,
+    min_training_samples: 200,
+    human_labels: 12,
+    human_label_floor: 50,
+    maturity: 'not_trained',
+    deps_installed: true,
+    retrain_enabled: true,
+    can_train: false,
+    cannot_train_reason: 'insufficient_samples',
+    cannot_train_message: 'Need 200 labelled samples, have 142.',
+    training: { state: 'idle', task_id: null, queued_at: null, started_at: null, triggered_by: null },
+    last_run: null,
     ...overrides,
   }
 }
@@ -193,6 +226,7 @@ describe('AIConfigPage — live model status', () => {
     mockGetAIConfig.mockResolvedValue(baseConfig())
     mockUpdateAIConfig.mockResolvedValue(baseConfig())
     mockGetModelStatus.mockResolvedValue(healthyStatus())
+    mockGetMLStatus.mockResolvedValue(mlStatus())
   })
 
   it('renders every tier of the live chain with its availability and reason', async () => {
@@ -385,6 +419,7 @@ describe('AIConfigPage — layout', () => {
     vi.clearAllMocks()
     mockGetAIConfig.mockResolvedValue(baseConfig())
     mockGetModelStatus.mockResolvedValue(healthyStatus())
+    mockGetMLStatus.mockResolvedValue(mlStatus())
   })
 
   it('renders the compact header with the route help topic', async () => {
@@ -444,6 +479,7 @@ describe('AIConfigPage — offline mode pinned by the environment', () => {
     vi.clearAllMocks()
     mockUpdateAIConfig.mockResolvedValue(baseConfig())
     mockGetModelStatus.mockResolvedValue(healthyStatus())
+    mockGetMLStatus.mockResolvedValue(mlStatus())
   })
 
   it('disables the toggle and names the env var + remedy when env-pinned', async () => {
@@ -512,6 +548,7 @@ describe('AIConfigPage — faithfulness evaluator', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockGetModelStatus.mockResolvedValue(healthyStatus())
+    mockGetMLStatus.mockResolvedValue(mlStatus())
   })
 
   it('offers no choice while the gate flag is off, and says where to turn it on', async () => {
@@ -628,5 +665,128 @@ describe('AIConfigPage — faithfulness evaluator', () => {
     const note = await screen.findByTestId('faithfulness-evaluator-note')
     expect(note).toHaveTextContent(/ragas package is not installed/)
     expect(screen.getByTestId('faithfulness-evaluator-in-use')).toHaveTextContent('In use: Single-prompt judge')
+  })
+})
+
+/**
+ * W04 AIC-01/02/04/05: the runtime now obeys what this page stores. Each value
+ * says where it comes from ("Set here" / "Server default") and when it applies;
+ * the Timeout floor is 5 s; the ML card replaces the hard-coded "/ 200" banner.
+ */
+describe('AIConfigPage — config sources, the timeout floor and the ML card (W04)', () => {
+  function hint(key: string): HTMLElement {
+    const el = document.querySelector(`[data-config-source-key="${key}"]`)
+    if (!el) throw new Error(`no source hint for ${key}`)
+    return el as HTMLElement
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockGetAIConfig.mockResolvedValue(baseConfig())
+    mockUpdateAIConfig.mockResolvedValue(baseConfig())
+    mockGetModelStatus.mockResolvedValue(healthyStatus())
+    mockGetMLStatus.mockResolvedValue(mlStatus())
+  })
+
+  it('says "Server default" with when each value applies, while nothing is stored', async () => {
+    await renderPage()
+    await screen.findByText('Deep Investigation')
+
+    expect(hint('deep_investigation_enabled')).toHaveTextContent('Server default · Applies within a minute.')
+    expect(hint('finetune_enabled')).toHaveTextContent(
+      'Server default · Applies within a minute. Switches the export-triggered tasks only; training itself needs a GPU or a hosted provider.',
+    )
+    expect(hint('ai_confidence_threshold')).toHaveTextContent('Server default · Applies to new pipelines.')
+    expect(hint('analysis_mode')).toHaveTextContent(/^Server default$/)
+    expect(screen.getByTestId('timeout-hint')).toHaveTextContent(
+      'Server default · Applies to every LLM call; an agent may set a lower limit. Applies to new pipelines; a running pipeline keeps its value.',
+    )
+    expect(screen.getByTestId('timeout-hint')).toHaveAttribute('data-config-source-key', 'ai_timeout_seconds')
+    for (const key of ['deep_investigation_enabled', 'finetune_enabled', 'ai_confidence_threshold', 'ai_timeout_seconds', 'analysis_mode']) {
+      expect(hint(key)).toHaveAttribute('data-source', 'env_default')
+    }
+  })
+
+  it('says "Set here" for each value the API reports as stored', async () => {
+    mockGetAIConfig.mockResolvedValue(baseConfig({
+      deep_investigation_enabled_source: 'ai_config',
+      finetune_enabled_source: 'ai_config',
+      ai_confidence_threshold_source: 'ai_config',
+      ai_timeout_seconds_source: 'ai_config',
+      analysis_mode_source: 'ai_config',
+    }))
+    await renderPage()
+    await screen.findByText('Deep Investigation')
+
+    for (const key of ['deep_investigation_enabled', 'finetune_enabled', 'ai_confidence_threshold', 'ai_timeout_seconds', 'analysis_mode']) {
+      expect(hint(key)).toHaveTextContent(/^Set here/)
+      expect(hint(key)).toHaveAttribute('data-source', 'ai_config')
+    }
+  })
+
+  it('accepts a 5 s timeout (the floor was 30)', async () => {
+    await renderPage()
+    const timeout = (await screen.findByLabelText('Timeout (seconds)')) as HTMLInputElement
+    expect(timeout).toHaveAttribute('min', '5')
+    expect(timeout).toHaveAttribute('max', '1800')
+
+    fireEvent.change(timeout, { target: { value: '5' } })
+    fireEvent.click(screen.getByText('Save Configuration'))
+    await waitFor(() => expect(mockUpdateAIConfig).toHaveBeenCalledTimes(1))
+    expect(mockUpdateAIConfig.mock.calls[0][0]).toMatchObject({ ai_timeout_seconds: 5 })
+  })
+
+  it('unticking Deep Investigation saves false, and the hint then reads "Set here"', async () => {
+    mockUpdateAIConfig.mockResolvedValue(baseConfig({
+      deep_investigation_enabled: false,
+      deep_investigation_enabled_source: 'ai_config',
+    }))
+    await renderPage()
+    const deep = (await screen.findByLabelText('Deep Investigation')) as HTMLInputElement
+    expect(deep).toBeChecked()
+    expect(hint('deep_investigation_enabled')).toHaveTextContent(/^Server default/)
+
+    fireEvent.click(deep)
+    fireEvent.click(screen.getByText('Save Configuration'))
+
+    await waitFor(() => expect(mockUpdateAIConfig).toHaveBeenCalledTimes(1))
+    expect(mockUpdateAIConfig.mock.calls[0][0]).toMatchObject({ deep_investigation_enabled: false })
+    await waitFor(() => expect(hint('deep_investigation_enabled')).toHaveTextContent('Set here · Applies within a minute.'))
+    // The ML card is re-read with the rest of the page's caches.
+    await waitFor(() => expect(mockGetMLStatus).toHaveBeenCalledTimes(2))
+  })
+
+  it('mounts the ML card under the mode radios, replacing the hard-coded "/ 200" banner', async () => {
+    mockGetAIConfig.mockResolvedValue(baseConfig({ analysis_mode: 'ml' }))
+    const { container } = await renderPage()
+    const card = await waitFor(() => {
+      const el = container.querySelector('[data-ml-training-card]')
+      if (!el?.querySelector('[data-ml-samples]')) throw new Error('card not ready')
+      return el as HTMLElement
+    })
+    expect(card.querySelector('[data-ml-samples]')).toHaveTextContent(
+      'Samples 142 / 200 · human labels 12 · no model yet',
+    )
+    // Inside the Analysis Engine card, after the radios and the mode's source hint.
+    const engine = screen.getByText('Analysis Engine').closest('.card') as HTMLElement
+    expect(engine.contains(card)).toBe(true)
+    const radios = engine.querySelectorAll('input[name="analysis_mode"]')
+    expect(radios[radios.length - 1].compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.queryByText(/ML model not yet trained/)).not.toBeInTheDocument()
+    expect(container.textContent).not.toMatch(/\/ 200 labeled samples/)
+  })
+
+  it('the ML radio badge follows the card once a model is trained', async () => {
+    // GET /settings/ai was read before Train now; the card's live status is newer.
+    mockGetAIConfig.mockResolvedValue(baseConfig({ ml_model_available: false }))
+    mockGetMLStatus.mockResolvedValue(mlStatus({
+      model_available: true, version: '20261014_031000', accuracy: 0.84,
+      trained_at: new Date().toISOString(), model_sample_count: 642, maturity: 'human_calibrated',
+      available_samples: 642, human_labels: 57, can_train: true, cannot_train_reason: null, cannot_train_message: null,
+    }))
+    await renderPage()
+
+    await waitFor(() => expect(screen.getByText('Ready (84% accuracy)')).toBeInTheDocument())
+    expect(screen.queryByText('Not Trained')).not.toBeInTheDocument()
   })
 })

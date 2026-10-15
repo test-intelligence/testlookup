@@ -97,7 +97,7 @@ ANALYSES = {
 }
 
 
-def _generate(llm, monkeypatch):
+def _generate(llm, monkeypatch, **kwargs):
     agent = SummaryAgent()
     monkeypatch.setattr(
         "app.agents.summary_agent.get_llm", lambda: _async_return(llm)
@@ -107,6 +107,7 @@ def _generate(llm, monkeypatch):
         anomaly_summary="4 tests failed",
         anomalies=[],
         analyses=ANALYSES,
+        **kwargs,
     )
 
 
@@ -144,9 +145,10 @@ def test_a_total_timeout_also_reaches_the_fallback(monkeypatch):
     """A timeout is not proof the model is unusable, so the later layers still
     get their turn — but if none of them produced anything, four blank layers
     must not be what ships."""
-    monkeypatch.setattr("app.agents.summary_agent._LAYER_TIMEOUT_SECONDS", 0.05)
+    # AIC-02: the layer timeout is computed per run and threaded to every
+    # layer call (no module constant to patch).
     llm = _HangingLLM()
-    _agent, coro = _generate(llm, monkeypatch)
+    _agent, coro = _generate(llm, monkeypatch, layer_timeout=0.05)
     with pytest.raises(SummaryLLMUnavailable):
         asyncio.run(coro)
     # All four were attempted — a timeout earns the benefit of the doubt.

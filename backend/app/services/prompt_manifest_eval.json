@@ -1,8 +1,8 @@
 {
-  "attested_at": "2026-10-10T03:25:49.562881+00:00",
-  "change_id": "ask-ai-chat-model-and-bug-hunt-2026-10-10",
+  "attested_at": "2026-10-15T03:50:12.825059+00:00",
+  "change_id": "w04-ai-config-2026-10-15",
   "eval_gate_run_id": null,
-  "eval_manifest_checksum": "4e0e5280d8ba1a1ddff2be3be592fb14bee9254d1592fe4d4ab944d3f3ce68ee",
+  "eval_manifest_checksum": "83ec026669f21dba1c544a2e0a40cd320a05c1f8e342c474086b87840cf88484",
   "gate_results": [
     {
       "agent_name": "AnalysisAgent",
@@ -116,7 +116,7 @@
   ],
   "manifest_digest": "e68421b16d89349953083fcd2916273023539a247cab982f43a4c1435eacf268",
   "mode": "source_review",
-  "notes": "chat_system v4: one rule added -- earlier answers were written from lookups made at the time, which are not replayed; treat their facts as read and do not retract one unless current data contradicts it. Measured on the homelab (anthropic/claude-haiku-5.5, 2026-10-10): turn 1 cited a real analysis dated 2026-08-25 (from that turn's recall lookup); turn 2, no longer seeing it, retracted it as 'not supported'. Live multi-turn validation in the browser after deploy, every claim checked against Postgres. Gate results carried from the previous attestation (the offline golden sets do not exercise chat_system).",
+  "notes": "W04 AIC-02: BudgetedLLM applies the configured AI timeout (llm_factory.py); no prompt text changed",
   "prompt_versions": {
     "anomaly_narrative": "v1:0298a3b5009f",
     "chat_compression": "v1:68e08a32dff5",
@@ -153,7 +153,7 @@
   "watched_sources": {
     "backend/app/agents/reviewer_agent.py": "9a68e8508d3fbd78620bf1f290482438618bc66676a21fc31bae797ab222bf47",
     "backend/app/services/agent_capability_registry.py": "cd7574054793b43c875b2210535005fe93eaf662fd2deb40b165dbd724922438",
-    "backend/app/services/llm_factory.py": "db163d1a291f196394ab41b07bd713dcc0effc153cdbe363db82d24df80fe96a",
+    "backend/app/services/llm_factory.py": "a79c509631f9a100a520bfe890acacb8527b9fba811b33a57b66e41e506f5bfe",
     "backend/app/services/model_router.py": "65048cdf67c973ca7413acf0c7e4be61282476d657d9c3ce38036911ba8ac87d"
   }
 }

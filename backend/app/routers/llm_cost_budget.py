@@ -17,6 +17,7 @@ Three user-facing surfaces:
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -148,7 +149,9 @@ async def billing_overview(
     every project row already has its cost, cap, utilization, and status
     computed so the frontend is a pure table.
     """
-    period_start, period_end = cost_service.current_period_bounds()
+    # One instant for every row, so the projections agree with each other.
+    now = datetime.now(timezone.utc)
+    period_start, period_end = cost_service.current_period_bounds(now)
 
     accessible = await get_accessible_project_ids(db, current_user)
     project_filter = None
@@ -176,7 +179,7 @@ async def billing_overview(
     total_cost = 0.0
     total_calls = 0
     for project in projects:
-        usage = await cost_service.get_current_usage(db, project.id)
+        usage = await cost_service.get_current_usage(db, project.id, now=now)
         total_cost += float(usage["total_cost_usd"])
         total_calls += int(usage["total_llm_calls"])
         rows.append(
@@ -188,6 +191,10 @@ async def billing_overview(
                 utilization_pct=usage.get("utilization_pct"),
                 status=str(usage.get("status") or "UNLIMITED"),
                 cap_hits=int(usage.get("cap_hits") or 0),
+                # AIC-06: the model is hand-built, so each figure is mapped
+                # here or it never reaches the page.
+                included_usd=usage.get("included_usd"),
+                **{key: usage.get(key) for key in cost_service.OVERAGE_FIELDS},
             )
         )
 
