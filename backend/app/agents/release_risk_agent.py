@@ -45,6 +45,7 @@ from app.core.config import settings
 from app.db.postgres import AsyncSessionLocal
 from app.models.agent_contracts import ReleaseRiskAgentOutput, validate_agent_contract
 from app.models.postgres import Defect, ReleaseDecision
+from app.services.defect_status import ACTIVE_STATUSES
 from app.services.criticality_service import (
     SCORE_MODEL_VERSION,
     compute_composite,
@@ -610,7 +611,8 @@ class ReleaseRiskAgent(BaseAgent):
         result = await db.execute(
             select(sa_func.count(Defect.id))
             .where(Defect.project_id == uuid.UUID(str(project_id)))
-            .where(Defect.resolution_status == "OPEN")
+            # Live = OPEN or IN_PROGRESS (W06 DEF-01).
+            .where(Defect.resolution_status.in_(ACTIVE_STATUSES))
         )
         return int(result.scalar() or 0)
 

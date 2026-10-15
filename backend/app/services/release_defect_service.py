@@ -29,19 +29,23 @@ passed by failing to fill in a field.
 from __future__ import annotations
 
 import uuid
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.release_filter import is_unattributed
 from app.models.postgres import Defect
+from app.services.defect_status import ACTIVE_STATUSES
 
 #: Severities that block on their own.
 BLOCKING_SEVERITIES = ("CRITICAL", "HIGH")
 
-#: Statuses that mean the defect is still live. Anything else — RESOLVED,
-#: CLOSED, WONTFIX — has been dealt with, whatever the outcome.
-OPEN_STATUS = "OPEN"
+#: Statuses that mean the defect is still live: OPEN and IN_PROGRESS (W06
+#: DEF-01). An in-progress defect is not fixed, so it blocks exactly like an
+#: open one. Anything else — RESOLVED, INVALID, the legacy CLOSED — has been
+#: dealt with, whatever the outcome. The vocabulary is ``defect_status``'s.
+OPEN_STATUSES = ACTIVE_STATUSES
 
 
 async def blocking_defects(
@@ -62,7 +66,7 @@ async def blocking_defects(
     """
     stmt = select(Defect).where(
         Defect.project_id == project_id,
-        Defect.resolution_status == OPEN_STATUS,
+        Defect.resolution_status.in_(OPEN_STATUSES),
         or_(
             # Either it asserts SOME impact — the exact release is checked in
             # Python below — or it was found here. Narrowing to these two cases
@@ -83,13 +87,80 @@ async def blocking_defects(
 def _affects(defect: Defect, release_id: uuid.UUID | str) -> bool:
     """Whether this defect blocks the given release.
 
-    Asserted impact wins when present. Otherwise it falls back to where the
-    defect was found — an untriaged defect is not a harmless one.
+    Asserted impact wins when present (a NON-EMPTY list). Otherwise it falls
+    back to where the defect was found — an untriaged defect is not a harmless
+    one. Ids compare case-insensitively on both sides, exactly as
+    :func:`affects_release_sql` does, so a legacy upper-case id counts in the
+    gate AND on the Defects page, never in only one of them.
     """
+    wanted = str(release_id).lower()
     asserted = defect.affects_releases
-    if asserted:
-        return str(release_id) in {str(r) for r in asserted}
-    return str(defect.release_id) == str(release_id)
+    if isinstance(asserted, list) and asserted:
+        return wanted in {str(r).lower() for r in asserted}
+    if defect.release_id is None:
+        return False
+    return str(defect.release_id).lower() == wanted
+
+
+#: "Asserted" in SQL: a non-empty JSON array. ``json_typeof`` of SQL NULL is
+#: NULL, so a SQL-NULL column, the JSON ``null`` scalar (what SQLAlchemy's JSON
+#: type stores for Python ``None``) and ``[]`` all count as NOT asserted, exactly
+#: as :func:`_affects` reads them.
+def asserted_impact_sql(alias: str) -> str:
+    column = f"{alias}.affects_releases"
+    # A CASE, not ``json_typeof(...) = 'array' AND json_array_length(...) > 0``:
+    # SQL does not promise to evaluate an AND left to right, and
+    # ``json_array_length`` raises on a scalar (the JSON ``null`` every
+    # hand-filed defect stores).
+    return f"(CASE WHEN json_typeof({column}) = 'array' THEN json_array_length({column}) > 0 ELSE false END)"
+
+
+def affects_release_sql(params: dict, release_ids: Sequence[str], *, alias: str = "d") -> str:
+    """``AND`` the defect affects one of ``release_ids`` by the release gate's rule; ``""`` for no ids.
+
+    The SQL twin of :func:`_affects` (asserted impact, else where it was found),
+    bound to it by a parity test on PostgreSQL. Ids are compared lower-cased on
+    both sides. The ``unattributed`` sentinel means "asserted nothing AND found
+    in no release"; ids plus the sentinel are the union. Each id is its own
+    bind (``:affects_rid_<n>``), so the fragment needs no expanding parameter
+    and runs under a plain ``text()``.
+
+    PostgreSQL-only (``json_typeof`` / ``json_array_elements_text``), like the
+    rest of the raw analytics SQL; the gate keeps its portable Python test.
+    """
+    if not alias.isidentifier():
+        raise ValueError(f"not a SQL alias: {alias!r}")
+    values = [release_ids] if isinstance(release_ids, (str, uuid.UUID)) else list(release_ids or ())
+    ids: dict[str, None] = {}
+    sentinel = False
+    for value in values:
+        text_value = str(value).strip()
+        if not text_value:
+            continue
+        if is_unattributed(text_value):
+            sentinel = True
+        else:
+            ids[text_value.lower()] = None
+    if not ids and not sentinel:
+        return ""
+    asserted = asserted_impact_sql(alias)
+    parts: list[str] = []
+    if ids:
+        names = []
+        for value in ids:
+            name = f"affects_rid_{len(names)}"
+            params[name] = value
+            names.append(f":{name}")
+        in_list = "(" + ", ".join(names) + ")"
+        parts.append(
+            f"CASE WHEN {asserted} "
+            f"THEN EXISTS (SELECT 1 FROM json_array_elements_text({alias}.affects_releases) AS a(rid) "
+            f"WHERE lower(a.rid) IN {in_list}) "
+            f"ELSE lower(CAST({alias}.release_id AS text)) IN {in_list} END"
+        )
+    if sentinel:
+        parts.append(f"(NOT {asserted} AND {alias}.release_id IS NULL)")
+    return "AND (" + " OR ".join(parts) + ")"
 
 
 def summarise_blocking(defects: list[Defect]) -> dict[str, Any]:

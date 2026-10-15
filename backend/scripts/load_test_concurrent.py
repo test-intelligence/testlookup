@@ -274,6 +274,14 @@ SCENARIOS: list[Scenario] = [
         "One suite's wall clock / summed time per run, 90 d",
         budget_p95_ms=_budget("execution_suite_history"),
     ),
+    # W06 DEF-04: the Defects page's KPI sparklines (budget in performance_budgets.py).
+    Scenario(
+        "defect_trend",
+        "GET",
+        lambda f: f"/api/v1/analytics/defects/trend?project_id={_first_project_id(f)}&days=90",
+        "Defect trend, 90 d: one generate_series statement + one totals statement over one project's defects",
+        budget_p95_ms=_budget("defect_trend"),
+    ),
     Scenario(
         "health_details",
         "GET",

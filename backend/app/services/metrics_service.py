@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 
 from app.models.postgres import Defect, Project, TestCase, TestRun
+from app.services.defect_status import ACTIVE_STATUSES
 from app.services.analytics_scope import (
     ReleaseArg,
     SuiteArg,
@@ -40,8 +41,10 @@ P0_DEFECT_SEVERITY = "CRITICAL"
 async def count_open_critical_defects(
     db: AsyncSession, project_id, release_id=None
 ) -> int:
-    """Count OPEN CRITICAL defects (the canonical severity behind a policy
-    "P0" hard cap) for a project. Centralised so every release-gate call site
+    """Count live (OPEN or IN_PROGRESS, ``ACTIVE_STATUSES``) CRITICAL defects
+    (the canonical severity behind a policy "P0" hard cap) for a project. An
+    in-progress P0 is not fixed, so it breaches the cap exactly like an open
+    one (W06 DEF-01). Centralised so every release-gate call site
     counts the same set — the prior inline ``severity == "P0"`` filters
     (metrics readiness + release-council synth/deep) each matched nothing or
     the wrong severity, silently defeating the ``max_p0_defects`` cap.
@@ -99,7 +102,7 @@ async def count_open_critical_defects(
     # The Unattributed bucket falls through on purpose: its runs belong to no
     # release, so the project's open P0s are the relevant set.
     conds = [
-        Defect.resolution_status == "OPEN",
+        Defect.resolution_status.in_(ACTIVE_STATUSES),
         Defect.severity == P0_DEFECT_SEVERITY,
         # Soft-deleted projects are excluded unconditionally. This feeds the
         # ``max_p0_defects`` hard cap, so without it a P0 on a project nobody
@@ -322,7 +325,8 @@ async def get_dashboard_summary(
     # caught: that test scans for functions summing ``test_runs`` columns, and
     # this counts the ``defects`` table.
     defect_conditions = [
-        Defect.resolution_status == "OPEN",
+        # Live = OPEN or IN_PROGRESS (W06 DEF-01): an in-progress defect is still active.
+        Defect.resolution_status.in_(ACTIVE_STATUSES),
         Defect.project_id.in_(select(Project.id).where(Project.is_active.is_(True))),
     ]
     if project_id:

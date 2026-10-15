@@ -1,4 +1,5 @@
 """Third-party integration endpoints (Jira, etc.)."""
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,6 +15,7 @@ from app.services.action_policy import (
     ActionStatus,
     check_jira_ticket_creation_policy,
 )
+from app.services.defect_status import ACTIVE_STATUSES
 from app.services.jira_client import create_jira_issue
 
 router = APIRouter(prefix="/api/v1/integrations", tags=["Integrations"])
@@ -57,8 +59,11 @@ async def create_jira_defect(
     )
     ai_analysis = ai_result.scalar_one_or_none()
 
+    # ``TestCase`` has no ``project_id`` (the comment above): reading
+    # ``tc.project_id`` raised AttributeError, a 500 before the pending defect
+    # the approval queue lists could be staged (W06 §0.34).
     policy_result = await check_jira_ticket_creation_policy(
-        project_id=str(tc.project_id),
+        project_id=str(owning_project_id),
         confidence_score=(
             ai_analysis.confidence_score if ai_analysis else None
         ),
@@ -71,6 +76,7 @@ async def create_jira_defect(
         defect = await _stage_pending_jira_defect(
             db=db,
             tc=tc,
+            project_id=owning_project_id,
             ai_analysis=ai_analysis,
             request=request,
             policy_result=policy_result,
@@ -112,18 +118,29 @@ async def _stage_pending_jira_defect(
     *,
     db: AsyncSession,
     tc: TestCase,
+    project_id: uuid.UUID,
     ai_analysis: AIAnalysis | None,
     request: JiraIssueRequest,
     policy_result: dict,
 ) -> Defect:
-    """Persist a local approval record before any direct Jira mutation."""
+    """Persist a local approval record before any direct Jira mutation.
+
+    ``project_id`` is the test case's owning project (``TestRun.project_id``),
+    resolved and authorised by the caller: ``TestCase`` carries none.
+    """
+    # The newest live (OPEN or IN_PROGRESS) defect of this test. Two legacy
+    # live rows must not raise MultipleResultsFound (the OPEN-only unique
+    # index does not cover IN_PROGRESS).
     existing_result = await db.execute(
-        select(Defect).where(
+        select(Defect)
+        .where(
             Defect.test_case_id == tc.id,
-            Defect.resolution_status == "OPEN",
+            Defect.resolution_status.in_(ACTIVE_STATUSES),
         )
+        .order_by(Defect.created_at.desc())
+        .limit(1)
     )
-    defect = existing_result.scalar_one_or_none()
+    defect = existing_result.scalars().first()
     policy_snapshot = _json_safe({
         **policy_result,
         "requested_project_key": request.project_key,
@@ -141,7 +158,7 @@ async def _stage_pending_jira_defect(
 
     defect = Defect(
         test_case_id=tc.id,
-        project_id=tc.project_id,
+        project_id=project_id,
         title=tc.test_name[:255],
         description=request.ai_summary,
         ai_confidence_score=ai_analysis.confidence_score if ai_analysis else None,

@@ -2582,6 +2582,94 @@ class DefectApprovalResponse(BaseModel):
     message: str
     jira_ticket: Optional[dict] = None
     jira_url: Optional[str] = None
+    # DEF-06 (approve only): what happened to the Jira ticket. Plain strings
+    # (the vocabulary is the approve path's, a drifted word must not 422):
+    # jira_status "filed" | "linked" | "not_filed" | "failed" | "unknown" | "not_requested";
+    # jira_reason (not_filed) "offline_mode" | "disabled" | "not_configured";
+    # jira_error (failed / unknown) the server's detail text.
+    jira_status: Optional[str] = None
+    jira_reason: Optional[str] = None
+    jira_error: Optional[str] = None
+
+
+# ── Defect triage (DEF-01) and the defect approval queue (DEF-06) ─────────
+# Enum-like fields are plain ``str``; the vocabularies live in ONE module
+# (``app.services.defect_status``) and requests are validated in the service
+# with one fixed 422 text each.
+
+class DefectPatchRequest(BaseModel):
+    """PATCH /api/v1/projects/{project_id}/defects/{defect_id}.
+
+    Only the fields SENT are applied (``model_fields_set``); ``null`` or ``""``
+    clears ``assignee_user_id``, ``owner_team`` and ``jira_key``. No field takes
+    a URL: a Jira link is built by the server from the configured domain, and
+    ``extra="forbid"`` makes a client-sent ``jira_url`` a 422, never stored.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    resolution_status: Optional[str] = Field(None, max_length=20)
+    assignee_user_id: Optional[str] = Field(None, max_length=64)
+    owner_team: Optional[str] = Field(None, max_length=255)
+    jira_key: Optional[str] = Field(None, max_length=50)
+    # Recorded in the activity-ledger row's context, never on the defect.
+    note: Optional[str] = Field(None, max_length=1000)
+
+
+class DefectJiraLinkResult(BaseModel):
+    """What linking a Jira key did. ``status``: "validated" | "saved_locally" | "unlinked"."""
+    status: str
+    # saved_locally: "offline_mode" | "disabled" | "not_configured"
+    reason: Optional[str] = None
+    jira_key: Optional[str] = None
+    # Server-built (``https://{domain}/browse/{KEY}``) or None.
+    jira_url: Optional[str] = None
+    # Jira's issue summary when validated: plain text, cut to 255 characters by
+    # the triage service (no max_length here: a long summary must not 500 a
+    # PATCH that has already committed).
+    summary: Optional[str] = None
+
+
+class DefectWriteBackResult(BaseModel):
+    """The Jira status write-back after a status change. ``status``: "sent" | "skipped" | "not_sent" | "failed"."""
+    status: str
+    # skipped: "already_in_status" | "no_transition"; not_sent: an availability
+    # reason; failed: "HTTP 4xx" | "<ExceptionClass>".
+    reason: Optional[str] = None
+
+
+class DefectPatchResponse(BaseModel):
+    """The PATCH answer: the defect's list row as the server now reads it (the
+    ``GET /analytics/defects`` row shape), so the page replaces its row."""
+    defect: Dict[str, Any]
+    changed_fields: List[str]
+    jira: Optional[DefectJiraLinkResult] = None
+    write_back: Optional[DefectWriteBackResult] = None
+
+
+class PendingDefectItem(BaseModel):
+    """One defect awaiting approval (GET /deep-investigate/defects/pending-review)."""
+    defect_id: str
+    project_id: str
+    title: Optional[str] = None
+    severity: Optional[str] = None
+    component: Optional[str] = None
+    owner_team: Optional[str] = None
+    created_at: Optional[str] = None
+    policy_reasons: List[str] = Field(default_factory=list)
+    # policy_evaluation["jira_project_key"] or ["requested_project_key"]
+    jira_project_key: Optional[str] = None
+    # policy_evaluation["source_run_id"] or ["requested_run_id"]
+    run_id: Optional[str] = None
+    cluster_id: Optional[str] = None
+    ai_confidence_score: Optional[int] = None
+
+
+class PendingDefectList(BaseModel):
+    """A page of the approval queue. ``total`` is a COUNT over the same scope, not ``len(items)``."""
+    items: List[PendingDefectItem]
+    total: int
+    page: int
+    page_size: int
 
 
 # ── One-click Jira defects (PMF US-6.1 / US-6.2 / US-6.3) ─────────────────

@@ -252,6 +252,11 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("defect.create_requested", "quality", "defect", "Defect ticket requested for {entity_label}"),
     _spec("defect.ticket_created", "quality", "defect", "Ticket {ticket_key} created for {entity_label}"),
     _spec("defect.commander_run", "quality", "run", "Defect Commander drafted a defect from a failure cluster in {entity_label}", "attempt"),
+    # DEF-01 triage (W06): a person changed the status, the assignee, the
+    # owner team, or removed the Jira link (``changed`` names each part, in
+    # labels and names, never user ids); a review rejection is a status change.
+    _spec("defect.updated", "quality", "defect", "Defect {entity_label} changed: {changed}"),
+    _spec("defect.ticket_linked", "quality", "defect", "Defect {entity_label} linked to Jira {ticket_key}"),
     _spec("flaky.detected", "quality", "test", "{entity_label} was detected as flaky"),
     _spec("test.newly_failing", "quality", "test", "{entity_label} started failing"),
     _spec("test.recovered", "quality", "test", "{entity_label} recovered"),

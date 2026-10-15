@@ -1588,6 +1588,14 @@ class Defect(Base):
             "signature_fingerprint",
             postgresql_where=text("signature_fingerprint IS NOT NULL"),
         ),
+        # "Defects assigned in this project" (migration 0213, DEF-01). Partial:
+        # most defects are unassigned.
+        Index(
+            "ix_defects_project_assignee",
+            "project_id",
+            "assignee_user_id",
+            postgresql_where=text("assignee_user_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -1611,6 +1619,13 @@ class Defect(Base):
     severity: Mapped[Optional[str]] = mapped_column(String(20))  # CRITICAL/HIGH/MEDIUM/LOW
     component: Mapped[Optional[str]] = mapped_column(String(255))
     owner_team: Mapped[Optional[str]] = mapped_column(String(255))
+    # The person working on it (migration 0213, DEF-01). Deleting the user
+    # leaves the defect unassigned. Set only through the triage PATCH, which
+    # applies the release-owner eligibility rule (active, not a service or
+    # synthetic account, ADMIN or a member of the project).
+    assignee_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     labels: Mapped[Optional[list]] = mapped_column(JSON)
     criticality_scores: Mapped[Optional[dict]] = mapped_column(JSON)
 

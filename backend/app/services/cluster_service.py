@@ -9,8 +9,9 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.postgres import Defect, FailureCluster
+from app.models.postgres import Defect, FailureCluster, TestRun
 from app.services.cluster_snapshot import is_current_snapshot
+from app.services.defect_status import ACTIVE_STATUSES
 
 logger = logging.getLogger("services.cluster")
 
@@ -25,6 +26,11 @@ async def check_duplicate(
     Returns a dict with cluster info and a list of potential duplicates
     ranked by word-overlap similarity.
 
+    Only the RUN's project's live defects (OPEN or IN_PROGRESS) are compared
+    (W06 §0.30): the candidates' titles, severities, components and Jira keys
+    are returned to the caller, who is authorised for this run only. The
+    unscoped query listed every project's open defects.
+
     Raises ValueError if the cluster is not found.
     """
     result = await db.execute(
@@ -38,13 +44,19 @@ async def check_duplicate(
     if not cluster:
         raise ValueError(f"Cluster {cluster_id} not found in run {run_id}")
 
-    defects_result = await db.execute(
-        select(Defect)
-        .where(Defect.resolution_status == "OPEN")
-        .order_by(Defect.created_at.desc())
-        .limit(100)
-    )
-    open_defects = defects_result.scalars().all()
+    run_project_id = (
+        await db.execute(select(TestRun.project_id).where(TestRun.id == run_id))
+    ).scalar_one_or_none()
+    open_defects: list[Defect] = []
+    if run_project_id is not None:
+        defects_result = await db.execute(
+            select(Defect)
+            .where(Defect.project_id == run_project_id)
+            .where(Defect.resolution_status.in_(ACTIVE_STATUSES))
+            .order_by(Defect.created_at.desc())
+            .limit(100)
+        )
+        open_defects = list(defects_result.scalars().all())
 
     cluster_label_lower = (cluster.label or "").lower()
     cluster_words = set(cluster_label_lower.split())

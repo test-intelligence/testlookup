@@ -699,9 +699,11 @@ async def _collect_investigations(
 
 async def _collect_defects(db: AsyncSession, project_id: uuid.UUID, cap: int) -> dict:
     from app.services.analytics_service import list_defects
+    from app.services.defect_status import ACTIVE_QUERY_VALUE
 
+    # Live = OPEN or IN_PROGRESS (W06 DEF-01): ``ACTIVE`` lists both.
     result = await list_defects(
-        db, str(project_id), resolution_status="OPEN", page=1, size=cap,
+        db, str(project_id), resolution_status=ACTIVE_QUERY_VALUE, page=1, size=cap,
     )
     return {"items": result.get("items") or [], "total": int(result.get("total") or 0)}
 

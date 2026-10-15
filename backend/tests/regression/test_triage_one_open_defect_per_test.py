@@ -87,7 +87,8 @@ async def test_the_same_test_failing_in_a_later_run_takes_a_recurrence_not_a_new
     assert "defects.last_recurrence_at IS NULL OR defects.last_recurrence_at <" in bumps[0]
     lookup = next(s for s in session.statements if s.startswith("SELECT defects.id, defects.test_case_id"))
     assert "defects.signature_fingerprint =" in lookup and "test_cases.test_fingerprint =" in lookup
-    assert "defects.resolution_status =" in lookup
+    # Live = OPEN or IN_PROGRESS (W06 DEF-01): the recurrence lookup admits both.
+    assert "defects.resolution_status IN" in lookup
     lock = session.statements.index(next(s for s in session.statements if "pg_advisory_xact_lock" in s))
     assert lock < session.statements.index(lookup), "the lookup must run under the per-test lock"
 
@@ -111,3 +112,35 @@ async def test_a_first_failure_opens_a_defect_that_records_the_test_fingerprint(
     insert = next(s for s in session.statements if s.startswith("INSERT INTO defects"))
     assert "signature_fingerprint" in insert
     assert result["action"] == "created"
+
+
+@pytest.mark.asyncio
+async def test_the_recurrence_attaches_to_an_in_progress_defect():
+    """W06 DEF-01: a test whose defect somebody moved to In progress keeps
+    failing. The recurrence must attach to THAT defect: an OPEN-only lookup
+    missed it, and the OPEN-only unique index then let a duplicate OPEN defect in."""
+    in_progress = SimpleNamespace(id=uuid.uuid4(), test_case_id=uuid.uuid4(), jira_ticket_id=None, jira_ticket_url=None)
+    session = _Session(recurring=in_progress)
+    statements: list = []
+    original = session.execute
+
+    async def recording(stmt, params=None):
+        statements.append(stmt)
+        return await original(stmt, params)
+
+    session.execute = recording
+    await _triage(session, str(uuid.uuid4()))
+
+    lookup = next(
+        stmt for stmt in statements
+        if hasattr(stmt, "compile") and _sql(stmt).startswith("SELECT defects.id, defects.test_case_id")
+    )
+    statuses = {
+        value
+        for key, bound in lookup.compile(dialect=postgresql.dialect()).params.items()
+        if key.startswith("resolution_status")
+        for value in (bound if isinstance(bound, (list, tuple)) else [bound])
+    }
+    assert statuses == {"OPEN", "IN_PROGRESS"}
+    assert not any(s.startswith("INSERT INTO defects") for s in session.statements), "no duplicate defect"
+    assert any(s.startswith("UPDATE defects SET recurrence_count") for s in session.statements)

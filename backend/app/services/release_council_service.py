@@ -45,6 +45,8 @@ from app.core.config import settings
 
 from app.models.constants import DIMENSION_METADATA
 from app.services.cluster_snapshot import is_current_snapshot
+# Live = OPEN or IN_PROGRESS (W06 DEF-01): an in-progress defect still counts as open.
+from app.services.defect_status import ACTIVE_STATUSES
 
 logger = logging.getLogger("services.release_council")
 
@@ -239,7 +241,7 @@ async def assemble_input_snapshot(
                 sa_func.count(Defect.id).label("count"),
             )
             .where(Defect.project_id == project_id)
-            .where(Defect.resolution_status == "OPEN")
+            .where(Defect.resolution_status.in_(ACTIVE_STATUSES))
             .group_by(Defect.component)
         )
         defect_rows = defect_result.all()
@@ -388,7 +390,7 @@ async def _synthesize_release_council(
             (await db.execute(
                 select(sa_func.count(Defect.id))
                 .where(Defect.project_id == run.project_id)
-                .where(Defect.resolution_status == "OPEN")
+                .where(Defect.resolution_status.in_(ACTIVE_STATUSES))
             )).scalar_one() or 0
         )
 
@@ -565,7 +567,7 @@ async def get_release_council(
                 sa_func.count(Defect.id).label("count"),
             )
             .where(Defect.project_id == project_id)
-            .where(Defect.resolution_status == "OPEN")
+            .where(Defect.resolution_status.in_(ACTIVE_STATUSES))
             .group_by(Defect.component)
         )
         open_defects_by_component = [

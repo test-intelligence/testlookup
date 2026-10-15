@@ -150,6 +150,14 @@ LATENCY_BUDGETS: list[LatencyBudget] = [
         "GET /analytics/execution/suite-history, 90 d, one suite: an index "
         "range on suite_executions (project_id, suite_key, run_created_at).",
     ),
+    # W06 DEF-04: harness-only like the two above (no ``http_handler``, so no
+    # Prometheus SLO alert or dashboard panel is required).
+    LatencyBudget(
+        "defect_trend", 60, 300, 600,
+        "GET /analytics/defects/trend, 90 d, one project: one generate_series "
+        "statement for the daily points and one totals statement, both over "
+        "that project's defects (ix_defects_project_id); cache miss.",
+    ),
     LatencyBudget(
         "run_timing", 80, 400, 800,
         "GET /runs/{run_id}/timing: one run's aggregate, suites, slowest 20 "

@@ -1457,7 +1457,8 @@ async def test_feedback_service_jira_resolution_webhook_creates_feedback_for_inv
         resolved_at=None,
     )
     analysis = SimpleNamespace(id=uuid.uuid4(), test_case_id=defect.test_case_id)
-    db = FakeAsyncDB([FakeExecuteResult(scalar=defect), FakeExecuteResult(scalar=analysis)])
+    # W06 §0.15: every defect linked to the key is read (``scalars().all()``).
+    db = FakeAsyncDB([FakeExecuteResult(scalars=[defect]), FakeExecuteResult(scalar=analysis)])
     payload = {
         "issue": {
             "key": "QA-123",
@@ -1471,7 +1472,10 @@ async def test_feedback_service_jira_resolution_webhook_creates_feedback_for_inv
     result = await feedback_service.jira_resolution_webhook(db, payload)
 
     assert result["defect_id"] == str(defect.id)
+    assert result["defect_ids"] == [str(defect.id)]
     assert defect.resolution_status == "INVALID"
+    # An INVALID close is a close: ``apply_status`` stamps ``resolved_at`` (it used to stay NULL).
+    assert defect.resolved_at is not None
     assert any(getattr(obj, "source", None) == "jira_invalid" for obj in db.added)
     # Item #2: service stages only, router handler commits.
     db.commit.assert_not_awaited()
