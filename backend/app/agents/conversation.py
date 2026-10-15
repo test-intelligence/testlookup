@@ -63,7 +63,12 @@ from app.models.postgres import (
     TestCase,
     TestRun,
 )
-from app.services.llm_factory import BudgetedLLM, get_llm, tools_unsupported_error
+from app.services.llm_factory import (
+    BudgetedLLM,
+    get_llm,
+    llm_call_timeout,
+    tools_unsupported_error,
+)
 from app.services.prompt_registry import get_prompt_text
 from app.services.redaction_service import redact_text
 from app.services.privacy_service import sanitize_for_llm
@@ -238,22 +243,20 @@ def _iso(value: Any) -> str:
 
 
 async def _configured_mode() -> str:
-    """The analysis mode the sidebar and the page read (``GET /settings/ai/mode``):
-    the ``ai_config`` app setting, else ``ANALYSIS_MODE``."""
-    mode = str(settings.ANALYSIS_MODE or "auto")
-    try:
-        from app.models.postgres import AppSetting
+    """The analysis mode the sidebar and the page read (``GET /settings/ai/mode``).
 
-        async with AsyncSessionLocal() as db:
-            row = (
-                await db.execute(select(AppSetting.value).where(AppSetting.key == "ai_config"))
-            ).first()
-        stored = (row[0] or {}) if row else {}
-        if isinstance(stored, dict) and stored.get("analysis_mode"):
-            mode = str(stored["analysis_mode"])
+    AIC-04: the one resolver every caller uses (Redis accelerator -> the stored
+    ``ai_config.analysis_mode`` -> ``ANALYSIS_MODE`` -> ``auto``), so the chat
+    can never disagree with the pipeline about the mode. A chat turn holds no
+    session, so the resolver may open its own on a cache miss.
+    """
+    try:
+        from app.services.analysis_router import resolve_configured_analysis_mode
+
+        return str((await resolve_configured_analysis_mode()).mode or "auto").lower()
     except Exception as exc:  # noqa: BLE001 -- fall back to the environment
         logger.debug("chat_mode_lookup_failed", error=str(exc)[:200])
-    return mode.lower()
+        return str(settings.ANALYSIS_MODE or "auto").lower()
 
 
 # Modes in which chat calls a model: the frontend's isLLMAvailable.
@@ -1657,10 +1660,14 @@ class ConversationAgent:
                 transcript=transcript,
             )
 
-            # Generate summary with timeout (outside DB session to avoid holding connection)
-            _COMPRESS_TIMEOUT = min(60, settings.AI_TIMEOUT_SECONDS)
+            # Generate summary with timeout (outside DB session to avoid holding connection).
+            # AIC-02: the Settings > AI timeout the model was built with (the
+            # live effective config; the frozen value inside a pipeline), capped
+            # at 60 s. Until the model exists, the env/scope value stands in.
+            _COMPRESS_TIMEOUT = llm_call_timeout(None, cap=60)
             try:
                 llm = await get_llm()
+                _COMPRESS_TIMEOUT = llm_call_timeout(llm, cap=60)
                 response = await asyncio.wait_for(
                     llm.ainvoke([HumanMessage(content=compression_prompt)]),
                     timeout=_COMPRESS_TIMEOUT,

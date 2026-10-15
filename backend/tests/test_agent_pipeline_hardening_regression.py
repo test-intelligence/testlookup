@@ -242,9 +242,16 @@ def test_summary_semantic_enrichment_has_deadline_and_fallback():
     source = _read("app/agents/summary_agent.py")
     fetch_similar = _function_source("app/agents/summary_agent.py", "_fetch_similar_failures")
 
-    assert "_SIMILAR_FAILURES_TIMEOUT_SECONDS" in source
+    timeouts = _function_source("app/agents/summary_agent.py", "summary_timeouts")
+
+    # AIC-02: the deadline is computed per run from the frozen Settings > AI
+    # timeout (timeout // 30, kept within 2..10 s), not at import from env.
+    assert "_SIMILAR_FAILURES_CAP = 10" in source
+    assert "_SIMILAR_FAILURES_FLOOR = 2" in source
+    assert "effective_llm_timeout(state, agent_id=_AGENT_ID)" in timeouts
+    assert "effective // 30" in timeouts
     assert "asyncio.wait_for" in fetch_similar
-    assert "timeout=_SIMILAR_FAILURES_TIMEOUT_SECONDS" in fetch_similar
+    assert "timeout=similar_timeout" in fetch_similar
     assert "except asyncio.TimeoutError" in fetch_similar
     assert "return []" in fetch_similar
 

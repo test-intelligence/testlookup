@@ -14,7 +14,7 @@ Flags are rows in the PostgreSQL `feature_flags` table (model `FeatureFlag`). Al
    - `enabled_projects` non-empty: off unless the request's project is in the list.
    - `enabled_roles` non-empty: off unless the caller's role (`VIEWER`, `TESTER`, `QA_ENGINEER`, `QA_LEAD`, `ADMIN`) is in the list.
    - `rollout_percent` below 100: on for a stable subset of callers. The bucket is `sha1("<key>:<user id>")` (or the project id when there is no user, or the literal `global` when there is neither) modulo 100, compared with the percentage. `0` is off.
-3. **No row.** The flag is **off**, except for the four keys with an [environment fallback](#environment-fallback).
+3. **No row.** The flag is **off**, except for the five keys with an [environment fallback](#environment-fallback).
 
 Every evaluation increments the Prometheus counter `feature_flag_evaluations_total{flag_key, result}`; `result="default"` means no row existed and the answer came from the fallback or the built-in "off".
 
@@ -28,7 +28,7 @@ A check can only honour `enabled_projects` and `enabled_roles` if the code that 
 
 ### Environment fallback
 
-For four keys, a missing row falls back to an environment variable, read straight from the process environment (`os.getenv`; only `1`, `true`, `yes`, `on` mean on). Once a row exists, the row wins and the variable is ignored.
+For five keys, a missing row falls back to an environment variable, read straight from the process environment (`os.getenv`; only `1`, `true`, `yes`, `on` mean on). Once a row exists, the row wins and the variable is ignored.
 
 | Flag | Fallback variable |
 |---|---|
@@ -36,8 +36,9 @@ For four keys, a missing row falls back to an environment variable, read straigh
 | `contract_validation` | `AIQ_CONTRACT_VALIDATION_ENABLED` |
 | `change_ownership` | `AIQ_CHANGE_OWNERSHIP_ENABLED` |
 | `async_decision_report_supersession` | `AIQ_ASYNC_DECISION_REPORT_SUPERSESSION_ENABLED` |
+| `aiq_gap_refinement` | `AIQ_GAP_REFINEMENT_ENABLED` |
 
-`knowledge_rag` always has a row (migration 0062 seeds it from the value of `KNOWLEDGE_RAG_ENABLED` at migration time), so in practice its fallback no longer applies.
+All five now have a row: migration 0062 seeds `knowledge_rag` from the value of `KNOWLEDGE_RAG_ENABLED` at migration time, and migrations 0208 / 0209 seed the four pipeline keys, each taking its variable's value at migration time into account (see [Agent pipeline stages](#agent-pipeline-stages-and-background-analysis)). In practice the fallbacks apply only to a row an administrator deleted. After the migration, change these flags in Settings, Feature flags, not in the environment.
 
 ### Managing flags
 
@@ -45,7 +46,8 @@ For four keys, a missing row falls back to an environment variable, read straigh
 - **API:** `/api/v1/feature-flags` (ADMIN): `GET` lists, `POST` creates (`key` must match `^[a-z][a-z0-9_]*$`, 2-80 characters), `GET`/`PATCH`/`DELETE /{key}` read, update and delete. `GET /{key}/status` (any signed-in user) returns `{key, enabled}` for the caller. Reference: [feature-flags API](../reference/api/feature-flags.md).
 - **Legacy API:** `GET /api/v1/settings/flags` (QA_LEAD), `PUT` and `DELETE /api/v1/settings/flags/{key}` (ADMIN) go through the older facade `backend/app/services/feature_flag_service.py`, which only reads and writes `enabled_global` (a `PUT` creates the row if missing). Its `is_enabled` is fail-open (an unknown key counts as on) and its seven "well-known" key constants (`secure_settings`, `onboarding_wizard`, `demo_mode`, `evidence_provenance`, `snapshot_caching`, `cluster_ranking`, `access_audit`) are not read by any code; nothing calls that `is_enabled`. Use `/api/v1/feature-flags`.
 - Every create, update and delete through either API writes a settings audit entry.
-- To turn on a flag that has no row (for example `defect_commander`), create it: `POST /api/v1/feature-flags` with `{"key": "defect_commander", "enabled_global": true}`, or "Add flag" in the UI.
+- To turn on a flag that has no row (for example `flaky_detection_timing`), create it: `POST /api/v1/feature-flags` with `{"key": "flaky_detection_timing", "enabled_global": true}`, or "Add flag" in the UI.
+- To turn a flag on for one project only, switch it on globally (`enabled_global` is the kill switch) and list the project under Edit (`enabled_projects`); the allow-list only narrows a flag that is on.
 
 ```bash
 # Turn on outbound webhooks for the whole instance (ADMIN JWT).
@@ -73,7 +75,7 @@ Default = the value on a fresh install after `alembic upgrade head`. "Not seeded
 | `release_compliance_pack` | 0066 | **off** | global | Release compliance-pack generation; 503 while off (`backend/app/services/compliance_pack_service.py`). See [user-guide/compliance.md](../../user-guide/compliance.md). |
 | `release_phase_gate_enforcement` | 0158 | **off** | global | Completing a release phase consults the phase gate: anything but GO is refused with 409 and the gate's blocking reasons, unless the caller supplies an override reason (the override is audited) (`backend/app/services/release_service.py`). Off: phases complete without the check. Reading the flag fails to off. |
 | `weekly_retro_digest` | 0069 | **off** | global (the digests page reads it per project) | The "weekly retro" digest type (`backend/app/services/retro_digest_service.py`, `frontend/src/pages/settings/DigestsPage.tsx`). |
-| `llm_cost_budget` | 0064 | **off** | global | LLM spend metering and per-project caps. See [LLM cost budget](#llm-cost-budget). |
+| `llm_cost_budget` | 0064 (off); 0207 turns it on for new installs | **on** for a new install; an upgraded install keeps its stored value (off unless an admin changed it) | global | LLM spend metering, per-project caps and the billing overage figures. Same fresh-install rule as [`manual_upload`](#manual_upload-on-new-installs-only). See [LLM cost budget](#llm-cost-budget). |
 | `perf_regression_detection` | 0069 (off); 0204 turns it on for new installs | **on** for a new install; an upgraded install keeps its stored value (off unless an admin changed it) | project | Per-test duration regressions: each run's PASSED tests judged against their rolling baselines (a spike is 3σ above the mean over 10+ runs), the baselines fed once per run on ingest, and the nightly baseline refresh (`backend/app/services/perf_regression_service.py`, `duration_regression_service.py`). Off: the run page's "Did anything get slower?" says detection is off instead of listing tests, and only suite regressions (no flag) are checked. Same fresh-install rule as [`manual_upload`](#manual_upload-on-new-installs-only). |
 | `knowledge_rag` | 0062 | value of `KNOWLEDGE_RAG_ENABLED` when the migration ran (`false` by default) | global | Knowledge sources and RAG-grounded test generation: the knowledge-source APIs answer 503 while off, and retrieval returns nothing (`knowledge_source_service.py`, `rag_retrieval_service.py`, `rag_eval_service.py`). Toggle at `/settings/ai`. See [user-guide/knowledge-base.md](../../user-guide/knowledge-base.md). |
 | `rag_faithfulness_gate` | 0069 | **off** | global | Faithfulness scoring of RAG-generated test cases and the auto-accept threshold (`backend/app/services/rag_faithfulness_service.py`). Only meaningful with `knowledge_rag` on. |
@@ -83,16 +85,38 @@ Default = the value on a fresh install after `alembic upgrade head`. "Not seeded
 
 ### Agent pipeline stages and background analysis
 
-These are evaluated per project (and, for pipeline stages, once per pipeline run, with the cache bypassed; the value is frozen for that run). None is seeded.
+These are evaluated per project (and, for pipeline stages, once per pipeline run, with the cache bypassed; the value is frozen for that run, and a resumed run keeps it). Settings, Feature flags lists the seeded stage flags together under "Agent stages (deep pipeline)". A stage that is off is skipped and the run says why ("... feature flag is off for this project").
+
+#### Seeded by 0208 / 0209
+
+"Legacy variable on" means the variable was `1`, `true`, `yes` or `on` in the environment of the process that ran `alembic upgrade` (the value it had been switching the stage with while no row existed).
+
+| Flag | Seeded by | Default | Fallback variable | What it gates (reader) |
+|---|---|---|---|---|
+| `contract_validation` | 0208 | **on** for a new install; an upgraded install has it off unless its legacy variable was on | `AIQ_CONTRACT_VALIDATION_ENABLED` | The API-contract specialist stage (read-only). |
+| `log_intelligence` | 0208 | **on** for a new install; off on an upgraded install | none | The log and trace evidence stage (read-only; needs Splunk, which stays off while `AI_OFFLINE_MODE` is on). |
+| `regression_watchman` | 0208 | **on** for a new install; off on an upgraded install | none | The stage that classifies failures as new regression, known-flaky recurrence or environmental anomaly (read-only; may use the LLM). |
+| `change_ownership` | 0208 | **on** for a new install; an upgraded install has it off unless its legacy variable was on | `AIQ_CHANGE_OWNERSHIP_ENABLED` | The baseline-diff and ownership stage (read-only). |
+| `defect_commander` | 0208 | **off** on every install (owner decision D20) | none | The MUTATING pipeline stage that promotes high-confidence failure clusters to defects and files Jira issues (`backend/app/agents/defect_commander.py`; wired in `backend/app/agents/workflow.py`). Off until Act mode routes its effects through approvals. Jira filing also needs Jira configured and `AI_OFFLINE_MODE=false`. The on-demand `POST /api/v1/agents/defect-command` is not gated by this flag. |
+| `async_decision_report_supersession` | 0208 | **off**, unless its legacy variable was on | `AIQ_ASYNC_DECISION_REPORT_SUPERSESSION_ENABLED` | Asynchronous supersession of decision reports in deep pipelines (`workflow.py`, `workflow_evaluation_service.py`). |
+| `aiq_gap_refinement` | 0209 | **on** for every install, new or upgraded, unless `AIQ_GAP_REFINEMENT_ENABLED` was set when the migration ran (then its value) | `AIQ_GAP_REFINEMENT_ENABLED` | The deterministic `gap_detection` and `report_refinement` deep-pipeline stages (no LLM, no egress); they add the "Analysis coverage" line to decision reports. |
+
+The "new install" rule is the one of [`manual_upload`](#manual_upload-on-new-installs-only): the database has no user and no project when the migration runs. **An existing install** (for example one upgraded in place) therefore gets the four read-only stage rows OFF; switch them on after the upgrade:
+
+```bash
+for key in contract_validation log_intelligence regression_watchman change_ownership; do
+  curl -X PATCH "$TL_URL/api/v1/feature-flags/$key" \
+    -H "Authorization: Bearer $TL_TOKEN" -H 'Content-Type: application/json' \
+    -d '{"enabled_global": true}'
+done
+```
+
+A row that existed before the migration (created by hand) is never changed by it. Downgrading 0208 / 0209 deletes a row only while it still equals its seed; a row an administrator edited (including a toggle) stays.
+
+#### Not seeded
 
 | Flag | Default | Fallback variable | What it gates (reader) |
 |---|---|---|---|
-| `defect_commander` | off | none | The mutating pipeline stage that promotes high-confidence failure clusters to defects and files Jira issues (`backend/app/agents/defect_commander.py`; wired in `backend/app/agents/workflow.py`). Jira filing also needs Jira configured and `AI_OFFLINE_MODE=false`. The on-demand `POST /api/v1/agents/defect-command` is not gated by this flag. |
-| `contract_validation` | off | `AIQ_CONTRACT_VALIDATION_ENABLED` | The API-contract specialist stage. |
-| `log_intelligence` | off | none | The log and trace evidence stage. |
-| `regression_watchman` | off | none | The stage that classifies failures as new regression, known-flaky recurrence or environmental anomaly. |
-| `change_ownership` | off | `AIQ_CHANGE_OWNERSHIP_ENABLED` | The baseline-diff and ownership stage. |
-| `async_decision_report_supersession` | off | `AIQ_ASYNC_DECISION_REPORT_SUPERSESSION_ENABLED` | Asynchronous supersession of decision reports in deep pipelines (`workflow.py`, `workflow_evaluation_service.py`). |
 | `cluster_investigator_children` | off | none | Child investigations per failure cluster, in shadow mode, also subject to the investigator agent policy (`backend/app/services/cluster_investigation_orchestrator.py`). |
 | `flaky_detection_timing` | off | none | The beat tasks that screen new and modified tests and sweep flaky-detection timing per project (`backend/app/worker/tasks.py`, `screen_new_test_fingerprints` and the timing sweep). |
 
@@ -114,13 +138,14 @@ curl -X PATCH "$TL_URL/api/v1/feature-flags/manual_upload" \
 
 ## LLM cost budget
 
-`llm_cost_budget` (off by default) switches on metering and per-project spend caps for LLM calls (`backend/app/services/llm_cost_budget.py`, `llm_cost_reservation.py`). While it is off nothing is metered against a cap and no analysis is downgraded, even if a project has a quota configured; the user guide's description of budgets downgrading analysis applies only with the flag on.
+`llm_cost_budget` switches on metering and per-project spend caps for LLM calls (`backend/app/services/llm_cost_budget.py`, `llm_cost_reservation.py`). It is **on for a new install** (migration 0207, the fresh-install rule of [`manual_upload`](#manual_upload-on-new-installs-only)); an upgraded install keeps its stored value, which is off unless an administrator changed it. While it is off nothing is metered against a cap and no analysis is downgraded, even if a project has a quota configured; the user guide's description of budgets downgrading analysis applies only with the flag on.
 
 With the flag on:
 
 - Usage is metered per project per **calendar month (UTC)** from the cost of each agent stage. Cost comes from the price table in `backend/app/services/llm_pricing.py`, overridable with `LLM_PRICE_OVERRIDES` ([configuration](configuration.md#ai-and-llm-providers)). Local providers (Ollama, vLLM and the other local ones) are metered as self-hosted (zero cost).
 - A project's quota (`GET`/`PUT /api/v1/projects/{project_id}/llm-quota`) has `hard_cap_usd`, `soft_warn_threshold_pct` (default 100) and `at_cap_action`: `SOFT_WARN` (log and metric only), `AUTO_DOWNGRADE_TO_ML` (default), `AUTO_DOWNGRADE_TO_RULES`, or `HARD_BLOCK` (no LLM work). The action fires once spend crosses `soft_warn_threshold_pct` of the hard cap.
 - Reaching the hard cap emits the `quota.exceeded` [outbound webhook](integrations.md#outbound-webhooks) event (when webhooks are on).
+- `included_usd` ("Included per month") and `overage_rate_usd` ("Overage rate") are billing-dashboard figures and are never enforced: spend up to `included_usd` is covered, spend above it is overage, and overage x rate is the charge. `GET .../llm-usage` and `GET /api/v1/billing/overview` return `covered_usd`, `overage_usd`, `overage_charge_usd` and a linear month-end projection (`projected_period_cost_usd`, `projected_overage_usd`, `projected_overage_charge_usd`, `projection_basis`). With `included_usd` at 0 (the form default: no allowance configured) those figures are `null`, never a charge; a project without an enabled quota has all of them `null`.
 - Usage: `GET /api/v1/projects/{project_id}/llm-usage` and `/llm-usage/history`; instance overview: `GET /api/v1/billing/overview`; UI: `/settings/billing`.
 - With a cap configured, the cap check fails closed: if the meter cannot be read, LLM work is refused rather than run unmetered.
 
@@ -134,14 +159,13 @@ These are environment variables, not rows; change them in the deployment and res
 |---|---|---|
 | `AI_OFFLINE_MODE` | `true` | Blocks remote LLM providers and most outbound integrations, regardless of flags (`outbound_webhooks`, `github_checks`, `gitlab` and `defect_commander`'s Jira filing all stay inert while it is on). `/settings/ai` can tighten it, never loosen it. |
 | `REVIEW_GATE_ENFORCED` | `false` | Human review gate for distributing AI reports (PDF export, share links, release-readiness value, `release.decided` webhooks). Off: would-be refusals are only audited. |
-| `AIQ_GAP_REFINEMENT_ENABLED` | `false` | Runs the `gap_detection` and `report_refinement` deep-pipeline stages. |
-| `AIQ_CONTRACT_VALIDATION_ENABLED`, `AIQ_CHANGE_OWNERSHIP_ENABLED`, `AIQ_ASYNC_DECISION_REPORT_SUPERSESSION_ENABLED` | `false` | [Environment fallbacks](#environment-fallback) for the matching flags while no row exists. |
+| `AIQ_CONTRACT_VALIDATION_ENABLED`, `AIQ_CHANGE_OWNERSHIP_ENABLED`, `AIQ_ASYNC_DECISION_REPORT_SUPERSESSION_ENABLED`, `AIQ_GAP_REFINEMENT_ENABLED` | `false` | Read once by migrations 0208 / 0209 for the seed value of the matching flag, then only as [environment fallbacks](#environment-fallback) while no row exists. The flags themselves are switched in Settings, Feature flags. |
 | `KNOWLEDGE_RAG_ENABLED` | `false` | Seeds `knowledge_rag` at migration time. |
-| `DEEP_INVESTIGATION_ENABLED` | `true` | Allows deep investigations of a run (422 when false). |
-| `FINETUNE_ENABLED` | `false` | Fine-tuning export and trigger tasks. |
+| `DEEP_INVESTIGATION_ENABLED` | `true` | Default for the Deep Investigation toggle in Settings, AI. A value saved there wins in both directions (applies within a minute). Off: every way of starting a deep investigation answers 422 `Deep investigation is disabled in Settings › AI.` |
+| `FINETUNE_ENABLED` | `false` | Default for the Fine-Tuning Pipeline toggle in Settings, AI; a value saved there wins in both directions. Gates the export-triggered fine-tuning tasks only; the weekly training-data export is not gated. |
 | `JIRA_ENABLED`, `SLACK_ENABLED`, `TEAMS_ENABLED`, `SMTP_ENABLED`, `SPLUNK_ENABLED`, `OCP_ENABLED` | `false` | Integration master switches (most can also be set in the UI; see [Integrations](integrations.md)). |
 | `SSO_ENABLED`, `SCIM_ENABLED` | `false` | SAML SSO and SCIM provisioning. |
 | `LIVE_EVENTS_REQUIRE_PROJECT_KEY` | `true` | Live events accept only project-scoped API keys. |
 | `AI_REPORT_EVAL_ALLOW_CALLER_CORPUS` | `false` | Test-only: lets report evaluation take a caller-supplied corpus. |
 | `HIGH_VOLUME_AUTO_DETECT_ENABLED`, `LIVE_SESSION_DRAIN_ENABLED`, `INGESTION_DLQ_ENABLED` | `true` | Ingestion safety mechanisms; leave on. |
-| `ML_MODEL_SYNC_ENABLED` | `false` (`true` in the Kubernetes base) | Share retrained ML models across pods through object storage. |
+| `ML_MODEL_SYNC_ENABLED` | `true` | Share retrained ML models across pods and containers through object storage, so a model trained by the worker (nightly or "Train now") reaches the API. Best-effort: with the store unreachable each attempt logs a warning and the process keeps its local model. |

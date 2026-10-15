@@ -74,7 +74,7 @@ Some promotions come back as "Defect created — awaiting approval": the defect 
 
 ## Automatic promotion (`defect_commander`)
 
-The deep pipeline's `defect_commander` stage can create defects from clusters on its own, and file tickets when Jira is enabled. It is the only pipeline stage that changes state outside its own records, and it runs only when a feature flag named `defect_commander` exists and is enabled for the project. No install creates that flag, so automatic promotion is **off** until an administrator adds it under **Feature flags**. Try it on one project first.
+The deep pipeline's `defect_commander` stage can create defects from clusters on its own, and file tickets when Jira is enabled. It is the only pipeline stage that changes state outside its own records, and it runs only when the feature flag `defect_commander` is enabled for the project. The flag is listed under **Settings → Feature flags** (group "Agent stages (deep pipeline)", marked MUTATING) and is **off** on every install. To try it on one project first, an administrator switches it on and, under **Edit**, lists that project: the flag is then on for that project only. A deep investigation started while the flag is off skips the stage, and its plan says why ("DefectCommander feature flag is off for this project"); a run keeps the value it started with, also when it is resumed.
 
 ## Duplicate detection
 
