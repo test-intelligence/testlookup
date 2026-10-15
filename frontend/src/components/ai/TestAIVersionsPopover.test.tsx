@@ -164,6 +164,29 @@ describe('TestAIVersionsPopover', () => {
     expect(container.querySelector('[data-test-ai-version-summary]')?.textContent).toBe(`v2 human correction (${HOSTILE})`)
   })
 
+  it("names the model of an AI version (as text), never of a person's correction", () => {
+    versionsState.data = {
+      run_id: 'run-9',
+      test_id: 't9',
+      test_fingerprint: 'fp',
+      test_name: 'test_pay',
+      current: null,
+      versions: [
+        version(1, { llm_model: HOSTILE }),
+        // The correction row inherits the model of the AI row it edited.
+        version(2, { trigger: 'human_correction', actor: { user_id: 'u', name: 'anna' }, llm_model: 'llama3.1' }),
+      ],
+      total: 2,
+    }
+    const { container } = renderPopover()
+    const [ai, person] = Array.from(container.querySelectorAll('[data-test-ai-version]'))
+    expect(ai.querySelector('[data-test-ai-version-model]')?.textContent).toBe(HOSTILE)
+    expect(container.querySelector('img')).toBeNull()
+    expect(person.querySelector('[data-test-ai-version-label]')?.textContent).toBe('v2 human correction (anna)')
+    expect(person.querySelector('[data-test-ai-version-model]')).toBeNull()
+    expect(person.textContent).not.toContain('llama3.1')
+  })
+
   it('a legacy point without a run id cannot read versions and says so', () => {
     const { container } = renderPopover({ runId: null })
     expect(hookCalls[hookCalls.length - 1]).toEqual([null, 't9'])
