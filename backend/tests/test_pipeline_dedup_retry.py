@@ -245,3 +245,60 @@ async def test_a_persons_trigger_sets_the_runs_key_so_automatic_triggers_collaps
     key = "testlookup:dedup:pipeline:run-2:offline"
     assert await _pipeline_admission_duplicate(key, owner="task-ann-1", requested_by="ann") is False
     assert await _pipeline_admission_duplicate(key, owner="task-auto", requested_by=None) is True
+
+
+@pytest.mark.asyncio
+async def test_a_persons_key_ends_with_their_pipeline_and_only_their_own_task_ends_it(fake_redis):
+    from app.worker.tasks import _release_requested_admission
+
+    key = "testlookup:dedup:pipeline:run-3:offline"
+    assert await _pipeline_admission_duplicate(key, owner="task-ann-1", requested_by="ann") is False
+    # A stale task cannot end a newer task's guard.
+    await _release_requested_admission(key, owner="task-ann-0", requested_by="ann")
+    assert await _pipeline_admission_duplicate(key, owner="task-ann-2", requested_by="ann") is True
+    # The owning task ends it: the same person's next trigger runs...
+    await _release_requested_admission(key, owner="task-ann-1", requested_by="ann")
+    assert await _pipeline_admission_duplicate(key, owner="task-ann-3", requested_by="ann") is False
+    # ...and the run's own key still collapses automatic triggers.
+    assert await _pipeline_admission_duplicate(key, owner="task-auto", requested_by=None) is True
+    # An automatic trigger has no person's key to end.
+    await _release_requested_admission(key, owner="task-auto", requested_by=None)
+    assert await fake_redis.get(key) == "task-ann-1"
+
+
+def test_the_same_persons_retrigger_after_a_finished_pipeline_runs(fake_redis, monkeypatch):
+    """Regression (W04 local walk, 2026-10-15): an admin set the threshold to 95, triggered, saw
+    triage skipped, set it to 40 and triggered again 39 s later. The API said "Pipeline queued";
+    the worker logged "Skipping duplicate pipeline" because the person's two-minute key outlived
+    the 38-second pipeline it guarded."""
+    from unittest.mock import AsyncMock
+
+    import app.agents.workflow as workflow
+    import app.services.intelligence_snapshot_service as snapshots
+    from app.worker import tasks
+
+    ran: list[str] = []
+
+    async def fake_offline(**kwargs):
+        ran.append(kwargs["requested_by"])
+        return {"completed_stages": ["summary"], "errors": []}
+
+    monkeypatch.setattr(workflow, "run_offline_pipeline", fake_offline)
+    monkeypatch.setattr(tasks, "_capture_ai_history_after_pipeline", lambda *a, **k: None)
+    monkeypatch.setattr(snapshots, "invalidate", AsyncMock())
+    run_id = "00000000-0000-4000-8000-0000000000aa"
+    project_id = "00000000-0000-4000-8000-0000000000bb"
+
+    def trigger(task_id):
+        return tasks.run_agent_pipeline.apply(
+            kwargs={"test_run_id": run_id, "project_id": project_id, "build_number": "1012",
+                    "requested_by": "ann"},
+            task_id=task_id,
+        ).get()
+
+    trigger("task-ann-1")
+    second = trigger("task-ann-2")
+    assert ran == ["ann", "ann"]
+    assert "duplicate" not in second
+    # The run's two-hour key is still there for automatic triggers.
+    assert fake_redis._data.get(f"testlookup:dedup:pipeline:{run_id}:offline") == "task-ann-1"

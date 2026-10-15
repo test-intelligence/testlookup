@@ -44,8 +44,9 @@ function VersionRow({ version, latest }: { version: AITestVersion; latest: boole
         )}
         <AICategoryChip category={version.failure_category} />
         <AIConfidence confidence={version.confidence_score} />
-        {version.llm_model && (
-          <span className="text-[var(--color-text-muted)]">{version.llm_model}</span>
+        {/* A correction edits the AI row in place and inherits its model; the person decided, so no model name. */}
+        {version.llm_model && version.trigger !== 'human_correction' && (
+          <span data-test-ai-version-model="" className="text-[var(--color-text-muted)]">{version.llm_model}</span>
         )}
         <span
           className="ml-auto text-[var(--color-text-muted)]"
