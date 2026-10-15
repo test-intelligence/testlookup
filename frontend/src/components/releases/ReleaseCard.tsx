@@ -61,7 +61,7 @@ function GateCell({ label, value, sub, tone = 'neutral' }: GateCellProps) {
     : tone === 'bad'  ? 'var(--status-failed)'
     : 'var(--color-text)'
   return (
-    <div className="text-right" data-gate-tile={label}>
+    <div data-gate-tile={label}>
       <div className="text-[9.5px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">{label}</div>
       <div className="text-[16px] tabular-nums font-semibold leading-none mt-1" style={{ color }}>{value}</div>
       <div className="text-[10.5px] text-[var(--color-text-faint)] mt-0.5">{sub}</div>
@@ -306,7 +306,6 @@ export default function ReleaseCard({
           </div>
         </div>
         <div className="flex items-center gap-4 shrink-0">
-          {showTiles && <GateTiles gate={gate} />}
           <div className="flex flex-col items-end gap-1">
             <GateBadge decision={gate.decision} reason={gate.decision === 'not_evaluated' ? gate.insufficientReason ?? undefined : undefined} />
             {verdictLine && (
@@ -345,6 +344,14 @@ export default function ReleaseCard({
           )}
         </div>
       </header>
+
+      {/* The recorded verdict's figures, a row of their own: beside the identity they left the
+          release name ~70 px in a 618 px card ("2.."), owner and due date wrapping word by word. */}
+      {showTiles && (
+        <div data-gate-tiles="" className="grid grid-cols-3 gap-3 px-4 pb-3">
+          <GateTiles gate={gate} />
+        </div>
+      )}
 
       {/* Body — body sections per state */}
       {hasBody && (
