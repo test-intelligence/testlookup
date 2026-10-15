@@ -101,7 +101,8 @@ async def _call_retry(monkeypatch, db, *, snapshot=None):
     from app.routers import agents as router
     from app.worker import tasks
 
-    async def _resolve():
+    async def _resolve(_db=None):
+        # W04: the route passes its request session (no second session).
         return snapshot or _snapshot()
 
     monkeypatch.setattr(workflow, "_resolve_analysis_mode_snapshot", _resolve)

@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.deep_investigation_gate import require_deep_investigation
 from app.services.pipeline_cancellation import request_cancel
 from app.services.pipeline_retry_config import decide_retry_mode
 from app.services.review_request_service import REVIEW_REJECTED_ERROR_PREFIX
@@ -358,6 +359,13 @@ async def trigger_pipeline(
             },
         )
 
+    # AIC-01: ``workflow_id: "deep"`` (or a custom workflow on the deep base)
+    # starts a deep investigation like POST /deep-investigate does, so the
+    # same Settings > AI gate applies. After the "already in progress" answer
+    # (that queues nothing), before anything is queued.
+    if workflow_type == "deep":
+        await require_deep_investigation(db)
+
     from app.worker.tasks import run_agent_pipeline
     task = run_agent_pipeline.delay(
         test_run_id=str(run.id),
@@ -557,9 +565,20 @@ async def retry_pipeline(
         )
 
     from app.agents.workflow import _resolve_analysis_mode_snapshot
+    from app.services.ai_config_resolver import get_effective_ai_config
+    from app.services.pipeline_ai_scope import build_ai_config_snapshot
 
+    # Both reads go through the REQUEST session: this handler already holds a
+    # connection (the guard's), and a second session here starves the 2+1 pool.
+    # The live threshold/timeout are compared with the frozen ones, so an
+    # operator who changed them and presses Retry gets a rerun under the new
+    # values instead of a resume that replays the old ones (W04 §1.3).
     plan = decide_retry_mode(
-        pipeline.execution_metadata, await _resolve_analysis_mode_snapshot()
+        pipeline.execution_metadata,
+        await _resolve_analysis_mode_snapshot(db),
+        current_ai_config=build_ai_config_snapshot(
+            await get_effective_ai_config(db=db, fresh=True), {}
+        ),
     )
 
     run = await db.get(TestRun, pipeline.test_run_id)
@@ -567,6 +586,13 @@ async def retry_pipeline(
         raise HTTPException(404, detail="TestRun not found for this pipeline")
 
     if plan.is_rerun:
+        # AIC-01: a rerun of a deep pipeline is a NEW deep investigation, so the
+        # Settings > AI gate applies (before anything is queued). A same-id
+        # resume below replays accepted work under its frozen snapshot and is
+        # never gated.
+        if pipeline.workflow_type == "deep":
+            await require_deep_investigation(db)
+
         from app.worker.tasks import run_agent_pipeline
 
         frozen_metadata = dict(pipeline.execution_metadata or {})
@@ -712,6 +738,12 @@ async def bulk_trigger_pipelines(
     itself — repeats just resolve to ``{duplicate: true}`` per task.
     """
     from app.worker.tasks import run_agent_pipeline
+
+    # AIC-01: a bulk deep trigger obeys the same Settings > AI gate as the
+    # single route (it applied none), refused BEFORE the scope query and the
+    # fan-out so nothing is queued. ``offline`` is unaffected.
+    if payload.workflow_type == "deep":
+        await require_deep_investigation(db)
 
     # One DB roundtrip to resolve every run + reject unknown ids.
     # Returning the not-found list lets the UI tell the user *which* IDs

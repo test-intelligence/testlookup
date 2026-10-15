@@ -42,8 +42,13 @@ class _OneConnectionPool:
         self._timeout = timeout
         self.held = 0
         self.max_held = 0
+        # Every checkout ATTEMPT. The AI-config resolver swallows a database
+        # error into env defaults, so a second session that times out here
+        # would not fail the request; counting attempts makes it visible.
+        self.attempts = 0
 
     async def checkout(self) -> None:
+        self.attempts += 1
         await asyncio.wait_for(self._slot.acquire(), timeout=self._timeout)
         self.held += 1
         self.max_held = max(self.max_held, self.held)
@@ -53,14 +58,25 @@ class _OneConnectionPool:
         self._slot.release()
 
 
+# W04 AIC-01: the trigger's gate reads the stored Settings > AI row through the
+# request session (a cache miss on the effective config). Deep investigation
+# on, mode llm: the gate lets the trigger through.
+STORED_AI_CONFIG = {"deep_investigation_enabled": True, "analysis_mode": "llm"}
+
+
 class _Result:
     def __init__(self, stmt) -> None:
         entity = stmt.column_descriptions[0]["name"] if hasattr(stmt, "column_descriptions") else ""
-        # select(TestRun) wants a row; select(TestRun.project_id) / membership a scalar.
-        self._scalar = (
-            SimpleNamespace(id=RUN_ID, project_id=PROJECT_ID, build_number="b-1")
-            if entity == "TestRun" else PROJECT_ID
-        )
+        # select(TestRun) wants a row; select(AppSetting) the stored AI config;
+        # select(SecretRef) no secret; select(TestRun.project_id) / membership a scalar.
+        if entity == "TestRun":
+            self._scalar = SimpleNamespace(id=RUN_ID, project_id=PROJECT_ID, build_number="b-1")
+        elif entity == "AppSetting":
+            self._scalar = SimpleNamespace(key="ai_config", value=dict(STORED_AI_CONFIG))
+        elif entity == "SecretRef":
+            self._scalar = None
+        else:
+            self._scalar = PROJECT_ID
 
     def scalar_one_or_none(self):
         return self._scalar
@@ -101,14 +117,18 @@ class _Session:
 
 
 @pytest.fixture
-def pool(monkeypatch):
+def pool(monkeypatch, fake_redis):
     pool = _OneConnectionPool()
     # The old handlers built their own session here; on a one-connection pool
-    # it must come from the same pool the request session uses.
+    # it must come from the same pool the request session uses. The resolver's
+    # own fallback session (db=None) comes from the same pool too, so a gate
+    # that forgot to pass the request session would stall here as well.
     monkeypatch.setattr(deep_investigation, "AsyncSessionLocal", lambda: _Session(pool), raising=False)
-    # What lies past the session code: the flag, the mode, the queue, the promotion.
-    monkeypatch.setattr(deep_investigation.settings, "DEEP_INVESTIGATION_ENABLED", True)
-    monkeypatch.setattr(deep_investigation, "get_analysis_mode", lambda: "llm")
+    monkeypatch.setattr("app.db.postgres.AsyncSessionLocal", lambda: _Session(pool))
+    # An EMPTY in-memory Redis: the gate misses every cache and must read the
+    # stored row through the request session (never a real Redis).
+    monkeypatch.setattr("app.db.redis_client.get_redis", lambda: fake_redis)
+    # What lies past the session code: the queue, the promotion.
     monkeypatch.setattr(
         deep_investigation.run_agent_pipeline, "apply_async", MagicMock(return_value=SimpleNamespace(id="task-1")),
     )
@@ -158,6 +178,7 @@ async def test_the_route_needs_one_connection(app, pool, method, path, body):
         response = await asyncio.wait_for(client.request(method, path, json=body), timeout=5)
     assert response.status_code == 200, response.text
     assert pool.max_held == 1
+    assert pool.attempts == 1, "a second session was opened inside the handler"
 
 
 @pytest.mark.asyncio
