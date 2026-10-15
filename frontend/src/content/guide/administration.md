@@ -160,7 +160,7 @@ Everything here that reaches outside the deployment is **switched off by offline
 - **Model Availability & Fallback Chain**: whether the model server answers and each required model is installed.
 - **LLM Provider** and **Embedding**: provider, model, temperature, max tokens.
 - **Pipeline Settings**: confidence threshold, timeout, offline mode, and toggles.
-- **Knowledge-Grounded Generation**: **Enable Knowledge RAG** for generating test cases from documents.
+- **Knowledge-Grounded Generation**: **Enable Knowledge RAG** for generating test cases from documents. While the `rag_faithfulness_gate` feature flag is on, **Faithfulness evaluator** chooses how drafts are scored: the single-prompt judge (the configured model, works offline) or Ragas (a hosted model; needs offline mode off and the `ragas` package). The badge shows the one in use.
 - **Cloud API Keys** for hosted providers, stored encrypted.
 
 Two switches are worth understanding:

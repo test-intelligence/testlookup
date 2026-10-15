@@ -27,7 +27,7 @@ In **Test cases → More → Knowledge** (or **AI Generate → From documents**;
 
 Generated cases don't silently become real tests — they go through a **review panel**. This is deliberate: the AI drafts, a human approves. Two signals help you review:
 
-- **Faithfulness** — an automatic score of whether each case is actually supported by its cited chunks (an LLM judge or the RAGAS metric). Low-faithfulness drafts are the ones to scrutinize or reject. Scoring, and the gate that holds back unfaithful drafts, run only when the `rag_faithfulness_gate` feature flag is on; it ships **off**, in which case every draft passes unscored.
+- **Faithfulness** — an automatic score of whether each case is actually supported by its cited chunks (an LLM judge or the RAGAS metric, chosen under **Faithfulness evaluator** in the AI configuration; RAGAS needs offline mode off and the `ragas` package, which the standard image does not include). Low-faithfulness drafts are the ones to scrutinize or reject. Scoring, and the gate that holds back unfaithful drafts, run only when the `rag_faithfulness_gate` feature flag is on; it ships **off**, in which case every draft passes unscored.
 - **Citations** — read the cited passages; if they don't back the assertion, don't approve it.
 
 Approved cases join the test-case catalogue like any other, under the [authored test-case lifecycle](test-management.md#authored-test-case-lifecycle).

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { AlertTriangle, CheckCircle2, RefreshCw, Save, WifiOff, XCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
@@ -9,6 +10,7 @@ import {
   type AIConfigUpdate,
   type AIModelStatusRead,
   type FallbackChainEntry,
+  type RagFaithfulnessEvaluator,
 } from '@/services/appSettingsService'
 import { usePermissions } from '@/hooks/usePermissions'
 import { activeTier, useAIModelStatus } from '@/hooks/useAIConfig'
@@ -49,6 +51,44 @@ const OFFLINE_PINNED_REASON =
   'Pinned by AI_OFFLINE_MODE in this deployment’s environment — offline mode cannot be ' +
   'turned off from this page. Set AI_OFFLINE_MODE=false in the backend environment and ' +
   'restart to permit cloud LLM egress.'
+
+/**
+ * The RAG faithfulness gate's two strategies (rag_faithfulness_service). Each
+ * description says what the strategy IS; whether it runs on this deployment
+ * comes from the API (`rag_faithfulness_evaluator_effective` and `_reason`).
+ */
+const FAITHFULNESS_EVALUATORS: { value: RagFaithfulnessEvaluator; label: string; desc: string }[] = [
+  {
+    value: 'ollama',
+    label: 'Single-prompt judge',
+    desc: 'Asks the configured LLM provider whether the citations support the case. Works offline.',
+  },
+  {
+    value: 'ragas',
+    label: 'Ragas',
+    desc:
+      'The Ragas faithfulness metric. It calls the hosted LLM Ragas is set up with, outside this ' +
+      'deployment’s LLM cost cap. Needs offline mode off and the ragas package installed.',
+  },
+]
+
+/**
+ * Why the single-prompt judge runs although Ragas is chosen, or null. Offline
+ * mode is read from the form, so the note follows the toggle before a save;
+ * a missing package is known only from the saved state the API reports.
+ */
+function evaluatorOverrideNote(form: AIConfigUpdate, config: AIConfigRead): string | null {
+  if ((form.rag_faithfulness_evaluator ?? config.rag_faithfulness_evaluator) !== 'ragas') return null
+  if (form.ai_offline_mode ?? config.ai_offline_mode) {
+    return config.ai_offline_mode_env_pinned
+      ? 'Offline mode is pinned on by AI_OFFLINE_MODE, so the single-prompt judge runs: Ragas calls a hosted LLM.'
+      : 'With offline mode on, the single-prompt judge runs: Ragas calls a hosted LLM. Ragas applies once offline mode is off.'
+  }
+  if (config.rag_faithfulness_evaluator_reason === 'ragas_not_installed') {
+    return 'The ragas package is not installed in this deployment’s backend, so the single-prompt judge runs.'
+  }
+  return null
+}
 
 const TIER_LABELS: Record<string, string> = {
   ml: 'Machine Learning',
@@ -289,6 +329,7 @@ export default function AIConfigPage() {
           finetune_enabled: cfg.finetune_enabled,
           analysis_mode: cfg.analysis_mode,
           knowledge_rag_enabled: cfg.knowledge_rag_enabled,
+          rag_faithfulness_evaluator: cfg.rag_faithfulness_evaluator,
         })
       })
       .catch(() => setError('Failed to load AI configuration'))
@@ -331,6 +372,10 @@ export default function AIConfigPage() {
 
   const llmTier = modelStatus?.fallback_chain.find(e => e.mode === 'llm')
   const offlinePinned = config.ai_offline_mode_env_pinned === true
+  const evaluatorNote = evaluatorOverrideNote(form, config)
+  const evaluatorInUse = FAITHFULNESS_EVALUATORS.find(
+    (e) => e.value === config.rag_faithfulness_evaluator_effective,
+  )
 
   return (
     <div className="space-y-4">
@@ -610,6 +655,73 @@ export default function AIConfigPage() {
                 </p>
               </div>
             </label>
+
+            {/* The evaluator matters only while the rag_faithfulness_gate flag
+                scores cases; with it off, say so instead of offering a choice
+                that does nothing. */}
+            <div className="space-y-2 border-t border-[var(--color-border)] pt-3" data-testid="faithfulness-evaluator">
+              <div className="flex flex-wrap items-center gap-2">
+                <h4 className="text-xs font-semibold text-[var(--color-text-secondary)]">Faithfulness evaluator</h4>
+                {config.rag_faithfulness_gate_enabled && evaluatorInUse && (
+                  <span
+                    className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${OK_CLS}`}
+                    data-testid="faithfulness-evaluator-in-use"
+                  >
+                    In use: {evaluatorInUse.label}
+                  </span>
+                )}
+              </div>
+              {config.rag_faithfulness_gate_enabled ? (
+                <>
+                  <p className="text-xs text-[var(--color-text-muted)]">
+                    Scores each knowledge-generated case against its citations. A case that scores
+                    too low waits for review instead of being auto-accepted.
+                  </p>
+                  {FAITHFULNESS_EVALUATORS.map(ev => (
+                    <label
+                      key={ev.value}
+                      className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                        (form.rag_faithfulness_evaluator ?? 'ollama') === ev.value
+                          ? 'border-[var(--color-ring)] bg-[var(--color-ring)]/5'
+                          : 'border-[var(--color-border)] hover:border-[var(--color-border-light)]'
+                      } ${!isAdmin ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      <input
+                        type="radio"
+                        name="rag_faithfulness_evaluator"
+                        value={ev.value}
+                        checked={(form.rag_faithfulness_evaluator ?? 'ollama') === ev.value}
+                        onChange={() => upd('rag_faithfulness_evaluator', ev.value)}
+                        disabled={!isAdmin}
+                        className="mt-0.5"
+                      />
+                      <div>
+                        <span className="text-sm font-medium text-[var(--color-text)]">{ev.label}</span>
+                        <p className="text-xs text-[var(--color-text-muted)] mt-0.5">{ev.desc}</p>
+                      </div>
+                    </label>
+                  ))}
+                  {evaluatorNote && (
+                    <div
+                      className={`flex items-start gap-2 px-3 py-2 rounded-lg border text-xs ${WARN_CLS}`}
+                      data-testid="faithfulness-evaluator-note"
+                    >
+                      <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" aria-hidden="true" />
+                      <span>{evaluatorNote}</span>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="text-xs text-[var(--color-text-muted)]" data-testid="faithfulness-gate-off">
+                  Not in use: the <code>rag_faithfulness_gate</code> feature flag is off, so generated
+                  cases are not scored. Turn it on in{' '}
+                  <Link to="/settings/feature-flags" className="text-[var(--color-accent)] hover:underline">
+                    Feature Flags
+                  </Link>{' '}
+                  to choose the evaluator.
+                </p>
+              )}
+            </div>
           </div>
 
           {/* API Keys */}

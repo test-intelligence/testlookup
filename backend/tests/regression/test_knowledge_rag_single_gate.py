@@ -78,13 +78,17 @@ async def test_the_ai_page_reports_what_the_gate_would_answer():
         "ai_confidence_threshold": 70, "ai_confidence_threshold_source": "default",
         "ai_timeout_seconds": 30, "deep_investigation_enabled": False,
         "finetune_enabled": False, "analysis_mode": "auto",
+        "rag_faithfulness_evaluator": "ollama",
+        "rag_faithfulness_evaluator_effective": "ollama",
+        "rag_faithfulness_evaluator_reason": "configured",
     })), patch("app.routers.app_settings._ml_status", new=AsyncMock(return_value={})), \
          patch("app.services.feature_flags.is_enabled", new=AsyncMock(return_value=False)) as gate:
         result = await settings_router.get_ai_config(_=MagicMock(), db=db)
 
     assert result.knowledge_rag_enabled is False
-    # It asked the gate's own resolver, by the gate's own key.
-    assert gate.await_args.args[0] == "knowledge_rag"
+    # It asked the gate's own resolver, by the gate's own key. (The page also
+    # reads the rag_faithfulness_gate flag, so not necessarily last.)
+    assert "knowledge_rag" in [call.args[0] for call in gate.await_args_list]
 
 
 @pytest.mark.asyncio

@@ -74,7 +74,17 @@ export interface AIConfigRead {
   ml_maturity: 'not_trained' | 'bootstrap_llm_imitating' | 'human_calibrated'
   // Knowledge RAG
   knowledge_rag_enabled: boolean
+  /** The stored faithfulness strategy; round-trips through the PUT. */
+  rag_faithfulness_evaluator: RagFaithfulnessEvaluator
+  /** The strategy the gate runs, which offline mode or a missing package can override. */
+  rag_faithfulness_evaluator_effective: RagFaithfulnessEvaluator
+  /** Why: 'configured' | 'offline_mode' | 'ragas_not_installed'. */
+  rag_faithfulness_evaluator_reason: string
+  /** The rag_faithfulness_gate flag, on in any scope. Off: no case is scored. */
+  rag_faithfulness_gate_enabled: boolean
 }
+
+export type RagFaithfulnessEvaluator = 'ollama' | 'ragas'
 
 export interface AIConfigUpdate {
   llm_provider?: string
@@ -94,6 +104,7 @@ export interface AIConfigUpdate {
   openrouter_api_key?: string
   analysis_mode?: AnalysisMode
   knowledge_rag_enabled?: boolean
+  rag_faithfulness_evaluator?: RagFaithfulnessEvaluator
 }
 
 // ── AI Model Status (US-13.2 — offline model pack) ───────────

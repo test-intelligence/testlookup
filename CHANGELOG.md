@@ -52,6 +52,18 @@ locally by default.
 
 ### Added
 
+- **Choose the RAG faithfulness evaluator in AI settings.** While the
+  `rag_faithfulness_gate` flag is on, **Settings › AI Configuration ›
+  Knowledge-Grounded Generation** offers the single-prompt judge or Ragas,
+  and `PUT /settings/ai` takes `rag_faithfulness_evaluator` (`ollama` |
+  `ragas`; anything else is a 422). It could only be set by editing the
+  `ai_config` row before, and saving any AI setting deleted it. The page and
+  `GET /settings/ai` report the strategy that runs
+  (`rag_faithfulness_evaluator_effective`) and why it differs from the choice
+  (`_reason`): offline mode, from the environment or the stored setting, or
+  a backend without the `ragas` package, which is not in `requirements.txt`.
+  The gate now falls back to the single-prompt judge in that last case too,
+  so a judged case is no longer labelled `ragas` when Ragas never ran.
 - **Execution time for tests, suites and runs** (deferred-features wave W02,
   EXEC-01 to EXEC-06): every report format and the live reporters keep each
   test's start, finish, setup / test / teardown split and worker

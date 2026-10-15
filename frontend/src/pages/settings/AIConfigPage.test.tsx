@@ -90,6 +90,10 @@ function baseConfig(overrides: Partial<AIConfigRead> = {}): AIConfigRead {
     ml_human_label_floor: 50,
     ml_maturity: 'not_trained',
     knowledge_rag_enabled: false,
+    rag_faithfulness_evaluator: 'ollama',
+    rag_faithfulness_evaluator_effective: 'ollama',
+    rag_faithfulness_evaluator_reason: 'configured',
+    rag_faithfulness_gate_enabled: false,
     ...overrides,
   }
 }
@@ -492,5 +496,137 @@ describe('AIConfigPage — offline mode pinned by the environment', () => {
     // The toggle still reports the truth: offline, pinned, read-only.
     expect(offlineToggle()).toBeChecked()
     expect(offlineToggle()).toBeDisabled()
+  })
+})
+
+/**
+ * The RAG faithfulness evaluator could be set only by editing the ai_config
+ * row. The page now offers it while the rag_faithfulness_gate flag scores
+ * cases, and says which strategy actually runs: offline mode and a missing
+ * ragas package both mean the single-prompt judge, whatever is chosen.
+ */
+describe('AIConfigPage — faithfulness evaluator', () => {
+  const ragasRadio = () => screen.getByRole('radio', { name: /^Ragas/ }) as HTMLInputElement
+  const judgeRadio = () => screen.getByRole('radio', { name: /^Single-prompt judge/ }) as HTMLInputElement
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockGetModelStatus.mockResolvedValue(healthyStatus())
+  })
+
+  it('offers no choice while the gate flag is off, and says where to turn it on', async () => {
+    mockGetAIConfig.mockResolvedValue(baseConfig({ rag_faithfulness_gate_enabled: false }))
+    await renderPage()
+
+    const off = await screen.findByTestId('faithfulness-gate-off')
+    expect(off).toHaveTextContent('rag_faithfulness_gate')
+    expect(off).toHaveTextContent('Feature Flags')
+    expect(screen.queryByRole('radio', { name: /^Ragas/ })).not.toBeInTheDocument()
+    expect(screen.queryByTestId('faithfulness-evaluator-in-use')).not.toBeInTheDocument()
+  })
+
+  it('saves a Ragas choice and reports what runs from the response', async () => {
+    mockGetAIConfig.mockResolvedValue(
+      baseConfig({ ai_offline_mode: false, ai_offline_mode_source: 'not_offline', rag_faithfulness_gate_enabled: true }),
+    )
+    mockUpdateAIConfig.mockResolvedValue(
+      baseConfig({
+        ai_offline_mode: false,
+        ai_offline_mode_source: 'not_offline',
+        rag_faithfulness_gate_enabled: true,
+        rag_faithfulness_evaluator: 'ragas',
+        rag_faithfulness_evaluator_effective: 'ragas',
+      }),
+    )
+    await renderPage()
+
+    await waitFor(() => expect(judgeRadio()).toBeChecked())
+    expect(screen.getByTestId('faithfulness-evaluator-in-use')).toHaveTextContent('In use: Single-prompt judge')
+
+    fireEvent.click(ragasRadio())
+    fireEvent.click(screen.getByText('Save Configuration'))
+
+    await waitFor(() => expect(mockUpdateAIConfig).toHaveBeenCalledTimes(1))
+    expect(mockUpdateAIConfig.mock.calls[0][0]).toMatchObject({ rag_faithfulness_evaluator: 'ragas' })
+    await waitFor(() =>
+      expect(screen.getByTestId('faithfulness-evaluator-in-use')).toHaveTextContent('In use: Ragas'),
+    )
+    expect(screen.queryByTestId('faithfulness-evaluator-note')).not.toBeInTheDocument()
+  })
+
+  it('keeps a stored Ragas choice when another field is saved', async () => {
+    mockGetAIConfig.mockResolvedValue(
+      baseConfig({
+        rag_faithfulness_gate_enabled: true,
+        rag_faithfulness_evaluator: 'ragas',
+        rag_faithfulness_evaluator_reason: 'offline_mode',
+      }),
+    )
+    mockUpdateAIConfig.mockResolvedValue(baseConfig())
+    await renderPage()
+    await waitFor(() => expect(screen.getByDisplayValue('qwen2.5:7b')).toBeInTheDocument())
+
+    fireEvent.change(screen.getByDisplayValue('qwen2.5:7b'), { target: { value: 'qwen2.5:14b' } })
+    fireEvent.click(screen.getByText('Save Configuration'))
+
+    await waitFor(() => expect(mockUpdateAIConfig).toHaveBeenCalledTimes(1))
+    expect(mockUpdateAIConfig.mock.calls[0][0]).toMatchObject({
+      llm_model: 'qwen2.5:14b',
+      rag_faithfulness_evaluator: 'ragas',
+    })
+  })
+
+  it('shows the single-prompt judge in use when offline mode is pinned', async () => {
+    mockGetAIConfig.mockResolvedValue(
+      baseConfig({
+        ai_offline_mode: true,
+        ai_offline_mode_source: 'env',
+        ai_offline_mode_env_pinned: true,
+        rag_faithfulness_gate_enabled: true,
+        rag_faithfulness_evaluator: 'ragas',
+        rag_faithfulness_evaluator_effective: 'ollama',
+        rag_faithfulness_evaluator_reason: 'offline_mode',
+      }),
+    )
+    await renderPage()
+
+    // The choice is shown as stored; the badge and the note say it is not what runs.
+    await waitFor(() => expect(ragasRadio()).toBeChecked())
+    expect(screen.getByTestId('faithfulness-evaluator-in-use')).toHaveTextContent('In use: Single-prompt judge')
+    expect(screen.getByTestId('faithfulness-evaluator-note')).toHaveTextContent('AI_OFFLINE_MODE')
+  })
+
+  it('warns before saving Ragas while the offline toggle is on', async () => {
+    mockGetAIConfig.mockResolvedValue(
+      baseConfig({ ai_offline_mode: true, ai_offline_mode_source: 'override', rag_faithfulness_gate_enabled: true }),
+    )
+    await renderPage()
+    await waitFor(() => expect(judgeRadio()).toBeChecked())
+    expect(screen.queryByTestId('faithfulness-evaluator-note')).not.toBeInTheDocument()
+
+    fireEvent.click(ragasRadio())
+    expect(screen.getByTestId('faithfulness-evaluator-note')).toHaveTextContent(/offline mode on/i)
+
+    // Unticking offline mode (unsaved) clears the warning it caused.
+    fireEvent.click(screen.getByRole('checkbox', { name: /Offline Mode/i }))
+    expect(screen.queryByTestId('faithfulness-evaluator-note')).not.toBeInTheDocument()
+  })
+
+  it('says when the ragas package is missing', async () => {
+    mockGetAIConfig.mockResolvedValue(
+      baseConfig({
+        ai_offline_mode: false,
+        ai_offline_mode_source: 'not_offline',
+        rag_faithfulness_gate_enabled: true,
+        rag_faithfulness_evaluator: 'ragas',
+        rag_faithfulness_evaluator_effective: 'ollama',
+        rag_faithfulness_evaluator_reason: 'ragas_not_installed',
+      }),
+    )
+    await renderPage()
+
+    const note = await screen.findByTestId('faithfulness-evaluator-note')
+    expect(note).toHaveTextContent(/ragas package is not installed/)
+    expect(screen.getByTestId('faithfulness-evaluator-in-use')).toHaveTextContent('In use: Single-prompt judge')
   })
 })
