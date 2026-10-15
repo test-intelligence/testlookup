@@ -80,6 +80,9 @@ async def test_evaluate_ollama_backend_when_flag_on():
         "app.services.rag_faithfulness_service._feature_enabled",
         AsyncMock(return_value=True),
     ), patch.object(settings, "AI_OFFLINE_MODE", True), patch(
+        "app.services.rag_faithfulness_service._active_llm_provider",
+        AsyncMock(return_value="ollama"),
+    ), patch(
         "app.services.rag_faithfulness_service._evaluate_via_ollama",
         AsyncMock(return_value=(0.9, "grounded")),
     ) as mock_ollama, patch(

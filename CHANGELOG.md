@@ -327,6 +327,14 @@ locally by default.
 
 ### Fixed
 
+- **The RAG faithfulness gate reads the AI settings.** It imported a resolver
+  function that does not exist and swallowed the error, so it always used the
+  single-prompt evaluator and labelled each judged case with the environment's
+  provider instead of the configured one. It now reads `get_effective_ai_config`:
+  a stored `rag_faithfulness_evaluator` of `ragas` is honoured unless offline
+  mode is on (from the environment or the stored setting), and the label names
+  the configured provider. Ragas 0.2+ scores are read correctly, and a failed
+  Ragas score now counts as 0, not a pass.
 - **"Token revocation status cannot be verified" now says what failed.** It
   read "revocation store unavailable", and the log said "Restore Redis", even
   when Redis and the database were fine and the server had simply run out of

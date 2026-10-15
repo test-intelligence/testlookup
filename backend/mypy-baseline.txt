@@ -88,7 +88,6 @@
 1 app/services/policy_evaluator_service.py
 1 app/services/privacy_service.py
 3 app/services/project_reset_service.py
-5 app/services/rag_faithfulness_service.py
 1 app/services/rag_generation_service.py
 1 app/services/rag_staleness_service.py
 4 app/services/release_attribution.py
