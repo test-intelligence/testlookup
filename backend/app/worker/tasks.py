@@ -321,11 +321,29 @@ async def _pipeline_admission_duplicate(
     if not requested_by:
         return await _is_duplicate(dedup_key, ttl=PIPELINE_ADMISSION_TTL, owner=owner)
     duplicate = await _is_duplicate(
-        f"{dedup_key}:requested:{requested_by}", ttl=REQUESTED_PIPELINE_ADMISSION_TTL, owner=owner,
+        _requested_admission_key(dedup_key, requested_by), ttl=REQUESTED_PIPELINE_ADMISSION_TTL, owner=owner,
     )
     if not duplicate:
         await _is_duplicate(dedup_key, ttl=PIPELINE_ADMISSION_TTL, owner=owner)
     return duplicate
+
+
+def _requested_admission_key(dedup_key: str, requested_by: str) -> str:
+    return f"{dedup_key}:requested:{requested_by}"
+
+
+async def _release_requested_admission(dedup_key: str, *, owner: str, requested_by: str | None) -> None:
+    """End a person's double-submit guard when their pipeline ends.
+
+    The two-minute key only has to cover the moments before the pipeline row
+    exists (after that the router refuses a trigger while one is in progress).
+    Kept past the end of a short pipeline, it dropped the same person's next
+    "Trigger pipeline" (say, after changing the confidence threshold) while
+    the API answered "Pipeline queued". Owner-checked, so a newer task's key
+    is never removed.
+    """
+    if requested_by:
+        await _release_duplicate_lock(_requested_admission_key(dedup_key, requested_by), owner)
 
 
 async def _release_duplicate_lock(key: str, owner: str) -> None:
@@ -2286,6 +2304,16 @@ def run_agent_pipeline(
                 type(inv_exc).__name__,
             )
 
+        if not final_state.get("duplicate"):
+            try:
+                _run_async(_release_requested_admission(
+                    dedup_key, owner=dedup_owner, requested_by=requested_by,
+                ))
+            except Exception as release_exc:  # noqa: BLE001 -- the key expires by itself
+                logger.warning(
+                    "[Task %s] Failed to release the requested-pipeline key (%s)",
+                    self.request.id, type(release_exc).__name__,
+                )
         return {"completed_stages": stages_done, "error_count": len(errors)}
     except Exception as exc:
         safe_error = f"{type(exc).__name__}: agent pipeline failed"
@@ -2330,6 +2358,9 @@ def run_agent_pipeline(
         # DLQ, and let the exception propagate as a real task failure.
         try:
             _run_async(_release_duplicate_lock(dedup_key, dedup_owner))
+            _run_async(_release_requested_admission(
+                dedup_key, owner=dedup_owner, requested_by=requested_by,
+            ))
         except Exception as release_exc:
             logger.warning(
                 "[Task %s] Failed to release pipeline dedup lock after error (%s)",

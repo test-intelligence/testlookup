@@ -291,8 +291,10 @@ locally by default.
 - **"Trigger pipeline" re-analyses a run again** (W03). The API answered
   "Pipeline queued" and recorded the request, but the worker dropped the task as
   a duplicate for two hours after any analysis of the run. A person's trigger
-  now runs (a double submit within two minutes still collapses, and automatic
-  triggers keep collapsing behind the run's two-hour key).
+  now runs, including one right after their previous pipeline finished (a
+  double submit while the first is still queued collapses, for up to two
+  minutes, and automatic triggers keep collapsing behind the run's two-hour
+  key).
 
 - **Drafting a defect from a cluster no longer ties up a database
   connection while the AI writes.** The draft request kept its connection

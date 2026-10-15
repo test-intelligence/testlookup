@@ -152,6 +152,9 @@ def pipeline(monkeypatch):
         if name.endswith("_run"):
             journal.append("pipeline")
             return state["final"]
+        if name == "_release_requested_admission":
+            journal.append("release")
+            return None
         journal.append("invalidate")
         return None
 
@@ -173,7 +176,7 @@ def test_a_finished_pipeline_captures_its_history_before_the_snapshot_invalidati
     _run_pipeline(pipeline, final)
     pipeline.spy.assert_called_once()
     assert pipeline.spy.call_args.args[1:] == (RUN, PROJECT, final)
-    assert pipeline.journal == ["pipeline", "ai_history", "invalidate"]
+    assert pipeline.journal == ["pipeline", "ai_history", "invalidate", "release"]
 
 
 def test_a_duplicate_short_circuit_captures_nothing(pipeline):
