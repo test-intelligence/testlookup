@@ -60,6 +60,23 @@ def _failure_category_value(category: Any) -> str:
     return str(getattr(category, "value", category))
 
 
+async def _release_connection_for_llm(db: AsyncSession) -> None:
+    """Hand the session's pooled connection back before an LLM call.
+
+    A worker has three connections. The defect-draft request held its own
+    across the call while the call's cost-cap check took a second, so a few
+    drafts at once starved the pool the way the run-intelligence GET did
+    (#247). ``close()`` ends the read transaction: not ``commit()`` (this
+    service is stage-only) and not ``rollback()`` (it expires the loaded
+    rows). Loaded attributes stay readable and the session opens a new
+    transaction on its next query. A session with pending writes keeps its
+    connection, because closing it would discard them.
+    """
+    if db.new or db.dirty or db.deleted:
+        return
+    await db.close()
+
+
 async def get_defect_candidate(
     run_id: str,
     cluster_id: str,
@@ -140,6 +157,9 @@ async def get_defect_candidate(
     # LLM-generated Jira content (with fallback)
     from app.services.llm_cost_reservation import cost_budget_scope
 
+    # The reads are done: give the connection back for the seconds the LLM
+    # takes (its cost-cap check needs one of its own).
+    await _release_connection_for_llm(db)
     # Re-audit R-B45-1: the ticket text is charged to the run's project.
     with cost_budget_scope(run.project_id):
         jira_content = await _generate_jira_content(cluster, analyses)

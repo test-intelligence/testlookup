@@ -235,7 +235,7 @@ async def test_a_cluster_stored_twice_is_read_as_its_newest_row(monkeypatch):
 
     monkeypatch.setattr(dps, "_generate_jira_content", ticket)
     with pytest.raises(_Stop):
-        await dps.get_defect_candidate(str(RUN_ID), "cl_001", SimpleNamespace(execute=execute))
+        await dps.get_defect_candidate(str(RUN_ID), "cl_001", SimpleNamespace(execute=execute, new=(), dirty=(), deleted=(), close=AsyncMock()))
     assert seen == ["newest"]
     cluster_sql = next(s for s in statements if "FROM failure_clusters" in s)
     assert "ORDER BY failure_clusters.created_at DESC" in cluster_sql

@@ -301,7 +301,7 @@ async def test_defect_promotion_writes_its_ticket_inside_the_runs_project_scope(
 
     monkeypatch.setattr(promotion, "_generate_jira_content", ticket)
     with pytest.raises(_Stop):
-        await promotion.get_defect_candidate(str(uuid.uuid4()), "c-1", SimpleNamespace(execute=execute))
+        await promotion.get_defect_candidate(str(uuid.uuid4()), "c-1", SimpleNamespace(execute=execute, new=(), dirty=(), deleted=(), close=AsyncMock()))
     assert seen == [str(project_id)]
 
 
