@@ -49,6 +49,13 @@ export interface SparklineProps {
   /** A soft fill under the line. */
   area?: boolean
   className?: string
+  /**
+   * W06 DEF-04: a hover text per point, index for index with `series`. Each
+   * MEASURED point with a title gets a transparent hit circle whose native
+   * `<title>` names it (the day's opened / closed counts); a `null` point has
+   * no circle. Absent, the output is exactly what it was.
+   */
+  pointTitles?: readonly (string | null)[]
 }
 
 /** The end dot's diameter, px: twice the inset, so the model's inset keeps it inside the cell. */
@@ -63,6 +70,7 @@ export default function Sparkline({
   height = SPARKLINE_HEIGHT,
   area = false,
   className,
+  pointTitles,
 }: SparklineProps) {
   // `useId` yields ":r1:" (React 18) or "«r1»" (React 19); neither is safe
   // inside `url(#…)`, so keep only the characters an id selector allows.
@@ -86,6 +94,8 @@ export default function Sparkline({
     marginTop: -DOT / 2,
     borderRadius: '50%',
     background: color,
+    // With hover targets, the dot must not swallow the newest point's.
+    ...(pointTitles ? { pointerEvents: 'none' as const } : {}),
   }
 
   return (
@@ -129,6 +139,16 @@ export default function Sparkline({
             strokeLinejoin="round"
             vectorEffect="non-scaling-stroke"
           />
+          {pointTitles &&
+            model.points.map((point) => {
+              const title = pointTitles[point.index]
+              if (title == null) return null
+              return (
+                <circle key={point.index} data-part="point" cx={point.x} cy={point.y} r={6} fill="transparent">
+                  <title>{title}</title>
+                </circle>
+              )
+            })}
         </svg>
         <span data-part="end-dot" style={dotStyle} />
       </div>

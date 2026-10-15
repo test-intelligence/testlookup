@@ -3,48 +3,54 @@
  * page has no §5 row), at 1440 x 900:
  *
  *   Header  → `PageHeader` (compact, **?** = the failure-analysis topic's
- *             "promoting to a defect"): Views (secondary) · "New defect"
- *             (primary). No toolbar row: the page has no window and no suite
- *             filter; its status filter belongs to the table and sits in the
- *             table's header beside the search.
+ *             "promoting to a defect"), actions in this order: Views
+ *             (secondary) · the window (7 / 30 / 90 d: the KPI sparklines,
+ *             Time to resolve and Escape rate) · "Only this release" (only
+ *             with ONE release picked in the top bar; `?scope=release`) · the
+ *             suite · "New defect" (primary). Still no toolbar row (the fold
+ *             budget, W06 §0.17); the status filter belongs to the table and
+ *             sits in the table's header beside the search.
  *   Verdict → `StatusBanner` in the "Defect queue verdict" landmark: the
  *             queue state (Release blocked / At risk / Queue healthy /
  *             Pending), the P0s, the defects with no Jira ticket, the queue
- *             health score, this week's net change. "All releases" when a
- *             release is picked in the top bar (defects are per project).
- *   KPIs    → `KpiStrip` ("Defect KPIs"): Open · P0 / P1 open · MTTR ·
- *             Unlinked to Jira · Oldest open P0 (its one real gauge).
+ *             health score, this week's net change (the trend's last 7 days).
+ *             "All releases" while the toggle is off and a release is picked;
+ *             "Affecting {release}" while it is on.
+ *   KPIs    → `KpiStrip` ("Defect KPIs"): Open · P0 / P1 open · Time to
+ *             resolve (each with the window's sparkline, values from the
+ *             trend's totals over EVERY defect in scope) · Escape rate
+ *             (DEF-03, "Not measured" below the sample floor) · Oldest open
+ *             P0 (its one real gauge).
  *   PRIMARY → the defects table (`data-primary`): Key · Title · Severity ·
- *             Status · Jira · Age · Actions, filtered by the status tabs (the
- *             `Tabs` primitive since P6; state in localStorage and saved
- *             views, not `?tab=`) and the search in its header. A row does not expand (its one action
- *             opens the Jira ticket), so there is no row drill-down to move.
+ *             Status · Owner · Jira · Age · Actions, filtered by the status
+ *             tabs (the `Tabs` primitive since P6; state in localStorage and
+ *             saved views, not `?tab=`) and the search in its header. A row
+ *             does not expand; its actions are "Open in Jira" (every role)
+ *             and the "Defect actions" menu (QA engineer and above: status,
+ *             assignee, Jira link — `DefectRowActions`), whose answer
+ *             replaces the row in place. `?defect=<id>` (the activity feed's
+ *             link) highlights and scrolls to that row.
  *   Tabs    → `?tab=`: "Where defects live" (open defects by component,
  *             severity stacked) · "Jira bridge".
  *   Below   → Disclosure "How queue health is computed": the health meter and
- *             its three weighted dimensions (the verdict card's right half; in
- *             three columns, so the old 2 x 2 grid's empty cell is gone).
+ *             its four weighted dimensions (Ownership is back: the list has
+ *             owners since W06 DEF-02).
  *
- * UX redesign P2: a control renders only when it does something real, so
- * there are no Link-Jira / Assign / Triage buttons until those flows exist.
+ * UX redesign P2: a control renders only when it does something real.
  *
- * Data: derives every section from the existing useDefects(...). A
- * useFailureCategories() call sat here too; its result was never
- * destructured, so it fed nothing. Removed once the release filter made it
- * re-fetch on every release change to no effect.
- * The README assumes a richer DefectItem with severity,
- * owner, release tag, and bridge metadata — none of which the current model
- * carries. Severity is synthesised; owner is NOT (nothing renders it):
- *   - severity     ← failure_category + ai_confidence_score
+ * Data: the rows come from useDefects(...) (every defect in scope, capped at
+ * 1,000); the KPI values and lines from useDefectTrend (server totals, so the
+ * cap never shows in a tile), the escape rate from useDefectEscapeRate.
+ *   - severity     ← the server's `priority` (P0-P3), else the stored
+ *                    severity, else failure_category + ai_confidence_score
  *   - key          ← jira_ticket_id, else the defect id's first 8 characters
- *   - jira link    ← jira_ticket_id / jira_ticket_url
+ *   - owner        ← assignee_name, else owner_team (and where it came from)
+ *   - jira link    ← jira_ticket_id / jira_ticket_url (safe URLs only)
  *   - age          ← created_at
  *   - bridge state ← derived from per-row jira_ticket_id presence
- * When the backend grows real defect-management endpoints these synth paths
- * collapse to single field reads.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { Bug, ExternalLink, Plus, Search, ShieldCheck } from 'lucide-react'
 import toast from 'react-hot-toast'
 import EmptyState from '@/components/ui/EmptyState'
@@ -56,22 +62,37 @@ import PageHeader from '@/components/ui/PageHeader'
 import StatusBanner, { type BannerFact, type BannerState } from '@/components/ui/StatusBanner'
 import KpiStrip from '@/components/ui/KpiStrip'
 import MetricCard from '@/components/ui/MetricCard'
+import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
+import WindowPicker from '@/components/ui/WindowPicker'
 import Tabs, { type TabItem } from '@/components/ui/Tabs'
 import { useTabParam } from '@/components/ui/useTabParam'
 import Disclosure from '@/components/ui/Disclosure'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import DefectIntakeModal from '@/components/defects/DefectIntakeModal'
+import DefectRowActions from '@/components/defects/DefectRowActions'
 import GaugeBar from '@/components/charts/GaugeBar'
+import Sparkline, { type SparklineTone } from '@/components/charts/Sparkline'
 import type { GaugeBands, GaugeTick, GaugeTone } from '@/components/charts/gaugeBar.model'
 import { refreshDefects, useDefects } from '@/hooks/useMetrics'
+import { refreshDefectInsights, useDefectEscapeRate, useDefectTrend } from '@/hooks/useDefectInsights'
 import { jiraBridgeState, useIntegrationsConfig, type JiraBridgeState } from '@/hooks/useIntegrationsConfig'
+import { usePageSuiteFilter } from '@/hooks/usePageSuiteFilter'
+import { useReleaseScope } from '@/hooks/useReleaseScope'
+import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
-import { useTimeWindowStore } from '@/store/timeWindowStore'
+import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import SavedViewsMenu from '@/components/reports/SavedViewsMenu'
 import { useReportViewsMenu } from '@/components/reports/useReportViewsMenu'
 import type { SavedView } from '@/services/savedViewsService'
 import { isSafeExternalUrl } from '@/utils/safeUrl'
-import type { DefectItem } from '@/types/analytics'
+import { formatNumber } from '@/utils/formatters'
+import type {
+  DefectEscapeRateResponse,
+  DefectItem,
+  DefectResponse,
+  DefectScopeQuery,
+  DefectTrendResponse,
+} from '@/types/analytics'
 
 /** The page's help topic (the header's **?**). */
 // Topic and section ("promoting to a defect"): PageHeader opens `topic#anchor`.
@@ -140,16 +161,22 @@ const VERDICT_THEME: Record<Verdict, VerdictTheme> = {
 }
 
 // ── Queue-health model ───────────────────────────────────────────────────
-type DimensionId = 'p0_throughput' | 'jira_coverage' | 'fix_velocity'
-// The design's weights. Ownership (0.20) was a fourth: with no owner field
-// on the backend it scored every open defect as unowned, so it is gone, and
-// the composite divides by the remaining weights' sum to stay on 0-100.
+type DimensionId = 'p0_throughput' | 'jira_coverage' | 'fix_velocity' | 'ownership'
+// The design's weights. Ownership was dropped while the backend had no owner
+// field (it scored every open defect as unowned); W06 DEF-02 gives every row
+// its assignee or team, so it is back. The weights sum to 1, so the
+// re-normalisation below leaves them as designed.
 const WEIGHTS: Record<DimensionId, number> = {
   p0_throughput: 0.35,
   jira_coverage: 0.25,
   fix_velocity:  0.20,
+  ownership:     0.20,
 }
 const WEIGHT_SUM = Object.values(WEIGHTS).reduce((a, b) => a + b, 0)
+
+/** The disclosure's sentence on what the Ownership dimension counts. */
+const OWNERSHIP_SENTENCE =
+  "Ownership counts open defects with an assignee or a team (their own, or one the project's ownership rules give them)."
 
 interface DimensionScore {
   id: DimensionId
@@ -171,6 +198,12 @@ interface DefectRow extends DefectItem {
   keyLabel: string
   jiraKey: string | null
   statusKey: StatusKey
+  /** The row's status word: "Invalid" and the legacy "Closed" share the Closed tab. */
+  statusLabel: string
+  /** Has an assignee or a team (the Ownership dimension). */
+  isOwned: boolean
+  /** The list row as the server sent it (the row menu PATCHes it; `severity` above is the P-level). */
+  source: DefectItem
 }
 
 interface QueueModel {
@@ -200,6 +233,20 @@ interface QueueModel {
 // intake maps P0-P3 onto them; analytics_service._SEVERITY_FROM_PRIORITY).
 const SEVERITY_FROM_STORED: Record<string, Severity> = { CRITICAL: 'P0', HIGH: 'P1', MEDIUM: 'P2', LOW: 'P3' }
 
+const PRIORITIES: readonly Severity[] = ['P0', 'P1', 'P2', 'P3']
+
+/**
+ * The row's P-level. W06: the server derives it (`defect_status.priority_sql`,
+ * the same rule the KPI totals and the trend read), so `priority` wins; the
+ * rule below is the fallback for a row without it (an old fixture, a cached
+ * payload) and stays byte-for-byte the server's (one case table is asserted
+ * on both sides).
+ */
+function severityOf(d: DefectItem): Severity {
+  const server = (d.priority ?? '').toUpperCase() as Severity
+  return PRIORITIES.includes(server) ? server : classifySeverity(d)
+}
+
 function classifySeverity(d: DefectItem): Severity {
   // The defect's own severity when it has one: the P0-P3 a person chose in
   // New defect, or the one its creator set. It was always synthesised from
@@ -226,13 +273,69 @@ function ageOf(iso: string): { ms: number; label: string; tone: DefectRow['ageTo
   return { ms, label: `${d}d`, tone: d >= 5 ? 'bad' : d >= 3 ? 'warn' : 'good' }
 }
 
+/**
+ * The tab a status word belongs to. INVALID (a person's "not a bug", or a
+ * review rejection) is closed: it sits under Closed with the label "Invalid".
+ * An unknown word still reads as Open — a drifted word must stay visible in a
+ * queue, never vanish from every tab.
+ */
 function statusKeyOf(s: string): StatusKey {
-  const u = s.toUpperCase()
+  const u = (s ?? '').toUpperCase()
   if (u === 'OPEN') return 'OPEN'
   if (u === 'IN_PROGRESS' || u === 'IN PROGRESS' || u === 'IN-PROGRESS') return 'IN_PROGRESS'
   if (u === 'RESOLVED') return 'RESOLVED'
-  if (u === 'CLOSED') return 'CLOSED'
+  if (u === 'CLOSED' || u === 'INVALID') return 'CLOSED'
   return 'OPEN'
+}
+
+const STATUS_LABEL: Record<Exclude<StatusKey, 'ALL'>, string> = {
+  OPEN: 'Open',
+  IN_PROGRESS: 'In progress',
+  RESOLVED: 'Resolved',
+  CLOSED: 'Closed',
+}
+
+function statusLabelOf(s: string, key: StatusKey): string {
+  if ((s ?? '').toUpperCase() === 'INVALID') return 'Invalid'
+  return key === 'ALL' ? 'Open' : STATUS_LABEL[key]
+}
+
+const isActive = (r: { statusKey: StatusKey }) => r.statusKey === 'OPEN' || r.statusKey === 'IN_PROGRESS'
+
+/** Where a team that is not the defect's own came from (the Owner cell's muted line). */
+const OWNER_SOURCE_LINE: Record<string, string> = {
+  rule: 'from ownership rules',
+  component_map: 'from the component map',
+  test_label: "from the test's owner label",
+}
+
+/** The Owner cell's lines: the assignee over their team, else the team over its source, else "Unassigned". */
+function ownerLines(d: DefectItem): { primary: string | null; secondary: string | null } {
+  const name = d.assignee_name?.trim() || null
+  const team = d.owner_team?.trim() || null
+  if (name) return { primary: name, secondary: team }
+  if (team) return { primary: team, secondary: (d.owner_source && OWNER_SOURCE_LINE[d.owner_source]) || null }
+  return { primary: null, secondary: null }
+}
+
+/**
+ * What the Jira cell says for an unlinked row whose approval tried to file a
+ * ticket (W06 DEF-06), instead of "unlinked"; `null` keeps "unlinked".
+ */
+function filingLabel(d: DefectItem): string | null {
+  switch (d.jira_filing_status) {
+    case 'not_filed':
+      if (d.jira_filing_reason === 'offline_mode') return 'not filed (offline)'
+      if (d.jira_filing_reason === 'disabled') return 'not filed (Jira off)'
+      if (d.jira_filing_reason === 'not_configured') return 'not filed (Jira not configured)'
+      return 'not filed'
+    case 'failed':
+      return 'filing failed'
+    case 'unknown':
+      return 'filing unconfirmed'
+    default:
+      return null
+  }
 }
 
 /** A real identifier for the row: its Jira ticket when linked, otherwise the
@@ -251,7 +354,7 @@ function componentOf(d: DefectItem): string {
 }
 
 function buildRow(d: DefectItem): DefectRow {
-  const severity = classifySeverity(d)
+  const severity = severityOf(d)
   const a = ageOf(d.created_at)
   const isUnlinked = !d.jira_ticket_id
   const componentName = componentOf(d)
@@ -273,6 +376,9 @@ function buildRow(d: DefectItem): DefectRow {
     keyLabel: buildKeyLabel(d),
     jiraKey: d.jira_ticket_id ?? null,
     statusKey,
+    statusLabel: statusLabelOf(d.resolution_status, statusKey),
+    isOwned: Boolean(d.assignee_name?.trim() || d.owner_team?.trim()),
+    source: d,
   }
 }
 
@@ -282,7 +388,13 @@ function toneFor(score: number): 'good' | 'warn' | 'bad' {
   return 'bad'
 }
 
-function buildQueueModel(rawDefects: DefectItem[]): QueueModel {
+/**
+ * `serverMttr` (W06 D-18, one MTTR on the page): the trend's windowed mean
+ * time to resolve, once it has loaded — the tile and the Fix-velocity
+ * dimension then read the same number. `null` inside it is "nothing resolved
+ * in the window". Absent, the model derives one from the loaded rows.
+ */
+function buildQueueModel(rawDefects: DefectItem[], serverMttr?: { days: number | null }): QueueModel {
   const rows: DefectRow[] = rawDefects.map(buildRow)
   const open = rows.filter(r => r.statusKey === 'OPEN').length
   const inProgress = rows.filter(r => r.statusKey === 'IN_PROGRESS').length
@@ -308,13 +420,14 @@ function buildQueueModel(rawDefects: DefectItem[]): QueueModel {
   const closures = rows.filter((r): r is DefectRow & { resolved_at: string } =>
     !!r.resolved_at && (r.statusKey === 'RESOLVED' || r.statusKey === 'CLOSED'),
   )
-  const mttrDays = closures.length === 0
+  const rowMttr = closures.length === 0
     ? null
     : closures.reduce((sum, r) => {
         const start = new Date(r.created_at).getTime()
         const end   = new Date(r.resolved_at).getTime()
         return sum + Math.max(0, (end - start) / 86400000)
       }, 0) / closures.length
+  const mttrDays = serverMttr ? serverMttr.days : rowMttr
 
   const countsByStatus: Record<StatusKey, number> = {
     ALL:         total,
@@ -345,6 +458,12 @@ function buildQueueModel(rawDefects: DefectItem[]): QueueModel {
   const fixVelocityScore = mttrDays == null
     ? 100
     : Math.max(0, 100 - (mttrDays / 7) * 100)   // 0d → 100; 7d → 0 (linear)
+  // Ownership: of the ACTIVE rows (a closed defect needs no owner), the share
+  // with an assignee or a team; nothing active → nothing unowned → 100.
+  const activeRows = rows.filter(isActive)
+  const ownershipScore = activeRows.length > 0
+    ? (activeRows.filter(r => r.isOwned).length / activeRows.length) * 100
+    : 100
 
   // Each dimension carries its RE-NORMALISED weight (design weight / sum), so
   // the tiles' percentages add up to 100 and the composite is their weighted
@@ -353,6 +472,7 @@ function buildQueueModel(rawDefects: DefectItem[]): QueueModel {
     { id: 'p0_throughput', label: 'P0 throughput', score: p0Throughput,      weight: WEIGHTS.p0_throughput / WEIGHT_SUM, tone: toneFor(p0Throughput) },
     { id: 'jira_coverage', label: 'Jira coverage', score: jiraCoverageScore, weight: WEIGHTS.jira_coverage / WEIGHT_SUM, tone: toneFor(jiraCoverageScore) },
     { id: 'fix_velocity',  label: 'Fix velocity',  score: fixVelocityScore,  weight: WEIGHTS.fix_velocity / WEIGHT_SUM,  tone: toneFor(fixVelocityScore) },
+    { id: 'ownership',     label: 'Ownership',     score: ownershipScore,    weight: WEIGHTS.ownership / WEIGHT_SUM,     tone: toneFor(ownershipScore) },
   ]
   const composite = Math.round(dimensions.reduce((sum, d) => sum + d.score * d.weight, 0))
 
@@ -400,12 +520,13 @@ function StatusTabs({
 }
 
 // ── "How queue health is computed" (a Disclosure below the table) ─────────
-// The verdict card's right half: the composite meter and its three weighted
-// dimensions, in three columns (the 2 x 2 grid left its fourth cell empty).
+// The verdict card's right half: the composite meter and its four weighted
+// dimensions, one column each.
 function QueueHealthDetails({ model, verdict }: { model: QueueModel; verdict: Verdict }) {
   return (
     <div data-queue-health="" className="flex flex-col gap-3.5">
       <HealthMeter model={model} verdict={verdict} />
+      <p data-ownership-note="" className="m-0 text-[12px] text-[var(--color-text-muted)]">{OWNERSHIP_SENTENCE}</p>
       <DimensionGrid dimensions={model.dimensions} />
     </div>
   )
@@ -510,26 +631,152 @@ function DimensionTile({ dim }: { dim: DimensionScore }) {
 const OLDEST_P0_DOMAIN = [0, 7] as const
 const OLDEST_P0_BANDS: GaugeBands = { direction: 'lower-is-better', thresholds: [2, 5] }
 
+/** The window options: the KPI sparklines, Time to resolve and Escape rate. The table lists every defect. */
+const DEFECT_WINDOWS = [7, 30, 90] as const
+const WINDOW_TITLE = 'Window for the KPI sparklines, Time to resolve and Escape rate. The table lists every defect.'
+/** U+2212, the closed count's sign in a point's hover text. */
+const MINUS = '−'
+
+/**
+ * A tile's trend line over the window, or — with fewer than two measured
+ * points — the words for why there is none (Overview's pattern). Counts run
+ * from 0 to the series' top: a zoomed [min, max] turns 40 → 42 into a cliff.
+ */
+function trendSpark(
+  label: string,
+  days: number,
+  series: readonly (number | null)[],
+  tone: SparklineTone,
+  pointTitles: readonly (string | null)[],
+  format?: (v: number) => string,
+): ReactNode {
+  const measured = series.filter((v): v is number => v !== null && Number.isFinite(v))
+  if (measured.length >= 2) {
+    return (
+      <Sparkline
+        series={series}
+        label={`${label} per day, last ${days} days`}
+        tone={tone}
+        domain={[0, Math.max(1, ...measured)]}
+        format={format}
+        pointTitles={pointTitles}
+        area
+        className="w-24"
+      />
+    )
+  }
+  const hint = `${days}d · not enough data for a trend line`
+  return (
+    <span data-spark-hint="" title={hint} className="block max-w-[9.5rem] text-right text-[11px] leading-tight text-[var(--color-text-faint)]">
+      {hint}
+    </span>
+  )
+}
+
+/** The escape-rate request as the strip reads it (SWR's three fields). */
+interface EscapeState {
+  data?: DefectEscapeRateResponse
+  error?: unknown
+  isLoading?: boolean
+}
+
+/**
+ * DEF-03's tile: the share of the window's defects that affect a shipped
+ * release and were filed after it shipped. Below the server's sample floor it
+ * reads "Not measured" with the server's reason — never 0 %.
+ */
+function EscapeRateTile({ escape }: { escape: EscapeState }) {
+  const data = escape.data
+  let value = '—'
+  let notMeasured = false
+  let hint = 'Defects filed after a release they affect had shipped.'
+  if (data) {
+    // "Not measured" is the tile's small line under a "—" value, not the 24 px
+    // value itself: as the value it ran into the tile's padding at 1280 px on
+    // Windows' fonts, and CI's DejaVu is wider.
+    notMeasured = !(data.measured && data.rate != null)
+    value = notMeasured ? '—' : `${(data.rate as number).toFixed(1)}%`
+    const lead = data.measured
+      ? `Defects filed after a release they affect had shipped: ${data.escaped} of ${data.attributed} reported in the last ${data.window_days} days that affect a shipped release.`
+      : (data.reason ?? `Fewer than ${data.sample_floor} defects reported in the last ${data.window_days} days affect a shipped release.`)
+    hint = `${lead} Production outcomes in the window: ${data.outcomes.incidents} incident(s), ${data.outcomes.rollbacks} rollback(s).`
+  } else if (escape.error) {
+    hint = 'The escape rate could not be loaded.'
+  }
+  return (
+    <div data-escape-measured={data ? String(data.measured && data.rate != null) : undefined} className="min-w-0 h-full">
+      <MetricCard
+        compact
+        icon={null}
+        title="Escape rate"
+        hint={hint}
+        loading={!data && !escape.error && Boolean(escape.isLoading)}
+        metric={notMeasured ? { value, trend_text: 'Not measured', trend_direction: 'none' } : { value }}
+      />
+    </div>
+  )
+}
+
 /**
  * The five defect KPIs (a `KpiStrip` of compact `MetricCard`s, UX redesign
  * P3). Owner decision OD-1 (Wave 2.5): a KPI glyph draws a REAL series or a
- * real scalar, or nothing. Four of these drew literal point strings and fixed
- * bars whatever the queue held; there is no defect history to draw instead
- * (`/analytics/defects` is a paged list with no window, and `chart-data` has
- * no defect metric), so they are gone. "Oldest open P0" is a real number of
- * days: it keeps a `GaugeBar` beside its value, drawn only when a P0 is open.
+ * real scalar, or nothing. W06 DEF-04 gives the page a real history
+ * (`/analytics/defects/trend`): Open, P0 / P1 and Time to resolve draw the
+ * window's line and read their VALUES from its totals, which count every
+ * defect in scope (the list stops at 1,000). While the trend loads or fails
+ * they show the loaded rows' values and no line. "Oldest open P0" is a real
+ * number of days: it keeps a `GaugeBar` beside its value, drawn only when a
+ * P0 is open. "Escape rate" (DEF-03) replaced "Unlinked to Jira", whose share
+ * is still the banner's "No Jira ticket" fact and the Jira bridge tab.
  *
  * Values only (P3): a tile with a caption line is ~99 px and put the table one
  * pixel inside the fold budget. The captions that were data moved to the
  * banner (this week's net change, the P0s blocking the release, the oldest
  * open P0's key).
  */
-export function DefectKpiStrip({ model }: { model: QueueModel }) {
+export function DefectKpiStrip({
+  model,
+  trend,
+  escape = {},
+}: {
+  model: QueueModel
+  /** The window's trend, once loaded (absent while it loads or after it failed). */
+  trend?: DefectTrendResponse
+  escape?: EscapeState
+}) {
   const oldestP0Days = model.oldestP0 ? Math.floor(model.oldestP0.ageMs / 86400000) : null
-  // HON-07: this was labelled "Escape rate", but it is the share of defects
-  // with no Jira issue, not defects found after a release shipped (DEF-03
-  // owns a real escape metric).
-  const unlinkedShare = model.total > 0 ? Math.round((model.unlinkedTotal / model.total) * 100) : 0
+  const totals = trend?.totals
+  const points = trend?.points ?? []
+  const n = trend?.window_days ?? points.length
+  const openValue = totals ? formatNumber(totals.open) : formatNumber(model.open + model.inProgress)
+  const p0p1Value = totals
+    ? `${formatNumber(totals.p0_open)} / ${formatNumber(totals.p1_open)}`
+    : `${model.p0Count} / ${model.p1Count}`
+  const flow = (p: DefectTrendResponse['points'][number]) => `${p.date}: +${p.opened} opened, ${MINUS}${p.closed} closed`
+  const openSpark = trend
+    ? trendSpark('Open defects', n, points.map(p => p.open_backlog), 'neutral', points.map(p => `${flow(p)}, ${p.open_backlog} open`))
+    : undefined
+  const p0p1Spark = trend
+    ? trendSpark(
+        'P0 / P1 open',
+        n,
+        points.map(p => p.p0p1_open),
+        (totals?.p0_open ?? 0) > 0 ? 'bad' : 'neutral',
+        points.map(p => `${flow(p)}, ${p.p0p1_open} P0/P1 open`),
+      )
+    : undefined
+  const mttrSpark = trend
+    ? trendSpark(
+        'Time to resolve',
+        n,
+        points.map(p => p.mttr_days),
+        'neutral',
+        points.map(p => (p.mttr_days != null
+          ? `${p.date}: ${p.mttr_days.toFixed(1)}d to resolve (7-day mean)`
+          : `${p.date}: nothing resolved in the 7 days`)),
+        v => `${v.toFixed(1)}d`,
+      )
+    : undefined
   const oldestP0Gauge = oldestP0Days != null ? (
     <GaugeBar
       value={oldestP0Days}
@@ -545,24 +792,20 @@ export function DefectKpiStrip({ model }: { model: QueueModel }) {
     <section aria-label="Defect KPIs">
       <KpiStrip>
         {[
-          <MetricCard key="open" compact icon={null} title="Open defects" metric={{ value: model.open + model.inProgress }} />,
-          <MetricCard key="p0p1" compact icon={null} title="P0 / P1 open" metric={{ value: `${model.p0Count} / ${model.p1Count}` }} />,
+          <MetricCard key="open" compact icon={null} title="Open defects" metric={{ value: openValue }} sparkline={openSpark} />,
+          <MetricCard key="p0p1" compact icon={null} title="P0 / P1 open" metric={{ value: p0p1Value }} sparkline={p0p1Spark} />,
           <MetricCard
             key="mttr"
             compact
             icon={null}
             title="Time to resolve"
-            hint="Mean time to resolve, over the defects resolved"
+            hint={trend
+              ? `Mean time to resolve, over the defects resolved in the last ${n} days`
+              : 'Mean time to resolve, over the defects resolved'}
             metric={{ value: model.mttrDays != null ? `${model.mttrDays.toFixed(1)}d` : '—' }}
+            sparkline={mttrSpark}
           />,
-          <MetricCard
-            key="unlinked"
-            compact
-            icon={null}
-            title="Unlinked to Jira"
-            hint="Share of defects (any status) with no Jira issue"
-            metric={{ value: `${unlinkedShare}%` }}
-          />,
+          <EscapeRateTile key="escape" escape={escape} />,
           <MetricCard
             key="oldest"
             compact
@@ -581,7 +824,7 @@ export function DefectKpiStrip({ model }: { model: QueueModel }) {
 type SortKey = 'age' | 'severity' | 'status'
 
 function DefectsTable({
-  rows, search, setSearch, sortKey, setSortKey, statusFilter, emptyQueue,
+  rows, search, setSearch, sortKey, setSortKey, statusFilter, emptyQueue, highlightId, onUpdated, rowRef,
 }: {
   rows: DefectRow[]
   search: string
@@ -592,6 +835,12 @@ function DefectsTable({
   statusFilter: React.ReactNode
   /** What the body says when the project has no defect at all (how to get one), instead of "no defects in this filter". */
   emptyQueue?: React.ReactNode
+  /** The `?defect=` row, marked until another row is acted on. */
+  highlightId?: string | null
+  /** The row menu's answer (the server's row after a PATCH). */
+  onUpdated: (row: DefectItem) => void
+  /** Registers the highlighted row's element, so the page can scroll to it. */
+  rowRef?: (el: HTMLTableRowElement | null) => void
 }) {
   const filtered = useMemo(() => {
     if (!search.trim()) return rows
@@ -600,7 +849,10 @@ function DefectsTable({
       r.titleText.toLowerCase().includes(q)
       || r.keyLabel.toLowerCase().includes(q)
       || (r.jiraKey ?? '').toLowerCase().includes(q)
-      || r.componentName.toLowerCase().includes(q),
+      || r.componentName.toLowerCase().includes(q)
+      // DEF-02 (D-15): owners are searchable instead of a separate owner chip.
+      || (r.assignee_name ?? '').toLowerCase().includes(q)
+      || (r.owner_team ?? '').toLowerCase().includes(q),
     )
   }, [rows, search])
 
@@ -639,7 +891,7 @@ function DefectsTable({
               type="search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search defects, Jira keys…"
+              placeholder="Search defects, Jira keys, owners…"
               className="bg-transparent text-[12px] text-[var(--color-text)] outline-none w-[220px]"
               aria-label="Search defects"
             />
@@ -655,6 +907,7 @@ function DefectsTable({
               <Th label="Title" />
               <ThSort label="Severity" active={sortKey === 'severity'} onClick={() => setSortKey('severity')} />
               <ThSort label="Status"   active={sortKey === 'status'}   onClick={() => setSortKey('status')} />
+              <Th label="Owner" />
               <Th label="Jira" />
               <ThSort label="Age" active={sortKey === 'age'} onClick={() => setSortKey('age')} sortDir={sortKey === 'age' ? '↓' : undefined} />
               <Th label="Actions" align="right" />
@@ -663,12 +916,20 @@ function DefectsTable({
           <tbody>
             {sorted.length === 0 && (
               <tr>
-                <td colSpan={7} className="text-center py-10 text-[var(--color-text-muted)]">
+                <td colSpan={8} className="text-center py-10 text-[var(--color-text-muted)]">
                   {search.trim() ? 'No defects match the search.' : emptyQueue ?? 'No defects in this filter.'}
                 </td>
               </tr>
             )}
-            {sorted.map(r => <DefectRowEl key={r.id} row={r} />)}
+            {sorted.map(r => (
+              <DefectRowEl
+                key={r.id}
+                row={r}
+                highlighted={highlightId === r.id}
+                onUpdated={onUpdated}
+                rowRef={highlightId === r.id ? rowRef : undefined}
+              />
+            ))}
           </tbody>
         </table>
       </div>
@@ -676,8 +937,36 @@ function DefectsTable({
   )
 }
 
-function DefectRowEl({ row }: { row: DefectRow }) {
+/**
+ * DEF-02's Owner cell: the assignee over their team, else the team over where
+ * it came from (nothing for the defect's own), else a muted "Unassigned".
+ * Free text from people and rules, so React text only; truncated at 160 px
+ * with the whole of it on hover.
+ */
+function OwnerCell({ row }: { row: DefectRow }) {
+  const { primary, secondary } = ownerLines(row)
+  if (!primary) {
+    return <span data-owner="none" className="text-[11.5px] text-[var(--color-text-muted)]">Unassigned</span>
+  }
+  const full = secondary ? `${primary} · ${secondary}` : primary
+  return (
+    <div data-owner={row.assignee_name?.trim() ? 'assignee' : 'team'} className="flex flex-col gap-0.5 min-w-0 max-w-[160px]" title={full}>
+      <span className="text-[12px] text-[var(--color-text)] truncate">{primary}</span>
+      {secondary && <span className="text-[10.5px] text-[var(--color-text-muted)] truncate">{secondary}</span>}
+    </div>
+  )
+}
+
+function DefectRowEl({
+  row, highlighted = false, onUpdated, rowRef,
+}: {
+  row: DefectRow
+  highlighted?: boolean
+  onUpdated: (row: DefectItem) => void
+  rowRef?: (el: HTMLTableRowElement | null) => void
+}) {
   const isP0 = row.severity === 'P0'
+  const filing = row.isUnlinked ? filingLabel(row) : null
   const sevPalette: Record<Severity, { bg: string; bd: string; fg: string }> = {
     P0: { bg: 'color-mix(in srgb, var(--status-failed) 15%, transparent)',     bd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)',     fg: 'var(--status-failed)' },
     P1: { bg: 'color-mix(in srgb, var(--status-broken) 15%, transparent)',    bd: 'color-mix(in srgb, var(--status-broken) 30%, transparent)',    fg: 'var(--status-broken)' },
@@ -694,25 +983,38 @@ function DefectRowEl({ row }: { row: DefectRow }) {
     : row.ageTone === 'good' ? 'var(--status-passed)'
     : 'var(--color-text)'
 
-  // The one real row action: open the linked Jira ticket. A row without a
-  // safe ticket URL has nothing to open, so it renders no action at all
-  // (no "Link Jira" / "Assign" button until those flows exist).
+  // "Open in Jira" for a row with a safe ticket URL (every role); the
+  // "Defect actions" menu beside it renders for a QA engineer and above
+  // (`DefectRowActions` decides, and needs the row's project).
   const jiraHref = row.jira_ticket_url && isSafeExternalUrl(row.jira_ticket_url)
     ? row.jira_ticket_url
     : null
 
   return (
     <tr
+      ref={rowRef}
+      data-defect-row={row.id}
+      data-highlighted={highlighted ? 'true' : undefined}
       style={{
-        background: isP0 ? 'color-mix(in srgb, var(--status-failed) 4%, transparent)' : 'transparent',
+        background: highlighted
+          ? 'color-mix(in srgb, var(--color-accent) 8%, transparent)'
+          : isP0 ? 'color-mix(in srgb, var(--status-failed) 4%, transparent)' : 'transparent',
         borderBottom: '1px solid var(--color-border)',
       }}
       className="transition-colors hover:bg-[var(--color-bg-hover)]"
     >
-      <td className="font-mono text-[11.5px] text-[var(--color-text-secondary)] whitespace-nowrap" style={{ padding: '10px 12px' }}>
+      <td
+        className="font-mono text-[11.5px] text-[var(--color-text-secondary)] whitespace-nowrap"
+        // The `?defect=` row's accent left border (on the cell: a <tr> draws no border of its own here).
+        style={{ padding: '10px 12px', boxShadow: highlighted ? 'inset 3px 0 0 var(--color-accent)' : undefined }}
+      >
         {row.keyLabel}
       </td>
-      <td style={{ padding: '10px 12px', minWidth: 280 }}>
+      {/* w-full max-w-0: the title takes the room the other columns leave and
+          truncates in it. Without it a nowrap title sized its column to the
+          whole text, and at 1280 px a "not filed (offline)" Jira chip pushed
+          Actions out of the card (W06 local demo). */}
+      <td className="w-full max-w-0" style={{ padding: '10px 12px', minWidth: 240 }}>
         <div className="flex flex-col gap-0.5 min-w-0">
           <span className="text-[12.5px] text-[var(--color-text)] truncate">{row.titleText}</span>
           <span className="text-[10.5px] text-[var(--color-text-muted)] truncate">
@@ -730,18 +1032,28 @@ function DefectRowEl({ row }: { row: DefectRow }) {
         </span>
       </td>
       <td style={{ padding: '10px 12px' }}>
-        <span className="inline-flex items-center gap-1.5 text-[11.5px]" style={{ color: statusColor }}>
+        <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-[11.5px]" style={{ color: statusColor }}>
           <i aria-hidden style={{ width: 6, height: 6, borderRadius: 999, background: 'currentColor' }} />
-          {row.statusKey === 'IN_PROGRESS' ? 'In progress' : row.statusKey.charAt(0) + row.statusKey.slice(1).toLowerCase()}
+          {row.statusLabel}
         </span>
       </td>
       <td style={{ padding: '10px 12px' }}>
+        <OwnerCell row={row} />
+      </td>
+      <td style={{ padding: '10px 12px' }}>
         {row.isUnlinked ? (
+          // DEF-06: an approval that tried to file a ticket says what happened, the reason on hover.
           <span
-            className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10.5px] italic font-mono"
-            style={{ background: 'transparent', border: '1px dashed var(--color-border)', color: 'var(--color-text-muted)' }}
+            data-jira-filing={filing ? row.jira_filing_status ?? undefined : undefined}
+            title={filing ? row.jira_filing_reason ?? undefined : undefined}
+            className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10.5px] italic font-mono whitespace-nowrap"
+            style={{
+              background: 'transparent',
+              border: `1px dashed ${filing && row.jira_filing_status !== 'not_filed' ? 'color-mix(in srgb, var(--status-broken) 45%, transparent)' : 'var(--color-border)'}`,
+              color: filing && row.jira_filing_status !== 'not_filed' ? 'var(--status-broken)' : 'var(--color-text-muted)',
+            }}
           >
-            unlinked
+            {filing ?? 'unlinked'}
           </span>
         ) : jiraHref ? (
           <a
@@ -783,27 +1095,30 @@ function DefectRowEl({ row }: { row: DefectRow }) {
         )}
       </td>
       <td className="text-right" style={{ padding: '10px 12px' }}>
-        <span className="text-[11.5px] tabular-nums font-semibold" style={{ color: ageColor }}>
+        <span className="whitespace-nowrap text-[11.5px] tabular-nums font-semibold" style={{ color: ageColor }}>
           {row.ageLabel}
         </span>
       </td>
       <td style={{ padding: '10px 12px', textAlign: 'right' }}>
-        {jiraHref && (
-          <a
-            href={jiraHref}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label={`Open ${row.jiraKey ?? row.keyLabel} in Jira`}
-            className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-md border transition-colors"
-            style={{
-              color: 'var(--color-accent)',
-              borderColor: 'color-mix(in srgb, var(--color-accent) 30%, transparent)',
-              background: 'var(--color-accent-bg-soft)',
-            }}
-          >
-            Open <ExternalLink className="h-3 w-3" />
-          </a>
-        )}
+        <div className="inline-flex items-center justify-end gap-1.5">
+          {jiraHref && (
+            <a
+              href={jiraHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={`Open ${row.jiraKey ?? row.keyLabel} in Jira`}
+              className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-md border transition-colors"
+              style={{
+                color: 'var(--color-accent)',
+                borderColor: 'color-mix(in srgb, var(--color-accent) 30%, transparent)',
+                background: 'var(--color-accent-bg-soft)',
+              }}
+            >
+              Open <ExternalLink className="h-3 w-3" />
+            </a>
+          )}
+          <DefectRowActions defect={row.source} onUpdated={onUpdated} />
+        </div>
       </td>
     </tr>
   )
@@ -1008,6 +1323,39 @@ const SECTION_TABS: readonly TabItem<SectionTab>[] = [
 ]
 const SECTION_TAB_IDS: readonly SectionTab[] = SECTION_TABS.map(t => t.id)
 
+/** `?scope=release`: the "Only this release" toggle (URL-synced, and saved in a view as `defects.scope`). */
+const SCOPE_PARAM = 'scope'
+const SCOPE_RELEASE = 'release'
+type ScopeMode = 'all' | 'release'
+/** `?defect=<id>`: the activity feed's link to one defect (`events.py` `_ENTITY_ROUTES`). */
+const DEFECT_PARAM = 'defect'
+
+const RELEASE_SCOPE_TITLE =
+  'Defects that affect the selected release: asserted impact, else where the defect was found. The release gate counts the same set.'
+const ALL_RELEASES_REASON =
+  'Defects are tracked per project, not per release — one raised against an earlier release can still be open now. ' +
+  '"Only this release" narrows the page to the defects that affect the selected release, the set its release gate counts.'
+
+/** What a saved view keeps beside the scope: the status tab and the release toggle. */
+function savedDefectsExtra(view: SavedView): { tab?: StatusKey; scope?: ScopeMode } {
+  const saved = view.filters?.defects
+  if (!saved || typeof saved !== 'object') return {}
+  const { tab, scope } = saved as { tab?: unknown; scope?: unknown }
+  return {
+    tab: STATUS_TABS.some(t => t.id === tab) ? (tab as StatusKey) : undefined,
+    scope: scope === 'release' || scope === 'all' ? scope : undefined,
+  }
+}
+
+/** The release's name for the scope chip: the list's envelope, else the trend's, when it names THAT release. */
+function scopedReleaseName(releaseId: string, ...metas: (DefectResponse['meta'] | DefectTrendResponse['meta'])[]): string | null {
+  for (const meta of metas) {
+    const release = meta?.scope?.releases?.find(r => r.id === releaseId)
+    if (release?.name) return release.name
+  }
+  return null
+}
+
 export default function DefectsPage() {
   const project = useProjectStore(s => s.activeProject)
   const activeProjectId = useProjectStore(s => s.activeProjectId)
@@ -1019,21 +1367,52 @@ export default function DefectsPage() {
   })
   useEffect(() => { localStorage.setItem(TAB_KEY, activeTab) }, [activeTab])
   const [sectionTab, setSectionTab] = useTabParam(SECTION_TAB_IDS, 'components')
+  const [searchParams, setSearchParams] = useSearchParams()
 
-  // P1: this page's saved views. Defects are project-wide (no release, no
-  // window, no suite): a view keeps the status tab.
+  // DEF-05: "Only this release" (`?scope=release`). It applies only while ONE
+  // release is picked in the top bar (`useReleaseScope` is null in All
+  // projects mode and for a release of another project); otherwise the page is
+  // today's deliberate all-releases view, and the three defect hooks send no
+  // release at all.
+  const releaseId = useReleaseScope()
+  const scopeOn = searchParams.get(SCOPE_PARAM) === SCOPE_RELEASE
+  const affecting = scopeOn && releaseId !== null
+  const setScopeOn = useCallback((on: boolean) => {
+    setSearchParams((current) => {
+      const out = new URLSearchParams(current)
+      if (on) out.set(SCOPE_PARAM, SCOPE_RELEASE)
+      else out.delete(SCOPE_PARAM)
+      return out
+    }, { replace: true })
+  }, [setSearchParams])
+
+  // DEF-04: the window (the KPI sparklines, Time to resolve and Escape rate;
+  // the table lists every defect). The global window, snapped to 7 / 30 / 90.
   const storedDays = useTimeWindowStore(s => s.days)
-  const viewExtra = useMemo(() => ({ defects: { tab: activeTab } }), [activeTab])
+  const days = snapToAllowed(storedDays, DEFECT_WINDOWS)
+
+  // DEF-05: the suite (the shared single-suite pattern); it narrows the list
+  // and the trend, never the escape rate (counted per release).
+  const { selectedSuite, setSelectedSuite, suiteFilter, suiteNames } = usePageSuiteFilter()
+  const { options: suiteOptions } = useSuiteOptions()
+
+  // P1 saved views: the top-bar release, the window, the suite, and beside
+  // them the status tab and the release toggle.
+  const viewExtra = useMemo(
+    () => ({ defects: { tab: activeTab, scope: (scopeOn ? 'release' : 'all') satisfies ScopeMode } }),
+    [activeTab, scopeOn],
+  )
   const applyViewExtra = useCallback((view: SavedView) => {
-    const saved = view.filters?.defects
-    const tab = saved && typeof saved === 'object' ? (saved as { tab?: unknown }).tab : undefined
-    if (STATUS_TABS.some(t => t.id === tab)) setActiveTab(tab as StatusKey)
-  }, [])
+    const { tab, scope } = savedDefectsExtra(view)
+    if (tab) setActiveTab(tab)
+    setScopeOn(scope === 'release')
+  }, [setScopeOn])
   const viewsMenu = useReportViewsMenu({
     route: '/defects',
-    windowDays: storedDays,
-    windowOptions: null,
-    release: false,
+    windowDays: days,
+    windowOptions: DEFECT_WINDOWS,
+    suite: { names: suiteNames, set: setSelectedSuite },
+    release: true,
     extraFilters: viewExtra,
     applyExtra: applyViewExtra,
   })
@@ -1051,15 +1430,61 @@ export default function DefectsPage() {
     setIntakeOpen(true)
   }
 
+  // The one scope the three defect hooks share (the escape rate takes the
+  // release only). Toggle off → no release_id / release_match at all.
+  const releaseIds = useMemo(() => (affecting && releaseId ? [releaseId] : undefined), [affecting, releaseId])
+  const listScope = useMemo<DefectScopeQuery>(
+    () => ({ releaseIds, releaseMatch: releaseIds ? 'affects' : undefined, suiteName: suiteFilter }),
+    [releaseIds, suiteFilter],
+  )
+
   // Pull all statuses up-front so we can drive the verdict + counts.
   // `error` is read alongside `data`: a failed fetch leaves `allDefects`
   // empty, which the verdict below reads as PENDING and renders as
   // "queue empty" -- an all-clear produced by never having looked.
-  const { data: allDefectsData, isLoading, error: defectsError, mutate: retryDefects } =
-    useDefects()
+  const { data: allDefectsData, isLoading, error: defectsError, mutate: mutateDefects } =
+    useDefects(undefined, listScope)
+  const { data: trend } = useDefectTrend({ ...listScope, days })
+  const escape = useDefectEscapeRate({ days, releaseIds })
   const allDefects = useMemo<DefectItem[]>(() => allDefectsData?.items ?? [], [allDefectsData])
-  const model = useMemo(() => buildQueueModel(allDefects), [allDefects])
+  const serverMttr = trend ? trend.totals.mttr_days : undefined
+  const model = useMemo(
+    () => buildQueueModel(allDefects, serverMttr === undefined ? undefined : { days: serverMttr }),
+    [allDefects, serverMttr],
+  )
   const verdict = pickVerdict(model)
+
+  // `?defect=<id>`: every status, no search, the row marked and scrolled to.
+  // The mark stays until another row is acted on.
+  const focusId = searchParams.get(DEFECT_PARAM)
+  const [highlightId, setHighlightId] = useState<string | null>(null)
+  // Adjusted while rendering when the link changes (React's pattern for
+  // "reset state when a prop changes"), not in an effect: no extra commit.
+  const [seenFocusId, setSeenFocusId] = useState<string | null>(null)
+  if (focusId && focusId !== seenFocusId) {
+    setSeenFocusId(focusId)
+    setActiveTab('ALL')
+    setSearch('')
+    setHighlightId(focusId)
+  }
+  const scrolledFor = useRef<string | null>(null)
+  const highlightRowRef = useCallback((el: HTMLTableRowElement | null) => {
+    if (!el || !highlightId || scrolledFor.current === highlightId) return
+    scrolledFor.current = highlightId
+    el.scrollIntoView?.({ block: 'center' })
+  }, [highlightId])
+
+  // DEF-01: the row menu's answer replaces the row in place (the server's
+  // row, so its tab, owner and Jira cell move at once), then everything
+  // revalidates; the trend and the escape rate are re-read too.
+  const replaceRow = useCallback((row: DefectItem) => {
+    setHighlightId(current => (current && current !== row.id ? null : current))
+    void mutateDefects(
+      current => (current ? { ...current, items: current.items.map(i => (i.id === row.id ? row : i)) } : current),
+      { revalidate: true },
+    )
+    void refreshDefectInsights()
+  }, [mutateDefects])
 
   if (!project && !isAllProjects) {
     return (
@@ -1077,7 +1502,7 @@ export default function DefectsPage() {
     return (
       <DataUnavailable
         error={defectsError}
-        onRetry={() => void retryDefects()}
+        onRetry={() => void mutateDefects()}
         testId="defects-data-unavailable"
       />
     )
@@ -1103,8 +1528,9 @@ export default function DefectsPage() {
 
   // The facts: the verdict card's issue rows and its lede, as numbers. The
   // unlinked count with no reason for it (nothing here knows why a ticket is
-  // missing), no "this week" on an all-time count, no auto-link rule.
-  const netThisWeek = model.weeklyAdded - model.weeklyClosed
+  // missing), no auto-link rule. "Net this week" is the trend's last 7 days
+  // once it has loaded (every defect in scope), else the loaded rows'.
+  const netThisWeek = trend ? trend.totals.net_last_7d : model.weeklyAdded - model.weeklyClosed
   const bannerFacts: BannerFact[] = [
     {
       label: 'No Jira ticket',
@@ -1119,6 +1545,10 @@ export default function DefectsPage() {
     { label: 'Queue health', value: verdict === 'PENDING' ? '—' : `${model.composite}/100` },
   ]
 
+  const releaseName = affecting && releaseId ? scopedReleaseName(releaseId, allDefectsData?.meta, trend?.meta) : null
+  const capped = allDefectsData ? allDefectsData.items.length < allDefectsData.total : false
+  const highlightMissing = Boolean(highlightId && allDefectsData && !model.rows.some(r => r.id === highlightId))
+
   return (
     <PageShell className="space-y-4">
       <PageHeader
@@ -1128,6 +1558,32 @@ export default function DefectsPage() {
         actions={
           <>
             {viewsMenu && <SavedViewsMenu {...viewsMenu} variant="ghost" />}
+            <span title={WINDOW_TITLE} className="inline-flex">
+              <WindowPicker options={DEFECT_WINDOWS} />
+            </span>
+            {releaseId && (
+              <button
+                type="button"
+                data-testid="defects-release-scope"
+                aria-pressed={scopeOn}
+                title={RELEASE_SCOPE_TITLE}
+                onClick={() => setScopeOn(!scopeOn)}
+                className="inline-flex items-center rounded-full border px-2.5 py-1 text-[12.5px] transition-colors"
+                style={{
+                  background: scopeOn ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',
+                  borderColor: scopeOn ? 'color-mix(in srgb, var(--color-accent) 30%, transparent)' : 'var(--color-border)',
+                  color: scopeOn ? 'var(--color-accent)' : 'var(--color-text-muted)',
+                }}
+              >
+                Only this release
+              </button>
+            )}
+            <SuiteFilterSelect
+              value={selectedSuite}
+              onChange={setSelectedSuite}
+              options={suiteOptions}
+              allLabel="All suites"
+            />
             <button
               type="button"
               onClick={openIntake}
@@ -1148,20 +1604,43 @@ export default function DefectsPage() {
               <span>{theme.label}</span>{' '}
               <span aria-hidden="true" className="text-[var(--color-text-muted)]">·</span>{' '}
               <span className="font-normal">{summaryNode}</span>{' '}
-              {/* The counts are the project's, whatever release the header has picked: `/analytics/defects` has
-                  no release dimension, and a defect raised against an earlier release can still be open now. */}
-              <AllReleasesBadge reason="Defects are tracked per project, not per release — one raised against an earlier release can still be open now. Whether a defect blocks a particular release is decided by the release gate." />
+              {/* While "Only this release" is off, the counts are every release's (a defect raised against an
+                  earlier release can still be open now), so a picked release gets the "All releases" badge.
+                  While it is on, the chip names the release the page is narrowed to. */}
+              {affecting ? (
+                <span
+                  data-defects-scope-chip=""
+                  title={RELEASE_SCOPE_TITLE}
+                  className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium whitespace-nowrap"
+                  style={{
+                    background: 'color-mix(in srgb, var(--color-accent) 12%, transparent)',
+                    borderColor: 'color-mix(in srgb, var(--color-accent) 30%, transparent)',
+                    color: 'var(--color-accent)',
+                  }}
+                >
+                  Affecting {releaseName ?? 'the selected release'}
+                </span>
+              ) : (
+                <AllReleasesBadge reason={ALL_RELEASES_REASON} />
+              )}
             </span>
           }
           facts={bannerFacts}
         />
       </section>
 
-      <DefectKpiStrip model={model} />
+      <DefectKpiStrip model={model} trend={trend} escape={escape} />
 
-      {allDefectsData && allDefectsData.items.length < allDefectsData.total && (
+      {allDefectsData && capped && (
         <p data-defects-capped="" className="text-[12px] text-[var(--color-text-muted)]">
-          The counts and the table cover the newest {allDefectsData.items.length} of {allDefectsData.total} defects.
+          {trend
+            ? `The table and the tabs cover the newest ${allDefectsData.items.length} of ${allDefectsData.total} defects; the KPI tiles count all of them.`
+            : `The counts and the table cover the newest ${allDefectsData.items.length} of ${allDefectsData.total} defects.`}
+        </p>
+      )}
+      {allDefectsData && highlightMissing && (
+        <p data-defect-missing="" className="text-[12px] text-[var(--color-text-muted)]">
+          That defect is not among the newest {allDefectsData.items.length} loaded.
         </p>
       )}
 
@@ -1173,6 +1652,9 @@ export default function DefectsPage() {
           sortKey={sortKey}
           setSortKey={setSortKey}
           statusFilter={<StatusTabs active={activeTab} onChange={setActiveTab} counts={model.countsByStatus} />}
+          highlightId={highlightId}
+          onUpdated={replaceRow}
+          rowRef={highlightRowRef}
           emptyQueue={model.total === 0 ? (
             // Concrete next steps when the queue is empty but the project may
             // still have failures worth triaging: review your failures, hand
@@ -1212,7 +1694,10 @@ export default function DefectsPage() {
         <DefectIntakeModal
           projectId={intakeProjectId}
           onClose={() => setIntakeOpen(false)}
-          onSuccess={() => { void refreshDefects() }}
+          onSuccess={() => {
+            void refreshDefects()
+            void refreshDefectInsights()
+          }}
         />
       )}
 

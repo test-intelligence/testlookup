@@ -108,4 +108,47 @@ describe('Sparkline', () => {
     expect(endDot(container).style.top).toBe(`${SPARKLINE_INSET}px`)
     expect(container.querySelector('text')).toBeNull()
   })
+
+  // W06 DEF-04: a hover text per point (the Defects KPI tiles' daily counts).
+  describe('pointTitles', () => {
+    it('absent, the markup is exactly what it was: no hit circle, no <title>', () => {
+      const { container } = render(<Sparkline series={[1, null, 3, 4]} label="Open defects" area />)
+      const before = container.innerHTML
+      expect(container.querySelector('circle')).toBeNull()
+      expect(container.querySelector('title')).toBeNull()
+      expect(endDot(container).style.pointerEvents).toBe('')
+      // Rendering it again with the prop explicitly undefined changes nothing either.
+      const again = render(<Sparkline series={[1, null, 3, 4]} label="Open defects" area pointTitles={undefined} />)
+      expect(again.container.innerHTML.replace(/spark-[A-Za-z0-9_-]+/g, 'spark-id'))
+        .toBe(before.replace(/spark-[A-Za-z0-9_-]+/g, 'spark-id'))
+    })
+
+    it('present, one <title> per MEASURED point, in order, and none for a null point', () => {
+      const titles = ['d1: one', 'd2: gap', 'd3: three', 'd4: four']
+      const { container } = render(
+        <Sparkline series={[1, null, 3, 4]} label="Open defects" pointTitles={titles} />,
+      )
+      const circles = [...container.querySelectorAll('circle[data-part="point"]')]
+      expect(circles).toHaveLength(3)
+      expect(circles.map((c) => c.querySelector('title')?.textContent)).toEqual(['d1: one', 'd3: three', 'd4: four'])
+      // Each sits on its point (x in % of the width), transparent, wide enough to hover.
+      expect(circles.map((c) => c.getAttribute('cx'))).toEqual(['0', String((2 / 3) * 100), '100'])
+      for (const c of circles) {
+        expect(c.getAttribute('r')).toBe('6')
+        expect(c.getAttribute('fill')).toBe('transparent')
+      }
+      // The end dot lets the newest point's hover through.
+      expect(endDot(container).style.pointerEvents).toBe('none')
+      // Still ONE accessible image: the titles are hover text, not extra images.
+      expect(screen.getAllByRole('img')).toHaveLength(1)
+    })
+
+    it('skips a measured point whose title is null, and keeps hostile text as text', () => {
+      const hostile = '<img src=x onerror="alert(1)">'
+      const { container } = render(<Sparkline series={[1, 2, 3]} label="x" pointTitles={[null, hostile, 'c']} />)
+      const titles = [...container.querySelectorAll('circle title')].map((t) => t.textContent)
+      expect(titles).toEqual([hostile, 'c'])
+      expect(container.querySelector('img')).toBeNull()
+    })
+  })
 })

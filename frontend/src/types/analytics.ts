@@ -1,3 +1,4 @@
+import type { EnvelopeMeta } from '@/lib/viz/contracts'
 import type { PaginatedResponse } from './common'
 
 export interface DashboardMetricValue {
@@ -199,9 +200,88 @@ export interface DefectItem {
   resolved_at?: string
   test_name: string
   suite_name?: string
+  // W06 (all optional: a fixture or a cached payload from before the wave has none of them).
+  /** The defect's project: the row menu PATCHes `/projects/{project_id}/defects/{id}`. */
+  project_id?: string
+  /** 'P0'..'P3', derived server-side (`defect_status.priority_sql`); the page's
+   *  `classifySeverity` is only the fallback for a row without it. */
+  priority?: string | null
+  /** DEF-02: the defect's own team, else the one the project's ownership rules give it; null = none. */
+  owner_team?: string | null
+  /** Where `owner_team` came from: 'defect' | 'rule' | 'component_map' | 'test_label'. */
+  owner_source?: string | null
+  /** DEF-01: the assigned person; `assignee_name` is null for an ineligible (service,
+   *  synthetic, inactive) account even when the id is stored. */
+  assignee_user_id?: string | null
+  assignee_name?: string | null
+  /** 'suggested' | 'pending_review' | 'approved' | 'executed' | 'rejected'. */
+  approval_status?: string | null
+  /** DEF-06: what the approval's Jira filing did: 'filed' | 'linked' | 'not_filed' | 'failed' | 'unknown';
+   *  null when no filing was attempted. `jira_filing_reason` names why (an availability reason or the server's text). */
+  jira_filing_status?: string | null
+  jira_filing_reason?: string | null
+  /** The release the defect was found in (already on the wire, now typed). */
+  release_name?: string | null
 }
 
-export type DefectResponse = PaginatedResponse<DefectItem>
+export type DefectResponse = PaginatedResponse<DefectItem> & { meta?: EnvelopeMeta }
+
+/** DEF-04 `GET /analytics/defects/trend`: one point per UTC day of the window. */
+export interface DefectTrendPoint {
+  date: string
+  opened: number
+  closed: number
+  /** Open (active) defects at the END of the day. */
+  open_backlog: number
+  p0p1_open: number
+  /** Mean days to resolve over the trailing 7 points; null when nothing was resolved in them. */
+  mttr_days: number | null
+}
+
+export interface DefectTrendTotals {
+  open: number
+  p0_open: number
+  p1_open: number
+  /** Over the whole window; null when nothing was resolved in it. */
+  mttr_days: number | null
+  resolved_in_window: number
+  opened_in_window: number
+  closed_in_window: number
+  opened_last_7d: number
+  closed_last_7d: number
+  net_last_7d: number
+  /** Legacy closed rows without a `resolved_at`: excluded from the points, counted here. */
+  closed_without_time: number
+}
+
+export interface DefectTrendResponse {
+  points: DefectTrendPoint[]
+  totals: DefectTrendTotals
+  window_days: number
+  meta?: EnvelopeMeta
+}
+
+/** DEF-03 `GET /analytics/defects/escape-rate`. `rate` is null below the sample floor (`measured: false`). */
+export interface DefectEscapeRateResponse {
+  rate: number | null
+  escaped: number
+  attributed: number
+  in_window: number
+  measured: boolean
+  reason: string | null
+  sample_floor: number
+  window_days: number
+  outcomes: { incidents: number; rollbacks: number; releases: number }
+  meta?: EnvelopeMeta
+}
+
+/** The scope the three defect hooks (list, trend, escape rate) send. Unset keys are not sent. */
+export interface DefectScopeQuery {
+  releaseIds?: string[]
+  releaseMatch?: 'found_in' | 'affects'
+  suiteName?: string | null
+  days?: number
+}
 
 export type DefectIntakeSeverity = 'P0' | 'P1' | 'P2' | 'P3'
 
@@ -223,6 +303,9 @@ export interface DefectIntakePayload {
   test_name?: string
   suite_name?: string
   jira_ticket_url?: string
+  /** W06 DEF-03: the releases the defect affects (ids of THIS project's releases; the
+   *  server refuses any other with one 422). Sent only when one is chosen. */
+  affects_releases?: string[]
 }
 
 export interface DefectIntakeResponse {
