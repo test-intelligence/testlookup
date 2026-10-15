@@ -354,9 +354,11 @@ locally by default.
   `BudgetedLLM.as_chat_model()`, so each of its calls is reserved against the
   cap like any other AI call, and a cap refusal is not retried. It scores on the
   request's event loop instead of blocking it in `ragas.evaluate`, and Ragas's
-  usage telemetry is off. The default image still leaves Ragas out (about 30
-  packages, among them pandas and pyarrow); build the backend with
-  `--build-arg INSTALL_RAGAS=1` to install `backend/requirements-ragas.txt`. A
+  usage telemetry is off. The default image still leaves Ragas out: it adds 26
+  packages, among them pandas and pyarrow (about 360 MB), and needs fsspec,
+  jiter and rich at lower versions than the default image runs. Build the
+  backend with `--build-arg INSTALL_RAGAS=1` to install
+  `backend/requirements-ragas.txt`, which pins that set. A
   Ragas install that fails to import now runs the single-prompt judge and labels
   the case with the provider that judged.
 - **"Token revocation status cannot be verified" now says what failed.** It
