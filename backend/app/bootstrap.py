@@ -59,6 +59,7 @@ from app.routers import (
     llm_cost_budget as llm_cost_budget_router,
     metrics,
     mfa,
+    ml_training,
     my_failures,
     notifications,
     onboarding,
@@ -173,6 +174,10 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     integrations.router,
     notifications.router,
     app_settings.router,
+    # W04 AIC-05: GET /settings/ai/ml/status, POST /settings/ai/ml/retrain. Right
+    # after app_settings.router; both paths end in literals under the literal
+    # ``ai/ml`` segment, and app_settings has no ``/ai/{...}`` route to shadow them.
+    ml_training.router,
     agents.router,
     # E1.2: AFTER agents.router, so /agents/{agent_id}/invoke is matched only
     # once every literal /agents/... route has had its chance.

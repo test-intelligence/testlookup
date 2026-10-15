@@ -74,6 +74,21 @@ redis==5.2.1
 kombu==5.6.2
 flower==2.1.0
 
+# ── ML tier: trainer + flaky-confidence model ────────────────
+# services/ml/trainer.py (the failure classifier, nightly beat + "Train now")
+# and services/ml/flaky_confidence.py. Without these the image answered "ML
+# dependencies not installed" and both models stayed inert (W04 AIC-05).
+# CPU-only, local, no egress. numpy already arrived through chromadb; it is
+# pinned so the trainer's version is the one tested. scipy, joblib,
+# threadpoolctl and narwhals are scikit-learn 1.9's own requirements, pinned to
+# the versions the tests run against.
+scikit-learn==1.9.0
+scipy==1.17.1
+numpy==2.4.4
+joblib==1.5.3
+threadpoolctl==3.6.0
+narwhals==2.24.0
+
 # ── XML / JSON Parsing ───────────────────────────────────────
 lxml==6.1.2
 defusedxml==0.7.1
