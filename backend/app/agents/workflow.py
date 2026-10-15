@@ -3654,12 +3654,11 @@ async def _create_pipeline_run(
         # threshold, so plan, routing and stages agree and a resume replays it.
         from app.services.pipeline_ai_scope import build_ai_config_snapshot
 
-        ai_config_snapshot = dict(
-            build_ai_config_snapshot(global_ai_config, resolved_agent_configs)
-        )
+        frozen_ai_config = build_ai_config_snapshot(global_ai_config, resolved_agent_configs)
+        ai_config_snapshot = dict(frozen_ai_config)
         initial_plan = build_workflow_plan(
             workflow_type=workflow_type,
-            threshold=int(ai_config_snapshot["confidence_threshold"]),
+            threshold=frozen_ai_config["confidence_threshold"],
             gap_refinement_enabled=bool(gap_refinement_enabled),
             cluster_children_enabled=bool(cluster_settings["enabled"]),
             cluster_children_aggregate_budget=dict(

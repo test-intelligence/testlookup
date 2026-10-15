@@ -973,6 +973,16 @@ def build_workflow_plan(
                 item["planned"] = False
                 item["rationale"] = f"not needed for the invoked agent {invoked_id}"
 
+    specialist_flags: dict[str, bool] = {
+        "contract_validation": contract_validation_enabled,
+        "log_intelligence": log_intelligence_enabled,
+        "regression_watchman": regression_watchman_enabled,
+        "change_ownership": change_ownership_enabled,
+        "defect_commander": defect_commander_enabled,
+    }
+    if workflow_type == "deep":
+        # Deep plans only: the offline/live plan hashes stay byte-identical.
+        specialist_flags["gap_refinement"] = gap_refinement_enabled
     plan = {
         "schema_version": PLANNER_SCHEMA_VERSION,
         "planner_version": PLANNER_VERSION,
@@ -988,18 +998,9 @@ def build_workflow_plan(
         # explained plan with the SAME inputs. Without these the rebuild fell
         # back to the kwarg defaults (all False) and reported every specialist
         # as "feature flag is off" even while the agent had just run.
-        "specialist_flags": {
-            "contract_validation": contract_validation_enabled,
-            "log_intelligence": log_intelligence_enabled,
-            "regression_watchman": regression_watchman_enabled,
-            "change_ownership": change_ownership_enabled,
-            "defect_commander": defect_commander_enabled,
-        },
+        "specialist_flags": specialist_flags,
         "stages": stages,
     }
-    if workflow_type == "deep":
-        # Deep plans only: the offline/live plan hashes stay byte-identical.
-        plan["specialist_flags"]["gap_refinement"] = gap_refinement_enabled
     if invocation_stage is not None:
         # Only on invocation plans, so every other plan's hash is unchanged.
         plan["invocation_stage"] = invocation_stage

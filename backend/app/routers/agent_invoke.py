@@ -412,7 +412,7 @@ async def _current_ai_config(db: AsyncSession) -> dict[str, Any]:
     from app.services.ai_config_resolver import get_effective_ai_config  # noqa: PLC0415
     from app.services.pipeline_ai_scope import build_ai_config_snapshot  # noqa: PLC0415
 
-    return build_ai_config_snapshot(await get_effective_ai_config(db=db, fresh=True), {})
+    return dict(build_ai_config_snapshot(await get_effective_ai_config(db=db, fresh=True), {}))
 
 
 async def _invocation_config_changed(db: AsyncSession, invocation: Any) -> bool:
