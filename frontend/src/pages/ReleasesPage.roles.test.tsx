@@ -25,12 +25,28 @@ vi.mock('@/store/projectStore', () => ({
 }))
 // Its own requests and tests; not what this file is about.
 vi.mock('@/components/compliance/CompliancePackPanel', () => ({ default: () => null }))
+vi.mock('@/hooks/useReleaseGate', () => ({
+  useReleaseGate: vi.fn(() => ({ data: null, isLoading: false, mutate: vi.fn() })),
+  useReleaseBaseline: vi.fn(() => ({ data: { comparable: false, reason: 'this release has no baseline' } })),
+  usePhaseGates: vi.fn(() => ({ data: undefined })),
+}))
+vi.mock('@/hooks/useProjectCompliancePacks', () => ({
+  PROJECT_COMPLIANCE_PACKS_KEY: 'project-compliance-packs',
+  useProjectCompliancePacks: () => ({ packs: [], total: 0, isLoading: false, isError: false, refresh: vi.fn() }),
+  refreshProjectCompliancePacks: vi.fn(),
+}))
+vi.mock('@/hooks/useActivityFeed', () => ({
+  useActivityFeed: () => ({ events: [], isLoading: false, error: undefined }),
+}))
 vi.mock('@/services/releasesService', () => ({
   releasesService: {
     delete: vi.fn().mockResolvedValue(undefined),
     deletePhase: vi.fn().mockResolvedValue(undefined),
     unlinkRun: vi.fn().mockResolvedValue(undefined),
     update: vi.fn(), create: vi.fn(), updatePhase: vi.fn(), markOutcome: vi.fn(),
+    // W05: the gate, the active release and sync (the hooks that read the gate are mocked above).
+    evaluateGate: vi.fn(), evaluatePhaseGate: vi.fn(), activate: vi.fn(), sync: vi.fn(),
+    getGate: vi.fn(), getGateBaseline: vi.fn(), getPhaseGates: vi.fn(),
   },
 }))
 vi.mock('react-hot-toast', () => ({ default: { success: vi.fn(), error: vi.fn() } }))
@@ -136,5 +152,58 @@ describe('an admin (the control)', () => {
     expect(releasesService.unlinkRun).toHaveBeenCalledWith('release-1', 'run-1')
     fireEvent.click(within(panel).getByRole('button', { name: 'Delete' }))
     expect(releasesService.delete).toHaveBeenCalledWith('release-1')
+  })
+})
+
+/**
+ * W05: recording a gate verdict (REL-01), making a release active and syncing
+ * releases (REL-08) are QA lead on the API. A QA lead sees Evaluate gate,
+ * Evaluate all in progress, Release actions, Sync releases and Record gate
+ * verdict; a QA engineer and a viewer see none of them, and still see the
+ * verdict itself.
+ */
+describe('W05 gate, activation and sync controls follow the role', () => {
+  const GO_GATE = {
+    verdict: 'GO', decided_at: '2026-10-14T09:30:00Z', pass_rate: 97.5, denominator: 40, evidence_count: 40,
+    run_count: 2, status_counts: { PASSED: 39, FAILED: 0, BROKEN: 0, SKIPPED: 1, UNKNOWN: 0 },
+    measured: true, insufficient_reason: null, blocking_reasons: [], blocking_total: 0,
+  }
+
+  beforeEach(async () => {
+    const { useReleases } = await import('@/hooks/useReleases')
+    vi.mocked(useReleases).mockReturnValue({
+      data: { items: [{ ...RELEASE, gate: GO_GATE }] }, isLoading: false, mutate: vi.fn(),
+    } as never)
+  })
+
+  it('a QA lead is offered all of them', () => {
+    signInAs('QA_LEAD')
+    renderAt('/releases')
+    const card = screen.getByRole('article', { name: /^Checkout 2\.5 2\.5\.0/ })
+    expect(within(card).getByTestId('release-evaluate')).toHaveTextContent('Re-evaluate')
+    expect(within(card).getByRole('button', { name: 'Release actions' })).toBeInTheDocument()
+    expect(screen.getByTestId('release-evaluate-all')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Sync releases/ })).toBeInTheDocument()
+    fireEvent.click(card)
+    const panel = screen.getByRole('dialog', { name: 'Checkout 2.5 2.5.0' })
+    expect(within(panel).getByTestId('gate-panel-evaluate')).toBeInTheDocument()
+    expect(within(panel).getByRole('button', { name: 'Record gate verdict' })).toBeInTheDocument()
+  })
+
+  it.each(['QA_ENGINEER', 'VIEWER'])('a %s sees the verdict and none of them', (role) => {
+    signInAs(role)
+    renderAt('/releases')
+    const card = screen.getByRole('article', { name: /^Checkout 2\.5 2\.5\.0/ })
+    expect(within(card).getByText('Go')).toBeInTheDocument()
+    expect(within(card).queryByTestId('release-evaluate')).not.toBeInTheDocument()
+    expect(within(card).queryByRole('button', { name: 'Release actions' })).not.toBeInTheDocument()
+    expect(screen.queryByTestId('release-evaluate-all')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Sync releases/ })).not.toBeInTheDocument()
+    fireEvent.click(card)
+    const panel = screen.getByRole('dialog', { name: 'Checkout 2.5 2.5.0' })
+    expect(within(panel).getByRole('heading', { name: 'Release gate' })).toBeInTheDocument()
+    expect(within(panel).queryByTestId('gate-panel-evaluate')).not.toBeInTheDocument()
+    expect(within(panel).queryByRole('button', { name: 'Record gate verdict' })).not.toBeInTheDocument()
+    expect(releasesService.evaluateGate).not.toHaveBeenCalled()
   })
 })
