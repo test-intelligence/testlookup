@@ -63,12 +63,13 @@ export function isDegradedPipeline(p: { status?: string | null; execution_metada
  * a run waiting for its automatic retry is still in progress, so it offers
  * Stop, not Retry. True for a failed run, a legacy `partial` row, and a
  * completed run whose stages degraded. A clean completed/passed run is not
- * retryable (the server answers 409 "finished successfully").
+ * retryable (the server answers 409 "finished successfully"), and neither is a
+ * run a person stopped: a stopped run is never resumed (E7.4; 409 "cancelled").
  */
 export function isResumablePipeline(
-  p: { status?: string | null; execution_metadata?: unknown } | null | undefined,
+  p: { status?: string | null; execution_metadata?: unknown; cancel_requested?: boolean | null } | null | undefined,
 ): boolean {
-  if (!p) return false
+  if (!p || p.cancel_requested) return false
   const raw = (p.status ?? '').toLowerCase()
   if (raw === 'failed' || raw === 'partial') return true
   return isDegradedPipeline(p)

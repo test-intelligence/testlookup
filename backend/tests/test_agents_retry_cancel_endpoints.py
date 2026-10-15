@@ -157,6 +157,34 @@ async def test_retry_refuses_review_rejected_pipeline_without_side_effects(monke
 
 
 @pytest.mark.asyncio
+async def test_retry_refuses_a_stopped_run_without_side_effects(monkeypatch):
+    """W04 local walk: Stop, then Retry on the same row answered 202 "resume"; the worker's
+    claim refused the stopped run (E7.4) and nothing ran while the page said "Resumed"."""
+    from app.routers import agents as router
+    from app.worker import tasks
+
+    pipeline = _pipeline("failed")
+    pipeline.cancel_requested = True
+    pipeline.error = "Deep pipeline execution error: PipelineCancelled: cancelled"
+    db = _DB(pipeline)
+    resume, rerun, activity = MagicMock(), MagicMock(), AsyncMock()
+    monkeypatch.setattr(tasks.resume_agent_pipeline, "apply_async", resume)
+    monkeypatch.setattr(tasks.run_agent_pipeline, "delay", rerun)
+    monkeypatch.setattr(router, "_record_retry_activity", activity)
+
+    with pytest.raises(HTTPException) as exc:
+        await _call_retry(monkeypatch, db)
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["reason"] == "cancelled"
+    assert exc.value.detail["links"]["rerun"] == "/api/v1/agents/pipelines/trigger"
+    assert not db.committed
+    resume.assert_not_called()
+    rerun.assert_not_called()
+    activity.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("status", ["pending", "running", "retry_wait"])
 async def test_retry_refuses_a_run_still_in_progress(monkeypatch, status):
     db = _DB(_pipeline(status))

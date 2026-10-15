@@ -515,6 +515,21 @@ async def retry_pipeline(
                 "public_status": public_status(current),
             },
         )
+    if bool(getattr(pipeline, "cancel_requested", False)):
+        # E7.4: a stopped run is never resumed, by any path; the worker's claim
+        # refuses it. Answering "resume" here queued a task that did nothing
+        # while the Agents page said "Resumed (attempt 2/5)" (W04 local walk).
+        raise HTTPException(
+            409,
+            detail={
+                "message": "This run was stopped, and a stopped run is not resumed. Start a new run instead.",
+                "reason": "cancelled",
+                "pipeline_run_id": str(pipeline.id),
+                "status": current.value,
+                "public_status": public_status(current),
+                "links": {"rerun": "/api/v1/agents/pipelines/trigger"},
+            },
+        )
     if not is_resumable(pipeline.status, pipeline.execution_metadata):
         # A clean ``completed``/``passed`` run. Retrying it would silently
         # discard a good result; the caller wants a fresh trigger instead.

@@ -432,6 +432,10 @@ function PipelineRow({
   const actions = usePipelineRowActions(pipeline, onChanged)
   const showRetry = canAct && isResumablePipeline(pipeline)
   const showStop = canAct && isPipelineInProgress(pipeline.status) && !pipeline.cancel_requested
+  // A run a person stopped is never resumed (E7.4): offer the new run straight away.
+  const showStartNew =
+    canAct && Boolean(pipeline.cancel_requested) && !isPipelineInProgress(pipeline.status) &&
+    pipeline.workflow_type !== 'live' && !actions.offerNewRun
   const started = pipeline.started_at ? new Date(pipeline.started_at).toLocaleString() : '—'
   const duration =
     pipeline.started_at && pipeline.completed_at
@@ -521,8 +525,21 @@ function PipelineRow({
             )}
           </span>
         </button>
-        {(showRetry || showStop) && (
+        {(showRetry || showStop || showStartNew) && (
           <div data-testid="pipeline-row-actions" className="flex shrink-0 items-center gap-1.5 pr-3">
+            {showStartNew && (
+              <button
+                type="button"
+                data-testid="pipeline-start-new-run"
+                onClick={() => void actions.startNewRun()}
+                disabled={actions.pending !== null}
+                title="This run was stopped, and a stopped run is not resumed"
+                className={ROW_ACTION_BTN}
+              >
+                <Zap className="h-3 w-3" />
+                {actions.pending === 'start' ? 'Queuing…' : 'Start a new run'}
+              </button>
+            )}
             {showRetry && (
               <button
                 type="button"

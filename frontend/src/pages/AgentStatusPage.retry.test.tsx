@@ -137,6 +137,24 @@ describe('which rows offer Retry and Stop', () => {
     }
   })
 
+  it('a run a person stopped offers "Start a new run", not a Retry that cannot resume it', async () => {
+    // W04 local walk: Stop, then Retry said "Resumed (attempt 2/5)" while the worker refused
+    // the stopped run and nothing ran.
+    agent.triggerPipeline.mockResolvedValue({ message: 'Pipeline queued', task_id: 't-1', run_id: 'run-stopped' })
+    await renderWith([
+      pipeline('stopped', { status: 'failed', workflow_type: 'deep', test_run_id: 'run-stopped', cancel_requested: true }),
+      pipeline('failed', { status: 'failed' }),
+    ])
+    const stopped = rowOf('stopped')
+    expect(within(stopped).queryByTestId('pipeline-retry')).toBeNull()
+    expect(within(rowOf('failed')).queryByTestId('pipeline-start-new-run')).toBeNull()
+
+    fireEvent.click(within(stopped).getByTestId('pipeline-start-new-run'))
+    await waitFor(() => expect(agent.triggerPipeline).toHaveBeenCalledWith('run-stopped', 'deep'))
+    expect(agent.retryPipeline).not.toHaveBeenCalled()
+    await waitFor(() => expect(toastApi.success).toHaveBeenCalledWith('Pipeline queued — it will appear in the list shortly.'))
+  })
+
   it('a role below QA engineer sees no actions at all', async () => {
     permissions.isQaEngineer = false
     await renderWith([pipeline('failed', { status: 'failed' }), pipeline('running', { status: 'running' })])

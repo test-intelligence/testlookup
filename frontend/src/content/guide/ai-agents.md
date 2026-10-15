@@ -161,7 +161,7 @@ Each pipeline shows its type, run, suite, start time, duration and status (**IN 
 With the `QA_ENGINEER` role or above you can act on a pipeline from its row:
 
 - **Retry** is offered on a **FAILED** pipeline and on a **COMPLETED** one marked **DEGRADED**. The server decides what happens. If the analysis configuration is the same as when the pipeline started, the pipeline **resumes** and keeps the stages it already completed (the row reads "Resumed (attempt 2/5)"). If the configuration changed since then (for example the confidence threshold or the timeout under **Settings › AI**), it **starts a new run** instead. A pipeline that was rejected in review, finished successfully, or reached its attempt limit is not retried: the row says why and offers **Start a new run**.
-- **Stop** is offered while a pipeline is in progress, and asks you to confirm. A queued pipeline stops at once. A running one shows **stopping** and ends at its next stage boundary. A stopped pipeline ends **FAILED**, and can be retried.
+- **Stop** is offered while a pipeline is in progress, and asks you to confirm. A queued pipeline stops at once. A running one shows **stopping** and ends at its next stage boundary. A stopped pipeline ends **FAILED** and is not resumed: its row offers **Start a new run** instead of **Retry**.
 
 Both actions are recorded in the project's activity ("AI analysis for … was retried", "… was cancelled").
 

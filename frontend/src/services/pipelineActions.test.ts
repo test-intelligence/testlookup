@@ -75,6 +75,9 @@ describe('isResumablePipeline', () => {
     // The backend's is_resumable includes retry_wait; the UI offers Stop there.
     [{ status: 'retry_wait' }, false],
     [{ status: 'FAILED' }, true],
+    // A run a person stopped is never resumed (E7.4): the server answers 409 "cancelled".
+    [{ status: 'failed', cancel_requested: true }, false],
+    [{ status: 'completed', execution_metadata: { stage_quality: 'degraded' }, cancel_requested: true }, false],
   ])('%j -> %s', (p, expected) => {
     expect(isResumablePipeline(p)).toBe(expected)
   })
