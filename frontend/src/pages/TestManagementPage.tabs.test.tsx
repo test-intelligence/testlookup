@@ -170,15 +170,38 @@ describe('Test Cases — five tabs (P4 item 7)', () => {
   })
 
   it('the health banner carries the library verdict and four facts, singular for one case', () => {
-    renderAt('/test-management')
-    const banner = document.querySelector('[data-status-banner]') as HTMLElement
-    expect(banner).toHaveTextContent(/Library health \d+\/100/)
-    // The pill names the library verdict in its own words: "AT RISK" was shown
-    // as the state's "FAILING", a word for builds, not for a test library.
-    const pill = banner.querySelector('[data-banner-pill]') as HTMLElement
-    expect(pill.textContent).toMatch(/^(HEALTHY|NEEDS ATTENTION|AT RISK)$/)
-    const facts = Array.from(banner.querySelectorAll('[data-banner-fact]')).map((f) => f.textContent)
-    expect(facts).toEqual(['Cases 3', 'Awaiting review 1', 'Automated 33%', 'Stale drafts 0'])
+    // "Stale" is a draft untouched for 30 days, measured from the clock: the
+    // fixture draft (updated 2026-09-15) turned stale on 2026-10-15 and this
+    // test started failing everywhere. Pin the clock just after the fixtures
+    // (Date only, so the page's timers keep running).
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-09-20T00:00:00Z'))
+    try {
+      renderAt('/test-management')
+      const banner = document.querySelector('[data-status-banner]') as HTMLElement
+      expect(banner).toHaveTextContent(/Library health \d+\/100/)
+      // The pill names the library verdict in its own words: "AT RISK" was shown
+      // as the state's "FAILING", a word for builds, not for a test library.
+      const pill = banner.querySelector('[data-banner-pill]') as HTMLElement
+      expect(pill.textContent).toMatch(/^(HEALTHY|NEEDS ATTENTION|AT RISK)$/)
+      const facts = Array.from(banner.querySelectorAll('[data-banner-fact]')).map((f) => f.textContent)
+      expect(facts).toEqual(['Cases 3', 'Awaiting review 1', 'Automated 33%', 'Stale drafts 0'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a draft untouched for 30 days counts as stale', () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-15T00:00:00Z'))
+    try {
+      renderAt('/test-management')
+      const banner = document.querySelector('[data-status-banner]') as HTMLElement
+      const facts = Array.from(banner.querySelectorAll('[data-banner-fact]')).map((f) => f.textContent)
+      expect(facts).toContain('Stale drafts 1')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it.each([
