@@ -298,6 +298,36 @@ async def _is_duplicate(key: str, ttl: int = 3600, owner: str | None = None) -> 
     return True
 
 
+PIPELINE_ADMISSION_TTL = 7200
+REQUESTED_PIPELINE_ADMISSION_TTL = 120
+
+
+async def _pipeline_admission_duplicate(
+    dedup_key: str, *, owner: str, requested_by: str | None,
+) -> bool:
+    """Is this pipeline delivery a duplicate to drop?
+
+    An automatic trigger (ingest, webhook, debounce) collapses behind the
+    run's 2-hour admission key, as before. A person's trigger
+    (``POST /agents/pipelines/trigger`` passes ``requested_by``) does not: it
+    used to hit that key and was dropped silently for two hours after any
+    analysis while the API said "Pipeline queued", so a deliberate
+    re-analysis never ran (and, since W03, never became a new AI version).
+    The router's state machine already refuses a trigger while a pipeline of
+    the run is in progress; here only a double submit by the same person
+    within two minutes collapses, and the run's key is still set so automatic
+    triggers keep collapsing behind it.
+    """
+    if not requested_by:
+        return await _is_duplicate(dedup_key, ttl=PIPELINE_ADMISSION_TTL, owner=owner)
+    duplicate = await _is_duplicate(
+        f"{dedup_key}:requested:{requested_by}", ttl=REQUESTED_PIPELINE_ADMISSION_TTL, owner=owner,
+    )
+    if not duplicate:
+        await _is_duplicate(dedup_key, ttl=PIPELINE_ADMISSION_TTL, owner=owner)
+    return duplicate
+
+
 async def _release_duplicate_lock(key: str, owner: str) -> None:
     """Release a dedup lock only if it is still owned by this task."""
     from app.db.redis_client import get_redis
@@ -2174,7 +2204,9 @@ def run_agent_pipeline(
         # treating it as such would let DownstreamTrackedTask close the outbox
         # without any matching AgentPipelineRun. Direct callers retain the
         # short-lived Redis admission guard.
-        if not source_outbox_id and await _is_duplicate(dedup_key, ttl=7200, owner=dedup_owner):
+        if not source_outbox_id and await _pipeline_admission_duplicate(
+            dedup_key, owner=dedup_owner, requested_by=requested_by,
+        ):
             logger.info(
                 "[Task %s] Skipping duplicate pipeline for run=%s type=%s",
                 self.request.id, test_run_id, workflow_type,

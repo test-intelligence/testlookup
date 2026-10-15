@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.worker.tasks import _is_duplicate, _release_duplicate_lock
+from app.worker.tasks import _is_duplicate, _pipeline_admission_duplicate, _release_duplicate_lock
 
 
 class _DedupRedis:
@@ -215,3 +215,33 @@ async def test_concurrent_different_attempts_dedup_correctly(fake_redis):
     await _release_duplicate_lock(key, "task-A")
     c = await _is_duplicate(key, ttl=7200, owner="task-C")
     assert c is False
+
+
+# ── A person's trigger is not an automatic duplicate (W03 / AIH-01) ───────────
+
+
+@pytest.mark.asyncio
+async def test_a_persons_retrigger_after_an_analysis_runs_and_an_automatic_one_still_collapses(fake_redis):
+    """Regression: POST /agents/pipelines/trigger answered "Pipeline queued" and the worker
+    dropped the task for two hours after any analysis of the run (the automatic admission
+    key), so "Trigger pipeline" never re-analysed and never made a new AI version."""
+    key = "testlookup:dedup:pipeline:run-1:offline"
+
+    # The run was analysed (an automatic trigger holds the run's 2-hour key).
+    assert await _pipeline_admission_duplicate(key, owner="task-auto", requested_by=None) is False
+    # Another automatic trigger still collapses behind it.
+    assert await _pipeline_admission_duplicate(key, owner="task-auto-2", requested_by=None) is True
+
+    # A person re-triggers: it runs.
+    assert await _pipeline_admission_duplicate(key, owner="task-ann-1", requested_by="ann") is False
+    # The same person's double submit within the short window collapses...
+    assert await _pipeline_admission_duplicate(key, owner="task-ann-2", requested_by="ann") is True
+    # ...another person's trigger is their own decision.
+    assert await _pipeline_admission_duplicate(key, owner="task-bob-1", requested_by="bob") is False
+
+
+@pytest.mark.asyncio
+async def test_a_persons_trigger_sets_the_runs_key_so_automatic_triggers_collapse_behind_it(fake_redis):
+    key = "testlookup:dedup:pipeline:run-2:offline"
+    assert await _pipeline_admission_duplicate(key, owner="task-ann-1", requested_by="ann") is False
+    assert await _pipeline_admission_duplicate(key, owner="task-auto", requested_by=None) is True

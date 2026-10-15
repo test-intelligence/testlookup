@@ -153,7 +153,12 @@ def test_pipeline_dedup_allows_same_owner_retry_and_releases_on_failure():
     assert "await redis.expire(key, ttl)" in is_duplicate
     assert "await redis.delete(key)" in release_lock
     assert "dedup_owner = str(self.request.id)" in run_pipeline
-    assert "_is_duplicate(dedup_key, ttl=7200, owner=dedup_owner)" in tasks
+    # Admission goes through one helper with the same owner (a person's trigger has its own
+    # short key, W03); an automatic trigger still holds the run's 2-hour key.
+    admission = _function_source("app/worker/tasks.py", "_pipeline_admission_duplicate")
+    assert "_pipeline_admission_duplicate(\n            dedup_key, owner=dedup_owner, requested_by=requested_by," in run_pipeline
+    assert "_is_duplicate(dedup_key, ttl=PIPELINE_ADMISSION_TTL, owner=owner)" in admission
+    assert "PIPELINE_ADMISSION_TTL = 7200" in tasks
     assert "_release_duplicate_lock(dedup_key, dedup_owner)" in run_pipeline
 
 
