@@ -403,7 +403,7 @@ def _emit_summary_route_decision(state: WorkflowState) -> None:
         state,
         decision_point=decision_point,
         chosen="triage",
-        rationale=f"{triageable} analyses meet confidence ≥ {threshold}",
+        rationale=_meet_confidence_text(triageable, threshold),
         alternatives=["failure_clustering" if deep else "end"],
         context=context,
     )
@@ -726,6 +726,12 @@ def _append_route_decision(state: WorkflowState, payload: dict[str, Any]) -> Non
         decisions.append(payload)
 
 
+def _meet_confidence_text(count: int, threshold: Any) -> str:
+    """The triage route's rationale: "1 analysis meets ..." / "3 analyses meet ..."."""
+    noun, verb = ("analysis", "meets") if count == 1 else ("analyses", "meet")
+    return f"{count} {noun} {verb} confidence ≥ {threshold}"
+
+
 def _emit_route_decision(
     state: WorkflowState,
     *,
@@ -838,7 +844,7 @@ def _route_after_summary(state: WorkflowState) -> str:
         state,
         decision_point="route_after_summary",
         chosen="triage",
-        rationale=f"{len(triageable)} analyses meet confidence ≥ {threshold}",
+        rationale=_meet_confidence_text(len(triageable), threshold),
     )
     return "triage"
 
@@ -878,7 +884,7 @@ def _route_after_summary_deep(state: WorkflowState) -> str:
         state,
         decision_point="route_after_summary_deep",
         chosen="triage",
-        rationale=f"{len(triageable)} analyses meet confidence ≥ {threshold}",
+        rationale=_meet_confidence_text(len(triageable), threshold),
     )
     return "triage"
 

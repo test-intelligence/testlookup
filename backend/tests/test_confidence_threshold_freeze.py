@@ -136,6 +136,13 @@ async def test_offline_at_40_runs_triage_and_says_how_many(quiet_summary):
     assert decision["rationale"] == "3 analyses meet confidence ≥ 40"
 
 
+def test_one_triageable_analysis_reads_in_the_singular():
+    from app.agents.workflow import _meet_confidence_text
+
+    assert _meet_confidence_text(1, 40) == "1 analysis meets confidence ≥ 40"
+    assert _meet_confidence_text(3, 40) == "3 analyses meet confidence ≥ 40"
+
+
 @pytest.mark.asyncio
 async def test_the_summary_steps_own_confidence_min_no_longer_routes(quiet_summary):
     """At 85 the old router (summary agent default ``confidence_min`` 80)
