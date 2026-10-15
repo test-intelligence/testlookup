@@ -14,7 +14,10 @@
  *   - By suite: Pass rate by suite (`chart-data` pass_rate, day x suite, top
  *     7 + Other) and Compare (C1: its own `chart-data` read of the three
  *     busiest suites of the series, no `top_n`);
- *   - Durations: Test duration p50 / p95, two `chart-data` day series;
+ *   - Execution time (`?tab=durations`, EXEC-04b): the execution metrics
+ *     (one `/analytics/execution-metrics` read: totals, wall vs summed per
+ *     day, by suite, regressions, the 20 slowest, the histogram) above Test
+ *     duration p50 / p95, two `chart-data` day series;
  *   - Heatmap: Suite pass rate by day, its own read (Wave 3, VIZ-501:
  *     `/analytics/heatmap?kind=suite_day`, the server's top suites by
  *     failures, the cut stated, no "Other" row).
@@ -45,6 +48,7 @@ import {
 import { TALL_VIEWPORT } from '../lib/production-pages'
 import {
   CHART_DATA_PATH,
+  EXECUTION_METRICS_PATH,
   HEATMAP_PATH,
   HOSTILE_NAME,
   PROJECT_ID,
@@ -60,6 +64,8 @@ const SUITES_Q = `metric=pass_rate&group_by=day&group_by=suite&top_n=7&project_i
 const COMPARE_Q = `project_id=${P}&days=14&metric=pass_rate&group_by=day&group_by=suite&suite_name=Auth&suite_name=Checkout&suite_name=Payments`
 const P50_Q = `metric=duration_p50&group_by=day&project_id=${P}&days=14`
 const P95_Q = `metric=duration_p95&group_by=day&project_id=${P}&days=14`
+/** EXEC-04b: the execution section's one read, the page's project and 14 days. */
+const EXECUTION_Q = `project_id=${P}&days=14`
 /** The heatmap's own read (Wave 3): the page's 14 days, the page scope. */
 const HEATMAP_Q = `kind=suite_day&project_id=${P}&days=14`
 /** The existence probe: unfiltered, so no `days` (K6). */
@@ -87,7 +93,7 @@ const LOAD = [
 /** What each catalogue tab adds to a load, every section of the tab near. */
 const TAB_READS = {
   'by-suite': [PROBE, `GET ${CHART_DATA_PATH}?${SUITES_Q}`, `GET ${CHART_DATA_PATH}?${COMPARE_Q}`],
-  durations: [PROBE, `GET ${CHART_DATA_PATH}?${P50_Q}`, `GET ${CHART_DATA_PATH}?${P95_Q}`],
+  durations: [PROBE, `GET ${EXECUTION_METRICS_PATH}?${EXECUTION_Q}`, `GET ${CHART_DATA_PATH}?${P50_Q}`, `GET ${CHART_DATA_PATH}?${P95_Q}`],
   heatmap: [PROBE, `GET ${HEATMAP_PATH}?${HEATMAP_Q}`],
 } as const
 type CatalogueTab = keyof typeof TAB_READS
@@ -95,17 +101,19 @@ type CatalogueTab = keyof typeof TAB_READS
 const PASS_RATE: [string, string] = ['trends-pass-rate', 'Pass rate trend']
 const SUITES: [string, string] = ['trends-multi-series', 'Pass rate by suite']
 const COMPARE: [string, string] = ['trends-compare', 'Compare']
+const EXECUTION: [string, string] = ['trends-execution', 'Wall clock vs test time per day']
 const DURATION: [string, string] = ['trends-duration', 'Test duration (p50 / p95)']
 const HEATMAP: [string, string] = ['trends-heatmap', 'Suite pass rate by day']
 
 /** Each catalogue tab's sections (the catalogue's `sections`: the others' are not rendered there at all). */
 const TAB_SECTIONS: Record<CatalogueTab, [string, string][]> = {
   'by-suite': [SUITES, COMPARE],
-  durations: [DURATION],
+  durations: [EXECUTION, DURATION],
   heatmap: [HEATMAP],
 }
-const CATALOGUE_SECTIONS = [SUITES, COMPARE, DURATION, HEATMAP]
-const TAB_LABEL: Record<CatalogueTab, string> = { 'by-suite': 'By suite', durations: 'Durations', heatmap: 'Heatmap' }
+const CATALOGUE_SECTIONS = [SUITES, COMPARE, EXECUTION, DURATION, HEATMAP]
+/** EXEC-04b: the durations tab is labelled "Execution time" (its id is unchanged). */
+const TAB_LABEL: Record<CatalogueTab, string> = { 'by-suite': 'By suite', durations: 'Execution time', heatmap: 'Heatmap' }
 
 /**
  * Requests for the ECharts LIBRARY (the heatmap engine's lazy chunk pulls it
@@ -171,8 +179,9 @@ test.describe('Trends, everything on screen (1280 x 4000)', () => {
         await expect(section(page, id), `${id} mounted on ${tab}`).toHaveCount(0)
         await expect(page.locator(`[data-lazy-section="${id}"]`), `${id}'s placeholder on ${tab}`).toHaveCount(0)
       }
-      // Each chart-data or heatmap frame states its grain (Compare's words are its own).
-      for (const [id] of TAB_SECTIONS[tab].filter(([id]) => id !== COMPARE[0])) {
+      // Each chart-data or heatmap frame states its grain (Compare's and the execution section's
+      // words are their own: the execution section counts per run and per test execution).
+      for (const [id] of TAB_SECTIONS[tab].filter(([id]) => id !== COMPARE[0] && id !== EXECUTION[0])) {
         await expect(section(page, id).locator('[data-catalogue-grain]'), id).toHaveText('Counted per test execution.')
       }
       if (tab === 'by-suite') {
@@ -211,6 +220,7 @@ test.describe('Trends, everything on screen (1280 x 4000)', () => {
     expect(requestsTo(api, CHART_DATA_PATH), 'chart-data on Volume').toEqual([])
     expect(requestsTo(api, HEATMAP_PATH), 'the heatmap on Volume').toEqual([])
     expect(requestsTo(api, '/api/v1/runs').filter((l) => l === PROBE), 'the probe on Volume').toEqual([])
+    expect(requestsTo(api, EXECUTION_METRICS_PATH), 'the execution metrics on Volume').toEqual([])
     const asked = (query: string) => () => observedTo(api, query)
     await pageTab(page, 'By suite').click()
     await expect(page).toHaveURL(/[?&]tab=by-suite(&|$)/)
@@ -218,11 +228,12 @@ test.describe('Trends, everything on screen (1280 x 4000)', () => {
     await expectDrawn(sectionFrame(page, ...SUITES), 'suites')
     expect(asked(P50_Q)() + asked(P95_Q)(), 'durations asked on By suite').toBe(0)
     expect(requestsTo(api, HEATMAP_PATH), 'the heatmap asked on By suite').toEqual([])
-    await pageTab(page, 'Durations').click()
-    await expect.poll(() => asked(P50_Q)() + asked(P95_Q)(), { message: 'p50 and p95 once Durations opens' }).toBe(2)
+    await pageTab(page, 'Execution time').click()
+    await expect.poll(() => asked(P50_Q)() + asked(P95_Q)(), { message: 'p50 and p95 once Execution time opens' }).toBe(2)
+    await expect.poll(() => requestsTo(api, EXECUTION_METRICS_PATH).length, { message: 'the execution metrics once Execution time opens' }).toBe(1)
     await expectDrawn(sectionFrame(page, ...DURATION), 'duration')
     await expect(section(page, SUITES[0]), 'By suite\'s sections leave with their tab').toHaveCount(0)
-    expect(requestsTo(api, HEATMAP_PATH), 'the heatmap asked on Durations').toEqual([])
+    expect(requestsTo(api, HEATMAP_PATH), 'the heatmap asked on Execution time').toEqual([])
     await pageTab(page, 'Heatmap').click()
     await expect.poll(() => requestsTo(api, HEATMAP_PATH).length, { message: 'the heatmap once its tab opens' }).toBe(1)
     await expectDrawn(sectionFrame(page, ...HEATMAP), 'heatmap')

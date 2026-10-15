@@ -89,6 +89,23 @@ def _glyph(preferred: str, fallback: str, stream) -> str:
     return preferred
 
 
+def encodable(stream):
+    """A cleaner that replaces what ``stream`` cannot encode with ``?``.
+
+    For ingested names (a CJK suite name) printed on a console whose code page
+    cannot hold them: the command still prints and exits 0 instead of dying on
+    a UnicodeEncodeError after the request succeeded."""
+    encoding = getattr(stream, "encoding", None) or "utf-8"
+
+    def clean(text: str) -> str:
+        try:
+            return text.encode(encoding, "replace").decode(encoding)
+        except LookupError:
+            return text.encode("ascii", "replace").decode("ascii")
+
+    return clean
+
+
 def print_success(message: str) -> None:
     console.print(f"[green]{_glyph('✓', '[OK]', sys.stdout)}[/] {message}")
 

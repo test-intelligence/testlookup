@@ -57,6 +57,19 @@ Key nuances:
 * Feature → suite (``uri`` kept as ``class_name``); Gherkin keyword (Given/
   When/Then) → common-step ``keyword``.
 
+Timing (EXEC-01):
+
+* ``duration_ms`` is what the framework reports for a scenario: its steps PLUS
+  its hooks — the scenario ``before`` / ``after`` hooks and each step's
+  ``before`` / ``after`` (BeforeStep / AfterStep) hooks. Until EXEC-01 only
+  the steps were summed, so a hook-heavy scenario under-reported; a report
+  without hooks keeps exactly the old figure.
+* When a scenario lists ``before`` / ``after`` hooks: ``setup_ms`` = its before
+  hooks, ``teardown_ms`` = its after hooks, ``call_ms`` = steps + step hooks.
+* ``start_timestamp`` (cucumber-jvm 6+) → ``started_at``; ``finished_at`` =
+  start + duration (computed, so ``timing_source='derived'``).
+* The format states no feature or run timing.
+
 Malformed input returns an empty list rather than raising — ingestion tasks
 are fire-and-forget; one bad upload must not wedge the worker.
 """
@@ -64,7 +77,17 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
+
+from app.services.parser_timing import set_case_timing
+from app.services.report_timings import (
+    TIMING_SOURCE_DERIVED,
+    TIMING_SOURCE_REPORT,
+    ReportTimings,
+    empty_timings,
+    finish_from_duration,
+    to_utc,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +163,28 @@ def _step_dicts(steps: list) -> List[dict]:
     return out
 
 
+def _hooks_ms(hooks: Any) -> Optional[int]:
+    """Summed duration (ns → ms) of a ``before`` / ``after`` hook list; None when it lists no timed hook."""
+    if not isinstance(hooks, list):
+        return None
+    total: Optional[int] = None
+    for hook in hooks:
+        if not isinstance(hook, dict) or not isinstance(hook.get("result"), dict):
+            continue
+        ms = _ns_to_ms(hook["result"].get("duration"))
+        if ms is not None and ms >= 0:
+            total = (total or 0) + ms
+    return total
+
+
+def _plus(a: Optional[int], b: Optional[int]) -> Optional[int]:
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return a + b
+
+
 def _derive_status(step_statuses: List[str], raw_statuses: List[str]) -> str:
     """Scenario verdict from its steps (see module docstring for the rules)."""
     if not step_statuses:
@@ -202,15 +247,24 @@ def parse_cucumber_json(content: str, test_run_id: str) -> List[dict]:
     the downstream ``_upsert_test_case`` pipeline is unchanged. Malformed input
     logs and returns ``[]``.
     """
+    return _parse(content, test_run_id)[0]
+
+
+def parse_cucumber_json_with_timings(content: str, test_run_id: str) -> Tuple[List[dict], ReportTimings]:
+    """The cases of :func:`parse_cucumber_json`; the format states no run or feature timing (always empty)."""
+    return _parse(content, test_run_id)
+
+
+def _parse(content: str, test_run_id: str) -> Tuple[List[dict], ReportTimings]:
     try:
         payload = json.loads(content)
     except (ValueError, TypeError) as exc:
         logger.warning("Failed to parse Cucumber JSON — invalid JSON: %s", exc)
-        return []
+        return [], empty_timings()
 
     if not isinstance(payload, list):
         logger.warning("Cucumber JSON root must be an array, got %s", type(payload).__name__)
-        return []
+        return [], empty_timings()
 
     normalized: List[dict] = []
     for feature in payload:
@@ -252,17 +306,22 @@ def parse_cucumber_json(content: str, test_run_id: str) -> List[dict]:
             status = _derive_status([s["status"] for s in common_steps], raw_statuses)
             error_message, stack_trace = _scenario_error(all_steps)
 
-            duration_ms = None
             step_durations = [s["duration_ms"] for s in common_steps if s["duration_ms"] is not None]
-            if step_durations:
-                duration_ms = sum(step_durations)
+            call_ms: Optional[int] = sum(step_durations) if step_durations else None
+            for step in all_steps:
+                if isinstance(step, dict):
+                    call_ms = _plus(call_ms, _plus(_hooks_ms(step.get("before")), _hooks_ms(step.get("after"))))
+            setup_ms = _hooks_ms(element.get("before"))
+            teardown_ms = _hooks_ms(element.get("after"))
+            # The framework's scenario duration: steps + step hooks + scenario hooks.
+            duration_ms = _plus(_plus(setup_ms, call_ms), teardown_ms)
 
             # Scenario Outline example rows share a name; the id carries the
             # ;example-row suffix that disambiguates full_name.
             element_id = str(element.get("id") or "").strip()
             full_name = f"{feature_name}.{element_id or name}"
 
-            normalized.append({
+            case = {
                 "test_run_id": test_run_id,
                 "test_name": name,
                 "full_name": full_name,
@@ -277,6 +336,18 @@ def parse_cucumber_json(content: str, test_run_id: str) -> List[dict]:
                 "tags": feature_tags + _collect_tags(element),
                 "steps": common_steps,
                 "framework": "cucumber",
-            })
+            }
+            started = to_utc(element.get("start_timestamp"))
+            has_hooks = setup_ms is not None or teardown_ms is not None
+            set_case_timing(
+                case,
+                started_at=started,
+                finished_at=finish_from_duration(started, duration_ms),
+                setup_ms=(setup_ms or 0) if has_hooks else None,
+                call_ms=(call_ms or 0) if has_hooks else None,
+                teardown_ms=(teardown_ms or 0) if has_hooks else None,
+                source=TIMING_SOURCE_DERIVED if started is not None else TIMING_SOURCE_REPORT,
+            )
+            normalized.append(case)
 
-    return normalized
+    return normalized, empty_timings()

@@ -196,7 +196,9 @@ const PAGES: RoutePage[] = [
   // Compare; Durations and Heatmap the hero and their one section.
   { name: 'Trends', path: '/trends', ready: (p) => landmark(p, 'Trend metrics'), handlers: TRENDS_ON, frames: 2 },
   { name: 'Trends, By suite', path: '/trends?tab=by-suite', ready: (p) => landmark(p, 'Trend metrics'), handlers: TRENDS_ON, frames: 3 },
-  { name: 'Trends, Durations', path: '/trends?tab=durations', ready: (p) => landmark(p, 'Trend metrics'), handlers: TRENDS_ON, frames: 2 },
+  // EXEC-04b: the tab is "Execution time": the hero, wall vs summed per day, the 20 slowest, the
+  // duration distribution and the p50 / p95 band.
+  { name: 'Trends, Execution time', path: '/trends?tab=durations', ready: (p) => landmark(p, 'Trend metrics'), handlers: TRENDS_ON, frames: 5 },
   { name: 'Trends, Heatmap', path: '/trends?tab=heatmap', ready: (p) => landmark(p, 'Trend metrics'), handlers: TRENDS_ON, frames: 2 },
   // Phase D S2: Summary and Release gate ask no flag either (Suite detail: S3).
   // UX redesign P3: Summary draws the suite bars (its primary); the trend is
@@ -222,8 +224,9 @@ const PAGES: RoutePage[] = [
     path: `/coverage/suite?name=${SUITE}&days=30`,
     ready: (p) => p.getByRole('heading', { name: /^Run history/ }),
     handlers: SUITE_DETAIL_ON,
-    // S4: + the test x run heatmap (no flag); S5: + the suite scatter (no flag).
-    frames: 4,
+    // S4: + the test x run heatmap (no flag); S5: + the suite scatter (no flag);
+    // EXEC-04b: + "Suite execution time".
+    frames: 5,
   },
   {
     // UX redesign P4 item 6: the gate's charts are its Context tab.

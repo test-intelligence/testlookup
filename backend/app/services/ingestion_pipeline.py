@@ -20,6 +20,7 @@ from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import IngestionSource, LaunchStatus, Project, TestCase, TestRun
 from app.models.schemas import BUILD_NUMBER_MAX_LENGTH
 from app.services.execution_time import resolve_execution_time
+from app.services.report_timings import ReportTimings
 from app.services.run_environment import normalize_environment
 from app.services.run_tombstone_service import run_is_tombstoned
 from app.services.ingestion import (
@@ -408,7 +409,12 @@ async def ingest_test_results(
     Process a list of normalized test result dicts and upsert into PostgreSQL.
 
     Each result dict should have at minimum: test_name, status.
-    Optional: duration_ms, suite_name, class_name, error_message, stack_trace, tags.
+    Optional: duration_ms, suite_name, class_name, error_message, stack_trace, tags,
+    and the EXEC-01 timing keys ``report_timings.CASE_TIMING_KEYS`` (started_at,
+    finished_at, setup_ms, call_ms, teardown_ms, worker_id) plus ``timing_source``.
+    The timing keys pass through untouched to ``_upsert_test_case``, which bounds
+    them for their columns (``report_timings.case_timing_columns``); duplicates
+    collapse with their timing, so a row's timing is its winning attempt's.
 
     Returns the count of processed cases.
     """
@@ -591,10 +597,15 @@ async def finalize_run(
     build_number: str,
     release_name: Optional[str] = None,
     run_ai: bool = True,
+    report_timings: Optional[ReportTimings] = None,
 ) -> None:
     """
     Post-ingestion steps: update aggregates, auto-tag, link release,
     queue notifications, queue agent pipeline.
+
+    ``report_timings`` (EXEC-02) is the uploaded report's own run and suite
+    timing, when the upload path parsed one; every other caller passes none and
+    the suite-execution step derives what the stored cases allow.
 
     Runs in a fresh DB session since Celery tasks don't carry the original session.
     """
@@ -637,6 +648,31 @@ async def finalize_run(
     # module level so its failure accounting can be tested without driving the
     # whole pipeline; the local name keeps every call site below unchanged.
     _run_isolated = _run_isolated_step
+
+    # EXEC-02: one execution record per suite of this run (wall clock, summed
+    # test time, parallelism) plus the run's own wall clock. Isolated like the
+    # steps below; the analytics cache is dropped again once it has committed,
+    # because step 1's invalidation ran before these rows existed.
+    from app.services.suite_execution_service import upsert_for_run
+
+    if await _run_isolated(
+        "suite_executions",
+        lambda d: upsert_for_run(d, rid, report_timings),
+    ):
+        from app.services.cache_service import invalidate_analytics_cache
+
+        await invalidate_analytics_cache(str(pid))
+
+    # EXEC-05: judge this run's test and suite durations against their
+    # baselines (after the suite rows exist), store duration_findings, feed the
+    # baselines once and stage "became slower" notifications. Isolated: a
+    # failure leaves the run unjudged ("measured": false on read), never broken.
+    from app.services.duration_regression_service import evaluate_duration_regressions
+
+    await _run_isolated(
+        "duration_regressions",
+        lambda d: evaluate_duration_regressions(d, rid),
+    )
 
     from app.services.suite_sync_service import sync_suite_membership
     from app.services.test_suite_service import (

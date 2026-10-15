@@ -51,14 +51,41 @@ column is fronted by a strict enum that silently 422s reads on drift.
 
 Malformed input returns an empty list rather than raising — ingestion tasks
 are fire-and-forget; one bad upload must not wedge the worker.
+
+Timing (EXEC-01):
+
+* Test start / finish from its ``<status>``: RF 3–6 ``starttime`` / ``endtime``
+  (``timing_source='report'``); RF 7 ``start`` + ``elapsed`` (the finish is
+  computed, so ``derived``). Robot writes the runner's LOCAL time with no
+  zone; it is stored as UTC and flagged ``source_extensions.timing_tz =
+  'assumed_utc'`` so a skewed zone can be found.
+* Setup / teardown: RF 3–6 ``<kw type="setup|teardown">`` (any case), RF 7
+  ``<setup>`` / ``<teardown>`` elements. When a test has either, ``setup_ms`` /
+  ``teardown_ms`` are their durations (0 for the one it lacks) and ``call_ms``
+  = duration − both.
+* :func:`parse_robot_xml_with_timings` returns the top-level suite span as the
+  run timing and, for every suite that holds tests, its span and its own
+  suite setup / teardown.
 """
 from __future__ import annotations
 
 import logging
-from datetime import datetime
-from typing import List, Optional
+from datetime import datetime, timedelta
+from typing import List, Optional, Tuple
 
 import defusedxml.ElementTree as ET
+
+from app.services.parser_timing import set_case_timing
+from app.services.report_timings import (
+    TIMING_SOURCE_DERIVED,
+    TIMING_SOURCE_REPORT,
+    ReportTimings,
+    add_suite_timing,
+    empty_timings,
+    flag_assumed_utc,
+    to_utc,
+    wall_ms_between,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +141,46 @@ def _status_duration_ms(status_el) -> Optional[int]:
     if start is not None and end is not None:
         return int((end - start).total_seconds() * 1000)
     return None
+
+
+def _status_span(status_el) -> Tuple[Optional[datetime], Optional[datetime], bool, bool]:
+    """(start, end, end_is_derived, naive) of a ``<status>`` element, as UTC datetimes.
+
+    RF 7 states ``start`` + ``elapsed`` (the end is computed); RF 3–6 states ``starttime`` + ``endtime``.
+    ``naive`` says the report gave no zone, so UTC was assumed.
+    """
+    if status_el is None:
+        return None, None, False, False
+    elapsed = status_el.get("elapsed")
+    raw_start = _parse_rf_timestamp(status_el.get("starttime") or status_el.get("start"))
+    naive = raw_start is not None and raw_start.tzinfo is None
+    start = to_utc(raw_start)
+    if elapsed is not None:
+        try:
+            seconds = float(elapsed)
+        except ValueError:
+            return start, None, False, naive
+        if start is None or seconds < 0:
+            return start, None, False, naive
+        return start, start + timedelta(seconds=seconds), True, naive
+    raw_end = _parse_rf_timestamp(status_el.get("endtime"))
+    naive = naive or (raw_end is not None and raw_end.tzinfo is None)
+    return start, to_utc(raw_end), False, naive
+
+
+def _fixture_ms(owner_el, kind: str) -> Optional[int]:
+    """Duration of the ``kind`` (``setup`` / ``teardown``) fixture directly under a test or suite.
+
+    RF 7 writes ``<setup>`` / ``<teardown>`` elements; RF 3–6 writes ``<kw type="setup">`` (lowercase in RF 3,
+    uppercase from RF 4). None when the element has no such fixture.
+    """
+    el = owner_el.find(kind)
+    if el is None:
+        el = next((kw for kw in owner_el.findall("kw") if (kw.get("type") or "").lower() == kind), None)
+    if el is None:
+        return None
+    duration = _status_duration_ms(el.find("status"))
+    return duration if duration is not None and duration >= 0 else None
 
 
 def _map_status(raw: Optional[str]) -> str:
@@ -186,12 +253,49 @@ def _collect_tags(test_el) -> List[str]:
     return [t for t in tags if t]
 
 
-def _walk_suites(suite_el, parents: tuple, run_id: str, out: List[dict]) -> None:
+def _attach_test_timing(case: dict, test_el, status_el) -> None:
+    started, finished, end_derived, naive = _status_span(status_el)
+    setup = _fixture_ms(test_el, "setup")
+    teardown = _fixture_ms(test_el, "teardown")
+    call: Optional[int] = None
+    if setup is not None or teardown is not None:
+        setup, teardown = setup or 0, teardown or 0
+        duration = case.get("duration_ms")
+        if duration is not None:
+            call = max(0, duration - setup - teardown)
+    set_case_timing(
+        case,
+        started_at=started,
+        finished_at=finished,
+        setup_ms=setup,
+        call_ms=call,
+        teardown_ms=teardown,
+        source=TIMING_SOURCE_DERIVED if end_derived else TIMING_SOURCE_REPORT,
+    )
+    if naive and (started is not None or finished is not None):
+        flag_assumed_utc(case)
+
+
+def _walk_suites(
+    suite_el, parents: tuple, run_id: str, out: List[dict], timings: Optional[ReportTimings] = None,
+) -> None:
     name = suite_el.get("name") or "Unknown Suite"
     path = parents + (name,)
     suite_name = " > ".join(path)
 
-    for test_el in suite_el.findall("test"):
+    tests = suite_el.findall("test")
+    if tests and timings is not None:
+        started, finished, _, _ = _status_span(suite_el.find("status"))
+        add_suite_timing(timings, {
+            "name": suite_name,
+            "started_at": started,
+            "finished_at": finished,
+            "wall_ms": wall_ms_between(started, finished),
+            "setup_ms": _fixture_ms(suite_el, "setup"),
+            "teardown_ms": _fixture_ms(suite_el, "teardown"),
+        })
+
+    for test_el in tests:
         test_name = test_el.get("name") or "Unknown"
         status_el = test_el.find("status")
         raw_status = status_el.get("status") if status_el is not None else None
@@ -215,7 +319,7 @@ def _walk_suites(suite_el, parents: tuple, run_id: str, out: List[dict]) -> None
             if fail_lines:
                 stack_trace = "\n".join(fail_lines)[:_MAX_TRACE_CHARS]
 
-        out.append({
+        case = {
             "test_run_id": run_id,
             "test_name": test_name,
             "full_name": f"{suite_name}.{test_name}",
@@ -230,10 +334,12 @@ def _walk_suites(suite_el, parents: tuple, run_id: str, out: List[dict]) -> None
             "tags": _collect_tags(test_el),
             "steps": _keyword_steps(test_el),
             "framework": "robot",
-        })
+        }
+        _attach_test_timing(case, test_el, status_el)
+        out.append(case)
 
     for child in suite_el.findall("suite"):
-        _walk_suites(child, path, run_id, out)
+        _walk_suites(child, path, run_id, out, timings)
 
 
 def parse_robot_xml(content: str, test_run_id: str) -> List[dict]:
@@ -243,18 +349,40 @@ def parse_robot_xml(content: str, test_run_id: str) -> List[dict]:
     the downstream ``_upsert_test_case`` pipeline is unchanged. Malformed input
     logs and returns ``[]``.
     """
+    return _parse(content, test_run_id)[0]
+
+
+def parse_robot_xml_with_timings(content: str, test_run_id: str) -> Tuple[List[dict], ReportTimings]:
+    """The cases of :func:`parse_robot_xml` plus the run (top suite) and per-suite timing."""
+    return _parse(content, test_run_id)
+
+
+def _parse(content: str, test_run_id: str) -> Tuple[List[dict], ReportTimings]:
     results: List[dict] = []
     try:
         root = ET.fromstring(content)
     except Exception as exc:
         logger.warning("Failed to parse Robot Framework XML: %s", exc)
-        return results
+        return results, empty_timings()
 
     if root.tag != "robot":
         logger.warning("Robot XML root must be <robot>, got <%s>", root.tag)
-        return results
+        return results, empty_timings()
 
+    timings = empty_timings()
+    starts: List[datetime] = []
+    ends: List[datetime] = []
     for suite in root.findall("suite"):
-        _walk_suites(suite, (), test_run_id, results)
+        _walk_suites(suite, (), test_run_id, results, timings)
+        started, finished, _, _ = _status_span(suite.find("status"))
+        if started is not None:
+            starts.append(started)
+        if finished is not None:
+            ends.append(finished)
 
-    return results
+    run_started = min(starts) if starts else None
+    run_finished = max(ends) if ends else None
+    timings["run_started_at"] = run_started
+    timings["run_finished_at"] = run_finished
+    timings["run_wall_ms"] = wall_ms_between(run_started, run_finished)
+    return results, timings

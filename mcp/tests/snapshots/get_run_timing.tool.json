@@ -1,0 +1,22 @@
+{
+  "description": "\n        How long ONE test run took and where the time went: its wall clock\n        (how long it took on the clock), its test time (the sum of the test\n        durations) and their ratio, the parallelism; setup / test body /\n        teardown totals; each suite's wall clock and test time; the slowest\n        tests against their duration baselines; and the run's duration\n        regressions (tests slower than their baseline, suites slower than\n        their history). Read-only.\n\n        Returns {ok, summary, has_duration_regressions, timing}: `summary` is\n        compact markdown, `timing` the REST body of\n        GET /api/v1/runs/{run_id}/timing (the waterfall's bars left out).\n        Reading it: a null figure means the test report did not carry it --\n        \"not reported\", NEVER 0 (a JUnit run has no timestamps, so no wall\n        clock and no parallelism). A block with `measured: false` says why in\n        `reason`; do not read it as \"nothing got slower\". Durations are\n        milliseconds. For a project's trend over many runs, per suite, use\n        `get_execution_metrics`.\n\n        Errors come back as {ok: false, status_code, detail}: an unknown run,\n        or one you cannot read, is a 404.\n\n        Args:\n            run_id: Test run UUID (from list_test_runs).\n            slowest: How many slowest tests to list (1-100, default 10).\n        ",
+  "inputSchema": {
+    "properties": {
+      "run_id": {
+        "title": "Run Id",
+        "type": "string"
+      },
+      "slowest": {
+        "default": 10,
+        "title": "Slowest",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "run_id"
+    ],
+    "title": "get_run_timingArguments",
+    "type": "object"
+  },
+  "name": "get_run_timing"
+}

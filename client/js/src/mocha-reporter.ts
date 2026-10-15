@@ -92,6 +92,8 @@ class TestLookupMochaReporter {
   private sessionReady: Promise<LiveSession | null> | null = null
   /** record() calls in flight, awaited before the session closes. */
   private readonly inFlight: Promise<unknown>[] = []
+  /** When each running test began (Mocha's ``test`` event, before its beforeEach hooks). */
+  private readonly startedAt = new WeakMap<object, number>()
   private readonly baseUrl: string | undefined
   private readonly apiKey: string | undefined
   private readonly token: string | undefined
@@ -147,6 +149,7 @@ class TestLookupMochaReporter {
 
   private _attachHooks(runner: MochaRunner): void {
     runner.on('start',   () => this._onStart())
+    runner.on('test',    (test: unknown) => this.startedAt.set(test as object, Date.now()))
     runner.on('pass',    (test: unknown) => this._record(test as MochaTest, 'PASSED'))
     runner.on('fail',    (test: unknown) => this._record(test as MochaTest, 'FAILED'))
     runner.on('pending', (test: unknown) => this._record(test as MochaTest, 'SKIPPED'))
@@ -210,10 +213,11 @@ class TestLookupMochaReporter {
     const error  = test.err?.message
     const stack  = test.err?.stack
     const duration = test.duration ?? 0
+    const startedAtMs = this.startedAt.get(test)
 
     this.inFlight.push(
       this.sessionReady
-        .then((s) => s?.record(name, status, duration, { suiteName: suite, error, stackTrace: stack }))
+        .then((s) => s?.record(name, status, duration, { suiteName: suite, error, stackTrace: stack, startedAtMs }))
         .catch((e) => console.debug('[TestLookup] record error:', e)),
     )
   }

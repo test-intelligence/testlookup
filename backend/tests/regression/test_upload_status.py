@@ -250,10 +250,11 @@ def test_all_rejected_file_upload_finalizes_without_ai_before_reporting_failure(
     with (
         patch.object(tasks, "_run_async", side_effect=asyncio.run),
         patch.object(tasks, "_archive_raw_upload", new=AsyncMock(return_value=None)),
+        # EXEC-01: the task parses through the timing twin (results + ReportTimings).
         patch.object(
             tasks,
-            "_parse_file_to_results",
-            return_value=[{"test_name": "bad", "status": "passed"}],
+            "_parse_file_to_results_with_timings",
+            return_value=([{"test_name": "bad", "status": "passed"}], {"run_wall_ms": None, "suites": []}),
         ),
         patch.object(ingestion_pipeline, "create_run_from_payload", new=AsyncMock(return_value=run)),
         patch.object(ingestion_pipeline, "ingest_test_results", side_effect=_reject_all),

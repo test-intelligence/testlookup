@@ -292,13 +292,16 @@ jobs:
     name: Backend — Test & Lint
     runs-on: ubuntu-latest
 
-    # Service images come from AWS's mirror of the Docker official images, not
-    # Docker Hub: hosted runners pull Docker Hub anonymously and share IPs, and
+    # Service images come from Google's mirror of Docker Hub (mirror.gcr.io, the
+    # mirror the buildx steps already use). ECR Public replaced Docker Hub on
+    # 2026-10-09 and then ran out too: on 2026-10-15 both backend jobs failed at
+    # "Initialize containers" with "toomanyrequests: Data limit exceeded" on two
+    # attempts in a row. Never bare Docker Hub: hosted runners pull Docker Hub anonymously and share IPs, and
     # on 2026-10-09 both backend jobs failed at "Initialize containers" with
     # "toomanyrequests: unauthenticated pull rate limit" twice in a row.
     services:
       postgres:
-        image: public.ecr.aws/docker/library/postgres:16-alpine
+        image: mirror.gcr.io/library/postgres:16-alpine
         env:
           POSTGRES_DB: testlookup_test
           POSTGRES_USER: testlookup_user
@@ -310,9 +313,9 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
-      # Valkey (BSD-3-Clause), the image every deployment ships, from ECR Public.
+      # Valkey (BSD-3-Clause), the image every deployment ships, through mirror.gcr.io.
       redis:
-        image: public.ecr.aws/valkey/valkey:8.1-alpine
+        image: mirror.gcr.io/valkey/valkey:8.1-alpine
         ports: ["6379:6379"]
         options: >-
           --health-cmd "valkey-cli ping"
@@ -472,7 +475,7 @@ jobs:
     # Mirror, not Docker Hub: see backend-test's services.
     services:
       postgres:
-        image: public.ecr.aws/docker/library/postgres:16-alpine
+        image: mirror.gcr.io/library/postgres:16-alpine
         env:
           POSTGRES_DB: testlookup_test
           POSTGRES_USER: testlookup_user
@@ -485,7 +488,7 @@ jobs:
           --health-retries 5
 
       mongo:
-        image: public.ecr.aws/docker/library/mongo:7
+        image: mirror.gcr.io/library/mongo:7
         ports: ["27017:27017"]
         options: >-
           --health-cmd "mongosh --quiet --eval 'db.adminCommand({ ping: 1 }).ok'"
@@ -494,7 +497,7 @@ jobs:
           --health-retries 10
 
       redis:
-        image: public.ecr.aws/valkey/valkey:8.1-alpine
+        image: mirror.gcr.io/valkey/valkey:8.1-alpine
         ports: ["6379:6379"]
         options: >-
           --health-cmd "valkey-cli ping"
@@ -681,6 +684,10 @@ jobs:
           tests/integration/test_ingest_intelligence_defect_release_postgres.py
           tests/integration/test_current_cluster_snapshot_postgres.py
           tests/integration/test_run_duration_aggregate_postgres.py
+          tests/integration/test_suite_executions_postgres.py
+          tests/integration/test_duration_regressions_postgres.py
+          tests/integration/test_exec_finalize_wiring_postgres.py
+          tests/integration/test_execution_metrics_postgres.py
           tests/integration/test_investigator_budget_postgres.py
           tests/integration/test_investigator_claim_provider_postgres.py
           tests/integration/test_investigator_resume_postgres.py
@@ -732,6 +739,7 @@ jobs:
           tests/integration/test_jira_fake_contract_postgres.py
           tests/integration/test_case_latest_execution_postgres.py
           tests/integration/test_manual_upload_default_postgres.py
+          tests/integration/test_test_case_execution_timing_postgres.py
           tests/integration/test_every_get_route_answers_without_500_postgres.py
           tests/integration/test_key_mint_revoke_race_postgres.py
           tests/integration/test_migration_index_leftovers_postgres.py
@@ -1448,12 +1456,12 @@ jobs:
       - name: Set up Docker Buildx
         if: steps.scope.outputs.run == 'true'
         uses: docker/setup-buildx-action@v4.3.0
-        # Not from Docker Hub: buildkit's own image comes from AWS's mirror and
+        # Not from Docker Hub: buildkit's own image (ECR Public until its data limit ran out, 2026-10-15) and
         # every docker.io base image (python, node, nginx) through
         # mirror.gcr.io, falling back to Docker Hub. On 2026-10-09 all three
         # image scans died here on "toomanyrequests" (see backend-test's services).
         with:
-          driver-opts: image=public.ecr.aws/vend/moby/buildkit:buildx-stable-1
+          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
           buildkitd-config-inline: |
             [registry."docker.io"]
               mirrors = ["mirror.gcr.io"]
@@ -1587,7 +1595,7 @@ jobs:
         uses: docker/setup-buildx-action@v4.3.0
         # Mirrors, not Docker Hub: see the image-scan job's buildx step.
         with:
-          driver-opts: image=public.ecr.aws/vend/moby/buildkit:buildx-stable-1
+          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
           buildkitd-config-inline: |
             [registry."docker.io"]
               mirrors = ["mirror.gcr.io"]

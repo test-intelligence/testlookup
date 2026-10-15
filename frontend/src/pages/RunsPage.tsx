@@ -1173,10 +1173,13 @@ function RunsTable({
                   <td style={{ padding: CELL_PAD }} className="font-semibold tabular-nums" data-run-pass-rate="">
                     <RunPassRateValue run={r} />
                   </td>
+                  {/* EXEC-04b: the wall clock when the run reported one, else the
+                      summed test time, each labelled; both in the tooltip. */}
                   <TimingCell
                     started={r.start_time ?? r.created_at}
                     end={r.end_time}
                     durationMs={r.duration_ms}
+                    wallClockMs={r.wall_clock_ms ?? null}
                   />
                   <td style={{ padding: CELL_PAD, textAlign: 'right' }}>
                     {/* P4: no separate "Intel" link — the AI verdict cell opens

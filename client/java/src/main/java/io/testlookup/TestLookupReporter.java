@@ -547,6 +547,16 @@ public class TestLookupReporter {
         public final String       stackTrace;
         public final List<String> tags;
         public final Map<String, Object> metadata;
+        /**
+         * Execution timing (EXEC-01), all optional. The event's {@code timestamp_ms}
+         * (taken when {@code record} is called) is the test's finish; {@code startedAtMs}
+         * is when it started (epoch ms, setup included). Older servers ignore them.
+         */
+        public final Long         startedAtMs;
+        public final Long         setupMs;
+        public final Long         callMs;
+        public final Long         teardownMs;
+        public final String       workerId;
 
         private RecordOptions(Builder b) {
             this.suiteName  = b.suiteName;
@@ -555,6 +565,11 @@ public class TestLookupReporter {
             this.stackTrace = b.stackTrace;
             this.tags       = b.tags;
             this.metadata   = b.metadata;
+            this.startedAtMs = b.startedAtMs;
+            this.setupMs     = b.setupMs;
+            this.callMs      = b.callMs;
+            this.teardownMs  = b.teardownMs;
+            this.workerId    = b.workerId;
         }
 
         public static Builder builder() { return new Builder(); }
@@ -567,6 +582,11 @@ public class TestLookupReporter {
             private String       stackTrace;
             private List<String> tags;
             private Map<String, Object> metadata;
+            private Long         startedAtMs;
+            private Long         setupMs;
+            private Long         callMs;
+            private Long         teardownMs;
+            private String       workerId;
 
             public Builder suiteName(String v)           { this.suiteName  = v; return this; }
             public Builder className(String v)           { this.className  = v; return this; }
@@ -574,6 +594,16 @@ public class TestLookupReporter {
             public Builder stackTrace(String v)          { this.stackTrace = v; return this; }
             public Builder tags(List<String> v)          { this.tags       = v; return this; }
             public Builder metadata(Map<String, Object> v){ this.metadata  = v; return this; }
+            /** Epoch ms the test started (setup included). */
+            public Builder startedAtMs(Long v)           { this.startedAtMs = v; return this; }
+            /** Fixture / before-hook time of this test, ms. */
+            public Builder setupMs(Long v)               { this.setupMs     = v; return this; }
+            /** The test body's own time, ms. */
+            public Builder callMs(Long v)                { this.callMs      = v; return this; }
+            /** Fixture / after-hook time of this test, ms. */
+            public Builder teardownMs(Long v)            { this.teardownMs  = v; return this; }
+            /** The parallel worker / runner slot that ran the test. */
+            public Builder workerId(String v)            { this.workerId    = v; return this; }
             public RecordOptions build()                 { return new RecordOptions(this); }
         }
     }
@@ -677,8 +707,21 @@ public class TestLookupReporter {
             if (opts.metadata != null && !opts.metadata.isEmpty()) {
                 event.set("metadata", MAPPER.valueToTree(opts.metadata));
             }
+            putMillis(event, "started_at_ms", opts.startedAtMs);
+            putMillis(event, "setup_ms",      opts.setupMs);
+            putMillis(event, "call_ms",       opts.callMs);
+            putMillis(event, "teardown_ms",   opts.teardownMs);
+            if (opts.workerId != null && !opts.workerId.isEmpty()) {
+                String worker = opts.workerId;
+                event.put("worker_id", worker.length() > 64 ? worker.substring(0, 64) : worker);
+            }
 
             enqueue(event);
+        }
+
+        /** A timing figure goes on the event only when it was given and is not negative. */
+        private static void putMillis(ObjectNode event, String key, Long value) {
+            if (value != null && value >= 0) event.put(key, value.longValue());
         }
 
         /** Record a log line (not a test result). */

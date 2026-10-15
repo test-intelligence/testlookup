@@ -73,6 +73,9 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/analytics/coverage-map` | Coverage Map | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/defects` | List Defects | [Analytics](api/analytics.md) |
 | POST | `/api/v1/analytics/defects` | Create Defect | [Analytics](api/analytics.md) |
+| GET | `/api/v1/analytics/execution-metrics` | Get Execution Metrics | [Execution Metrics](api/execution-metrics.md) |
+| GET | `/api/v1/analytics/execution-metrics.csv` | Export Execution Metrics Csv | [Analytics](api/analytics.md) |
+| GET | `/api/v1/analytics/execution/suite-history` | Get Suite Execution History | [Execution Metrics](api/execution-metrics.md) |
 | GET | `/api/v1/analytics/failure-categories` | Failure Categories | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/failure-groups` | Failure Groups | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/flake-load` | Flake Load | [Analytics](api/analytics.md) |
@@ -384,6 +387,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/runs/{run_id}/decision-reports/{report_id}/feedback` | Submit Decision Report Feedback | [Feedback & Training](api/feedback-training.md) |
 | GET | `/api/v1/runs/{run_id}/decision-trail` | AI decision trail for a test run | [Decision Trail](api/decision-trail.md) |
 | GET | `/api/v1/runs/{run_id}/downstream-status` | Get Run Downstream Status | [Test Runs](api/test-runs.md) |
+| GET | `/api/v1/runs/{run_id}/duration-regressions` | Get Run Duration Regressions | [Test Runs](api/test-runs.md) |
 | GET | `/api/v1/runs/{run_id}/export` | Export Intelligence Report | [Run Intelligence](api/run-intelligence.md) |
 | GET | `/api/v1/runs/{run_id}/intelligence` | Get Run Intelligence Endpoint | [Run Intelligence](api/run-intelligence.md) |
 | POST | `/api/v1/runs/{run_id}/intelligence/refresh` | Refresh Intelligence | [Run Intelligence](api/run-intelligence.md) |
@@ -401,6 +405,8 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/runs/{run_id}/tests/{test_id}/rich-detail` | Get Enriched Test Case Detail Endpoint | [Test Runs](api/test-runs.md) |
 | GET | `/api/v1/runs/{run_id}/tests/{test_id}/step-flips` | Get Test Case Step Flips | [Test Runs](api/test-runs.md) |
 | GET | `/api/v1/runs/{run_id}/tests/{test_id}/steps` | Get Test Case Steps | [Test Runs](api/test-runs.md) |
+| GET | `/api/v1/runs/{run_id}/timing` | Get Run Timing | [Execution Metrics](api/execution-metrics.md) |
+| GET | `/api/v1/runs/{run_id}/timing.csv` | Export Run Timing Csv | [Test Runs](api/test-runs.md) |
 | GET | `/api/v1/saved-views` | List Saved Views | [Saved Views](api/saved-views.md) |
 | POST | `/api/v1/saved-views` | Create Saved View | [Saved Views](api/saved-views.md) |
 | DELETE | `/api/v1/saved-views/{view_id}` | Delete Saved View | [Saved Views](api/saved-views.md) |
@@ -575,4 +581,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **566 HTTP operations**, **475 paths**, **81 domain pages**.
+Total: **572 HTTP operations**, **481 paths**, **82 domain pages**.

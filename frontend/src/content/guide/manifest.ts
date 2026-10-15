@@ -115,8 +115,11 @@ export const DOC_PAGES: DocPage[] = [
     group: 'Using TestLookup',
     icon: GitBranch,
     summary:
-      'The run list, a run\'s Tests, Analysis, Changes and Evidence tabs, comparing runs and bisecting a regression.',
-    keywords: ['run', 'build', 'compare', 'bisect', 'analysis', 'evidence', 'test result', 'release tag', 'pipeline'],
+      'The run list, a run\'s Tests, Analysis, Changes, Evidence and Timing tabs, comparing runs and bisecting a regression.',
+    keywords: [
+      'run', 'build', 'compare', 'bisect', 'analysis', 'evidence', 'test result', 'release tag', 'pipeline',
+      'timing', 'wall clock', 'test time', 'parallelism', 'waterfall', 'worker',
+    ],
   },
   {
     id: 'live',
@@ -179,7 +182,10 @@ export const DOC_PAGES: DocPage[] = [
     icon: ChartLine,
     summary:
       'Reading, zooming, filtering from and exporting any chart, and what each report page draws.',
-    keywords: ['chart', 'export', 'png', 'svg', 'csv', 'zoom', 'compare', 'heatmap', 'scatter', '3d', 'sankey', 'saved views', 'cross-filter', 'presentation'],
+    keywords: [
+      'chart', 'export', 'png', 'svg', 'csv', 'zoom', 'compare', 'heatmap', 'scatter', '3d', 'sankey', 'saved views', 'cross-filter', 'presentation',
+      'execution time', 'wall clock', 'slowest tests', 'duration distribution', 'histogram',
+    ],
   },
   {
     id: 'test-management',

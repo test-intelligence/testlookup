@@ -64,6 +64,17 @@
       "high_cardinality": true
     }
   },
+  "run_only_metrics": [
+    "wall_clock_total",
+    "wall_clock_p50",
+    "wall_clock_p95"
+  ],
+  "row_level_dimensions": [
+    "suite",
+    "status",
+    "failure_category",
+    "test"
+  ],
   "cases": [
     {"group_by": ["day"], "outcome": "ok", "suite_names": 0, "top_n": null},
     {"group_by": ["day"], "outcome": "top_n_unsupported", "suite_names": 0, "top_n": 7},

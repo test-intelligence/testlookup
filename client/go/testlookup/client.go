@@ -186,6 +186,10 @@ type RecordOptions struct {
 	StackTrace string
 	Tags       []string
 	Metadata   map[string]interface{}
+	// StartedAt is when the test began (EXEC-01). The event's timestamp_ms,
+	// taken when Record is called, is its finish. Zero = not sent; servers
+	// that predate the field ignore it.
+	StartedAt time.Time
 }
 
 // ── Reporter ──────────────────────────────────────────────────────────────────
@@ -377,6 +381,7 @@ func (s *Session) Record(ctx context.Context, testName string, status TestStatus
 	if opts.StackTrace != "" { event.StackTrace   = opts.StackTrace }
 	if len(opts.Tags)   > 0  { event.Tags         = opts.Tags }
 	if opts.Metadata   != nil { event.Metadata    = opts.Metadata }
+	if !opts.StartedAt.IsZero() { event.StartedAtMs = opts.StartedAt.UnixMilli() }
 
 	s.enqueue(ctx, event)
 }
@@ -595,6 +600,7 @@ type liveEvent struct {
 	StackTrace   string                 `json:"stack_trace,omitempty"`
 	Tags         []string               `json:"tags,omitempty"`
 	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	StartedAtMs  int64                  `json:"started_at_ms,omitempty"`
 }
 
 type batchPayload struct {

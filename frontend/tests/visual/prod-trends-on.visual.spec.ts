@@ -14,8 +14,13 @@
  * UX redesign P3 (the page template): the pass-rate frame is the hero, full
  * width under the KPI strip; the catalogue's sections are the page's tabs —
  * By suite (the suite series and Compare, beside the suite pass rates card),
- * Durations, Heatmap — each captured after its tab is opened. Every region
- * keeps its name; the sizes changed with the layout.
+ * Durations (labelled "Execution time" since EXEC-04b, which puts the
+ * execution-metrics section above the p50 / p95 band), Heatmap — each
+ * captured after its tab is opened. Every region keeps its name; the sizes
+ * changed with the layout. W02 (EXEC-04b) adds three regions in the
+ * Execution time tab, PNGs from CI: `trends-on-execution-per-day` (wall clock
+ * vs summed test time), `trends-on-slowest` (20 slowest by p95) and
+ * `trends-on-histogram` (the duration distribution, TRND-09).
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { expect, test, type Page } from '@playwright/test'
@@ -55,12 +60,28 @@ for (const theme of THEMES) {
     await visualRegion(page, 'trends-on-multi-series', theme, suites)
     await visualRegion(page, 'trends-on-compare', theme, compare)
 
-    await openTab(page, 'Durations')
+    await openTab(page, 'Execution time')
     const duration = sectionFrame(page, 'trends-duration', 'Test duration (p50 / p95)')
     await expectDrawn(duration, 'duration')
     await waitForCharts(duration)
     await expectNoErrorFrame(page)
     await visualRegion(page, 'trends-on-duration', theme, duration)
+
+    // EXEC-04b (W02, PNGs from CI): the execution-metrics charts above the band.
+    const perDay = sectionFrame(page, 'trends-execution', 'Wall clock vs test time per day')
+    const slowest = sectionFrame(page, 'trends-execution', /slowest tests \(p95\)$/)
+    const histogram = sectionFrame(page, 'trends-execution', 'Duration distribution')
+    for (const [frame, what] of [[perDay, 'per day'], [slowest, 'slowest'], [histogram, 'histogram']] as const) {
+      await expectDrawn(frame, what)
+    }
+    await waitForCharts(perDay)
+    await waitForCharts(histogram)
+    // The slowest tests are ranked HTML bars, not a recharts surface.
+    await expect(slowest.getByRole('listitem').first()).toBeVisible()
+    await expectNoErrorFrame(page)
+    await visualRegion(page, 'trends-on-execution-per-day', theme, perDay)
+    await visualRegion(page, 'trends-on-slowest', theme, slowest)
+    await visualRegion(page, 'trends-on-histogram', theme, histogram)
 
     await openTab(page, 'Heatmap')
     const heatmap = sectionFrame(page, 'trends-heatmap', 'Suite pass rate by day')

@@ -586,7 +586,38 @@ class TestRunSummary(BaseModel):
     broken_tests: int
     unknown_tests: int = 0
     pass_rate: Optional[float] = None
-    duration_ms: Optional[int] = None
+    duration_ms: Optional[int] = Field(
+        None,
+        description=(
+            "Test time (summed): the sum of the run's test durations, not how "
+            "long the run took. Parallel tests make it larger than wall_clock_ms."
+        ),
+    )
+    # EXEC-02 (migration 0203): how long the run took on the clock.
+    wall_clock_ms: Optional[int] = Field(
+        None,
+        description=(
+            "Wall clock: how long the run took, start to finish. NULL when no "
+            "report or test timestamps state it (timing_source 'derived_sum' "
+            "or not timed yet) -- never the summed time passed off as a wall "
+            "clock. Parallelism = duration_ms / wall_clock_ms."
+        ),
+    )
+    exec_started_at: Optional[datetime] = Field(
+        None, description="When the run's tests started executing (not the ingest time)."
+    )
+    exec_finished_at: Optional[datetime] = Field(
+        None, description="When the run's tests finished executing (not the finalize time)."
+    )
+    timing_source: Optional[str] = Field(
+        None,
+        description=(
+            "Where wall_clock_ms came from: 'report' (the report stated it), "
+            "'derived' (the union of the suites' start/finish spans) or "
+            "'derived_sum' (no wall clock known; only the summed time). "
+            "NULL = not timed yet."
+        ),
+    )
     ocp_pod_name: Optional[str] = None
     ocp_namespace: Optional[str] = None
     primary_suite_name: Optional[str] = None
@@ -671,6 +702,18 @@ class TestCaseDetail(TestCaseSummary):
     tags: Optional[List[str]] = None
     error_message: Optional[str] = None
     minio_s3_prefix: Optional[str] = None
+    # Execution timing (EXEC-01, migration 0202): what the report or live
+    # stream said about when the test ran. All None when the format carries
+    # none of it (JUnit XML, xUnit) -- "not reported", never zero.
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    setup_ms: Optional[int] = None
+    call_ms: Optional[int] = None
+    teardown_ms: Optional[int] = None
+    worker_id: Optional[str] = None
+    # report | derived | live (``report_timings.TIMING_SOURCES``); plain str so
+    # a value outside the set cannot 422 the detail read.
+    timing_source: Optional[str] = None
 
 
 class TestCaseListResponse(BaseModel):
@@ -785,6 +828,14 @@ class TestCaseExecutionSection(BaseModel):
     error_message: Optional[str] = None
     stack_trace: Optional[str] = None
     parameters: List[Dict[str, Any]] = Field(default_factory=list)
+    # Execution timing (EXEC-01): see TestCaseDetail. None = not reported.
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    setup_ms: Optional[int] = None
+    call_ms: Optional[int] = None
+    teardown_ms: Optional[int] = None
+    worker_id: Optional[str] = None
+    timing_source: Optional[str] = None
 
 
 class TestCaseProvenanceSection(BaseModel):
@@ -1630,6 +1681,505 @@ class NotificationTransitionPolicyResponse(BaseModel):
     is_default: bool = False
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ── Duration regressions (EXEC-05) ────────────────────────────────────────────
+# ``GET /api/v1/runs/{run_id}/duration-regressions``: the stored
+# ``test_runs.duration_findings`` (``services/duration_regression_service``).
+# Vocabulary fields stay ``str`` -- a strict enum over a stored JSON value
+# 422s silently when the producer grows a value.
+
+
+class DurationSpikeResponse(BaseModel):
+    """A PASSED test slower than its Welford baseline (>= 3 sigma, >= 10 samples)."""
+    test_fingerprint: str
+    test_name: Optional[str] = None
+    suite_name: Optional[str] = None
+    observed_ms: int
+    baseline_mean_ms: float
+    baseline_stddev_ms: float = 0.0
+    baseline_p95_ms: float = 0.0
+    sample_count: int = 0
+    sigma: float
+    delta_ms: Optional[int] = None
+    ratio: Optional[float] = None
+    previous_ms: Optional[int] = None
+    #: The previous run of the test was already this slow (no notification).
+    was_slow_before: bool = False
+    new: bool = False
+
+
+class SuiteDurationRegressionResponse(BaseModel):
+    """A suite whose median over its last 5 runs is >= 1.5x the 20 before."""
+    suite_name: Optional[str] = None
+    suite_key: str
+    metric: str = "summed"  # "wall" | "summed"
+    ratio: Optional[float] = None
+    recent_median_ms: Optional[float] = None
+    baseline_median_ms: Optional[float] = None
+    recent_runs: int = 0
+    baseline_runs: int = 0
+    observed_ms: Optional[int] = None
+    was_slow_before: bool = False
+    new: bool = False
+
+
+class DurationRegressionsResponse(BaseModel):
+    """A run's duration regressions. ``measured: false`` + ``reason`` when
+    neither check could be made -- never an empty list read as "no
+    regressions". ``stored: false`` = computed at read time for a run that
+    was not evaluated on ingest (nothing was written)."""
+    run_id: uuid.UUID
+    schema_version: int = 1
+    measured: bool
+    reason: Optional[str] = None
+    stored: bool = False
+    evaluated_at: Optional[datetime] = None
+    spikes: List[DurationSpikeResponse] = Field(default_factory=list)
+    spike_count: int = 0
+    suites: List[SuiteDurationRegressionResponse] = Field(default_factory=list)
+    suite_regression_count: int = 0
+    #: ``{measured, reason, considered, judged, history, required_history, sigma}``
+    test_check: dict[str, Any] = Field(default_factory=dict)
+    #: ``{measured, reason, evaluated, history, required_history, recent_runs, baseline_runs, ratio}``
+    suite_check: dict[str, Any] = Field(default_factory=dict)
+    #: Fingerprints / suite keys this run's "became slower" message named.
+    notified: dict[str, Any] = Field(default_factory=dict)
+
+
+# ── EXEC-03: execution metrics ──────────────────────────────────────────────
+#
+# GET /runs/{run_id}/timing, GET /analytics/execution/suite-history and
+# GET /analytics/execution-metrics (``services/execution_metrics_service.py``).
+# Units: every ``*_ms`` field is milliseconds, every ``*_at`` field and
+# ``window_*`` bound an ISO 8601 UTC instant, every ``day`` a UTC
+# ``YYYY-MM-DD``. ``null`` means NOT MEASURED (the report did not carry the
+# figure, or nothing in scope has it), never zero. A block that could not be
+# measured says so with ``measured: false`` and a human-readable ``reason``.
+# Additive only from here on: other surfaces (the UI, the CLI, MCP) are built
+# against these field names.
+
+
+class ExecutionPercentiles(BaseModel):
+    """p50 / p95 of one figure over a set of executions."""
+    #: Executions that carried the figure (the sample behind the percentiles).
+    n: int = 0
+    p50_ms: Optional[float] = None
+    p95_ms: Optional[float] = None
+    measured: bool = False
+    reason: Optional[str] = None
+
+
+class RunTimingFigures(BaseModel):
+    """The run's own figures (EXEC-02 columns on ``test_runs``)."""
+    #: How long the run took on the clock; null = not reported (never the sum).
+    wall_clock_ms: Optional[int] = None
+    #: Sum of the run's test durations ("Test time (summed)").
+    summed_ms: Optional[int] = None
+    #: summed_ms / wall_clock_ms, 2 places; null when the wall clock is unknown.
+    parallelism: Optional[float] = None
+    #: ``report`` | ``derived`` | ``derived_sum``; null = not timed yet.
+    timing_source: Optional[str] = None
+    exec_started_at: Optional[datetime] = None
+    exec_finished_at: Optional[datetime] = None
+    #: Tests in the run.
+    test_count: int = 0
+    #: Tests carrying both a start and a finish timestamp.
+    timed_count: int = 0
+    #: Tests carrying a duration.
+    duration_count: int = 0
+
+
+class RunTimingPhases(BaseModel):
+    """Setup / test body / teardown totals over the run's tests."""
+    measured: bool = False
+    reason: Optional[str] = None
+    #: Tests that reported at least one phase.
+    tests_with_phases: int = 0
+    setup_ms: Optional[int] = None
+    call_ms: Optional[int] = None
+    teardown_ms: Optional[int] = None
+    #: setup_ms / (setup_ms + call_ms + teardown_ms), 0-1, 4 places.
+    setup_share: Optional[float] = None
+    teardown_share: Optional[float] = None
+
+
+class SuiteExecutionResponse(BaseModel):
+    """One ``suite_executions`` row: how long one suite of one run took."""
+    suite_name: str
+    suite_key: str
+    #: ``report`` | ``derived`` | ``derived_sum`` (wall clock null for the last).
+    source: str
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    wall_ms: Optional[int] = None
+    summed_ms: Optional[int] = None
+    #: Suite-level fixtures (before-all / after-all) as the report states them.
+    setup_ms: Optional[int] = None
+    teardown_ms: Optional[int] = None
+    test_count: int = 0
+    timed_count: int = 0
+    passed: int = 0
+    failed: int = 0
+    broken: int = 0
+    skipped: int = 0
+    unknown: int = 0
+    parallelism: Optional[float] = None
+
+
+class RunTimingSuites(BaseModel):
+    #: False when the run has no suite_executions rows yet (finalize or the
+    #: backfill has not reached it); ``items`` is then empty for that reason.
+    measured: bool = False
+    reason: Optional[str] = None
+    total: int = 0
+    truncated: bool = False
+    items: List[SuiteExecutionResponse] = Field(default_factory=list)
+
+
+class TestDurationBaselineResponse(BaseModel):
+    """A test's running duration statistics (``perf_baselines``)."""
+    mean_ms: float
+    stddev_ms: float = 0.0
+    p95_ms: Optional[float] = None
+    sample_count: int = 0
+    last_observed_ms: Optional[int] = None
+    last_observed_at: Optional[datetime] = None
+
+
+class RunTimingTestResponse(BaseModel):
+    """One test of the run, as the slowest list shows it."""
+    test_id: uuid.UUID
+    test_name: str
+    test_fingerprint: Optional[str] = None
+    #: The effective suite (a live-stream run's label, else the row's suite).
+    suite_name: Optional[str] = None
+    status: str
+    duration_ms: Optional[int] = None
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    setup_ms: Optional[int] = None
+    call_ms: Optional[int] = None
+    teardown_ms: Optional[int] = None
+    worker_id: Optional[str] = None
+    #: ``report`` | ``derived`` | ``live``; null when the format carried no timing.
+    timing_source: Optional[str] = None
+    #: Null when the test has no baseline in this project.
+    baseline: Optional[TestDurationBaselineResponse] = None
+    #: duration_ms / baseline.mean_ms, 2 places; null without both.
+    baseline_ratio: Optional[float] = None
+
+
+class RunTimingSlowest(BaseModel):
+    limit: int
+    #: Tests carrying a duration (the population the list was cut from).
+    total: int = 0
+    measured: bool = False
+    reason: Optional[str] = None
+    items: List[RunTimingTestResponse] = Field(default_factory=list)
+
+
+class RunTimingLane(BaseModel):
+    """One worker lane: the timed tests one worker ran."""
+    #: Null = the report did not say which worker ran these tests.
+    worker_id: Optional[str] = None
+    test_count: int = 0
+    #: Sum of the lane's test durations.
+    busy_ms: Optional[int] = None
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    span_ms: Optional[int] = None
+
+
+class RunTimingWorkers(BaseModel):
+    #: True when the report named the worker of at least one timed test.
+    measured: bool = False
+    reason: Optional[str] = None
+    total: int = 0
+    truncated: bool = False
+    lanes: List[RunTimingLane] = Field(default_factory=list)
+
+
+class RunTimelineItem(BaseModel):
+    test_id: uuid.UUID
+    test_name: str
+    suite_name: Optional[str] = None
+    status: str
+    worker_id: Optional[str] = None
+    started_at: datetime
+    finished_at: datetime
+    #: started_at - timeline.origin, in ms (>= 0).
+    offset_ms: int
+    duration_ms: Optional[int] = None
+
+
+class RunTimeline(BaseModel):
+    """Tests with a start and a finish, for the waterfall. When more than
+    ``limit`` qualify, the ``limit`` LONGEST are kept (``truncated``)."""
+    measured: bool = False
+    #: e.g. "report carried no timestamps".
+    reason: Optional[str] = None
+    limit: int
+    #: Tests carrying both timestamps (before the cut).
+    total: int = 0
+    truncated: bool = False
+    #: The earliest start of any timed test; offsets are measured from here.
+    origin: Optional[datetime] = None
+    #: The latest finish of any timed test.
+    end: Optional[datetime] = None
+    #: Ordered by started_at, then test_id.
+    items: List[RunTimelineItem] = Field(default_factory=list)
+
+
+class RunTimingResponse(BaseModel):
+    """GET /api/v1/runs/{run_id}/timing."""
+    run_id: uuid.UUID
+    project_id: uuid.UUID
+    status: str
+    build_number: Optional[str] = None
+    branch: Optional[str] = None
+    created_at: Optional[datetime] = None
+    run: RunTimingFigures
+    phases: RunTimingPhases
+    suites: RunTimingSuites
+    slowest: RunTimingSlowest
+    workers: RunTimingWorkers
+    timeline: RunTimeline
+    #: The run's duration regressions (same body as /duration-regressions).
+    duration_findings: Optional[DurationRegressionsResponse] = None
+
+
+class SuiteHistoryPoint(BaseModel):
+    """One run of the suite."""
+    run_id: uuid.UUID
+    build_number: Optional[str] = None
+    run_created_at: datetime
+    branch: Optional[str] = None
+    run_status: Optional[str] = None
+    source: str
+    wall_ms: Optional[int] = None
+    summed_ms: Optional[int] = None
+    parallelism: Optional[float] = None
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    test_count: int = 0
+    timed_count: int = 0
+    passed: int = 0
+    failed: int = 0
+    broken: int = 0
+    skipped: int = 0
+    unknown: int = 0
+
+
+class SuiteHistoryStats(BaseModel):
+    """Window percentiles over EVERY execution in the window (not only the
+    returned points)."""
+    wall: ExecutionPercentiles = Field(default_factory=ExecutionPercentiles)
+    summed: ExecutionPercentiles = Field(default_factory=ExecutionPercentiles)
+    parallelism_p50: Optional[float] = None
+
+
+class SuiteExecutionHistoryResponse(BaseModel):
+    """GET /api/v1/analytics/execution/suite-history."""
+    project_id: Optional[uuid.UUID] = None
+    #: The suite's ingested spelling (latest row), else the name as sent.
+    suite_name: Optional[str] = None
+    suite_key: Optional[str] = None
+    #: The branch filter applied; null = every branch.
+    branch: Optional[str] = None
+    days: int
+    limit: int
+    #: Executions of the suite in the window (before the limit).
+    total: int = 0
+    truncated: bool = False
+    measured: bool = False
+    reason: Optional[str] = None
+    #: Oldest first (a time series); the newest ``limit`` when truncated.
+    points: List[SuiteHistoryPoint] = Field(default_factory=list)
+    stats: SuiteHistoryStats = Field(default_factory=SuiteHistoryStats)
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class ExecutionDayPoint(BaseModel):
+    day: str
+    runs: int = 0
+    #: Sum of the wall clocks of the day's runs that have one.
+    wall_clock_ms: Optional[int] = None
+    wall_runs: int = 0
+    summed_ms: Optional[int] = None
+    summed_runs: int = 0
+
+
+class ExecutionPerDay(BaseModel):
+    #: ``run`` (test_runs wall clock + summed time) or ``suite`` (when a
+    #: suite_name filter is applied: the selected suites' suite_executions rows).
+    grain: str = "run"
+    #: Every UTC day of the window, oldest first; a day with no runs has
+    #: runs 0 and null figures.
+    points: List[ExecutionDayPoint] = Field(default_factory=list)
+
+
+class ExecutionTotals(BaseModel):
+    runs: int = 0
+    wall_clock_ms: Optional[int] = None
+    wall_runs: int = 0
+    summed_ms: Optional[int] = None
+    summed_runs: int = 0
+    #: Over the runs carrying BOTH figures: their summed / their wall clock.
+    parallelism: Optional[float] = None
+
+
+class ExecutionSuiteWindow(BaseModel):
+    runs: int = 0
+    wall: ExecutionPercentiles = Field(default_factory=ExecutionPercentiles)
+    summed: ExecutionPercentiles = Field(default_factory=ExecutionPercentiles)
+
+
+class ExecutionSuiteRow(BaseModel):
+    suite_key: str
+    suite_name: str
+    current: ExecutionSuiteWindow
+    #: The window of the same length just before this one.
+    previous: ExecutionSuiteWindow
+    #: (current - previous) / previous x 100, 1 place; null without both.
+    wall_p50_change_pct: Optional[float] = None
+    wall_p95_change_pct: Optional[float] = None
+    summed_p50_change_pct: Optional[float] = None
+    summed_p95_change_pct: Optional[float] = None
+
+
+class ExecutionSuites(BaseModel):
+    limit: int
+    #: Suites that ran in the window (before the limit).
+    total: int = 0
+    truncated: bool = False
+    #: Ordered by current wall p95, then summed p95, descending.
+    items: List[ExecutionSuiteRow] = Field(default_factory=list)
+
+
+class ExecutionSuiteRegression(BaseModel):
+    suite_key: str
+    suite_name: Optional[str] = None
+    branch: Optional[str] = None
+    #: ``wall`` | ``summed`` (wall only when every run of the window has one).
+    metric: str
+    ratio: float
+    recent_median_ms: Optional[float] = None
+    baseline_median_ms: Optional[float] = None
+    recent_runs: int = 0
+    baseline_runs: int = 0
+    observed_ms: Optional[int] = None
+    #: The previous run was already this slow (the regression is not new).
+    was_slow_before: bool = False
+    latest_run_id: Optional[uuid.UUID] = None
+    latest_run_at: Optional[datetime] = None
+
+
+class ExecutionSuiteRegressions(BaseModel):
+    measured: bool = False
+    reason: Optional[str] = None
+    #: Suite x branch histories judged (enough history).
+    evaluated: int = 0
+    #: Suite x branch histories considered (ran in the window).
+    considered: int = 0
+    total: int = 0
+    items: List[ExecutionSuiteRegression] = Field(default_factory=list)
+
+
+class ExecutionTestRegression(BaseModel):
+    test_fingerprint: str
+    test_name: Optional[str] = None
+    suite_name: Optional[str] = None
+    baseline_mean_ms: float
+    baseline_p95_ms: Optional[float] = None
+    sample_count: int = 0
+    window_p50_ms: float
+    window_n: int = 0
+    #: window_p50_ms / baseline_mean_ms, 2 places.
+    ratio: float
+
+
+class ExecutionTestRegressions(BaseModel):
+    measured: bool = False
+    reason: Optional[str] = None
+    #: Tests with a baseline of >= min_samples observed in the window, judged.
+    considered: int = 0
+    total: int = 0
+    items: List[ExecutionTestRegression] = Field(default_factory=list)
+
+
+class ExecutionRegressionRule(BaseModel):
+    recent_runs: int
+    baseline_runs: int
+    min_baseline_runs: int
+    ratio: float
+    same_branch: bool = True
+    test_min_samples: int
+    test_ratio: float
+
+
+class ExecutionRegressions(BaseModel):
+    rule: ExecutionRegressionRule
+    suites: ExecutionSuiteRegressions
+    tests: ExecutionTestRegressions
+
+
+class ExecutionSlowTest(BaseModel):
+    test_fingerprint: str
+    test_name: Optional[str] = None
+    suite_name: Optional[str] = None
+    #: Executions in the window carrying a duration.
+    n: int = 0
+    p50_ms: Optional[float] = None
+    p95_ms: Optional[float] = None
+    max_ms: Optional[int] = None
+
+
+class ExecutionSlowTests(BaseModel):
+    limit: int
+    measured: bool = False
+    reason: Optional[str] = None
+    #: Ordered by p95 descending (the slowest first, not the most executed).
+    items: List[ExecutionSlowTest] = Field(default_factory=list)
+
+
+class ExecutionHistogramBucket(BaseModel):
+    """One duration bucket: ``lower_ms <= duration < upper_ms``."""
+    lower_ms: int
+    #: Null = the open-ended top bucket.
+    upper_ms: Optional[int] = None
+    count: int = 0
+
+
+class ExecutionDurationHistogram(BaseModel):
+    """TRND-09: the window's test executions by duration, over fixed
+    log-spaced bucket edges (every bucket present, zero-filled)."""
+    measured: bool = False
+    reason: Optional[str] = None
+    #: Test executions in scope carrying a duration.
+    n: int = 0
+    buckets: List[ExecutionHistogramBucket] = Field(default_factory=list)
+    p50_ms: Optional[float] = None
+    p95_ms: Optional[float] = None
+
+
+class ExecutionMetricsResponse(BaseModel):
+    """GET /api/v1/analytics/execution-metrics."""
+    project_id: Optional[uuid.UUID] = None
+    days: int
+    branch: Optional[str] = None
+    window_start: Optional[datetime] = None
+    window_end: Optional[datetime] = None
+    previous_window_start: Optional[datetime] = None
+    measured: bool = False
+    reason: Optional[str] = None
+    totals: ExecutionTotals = Field(default_factory=ExecutionTotals)
+    per_day: ExecutionPerDay = Field(default_factory=ExecutionPerDay)
+    suites: ExecutionSuites
+    regressions: ExecutionRegressions
+    slowest_tests: ExecutionSlowTests
+    duration_histogram: ExecutionDurationHistogram = Field(default_factory=ExecutionDurationHistogram)
+    meta: dict[str, Any] = Field(default_factory=dict)
 
 
 # ── Agent Pipeline Schemas ─────────────────────────────────────
@@ -3067,6 +3617,55 @@ class LiveEvent(BaseModel):
     # Client-side unix epoch ms — preserved for ordering; falls back to server time if absent
     timestamp_ms: Optional[int] = None
     metadata: Optional[dict] = None
+    # EXEC-01: optional execution timing on a ``test_result``. The server stores ``timestamp_ms`` as the test's
+    # finish and ``started_at_ms`` (or a ``test_start`` of the same test in the same batch) as its start, both
+    # bounded against the session's server-side clock. A value the server cannot use is dropped, never a 422:
+    # a bad timing figure must not cost the batch its results. Unset, they are left out of ``model_dump()``, so an
+    # event without timing keeps exactly the stored payload — and batch-admission digest — it had before.
+    started_at_ms: Optional[int] = Field(
+        None,
+        description="Client epoch ms when the test started (its setup included), sent on test_result.",
+        exclude_if=lambda value: value is None,
+    )
+    setup_ms: Optional[int] = Field(
+        None,
+        description="Fixture / before-hook time of this test, ms (0..24 h).",
+        exclude_if=lambda value: value is None,
+    )
+    call_ms: Optional[int] = Field(
+        None,
+        description="The test body's own time, ms (0..24 h).",
+        exclude_if=lambda value: value is None,
+    )
+    teardown_ms: Optional[int] = Field(
+        None,
+        description="Fixture / after-hook time of this test, ms (0..24 h).",
+        exclude_if=lambda value: value is None,
+    )
+    worker_id: Optional[str] = Field(
+        None,
+        description="The parallel worker / runner slot that ran the test (at most 64 characters).",
+        exclude_if=lambda value: value is None,
+    )
+
+    @field_validator("started_at_ms", "setup_ms", "call_ms", "teardown_ms", mode="before")
+    @classmethod
+    def _usable_ms_or_none(cls, value: Any, info: Any) -> Optional[int]:
+        if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        if value != value or value in (float("inf"), float("-inf")):  # NaN / infinity
+            return None
+        ms = int(round(value))
+        upper = 9_007_199_254_740_991 if info.field_name == "started_at_ms" else 86_400_000
+        return ms if 0 <= ms <= upper else None
+
+    @field_validator("worker_id", mode="before")
+    @classmethod
+    def _worker_text_or_none(cls, value: Any) -> Optional[str]:
+        if value is None or isinstance(value, bool) or not isinstance(value, (str, int)):
+            return None
+        text = str(value).strip()[:64]
+        return text or None
 
 
 class LiveEventBatch(_NulFreeInput):
@@ -3159,6 +3758,14 @@ class IngestTestResult(BaseModel):
     stack_trace: Optional[str] = None
     tags: Optional[List[str]] = None
     metadata: Optional[Dict[str, Any]] = None
+    # EXEC-01: optional execution timing. The write side bounds the values and
+    # parses ISO text, so a value the store cannot hold becomes NULL.
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    setup_ms: Optional[int] = Field(None, ge=0)
+    call_ms: Optional[int] = Field(None, ge=0)
+    teardown_ms: Optional[int] = Field(None, ge=0)
+    worker_id: Optional[str] = Field(None, max_length=64)
 
 
 class IngestPayload(_NulFreeInput):
@@ -3772,6 +4379,27 @@ class TestCaseHistoryPointResponse(BaseModel):
     status: str
     duration_ms: Optional[int] = None
     created_at: Optional[datetime] = None
+    # EXEC-03: the execution timing of this run's row (all null when the
+    # format carried none -- JUnit, xUnit -- never 0).
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    setup_ms: Optional[int] = None
+    call_ms: Optional[int] = None
+    teardown_ms: Optional[int] = None
+    worker_id: Optional[str] = None
+    timing_source: Optional[str] = None
+
+
+class TestCaseDurationStatsResponse(BaseModel):
+    """EXEC-03: duration percentiles of the test over the history window
+    (every execution in the window, not only the 50 points returned)."""
+    window_days: int = 30
+    n: int = 0
+    p50_ms: Optional[float] = None
+    p95_ms: Optional[float] = None
+    max_ms: Optional[int] = None
+    measured: bool = False
+    reason: Optional[str] = None
 
 
 class TestCaseFlakinessResponse(BaseModel):
@@ -3824,6 +4452,10 @@ class TestCaseHistoryResponse(BaseModel):
     history: List[TestCaseHistoryPointResponse] = []
     flakiness: TestCaseFlakinessResponse
     metadata: TestCaseMetadataResponse
+    # EXEC-03 (additive): window percentiles and the project baseline.
+    duration_stats: Optional[TestCaseDurationStatsResponse] = None
+    #: Null when the test has no duration baseline in this project.
+    baseline: Optional[TestDurationBaselineResponse] = None
 
 
 # ── SSO / SAML / SCIM Schemas (ENT-01) ──────────────────────────────────────
@@ -4127,7 +4759,12 @@ class PolicyRule(BaseModel):
     """A single rule within a release gate policy."""
     id: str = Field(..., min_length=1, max_length=100)
     name: str = Field(..., min_length=1, max_length=255)
-    type: str  # flaky_recurrence | open_defect_limit | dimension_ceiling | override_rules
+    # flaky_recurrence | open_defect_limit | dimension_ceiling | override_rules
+    # | perf_regression (EXEC-05, opt-in: absent from every policy unless
+    # added; params ``{max_spikes, min_sigma, suite_ratio,
+    # max_suite_regressions, action}`` over the run's stored duration
+    # findings; an unmeasured run never trips it).
+    type: str
     enabled: bool = True
     params: dict = Field(default_factory=dict)
 

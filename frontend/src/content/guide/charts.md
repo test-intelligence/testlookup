@@ -78,10 +78,10 @@ For a whole report as a PDF or Excel file, see [Reports and exports](/docs/repor
 | Page | Charts |
 |---|---|
 | **Overview** | Pass rate trend, status breakdown, top failing tests, failure categories |
-| **Trends** | Pass rate by suite, test duration (p50 / p95), Compare, and the suite-by-day heatmap |
+| **Trends** | Pass rate by suite, Compare, execution time (wall clock vs test time, by suite, regressions, the 20 slowest tests, the duration distribution), test duration (p50 / p95), and the suite-by-day heatmap |
 | **Coverage** | The test coverage map, and heatmaps of suite pass rate by environment or by release |
 | **Failures** | Failures grouped by error message, systemic flake clusters, the drill-down, and the duration-versus-failure-rate scatter |
-| **Suite detail** | Test results by run (heatmap) and the test scatter |
+| **Suite detail** | Test results by run (heatmap), the test scatter, and the suite's execution time per run |
 | **Summary report** | Status breakdown, results by suite, failures by test, pass rate trend |
 | **Release gate** | Pass rate by release and failure cluster share, under **Context** |
 | **Run compare** | Status changes between two runs |
@@ -90,9 +90,29 @@ For a whole report as a PDF or Excel file, see [Reports and exports](/docs/repor
 
 - **Pass rate by suite** draws the 7 busiest suites and folds the rest into **Other**. **Customise** changes the metric, the line dimension (suite, environment, branch or release), day or week buckets, the number of lines, the chart type and the scale. Options that do not fit the data are shown with the reason. Customisations are kept in this browser; **Reset to default** restores the chart.
 - **Overlays.** **7-day moving average** and **Trend line** draw over the pass rate. Days that are unusual for the series are marked "Flagged as unusual". The trend line needs at least 7 days with runs.
+- **Execution time** (the tab's first section) is described in [Execution time](#execution-time) below.
 - **Test duration (p50 / p95)** shows the typical and the slow end of test durations. A day without timings is a gap.
 - **Compare** draws suites or releases you choose on one chart. It starts with the 3 busiest suites; pick others with **Suites** and **Releases** in the card (releases need one project selected). **Compare by** draws one line per suite, per release, or per suite and release (colour is the suite, the dash is the release), up to 8 lines; **Metric** switches between pass rate, failures and executions. Your choice is in the page link, so sharing the link shares the comparison.
 - **Suite pass rate by day** is a heatmap of the 40 suites with the most failures.
+
+### Execution time
+
+**Trends › Execution time** (`/trends?tab=durations`) shows how long your runs took, for the page's project, window, release and suite filter. A run has two durations, and the tab keeps them apart:
+
+- **Wall clock** — how long the run took on the clock. When a report carries no timestamps (an older JUnit file, for example) the wall clock is **not reported**; the summed time never stands in for it.
+- **Test time (summed)** — every test's duration added up. Tests that ran in parallel are each counted in full, so it can be far longer than the wall clock.
+- **Parallelism** — test time (summed) divided by the wall clock, over the runs that have both. 1.0× means the tests ran one after another.
+
+From top to bottom:
+
+- **Execution time** — the window's totals: wall clock, test time (summed), parallelism, and how many runs reported a wall clock. **How to read these figures** opens this section.
+- **Wall clock vs test time per day** — the two figures as two lines. A day with no run, or no run that reported a wall clock, is a gap with the reason in its tooltip, never 0 ms. A one-day window shows no trend.
+- **Execution time by suite** — each suite's p50 and p95 of both figures, with the change against the previous window of the same length (**+12.5%** is slower, in red; **—** means there was nothing to compare with).
+- **Biggest regressions** — **Suites** whose median over their last 5 runs is at least 1.5× the median of the 20 runs before them, on the same branch, and **Tests** whose median in the window is at least 1.5× their duration baseline (10 or more samples). When there is not enough history, the block says so instead of showing an empty list.
+- **20 slowest tests (p95)** — the tests with the longest 95th-percentile duration and how many runs each p95 is over. When one test is far slower than the rest, the bars stop at the p90 of the twenty and the longer bars end in a hatched **off-scale** mark, with their real p95 printed beside them.
+- **Duration distribution** — every test execution in the window by duration, on fixed buckets from 10 ms to 5 minutes (the last bucket counts everything longer), with the window's p50 and p95.
+
+A suite's own page shows **Suite execution time** under **Charts**: its wall clock and test time for each of its last 30 runs, with the window's p50 / p95 of both. Its **Runs** tab has a **Wall clock** column. See [Runs and run detail](/docs/runs#timing) for one run's breakdown.
 
 ### Failures
 

@@ -141,7 +141,7 @@ Show the LLM cost budget overview: which projects are closest to their cap?
 List open quarantine proposals and approve the one with the highest flip rate
 ```
 
-## Tool reference (68 tools)
+## Tool reference (70 tools)
 
 A `?` marks an optional parameter.
 
@@ -169,6 +169,7 @@ A `?` marks an optional parameter.
 | `list_test_cases` | `run_id`, `status?`, `suite?`, `page?`, `size?` | Filter by status/suite with error snippets |
 | `get_test_case` | `run_id`, `test_id`, `include_steps?` | Full test record with Allure labels; `include_steps=true` adds the latest run's step tree |
 | `get_test_step_flips` | `run_id`, `test_id` | Step-level flakiness across retained runs: which step flipped between PASSED and FAILED, how often, in how many runs, and its current status. Read-only. |
+| `get_run_timing` | `run_id`, `slowest?` | How long one run took and where the time went: wall clock, test time (summed) and parallelism, setup/test body/teardown totals, per-suite times, the slowest tests (default 10, max 100) against their baselines, and the run's duration regressions. Compact markdown plus the REST body (`/runs/{run_id}/timing`, waterfall bars left out). A null figure is "not reported", never 0. Read-only. |
 
 ### Metrics and quality KPIs
 
@@ -189,9 +190,10 @@ A `?` marks an optional parameter.
 | `list_defects` | `project_id`, `resolution_status?`, `limit?` | Defect list (lightweight, limit-based) |
 | `create_defect` | `project_id`, `fingerprint?` or `cluster_id?`, `target?`, `issue_type?`, `jira_project_key?`, `assignee?`, `extra_comment?`, `dry_run?` | **Write.** One-click Jira issue (or `target="webhook"` event) for a failure signature; `dry_run=true` returns the server preview without creating anything (default `false`); dedup-first (QA_ENGINEER+) |
 | `get_ai_analysis_summary` | `project_id`, `days?` | AI triage coverage and confidence distribution |
-| `get_chart_data` | `group_by`, `metric?`, `project_id?`, `release_id?`, `suite_name?`, `days?`, `top_n?` | A metric over 1-2 dimensions, the same series the REST API and UI charts draw, returned verbatim with `meta`. The only analytics tool that is release- and suite-scoped; without `project_id` it covers every project you can read. Errors carry `code`/`param`/`allowed` |
+| `get_chart_data` | `group_by`, `metric?`, `project_id?`, `release_id?`, `suite_name?`, `days?`, `top_n?` | A metric over 1-2 dimensions, the same series the REST API and UI charts draw, returned verbatim with `meta`. Release- and suite-scoped; without `project_id` it covers every project you can read. `wall_clock_total`/`_p50`/`_p95` are run-level only (refused under a suite filter or a row-level `group_by`). Errors carry `code`/`param`/`allowed` |
+| `get_execution_metrics` | `project_id`, `days?`, `suite_name?`, `release_id?`, `branch?`, `top?` | How long a project's runs and suites take and what got slower: wall clock and test time p50/p95 per suite against the previous window, suite and test duration regressions, the slowest tests, a duration histogram. Compact markdown plus the REST body (`/analytics/execution-metrics`). Release- and suite-scoped. A null figure is "not reported", never 0 |
 
-The other analytics tools answer project-wide: the UI can narrow them to a
+The leaderboard tools above answer project-wide: the UI can narrow them to a
 release and they cannot, so their numbers and a release-filtered dashboard's
 legitimately differ. Use `get_chart_data` for a release- or suite-scoped number.
 The UI's charts read the same endpoint, except the Trends page's pass-rate

@@ -10,7 +10,7 @@ List Runs
 
 
 
-Source: [backend/app/routers/runs.py:64](../../../backend/app/routers/runs.py#L64).
+Source: [backend/app/routers/runs.py:65](../../../backend/app/routers/runs.py#L65).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -215,7 +215,7 @@ in 'running' status, or any pipeline created in the last 2h, are
 excluded — matching the Celery task's dedup window so the user doesn't
 waste a click re-firing what's already in flight.
 
-Source: [backend/app/routers/runs.py:146](../../../backend/app/routers/runs.py#L146).
+Source: [backend/app/routers/runs.py:147](../../../backend/app/routers/runs.py#L147).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -396,7 +396,7 @@ Four guards, each a real hazard rather than defensive habit:
   beyond non-empty. Prefixes outside the project's scope are refused and
   REPORTED, never deleted.
 
-Source: [backend/app/routers/runs.py:770](../../../backend/app/routers/runs.py#L770).
+Source: [backend/app/routers/runs.py:809](../../../backend/app/routers/runs.py#L809).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 
@@ -496,7 +496,7 @@ Get Run
 
 
 
-Source: [backend/app/routers/runs.py:259](../../../backend/app/routers/runs.py#L259).
+Source: [backend/app/routers/runs.py:260](../../../backend/app/routers/runs.py#L260).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -607,7 +607,7 @@ disagree or are too thin — not a failure to decide.
 a newly-flaky test reflects a real bug often enough that suppression is the
 one irreversible mistake available.
 
-Source: [backend/app/routers/runs.py:297](../../../backend/app/routers/runs.py#L297).
+Source: [backend/app/routers/runs.py:298](../../../backend/app/routers/runs.py#L298).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -694,7 +694,7 @@ Get Run Downstream Status
 
 Expose durable publication state for required post-ingestion work.
 
-Source: [backend/app/routers/runs.py:271](../../../backend/app/routers/runs.py#L271).
+Source: [backend/app/routers/runs.py:272](../../../backend/app/routers/runs.py#L272).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -775,6 +775,102 @@ await downstream_status_for_run(db, run_id=run_id)
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
 
+## GET `/api/v1/runs/{run_id}/duration-regressions`
+
+Get Run Duration Regressions
+
+EXEC-05: tests slower than their baseline and suites slower than their
+history, for the run page's Changes tab.
+
+The findings stored when the run was evaluated on ingest, else the same
+checks computed now without writing anything (``stored: false``).
+``measured: false`` with a ``reason`` ("not enough history (4 of 10)",
+"duration regression detection is off for this project") when neither
+check could be made -- an empty list never stands in for "no
+regressions". A live run still streaming answers the same way instead of
+404, as ``/regression-diff`` does.
+
+Source: [backend/app/routers/runs.py:527](../../../backend/app/routers/runs.py#L527).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+run_id: uuid.UUID, db: AsyncSession=Depends(get_db), _: Any=Depends(require_run_access())
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=404, detail='Test run not found')
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "get_run_duration_regressions_api_v1_runs__run_id__duration_regressions_get",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "run_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Run Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/DurationRegressionsResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## POST `/api/v1/runs/{run_id}/recover-live`
 
 Recover Live Run From Buffer
@@ -790,7 +886,7 @@ re-checks whether work is already done before inserting.
 Returns 422 when the run isn't recoverable (already populated / not a
 live run / no buffer left in Redis).
 
-Source: [backend/app/routers/runs.py:605](../../../backend/app/routers/runs.py#L605).
+Source: [backend/app/routers/runs.py:644](../../../backend/app/routers/runs.py#L644).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -894,7 +990,7 @@ broken error toast. (Bug 2026-05-19 — Run Detail page hit 404s for
 sessions clicked during the first ~30s before the drainer
 materialised the TestRun row.)
 
-Source: [backend/app/routers/runs.py:480](../../../backend/app/routers/runs.py#L480).
+Source: [backend/app/routers/runs.py:481](../../../backend/app/routers/runs.py#L481).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -988,7 +1084,7 @@ Set Run Release
 
 
 
-Source: [backend/app/routers/runs.py:526](../../../backend/app/routers/runs.py#L526).
+Source: [backend/app/routers/runs.py:565](../../../backend/app/routers/runs.py#L565).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 
@@ -1102,7 +1198,7 @@ ratchet); the underlying read is project-scoped. No DB writes. Returns 404
 when ``run_id`` has no run; otherwise a roll-up listing only the tests with at
 least one step flip (``truncated`` flags a run larger than the analysis cap).
 
-Source: [backend/app/routers/runs.py:456](../../../backend/app/routers/runs.py#L456).
+Source: [backend/app/routers/runs.py:457](../../../backend/app/routers/runs.py#L457).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1195,7 +1291,7 @@ List Test Cases
 
 
 
-Source: [backend/app/routers/runs.py:283](../../../backend/app/routers/runs.py#L283).
+Source: [backend/app/routers/runs.py:284](../../../backend/app/routers/runs.py#L284).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1331,7 +1427,7 @@ Get Test Case
 
 
 
-Source: [backend/app/routers/runs.py:340](../../../backend/app/routers/runs.py#L340).
+Source: [backend/app/routers/runs.py:341](../../../backend/app/routers/runs.py#L341).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1442,7 +1538,7 @@ leakage), the computed flakiness value (reusing
 ``analytics_service``/``test_health_coach`` thresholds), and identity
 metadata (owner / first-last seen / suite / timestamps). No DB writes.
 
-Source: [backend/app/routers/runs.py:405](../../../backend/app/routers/runs.py#L405).
+Source: [backend/app/routers/runs.py:406](../../../backend/app/routers/runs.py#L406).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1543,7 +1639,7 @@ Access is checked against the supplied run before the service query. The
 endpoint is separate from the legacy flat detail route so existing clients
 retain their response shape during gradual rollout.
 
-Source: [backend/app/routers/runs.py:381](../../../backend/app/routers/runs.py#L381).
+Source: [backend/app/routers/runs.py:382](../../../backend/app/routers/runs.py#L382).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1649,7 +1745,7 @@ verdict. Resolves the test's ``test_fingerprint`` + project via the PROVIDED
 read is project-scoped. No DB writes. Returns 404 when ``test_id`` doesn't
 belong to ``run_id``; an empty-window "insufficient history" report otherwise.
 
-Source: [backend/app/routers/runs.py:430](../../../backend/app/routers/runs.py#L430).
+Source: [backend/app/routers/runs.py:431](../../../backend/app/routers/runs.py#L431).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1757,7 +1853,7 @@ stays unchanged and clients fetch steps on demand. Guarded by
 ``require_run_access`` which verifies the PROVIDED ``run_id`` (IDOR ratchet).
 Returns the ordered, nested step tree with per-step + test-level attachments.
 
-Source: [backend/app/routers/runs.py:359](../../../backend/app/routers/runs.py#L359).
+Source: [backend/app/routers/runs.py:360](../../../backend/app/routers/runs.py#L360).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1850,6 +1946,104 @@ Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
 tree
+```
+
+Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
+
+## GET `/api/v1/runs/{run_id}/timing.csv`
+
+Export Run Timing Csv
+
+EXEC-06: every test of the run with its timing, as CSV, slowest first.
+
+Columns: test_name, suite_name (the effective suite), status, duration_ms,
+started_at, finished_at (ISO 8601 UTC), setup_ms, call_ms, teardown_ms,
+worker_id, timing_source (``report`` | ``derived`` | ``live``). A figure
+the report did not carry (a JUnit file has no timestamps) is an empty
+cell, never 0. ``X-Row-Count`` is the number of tests in the file and
+``X-Truncated`` says whether the 100,000-row cap cut it. Read-only.
+
+Source: [backend/app/routers/execution_metrics_export.py:70](../../../backend/app/routers/execution_metrics_export.py#L70).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+run_id: uuid.UUID, db: AsyncSession=Depends(get_db), _: User=Depends(require_run_access())
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=404, detail='Test run not found')
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "export_run_timing_csv_api_v1_runs__run_id__timing_csv_get",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "run_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Run Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "text/csv": {}
+      },
+      "description": "One row per test, slowest first."
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+Handler return expressions (source excerpts, not an inferred wire schema):
+
+```python
+_csv_response(export.RUN_TIMING_COLUMNS, records, filename=export.run_timing_filename(run.build_number, run_id), truncated=truncated, total=len(records))
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.

@@ -47,7 +47,7 @@ import {
 } from './tooltip'
 import { ChartLegend, useChartPatternPrefix, type LegendEntry } from './patterns'
 import { durationTickLabel, type DurationBandModel, type DurationBandPoint } from './durationBuckets'
-import { zeroBasedScale, type NiceScale } from './niceScale'
+import { durationScale, type NiceScale } from './niceScale'
 import { NO_VALUE, utcDayLabel } from './chartText'
 import { durationBandMax } from './zoom/zoomSlices'
 
@@ -87,7 +87,7 @@ const PLOT_MARGIN_RIGHT_WITH_BRUSH = 24
 
 /**
  * The duration axis: from zero to a NICE top over `max` (ms), with its ticks
- * (`zeroBasedScale`), handed to Recharts rather than left to it.
+ * (`durationScale`: clock steps from a minute up), handed to Recharts rather than left to it.
  *
  * Recharts' own `auto` axis ticked a 1,373 ms band at 0, 350, 700, 1,050 and
  * 1,400 ms — printed "1.1s" for 1,050, a label naming the wrong value — and a
@@ -100,7 +100,7 @@ const PLOT_MARGIN_RIGHT_WITH_BRUSH = 24
  */
 export function durationAxis(max: number | undefined): NiceScale | null {
   if (max === undefined || !Number.isFinite(max) || max <= 0) return null
-  return zeroBasedScale(max, { intervals: DURATION_AXIS_INTERVALS })
+  return durationScale(max, { intervals: DURATION_AXIS_INTERVALS })
 }
 
 /** Intervals on the duration axis — at most; the 1-2-2.5-5 step may use fewer. */

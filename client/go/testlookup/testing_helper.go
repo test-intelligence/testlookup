@@ -90,6 +90,7 @@ func (tr *TestReporter) RecordTest(t testing.TB, testName string, start time.Tim
 	tr.session.Record(context.Background(), testName, status, durationMs, RecordOptions{
 		SuiteName: tr.suiteName,
 		Error:     errMsg,
+		StartedAt: start,
 	})
 }
 

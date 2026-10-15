@@ -30,7 +30,11 @@
  *               breakdown (kit `StackedColumnChartFrame`).
  *     By suite  Pass rate by suite and Compare (the catalogue) beside the
  *               Suite pass rates card.
- *     Durations Test duration p50 / p95 (the catalogue).
+ *     Execution time (`?tab=durations`, the id kept from when it was
+ *               "Durations"; EXEC-04b) — the execution-metrics section (wall
+ *               clock vs summed test time, the per-suite table, regressions,
+ *               the 20 slowest tests, the duration distribution) above the
+ *               test duration p50 / p95 band (the catalogue).
  *     Heatmap   Suite pass rate by day (the catalogue).
  *
  * P3 moved every chart; none was rebuilt. The verdict card is gone (its
@@ -130,7 +134,8 @@ const HELP_TOPIC = helpTopicParam('/trends')
 const TRENDS_TABS = [
   { id: 'volume', label: 'Volume' },
   { id: 'by-suite', label: 'By suite' },
-  { id: 'durations', label: 'Durations' },
+  // EXEC-04b: the label is "Execution time"; the id stays `durations`, so every link to the tab still opens it.
+  { id: 'durations', label: 'Execution time' },
   { id: 'heatmap', label: 'Heatmap' },
 ] as const
 type TrendsTab = (typeof TRENDS_TABS)[number]['id']
@@ -144,7 +149,7 @@ type CatalogueTab = Exclude<TrendsTab, 'volume'>
  */
 const CATALOGUE_TAB_SECTIONS: Record<CatalogueTab, readonly TrendsSectionId[]> = {
   'by-suite': ['trends-multi-series', 'trends-compare'],
-  durations: ['trends-duration'],
+  durations: ['trends-execution', 'trends-duration'],
   heatmap: ['trends-heatmap'],
 }
 

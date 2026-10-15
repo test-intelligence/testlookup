@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<test-run id="0" runstate="Runnable" testcasecount="3" result="Failed" label="Error" total="3" passed="1" failed="1" warnings="0" inconclusive="0" skipped="1" asserts="2" engine-version="3.16.3.0" clr-version="8.0.8" start-time="2026-10-14 10:00:00Z" end-time="2026-10-14 10:00:05Z" duration="4.512345">
+  <command-line><![CDATA[nunit3-console Shop.Tests.dll]]></command-line>
+  <test-suite type="Assembly" id="0-1004" name="Shop.Tests.dll" fullname="/ci/Shop.Tests/bin/Shop.Tests.dll" runstate="Runnable" testcasecount="3" result="Failed" site="Child" label="Error" start-time="2026-10-14T10:00:00.1000000Z" end-time="2026-10-14T10:00:04.5000000Z" duration="4.400000" total="3" passed="1" failed="1" warnings="0" inconclusive="0" skipped="1" asserts="2">
+    <test-suite type="TestSuite" id="0-1005" name="Shop" fullname="Shop" runstate="Runnable" testcasecount="3" result="Failed" site="Child" start-time="2026-10-14T10:00:00.2000000Z" end-time="2026-10-14T10:00:04.4000000Z" duration="4.200000" total="3" passed="1" failed="1" warnings="0" inconclusive="0" skipped="1" asserts="2">
+      <test-suite type="TestFixture" id="0-1000" name="CartTests" fullname="Shop.CartTests" classname="Shop.CartTests" runstate="Runnable" testcasecount="3" result="Failed" site="Child" start-time="2026-10-14T10:00:00.2500000Z" end-time="2026-10-14T10:00:04.3000000Z" duration="4.050000" total="3" passed="1" failed="1" warnings="0" inconclusive="0" skipped="1" asserts="2">
+        <test-case id="0-1001" name="AddsItem" fullname="Shop.CartTests.AddsItem" methodname="AddsItem" classname="Shop.CartTests" runstate="Runnable" seed="1912385219" result="Passed" start-time="2026-10-14T10:00:00.3000000Z" end-time="2026-10-14T10:00:01.5000000Z" duration="1.200000" asserts="1" />
+        <test-case id="0-1002" name="AppliesCoupon" fullname="Shop.CartTests.AppliesCoupon" methodname="AppliesCoupon" classname="Shop.CartTests" runstate="Runnable" seed="602437191" result="Failed" start-time="2026-10-14T10:00:01.5500000Z" end-time="2026-10-14T10:00:04.2500000Z" duration="2.700000" asserts="1">
+          <failure>
+            <message><![CDATA[  Expected: 10.00m
+  But was:  12.00m
+]]></message>
+            <stack-trace><![CDATA[at Shop.CartTests.AppliesCoupon() in /ci/Shop.Tests/CartTests.cs:line 31
+]]></stack-trace>
+          </failure>
+          <assertions>
+            <assertion result="Failed">
+              <message><![CDATA[  Expected: 10.00m
+  But was:  12.00m
+]]></message>
+            </assertion>
+          </assertions>
+        </test-case>
+        <test-case id="0-1003" name="RemovesItem" fullname="Shop.CartTests.RemovesItem" methodname="RemovesItem" classname="Shop.CartTests" runstate="Ignored" seed="1145928372" result="Skipped" label="Ignored" start-time="2026-10-14T10:00:04.2600000Z" end-time="2026-10-14T10:00:04.2600000Z" duration="0.000012" asserts="0">
+          <properties>
+            <property name="_SKIPREASON" value="flaky on CI" />
+          </properties>
+          <reason>
+            <message><![CDATA[flaky on CI]]></message>
+          </reason>
+        </test-case>
+      </test-suite>
+    </test-suite>
+  </test-suite>
+</test-run>

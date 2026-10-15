@@ -1,0 +1,38 @@
+Run #1234 · main · FAILED
+Wall clock 9.0 s · Test time 17.4 s · Parallelism 1.9×
+Setup 1.4 s · Test body 14.0 s · Teardown 960 ms
+
+                              Suites
+┏━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━┓
+┃Suite    ┃ Wall clock ┃ Test time ┃ Parallelism ┃ Tests ┃ Failed┃
+┡━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━┩
+│checkout │      5.0 s │     9.1 s │        1.8× │     6 │      1│
+│cart     │          - │     8.3 s │           - │     6 │      0│
+└─────────┴────────────┴───────────┴─────────────┴───────┴───────┘
+               - = not reported by the test report
+
+                                  Slowest 5 of 12 tests
+┏━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━┓
+┃# ┃ Test                        ┃ Suite    ┃ Status ┃ Duration ┃ Baseline ┃ vs baseline┃
+┡━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━┩
+│1 │ checkout::test_pay          │ checkout │ FAILED │    1.8 s │   900 ms │        2.0×│
+│2 │ checkout::test_refund       │ checkout │ PASSED │    1.5 s │        - │           -│
+│3 │ [bold red]cart::test_add[/] │ cart     │ PASSED │    1.2 s │        - │           -│
+│4 │ cart::test_remove           │ cart     │ PASSED │   999 ms │        - │           -│
+│5 │ cart::test_empty            │ -        │ PASSED │     0 ms │        - │           -│
+└──┴─────────────────────────────┴──────────┴────────┴──────────┴──────────┴────────────┘
+                           - = not reported by the test report
+
+Duration regressions: 1 slower test, 1 slower suite
+                    Slower than their baseline
+┏━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━┳━━━━┓
+┃Test               ┃ Suite    ┃ This run ┃ Baseline ┃ Ratio ┃ New┃
+┡━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━╇━━━━┩
+│checkout::test_pay │ checkout │    1.8 s │   900 ms │  2.0× │ yes│
+└───────────────────┴──────────┴──────────┴──────────┴───────┴────┘
+                          Suites slower than their history
+┏━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━━━━┓
+┃Suite    ┃ Metric     ┃ Recent median ┃ Baseline median ┃ Ratio ┃ New             ┃
+┡━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━━━━┩
+│checkout │ wall clock │         9.0 s │           5.0 s │  1.8× │ no (slow before)│
+└─────────┴────────────┴───────────────┴─────────────────┴───────┴─────────────────┘

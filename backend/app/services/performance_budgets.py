@@ -134,6 +134,29 @@ LATENCY_BUDGETS: list[LatencyBudget] = [
         http_handler="/api/v1/analytics/chart-data/rows",
     ),
 
+    # ── EXEC-03 execution metrics (live harness ``SCENARIOS``) ───────────
+    # Harness-only for now: no ``http_handler``, so no Prometheus SLO alert
+    # or dashboard panel is required (``test_slo_alerts_match_budgets``).
+    # The story's target is to stay inside chart_data's 1500 ms p95.
+    LatencyBudget(
+        "execution_metrics", 300, 1500, 3000,
+        "GET /analytics/execution-metrics, 30 d, one project: per-day "
+        "totals, per-suite p50/p95 vs the previous window, suite + test "
+        "regressions, slowest tests, duration histogram. Same ceiling as "
+        "chart_data (EXEC-03).",
+    ),
+    LatencyBudget(
+        "execution_suite_history", 60, 300, 600,
+        "GET /analytics/execution/suite-history, 90 d, one suite: an index "
+        "range on suite_executions (project_id, suite_key, run_created_at).",
+    ),
+    LatencyBudget(
+        "run_timing", 80, 400, 800,
+        "GET /runs/{run_id}/timing: one run's aggregate, suites, slowest 20 "
+        "(ix_test_cases_run_duration), lanes, a timeline of at most 2,000 "
+        "tests and the run's duration findings.",
+    ),
+
     # ── Other HTTP and pipeline operations not in the live harness ────────
     LatencyBudget(
         "semantic_search", 100, 500, 1000,

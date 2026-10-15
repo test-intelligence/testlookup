@@ -15,6 +15,8 @@
  * UX redesign P4: the URL redirects to the suite page's Charts tab
  * (`/suites/<id>?tab=charts`), which renders these frames and sections
  * unchanged; each region is the frame or section itself.
+ * W02 (EXEC-04b) adds `suite-on-execution`: "Suite execution time", the
+ * suite's wall clock and summed test time per run (its PNG from CI).
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { expect, test } from '@playwright/test'
@@ -67,6 +69,12 @@ test.describe('Wave 3 sections', () => {
       await expect(section(page, 'scatter-suite').locator('[data-scatter-selection-count]')).toBeVisible()
       await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
       await visualRegion(page, 'suite-on-scatter-selected', theme, section(page, 'scatter-suite'))
+
+      // EXEC-04b: the suite's wall clock and summed test time per run (new with W02, its PNG from CI).
+      const execution = sectionFrame(page, 'suite-execution', 'Suite execution time')
+      await expectDrawn(execution, 'suite execution time')
+      await waitForCharts(execution)
+      await visualRegion(page, 'suite-on-execution', theme, execution)
       assertHermetic(api, errors)
     })
   }

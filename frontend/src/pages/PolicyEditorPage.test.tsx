@@ -394,3 +394,34 @@ describe('a valid policy is saved', () => {
     )
   })
 })
+
+/**
+ * EXEC-05 (owner decision D44): a slowdown blocks a release only through the
+ * opt-in "Performance regression" rule. A new policy does not have it; adding
+ * it saves a `perf_regression` rule with its thresholds.
+ */
+describe('the Performance regression rule is opt-in', () => {
+  it('is offered, absent from a new policy, and saved with its thresholds when added', async () => {
+    mockCreatePolicy.mockResolvedValue({ id: 'pol-1' })
+    const { container } = renderAt('/policies/new')
+    expect(container.querySelector('[data-policy-rule="perf_regression"]')).toBeNull()
+    const add = screen.getByLabelText('Add rule') as HTMLSelectElement
+    expect([...add.options].map(o => o.textContent)).toContain('Performance regression')
+
+    fireEvent.change(add, { target: { value: 'perf_regression' } })
+    const rule = container.querySelector('[data-policy-rule="perf_regression"]') as HTMLElement
+    expect(rule).not.toBeNull()
+    expect((screen.getByLabelText('Max slower tests') as HTMLInputElement).value).toBe('0')
+    expect((screen.getByLabelText('Min σ above baseline') as HTMLInputElement).value).toBe('3')
+    expect((screen.getByLabelText('Suite slower by (×)') as HTMLInputElement).value).toBe('1.5')
+    fireEvent.change(screen.getByLabelText('Max slower tests'), { target: { value: '2' } })
+
+    nameIt('Perf gate')
+    fireEvent.click(saveButton())
+    await waitFor(() => expect(mockCreatePolicy).toHaveBeenCalledTimes(1))
+    const created = mockCreatePolicy.mock.calls[0][0] as { rules: { rules: { type: string; enabled: boolean; params: Record<string, unknown> }[] } }
+    const [saved] = created.rules.rules.filter(r => r.type === 'perf_regression')
+    expect(saved.enabled).toBe(true)
+    expect(saved.params).toEqual({ max_spikes: 2, min_sigma: 3, suite_ratio: 1.5, max_suite_regressions: 0, action: 'BLOCK' })
+  })
+})

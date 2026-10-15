@@ -126,7 +126,7 @@ function openScore() {
 }
 
 /** P3: the page's own tabs (Volume is the default). */
-function openTab(name: 'Volume' | 'By suite' | 'Durations' | 'Heatmap') {
+function openTab(name: 'Volume' | 'By suite' | 'Execution time' | 'Heatmap') {
   fireEvent.click(within(screen.getByRole('tablist', { name: 'Trend views' })).getByRole('tab', { name }))
 }
 
@@ -707,7 +707,7 @@ describe('TrendsPage rollout (Wave 2.6)', () => {
 
   it('mounts the catalogue with the page window and suite scope, in its tab, after the hero', async () => {
     await renderTrends(await activeDays(3))
-    // P3: the catalogue is in the By suite, Durations and Heatmap tabs; the default tab (Volume) does not mount it.
+    // P3: the catalogue is in the By suite, Execution time and Heatmap tabs; the default tab (Volume) does not mount it.
     expect(screen.queryByTestId('trends-catalogue')).toBeNull()
     expect(catalogue.props).toEqual([])
     openTab('By suite')
@@ -744,7 +744,7 @@ describe('TrendsPage rollout (Wave 2.6)', () => {
   // here, and the charts must say 30 like every other number on the page.
   it('hands the catalogue the snapped page window, not the raw stored one', async () => {
     await renderTrends(await activeDays(3))
-    openTab('Durations')
+    openTab('Execution time')
     await screen.findByTestId('trends-catalogue')
     const { useTimeWindowStore } = await import('@/store/timeWindowStore')
     act(() => useTimeWindowStore.getState().setDays(45))
@@ -1008,7 +1008,8 @@ describe('TrendsPage P3: the page template', () => {
   it.each([
     ['volume', 'Volume'],
     ['by-suite', 'By suite'],
-    ['durations', 'Durations'],
+    // EXEC-04b: the tab is labelled "Execution time"; its id (and every link to it) is still `durations`.
+    ['durations', 'Execution time'],
     ['heatmap', 'Heatmap'],
   ] as const)('?tab=%s selects %s and renders its section', async (id, label) => {
     await renderAt(`/trends?tab=${id}`)
@@ -1051,7 +1052,8 @@ describe('TrendsPage P3: the page template', () => {
   // proves the requests). No CSS hides anything any more.
   it.each([
     ['by-suite', ['trends-multi-series', 'trends-compare']],
-    ['durations', ['trends-duration']],
+    // EXEC-04b: the execution-time section above the p50 / p95 band.
+    ['durations', ['trends-execution', 'trends-duration']],
     ['heatmap', ['trends-heatmap']],
   ] as const)('the %s tab renders the catalogue with exactly its sections', async (id, sections) => {
     await renderAt(`/trends?tab=${id}`)

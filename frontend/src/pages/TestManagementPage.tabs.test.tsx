@@ -53,7 +53,9 @@ const CASES: ManagedTestCase[] = [
   source: 'managed',
   allowed_actions: ['deprecate'],
   created_at: '2026-09-01T00:00:00Z',
-  updated_at: '2026-09-15T00:00:00Z',
+  // Relative to the run: a draft is "stale" from 30 days, and a fixed 2026-09-15 turned the banner's
+  // "Stale drafts 0" into 1 on 2026-10-15, on every branch.
+  updated_at: new Date(Date.now() - 2 * 86_400_000).toISOString(),
 }))
 
 vi.mock('@/hooks/useTestManagement', async (importOriginal) => ({

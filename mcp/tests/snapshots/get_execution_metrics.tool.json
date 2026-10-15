@@ -1,0 +1,76 @@
+{
+  "description": "\n        How long a project's test runs and suites take, and what got slower:\n        wall clock (how long runs took on the clock) and test time (the sum of\n        test durations) per suite as p50/p95 for this window against the\n        previous window of the same length, suites whose recent runs got\n        slower (median of the last 5 runs vs the 20 before, same branch),\n        tests slower than their duration baseline, the slowest tests by p95,\n        and a histogram of test durations. Use it for \"how long does the\n        checkout suite take?\" or \"what got slower this week?\" (pass\n        suite_name=[\"checkout\"]). Read-only.\n\n        Returns {ok, summary, metrics}: `summary` is compact markdown,\n        `metrics` the REST body of GET /api/v1/analytics/execution-metrics\n        verbatim (with `meta`). Reading it: a null figure means the test\n        reports did not carry it -- \"not reported\", NEVER 0 (JUnit reports\n        have no timestamps, so their suites have a test time but no wall\n        clock). A block with `measured: false` says why in `reason` (\"not\n        enough history (7 of 15)\"); do not read it as \"nothing got slower\".\n        Durations are milliseconds, `*_change_pct` percent. A project you\n        cannot read answers the empty shape (measured: false), never its data.\n        For one run's breakdown use `get_run_timing`.\n\n        Args:\n            project_id: Project UUID (required: one project).\n            days: Window in days ending now, UTC (1-365, default 30).\n            suite_name: Suite names, matched case-insensitively (OR, at most\n                50). Narrows every block to those suites.\n            release_id: Release UUIDs, or \"unattributed\" (OR, at most 20).\n            branch: Only runs of this branch (exact). Omit for every branch.\n            top: Rows in each regressions list and the slowest tests (1-100,\n                default 20).\n\n        Errors come back as {ok: false, status_code, detail} plus `code`,\n        `param` and `allowed` from the server (a 422 names the parameter and\n        what it accepts), and `retry_after` on a 429.\n        ",
+  "inputSchema": {
+    "properties": {
+      "branch": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Branch"
+      },
+      "days": {
+        "default": 30,
+        "title": "Days",
+        "type": "integer"
+      },
+      "project_id": {
+        "title": "Project Id",
+        "type": "string"
+      },
+      "release_id": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Release Id"
+      },
+      "suite_name": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Suite Name"
+      },
+      "top": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Top"
+      }
+    },
+    "required": [
+      "project_id"
+    ],
+    "title": "get_execution_metricsArguments",
+    "type": "object"
+  },
+  "name": "get_execution_metrics"
+}

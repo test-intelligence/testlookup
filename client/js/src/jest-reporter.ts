@@ -49,6 +49,8 @@ interface TestCaseResult {
   title: string
   status: 'passed' | 'failed' | 'skipped' | 'pending' | 'todo' | 'disabled'
   duration?: number | null
+  /** Epoch ms the test started (Jest 29+); absent on older Jest. */
+  startAt?: number | null
   failureMessages: string[]
   failureDetails: unknown[]
 }
@@ -224,7 +226,12 @@ export default class TestLookupJestReporter {
 
     // Fire-and-forget: Jest doesn't await non-async reporter methods
     this.session!
-      .record(tc.fullName, status, tc.duration ?? 0, { suiteName, error, stackTrace: stack })
+      .record(tc.fullName, status, tc.duration ?? 0, {
+        suiteName,
+        error,
+        stackTrace: stack,
+        startedAtMs: tc.startAt ?? undefined,
+      })
       .catch((e) => console.debug('[TestLookup] record error:', e))
   }
 

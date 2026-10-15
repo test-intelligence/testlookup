@@ -19,7 +19,7 @@ A **run** is one execution of a suite: a CI job, a local `pytest`, a TestNG sess
 | **Status** | Passed, failed or in progress |
 | **AI verdict** | **Go**, **Conditional** or **No-Go** from the run's analysis, or **—** when there is none yet (hover for why). Click it to open the run's **Analysis** tab |
 | **Tests** / **Pass rate** | The run's counts |
-| **Timing** | When it ran and how long it took; click the header to sort |
+| **Timing** | When it ran and how long it took: the **wall clock** ("9.0s wall") when the run reported one, otherwise the **summed** test time ("17.4s summed"); hover for both. Click the header to sort |
 | **Actions** | Icon buttons: **Re-trigger standard pipeline**, **Trigger deep investigation**, and **Compare to the previous run** of the same suite |
 
 The first two actions, and the bulk controls (tick rows, then **Bulk trigger** or **Bulk deep**), need the `QA_ENGINEER` role or above. The **⋯** menu offers **Trigger all failed (N)** and **Deep all failed (N)** for every failed run in the window.
@@ -37,7 +37,7 @@ Two disclosures at the bottom explain the banner:
 
 ## One run's page
 
-Click a build to open `/runs/<run id>`, titled **Run #<build number>**. Under the title: the run's status, suite and release. **Set release** (or the pencil next to an existing release, **Change release**) attaches the run to a release by name, creating the release if it does not exist yet; this needs the `QA_LEAD` role.
+Click a build to open `/runs/<run id>`, titled **Run #<build number>**. Under the title: the run's status, suite and release, and its timing: **Wall clock** (or **not reported** when the report carried no timestamps), **Test time (summed)** and, when both are known, **Parallelism**. See [Concepts](/docs/concepts#definitions) for the three terms. **Set release** (or the pencil next to an existing release, **Change release**) attaches the run to a release by name, creating the release if it does not exist yet; this needs the `QA_LEAD` role.
 
 The **⋯** menu:
 
@@ -52,7 +52,7 @@ The **⋯** menu:
 | **Release gate** | The release-gate view for this run (`/release-gate/<run id>`) |
 | **Ask AI about this run** | Opens [Ask AI](/docs/ask-ai) with the question "What failed in this build, and why?" written for you. Shown only when Ask AI is available |
 
-The page has four tabs. The tab is in the address (`?tab=`), so a link can open a specific one.
+The page has five tabs. The tab is in the address (`?tab=`), so a link can open a specific one.
 
 ### Tests
 
@@ -86,6 +86,19 @@ The detail behind the analysis. Old links to `/agents/run/<id>` open here.
 - **The pipeline's AI report** — **View AI report** to read it, and **Agent stages** to see each stage the pipeline ran. When the run has several pipeline runs, a **Pipeline** picker chooses between them.
 
 "No agent pipeline has analysed this run yet." means no pipeline has run; **Trigger pipeline** in the ⋯ menu starts one.
+
+### Timing
+
+How long the run took and where the time went (`?tab=timing`).
+
+- **Execution time** — **Wall clock**, **Test time (summed)**, **Parallelism** (summed ÷ wall clock) and the setup / teardown share, with where the figures come from (the report's own run span, or its tests' start and finish times).
+- **Setup, test and teardown** — the time the run's tests spent in each phase, when the report recorded them.
+- **Timeline** — one row per worker, one bar per test, coloured by status, so you can see what ran in parallel and where a worker sat idle. Click a bar to open that test. A run with more than 2,000 timed tests shows the 2,000 longest and says so.
+- **Workers**, **Suites** — per worker and per suite: tests, wall clock and summed time.
+- **Slowest tests** — the 20 slowest tests, each with its duration baseline when it has one.
+- **Duration regressions** — tests and suites slower than their usual time, the same findings as the **Changes** tab.
+
+When a report format does not record start times (a JUnit file without timestamps, for example), the tab says so and shows durations only: no timeline, no empty chart, and the wall clock is **not reported** rather than the summed time. Project-wide execution time is on [Trends › Execution time](/docs/charts#execution-time).
 
 ## One test result
 

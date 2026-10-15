@@ -31,11 +31,38 @@ Pseudo-steps surfaced (in order, only when present):
 Status vocab MUST be the strict TestLookup set (PASSED/FAILED/SKIPPED/BROKEN/
 UNKNOWN) — the granular ``test_steps.status`` column is fronted by a strict enum
 that silently 422s the read endpoint on any value outside it.
+
+Timing (EXEC-01, contract in ``report_timings``), only what each shape says:
+  * native: ``test-method@started-at`` / ``@finished-at`` per test; the
+    ``@BeforeMethod`` / ``@AfterMethod`` config methods' ``duration-ms`` become
+    the ``setup_ms`` of the next test / the ``teardown_ms`` of the previous test
+    in the same class (the method's own ``duration-ms`` is then its
+    ``call_ms``); class-, test-, group- and suite-level config time is the
+    suite's ``setup_ms`` / ``teardown_ms``; ``<suite started-at finished-at
+    duration-ms>`` is the suite timing. Config methods are still not tests.
+  * surefire / JUnit: no per-test clock in the schema — only the non-standard
+    ``<testcase timestamp>`` some writers add (finish then derived from
+    ``time``); ``<testsuite timestamp time>`` and ``<testsuites timestamp time>``
+    are the suite and run timing.
+``parse_testng_xml`` keeps returning ``list[dict]``;
+``parse_testng_xml_with_timings`` also returns the ``ReportTimings``.
 """
 import logging
 from typing import List, Optional
 
 import defusedxml.ElementTree as ET
+
+from app.services.report_timings import (
+    ReportTimings,
+    add_suite_timing,
+    apply_case_clock,
+    empty_timings,
+    finish_from_duration,
+    non_negative_ms,
+    parse_report_time,
+    seconds_to_ms,
+    wall_ms_between,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +203,33 @@ def _is_config_method(node) -> bool:
     return str(node.get("is-config") or "").lower() == "true"
 
 
+def _is_true(node, attribute: str) -> bool:
+    return str(node.get(attribute) or "").lower() == "true"
+
+
+# A config method's time belongs to ONE test only for @BeforeMethod/@AfterMethod.
+# Class/test/group/suite configuration runs once for many tests: suite time.
+_SUITE_SETUP_FLAGS = ("is-before-class", "is-before-test", "is-before-suite", "is-before-groups")
+_SUITE_TEARDOWN_FLAGS = ("is-after-class", "is-after-test", "is-after-suite", "is-after-groups")
+
+
+def _in_run_order(methods: list) -> list:
+    """A class's ``<test-method>`` elements in the order they ran.
+
+    TestNG writes them sorted by start already; a writer that does not is
+    re-sorted by ``started-at`` when every element has one. The sort is stable,
+    so methods started in the same second (TestNG's clock often has second
+    resolution) keep document order. Without a full set of clocks, document
+    order is the only evidence and is kept.
+    """
+    starts = [parse_report_time(m.get("started-at"))[0] for m in methods]
+    known = [start for start in starts if start is not None]
+    if not methods or len(known) != len(methods):
+        return methods
+    order = sorted(range(len(methods)), key=lambda i: known[i])
+    return [methods[i] for i in order]
+
+
 def _testng_exception(method):
     """(message, stack) from a <test-method>'s exception, if any."""
     exc = method.find("exception")
@@ -192,16 +246,38 @@ def _testng_exception(method):
     )
 
 
-def _parse_testng_results(root, test_run_id: str) -> List[dict]:
-    """Parse a native ``testng-results.xml`` document."""
+def _add_ms(total: Optional[int], ms: int) -> int:
+    return ms if total is None else total + ms
+
+
+def _parse_testng_results(root, test_run_id: str) -> tuple[List[dict], ReportTimings]:
+    """Parse a native ``testng-results.xml`` document (results + timings)."""
     results: List[dict] = []
+    timings = empty_timings()
     for suite in root.findall("suite"):
         suite_name = suite.get("name") or "Unknown Suite"
+        suite_setup: Optional[int] = None
+        suite_teardown: Optional[int] = None
         for test in suite.findall("test"):
             for klass in test.findall("class"):
                 class_name = klass.get("name") or ""
-                for method in klass.findall("test-method"):
+                pending_setup: Optional[int] = None  # @BeforeMethod time not yet charged
+                previous: Optional[dict] = None  # the test an @AfterMethod follows
+                for method in _in_run_order(klass.findall("test-method")):
                     if _is_config_method(method):
+                        # Not a test (it is never counted), but its time is.
+                        config_ms = non_negative_ms(method.get("duration-ms"))
+                        if config_ms is None:
+                            continue
+                        if _is_true(method, "is-before-method"):
+                            pending_setup = _add_ms(pending_setup, config_ms)
+                        elif _is_true(method, "is-after-method"):
+                            if previous is not None:
+                                previous["teardown_ms"] = _add_ms(previous.get("teardown_ms"), config_ms)
+                        elif any(_is_true(method, flag) for flag in _SUITE_SETUP_FLAGS):
+                            suite_setup = _add_ms(suite_setup, config_ms)
+                        elif any(_is_true(method, flag) for flag in _SUITE_TEARDOWN_FLAGS):
+                            suite_teardown = _add_ms(suite_teardown, config_ms)
                         continue
                     raw_status = str(method.get("status") or "").upper()
                     # An unrecognised status becomes UNKNOWN rather than
@@ -214,7 +290,7 @@ def _parse_testng_results(root, test_run_id: str) -> List[dict]:
                     except (TypeError, ValueError):
                         duration_ms = None
                     message, stack = _testng_exception(method)
-                    results.append({
+                    case = {
                         "test_run_id": test_run_id,
                         "test_name": name,
                         "full_name": f"{class_name}.{name}" if class_name else name,
@@ -241,29 +317,82 @@ def _parse_testng_results(root, test_run_id: str) -> List[dict]:
                             "expected": None,
                             "actual": None,
                         }],
-                    })
-    return results
+                    }
+                    apply_case_clock(case, method.get("started-at"), method.get("finished-at"))
+                    if pending_setup is not None:
+                        case["setup_ms"] = pending_setup
+                        pending_setup = None
+                    results.append(case)
+                    previous = case
+        suite_started, _ = parse_report_time(suite.get("started-at"))
+        suite_finished, _ = parse_report_time(suite.get("finished-at"))
+        suite_wall = non_negative_ms(suite.get("duration-ms"))
+        add_suite_timing(timings, {
+            "name": suite_name,
+            "started_at": suite_started,
+            "finished_at": suite_finished,
+            "wall_ms": suite_wall if suite_wall is not None else wall_ms_between(suite_started, suite_finished),
+            "setup_ms": suite_setup,
+            "teardown_ms": suite_teardown,
+        })
+    # With its fixtures split off, a method's own ``duration-ms`` is the test
+    # body: say so only where there is a split to show.
+    for case in results:
+        if ("setup_ms" in case or "teardown_ms" in case) and case.get("duration_ms") is not None:
+            case["call_ms"] = case["duration_ms"]
+    return results, timings
 
 
 def parse_testng_xml(xml_content: str, test_run_id: str) -> List[dict]:
-    """Parse a TestNG surefire XML report into a list of normalised test case dicts."""
-    results: List[dict] = []
+    """Parse a TestNG (native or surefire/JUnit) XML report into normalised test case dicts."""
+    return _parse(xml_content, test_run_id)[0]
+
+
+def parse_testng_xml_with_timings(xml_content: str, test_run_id: str) -> tuple[List[dict], ReportTimings]:
+    """:func:`parse_testng_xml`, plus the report's run and suite timing (``ReportTimings``)."""
+    return _parse(xml_content, test_run_id)
+
+
+def _parse(xml_content: str, test_run_id: str) -> tuple[List[dict], ReportTimings]:
     try:
         root = ET.fromstring(xml_content)
     except Exception as e:
         logger.warning(f"Failed to parse TestNG XML: {e}")
-        return results
+        return [], empty_timings()
 
     # Native testng-results.xml — a completely different document shape from
     # surefire's. Checked FIRST because its root tag is unambiguous.
     if root.tag == "testng-results":
         return _parse_testng_results(root, test_run_id)
+    return _parse_surefire(root, test_run_id)
+
+
+def _parse_surefire(root, test_run_id: str) -> tuple[List[dict], ReportTimings]:
+    """Parse a surefire / JUnit ``<testsuite>`` or ``<testsuites>`` document."""
+    results: List[dict] = []
+    timings = empty_timings()
+
+    if root.tag == "testsuites":
+        # The run's own figures, when the writer states them (many do not).
+        run_started, _ = parse_report_time(root.get("timestamp"))
+        run_wall = seconds_to_ms(root.get("time"))
+        timings["run_started_at"] = run_started
+        timings["run_wall_ms"] = run_wall
+        timings["run_finished_at"] = finish_from_duration(run_started, run_wall)
 
     # Handle both <testsuite> and <testsuites> root elements (surefire/JUnit).
     suites = [root] if root.tag == "testsuite" else root.findall("testsuite")
 
     for suite in suites:
         suite_name = suite.get("name", "Unknown Suite")
+        suite_started, _ = parse_report_time(suite.get("timestamp"))
+        suite_wall = seconds_to_ms(suite.get("time"))
+        add_suite_timing(timings, {
+            "name": suite_name,
+            "started_at": suite_started,
+            "finished_at": finish_from_duration(suite_started, suite_wall),
+            "wall_ms": suite_wall,
+        })
         for testcase in suite.findall("testcase"):
             name = testcase.get("name", "Unknown")
             classname = testcase.get("classname", "")
@@ -304,7 +433,7 @@ def parse_testng_xml(xml_content: str, test_run_id: str) -> List[dict]:
                 error_message = None
                 stack_trace = None
 
-            results.append({
+            case = {
                 "test_run_id": test_run_id,
                 "test_name": name,
                 "full_name": f"{classname}.{name}" if classname else name,
@@ -320,6 +449,9 @@ def parse_testng_xml(xml_content: str, test_run_id: str) -> List[dict]:
                 # outcome (failure→FAILED / error→BROKEN / skipped) + captured
                 # reporter/system log blocks. TestNG has no native step tree.
                 "steps": _build_steps(testcase, status),
-            })
+            }
+            # Not in the JUnit schema; some writers add it. Finish = start + time.
+            apply_case_clock(case, testcase.get("timestamp"))
+            results.append(case)
 
-    return results
+    return results, timings

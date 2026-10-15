@@ -23,6 +23,14 @@ vi.mock('./ScatterSection', () => {
   )
   return { ScatterSection, default: ScatterSection }
 })
+// EXEC-04b: "Suite execution time", the third section (its own test is SuiteExecutionSection.test.tsx).
+vi.mock('./SuiteExecutionSection', () => {
+  sections.loads.push('execution')
+  const SuiteExecutionSection = (props: { days: number; suiteName: string; projectId?: string | null }) => (
+    <div data-testid="execution" data-props={JSON.stringify(props)} />
+  )
+  return { default: SuiteExecutionSection }
+})
 
 import SuiteDetailAdvanced from './SuiteDetailAdvanced'
 
@@ -39,15 +47,18 @@ const propsOf = (testId: string) => JSON.parse(screen.getByTestId(testId).getAtt
 const LAZY_TIMEOUT = 5_000
 
 describe('SuiteDetailAdvanced', () => {
-  it('the test x run heatmap and the suite scatter, both for the page’s one suite and window', async () => {
-    render(<SuiteDetailAdvanced days={14} suiteName="Auth" />)
+  it('the test x run heatmap, the suite scatter and the suite execution time, all for the page’s one suite and window', async () => {
+    render(<SuiteDetailAdvanced days={14} suiteName="Auth" projectId="proj-1" />)
     await waitFor(() => expect(screen.getByTestId('scatter')).toBeInTheDocument(), { timeout: LAZY_TIMEOUT })
     expect(await screen.findByTestId('heatmap', {}, { timeout: LAZY_TIMEOUT })).toBeInTheDocument()
+    expect(await screen.findByTestId('execution', {}, { timeout: LAZY_TIMEOUT })).toBeInTheDocument()
     expect(propsOf('heatmap')).toEqual({ days: 14, suiteFilter: ['Auth'], kinds: ['test_run'] })
     expect(propsOf('scatter')).toEqual({ days: 14, suiteFilter: ['Auth'], placement: 'suite' })
-    // The heatmap first, the scatter under it.
+    // EXEC-04b: the suite's own project reaches the execution-time read.
+    expect(propsOf('execution')).toEqual({ days: 14, suiteName: 'Auth', projectId: 'proj-1' })
+    // The heatmap first, the scatter under it, the execution time last.
     const order = Array.from(document.querySelectorAll('[data-testid]'), (el) => el.getAttribute('data-testid'))
-    expect(order).toEqual(['heatmap', 'scatter'])
+    expect(order).toEqual(['heatmap', 'scatter', 'execution'])
   })
 
   it('no suite: renders nothing', () => {

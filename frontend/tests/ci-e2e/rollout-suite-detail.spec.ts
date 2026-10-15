@@ -57,6 +57,7 @@ import {
   SCATTER_SUITE_TESTS,
   SUITE,
   SUITE_DETAIL_ON,
+  SUITE_HISTORY_PATH,
   SUITE_ID,
   TEST_SCATTER_PATH,
   withoutObjectMemberLabels,
@@ -103,9 +104,12 @@ const SCATTER_LINE = `GET ${TEST_SCATTER_PATH}?min_executions=5&order=failures&p
  * (the test x run heatmap since S4, the scatter since S5 mounts it
  * unconditionally: its top sits about 2,500 px down, inside the 200 px near
  * margin), with their one run probe. No 3D lookup: "View in 3D" is always
- * offered.
+ * offered. EXEC-04b: the composite's third section, "Suite execution time"
+ * (below the scatter), is near at this height too: its one suite-history read,
+ * the suite's last 30 executions in the page's window.
  */
-const INVENTORY = [...SHELL_BASE, ...PAGE_READS, HEATMAP_LINE, SCATTER_LINE, RUN_PROBE]
+const SUITE_HISTORY_LINE = `GET ${SUITE_HISTORY_PATH}?project_id=${P}&days=30&suite_name=${SUITE}&limit=30`
+const INVENTORY = [...SHELL_BASE, ...PAGE_READS, HEATMAP_LINE, SCATTER_LINE, RUN_PROBE, SUITE_HISTORY_LINE]
 
 /** Every section mounted (the 4000 px describe): the same requests, nothing more. */
 const INVENTORY_BOTH = INVENTORY

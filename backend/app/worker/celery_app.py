@@ -434,6 +434,16 @@ celery_app.conf.update(
             "task": "app.worker.tasks.backfill_placeholder_test_cases",
             "schedule": crontab(minute=10),  # once per hour at :10
         },
+        # EXEC-02 one-shot: time every run that predates ``suite_executions``
+        # (migration 0203) as ``derived_sum`` rows, 500 runs a chunk behind the
+        # Redis cursor ``suite_exec.backfill_cursor``. Each tick resumes where
+        # the last stopped; once the cursor says ``done`` a tick is a single
+        # Redis read, so the entry stops doing work when the backfill is
+        # complete. New runs are timed by finalize, not by this.
+        "backfill-suite-executions": {
+            "task": "app.worker.tasks.backfill_suite_executions",
+            "schedule": crontab(minute="*/10"),
+        },
         # Auto-recovery for completed live_stream runs whose
         # close_session → persist_live_session handoff dropped on the
         # floor (silent apply_async failure, queue backpressure, worker

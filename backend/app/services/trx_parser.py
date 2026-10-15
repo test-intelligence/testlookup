@@ -47,6 +47,14 @@ fronted by a strict enum that silently 422s reads on drift.
 
 Malformed input returns an empty list rather than raising — ingestion tasks
 are fire-and-forget; one bad upload must not wedge the worker.
+
+Timing (EXEC-01, contract in ``report_timings``): each ``UnitTestResult``'s
+``startTime`` / ``endTime`` (ISO with an offset) become ``started_at`` /
+``finished_at``; TRX reports no setup/teardown split and no per-class timing.
+The run timing is ``<TestRun><Times start finish>``. ``computerName`` is the
+machine, not a worker slot, so it is not a ``worker_id``.
+``parse_trx_xml`` keeps returning ``list[dict]``; ``parse_trx_xml_with_timings``
+also returns the ``ReportTimings``.
 """
 from __future__ import annotations
 
@@ -54,6 +62,14 @@ import logging
 from typing import Dict, List, Optional, Tuple
 
 import defusedxml.ElementTree as ET
+
+from app.services.report_timings import (
+    ReportTimings,
+    apply_case_clock,
+    empty_timings,
+    parse_report_time,
+    wall_ms_between,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -179,16 +195,34 @@ def parse_trx_xml(content: str, test_run_id: str) -> List[dict]:
     the downstream ``_upsert_test_case`` pipeline is unchanged. Malformed
     input logs and returns ``[]``.
     """
+    return _parse(content, test_run_id)[0]
+
+
+def parse_trx_xml_with_timings(content: str, test_run_id: str) -> tuple[List[dict], ReportTimings]:
+    """:func:`parse_trx_xml`, plus the report's run timing (``ReportTimings``)."""
+    return _parse(content, test_run_id)
+
+
+def _parse(content: str, test_run_id: str) -> tuple[List[dict], ReportTimings]:
     results: List[dict] = []
+    timings = empty_timings()
     try:
         root = ET.fromstring(content)
     except Exception as exc:
         logger.warning("Failed to parse TRX XML: %s", exc)
-        return results
+        return results, timings
 
     if _local(root.tag) != "TestRun":
         logger.warning("TRX root must be <TestRun>, got <%s>", _local(root.tag))
-        return results
+        return results, timings
+
+    times = _find_local(root, "Times")
+    if times is not None:
+        run_started, _ = parse_report_time(times.get("start"))
+        run_finished, _ = parse_report_time(times.get("finish"))
+        timings["run_started_at"] = run_started
+        timings["run_finished_at"] = run_finished
+        timings["run_wall_ms"] = wall_ms_between(run_started, run_finished)
 
     defs = _definitions(root)
 
@@ -210,7 +244,7 @@ def parse_trx_xml(content: str, test_run_id: str) -> List[dict]:
             ))
 
         short_name = method_name or test_name
-        results.append({
+        case = {
             "test_run_id": test_run_id,
             "test_name": short_name,
             "full_name": f"{class_name}.{short_name}" if class_name else test_name,
@@ -224,6 +258,8 @@ def parse_trx_xml(content: str, test_run_id: str) -> List[dict]:
             "attachments": [],
             "steps": steps,
             "framework": "trx",
-        })
+        }
+        apply_case_clock(case, result_el.get("startTime"), result_el.get("endTime"))
+        results.append(case)
 
-    return results
+    return results, timings

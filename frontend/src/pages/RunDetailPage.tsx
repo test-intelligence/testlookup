@@ -10,6 +10,9 @@
  *   Changes   the regression diff since the last good run, and Compare.
  *   Evidence  the verified decision report (claims, verification) and the
  *             agent pipeline's AI report. `/agents/run/:id` redirects here.
+ *   Timing    (EXEC-04) how long the run took and where the time went: wall
+ *             clock against summed test time, the waterfall by worker, the
+ *             slowest tests and the duration regressions (`RunTimingTab`).
  *
  * One PageHeader: build, job · branch · date, the status pill, suite and
  * release chips; every action (trigger, deep investigation, refresh, PDF,
@@ -38,6 +41,7 @@ import { usePermissions } from '@/hooks/usePermissions'
 import { useFeatureEnabled } from '@/hooks/useFeatureFlags'
 import { isLLMAvailable, useAIConfig } from '@/hooks/useAIConfig'
 import { askAboutRunHref } from '@/components/chat/chatContent'
+import RunTimingFigures from '@/components/runs/RunTimingFigures'
 import { runsService } from '@/services/runsService'
 import agentService from '@/services/agentService'
 import type { TestRun } from '@/types/runs'
@@ -48,11 +52,12 @@ import { RunIntelligenceBody } from './RunIntelligencePage'
 import RunTestsTab from './run/RunTestsTab'
 import RunChangesTab from './run/RunChangesTab'
 import RunEvidenceTab from './run/RunEvidenceTab'
+import RunTimingTab from './run/RunTimingTab'
 import { downloadRunEvidenceBundle, downloadRunPdf, readReportVersion } from './run/runActions'
 
 const HELP_TOPIC = helpTopicParam('/runs')
 
-const TAB_IDS = ['tests', 'analysis', 'changes', 'evidence'] as const
+const TAB_IDS = ['tests', 'analysis', 'changes', 'evidence', 'timing'] as const
 type RunTab = (typeof TAB_IDS)[number]
 
 function ReleaseTag({ releaseName, onSet }: {
@@ -336,6 +341,7 @@ export default function RunDetailPage() {
     { id: 'analysis', label: 'Analysis' },
     { id: 'changes', label: 'Changes' },
     { id: 'evidence', label: 'Evidence' },
+    { id: 'timing', label: 'Timing' },
   ]
 
   const subtitle = run
@@ -355,6 +361,8 @@ export default function RunDetailPage() {
               <StatusBadge status={run.status} />
               <SuiteBadge primary={run.primary_suite_name} all={run.suite_names} />
               <ReleaseTag releaseName={run.release_name} onSet={handleSetRelease} />
+              {/* EXEC-04b: the run's two durations, labelled (the Timing tab has the breakdown). */}
+              <RunTimingFigures run={run} />
             </div>
           )
         }
@@ -398,6 +406,11 @@ export default function RunDetailPage() {
       {runId && tab === 'evidence' && (
         <SectionErrorBoundary message="The run's evidence failed to load">
           <RunEvidenceTab runId={runId} />
+        </SectionErrorBoundary>
+      )}
+      {runId && tab === 'timing' && (
+        <SectionErrorBoundary message="The run's timing failed to load">
+          <RunTimingTab runId={runId} />
         </SectionErrorBoundary>
       )}
     </div>

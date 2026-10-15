@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="jest tests" tests="3" failures="1" errors="0" time="4.521">
+  <testsuite name="cart.test.js" errors="0" failures="1" skipped="0" timestamp="2026-10-14T10:00:00" time="3.002" tests="2">
+    <testcase classname="cart adds an item" name="cart adds an item" time="1.5">
+    </testcase>
+    <testcase classname="cart applies a coupon" name="cart applies a coupon" time="1.4">
+      <failure>Error: expect(received).toBe(expected) // Object.is equality
+
+Expected: 10
+Received: 12
+    at Object.toBe (cart.test.js:14:23)</failure>
+    </testcase>
+  </testsuite>
+  <testsuite name="payment.test.js" errors="0" failures="0" skipped="0" timestamp="2026-10-14T10:00:00" time="1.204" tests="1">
+    <testcase classname="payment pays by card" name="payment pays by card" time="1.1">
+    </testcase>
+  </testsuite>
+</testsuites>

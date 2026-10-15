@@ -250,3 +250,21 @@ def test_a_connection_failure_is_a_structured_result(monkeypatch):
     monkeypatch.setattr(client, "_request_access_token", lambda: "caller-token")
     result = asyncio.run(_tool()(group_by=["day"]))
     assert result["ok"] is False and "status_code" not in result
+
+
+# ── 5. EXEC-03: the run-grain wall-clock metrics ────────────────────────────
+
+
+def test_the_wall_clock_metrics_are_offered_and_documented_as_run_level():
+    """``wall_clock_total`` / ``_p50`` / ``_p95`` answer per RUN from
+    ``test_runs.wall_clock_ms``. The server refuses them under a row-level
+    ``group_by`` or a suite filter (422 ``run_only_metric``), so the tool text
+    must say so: an agent that asks for a suite's wall clock here is pointed at
+    ``get_execution_metrics`` instead of guessing at the 422."""
+    wall = {"wall_clock_total", "wall_clock_p50", "wall_clock_p95"}
+    assert wall <= set(analytics.CHART_METRICS)
+    doc = " ".join((_tool().__doc__ or "").split())
+    assert "run-level only, not per suite" in doc
+    assert "run_only_metric" in doc
+    assert "get_execution_metrics" in doc
+    assert "never counted as 0" in doc

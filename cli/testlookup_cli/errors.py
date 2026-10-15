@@ -9,6 +9,10 @@ EXIT_AUTH = 3
 EXIT_PERMISSION = 4
 EXIT_NOT_FOUND = 5
 EXIT_TIMEOUT = 6
+#: ``runs timing --fail-on-regression``: the run has duration regressions.
+#: Its own code, not 3: 3 is "authentication failed", and a CI job that lets a
+#: slowdown through as a warning must not let an expired token through with it.
+EXIT_REGRESSION = 7
 
 
 class CLIError(Exception):

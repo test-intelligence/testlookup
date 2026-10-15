@@ -20,6 +20,29 @@ Every path lands in the same place: a **run** in your project, with per-test row
 
 Cypress and Playwright parsing each sit behind a feature flag (`cypress_ingest`, `playwright_ingest`). Both ship on; with one turned off, that format is refused with `503`.
 
+### Timing captured per format
+
+Besides each test's duration, TestLookup keeps what the report says about **when** each test ran: its start and finish, how long its fixtures took (setup and teardown) apart from the test body, and the parallel worker that ran it. It also keeps the suite and run timing the report states. Each format carries a different subset. Anything a format does not carry is stored as **not reported** (empty), never as zero or as the upload time.
+
+- Clocks are stored in UTC. A report clock with no time zone (JUnit, Robot Framework, older xUnit runners) is read as UTC, and the test is flagged `timing_tz: assumed_utc` in its source extensions. The same applies to a TestNG zone abbreviation such as `IST`, which can name more than one offset.
+- A finish computed as start + duration (Playwright, Cucumber, a JUnit `<testcase timestamp>`) is marked `timing_source: derived`. Values read straight from the report are `report`. Values from the live stream are `live`.
+- Test counts do not change. TestNG configuration methods are timed but still not counted as tests.
+
+| Format | Start / finish per test | Setup / test / teardown split | Worker | Suite and run timing |
+|---|---|---|---|---|
+| JUnit XML / surefire | Not in the schema. A non-standard `<testcase timestamp>` is used when a writer adds one (finish = start + `time`) | Not reported | Not reported | `<testsuite timestamp time>`, `<testsuites timestamp time>` |
+| TestNG (`testng-results.xml`) | `started-at` / `finished-at` | `@BeforeMethod` becomes the setup of the next test in the class, `@AfterMethod` the teardown of the previous one; the method's own `duration-ms` is the test body | Not reported | `<suite started-at finished-at duration-ms>`; class-, test-, group- and suite-level configuration methods are the suite's setup / teardown |
+| NUnit 3 | `start-time` / `end-time` | Not reported | Not reported | The fixture's and `<test-run>`'s `start-time` / `end-time` / `duration` |
+| TRX (`dotnet test --logger trx`) | `startTime` / `endTime` | Not reported | Not reported (`computerName` is the machine, not a worker) | `<Times start finish>` |
+| xUnit.net v2 | **Not in the format** | Not reported | Not reported | Each collection's `time`; the assembly's `start-rtf` / `finish-rtf`, or `run-date` + `run-time` + `time` |
+| pytest (`--json-report`) | Not in the format | `setup` / `call` / `teardown` durations | Not reported | The report's `created` + `duration` |
+| Playwright (`--reporter=json`) | The final attempt's `startTime` (finish derived from its duration) | "Before Hooks" / "After Hooks" steps, when the report lists them | `parallelIndex` (else `workerIndex`) | `stats.startTime` / `stats.duration` |
+| Cypress (Mochawesome) | Not in the format | Not reported per test | Not reported | `stats.start` / `end` / `duration`; a suite's `beforeHooks` / `afterHooks` are its setup / teardown |
+| Allure | `start` / `stop` | In a zip, the `befores` / `afters` of the `*-container.json` files whose `children` include the test | Not reported | The containers' fixtures |
+| Robot Framework (`output.xml`) | `<status starttime endtime>` (RF 3-6) or `start` + `elapsed` (RF 7) | `<kw type="setup">` / `type="teardown"` (RF 6 and earlier), `<setup>` / `<teardown>` (RF 7) | Not reported | Each suite's `<status>` |
+| Cucumber JSON | `start_timestamp` (cucumber-jvm 6 and later; finish derived) | The scenario's `before` / `after` hooks. A scenario's duration includes its hooks, as the framework reports it | Not reported | Not reported |
+| Live-streaming SDKs | The `test_start` / `test_result` event times. A client clock far off from the server's is ignored, not trusted | Not reported | Not reported | `run_start` / `run_complete` |
+
 ## 1. Upload from the dashboard
 
 **Runs → Upload** (or the deep link `/runs?upload=1`) opens the upload dialog: pick the project, the report file and a build number. It works in the **All Projects** view too, because the dialog asks for the project itself.

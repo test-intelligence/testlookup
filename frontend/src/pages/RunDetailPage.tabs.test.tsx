@@ -1,7 +1,7 @@
 /**
- * UX redesign P4: the Run page (`/runs/:runId`) is one page with four tabs —
- * Tests (default) · Analysis · Changes · Evidence — and one PageHeader whose
- * ⋯ menu carries every action. These tests hold:
+ * UX redesign P4: the Run page (`/runs/:runId`) is one page with tabs —
+ * Tests (default) · Analysis · Changes · Evidence · Timing (EXEC-04) — and one
+ * PageHeader whose ⋯ menu carries every action. These tests hold:
  *
  *  - the layout: the page's tab bar, then the primary content (the test
  *    table) with nothing between but the status chips, and no Disclosure
@@ -146,6 +146,18 @@ const DIFF = {
   commit_range: [{ sha: 'abc1234', message: 'Change the gateway timeout', author: 'dev', timestamp: '2026-03-31T09:00:00Z' }],
 }
 
+/** An old run's timing (EXEC-03 §1): durations only. */
+const TIMING = {
+  run_id: 'run-1', project_id: 'proj-1', status: 'FAILED', build_number: '42', branch: 'main', created_at: '2026-03-31T10:00:00Z',
+  run: { wall_clock_ms: null, summed_ms: 70, parallelism: null, timing_source: 'derived_sum', exec_started_at: null, exec_finished_at: null, test_count: 7, timed_count: 0, duration_count: 7 },
+  phases: { measured: false, reason: 'report carried no setup/teardown split', tests_with_phases: 0, setup_ms: null, call_ms: null, teardown_ms: null, setup_share: null, teardown_share: null },
+  suites: { measured: false, reason: 'suite timing was not recorded for this run yet', total: 0, truncated: false, items: [] },
+  slowest: { limit: 20, total: 0, measured: false, reason: 'no test in this run reported a duration', items: [] },
+  workers: { measured: false, reason: 'report carried no timestamps', total: 0, truncated: false, lanes: [] },
+  timeline: { measured: false, reason: 'report carried no timestamps', limit: 2000, total: 0, truncated: false, origin: null, end: null, items: [] },
+  duration_findings: null,
+}
+
 const PIPELINE = {
   id: 'pipe-1', test_run_id: 'run-1', workflow_type: 'offline', status: 'completed',
   started_at: '2026-03-31T10:00:00Z', completed_at: '2026-03-31T10:01:00Z', error: null,
@@ -206,7 +218,7 @@ describe('Run page — tabs', () => {
   it('opens on Tests: the tab bar, then the test table as the one primary content, no Disclosure above it', () => {
     const { container } = renderAt('/runs/run-1')
     expect(within(pageTabs()).getByRole('tab', { name: /Tests/ })).toHaveAttribute('aria-selected', 'true')
-    expect(within(pageTabs()).getAllByRole('tab').map((t) => t.getAttribute('data-tab'))).toEqual(['tests', 'analysis', 'changes', 'evidence'])
+    expect(within(pageTabs()).getAllByRole('tab').map((t) => t.getAttribute('data-tab'))).toEqual(['tests', 'analysis', 'changes', 'evidence', 'timing'])
     // The Tests tab counts the run's tests.
     expect(within(within(pageTabs()).getByRole('tab', { name: /Tests/ })).getByText('7')).toBeInTheDocument()
     const primaries = container.querySelectorAll('[data-primary]')
@@ -223,6 +235,7 @@ describe('Run page — tabs', () => {
     expect(askedFor(hooks.useFailureClusters, 'run-1')).toBe(false)
     expect(askedFor(hooks.usePipelines, 'run-1')).toBe(false)
     expect(hooks.useSWR.mock.calls.some((c) => c[0] === 'regression-diff-run-1')).toBe(false)
+    expect(hooks.useSWR.mock.calls.some((c) => Array.isArray(c[0]) && c[0][0] === 'run-timing')).toBe(false)
   })
 
   it('lists failed and broken tests first, keeping the order within each group', () => {
@@ -301,6 +314,23 @@ describe('Run page — tabs', () => {
     expect(askedFor(hooks.usePipelineStages, 'pipe-1')).toBe(true)
     expect(askedFor(hooks.useRunSummary, 'run-1')).toBe(true)
     expect(askedFor(hooks.useTestCases, 'run-1')).toBe(false)
+  })
+
+  it('?tab=timing renders the run\'s timing (EXEC-04) and reads it only when open', () => {
+    hooks.useSWR.mockImplementation((key: unknown) => ({
+      data: Array.isArray(key) && key[0] === 'run-timing' ? TIMING : undefined,
+      isLoading: false,
+      error: undefined,
+    }))
+    const { container } = renderAt('/runs/run-1?tab=timing')
+    expect(within(pageTabs()).getByRole('tab', { name: 'Timing' })).toHaveAttribute('aria-selected', 'true')
+    const primary = container.querySelector('[data-primary]') as HTMLElement
+    expect(primary).toHaveAttribute('aria-label', 'Execution time')
+    expect(primary.querySelector('[data-timing-kpi="wall"]')).toHaveTextContent('Wall clocknot reported')
+    expect(container.querySelector('[data-timing-unmeasured="timeline"]')?.textContent).toMatch(/^Report carried no timestamps\./)
+    expect(hooks.useSWR.mock.calls.some((c) => Array.isArray(c[0]) && c[0][0] === 'run-timing' && c[0][1] === 'run-1')).toBe(true)
+    expect(askedFor(hooks.useTestCases, 'run-1')).toBe(false)
+    expect(askedFor(hooks.useRunIntelligence, 'run-1')).toBe(false)
   })
 
   it('says so when no agent pipeline has analysed the run', () => {
@@ -397,7 +427,7 @@ describe('Run page — one header', () => {
     trigger.mockRestore()
   })
 
-  it.each(['tests', 'analysis', 'changes', 'evidence'])('links nowhere old on the %s tab', (tab) => {
+  it.each(['tests', 'analysis', 'changes', 'evidence', 'timing'])('links nowhere old on the %s tab', (tab) => {
     const { container } = renderAt(`/runs/run-1?tab=${tab}`)
     for (const link of Array.from(container.querySelectorAll('a[href]'))) {
       expect(link.getAttribute('href')).not.toMatch(/^\/runs\/[^/?]+\/intelligence|^\/deep-investigate\/|^\/agents\/run\//)

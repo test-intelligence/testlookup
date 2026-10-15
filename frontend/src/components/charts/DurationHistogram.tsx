@@ -44,6 +44,13 @@ export interface DurationHistogramProps {
   title?: string
   height?: number
   animate?: boolean
+  /**
+   * What the buckets are, under the drawn buckets. The default describes the
+   * client's 1-2-5 ladder (`buildDurationHistogram`); a model built from the
+   * server's FIXED buckets (TRND-09, `/analytics/execution-metrics`) says so
+   * in its own words, because "1-2-5 per decade" would name edges it does not have.
+   */
+  caption?: string
 }
 
 const NOTE = 'text-xs text-[var(--color-text-secondary)]'
@@ -89,6 +96,7 @@ export default function DurationHistogram({
   title = 'Duration distribution',
   height: requestedHeight = 260,
   animate: requested,
+  caption = HISTOGRAM_BUCKETS_CAPTION,
 }: DurationHistogramProps) {
   // Full screen (VIZ-608): the plot takes the frame's body, less room for the three notes under it.
   // Full screen shows the drawing scaled up (`ChartResponsive`): it is LAID OUT at page text size.
@@ -191,7 +199,7 @@ export default function DurationHistogram({
         Explains the BUCKETS, so it is shown only when buckets are drawn: under
         the "nothing timed" message it described an axis that is not there.
       */}
-      {rows.length > 0 && <figcaption className={NOTE}>{HISTOGRAM_BUCKETS_CAPTION}</figcaption>}
+      {rows.length > 0 && <figcaption className={NOTE}>{caption}</figcaption>}
       {model.excludedStatement && (
         <p data-chart-excluded="" className={NOTE}>
           {model.excludedStatement}

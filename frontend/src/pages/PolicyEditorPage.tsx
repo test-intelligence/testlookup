@@ -53,6 +53,10 @@ const RULE_TYPES = [
   { type: 'open_defect_limit', label: 'Open Defect Limit', defaultParams: { max_open_defects: 5, action: 'BLOCK' } },
   { type: 'dimension_ceiling', label: 'Dimension Ceiling', defaultParams: { dimension: 'regression_likely', max_score: 70, action: 'BLOCK' } },
   { type: 'override_rules', label: 'Override Restrictions', defaultParams: { allow_override_to_go_from_no_go: true, require_reason_min_length: 0 } },
+  // EXEC-05 (owner decision D44): the only way a slowdown can block a
+  // release. Opt-in: no policy has it until it is added here. It reads the
+  // run's duration findings; a run that was not measured never trips it.
+  { type: 'perf_regression', label: 'Performance regression', defaultParams: { max_spikes: 0, min_sigma: 3, suite_ratio: 1.5, max_suite_regressions: 0, action: 'BLOCK' } },
 ];
 
 const DIMENSIONS = [
@@ -653,6 +657,48 @@ export default function PolicyEditorPage() {
                           onChange={e => updateRuleParam(idx, 'require_reason_min_length', parseInt(e.target.value) || 0)}
                           className={FIELD_SM} disabled={!editable} />
                       </div>
+                    </>
+                  )}
+                  {rule.type === 'perf_regression' && (
+                    <>
+                      <div>
+                        <label htmlFor={`policy-rule-${idx}-max-spikes`} className={LABEL_SM}>Max slower tests</label>
+                        <input id={`policy-rule-${idx}-max-spikes`} type="number" min={0} value={rule.params.max_spikes as number ?? 0}
+                          onChange={e => updateRuleParam(idx, 'max_spikes', parseInt(e.target.value) || 0)}
+                          className={FIELD_SM} disabled={!editable} />
+                      </div>
+                      <div>
+                        <label htmlFor={`policy-rule-${idx}-min-sigma`} className={LABEL_SM}>Min σ above baseline</label>
+                        <input id={`policy-rule-${idx}-min-sigma`} type="number" min={3} step={0.5} value={rule.params.min_sigma as number ?? 3}
+                          onChange={e => updateRuleParam(idx, 'min_sigma', parseFloat(e.target.value) || 3)}
+                          className={FIELD_SM} disabled={!editable} />
+                      </div>
+                      <div>
+                        <label htmlFor={`policy-rule-${idx}-action`} className={LABEL_SM}>Action</label>
+                        <select id={`policy-rule-${idx}-action`} value={rule.params.action as string ?? 'BLOCK'}
+                          onChange={e => updateRuleParam(idx, 'action', e.target.value)}
+                          className={FIELD_SM} disabled={!editable}>
+                          <option value="BLOCK">BLOCK</option>
+                          <option value="WARN">WARN</option>
+                          <option value="INFO">INFO</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label htmlFor={`policy-rule-${idx}-max-suites`} className={LABEL_SM}>Max slower suites</label>
+                        <input id={`policy-rule-${idx}-max-suites`} type="number" min={0} value={rule.params.max_suite_regressions as number ?? 0}
+                          onChange={e => updateRuleParam(idx, 'max_suite_regressions', parseInt(e.target.value) || 0)}
+                          className={FIELD_SM} disabled={!editable} />
+                      </div>
+                      <div>
+                        <label htmlFor={`policy-rule-${idx}-suite-ratio`} className={LABEL_SM}>Suite slower by (×)</label>
+                        <input id={`policy-rule-${idx}-suite-ratio`} type="number" min={1.5} step={0.1} value={rule.params.suite_ratio as number ?? 1.5}
+                          onChange={e => updateRuleParam(idx, 'suite_ratio', parseFloat(e.target.value) || 1.5)}
+                          className={FIELD_SM} disabled={!editable} />
+                      </div>
+                      <p className={clsx(HINT, 'col-span-3')}>
+                        A test counts when it is at least this many σ above its baseline (10+ runs); a suite when the median of its
+                        last 5 runs is this many times the 20 before. A run whose durations were not measured passes.
+                      </p>
                     </>
                   )}
                 </div>

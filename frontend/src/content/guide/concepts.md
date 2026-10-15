@@ -26,6 +26,12 @@ flowchart LR
 
 **Test case execution** — one test's outcome inside one run: status, duration, error message, stack trace.
 
+**Wall clock** — how long a run (or one suite in it) took on the clock: from its first test's start to its last test's finish, or the run span the report states. **Not reported** when the report carried no timestamps; it is never filled in with the summed time.
+
+**Test time (summed)** — every test's duration in a run added up. Tests that ran in parallel are each counted in full, so it is usually longer than the wall clock. It is the "duration" older pages and exports show for a run.
+
+**Parallelism** — test time (summed) divided by the wall clock: 1.0× means the tests ran one after another, 4.0× means about four at a time. Shown only when both figures are known.
+
 **Test fingerprint** — a stable identity for a test derived from its name and location. This is what lets TestLookup follow a test across runs and branches. **Rename a test and its history follows the old fingerprint.**
 
 **Suite** — the grouping a test belongs to. Taken from the report where present, inferred otherwise; tests without one land in the project's default suite. The **Suites** page and a suite's own page are described in [Test management](/docs/test-management#suites).

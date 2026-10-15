@@ -41,6 +41,8 @@ from app.routers import (
     defect_jira,
     digests,
     duplicates,
+    execution_metrics,
+    execution_metrics_export,
     feature_flags as feature_flags_router,
     feedback,
     fixer,
@@ -158,6 +160,15 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     analytics_failure_groups.router,   # VIZ-207: GET /analytics/failure-groups
     analytics_chart_rows.router,       # VIZ-208: GET /analytics/chart-data/rows
     analytics_test_scatter.router,     # VIZ-506-BE: GET /analytics/test-scatter
+    # EXEC-03: GET /runs/{run_id}/timing, /analytics/execution/suite-history and
+    # /analytics/execution-metrics. After runs.router and analytics.router; every
+    # path ends in a literal, so it shadows nothing and nothing shadows it.
+    execution_metrics.router,
+    # EXEC-06: GET /runs/{run_id}/timing.csv and /analytics/execution-metrics.csv.
+    # Literal last segments (``timing.csv`` is not ``timing``), so they shadow
+    # nothing and nothing above shadows them.
+    execution_metrics_export.runs_router,
+    execution_metrics_export.analytics_router,
     integrations.router,
     notifications.router,
     app_settings.router,
@@ -275,7 +286,7 @@ def configure_middlewares(app: FastAPI) -> None:
         # be a full payload) and the cache header would be invisible exactly
         # where it is read. ``Retry-After`` -- the 429 and the 503
         # ``analytics_timeout`` -- is already here.
-        expose_headers=["X-Refresh-Retry-Safe", "Retry-After", "X-TestLookup-AI-Generated", "X-TestLookup-Review-State", "X-Request-ID", "X-Analytics-Meta", "ETag", "X-Analytics-Cache"],
+        expose_headers=["X-Refresh-Retry-Safe", "Retry-After", "X-TestLookup-AI-Generated", "X-TestLookup-Review-State", "X-Request-ID", "X-Analytics-Meta", "ETag", "X-Analytics-Cache", "Content-Disposition"],
     )
 
     # Import locally so middleware setup stays close to other app wiring.

@@ -18,6 +18,11 @@ Known drift, documented rather than hidden:
   differs from this under a suite filter.
 * Releases are UUIDs or ``unattributed``. Resolving a release by name is a
   follow-up.
+
+``analytics execution`` (EXEC-06) reads ``GET /api/v1/analytics/execution-metrics``
+instead -- the endpoint the UI's Trends > Execution time and MCP's
+``get_execution_metrics`` read -- with the same ``--release`` / ``--suite``
+scope plus ``--branch``. It renders through ``timing_render``.
 """
 import asyncio
 import sys
@@ -26,10 +31,12 @@ from typing import Optional
 import typer
 from rich.console import Console
 
-from testlookup_cli import chart_render, client, output
+from testlookup_cli import chart_render, client, output, timing_render
 from testlookup_cli.errors import EXIT_VALIDATION, exit_code_for
 
-analytics_app = typer.Typer(name="analytics", help="Chart data: the series the UI's charts draw")
+analytics_app = typer.Typer(
+    name="analytics", help="Chart data and execution time: the numbers the UI's charts draw",
+)
 
 CHART_DATA_PATH = "/api/v1/analytics/chart-data"
 FORMATS = ("table", "csv", "json")
@@ -149,6 +156,74 @@ def trends(
         releases=releases, suites=suites, days=days, top_n=top_n,
     )
     _run(params, output_format, profile_name, f"{metric} by {', '.join(group_by)}")
+
+
+EXECUTION_PATH = "/api/v1/analytics/execution-metrics"
+EXECUTION_FORMATS = ("table", "json")
+
+
+def execution_params(
+    *,
+    project_id: str,
+    releases: Optional[list[str]],
+    suites: Optional[list[str]],
+    days: int,
+    branch: Optional[str],
+    top: Optional[int],
+) -> dict:
+    """``analytics execution``'s query string, with the REST names; an unused
+    option is not sent (the route's own default applies)."""
+    params: dict = {"project_id": project_id, "days": days}
+    if releases:
+        params["release_id"] = list(releases)
+    if suites:
+        params["suite_name"] = list(suites)
+    if branch:
+        params["branch"] = branch
+    if top is not None:
+        params["top"] = top
+    return params
+
+
+@analytics_app.command("execution")
+def execution(
+    project_id: str = typer.Option(..., "--project", "-p", help="Project ID (required: one project)."),
+    releases: list[str] = typer.Option(None, "--release", help="Release UUID or 'unattributed'. Repeat for several (OR)."),
+    suites: list[str] = typer.Option(None, "--suite", help="Test suite name, case-insensitive. Repeat for several (OR)."),
+    days: int = typer.Option(30, "--days", help="Window in days ending today, UTC (1-365); compared with the window before it."),
+    branch: str = typer.Option(None, "--branch", help="Only runs of this branch (exact). Omit for every branch."),
+    top: int = typer.Option(None, "--top", help="Rows in each regressions list and the slowest tests (1-100, default 20)."),
+    as_json: bool = typer.Option(False, "--json", help="Print the REST body as JSON (same as -o json)."),
+    output_format: str = typer.Option("table", "--format", "--output", "-o", help="table|json"),
+    profile_name: str = typer.Option(None, "--profile"),
+):
+    """Execution time per suite (wall clock and summed test time, p50/p95,
+    against the previous window), suite and test duration regressions and the
+    slowest tests. A figure the reports did not carry is "-" (not reported),
+    never 0."""
+    output_format = "json" if as_json else output_format
+    if output_format not in EXECUTION_FORMATS:
+        output.print_error(f"Unknown format '{output_format}'. Use one of: {', '.join(EXECUTION_FORMATS)}.")
+        raise typer.Exit(EXIT_VALIDATION)
+    params = execution_params(
+        project_id=project_id, releases=releases, suites=suites, days=days, branch=branch, top=top,
+    )
+    try:
+        body = asyncio.run(client.request("GET", EXECUTION_PATH, params=params, profile_name=profile_name))
+    except Exception as e:
+        message = RATE_LIMITED if getattr(e, "status_code", None) == 429 else str(e)
+        output.print_error(message)
+        raise typer.Exit(exit_code_for(e))
+    if output_format == "json":
+        output.print_json(body)
+        return
+    console = Console(highlight=False, legacy_windows=None if sys.stdout.isatty() else False)
+    console.print(timing_render.execution_view(
+        body,
+        separator=output._glyph(" · ", " | ", sys.stdout),
+        times=output._glyph("×", "x", sys.stdout),
+        clean=_encodable(sys.stdout),
+    ))
 
 
 @analytics_app.command("chart")

@@ -5,7 +5,7 @@ import hashlib
 import json
 import secrets
 import uuid as _uuid_mod
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import structlog
@@ -25,7 +25,9 @@ from app.models.postgres import (
     TestRun,
     TestStatus,
 )
+from app.services.execution_time import QUIET_FUTURE_SKEW
 from app.services.ingestion_sanitization import sanitize_test_result_payload
+from app.services.report_timings import TIMING_SOURCE_LIVE, case_timing_columns, to_utc
 from app.services.run_tombstone_service import run_is_tombstoned
 from app.streams import (
     LIVE_BATCH_DEDUP_KEY,
@@ -145,8 +147,74 @@ def _fingerprint(event: dict) -> str:
     return hashlib.md5(value.encode()).hexdigest()
 
 
+#: A live clock this far BEFORE the session started (server time) is a client clock that is off, not history.
+LIVE_CLOCK_EARLY_TOLERANCE = timedelta(hours=1)
+
+#: The ``test_cases`` timing columns every live row carries (bulk inserts need one key set per statement).
+LIVE_TIMING_COLUMNS = (
+    "started_at", "finished_at", "setup_ms", "call_ms", "teardown_ms", "worker_id", "timing_source",
+)
+
+
+def _live_clock(
+    value: Any, *, floor: Optional[datetime], ceiling: datetime,
+) -> tuple[Optional[datetime], bool]:
+    """``(moment, rejected)`` for one client epoch-ms value; ``rejected`` = it was sent but cannot be trusted."""
+    if value is None:
+        return None, False
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None, True
+    moment = to_utc(value)
+    if moment is None or moment > ceiling or (floor is not None and moment < floor):
+        return None, True
+    return moment, False
+
+
+def live_timing_columns(
+    event: dict,
+    *,
+    start_ms: Any = None,
+    session_started_at: Optional[datetime] = None,
+    now: Optional[datetime] = None,
+) -> dict:
+    """EXEC-01: the seven timing columns for one live ``test_result`` (every key present, None when unknown).
+
+    The finish is the event's own ``timestamp_ms`` (the SDK stamps it as it records the result); the start is its
+    ``started_at_ms``, else ``start_ms`` (a ``test_start`` of the same test seen earlier in the batch). Both are
+    client clocks, so both are bounded against the server's: a value later than ``now`` + a few minutes, or more
+    than an hour before the session started, means that client's clock is off, and then NEITHER is kept (one
+    untrustworthy value discredits the pair). Phase times are durations, clock-independent, and are kept.
+    ``timing_source`` is ``live`` whenever any value survived.
+    """
+    ceiling = (now or datetime.now(timezone.utc)) + QUIET_FUTURE_SKEW
+    session_start = to_utc(session_started_at) if isinstance(session_started_at, datetime) else None
+    floor = session_start - LIVE_CLOCK_EARLY_TOLERANCE if session_start is not None else None
+    raw_start = event.get("started_at_ms")
+    started, bad_start = _live_clock(raw_start if raw_start is not None else start_ms, floor=floor, ceiling=ceiling)
+    finished, bad_finish = _live_clock(event.get("timestamp_ms"), floor=floor, ceiling=ceiling)
+    if bad_start or bad_finish:
+        started = finished = None
+    columns = case_timing_columns({
+        "started_at": started,
+        "finished_at": finished,
+        "setup_ms": event.get("setup_ms"),
+        "call_ms": event.get("call_ms"),
+        "teardown_ms": event.get("teardown_ms"),
+        "worker_id": event.get("worker_id"),
+    })
+    if columns.get("timing_source") is not None:
+        columns["timing_source"] = TIMING_SOURCE_LIVE
+    return {key: columns.get(key) for key in LIVE_TIMING_COLUMNS}
+
+
 def _event_to_row(
-    event: dict, *, run_uuid: _uuid_mod.UUID, default_suite: Optional[str]
+    event: dict,
+    *,
+    run_uuid: _uuid_mod.UUID,
+    default_suite: Optional[str],
+    start_ms: Any = None,
+    session_started_at: Optional[datetime] = None,
+    now: Optional[datetime] = None,
 ) -> dict:
     safe = sanitize_test_result_payload(event)
     test_name = safe.get("test_name") or ""
@@ -168,6 +236,9 @@ def _event_to_row(
         "error_message": safe.get("error_message"),
         "stack_trace": safe.get("stack_trace"),
         "tags": safe.get("tags"),
+        **live_timing_columns(
+            safe, start_ms=start_ms, session_started_at=session_started_at, now=now,
+        ),
     }
 
 
@@ -395,6 +466,7 @@ def _attempt_id(session_id: str, batch_id: str) -> _uuid_mod.UUID:
 async def _upsert_projection_rows(
     db, evidence: list[dict], *, run_uuid: _uuid_mod.UUID,
     stream_key: str, session_suite: Optional[str], now: datetime,
+    session_started_at: Optional[datetime] = None,
 ) -> None:
     grouped: dict[tuple[str, str], list[dict]] = {}
     for item in evidence:
@@ -437,15 +509,23 @@ async def _upsert_projection_rows(
     ), receipts)
 
     by_fingerprint = {}
+    # EXEC-01: a ``test_start`` earlier in this batch gives the start of the same test's result.
+    starts: dict[str, Any] = {}
     for item in evidence:
-        if item["event_type"] == "test_result":
-            row = _event_to_row(item["payload"], run_uuid=run_uuid, default_suite=session_suite)
+        if item["event_type"] == "test_start":
+            starts[_fingerprint(item["payload"])] = item["payload"].get("timestamp_ms")
+        elif item["event_type"] == "test_result":
+            row = _event_to_row(
+                item["payload"], run_uuid=run_uuid, default_suite=session_suite,
+                start_ms=starts.pop(_fingerprint(item["payload"]), None),
+                session_started_at=session_started_at, now=now,
+            )
             by_fingerprint[row["test_fingerprint"]] = row
     rows = list(by_fingerprint.values())
     if rows:
         case_insert = _pg_insert(TestCase)
         fields = ("test_name", "suite_name", "class_name", "status", "duration_ms",
-                  "error_message", "stack_trace", "tags")
+                  "error_message", "stack_trace", "tags", *LIVE_TIMING_COLUMNS)
         statement = case_insert.on_conflict_do_update(
             constraint="uq_test_cases_run_fingerprint",
             set_={name: getattr(case_insert.excluded, name) for name in fields},
@@ -515,6 +595,7 @@ async def _project(
     await _upsert_projection_rows(
         db, evidence, run_uuid=run_uuid, stream_key=stream_key,
         session_suite=session_suite, now=now,
+        session_started_at=getattr(run, "start_time", None),
     )
 
 

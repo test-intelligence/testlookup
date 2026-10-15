@@ -254,6 +254,11 @@ public class TestLookupListener implements ISuiteListener, ITestListener {
         if (configuredSuite != null) {
             optsBuilder.suiteName(configuredSuite);
         }
+        // EXEC-01: when the test method started (TestNG stamps it; 0 for a
+        // test skipped before it ran, which then sends no start).
+        if (result.getStartMillis() > 0) {
+            optsBuilder.startedAtMs(result.getStartMillis());
+        }
 
         session.record(testName, status, durationMs, optsBuilder.build());
     }

@@ -395,13 +395,14 @@ export function SuiteDetailBody({ suiteName, days }: { suiteName: string; days: 
  * page's own header carries the KPIs, its Tests tab the per-test rows and its
  * Runs tab the recent runs, so none of them is repeated here.
  */
-export function SuiteChartsPanel({ suiteName, days }: { suiteName: string; days: number }) {
+export function SuiteChartsPanel({ suiteName, days, projectId }: { suiteName: string; days: number; projectId?: string | null }) {
   const body = useSuiteBody(suiteName, days)
   return (
     <SuiteBodyState body={body} days={days}>
       <div className="space-y-4" data-suite-charts="">
         {body.trendHasRuns && <SuiteTrendCharts days={days} trendPoints={body.trendPoints} primary />}
-        <SuiteDetailAdvanced days={days} suiteName={suiteName} />
+        {/* EXEC-04b: the composite's last section, "Suite execution time", reads the suite's own project. */}
+        <SuiteDetailAdvanced days={days} suiteName={suiteName} projectId={projectId} />
       </div>
     </SuiteBodyState>
   )

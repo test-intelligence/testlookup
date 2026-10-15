@@ -105,6 +105,25 @@ def _first_run_id(fixtures: dict) -> str:
     return fixtures["run_ids"][0]
 
 
+def _suite_scope(fixtures: dict) -> tuple[str, str]:
+    """``(project_id, suite)`` of a listed run that names a suite (``fetch_fixtures``); the first project and a
+    placeholder suite when the fixtures predate it."""
+    return fixtures.get("suite_scope") or (_first_project_id(fixtures), "unknown suite")
+
+
+def _execution_metrics_path(fixtures: dict) -> str:
+    """EXEC-03: the project of a listed run (it has runs to measure), 30 d."""
+    project_id, _suite = _suite_scope(fixtures)
+    return f"/api/v1/analytics/execution-metrics?project_id={project_id}&days=30"
+
+
+def _suite_history_path(fixtures: dict) -> str:
+    """EXEC-03: one suite of that project, 90 d."""
+    project_id, suite = _suite_scope(fixtures)
+    query = urllib.parse.urlencode({"project_id": project_id, "suite_name": suite, "days": 90})
+    return f"/api/v1/analytics/execution/suite-history?{query}"
+
+
 # The harness pulls budgets from the single source of truth in
 # ``app.services.performance_budgets`` so harness, pytest smoke test, and
 # Prometheus alerts always agree on what "fast enough" means.
@@ -233,6 +252,28 @@ SCENARIOS: list[Scenario] = [
         "Flaky coach with dedicated-write-session cache populate (item #4)",
         budget_p95_ms=_budget("flaky_coach"),
     ),
+    # EXEC-03: the execution-metrics reads (budgets in performance_budgets.py).
+    Scenario(
+        "run_timing",
+        "GET",
+        lambda f: f"/api/v1/runs/{_first_run_id(f)}/timing",
+        "Run timing breakdown: aggregate, suites, slowest 20, lanes, timeline",
+        budget_p95_ms=_budget("run_timing"),
+    ),
+    Scenario(
+        "execution_metrics",
+        "GET",
+        _execution_metrics_path,
+        "Project execution metrics, 30 d (VIZ-209 layer: warm after the first call)",
+        budget_p95_ms=_budget("execution_metrics"),
+    ),
+    Scenario(
+        "execution_suite_history",
+        "GET",
+        _suite_history_path,
+        "One suite's wall clock / summed time per run, 90 d",
+        budget_p95_ms=_budget("execution_suite_history"),
+    ),
     Scenario(
         "health_details",
         "GET",
@@ -281,7 +322,13 @@ async def fetch_fixtures(base_url: str, token: str) -> dict:
             f"Not enough seeded data to benchmark (projects={len(project_ids)}, "
             f"runs={len(run_ids)}). Run `make seed-data` first."
         )
-    return {"project_ids": project_ids, "run_ids": run_ids}
+    # EXEC-03 scenarios read a project that has runs, and one of its suites.
+    labelled = next((r for r in runs if r.get("primary_suite_name") and r.get("project_id")), None)
+    suite_scope = (
+        (str(labelled["project_id"]), str(labelled["primary_suite_name"]))
+        if labelled else (str(runs[0].get("project_id") or project_ids[0]), "unknown suite")
+    )
+    return {"project_ids": project_ids, "run_ids": run_ids, "suite_scope": suite_scope}
 
 
 # ── Benchmark runner ────────────────────────────────────────────────────────
