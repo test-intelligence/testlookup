@@ -33,7 +33,9 @@ from app.models.postgres import (
     TestRun,
 )
 from app.models.serializers import serialize_model  # noqa: F401
-from app.services import release_lifecycle_service
+from app.services import release_gate_service, release_lifecycle_service
+from app.services import release_owner_service
+from app.services.activity.service import ActorRef, record as record_activity
 from app.services.release_linker import sync_primary_release
 from app.services.release_sort_key import compute_sort_key
 
@@ -114,6 +116,10 @@ async def list_releases(
         item["phases"] = [serialize_model(phase) for phase in release.phases]
         item["test_run_count"] = 0
         item["project_name"] = project_name_map.get(item["project_id"])
+        # REL-01 / REL-02. Present on every item, filled by the batch below:
+        # ``None`` means "never evaluated" / "No owner", never a default.
+        item["gate"] = None
+        item["owner"] = None
         items.append(item)
 
     if items:
@@ -128,8 +134,21 @@ async def list_releases(
         )
         count_rows = (await db.execute(count_query, {"ids": ids})).fetchall()
         count_map = {row[0]: row[1] for row in count_rows}
-        for item in items:
+
+        # REL-01: the CURRENT recorded release-level verdict of every release
+        # on the page, in a constant number of statements however many cards
+        # there are (the list polls every 30 s). Read from the stored snapshot,
+        # never recomputed: a card shows what was decided, not what today's
+        # runs would say. A release with no decision is absent -> ``None``.
+        gates = await release_gate_service.current_gate_summaries(db, ids)
+        # REL-02: ONE statement for every owner on the page.
+        owners = await release_owner_service.owners_by_id(
+            db, [getattr(release, "owner_user_id", None) for release in rows]
+        )
+        for release, item in zip(rows, items):
             item["test_run_count"] = count_map.get(item["id"], 0)
+            item["gate"] = gates.get(item["id"])
+            item["owner"] = owners.get(getattr(release, "owner_user_id", None))
 
     return {"items": items, "total": len(items)}
 
@@ -227,8 +246,14 @@ async def resolve_baseline(
     return previous.id if previous is not None else None
 
 
-async def create_release(db: AsyncSession, body) -> Release:
-    """Stage a new release (and its initial phases). Handler commits + serializes."""
+async def create_release(db: AsyncSession, body, *, actor=None) -> Release:
+    """Stage a new release (and its initial phases). Handler commits + serializes.
+
+    ``actor`` is the caller (the router passes ``current_user``). It is written
+    to ``created_by_id`` -- a column every creation path left empty, so "who
+    made this release" had no answer -- and it is the default owner when it is
+    an interactive human (REL-02, ``release_owner_service.default_owner_for``).
+    """
     # Project-existence guard. Without it, a stale ``activeProjectId`` on
     # the FE (or a hand-rolled API call against a deleted project) hits
     # the asyncpg ForeignKeyViolationError as an opaque 500. The 404 here
@@ -245,10 +270,15 @@ async def create_release(db: AsyncSession, body) -> Release:
     _check_cutoff_window(
         getattr(body, "cutoff_start_at", None), getattr(body, "cutoff_end_at", None)
     )
+    owner_user_id = await _owner_for_create(db, project_uuid, body, actor)
     sort_key = compute_sort_key(body.version, body.name)
     release = Release(
         project_id=project_uuid,
         name=body.name,
+        # REL-02. The creator is recorded whoever they are (a CI key included);
+        # the OWNER is a person, so it is only defaulted for one.
+        created_by_id=getattr(actor, "id", None),
+        owner_user_id=owner_user_id,
         version=body.version,
         description=body.description,
         status=body.status,
@@ -310,12 +340,39 @@ async def create_release(db: AsyncSession, body) -> Release:
     return release
 
 
+def _fields_set(body) -> set:
+    """``model_fields_set`` of a request body, tolerating plain test doubles."""
+    return set(getattr(body, "model_fields_set", None) or ())
+
+
+async def _owner_for_create(db: AsyncSession, project_id: uuid.UUID, body, actor):
+    """The owner a new release starts with (REL-02).
+
+    * a non-empty ``owner_user_id`` is validated against the project (a body id
+      is ownership-checked like a path id: 422 ``OWNER_INELIGIBLE``);
+    * an explicit ``null`` / ``""`` is the caller choosing "No owner";
+    * an absent field defaults to the creating human (never a key or robot).
+    """
+    supplied = getattr(body, "owner_user_id", None)
+    if supplied not in (None, ""):
+        return await release_owner_service.validate_owner(db, project_id, supplied)
+    if "owner_user_id" in _fields_set(body):
+        return None
+    return release_owner_service.default_owner_for(actor)
+
+
 async def serialize_created_release(db: AsyncSession, release: Release) -> dict:
     """Serialize a freshly-committed release into the response shape."""
     stmt = select(Release).where(Release.id == release.id).options(selectinload(Release.phases))
     release = (await db.execute(stmt)).scalar_one()
     data = serialize_model(release)
     data["phases"] = [serialize_model(phase) for phase in release.phases]
+    # REL-01: a release created a moment ago has no recorded verdict, so no
+    # query is spent proving it. REL-02: the owner the create resolved.
+    data["gate"] = None
+    data["owner"] = await release_owner_service.owner_for(
+        db, getattr(release, "owner_user_id", None)
+    )
     outcomes = (
         await db.execute(
             select(ReleaseOutcome)
@@ -422,6 +479,15 @@ async def get_release_details(db: AsyncSession, release_id: str) -> dict:
         if hasattr(value, "__float__") and not isinstance(value, (int, float, bool)):
             metrics[key] = float(value)
     data["metrics"] = metrics
+
+    # REL-01 / REL-02: the same embed the list carries, for one id. Last, so
+    # the statements above keep their order. ``/releases/:id`` renders from this
+    # payload alone, so it must carry the verdict and the owner itself.
+    gates = await release_gate_service.current_gate_summaries(db, [release.id])
+    data["gate"] = gates.get(str(release.id))
+    data["owner"] = await release_owner_service.owner_for(
+        db, getattr(release, "owner_user_id", None)
+    )
     return data
 
 
@@ -430,6 +496,22 @@ async def update_release(db: AsyncSession, release_id: str, body) -> Release:
     release = await get_release_or_404(db, release_id)
     updates = body.model_dump(exclude_none=True)
     new_status = updates.get("status")
+
+    # REL-02. The owner is not a blanket ``setattr``: ``exclude_none`` above can
+    # never carry a ``null`` (so "clear the owner" would be unreachable), and the
+    # value is a caller-supplied user id that must be scoped to this release's
+    # project. Detected by ``model_fields_set``: sent at all, ``null`` / ``""``
+    # clears, anything else is validated (422 ``OWNER_INELIGIBLE``) -- before
+    # any field below is touched.
+    updates.pop("owner_user_id", None)
+    owner_sent = "owner_user_id" in _fields_set(body)
+    new_owner = None
+    if owner_sent:
+        supplied_owner = getattr(body, "owner_user_id", None)
+        if supplied_owner not in (None, ""):
+            new_owner = await release_owner_service.validate_owner(
+                db, release.project_id, supplied_owner
+            )
 
     # If transitioning to "released", validate all phases are completed or skipped
     if new_status == "released" and release.status != "released":
@@ -500,6 +582,8 @@ async def update_release(db: AsyncSession, release_id: str, body) -> Release:
 
     for field, value in updates.items():
         setattr(release, field, value)
+    if owner_sent:
+        release.owner_user_id = new_owner
 
     # Renaming a release, or giving it a version for the first time, changes
     # where it sorts. Recompute unconditionally rather than guarding on which
@@ -778,6 +862,10 @@ async def _enforce_phase_gate(
         _audit_phase(db, actor, project_id, "release.phase_skipped", phase, {
             "reason": updates["skip_reason"],
         })
+        await _record_phase_event(
+            db, actor, release_id, project_id, phase, "release.phase_skipped",
+            {"phase": phase.name, "reason": updates["skip_reason"].strip()},
+        )
         return
 
     # completed
@@ -808,6 +896,48 @@ async def _enforce_phase_gate(
         "blocking_reasons": result.get("blocking_reasons"),
         "reason": override,
     })
+    await _record_phase_event(
+        db, actor, release_id, project_id, phase, "release.phase_gate_overridden",
+        {"phase": phase.name, "reason": override, "verdict": result.get("verdict")},
+    )
+
+
+async def _record_phase_event(
+    db: AsyncSession,
+    actor,
+    release_id: str,
+    project_id,
+    phase: ReleasePhase,
+    event_type: str,
+    context: dict,
+) -> None:
+    """Put a phase override / skip in the activity ledger, with its reason (REL-10).
+
+    ``_audit_phase`` writes ``access_audit_logs``, which no feed reads: the
+    override was recorded and still invisible on ``/activity``. Both events are
+    ``outcome`` mode, so the row is staged on THIS session and commits (or rolls
+    back) with the phase change itself: a refused or failed update leaves no
+    "overridden" row behind, and no second database session is opened inside
+    the request.
+
+    Only reached once the gate decided to let the change through, so the
+    flag-off and GO paths spend nothing here. No actor (an internal caller)
+    means nobody to attribute it to, and an anonymous row would be worse than
+    the access-audit entry that already exists.
+    """
+    if actor is None or project_id is None:
+        return
+    release = await db.get(Release, uuid.UUID(str(release_id)))
+    await record_activity(
+        db,
+        project_id=project_id,
+        event_type=event_type,
+        actor=ActorRef.from_user(actor),
+        entity_id=str(release_id),
+        entity_label=getattr(release, "name", None),
+        release_id=uuid.UUID(str(release_id)),
+        context=context,
+    )
 
 
 def _audit_phase(db, actor, project_id, action: str, phase, after: dict) -> None:
