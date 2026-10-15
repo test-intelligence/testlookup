@@ -130,6 +130,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/chat/sessions/{session_id}/messages` | Get Messages | [Chat](api/chat.md) |
 | POST | `/api/v1/chat/sessions/{session_id}/messages` | Send Message | [Chat](api/chat.md) |
 | POST | `/api/v1/chat/sessions/{session_id}/messages/stream` | Stream Message | [Chat](api/chat.md) |
+| GET | `/api/v1/compliance-packs` | List Project Compliance Packs | [Compliance Pack](api/compliance-pack.md) |
 | DELETE | `/api/v1/compliance-packs/{pack_id}` | Delete Compliance Pack | [Compliance Pack](api/compliance-pack.md) |
 | GET | `/api/v1/compliance-packs/{pack_id}/download` | Download Compliance Pack | [Compliance Pack](api/compliance-pack.md) |
 | POST | `/api/v1/compliance-packs/{pack_id}/retire` | Retire Compliance Pack | [Compliance Pack](api/compliance-pack.md) |
@@ -590,4 +591,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **581 HTTP operations**, **490 paths**, **84 domain pages**.
+Total: **582 HTTP operations**, **491 paths**, **84 domain pages**.

@@ -49,16 +49,17 @@ import uuid
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Collection, Optional
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
     CompliancePack,
     Defect,
     FailureCluster,
+    Project,
     Release,
     ReleaseDecision,
     ReleaseGatePolicy,
@@ -903,16 +904,65 @@ async def list_packs_for_release(
     return list(result.scalars().all())
 
 
-async def list_packs_for_project(
-    db: AsyncSession, project_id: uuid.UUID, *, limit: int = 100,
-) -> list[CompliancePack]:
-    result = await db.execute(
-        select(CompliancePack)
-        .where(CompliancePack.project_id == project_id)
-        .order_by(CompliancePack.generated_at.desc())
-        .limit(limit)
-    )
-    return list(result.scalars().all())
+#: Columns of the project-wide list (W05 REL-04). Never ``minio_key``,
+#: ``metadata_snapshot`` or ``notes``: a storage key and an evidence snapshot do
+#: not belong in a side rail, and the snapshot can be large.
+_SUMMARY_COLUMNS = (
+    CompliancePack.id,
+    CompliancePack.release_id,
+    Release.name.label("release_name"),
+    Release.version.label("release_version"),
+    CompliancePack.project_id,
+    Project.name.label("project_name"),
+    CompliancePack.bytes,
+    CompliancePack.file_count,
+    CompliancePack.manifest_sha256,
+    CompliancePack.generated_at,
+    CompliancePack.retention_expires_at,
+    (CompliancePack.retention_expires_at <= func.now()).label("retired"),
+)
+
+
+async def list_packs_for_projects(
+    db: AsyncSession,
+    project_ids: Optional[Collection[uuid.UUID]],
+    *,
+    limit: int,
+) -> tuple[list[dict[str, Any]], int]:
+    """The newest packs across a set of projects, and how many there are.
+
+    ``project_ids=None`` means every ACTIVE project (an ADMIN); an empty
+    collection returns ``([], 0)`` without a query. A soft-deleted project's
+    packs never appear (the join to active ``projects``); a pack whose release
+    was deleted keeps its row (FK ``SET NULL``) and reads ``release_name:
+    None`` (LEFT join). ``total`` is a COUNT over the same scope, not
+    ``len(items)``. Newest first, served by ``ix_compliance_packs_project``.
+    """
+    if project_ids is not None and not project_ids:
+        return [], 0
+    scope = [Project.is_active.is_(True)]
+    if project_ids is not None:
+        scope.append(CompliancePack.project_id.in_(list(project_ids)))
+    rows = (
+        await db.execute(
+            select(*_SUMMARY_COLUMNS)
+            .join(Project, Project.id == CompliancePack.project_id)
+            .outerjoin(Release, Release.id == CompliancePack.release_id)
+            .where(*scope)
+            .order_by(CompliancePack.generated_at.desc(), CompliancePack.id.desc())
+            .limit(limit)
+        )
+    ).mappings().all()
+    total = (
+        await db.execute(
+            select(func.count())
+            .select_from(CompliancePack)
+            .join(Project, Project.id == CompliancePack.project_id)
+            .where(*scope)
+        )
+    ).scalar_one()
+    items = [{**row, "retired": bool(row["retired"])} for row in rows]
+    return items, int(total or 0)
 
 
 async def get_pack(db: AsyncSession, pack_id: uuid.UUID) -> Optional[CompliancePack]:

@@ -34,11 +34,22 @@ pytestmark = pytest.mark.regression
 
 from fastapi import HTTPException  # noqa: E402
 
+from app.models.postgres import AccessAuditLog, ProjectActivityEvent  # noqa: E402
 from app.routers.releases import PhaseUpdate  # noqa: E402
 from app.services import release_service as svc  # noqa: E402
 
 RELEASE = uuid.uuid4()
 PROJECT = uuid.uuid4()
+
+
+def _audits(db):
+    """The access-audit rows. Since W05 REL-10 the same change also stages an
+    activity-ledger row, so "one row was added" no longer means "one audit"."""
+    return [row for row in db.added if isinstance(row, AccessAuditLog)]
+
+
+def _ledger(db):
+    return [row for row in db.added if isinstance(row, ProjectActivityEvent)]
 
 
 class _Phase:
@@ -81,6 +92,11 @@ class _Session:
 
     async def flush(self):
         return None
+
+    async def get(self, model, pk):
+        # The ledger row names the release (REL-10): ``_record_phase_event``
+        # reads it with ``db.get``. Only reached once a bypass is allowed.
+        return SimpleNamespace(id=pk, name="2026.11", project_id=PROJECT)
 
 
 def _actor():
@@ -232,8 +248,8 @@ async def test_an_override_completes_the_phase_and_is_recorded():
         )
 
     assert phase.status == "completed"
-    assert len(db.added) == 1, "the override was not recorded"
-    row = db.added[0]
+    assert len(_audits(db)) == 1, "the override was not recorded"
+    row = _audits(db)[0]
     assert row.action == "release.phase_gate_overridden"
     assert row.actor_user_id == actor.id, (
         "an override recorded against nobody answers 'what' and not 'who'"
@@ -244,6 +260,12 @@ async def test_an_override_completes_the_phase_and_is_recorded():
         "the audit row must preserve WHAT the gate objected to, since the "
         "verdict is recomputed from data that will have moved on"
     )
+    # W05 REL-10: and the activity ledger, which is what /activity reads.
+    (event,) = _ledger(db)
+    assert event.event_type == "release.phase_gate_overridden"
+    assert event.summary.endswith("hotfix, risk accepted by QA lead")
+    assert event.context["verdict"] == "NO_GO"
+    assert event.actor_id == actor.id
 
 
 @pytest.mark.asyncio
@@ -298,9 +320,12 @@ async def test_a_skip_with_a_reason_is_allowed_and_recorded():
             actor=_actor(),
         )
     assert phase.status == "skipped"
-    assert len(db.added) == 1
-    assert db.added[0].action == "release.phase_skipped"
-    assert db.added[0].after_value["reason"] == "vendor environment unavailable"
+    assert len(_audits(db)) == 1
+    assert _audits(db)[0].action == "release.phase_skipped"
+    assert _audits(db)[0].after_value["reason"] == "vendor environment unavailable"
+    (event,) = _ledger(db)
+    assert event.event_type == "release.phase_skipped"
+    assert event.summary.endswith("vendor environment unavailable")
 
 
 @pytest.mark.asyncio

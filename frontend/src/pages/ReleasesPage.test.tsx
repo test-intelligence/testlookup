@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ReleasesPage from './ReleasesPage'
 import { releasesService } from '@/services/releasesService'
+import { NEVER_EVALUATED_LEDE } from '@/components/releases/health'
 
 vi.mock('@/hooks/useReleases', () => ({
   useReleases: vi.fn(),
@@ -16,6 +17,25 @@ vi.mock('@/hooks/useRuns', () => ({
 // Each release's compliance packs, so no request leaves the test (src/test/networkGuard.ts).
 vi.mock('@/hooks/useCompliancePacks', () => ({
   useCompliancePacks: () => ({ packs: [], isLoading: false, isError: false, refresh: vi.fn() }),
+}))
+// W05: the detail's gate reads and the rail's packs and ledger rows (their own tests cover them).
+vi.mock('@/hooks/useReleaseGate', () => ({
+  useReleaseGate: vi.fn(() => ({ data: null, isLoading: false, mutate: vi.fn() })),
+  useReleaseBaseline: vi.fn(() => ({ data: { comparable: false, reason: 'this release has no baseline' } })),
+  usePhaseGates: vi.fn(() => ({ data: undefined })),
+}))
+vi.mock('@/hooks/useProjectCompliancePacks', () => ({
+  PROJECT_COMPLIANCE_PACKS_KEY: 'project-compliance-packs',
+  useProjectCompliancePacks: () => ({ packs: [], total: 0, isLoading: false, isError: false, refresh: vi.fn() }),
+  refreshProjectCompliancePacks: vi.fn(),
+}))
+vi.mock('@/hooks/useActivityFeed', () => ({
+  useActivityFeed: () => ({ events: [], isLoading: false, error: undefined }),
+}))
+// The release editor's owner picker (REL-02).
+const projectMembers = vi.hoisted(() => ({ data: [] as unknown[] }))
+vi.mock('@/hooks/useUserManagement', () => ({
+  useProjectMembers: vi.fn(() => ({ data: projectMembers.data, isLoading: false })),
 }))
 
 const projectStoreState = vi.hoisted(() => ({
@@ -643,7 +663,7 @@ describe('ReleasesPage — one banner above the list, the rest under it (P6)', (
     // Closed, it still says the two counts the banner does not.
     expect(toggle).toHaveTextContent('1 in progress · 1 released in 30 days')
     fireEvent.click(toggle)
-    expect(screen.getByText(/^No gate evaluation yet — phase results will populate/)).toBeInTheDocument()
+    expect(screen.getByText(NEVER_EVALUATED_LEDE)).toBeInTheDocument()
     const blockers = screen.getByRole('list', { name: 'Top blockers on 2026.11' })
     expect(within(blockers).getByText('Regression failed')).toBeInTheDocument()
     const details = within(healthDisclosure())

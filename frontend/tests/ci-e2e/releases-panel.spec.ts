@@ -29,7 +29,9 @@ async function geometry(page: Page) {
 }
 
 const card = (page: Page, name: string) => page.getByRole('article', { name: new RegExp(`^${name.replace('.', '\\.')} `) })
-const detailRequests = (seen: readonly string[]) => seen.filter((line) => /^GET \/api\/v1\/releases\/[^/?]+(\/compliance-packs)?$/.test(line))
+// A release's reads: its detail and packs, and (W05 REL-01) its recorded gate, its baseline and its phases' live gates.
+const detailRequests = (seen: readonly string[]) =>
+  seen.filter((line) => /^GET \/api\/v1\/releases\/[^/?]+(\/compliance-packs|\/gate|\/gate\/baseline|\/phases\/gate)?$/.test(line))
 
 test('a release opens in a side panel over the list, which does not move', async ({ page }) => {
   const { api, errors } = await openRollout(page, '/releases', { handlers: RELEASES_PAGE, ready })
@@ -54,10 +56,13 @@ test('a release opens in a side panel over the list, which does not move', async
   await expect(panel.getByText('Checkout revamp')).toBeVisible()
   await expect(panel.getByRole('heading', { name: 'Release Phases' })).toBeVisible()
   await networkQuiet(page, api)
-  expect(detailRequests(api.seen)).toEqual([
+  expect([...detailRequests(api.seen)].sort()).toEqual([
     `GET /api/v1/releases/${ACTIVE_ID}`,
     `GET /api/v1/releases/${ACTIVE_ID}/compliance-packs`,
-  ])
+    `GET /api/v1/releases/${ACTIVE_ID}/gate`,
+    `GET /api/v1/releases/${ACTIVE_ID}/gate/baseline`,
+    `GET /api/v1/releases/${ACTIVE_ID}/phases/gate`,
+  ].sort())
   // Beside the list, not in it: the page behind is exactly as tall as before.
   const opened = await geometry(page)
   expect(opened).toEqual(before)
@@ -66,10 +71,13 @@ test('a release opens in a side panel over the list, which does not move', async
   expect(box?.width).toBe(640)
   expect(Math.round((box?.x ?? 0) + (box?.width ?? 0))).toBe(1440)
 
-  // Escape closes it; another release opens in its place from the right rail.
+  // Escape closes it; the release opens again from the right rail ("Shipping this week": due in 5 days).
+  // W05: the rail's "View packs" rows are only the releases READY for a pack; this fixture's shipped
+  // release has one and its in-progress release is No-Go, so the rail lists the pack and no such row.
   await page.keyboard.press('Escape')
   await expect(panel).toHaveCount(0)
-  await page.getByRole('button', { name: 'View packs' }).first().click()
+  const shipping = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Shipping this week' }) })
+  await shipping.getByRole('button', { name: /^2026\.11/ }).click()
   await expect(page.getByRole('dialog', { name: '2026.11' })).toBeVisible()
   await page.getByRole('button', { name: 'Close release' }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
@@ -129,7 +137,10 @@ test('a planned release with no phases offers no stub controls', async ({ page }
   const planned = card(page, '2026.12')
   await expect(planned.getByText('No phases scoped yet')).toBeVisible()
   await expect(planned.getByText("Add 2026.12's phases in its detail.")).toBeVisible()
-  await expect(planned.getByRole('button')).toHaveCount(0)
+  // W05 REL-08: its one control is the real "Release actions" menu (Set as active release); no
+  // Clone / Generate / Export stub, and no Evaluate (a planned release has nothing to evaluate).
+  await expect(planned.getByRole('button')).toHaveCount(1)
+  await expect(planned.getByRole('button', { name: 'Release actions' })).toBeVisible()
   expect(api.unhandled).toEqual([])
   expect(errors).toEqual([])
 })

@@ -39,6 +39,11 @@ import {
 } from '../services/policyService';
 import { usePolicies, usePolicy } from '@/hooks/usePolicyEditor';
 import { usePermissions } from '@/hooks/usePermissions';
+import { extractErrorMessage } from '@/services/apiErrors';
+import { appMutate } from '@/utils/swrCacheMutate';
+
+/** `usePolicies`' SWR key (`hooks/usePolicyEditor.ts`), revalidated after a refused publish. */
+const POLICIES_LIST_KEY = 'release-gate-policies';
 
 /**
  * Every write here -- create, save, publish, deactivate, and the simulator --
@@ -293,7 +298,16 @@ export default function PolicyEditorPage() {
       toast.success('Policy published and activated');
       setIsDraft(false);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Publish failed');
+      // GATE-03: the publish request suppresses the interceptor's toast, so
+      // this is the only one, and it carries the server's sentence (another
+      // admin's publish won the race, or "Policy is already published"), not
+      // Axios's "Request failed with status code 409".
+      const response = (err as { response?: { status?: number; data?: { detail?: unknown } } }).response;
+      toast.error(extractErrorMessage(response?.data?.detail, 'Publish failed'));
+      // Reload the list, so the winner's Active badge is what the reader sees
+      // next: on a 409 the scope's active policy changed under this draft.
+      void appMutate([POLICIES_LIST_KEY]);
+      if (response?.status === 409) navigate('/policies');
     }
   };
 

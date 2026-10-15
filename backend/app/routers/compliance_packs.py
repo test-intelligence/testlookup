@@ -15,13 +15,18 @@ Three endpoints:
   Stream the ZIP bytes back. We serve it via StreamingResponse rather
   than a presigned S3 URL so the same endpoint works with the local
   storage provider, MinIO, and a cloud S3 bucket.
+
+* ``GET  /api/v1/compliance-packs?project_id=&limit=`` (W05 REL-04)
+  The newest packs of one project, or of every project the caller can see,
+  for the releases page's side rail.
 """
 from __future__ import annotations
 
 import uuid
+from typing import Optional
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,6 +41,8 @@ from app.core.deps import (
 from app.models.postgres import Release, User, UserRole
 from app.models.schemas import (
     CompliancePackLifecycleResponse,
+    CompliancePackListRead,
+    CompliancePackSummaryRead,
     RetireCompliancePackRequest,
     CompliancePackGenerateRequest,
     CompliancePackRead,
@@ -44,6 +51,40 @@ from app.services import compliance_pack_service as svc
 
 router = APIRouter(tags=["Compliance Pack"])
 logger = structlog.get_logger("routers.compliance_packs")
+
+
+# ── Project-wide list (W05 REL-04) ──────────────────────────────────────────
+
+
+@router.get("/api/v1/compliance-packs", response_model=CompliancePackListRead)
+async def list_project_compliance_packs(
+    # A QUERY id, so the authorization ratchet (which reads path params) cannot
+    # see it: the handler scopes it itself with ``resolve_project_scope`` --
+    # 400 for a malformed id, 403 for a project the caller is not in.
+    project_id: Optional[str] = Query(None),
+    limit: int = Query(10, ge=1, le=50),
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """The newest packs in one project, or across every project the caller can
+    see, and how many there are (``total`` is counted, not ``len(items)``).
+
+    Not flag-gated, like the per-release list: generating a pack is what
+    ``release_compliance_pack`` controls. A project-bound API key is confined
+    to its project by ``get_accessible_project_ids``.
+    """
+    scoped, allowed = await resolve_project_scope(db, current_user, project_id)
+    if scoped is not None:
+        project_ids: Optional[set[uuid.UUID]] = {scoped}
+    else:
+        # ``None`` = an ADMIN naming no project: every active project. An empty
+        # set (a user in no project) answers without a query.
+        project_ids = allowed
+    items, total = await svc.list_packs_for_projects(db, project_ids, limit=limit)
+    return CompliancePackListRead(
+        items=[CompliancePackSummaryRead(**item) for item in items],
+        total=total,
+    )
 
 
 # ── Generate ───────────────────────────────────────────────────────────────

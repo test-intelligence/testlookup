@@ -10,7 +10,7 @@
  * Every factory returns fresh state per call, as each spec's did: a proposal,
  * a decision or a trigger made in one test never leaks into the next.
  */
-import type { ApiHandlers, ApiRequest } from '../../lib/production-pages'
+import { respond, type ApiHandlers, type ApiRequest } from '../../lib/production-pages'
 import { daysAgo, isoAgo, LAYOUT, PROJECT_ID, RUN_ID } from './fixtures'
 import { RUN_PAGE } from './fixtures-run'
 
@@ -613,11 +613,22 @@ export function withGateBlockers(handlers: ApiHandlers): ApiHandlers {
   ]
 }
 
-// ── Releases (`/releases`, from `releases-panel.spec.ts`) ──────────────────
+// ── Releases (`/releases`, from `releases-panel.spec.ts`; W05 gate, owner and rail answers) ──
+//
+// W05 (`docs/deferred-scope-2026-10-13/work/W05-contract.md` §4.7 "Fixture rules"): every list item
+// carries the server's CURRENT recorded verdict (`gate`) and its `owner`: 2026.11 is NO_GO with 25
+// blocking reasons, 2026.12 was never evaluated (and has no owner), 2026.10 is GO. The in-progress
+// release's phases are its OWN ("Build verification", "Payments soak", "Customer acceptance"), never the
+// old six-bucket template's. The rail reads the project's packs and its activity ledger; a release's
+// detail reads its gate, its baseline and its phases' live gates; the edit dialog reads the members.
+// `fold-budget`, `shell` and `releases-panel` share `RELEASES_PAGE` and fail closed on anything else.
+//
+// `releasesWorld()` is fresh state per call; `releasesReadHandlers(world)` answers every read from it, so
+// the W05 specs (`fixtures-releases.ts`) mutate a world of their own and the reads follow.
 
 const releasesPageOf = <T>(items: T[]) => ({ items, total: items.length, page: 1, size: 100, pages: items.length > 0 ? 1 : 0 })
 
-const phase = (releaseId: string, id: string, name: string, phaseType: string, status: string, order: number) => ({
+export const releasePhase = (releaseId: string, id: string, name: string, phaseType: string, status: string, order: number) => ({
   id,
   release_id: releaseId,
   name,
@@ -635,43 +646,141 @@ const phase = (releaseId: string, id: string, name: string, phaseType: string, s
   updated_at: isoAgo(1),
 })
 
-/** The in-progress release (a failed phase: a red blocker). */
+/** The in-progress release (NO_GO; a failed phase). */
 export const RELEASE_ACTIVE_ID = 'aaaaaaaa-0000-4000-8000-000000000001'
-const PLANNING_ID = 'aaaaaaaa-0000-4000-8000-000000000002'
-const SHIPPED_ID = 'aaaaaaaa-0000-4000-8000-000000000003'
+/** The planned release (never evaluated, no owner, no phases). */
+export const RELEASE_PLANNING_ID = 'aaaaaaaa-0000-4000-8000-000000000002'
+/** The shipped release (GO, one compliance pack). */
+export const RELEASE_SHIPPED_ID = 'aaaaaaaa-0000-4000-8000-000000000003'
 
-const release = (id: string, name: string, status: string, extra: Record<string, unknown> = {}) => ({
+/** The people of the project (REL-02); `QA Lead` is the signed-in fixture user (`USER`). */
+export const RELEASE_PEOPLE = {
+  qaLead: { id: '00000000-0000-4000-8000-000000000001', name: 'QA Lead', username: 'qa_lead' },
+  priya: { id: '00000000-0000-4000-8000-0000000000b1', name: 'Priya Nair', username: 'priya' },
+  dana: { id: '00000000-0000-4000-8000-0000000000b2', name: 'Dana Whitfield', username: 'dana' },
+} as const
+
+export interface ReleaseOwnerFixture { id: string; name: string }
+
+/** `ReleaseGateSummary` (contract §1.1), as the list and the detail embed it. */
+export interface ReleaseGateFixture {
+  verdict: string
+  decided_at: string | null
+  pass_rate: number | null
+  denominator: number
+  evidence_count: number
+  run_count: number
+  status_counts: Record<string, number>
+  measured: boolean
+  insufficient_reason: string | null
+  blocking_reasons: string[]
+  blocking_total: number
+}
+
+type ReleasePhaseFixture = ReturnType<typeof releasePhase>
+
+export const releaseRow = (id: string, name: string, status: string, extra: Record<string, unknown> = {}) => ({
   id,
   project_id: PROJECT_ID,
   project_name: 'Checkout',
   name,
   version: name,
-  description: null,
+  description: null as string | null,
   status,
-  planned_date: null,
-  released_at: null,
+  planned_date: null as string | null,
+  released_at: null as string | null,
   created_at: isoAgo(30),
   updated_at: isoAgo(1),
-  phases: [],
+  phases: [] as ReleasePhaseFixture[],
   test_run_count: 0,
+  is_active: false,
+  activated_at: null as string | null,
+  source_system: null as string | null,
+  external_url: null as string | null,
+  last_synced_at: null as string | null,
+  owner_user_id: null as string | null,
+  owner: null as ReleaseOwnerFixture | null,
+  gate: null as ReleaseGateFixture | null,
   ...extra,
 })
 
-/** One in progress (a failed phase: a red blocker), one planned with no phases, one shipped. */
-const PAGE_RELEASES = [
-  release(RELEASE_ACTIVE_ID, '2026.11', 'in_progress', {
-    description: 'Checkout revamp',
-    planned_date: daysAgo(-5),
-    test_run_count: 2,
-    phases: [
-      phase(RELEASE_ACTIVE_ID, 'ph-smoke', 'Smoke', 'qa_testing', 'completed', 1),
-      phase(RELEASE_ACTIVE_ID, 'ph-regression', 'Regression', 'qa_testing', 'failed', 2),
-      phase(RELEASE_ACTIVE_ID, 'ph-e2e', 'E2E suites', 'qa_testing', 'in_progress', 3),
-    ],
-  }),
-  release(PLANNING_ID, '2026.12', 'planning', { planned_date: daysAgo(-30) }),
-  release(SHIPPED_ID, '2026.10', 'released', { released_at: isoAgo(10), test_run_count: 1 }),
+export type ReleaseRowFixture = ReturnType<typeof releaseRow>
+
+/** The list embeds at most 20 display reasons (`GATE_LIST_REASON_CAP`); `blocking_total` is the whole count. */
+export const GATE_LIST_REASON_CAP = 20
+
+/** 25 blocking reasons, in the server's display form: 22 failed and 2 broken tests, then a defect. */
+export const NO_GO_REASONS: string[] = [
+  'test_pay (checkout-e2e) is FAILED',
+  ...Array.from({ length: 21 }, (_, i) => `test_checkout_step_${String(i + 1).padStart(2, '0')} (checkout-e2e) is FAILED`),
+  'test_refund_partial (payments-api) is BROKEN',
+  'test_refund_full (payments-api) is BROKEN',
+  'Open P0 defect CHK-412: card declined on retry',
 ]
+
+/** A recorded verdict as the list embeds it (reasons capped at 20). */
+export function gateSummary(fields: Partial<ReleaseGateFixture> & { verdict: string }, reasons: string[] = []): ReleaseGateFixture {
+  return {
+    decided_at: isoAgo(0, 2),
+    pass_rate: null,
+    denominator: 0,
+    evidence_count: 0,
+    run_count: 0,
+    status_counts: {},
+    measured: true,
+    insufficient_reason: null,
+    ...fields,
+    blocking_reasons: reasons.slice(0, GATE_LIST_REASON_CAP),
+    blocking_total: reasons.length,
+  }
+}
+
+const OWNER_OF = (person: { id: string; name: string }) => ({ owner_user_id: person.id, owner: { id: person.id, name: person.name } })
+
+/** One in progress (NO_GO, a failed phase), one planned with no phases (never evaluated), one shipped (GO). */
+function pageReleases(): ReleaseRowFixture[] {
+  return [
+    releaseRow(RELEASE_ACTIVE_ID, '2026.11', 'in_progress', {
+      description: 'Checkout revamp',
+      planned_date: daysAgo(-5),
+      test_run_count: 2,
+      is_active: true,
+      activated_at: isoAgo(6),
+      ...OWNER_OF(RELEASE_PEOPLE.dana),
+      phases: [
+        releasePhase(RELEASE_ACTIVE_ID, 'ph-build', 'Build verification', 'qa_testing', 'completed', 1),
+        releasePhase(RELEASE_ACTIVE_ID, 'ph-soak', 'Payments soak', 'qa_testing', 'failed', 2),
+        releasePhase(RELEASE_ACTIVE_ID, 'ph-uat', 'Customer acceptance', 'uat', 'in_progress', 3),
+      ],
+      gate: gateSummary(
+        {
+          verdict: 'NO_GO',
+          pass_rate: 94,
+          denominator: 412,
+          evidence_count: 400,
+          run_count: 2,
+          status_counts: { PASSED: 376, FAILED: 22, BROKEN: 2 },
+        },
+        NO_GO_REASONS,
+      ),
+    }),
+    releaseRow(RELEASE_PLANNING_ID, '2026.12', 'planning', { planned_date: daysAgo(-30) }),
+    releaseRow(RELEASE_SHIPPED_ID, '2026.10', 'released', {
+      released_at: isoAgo(10),
+      test_run_count: 1,
+      ...OWNER_OF(RELEASE_PEOPLE.qaLead),
+      gate: gateSummary({
+        verdict: 'GO',
+        decided_at: isoAgo(10, 2),
+        pass_rate: 99.19,
+        denominator: 250,
+        evidence_count: 248,
+        run_count: 1,
+        status_counts: { PASSED: 246, SKIPPED: 2 },
+      }),
+    }),
+  ]
+}
 
 const linkedRun = (id: string, build: string, passed: number, failed: number, ago: number) => ({
   id,
@@ -689,9 +798,145 @@ const linkedRun = (id: string, build: string, passed: number, failed: number, ag
   phase_id: null,
 })
 
-function releaseDetailOf(id: string) {
-  const base = PAGE_RELEASES.find((r) => r.id === id)
-  if (!base) return null
+/** `PhaseGateResult` (contract §1.4): a LIVE preview, nothing recorded. */
+export const phaseGate = (phaseId: string, phaseName: string, verdict: string, reasons: string[], evidence: number, denominator: number) => ({
+  phase_id: phaseId,
+  phase_name: phaseName,
+  verdict,
+  blocking_reasons: reasons,
+  may_exit: verdict === 'GO',
+  recorded: false,
+  scorecard: {
+    evidence_count: evidence,
+    denominator,
+    pass_rate: evidence > 0 ? Math.round(((evidence - reasons.length) / evidence) * 1000) / 10 : null,
+    measured: evidence >= 5,
+  },
+})
+
+/** `CompliancePackSummaryRead` (contract §3.3): no storage key, no snapshot. */
+export const RELEASE_PACK = {
+  id: 'cccccccc-0000-4000-8000-000000000001',
+  release_id: RELEASE_SHIPPED_ID,
+  release_name: '2026.10',
+  release_version: '2026.10',
+  project_id: PROJECT_ID,
+  project_name: 'Checkout',
+  bytes: 422_195, // 412.3 KB
+  file_count: 9,
+  manifest_sha256: `ab12cd34${'5e6f7a8b'.repeat(7)}`,
+  generated_at: isoAgo(9),
+  retention_expires_at: '2033-09-09T12:00:00.000Z',
+  retired: false,
+}
+
+/** An activity-ledger row (`GET /projects/{id}/activity`). */
+export const releaseEvent = (
+  id: string,
+  eventType: string,
+  summary: string,
+  actor: { type: string; id: string | null; name: string | null },
+  releaseId: string,
+  label: string,
+  occurredAt: string,
+) => ({
+  id,
+  project_id: PROJECT_ID,
+  release_id: releaseId,
+  occurred_at: occurredAt,
+  category: 'release',
+  event_type: eventType,
+  actor: { ...actor, ref: null },
+  entity: { type: 'release', id: releaseId, label, href: `/releases/${releaseId}` },
+  target: null,
+  summary,
+  context: null,
+  has_diff: false,
+  source: null,
+  group_key: null,
+})
+
+const person = (key: keyof typeof RELEASE_PEOPLE) => ({ type: 'user', id: RELEASE_PEOPLE[key].id, name: RELEASE_PEOPLE[key].name })
+
+/** `ProjectMemberResponse` rows: three people, then who may NOT own a release (synthetic, service, inactive). */
+export function projectMembers() {
+  const member = (i: number, user: { id: string; username: string; name: string | null }, flags: Record<string, boolean> = {}) => ({
+    id: `00000000-0000-4000-8000-0000000001${String(i).padStart(2, '0')}`,
+    user_id: user.id,
+    project_id: PROJECT_ID,
+    role: 'QA_ENGINEER',
+    created_at: isoAgo(60),
+    email: `${user.username}@example.test`,
+    username: user.username,
+    full_name: user.name,
+    is_service_account: false,
+    is_synthetic: false,
+    is_active: true,
+    ...flags,
+  })
+  return [
+    member(1, RELEASE_PEOPLE.qaLead),
+    member(2, RELEASE_PEOPLE.priya),
+    member(3, RELEASE_PEOPLE.dana),
+    member(4, { id: '00000000-0000-4000-8000-0000000000c1', username: 'qa-lead-checkout', name: 'Checkout QA lead (system)' }, { is_synthetic: true }),
+    member(5, { id: '00000000-0000-4000-8000-0000000000c2', username: 'ci-bot', name: 'CI bot' }, { is_service_account: true }),
+    member(6, { id: '00000000-0000-4000-8000-0000000000c3', username: 'old.contractor', name: 'Old Contractor' }, { is_active: false }),
+  ]
+}
+
+/** Everything the release reads answer from: fresh per call. */
+export interface ReleasesWorld {
+  rows: ReleaseRowFixture[]
+  /** Every display reason per release (the detail's `blocking_reasons_display`). */
+  reasons: Record<string, string[]>
+  phaseGates: Record<string, ReturnType<typeof phaseGate>[]>
+  baselines: Record<string, Record<string, unknown>>
+  packs: (typeof RELEASE_PACK)[]
+  events: ReturnType<typeof releaseEvent>[]
+}
+
+export function releasesWorld(): ReleasesWorld {
+  return {
+    rows: pageReleases(),
+    reasons: { [RELEASE_ACTIVE_ID]: [...NO_GO_REASONS] },
+    phaseGates: {
+      [RELEASE_ACTIVE_ID]: [
+        phaseGate('ph-build', 'Build verification', 'GO', [], 180, 190),
+        phaseGate('ph-soak', 'Payments soak', 'NO_GO', ['test_pay (checkout-e2e) is FAILED'], 120, 124),
+        phaseGate('ph-uat', 'Customer acceptance', 'NOT_EVALUATED', [], 0, 40),
+      ],
+    },
+    baselines: {
+      [RELEASE_ACTIVE_ID]: { comparable: true, baseline_release_id: RELEASE_SHIPPED_ID, pass_rate_delta: -5.19, denominator_delta: 162, evidence_delta: 152 },
+      [RELEASE_SHIPPED_ID]: { comparable: false, reason: 'No earlier release of this project has a recorded verdict to compare with.' },
+      [RELEASE_PLANNING_ID]: { comparable: false, reason: 'This release has no recorded verdict yet.' },
+    },
+    packs: [{ ...RELEASE_PACK }],
+    events: [
+      releaseEvent('ev-rel-1', 'release.activated', 'Release 2026.11 was activated', person('priya'), RELEASE_ACTIVE_ID, '2026.11', isoAgo(0, 1)),
+      releaseEvent(
+        'ev-rel-2',
+        'release.phase_gate_overridden',
+        'Phase gate Build verification overridden on release 2026.11: Customer waiver CAB-142',
+        person('dana'),
+        RELEASE_ACTIVE_ID,
+        '2026.11',
+        isoAgo(1),
+      ),
+      releaseEvent('ev-rel-3', 'release.created', 'Release 2026.12 created', { type: 'api_key', id: 'key-1', name: 'ci-bot' }, RELEASE_PLANNING_ID, '2026.12', isoAgo(3)),
+    ],
+  }
+}
+
+const idAt = (path: string, fromEnd: number) => {
+  const parts = path.split('/')
+  return parts[parts.length - 1 - fromEnd]
+}
+
+/** `GET /releases/{id}`: the row (with its `gate` and `owner`), its linked runs and metrics. */
+function releaseDetailOf(world: ReleasesWorld, id: string) {
+  const base = world.rows.find((r) => r.id === id)
+  if (!base) return respond(404, { detail: 'Release not found' })
   const runs = id === RELEASE_ACTIVE_ID ? [linkedRun('run-1', '412', 180, 20, 2), linkedRun('run-2', '415', 196, 4, 1)] : []
   const passed = runs.reduce((s, r) => s + r.passed_tests, 0)
   const failed = runs.reduce((s, r) => s + r.failed_tests, 0)
@@ -709,10 +954,91 @@ function releaseDetailOf(id: string) {
   }
 }
 
-/** The list, each release's detail and its compliance packs (none). */
-export const RELEASES_PAGE: ApiHandlers = [
-  ['/api/v1/releases', () => releasesPageOf(PAGE_RELEASES)],
-  [/^\/api\/v1\/releases\/[^/]+\/compliance-packs$/, () => []],
-  [/^\/api\/v1\/releases\/[^/]+$/, ({ path }) => releaseDetailOf(path.split('/').pop() as string)],
-  ...LAYOUT,
-]
+/** `GET /releases/{id}/gate`: the stored snapshot; 404 when never evaluated (`ReleaseGateDetail`). */
+function gateDetailOf(world: ReleasesWorld, id: string) {
+  const row = world.rows.find((r) => r.id === id)
+  const gate = row?.gate
+  if (!row || !gate) return respond(404, { detail: 'No release gate decision has been recorded for this release' })
+  const display = world.reasons[id] ?? gate.blocking_reasons
+  return {
+    release_id: id,
+    verdict: gate.verdict,
+    decided_at: gate.decided_at,
+    // The stored strings: an ingested test is "<suite>::<16-hex fingerprint>"; the display form sits beside them.
+    blocking_reasons: display.map((reason, i) =>
+      reason.startsWith('Open ') ? reason : `checkout-e2e::${String(i).padStart(4, '0')}a1b2c3d4e5f6 is ${reason.split(' is ')[1]}`,
+    ),
+    ...(display.length > 0 ? { blocking_reasons_display: display } : {}),
+    blocking_total: gate.blocking_total,
+    scorecard: {
+      denominator: gate.denominator,
+      evidence_count: gate.evidence_count,
+      pass_rate: gate.pass_rate,
+      status_counts: gate.status_counts,
+      run_count: gate.run_count,
+      measured: gate.measured,
+      insufficient_reason: gate.insufficient_reason,
+      evidence_floor: 5,
+    },
+    from_snapshot: true,
+  }
+}
+
+function phaseGatesOf(world: ReleasesWorld, id: string) {
+  const phases = world.phaseGates[id] ?? []
+  return {
+    release_id: id,
+    status: phases.some((p) => p.verdict === 'NO_GO') ? 'NO_GO' : phases.length ? 'GO' : 'NOT_EVALUATED',
+    failing_phases: phases.filter((p) => p.verdict === 'NO_GO').map((p) => p.phase_name),
+    unevaluated_phases: phases.filter((p) => p.verdict === 'NOT_EVALUATED').map((p) => p.phase_name),
+    phase_count: phases.length,
+    phases,
+  }
+}
+
+/** The per-release pack history (`CompliancePackRead[]`), from the world's packs. */
+function releasePacksOf(world: ReleasesWorld, id: string) {
+  return world.packs
+    .filter((p) => p.release_id === id)
+    .map((p) => ({
+      id: p.id,
+      release_id: p.release_id,
+      project_id: p.project_id,
+      test_run_id: null,
+      minio_key: `packs/${p.id}.zip`,
+      manifest_sha256: p.manifest_sha256,
+      file_count: p.file_count,
+      bytes: p.bytes,
+      retention_expires_at: p.retention_expires_at,
+      generated_at: p.generated_at,
+      generated_by_user_id: null,
+      metadata_snapshot: null,
+      notes: null,
+    }))
+}
+
+/** Every release READ the list, the rail, a detail and the edit dialog make, answered from `world`. */
+export function releasesReadHandlers(world: ReleasesWorld): ApiHandlers {
+  return [
+    ['/api/v1/releases', () => releasesPageOf(world.rows)],
+    // The rail (REL-04): the project's packs (newest first, `total` counted) and its release events.
+    ['/api/v1/compliance-packs', ({ url }) => {
+      const limit = Number(url.searchParams.get('limit') ?? 10)
+      const packs = [...world.packs].sort((a, b) => b.generated_at.localeCompare(a.generated_at))
+      return { items: packs.slice(0, limit), total: packs.length }
+    }],
+    [/^\/api\/v1\/projects\/[^/]+\/activity$/, ({ url }) => {
+      const limit = Number(url.searchParams.get('limit') ?? 50)
+      return { items: world.events.slice(0, limit), next_cursor: null, ledger_started_at: isoAgo(40), window: { since: null, until: null } }
+    }],
+    [/^\/api\/v1\/projects\/[^/]+\/members$/, () => projectMembers()],
+    [/^\/api\/v1\/releases\/[^/]+\/compliance-packs$/, ({ path }) => releasePacksOf(world, idAt(path, 1))],
+    [/^\/api\/v1\/releases\/[^/]+\/gate$/, ({ path }) => gateDetailOf(world, idAt(path, 1))],
+    [/^\/api\/v1\/releases\/[^/]+\/gate\/baseline$/, ({ path }) => world.baselines[idAt(path, 2)] ?? { comparable: false, reason: 'No baseline.' }],
+    [/^\/api\/v1\/releases\/[^/]+\/phases\/gate$/, ({ path }) => phaseGatesOf(world, idAt(path, 2))],
+    [/^\/api\/v1\/releases\/[^/]+$/, ({ path }) => releaseDetailOf(world, idAt(path, 0))],
+  ]
+}
+
+/** The list, each release's detail, gate, baseline, phase gates and packs, the rail's packs and activity, the members. */
+export const RELEASES_PAGE: ApiHandlers = [...releasesReadHandlers(releasesWorld()), ...LAYOUT]

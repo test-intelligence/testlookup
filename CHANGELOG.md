@@ -52,6 +52,27 @@ locally by default.
 
 ### Added
 
+- **Releases show the real gate, a real owner, and the active release**
+  (deferred-features wave W05, GATE-03, REL-01, REL-02, REL-04, REL-08, REL-10).
+  A release card no longer computes its own verdict from thresholds it made up:
+  it shows the recorded release gate (Go / No-Go / Not evaluated, or "Not
+  evaluated yet"), with Pass rate · Evidence · Runs, when it was evaluated, and
+  the server's blocking reasons by test name. A QA lead can **Evaluate gate** on a
+  card or **Evaluate all in progress**; the release page has a gate panel
+  (scorecard, blocking list, comparison with the baseline release) and a live
+  gate chip per phase. Completing or skipping a phase whose gate is not Go asks
+  for a reason and records it in the activity log
+  (`release_phase_gate_enforcement`, on for new installs, migration 0212). A
+  release has an **owner** (a project member, set in Edit; new releases default
+  to their creator, migration 0211) instead of the project's name. **Set as
+  active release** and **Sync releases** (GitHub milestones / Jira fix versions)
+  are in the UI; offline, sync says why it cannot run. The right rail lists the
+  project's real compliance packs (`GET /api/v1/compliance-packs`, size and
+  hash, Download; `release_compliance_pack` on for new installs) and its recent
+  release activity from the activity log. Release-gate policies are one active
+  per scope by database constraint (migration 0210 demotes duplicates, keeping
+  the policy in force); a publish race answers 409.
+
 - **Settings › AI does what it says** (deferred-features wave W04, AIC-01 to
   AIC-07, AGT-04, AGT-16). The analysis mode, Deep Investigation and Fine-Tuning
   toggles, the confidence threshold and the timeout are now read from the stored

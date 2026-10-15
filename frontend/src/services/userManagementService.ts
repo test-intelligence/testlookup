@@ -21,6 +21,14 @@ export interface ProjectMember {
   email: string
   username: string
   full_name: string | null
+  /**
+   * The member list includes the per-project synthetic QA lead and service
+   * accounts; a release owner picker leaves them out (REL-02). Optional: an
+   * older server omits them.
+   */
+  is_service_account?: boolean
+  is_synthetic?: boolean
+  is_active?: boolean
 }
 
 export interface ApiKey {

@@ -34,9 +34,17 @@ pytestmark = pytest.mark.regression
 
 from fastapi import HTTPException  # noqa: E402
 
+from app.models.postgres import AccessAuditLog  # noqa: E402
 from app.routers import releases as router_mod  # noqa: E402
 
 PROJECT = uuid.uuid4()
+
+
+def _audits(db):
+    """The access-audit rows. Since W05 REL-04 an activation also stages a
+    ``release.activated`` activity-ledger row (``test_release_activation_event``),
+    so "one row was added" no longer means "one audit"."""
+    return [row for row in db.added if isinstance(row, AccessAuditLog)]
 
 
 class _Rel:
@@ -211,8 +219,8 @@ async def test_the_change_is_audited_with_the_actor_and_what_it_displaced():
             release_id=str(target.id), db=db, current_user=actor, __=None
         )
 
-    assert len(db.added) == 1
-    row = db.added[0]
+    assert len(_audits(db)) == 1
+    row = _audits(db)[0]
     assert row.action == "release.activated"
     assert row.actor_user_id == actor.id, (
         "an activation recorded against nobody answers 'what' and not 'who'"
@@ -236,7 +244,7 @@ async def test_the_first_activation_records_no_predecessor_rather_than_failing()
         )
 
     assert out["deactivated"] is None
-    assert db.added[0].before_value is None
+    assert _audits(db)[0].before_value is None
 
 
 # ── Authorization ────────────────────────────────────────────────────────────

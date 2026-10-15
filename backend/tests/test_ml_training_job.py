@@ -155,6 +155,38 @@ def _stub_trainer(monkeypatch, result=None, exc=None):
     return calls
 
 
+# ── a rare category does not sink the run (W04 homelab, 2026-10-15) ───────────
+
+
+@pytest.mark.asyncio
+async def test_a_category_with_one_or_two_labels_is_left_out_not_fatal(model_env, monkeypatch):
+    """The homelab's 298 labels held two categories with a single sample each: Train now
+    failed with sklearn's "The least populated classes in y have only 1 member" (the
+    classifier's own stratified early-stopping split), so the ML tier could never activate."""
+    pytest.importorskip("sklearn")
+    from app.services.ml.feature_extractor import FEATURE_NAMES
+    from app.services.ml.label_provenance import HUMAN_DIRECT
+
+    samples, labels, provenances = _separable_pool()
+    for label, count in (("TEST_DATA", 1), ("FLAKY", 2)):
+        for i in range(count):
+            s = {name: 0.0 for name in FEATURE_NAMES}
+            s["error_msg_length"] = float(i)
+            samples.append(s)
+            labels.append(label)
+            provenances.append(HUMAN_DIRECT)
+
+    async def _gather():
+        return samples, labels, provenances
+
+    monkeypatch.setattr(model_env.trainer, "_gather_training_data", _gather)
+    result = await model_env.trainer.train_classifier()
+
+    assert result["status"] == "trained", result
+    assert result["excluded_classes"] == {"TEST_DATA": 1, "FLAKY": 2}
+    assert result["sample_count"] == 63
+
+
 # ── assertion 4: a real training run ─────────────────────────────────────────
 
 

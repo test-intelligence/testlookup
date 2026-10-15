@@ -2,7 +2,7 @@
 
 For regulated teams, "we shipped it" isn't enough — you need to show *why it was safe to ship*, with evidence, after the fact. A **compliance pack** is TestLookup's answer: a point-in-time, exportable snapshot of everything behind a release decision, assembled in one action and stored durably.
 
-> Compliance packs are an **enterprise feature** behind the `release_compliance_pack` flag. If the controls below aren't visible, an admin needs to enable the flag ([Administration → Feature Flags](administration.md#operating-the-instance)); the API returns 503 when it's off.
+> Generating a compliance pack is behind the `release_compliance_pack` flag, which is **on for a new install**; an upgraded install keeps its stored value (off unless an admin turned it on). If generating answers 503, an admin needs to enable the flag ([Administration → Feature Flags](administration.md#operating-the-instance)). Listing and downloading existing packs, on the release and in the releases page's side rail, never need the flag.
 
 ## What's in a pack
 
