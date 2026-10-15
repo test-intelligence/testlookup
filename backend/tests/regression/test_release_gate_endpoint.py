@@ -270,6 +270,13 @@ class TestTheStoredVerdictIsReadNotRecomputed:
         # Says plainly that these numbers describe the moment the gate ran, not
         # now.
         assert result["from_snapshot"] is True
+        # W05 REL-01, additive and derived from the same row (no query): the
+        # pass rate is passed over EVIDENCE, the reason is None when measured,
+        # and the total travels beside the (possibly truncated) display list.
+        assert result["scorecard"]["pass_rate"] == round(37 / 38 * 100, 2)
+        assert result["scorecard"]["insufficient_reason"] is None
+        assert result["blocking_total"] == 1
+        assert result["blocking_reasons"] == ["ui::t1 is FAILED"]
 
 
 def _async(value):

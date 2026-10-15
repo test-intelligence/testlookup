@@ -30,6 +30,7 @@ import structlog
 from sqlalchemy import func, select
 
 from app.models.postgres import AIAnalysis, Project, Release, TestCase, TestRun, User
+from app.services import release_gate_reasons
 from app.services.redaction_service import redact_log_message
 
 logger = structlog.get_logger(__name__)
@@ -365,36 +366,11 @@ async def _ai_summary(run_id: uuid.UUID) -> Optional[dict[str, Any]]:
     }
 
 
-def _reason_key(reason: str) -> tuple[Optional[str], Optional[str], str]:
-    """``"<suite>::<fingerprint> is FAILED"`` -> (suite, fingerprint, status)."""
-    head, sep, status = reason.rpartition(" is ")
-    if not sep or "::" not in head:
-        return None, None, reason
-    suite, _, ident = head.rpartition("::")
-    return suite, ident, status
-
-
-async def _readable_reasons(db: Any, project_id: Any, reasons: list[str]) -> list[str]:
-    """The gate names a test by suite and fingerprint; an email names it by
-    test name. Defect reasons, and any key that does not resolve, pass through."""
-    fps = {fp for _, fp, _ in map(_reason_key, reasons) if fp}
-    names: dict[str, str] = {}
-    if fps:
-        rows = await db.execute(
-            select(TestCase.test_fingerprint, func.max(TestCase.test_name))
-            .join(TestRun, TestRun.id == TestCase.test_run_id)
-            .where(TestRun.project_id == project_id, TestCase.test_fingerprint.in_(fps))
-            .group_by(TestCase.test_fingerprint)
-        )
-        names = {fp: name for fp, name in rows.all() if name}
-    out = []
-    for reason in reasons:
-        suite, fp, status = _reason_key(reason)
-        if fp and fp in names:
-            out.append(f"{names[fp]} ({suite or 'no suite'}) is {status}")
-        else:
-            out.append(reason)
-    return out
+# Promoted to ``services/release_gate_reasons.py`` (W05 REL-01) so the release
+# list, the release detail and this email print the same words; the private
+# names stay as aliases for this module's callers and its tests.
+_reason_key = release_gate_reasons.reason_key
+_readable_reasons = release_gate_reasons.readable_reasons
 
 
 async def _release_impact(

@@ -123,6 +123,12 @@ def _build_project_member_response(member: ProjectMember, user: User) -> Project
         email=user.email,
         username=user.username,
         full_name=user.full_name,
+        # REL-02: the release Owner picker offers people, not the synthetic
+        # per-project QA lead or a CI service account, and not a deactivated
+        # user. Without the flags the client could not tell them apart.
+        is_service_account=bool(getattr(user, "is_service_account", False)),
+        is_synthetic=bool(getattr(user, "is_synthetic", False)),
+        is_active=getattr(user, "is_active", True) is not False,
     )
 
 

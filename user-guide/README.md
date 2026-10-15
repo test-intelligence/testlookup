@@ -31,15 +31,15 @@ Four older pages moved into the in-app guide and now only point there: [dashboar
 
 ## Feature flags you will meet first
 
-Several workflows are switched by feature flags (**Settings → System → Feature flags**, administrators only). These ship **off** on a new install, so the pages behind them say so until you turn them on:
+Several workflows are switched by feature flags (**Settings → System → Feature flags**, administrators only). These ship **off** on a new install unless marked otherwise, so the pages behind them say so until you turn them on; an upgraded install keeps the value it had:
 
 | Flag | Turns on |
 |---|---|
 | `flaky_auto_quarantine` | Quarantine proposals and the review workflow on **Flaky tests** |
 | `outbound_webhooks` | Outbound webhook subscriptions (**Settings → Integrations → Outbound webhooks**) |
-| `llm_cost_budget` | Enforcement of the per-project LLM cost budget |
-| `release_phase_gate_enforcement` | Refusing to complete a release phase without a GO verdict |
-| `release_compliance_pack` | Compliance pack generation |
+| `llm_cost_budget` | Enforcement of the per-project LLM cost budget (on for a new install) |
+| `release_phase_gate_enforcement` | Asking for a reason to complete a release phase without a GO verdict, or to skip one (on for a new install) |
+| `release_compliance_pack` | Compliance pack generation (on for a new install) |
 | `github_checks` | GitHub check runs and pull-request comments |
 | `gitlab` | GitLab merge-request notes and commit statuses |
 

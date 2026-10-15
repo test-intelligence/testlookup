@@ -166,6 +166,21 @@ class TestTheScorecardCarriesItsOwnCaveats:
         assert thin["measured"] is False
         assert thick["measured"] is True
 
+    def test_the_unmeasured_sentences_are_unchanged_by_the_shared_helper(self):
+        """W05 REL-01 moved the sentence into ``insufficient_reason`` so a stored
+        verdict can say it too; the live scorecard's words must not move."""
+        thin = svc.summarise(rollup_of(a="PASSED", b="SKIPPED"))
+        assert thin["insufficient_reason"] == "1 of 2 tests carry evidence; 5 required"
+
+        rejected = rollup_of(**{f"t{i}": "PASSED" for i in range(6)})
+        rejected.incomplete_runs = {"run-1": 3, "run-2": 1}
+        assert svc.summarise(rejected)["insufficient_reason"] == "2 run(s) rejected source results"
+        assert svc.summarise(rollup_of(**{f"t{i}": "PASSED" for i in range(6)}))["insufficient_reason"] is None
+
+    def test_the_pass_rate_helper_is_the_rollups_arithmetic(self):
+        r = rollup_of(a="PASSED", b="PASSED", c="FAILED", d="SKIPPED")
+        assert r.pass_rate() == svc.pass_rate_from_counts(2, 3) == 66.67
+
     def test_the_scorecard_reports_the_attribution_mix(self):
         r = rollup_of(a="PASSED")
         r.attribution_mix = {"explicit_name": 3, "active_release_fallback": 7}

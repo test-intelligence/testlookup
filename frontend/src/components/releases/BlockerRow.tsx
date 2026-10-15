@@ -1,7 +1,13 @@
 /**
  * BlockerRow — single horizontal row inside a release card highlighting an
  * open blocker or a resolved one. Three severities (warn / red / resolved).
+ *
+ * The action is an in-app route (`/releases/{id}#gate`, `#phase-{id}`), so it
+ * is a router `Link`: a raw `<a href>` reloaded the whole app. The click does
+ * not reach the card (whose own click opens the side panel).
  */
+import type { MouseEvent } from 'react'
+import { Link } from 'react-router-dom'
 import { clsx } from 'clsx'
 import { AlertTriangle, CheckCircle2, ArrowRight, ExternalLink } from 'lucide-react'
 import type { DerivedBlocker } from './types'
@@ -70,14 +76,41 @@ export default function BlockerRow({ blocker }: BlockerRowProps) {
           )}
         </div>
       </div>
-      <a
-        href={blocker.action.href}
-        className="inline-flex items-center gap-1 text-[12px] text-[var(--color-accent)] hover:underline shrink-0"
-      >
-        {blocker.action.label.includes('→') ? null : <ExternalLink className="h-3 w-3" />}
-        {blocker.action.label}
-        {blocker.action.label.includes('→') ? null : <ArrowRight className="h-3 w-3" />}
-      </a>
+      {blocker.action.href.startsWith('/') ? (
+        <Link
+          to={blocker.action.href}
+          onClick={stopToCard}
+          className={ACTION_CLASS}
+        >
+          <ActionLabel label={blocker.action.label} />
+        </Link>
+      ) : (
+        <a
+          href={blocker.action.href}
+          onClick={stopToCard}
+          className={ACTION_CLASS}
+        >
+          <ActionLabel label={blocker.action.label} />
+        </a>
+      )}
     </div>
+  )
+}
+
+const ACTION_CLASS = 'inline-flex items-center gap-1 text-[12px] text-[var(--color-accent)] hover:underline shrink-0'
+
+/** The link follows its own route; the card around it must not also open the side panel. */
+function stopToCard(e: MouseEvent) {
+  e.stopPropagation()
+}
+
+function ActionLabel({ label }: { label: string }) {
+  const arrow = label.includes('→')
+  return (
+    <>
+      {arrow ? null : <ExternalLink className="h-3 w-3" />}
+      {label}
+      {arrow ? null : <ArrowRight className="h-3 w-3" />}
+    </>
   )
 }

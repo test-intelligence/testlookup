@@ -92,7 +92,9 @@ _ENTITY_ROUTES: Final[Mapping[str, str]] = {
     "run": "/runs/{id}",
     "test": "/test-management?test={id}",
     "suite": "/suites/{id}",
-    "release": "/releases?release={id}",
+    # W05 REL-04: the release's own page. ``/releases?release={id}`` opened
+    # nothing: the releases page ignores a ``release`` query parameter.
+    "release": "/releases/{id}",
     "policy": "/policies/{id}",
     # No page renders attribution rules today — the API exists, the UI does
     # not. An empty route yields href=None, so the feed prints the rule's name
@@ -223,8 +225,12 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("release.outcome_marked", "release", "release", "Release {entity_label} marked as {outcome}"),
     _spec("release.decision_overridden", "release", "release", "Release decision for {entity_label} overridden to {recommendation}", "attempt"),
     _spec("release.phase_advanced", "release", "release", "Release {entity_label} advanced to {phase}"),
-    _spec("release.phase_skipped", "release", "release", "Phase {phase} skipped on release {entity_label}", "attempt"),
-    _spec("release.phase_gate_overridden", "release", "release", "Phase gate {phase} overridden on release {entity_label}", "attempt"),
+    # W05 REL-10: emitted by ``release_service._enforce_phase_gate`` beside its
+    # access-audit row, in the request's own transaction (outcome mode: no
+    # second session inside a guarded handler, and a rolled-back phase change
+    # leaves no row). The reason the user typed is the point of the entry.
+    _spec("release.phase_skipped", "release", "release", "Phase {phase} skipped on release {entity_label}: {reason}"),
+    _spec("release.phase_gate_overridden", "release", "release", "Phase gate {phase} overridden on release {entity_label}: {reason}"),
     _spec("release.linked_run", "release", "release", "A run was linked to release {entity_label}"),
     _spec("release.unlinked_run", "release", "release", "A run was unlinked from release {entity_label}"),
     _spec("release.synced_external", "release", "release", "Release {entity_label} synced from {provider}"),

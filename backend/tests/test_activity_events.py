@@ -203,6 +203,36 @@ def test_entity_href_resolves_known_types_and_skips_unknown() -> None:
     assert E.entity_href("not_a_type", "abc") is None
 
 
+def test_a_release_links_to_its_own_page() -> None:
+    """W05 REL-04: ``/releases?release={id}`` opened nothing (the releases page
+    ignores that parameter); the release's own page is ``/releases/{id}``."""
+    assert E.entity_href("release", "r-1") == "/releases/r-1"
+
+
+@pytest.mark.parametrize(
+    "event_type,expected",
+    [
+        (
+            "release.phase_gate_overridden",
+            "Phase gate Regression overridden on release 2026.11: Customer waiver CAB-142",
+        ),
+        ("release.phase_skipped", "Phase Regression skipped on release 2026.11: Customer waiver CAB-142"),
+    ],
+)
+def test_phase_override_and_skip_are_outcome_rows_that_carry_the_reason(event_type, expected) -> None:
+    """W05 REL-10: emitted from ``_enforce_phase_gate`` on the request session
+    (outcome: no second session in a guarded handler, nothing left behind by a
+    rolled-back phase change), and the reason the user typed is in the feed."""
+    spec = E.lookup(event_type)
+    assert spec.write_mode == "outcome"
+    assert (spec.category, spec.entity_type) == ("release", "release")
+    summary = E.render_summary(
+        spec, entity_label="2026.11", actor_name="Anand",
+        context={"phase": "Regression", "reason": "Customer waiver CAB-142", "verdict": "NO_GO"},
+    )
+    assert summary == expected
+
+
 def test_lookup_rejects_unregistered_names() -> None:
     with pytest.raises(E.UnknownActivityEvent):
         E.lookup("totally.invented")

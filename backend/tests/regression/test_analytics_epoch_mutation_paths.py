@@ -1181,15 +1181,19 @@ async def test_release_gate_system_default_publish_bumps_every_project(journal, 
             super().__init__(journal)
             self._call = 0
 
-        async def execute(self, *_a, **_k):
+        async def execute(self, statement, *_a, **_k):
+            # Dispatched on the statement, not on call order: publish also
+            # takes the scope lock and re-reads the scope's active ids under
+            # it (W05 GATE-03), so the number of reads before the project
+            # list is not this test's business.
             self._call += 1
+            sql = str(statement)
             result = MagicMock()
-            if self._call == 1:  # fetch the policy by id
-                result.scalar_one_or_none.return_value = policy
-            elif self._call == 2:  # existing active policies for the same scope
-                result.scalars.return_value.all.return_value = []
-            else:  # _policy_scope_projects: every project (system default)
+            result.scalar_one_or_none.return_value = policy
+            if "FROM projects" in sql:  # _policy_scope_projects: every project
                 result.scalars.return_value.all.return_value = [p1, p2]
+            else:  # the policy itself, and no other active policy in scope
+                result.scalars.return_value.all.return_value = []
             return result
 
         async def refresh(self, *_a, **_k):

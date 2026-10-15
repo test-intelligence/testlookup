@@ -12,11 +12,18 @@
  * StatusBanner (`ReleaseHealthBanner`) instead of a verdict band beside a KPI
  * strip; the band's lede, the release's top blockers and the four count cards
  * are in the collapsed "Release health · this week" disclosure under the list.
+ *
+ * W05 "release-gate": a release shows its CURRENT recorded gate verdict; a QA
+ * lead records one with Evaluate gate (a card, the gate panel) or Evaluate
+ * all in progress (the toolbar). The detail has the gate panel (`#gate`) and
+ * each phase's live gate chip; a phase-gate 409 opens the reason dialog
+ * (REL-10). A QA lead can make a release the active one and sync releases
+ * from GitHub / Jira (REL-08); a release's owner is set in its editor (REL-02).
  */
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import {
-  CheckCircle2, ExternalLink, Package, Pencil, Plus, RotateCcw, Trash2, TriangleAlert, X,
+  CheckCircle2, ExternalLink, Package, Pencil, Plus, RefreshCw, RotateCcw, Trash2, TriangleAlert, X,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
@@ -34,8 +41,10 @@ import Disclosure from '@/components/ui/Disclosure'
 import CompliancePackPanel from '@/components/compliance/CompliancePackPanel'
 import { buildReleaseWorkflow } from '@/components/workflow/workflowPresets'
 import { useReleases, useRelease } from '@/hooks/useReleases'
+import { usePhaseGates } from '@/hooks/useReleaseGate'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
-import { releasesService } from '@/services/releasesService'
+import { releasesService, type PhaseUpdateResult } from '@/services/releasesService'
+import { extractErrorMessage } from '@/services/apiErrors'
 import { useRuns } from '@/hooks/useRuns'
 import { useModalFocus } from '@/hooks/useModalFocus'
 import { usePermissions } from '@/hooks/usePermissions'
@@ -44,6 +53,14 @@ import { deriveRelease, computeStageCounts } from '@/components/releases/mapping
 import { ReleaseHealthBanner, ReleaseHealthDetails } from '@/components/releases/ReleaseHealth'
 import ReleaseCard from '@/components/releases/ReleaseCard'
 import { ShippingThisWeek, AgingSignals, CompliancePacks, RecentActivity } from '@/components/releases/RightRail'
+import GatePanel from '@/components/releases/GatePanel'
+import PhaseGateChip from '@/components/releases/PhaseGateChip'
+import PhaseReasonDialog from '@/components/releases/PhaseReasonDialog'
+import SyncReleasesDialog from '@/components/releases/SyncReleasesDialog'
+import OwnerSelect from '@/components/releases/OwnerSelect'
+import {
+  evaluateAllPartialToast, evaluateAllToast, evaluationToast, verdictWord,
+} from '@/components/releases/gateCopy'
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -78,6 +95,27 @@ function fmtDate(iso: string | null | undefined) {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+type RequestError = { message?: string; response?: { status?: number; data?: { detail?: unknown } } }
+
+/** The server's own sentence for a failed request (the interceptor's wording when it toasts). */
+function serverDetail(err: unknown, fallback: string): string {
+  const e = err as RequestError
+  return extractErrorMessage(e?.response?.data?.detail, e?.message || fallback)
+}
+
+/**
+ * Revalidate one release's detail and gate reads after a write. The list is
+ * the caller's own mutate; these keys are read by the side panel AND the
+ * routed page, and neither polls.
+ */
+function revalidateReleaseReads(releaseId: string) {
+  return Promise.all([
+    appMutate(['release-detail', releaseId]),
+    appMutate(['release-gate', releaseId]),
+    appMutate(['release-phase-gates', releaseId]),
+  ])
+}
+
 // ── Create / Edit Release Modal ─────────────────────────────────────────────
 
 interface ReleaseModalProps {
@@ -95,6 +133,11 @@ export function ReleaseModal({ projectId, onClose, onSaved, initial }: ReleaseMo
   const [plannedDate, setPlanned] = useState(
     initial?.planned_date ? initial.planned_date.slice(0, 10) : '',
   )
+  // REL-02: the owner as the server resolved it ('' = No owner). Editing only:
+  // a new release's owner defaults to its creator on the server, and the
+  // member list is asked for only when somebody opens an editor.
+  const initialOwnerId = initial?.owner?.id ?? ''
+  const [ownerId, setOwnerId] = useState(initialOwnerId)
   const [saving, setSaving] = useState(false)
   const dialogRef = useModalFocus({ onClose, canClose: !saving })
 
@@ -109,7 +152,10 @@ export function ReleaseModal({ projectId, onClose, onSaved, initial }: ReleaseMo
           description: description || undefined,
           status,
           planned_date: plannedDate ? new Date(plannedDate).toISOString() : undefined,
-        } as Partial<Release>)
+          // Sent only when it changed: re-sending the owner is not an edit,
+          // and "" (No owner) clears it.
+          ...(ownerId !== initialOwnerId ? { owner_user_id: ownerId || null } : {}),
+        })
         toast.success('Release updated')
       } else {
         await releasesService.create({
@@ -162,6 +208,18 @@ export function ReleaseModal({ projectId, onClose, onSaved, initial }: ReleaseMo
               </select>
             </div>
           </div>
+          {initial && (
+            <div>
+              <label htmlFor="release-field-owner" className="block text-xs text-[var(--color-text-muted)] mb-1">Owner</label>
+              <OwnerSelect
+                id="release-field-owner"
+                projectId={projectId}
+                value={ownerId}
+                onChange={setOwnerId}
+                currentOwner={initial.owner ?? null}
+              />
+            </div>
+          )}
           <div>
             <label htmlFor="release-field-3" className="block text-xs text-[var(--color-text-muted)] mb-1">Planned Release Date</label>
             <input id="release-field-3" type="date" value={plannedDate} onChange={e => setPlanned(e.target.value)} className="input w-full" />
@@ -369,40 +427,129 @@ function AddPhaseRow({ releaseId, existingPhaseNames, onSaved }: {
 
 // ── Release Detail Panel ────────────────────────────────────────────────────
 
+/** A phase transition the server refused until a reason travels with it (REL-10). */
+interface PendingPhaseReason {
+  phase: ReleasePhase
+  status: 'completed' | 'skipped'
+  /** The 409's detail, verbatim. */
+  message: string
+}
+
 /**
- * A release's detail: metrics, compliance packs, production outcome, phases,
- * linked runs, and the collapsed pipeline. The same body in the side panel
- * (`/releases`) and on the release's own page (`/releases/:releaseId`).
+ * A release's detail: metrics, the release gate, compliance packs, production
+ * outcome, phases, linked runs, and the collapsed pipeline. The same body in
+ * the side panel (`/releases`) and on the release's own page
+ * (`/releases/:releaseId`).
+ *
+ * `onEvaluate` is the page's (QA lead only): the card and the gate panel
+ * record a verdict through one handler, with one toast.
  */
-function ReleaseDetailPanel({ releaseId }: { releaseId: string }) {
+function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false }: {
+  releaseId: string
+  onEvaluate?: () => void
+  evaluating?: boolean
+}) {
   const navigate = useNavigate()
   const { hash } = useLocation()
-  const { isAdmin } = usePermissions()
+  const { isAdmin, isQaLead } = usePermissions()
   const { data: detail, isLoading, mutate: refetch } = useRelease(releaseId)
+  // Each phase's LIVE gate, for the chips in the phase rows (D-2: never on
+  // the cards, where N cards x M phases per poll is not affordable).
+  const { data: phaseGates } = usePhaseGates(detail ? releaseId : null)
   const [showLinkModal, setShowLinkModal] = useState(false)
   const [markingReleased, setMarkingReleased] = useState(false)
   const [outcomeReason, setOutcomeReason] = useState('')
   const [markingOutcome, setMarkingOutcome] = useState<'incident' | 'rollback' | null>(null)
+  const [pendingReason, setPendingReason] = useState<PendingPhaseReason | null>(null)
+  const [sendingReason, setSendingReason] = useState(false)
+  const [recordingPhaseId, setRecordingPhaseId] = useState<string | null>(null)
   // Pagination for the linked-runs table — 25 rows per page, client-side
   // slice. The release summary above still aggregates across every linked
   // run because it reads ``detail.metrics`` from the API, not this slice.
   const LINKED_PAGE_SIZE = 25
   const [linkedPage, setLinkedPage] = useState(1)
 
+  // A deep link to a phase (`#phase-<id>`) or to the gate (`#gate`, a
+  // blocker's "Open gate →") scrolls its section into view.
   useEffect(() => {
-    if (!detail || !hash.startsWith('#phase-')) return
-    const targetId = decodeURIComponent(hash.slice(1))
-    document.getElementById(targetId)?.scrollIntoView({ block: 'center' })
+    if (!detail) return
+    if (hash.startsWith('#phase-')) {
+      const targetId = decodeURIComponent(hash.slice(1))
+      document.getElementById(targetId)?.scrollIntoView({ block: 'center' })
+    } else if (hash === '#gate') {
+      document.getElementById('gate')?.scrollIntoView({ block: 'start' })
+    }
   }, [detail, hash])
 
-  async function updatePhaseStatus(phaseId: string, status: string) {
+  const phaseGateById = useMemo(
+    () => new Map((phaseGates?.phases ?? []).map(p => [p.phase_id, p])),
+    [phaseGates],
+  )
+
+  function phaseUpdated(result: PhaseUpdateResult | undefined) {
+    void refetch()
+    void appMutate(['release-phase-gates', releaseId])
+    if (result?.all_phases_completed) {
+      toast.success('All phases completed! You can now mark this release as Released.')
+    }
+  }
+
+  /**
+   * Move a phase on. The first attempt is quiet (`suppressToast`): with
+   * phase-gate enforcement on, completing a phase whose gate is not GO, or
+   * skipping one, answers 409 with the server's reason, and that opens the
+   * reason dialog instead of a toast. Any other failure toasts the server's
+   * own sentence.
+   */
+  async function updatePhaseStatus(phase: ReleasePhase, status: string) {
     try {
-      const result = await releasesService.updatePhase(releaseId, phaseId, { status } as Partial<ReleasePhase>)
-      refetch()
-      if ((result as unknown as { all_phases_completed?: boolean })?.all_phases_completed) {
-        toast.success('All phases completed! You can now mark this release as Released.')
+      const result = await releasesService.updatePhase(releaseId, phase.id, { status }, { suppressToast: true })
+      phaseUpdated(result)
+    } catch (err: unknown) {
+      const e = err as RequestError
+      if (e?.response?.status === 409 && (status === 'completed' || status === 'skipped')) {
+        setPendingReason({ phase, status, message: serverDetail(err, 'The phase gate refused this change.') })
+        return
       }
-    } catch { toast.error('Failed to update phase') }
+      toast.error(serverDetail(err, 'The phase could not be updated.'))
+    }
+  }
+
+  /** Resend the refused transition with its reason, under the server's exact field name. */
+  async function sendPhaseReason(reason: string) {
+    if (!pendingReason) return
+    const { phase, status } = pendingReason
+    setSendingReason(true)
+    try {
+      const body = status === 'completed'
+        ? { status, gate_override_reason: reason }
+        : { status, skip_reason: reason }
+      // Not quiet: a failure now toasts the server's sentence, and the dialog stays.
+      const result = await releasesService.updatePhase(releaseId, phase.id, body)
+      setPendingReason(null)
+      toast.success(status === 'completed'
+        ? `Phase "${phase.name}" completed with an override`
+        : `Phase "${phase.name}" skipped`)
+      phaseUpdated(result)
+    } catch {
+      // The interceptor toasted the server's detail.
+    } finally {
+      setSendingReason(false)
+    }
+  }
+
+  /** Record one phase's gate verdict (QA lead); the chip stays a live preview. */
+  async function recordPhaseGate(phase: ReleasePhase) {
+    setRecordingPhaseId(phase.id)
+    try {
+      const result = await releasesService.evaluatePhaseGate(releaseId, phase.id)
+      toast.success(`Recorded the gate verdict for "${phase.name}": ${verdictWord(result.verdict)}`)
+      void appMutate(['release-phase-gates', releaseId])
+    } catch {
+      // The interceptor toasted the server's detail.
+    } finally {
+      setRecordingPhaseId(null)
+    }
   }
 
   async function markAsReleased() {
@@ -478,6 +625,16 @@ function ReleaseDetailPanel({ releaseId }: { releaseId: string }) {
           onSaved={() => { refetch(); setShowLinkModal(false) }}
         />
       )}
+      {pendingReason && (
+        <PhaseReasonDialog
+          phaseName={pendingReason.phase.name}
+          action={pendingReason.status === 'completed' ? 'complete' : 'skip'}
+          serverMessage={pendingReason.message}
+          busy={sendingReason}
+          onSubmit={reason => void sendPhaseReason(reason)}
+          onCancel={() => setPendingReason(null)}
+        />
+      )}
 
       {/* Metrics strip */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
@@ -494,6 +651,10 @@ function ReleaseDetailPanel({ releaseId }: { releaseId: string }) {
           </div>
         ))}
       </div>
+
+      {/* REL-01: the recorded verdict, its scorecard, every blocking reason
+          and the baseline comparison (`#gate`). */}
+      <GatePanel releaseId={releaseId} onEvaluate={onEvaluate} evaluating={evaluating} />
 
       {/* Tier 1 item 4 — Compliance export pack for audit reviewers. */}
       <CompliancePackPanel releaseId={releaseId} releaseName={detail.name} />
@@ -576,54 +737,71 @@ function ReleaseDetailPanel({ releaseId }: { releaseId: string }) {
       <div className="card">
         <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">Release Phases</h3>
         <div className="space-y-2">
-          {(detail.phases ?? []).map((phase, i) => (
-            <div
-              id={`phase-${phase.id}`}
-              key={phase.id}
-              className="scroll-mt-24 flex items-center gap-3 p-2 rounded-lg bg-[var(--color-bg-secondary)]/60 group"
-            >
-              <div className="flex items-center justify-center h-6 w-6 rounded-full bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] text-xs font-bold flex-shrink-0">
-                {i + 1}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-medium text-[var(--color-text)]">{phase.name}</span>
-                  <span className="text-xs text-[var(--color-text-muted)]">{PHASE_TYPES.find(t => t.value === phase.phase_type)?.label ?? phase.phase_type}</span>
-                  <span className={clsx('text-xs px-1.5 py-0.5 rounded font-medium', PHASE_STATUS_COLOR[phase.status] ?? PHASE_STATUS_COLOR.pending)}>
-                    {phase.status.replace('_', ' ')}
-                  </span>
+          {(detail.phases ?? []).map((phase, i) => {
+            const phaseGate = phaseGateById.get(phase.id)
+            return (
+              <div
+                id={`phase-${phase.id}`}
+                key={phase.id}
+                className="scroll-mt-24 flex items-center gap-3 p-2 rounded-lg bg-[var(--color-bg-secondary)]/60 group"
+              >
+                <div className="flex items-center justify-center h-6 w-6 rounded-full bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] text-xs font-bold flex-shrink-0">
+                  {i + 1}
                 </div>
-                {(phase.planned_start || phase.planned_end) && (
-                  <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-                    {fmtDate(phase.planned_start)} → {fmtDate(phase.planned_end)}
-                  </p>
-                )}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-medium text-[var(--color-text)]">{phase.name}</span>
+                    <span className="text-xs text-[var(--color-text-muted)]">{PHASE_TYPES.find(t => t.value === phase.phase_type)?.label ?? phase.phase_type}</span>
+                    <span className={clsx('text-xs px-1.5 py-0.5 rounded font-medium', PHASE_STATUS_COLOR[phase.status] ?? PHASE_STATUS_COLOR.pending)}>
+                      {phase.status.replace('_', ' ')}
+                    </span>
+                    {phaseGate && <PhaseGateChip result={phaseGate} />}
+                  </div>
+                  {(phase.planned_start || phase.planned_end) && (
+                    <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+                      {fmtDate(phase.planned_start)} → {fmtDate(phase.planned_end)}
+                    </p>
+                  )}
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {isQaLead && (
+                    <button
+                      type="button"
+                      onClick={() => void recordPhaseGate(phase)}
+                      disabled={recordingPhaseId !== null}
+                      data-testid="phase-record-gate"
+                      className="text-[11px] px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50"
+                    >
+                      {recordingPhaseId === phase.id ? 'Recording…' : 'Record gate verdict'}
+                    </button>
+                  )}
+                  <select
+                    value={phase.status}
+                    onChange={e => void updatePhaseStatus(phase, e.target.value)}
+                    aria-label={`Status of phase ${phase.name}`}
+                    className="text-xs bg-[var(--color-bg-hover)] border border-[var(--color-border-light)] rounded px-1.5 py-0.5 text-[var(--color-text)] focus:outline-none"
+                  >
+                    <option value="pending">Pending</option>
+                    <option value="in_progress">In Progress</option>
+                    <option value="completed">Completed</option>
+                    <option value="skipped">Skipped</option>
+                    <option value="failed">Failed</option>
+                  </select>
+                  <button
+                    onClick={() => {
+                      if (confirm(`Remove phase "${phase.name}"?`)) deletePhase(phase.id)
+                    }}
+                    disabled={!isAdmin}
+                    aria-label={`Remove phase ${phase.name}`}
+                    className="text-[var(--color-text-faint)] hover:text-[var(--status-failed)] transition-colors p-0.5 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-[var(--color-text-faint)]"
+                    title={isAdmin ? 'Remove phase' : ADMIN_REQUIRED}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
               </div>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <select
-                  value={phase.status}
-                  onChange={e => updatePhaseStatus(phase.id, e.target.value)}
-                  className="text-xs bg-[var(--color-bg-hover)] border border-[var(--color-border-light)] rounded px-1.5 py-0.5 text-[var(--color-text)] focus:outline-none"
-                >
-                  <option value="pending">Pending</option>
-                  <option value="in_progress">In Progress</option>
-                  <option value="completed">Completed</option>
-                  <option value="skipped">Skipped</option>
-                </select>
-                <button
-                  onClick={() => {
-                    if (confirm(`Remove phase "${phase.name}"?`)) deletePhase(phase.id)
-                  }}
-                  disabled={!isAdmin}
-                  aria-label={`Remove phase ${phase.name}`}
-                  className="text-[var(--color-text-faint)] hover:text-[var(--status-failed)] transition-colors p-0.5 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-[var(--color-text-faint)]"
-                  title={isAdmin ? 'Remove phase' : ADMIN_REQUIRED}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </div>
-          ))}
+            )
+          })}
           <AddPhaseRow
             releaseId={releaseId}
             existingPhaseNames={(detail.phases ?? []).map((p: ReleasePhase) => p.name)}
@@ -760,9 +938,14 @@ export default function ReleasesPage() {
     : (project?.name ?? 'this project')
 
   const navigate = useNavigate()
-  const { isAdmin } = usePermissions()
+  const { isAdmin, isQaLead } = usePermissions()
   const [showModal, setShowModal]     = useState(false)
   const [editRelease, setEditRelease] = useState<Release | undefined>()
+  const [showSync, setShowSync]       = useState(false)
+  // Releases whose gate evaluation is in flight (a card's, the panel's, or
+  // the one "Evaluate all" is on), and the loop's progress.
+  const [evaluatingIds, setEvaluatingIds] = useState<ReadonlySet<string>>(() => new Set())
+  const [evaluateAllProgress, setEvaluateAllProgress] = useState<{ index: number; total: number } | null>(null)
   // UX redesign P5 item 5: on the list a release opens in a side panel (a
   // drill-down, §2), not inline under its card. Its own page,
   // `/releases/:releaseId`, shows the same detail as the page itself.
@@ -780,10 +963,12 @@ export default function ReleasesPage() {
     if (statusFilter !== 'all') xs = xs.filter(r => r.stage === statusFilter)
     if (search.trim()) {
       const q = search.trim().toLowerCase()
+      // The owner's name (REL-02), never the "No owner" placeholder: a
+      // search for "owner" must not match every unowned release.
       xs = xs.filter(r =>
         r.name.toLowerCase().includes(q)
         || r.version.toLowerCase().includes(q)
-        || r.ownerName.toLowerCase().includes(q),
+        || (r.hasOwner && r.ownerName.toLowerCase().includes(q)),
       )
     }
     return xs
@@ -806,6 +991,82 @@ export default function ReleasesPage() {
     [derived],
   )
 
+  const markEvaluating = (id: string, on: boolean) => setEvaluatingIds(prev => {
+    const next = new Set(prev)
+    if (on) next.add(id)
+    else next.delete(id)
+    return next
+  })
+
+  /** Re-read every view of the releases a write touched: the list and each one's detail and gate. */
+  function revalidateAfterWrite(ids: string[]) {
+    return Promise.all([refetch(), ...ids.map(revalidateReleaseReads)])
+  }
+
+  /**
+   * Evaluate one release's gate and record the verdict (QA lead; REL-01).
+   * The toast quotes the verdict the server recorded; a failure is the
+   * interceptor's toast with the server's sentence.
+   */
+  async function evaluateRelease(id: string, name: string) {
+    markEvaluating(id, true)
+    try {
+      const result = await releasesService.evaluateGate(id)
+      toast.success(evaluationToast(name, result))
+      await revalidateAfterWrite([id])
+    } catch {
+      // The interceptor toasted the server's detail.
+    } finally {
+      markEvaluating(id, false)
+    }
+  }
+
+  /**
+   * "Evaluate all in progress" (D-1): the existing route, one release at a
+   * time, and one failure does not stop the rest. Each request is quiet; the
+   * one toast at the end says what happened to all of them.
+   */
+  async function evaluateAllInProgress() {
+    const targets = inProgressReleases.map(r => ({ id: r.id, name: r.name }))
+    if (targets.length === 0 || evaluateAllProgress) return
+    const verdicts: string[] = []
+    const failures: string[] = []
+    for (const [index, target] of targets.entries()) {
+      setEvaluateAllProgress({ index: index + 1, total: targets.length })
+      markEvaluating(target.id, true)
+      try {
+        const result = await releasesService.evaluateGate(target.id, { suppressToast: true })
+        verdicts.push(result.verdict)
+      } catch (err: unknown) {
+        failures.push(serverDetail(err, 'the evaluation failed'))
+      } finally {
+        markEvaluating(target.id, false)
+      }
+    }
+    setEvaluateAllProgress(null)
+    if (failures.length === 0) {
+      toast.success(evaluateAllToast(verdicts))
+    } else {
+      toast.error(evaluateAllPartialToast(verdicts.length, targets.length, failures.length, failures[0]))
+    }
+    await revalidateAfterWrite(targets.map(t => t.id))
+  }
+
+  /** Make a release the project's active one: where runs no other rule claims land (REL-08). */
+  async function setActiveRelease(id: string) {
+    const target = derived.find(r => r.id === id)
+    const name = target?.name ?? 'this release'
+    if (!confirm(`Make "${name}" the active release? Runs that no other rule matches will land here.`)) return
+    try {
+      const result = await releasesService.activate(id)
+      toast.success(result.changed ? `"${name}" is now the active release` : `"${name}" was already the active release`)
+      // The previously active release lost its badge: re-read the whole list.
+      await revalidateAfterWrite(result.deactivated ? [id, result.deactivated] : [id])
+    } catch {
+      // A finished release answers 409 with its reason: the interceptor's toast.
+    }
+  }
+
   async function deleteRelease(id: string) {
     if (!confirm('Delete this release and all its phases? This cannot be undone.')) return
     try {
@@ -827,6 +1088,19 @@ export default function ReleasesPage() {
 
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
+  // The rail's project (§1.5): the picker's on the list (null = All
+  // projects), the release's own on its page (a deep link may be into another
+  // project than the picker's).
+  const railProjectId = releaseId
+    ? (routedRelease?.project_id ?? null)
+    : (isAllProjects ? null : activeProjectId)
+  // QA lead, one project, the list: Sync releases; Evaluate all in progress.
+  const canSync = isQaLead && !isAllProjects && !releaseId && Boolean(activeProjectId)
+  const canEvaluateAll = isQaLead && !releaseId && inProgressReleases.length > 0
+  const onEvaluateCard = isQaLead
+    ? (id: string) => void evaluateRelease(id, derived.find(r => r.id === id)?.name ?? 'Release')
+    : undefined
+  const onSetActiveCard = isQaLead ? (id: string) => void setActiveRelease(id) : undefined
 
   // The release in the side panel (list route only). Looked up in the
   // unfiltered list, so a search that hides its card does not close it; a
@@ -859,6 +1133,14 @@ export default function ReleasesPage() {
     />
   ) : null
 
+  const syncDialog = showSync && canSync && activeProjectId ? (
+    <SyncReleasesDialog
+      projectId={activeProjectId}
+      onClose={() => setShowSync(false)}
+      onDone={() => { setShowSync(false); void refetch() }}
+    />
+  ) : null
+
   // M21: an outage used to render "No releases yet" and a create-release CTA.
   if (pageError && releases.length === 0) {
     const retry = releaseId ? refetchRoutedRelease : refetch
@@ -881,6 +1163,7 @@ export default function ReleasesPage() {
           open it is rendered inside the panel instead (below), so it is not
           drawn under the panel's backdrop. */}
       {!panelRelease && releaseModal}
+      {syncDialog}
 
       <div className="w-full pb-10">
         <PageHeader
@@ -897,12 +1180,23 @@ export default function ReleasesPage() {
             + ` · ${stageCounts.in_progress} in progress · ${derived.filter(r => r.blockers.some(b => b.severity === 'red')).length} blocked`
           }
           actions={!isAllProjects && !releaseId ? (
-            <button
-              onClick={() => { setEditRelease(undefined); setShowModal(true) }}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] rounded-md font-medium"
-            >
-              <Plus className="h-4 w-4" /> New release
-            </button>
+            <div className="flex items-center gap-2">
+              {canSync && (
+                <button
+                  type="button"
+                  onClick={() => setShowSync(true)}
+                  className="btn-secondary inline-flex items-center gap-1.5 text-sm"
+                >
+                  <RefreshCw className="h-4 w-4" aria-hidden="true" /> Sync releases
+                </button>
+              )}
+              <button
+                onClick={() => { setEditRelease(undefined); setShowModal(true) }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] rounded-md font-medium"
+              >
+                <Plus className="h-4 w-4" /> New release
+              </button>
+            </div>
           ) : undefined}
         />
 
@@ -950,6 +1244,19 @@ export default function ReleasesPage() {
                   className="bg-transparent outline-none text-[12.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] w-[260px]"
                 />
               </label>
+              {canEvaluateAll && (
+                <button
+                  type="button"
+                  data-testid="release-evaluate-all"
+                  onClick={() => void evaluateAllInProgress()}
+                  disabled={evaluateAllProgress !== null}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-[var(--color-border)] text-[12px] font-medium text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] disabled:opacity-60"
+                >
+                  {evaluateAllProgress
+                    ? `Evaluating ${evaluateAllProgress.index} of ${evaluateAllProgress.total}…`
+                    : 'Evaluate all in progress'}
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -1011,7 +1318,8 @@ export default function ReleasesPage() {
                 ) : releaseId ? (
                   filteredDerived.map(r => (
                     <div key={r.id} data-release-page="">
-                      <ReleaseCard release={r} />
+                      {/* Its Evaluate is the gate panel's, right below: one button, not two. */}
+                      <ReleaseCard release={r} onSetActive={onSetActiveCard} />
                       {/* The release's own page: its detail is the page, not a drill-down. */}
                       <div
                         className="mt-2 rounded-xl border p-4"
@@ -1036,13 +1344,24 @@ export default function ReleasesPage() {
                             Delete
                           </button>
                         </div>
-                        <ReleaseDetailPanel releaseId={r.id} />
+                        <ReleaseDetailPanel
+                          releaseId={r.id}
+                          onEvaluate={isQaLead ? () => void evaluateRelease(r.id, r.name) : undefined}
+                          evaluating={evaluatingIds.has(r.id)}
+                        />
                       </div>
                     </div>
                   ))
                 ) : (
                   filteredDerived.map(r => (
-                    <ReleaseCard key={r.id} release={r} onClick={() => openPanel(r.id)} />
+                    <ReleaseCard
+                      key={r.id}
+                      release={r}
+                      onClick={() => openPanel(r.id)}
+                      onEvaluate={onEvaluateCard}
+                      evaluating={evaluatingIds.has(r.id)}
+                      onSetActive={onSetActiveCard}
+                    />
                   ))
                 )}
               </div>
@@ -1053,8 +1372,8 @@ export default function ReleasesPage() {
             <div className="flex flex-col gap-3.5 min-w-0">
               <ShippingThisWeek releases={derived} onOpen={openPanel} />
               <AgingSignals releases={derived} onOpen={openPanel} />
-              <CompliancePacks releases={derived} onOpen={openPanel} />
-              <RecentActivity releases={derived} />
+              <CompliancePacks releases={derived} onOpen={openPanel} projectId={railProjectId} />
+              <RecentActivity releases={derived} projectId={railProjectId} />
             </div>
           </div>
         )}
@@ -1105,7 +1424,12 @@ export default function ReleasesPage() {
               <p className="text-sm text-[var(--color-text-muted)]">{panelRelease.source.description}</p>
             )}
             {/* Keyed: another release starts on its own detail, with its own state. */}
-            <ReleaseDetailPanel key={panelRelease.id} releaseId={panelRelease.id} />
+            <ReleaseDetailPanel
+              key={panelRelease.id}
+              releaseId={panelRelease.id}
+              onEvaluate={isQaLead ? () => void evaluateRelease(panelRelease.id, panelRelease.name) : undefined}
+              evaluating={evaluatingIds.has(panelRelease.id)}
+            />
             {releaseModal}
           </div>
         )}

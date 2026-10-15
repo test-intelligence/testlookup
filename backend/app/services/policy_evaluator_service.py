@@ -83,13 +83,13 @@ async def resolve_effective_policy(
     2. Active system default (project_id IS NULL) → "system"
     3. None → "hardcoded" (use config.py defaults)
     """
-    # NB: ``is_active`` has no DB-level single-active guarantee (the only
-    # unique constraint is (project_id, version), and publish_policy enforces
-    # "one active per scope" in application code). A concurrent publish race
-    # can therefore leave two active rows for a scope. Order by version desc so
-    # resolution is deterministic regardless — the latest published version
-    # wins, matching the /history endpoints' ordering — instead of an arbitrary
-    # row from an unordered LIMIT 1.
+    # Since migration 0210 (GATE-03) the database guarantees at most one
+    # active row per scope (``uq_rgp_one_active_project`` /
+    # ``uq_rgp_one_active_system``), and publish_policy serialises publishes
+    # with a scope lock. The ``ORDER BY version DESC LIMIT 1`` stays as a
+    # deterministic tie-break for a database that has not run 0210 yet: the
+    # latest published version wins, matching the /history endpoints' ordering
+    # (and the row 0210 keeps when it demotes duplicates).
     if project_id:
         pid = uuid.UUID(str(project_id)) if not isinstance(project_id, uuid.UUID) else project_id
         result = await db.execute(

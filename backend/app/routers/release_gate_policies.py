@@ -4,7 +4,8 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
@@ -36,6 +37,58 @@ SYSTEM_DEFAULT_REFUSED_DETAIL = (
     "to every project without a policy of its own, so only an instance "
     "administrator may change it"
 )
+
+#: GATE-03: what the loser of a concurrent publish in one scope is told.
+PUBLISH_RACE_DETAIL = (
+    "Another policy was published for this scope at the same moment. Reload "
+    "the policies and publish again if you still want this version."
+)
+#: GATE-03: what the loser of a concurrent draft create in one scope is told.
+CREATE_RACE_DETAIL = (
+    "Another policy version was created for this scope at the same moment. Try again."
+)
+ALREADY_PUBLISHED_DETAIL = "Policy is already published"
+
+#: The indexes whose violation is a scope race (migration 0210, plus the
+#: project-scope version constraint of 0032). Any other IntegrityError is a
+#: real bug and is re-raised.
+_SCOPE_RACE_INDEX_PREFIX = "uq_rgp_"
+
+
+def _scope_lock_key(project_id: Optional[uuid.UUID]) -> str:
+    return "release_gate_policy:" + (str(project_id) if project_id else "system")
+
+
+async def _lock_scope(db: AsyncSession, project_id: Optional[uuid.UUID]) -> None:
+    """Serialise policy writes within ONE scope (a project, or the system default).
+
+    A transaction-scoped advisory lock on the request session (pattern
+    ``services/agent_authority_lock.py``): released by the router's commit or
+    rollback, never held across requests. Two scopes never wait on each other.
+    """
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+        {"key": _scope_lock_key(project_id)},
+    )
+
+
+def _is_scope_race(exc: IntegrityError) -> bool:
+    """True when the violated constraint is one of the policy-scope indexes."""
+    return _SCOPE_RACE_INDEX_PREFIX in str(getattr(exc, "orig", None) or exc)
+
+
+async def _active_ids_in_scope(
+    db: AsyncSession, project_id: Optional[uuid.UUID], exclude: uuid.UUID
+) -> set[uuid.UUID]:
+    rows = await db.execute(
+        select(ReleaseGatePolicy.id).where(
+            # ``== None`` renders ``IS NULL`` for the system scope.
+            ReleaseGatePolicy.project_id == project_id,
+            ReleaseGatePolicy.is_active == True,  # noqa: E712
+            ReleaseGatePolicy.id != exclude,
+        )
+    )
+    return set(rows.scalars().all())
 
 
 async def _policy_scope_projects(
@@ -199,6 +252,11 @@ async def create_policy(
     # Validate the policy document
     _validate_policy_document(payload.rules)
 
+    # GATE-03: serialise version allocation within the scope. Without the lock
+    # two concurrent creates read the same max(version) and the loser's INSERT
+    # hit the unique version index as an unhandled IntegrityError (a 500).
+    await _lock_scope(db, payload.project_id)
+
     # Auto-increment version for this scope
     version_result = await db.execute(
         select(func.coalesce(func.max(ReleaseGatePolicy.version), 0))
@@ -217,7 +275,15 @@ async def create_policy(
         created_by=current_user.id,
     )
     db.add(policy)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        # Backstop for a writer that skipped the lock (manual SQL, an old
+        # replica mid-deploy): a version collision is a 409, never a 500.
+        await db.rollback()
+        if not _is_scope_race(exc):
+            raise
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=CREATE_RACE_DETAIL)
     await db.refresh(policy)
     logger.info("Policy created: %s v%d by %s", policy.name, policy.version, current_user.username)
     return policy
@@ -276,18 +342,36 @@ async def publish_policy(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Policy not found")
     _enforce_policy_binding(current_user, policy.project_id)
     if not policy.is_draft:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Policy is already published")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=ALREADY_PUBLISHED_DETAIL)
+
+    # GATE-03: exactly one active policy per scope, and a clear 409 for the
+    # loser of a concurrent publish rather than a silent last-writer-wins.
+    #
+    # ``before`` is what this admin was looking at; after the scope lock is
+    # held, anything different means another publish committed in between.
+    before = await _active_ids_in_scope(db, policy.project_id, policy.id)
+    await _lock_scope(db, policy.project_id)
+    # Re-read under the lock: the same draft published by someone else is no
+    # longer a draft.
+    await db.refresh(policy)
+    if not policy.is_draft:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=ALREADY_PUBLISHED_DETAIL)
+    current = await _active_ids_in_scope(db, policy.project_id, policy.id)
+    if current != before:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=PUBLISH_RACE_DETAIL)
 
     # Deactivate any existing active policy for the same scope
-    existing_active = await db.execute(
-        select(ReleaseGatePolicy).where(
-            ReleaseGatePolicy.project_id == policy.project_id,
-            ReleaseGatePolicy.is_active == True,  # noqa: E712
-            ReleaseGatePolicy.id != policy_id,
+    if current:
+        existing_active = await db.execute(
+            select(ReleaseGatePolicy).where(ReleaseGatePolicy.id.in_(current))
         )
-    )
-    for old_policy in existing_active.scalars().all():
-        old_policy.is_active = False
+        for old_policy in existing_active.scalars().all():
+            old_policy.is_active = False
+        # The demote MUST reach the database before the promote. SQLAlchemy
+        # orders persistent UPDATEs by primary key, and policy ids are uuid4, so
+        # without this flush the promote is emitted first about half the time
+        # and the one-active index refuses it -- even with no race at all.
+        await db.flush()
 
     from datetime import datetime, timezone
 
@@ -296,7 +380,14 @@ async def publish_policy(
     policy.activated_by = current_user.id
     policy.activated_at = datetime.now(timezone.utc)
 
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        # Backstop for a writer that skipped the scope lock.
+        await db.rollback()
+        if not _is_scope_race(exc):
+            raise
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=PUBLISH_RACE_DETAIL)
     await db.refresh(policy)
     # VIZ-212: the cached dashboard's readiness band reads the ACTIVE policy.
     from app.services.cache_service import bump_analytics_epochs

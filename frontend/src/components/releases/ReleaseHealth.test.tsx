@@ -12,10 +12,28 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ReleaseHealthBanner, ReleaseHealthDetails } from './ReleaseHealth'
 import { countReleases, releaseHealthFacts, releaseHeadline } from './health'
-import type { DerivedBlocker, DerivedRelease } from './types'
+import type { DerivedBlocker, DerivedGate, DerivedRelease, GateDecision } from './types'
+
+/** A recorded verdict (or none) in the §1.4 `DerivedGate` shape. */
+function gateOf(decision: GateDecision, overrides: Partial<DerivedGate> = {}): DerivedGate {
+  const evaluated = decision !== 'never_evaluated'
+  return {
+    decision,
+    passRate: evaluated ? 92 : null,
+    denominator: evaluated ? 40 : null,
+    evidence: evaluated ? 38 : null,
+    runCount: evaluated ? 3 : null,
+    decidedAt: evaluated ? new Date(Date.now() - 2 * 3600 * 1000).toISOString() : null,
+    measured: decision === 'go' || decision === 'no_go' || decision === 'conditional',
+    insufficientReason: decision === 'not_evaluated' ? '3 of 40 tests carry evidence; 5 required' : null,
+    blockingTotal: 0,
+    ...overrides,
+  }
+}
 
 /** A `DerivedRelease` with only what the health views read set to something meaningful. */
 function makeRelease(overrides: Partial<DerivedRelease> = {}): DerivedRelease {
+  const blockers = overrides.blockers ?? []
   return {
     source: {} as DerivedRelease['source'],
     id: 'rel-1',
@@ -23,43 +41,48 @@ function makeRelease(overrides: Partial<DerivedRelease> = {}): DerivedRelease {
     version: 'v1.0',
     ownerInitials: 'AB',
     ownerName: 'A B',
-    gate: { decision: 'conditional', composite: 92, coverage: null, flakePct: null, updatedAt: null },
+    hasOwner: true,
+    isActive: false,
+    externalUrl: null,
+    sourceSystem: null,
+    gate: gateOf('conditional'),
     totals: null,
     phases: [],
-    blockers: [],
+    blockers,
+    blockerCount: blockers.length,
     dueAt: null,
     stage: 'in_progress',
     ...overrides,
-  } as DerivedRelease
+  }
 }
 
 function blocker(severity: DerivedBlocker['severity'], title: string, context = ''): DerivedBlocker {
   return { id: `b-${severity}-${title}`, severity, title, context, action: { label: 'View', href: '#' } }
 }
 
-const NOT_EVALUATED = { decision: 'not_evaluated', composite: null, coverage: null, flakePct: null, updatedAt: null } as const
+const NEVER_EVALUATED = gateOf('never_evaluated')
 
-/** In progress (not evaluated, a red blocker), in progress at go, planning, released 2 days ago. */
+/** In progress (never evaluated, a red blocker), in progress at go, planning, released 2 days ago. */
 function project(): { next: DerivedRelease; all: DerivedRelease[] } {
   const next = makeRelease({
     id: 'rel-next',
     name: '2026.11',
     version: '2026.11',
-    gate: { ...NOT_EVALUATED },
+    gate: { ...NEVER_EVALUATED },
     blockers: [blocker('red', 'Regression failed', 'Regression')],
   })
   const ready = makeRelease({
     id: 'rel-ready',
     name: '2026.10.1',
     version: '2026.10.1',
-    gate: { decision: 'go', composite: 97, coverage: null, flakePct: null, updatedAt: null },
+    gate: gateOf('go', { passRate: 97 }),
   })
-  const planned = makeRelease({ id: 'rel-plan', name: '2026.12', stage: 'planning', gate: { ...NOT_EVALUATED } })
+  const planned = makeRelease({ id: 'rel-plan', name: '2026.12', stage: 'planning', gate: { ...NEVER_EVALUATED } })
   const shipped = makeRelease({
     id: 'rel-shipped',
     name: '2026.10',
     stage: 'released',
-    gate: { ...NOT_EVALUATED },
+    gate: { ...NEVER_EVALUATED },
     source: { released_at: new Date(Date.now() - 2 * 24 * 3600 * 1000).toISOString() } as DerivedRelease['source'],
   })
   return { next, all: [next, ready, planned, shipped] }
@@ -91,9 +114,10 @@ describe('ReleaseHealthBanner — one line above the list', () => {
       ['conditional', 'conditional', 'CONDITIONAL GO'],
       ['no_go', 'no_go', 'NO-GO'],
       ['not_evaluated', 'pending', 'NOT EVALUATED'],
+      ['never_evaluated', 'pending', 'NOT EVALUATED'],
     ] as const
     for (const [decision, state, pill] of cases) {
-      const release = makeRelease({ gate: { decision, composite: decision === 'not_evaluated' ? null : 91, coverage: null, flakePct: null, updatedAt: null } })
+      const release = makeRelease({ gate: gateOf(decision) })
       const { container, unmount } = render(<ReleaseHealthBanner highlighted={release} inProgressReleases={[release]} releases={[release]} />)
       expect(container.querySelector('[data-status-banner]'), decision).toHaveAttribute('data-status-banner', state)
       expect(container.querySelector('[data-banner-pill]'), decision).toHaveTextContent(pill)
@@ -101,10 +125,31 @@ describe('ReleaseHealthBanner — one line above the list', () => {
     }
   })
 
-  it('puts the composite first when the gate has one, still at most four facts', () => {
-    const release = makeRelease({ blockers: [blocker('warn', 'Composite under cap')] })
+  it('puts the pass rate first when the recorded verdict was measured, still at most four facts', () => {
+    const release = makeRelease({ blockers: [blocker('warn', 'A warning')] })
     const { container } = render(<ReleaseHealthBanner highlighted={release} inProgressReleases={[release]} releases={[release]} />)
-    expect(facts(container)).toEqual(['Composite pass rate 92.0%', 'Open blockers 1', 'Ready to ship 0', 'Blocked 0'])
+    expect(facts(container)).toEqual(['Pass rate 92.0%', 'Open blockers 1', 'Ready to ship 0', 'Blocked 0'])
+  })
+
+  it('states no pass rate for a verdict below the evidence floor, nor for a release never evaluated', () => {
+    for (const gate of [gateOf('not_evaluated', { passRate: 50 }), NEVER_EVALUATED]) {
+      const release = makeRelease({ gate })
+      const { container, unmount } = render(<ReleaseHealthBanner highlighted={release} inProgressReleases={[release]} releases={[release]} />)
+      expect(facts(container)[0], gate.decision).toBe('Open blockers 0')
+      expect(container.textContent).not.toMatch(/Pass rate/)
+      unmount()
+    }
+  })
+
+  it('counts every blocker the server recorded, not the few a card keeps', () => {
+    // 25 blocking reasons recorded; the derived release keeps 5 rows.
+    const release = makeRelease({
+      gate: gateOf('no_go', { blockingTotal: 25 }),
+      blockers: Array.from({ length: 5 }, (_, i) => blocker('red', `t${i} (suite) is FAILED`)),
+      blockerCount: 25,
+    })
+    const { container } = render(<ReleaseHealthBanner highlighted={release} inProgressReleases={[release]} releases={[release]} />)
+    expect(facts(container)).toEqual(['Pass rate 92.0%', 'Open blockers 25', 'Ready to ship 0', 'Blocked 1'])
   })
 
   it('"Open" opens the release that ships next; with no opener (its own page) there is no action', () => {
@@ -119,7 +164,7 @@ describe('ReleaseHealthBanner — one line above the list', () => {
   })
 
   it('says so when no release is in flight, with the counts still counted', () => {
-    const shipped = makeRelease({ stage: 'released', gate: { ...NOT_EVALUATED } })
+    const shipped = makeRelease({ stage: 'released', gate: { ...NEVER_EVALUATED } })
     const { container } = render(<ReleaseHealthBanner highlighted={null} inProgressReleases={[]} releases={[shipped]} />)
     expect(container.querySelector('[data-banner-pill]')).toHaveTextContent('NOTHING IN FLIGHT')
     expect(
@@ -145,6 +190,8 @@ describe('ReleaseHealthDetails — the rest, collapsed under the list', () => {
   it('opens to the gate lede, the top three blockers and the four count cards with their sub-lines', () => {
     const next = makeRelease({
       name: 'Checkout',
+      gate: gateOf('no_go', { blockingTotal: 4 }),
+      blockerCount: 4,
       blockers: [
         blocker('red', 'Regression failed', 'Regression'),
         blocker('warn', 'Flake rate 2.1% over cap', 'flake budget'),
@@ -154,7 +201,7 @@ describe('ReleaseHealthDetails — the rest, collapsed under the list', () => {
     })
     render(<ReleaseHealthDetails highlighted={next} releases={[next]} />)
     fireEvent.click(screen.getByRole('button', { name: /Release health · this week/ }))
-    expect(screen.getByText('Composite pass rate 92.0% is under the 95% gate. 4 blockers across this release.')).toBeInTheDocument()
+    expect(screen.getByText('Checkout was No-Go 2h ago: 4 blocking items; pass rate 92.0% over 38 tests.')).toBeInTheDocument()
     const list = screen.getByRole('list', { name: 'Top blockers on Checkout' })
     expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
       'Regression failed· Regression',
@@ -197,8 +244,10 @@ describe('ReleaseHealthDetails — the rest, collapsed under the list', () => {
 
 describe('the release-health words and counts (health.ts)', () => {
   it('calls a not-yet-evaluated in-progress release in progress, never "in planning"', () => {
-    const release = makeRelease({ name: 'Checkout', version: '2.5.0', gate: { ...NOT_EVALUATED } })
-    expect(releaseHeadline(release)).toBe('Checkout (2.5.0) is in progress, not evaluated yet')
+    for (const gate of [NEVER_EVALUATED, gateOf('not_evaluated')]) {
+      const release = makeRelease({ name: 'Checkout', version: '2.5.0', gate })
+      expect(releaseHeadline(release), gate.decision).toBe('Checkout (2.5.0) is in progress, not evaluated yet')
+    }
   })
 
   it('counts each number the way the strip does, and the banner states the same ones', () => {

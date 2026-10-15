@@ -195,7 +195,41 @@ class ReleaseRollup:
         passed = sum(
             1 for s in self.latest_by_test.values() if s == TestStatus.PASSED.value
         )
-        return round(passed / evidence * 100, 2)
+        return pass_rate_from_counts(passed, evidence)
+
+
+def pass_rate_from_counts(passed: Optional[int], evidence: Optional[int]) -> Optional[float]:
+    """Passed over evidence, as a percentage rounded to two places (W05 REL-01).
+
+    The one arithmetic behind every pass rate the release gate shows: the live
+    rollup (``ReleaseRollup.pass_rate``) and a STORED decision row
+    (``release_gate_service.shape_gate_summary``) both call it, so a card can
+    never disagree with the scorecard it summarises. ``None`` when nothing ran,
+    or when the count is unknown (a legacy row without ``PASSED``): absence is
+    not a 0% measurement.
+    """
+    if passed is None or not evidence:
+        return None
+    return round(passed / evidence * 100, 2)
+
+
+def insufficient_reason(
+    evidence_count: int, denominator: int, incomplete_count: int
+) -> Optional[str]:
+    """Why a verdict is not measured, or ``None`` when it is (W05 REL-01).
+
+    Shared by ``summarise`` (live) and the stored-decision summary, so both say
+    the same sentence. The evidence floor is checked first: with too few tests,
+    rejected source rows are not the main problem.
+    """
+    if evidence_count < MIN_EVIDENCE:
+        return (
+            f"{evidence_count} of {denominator} tests carry evidence; "
+            f"{MIN_EVIDENCE} required"
+        )
+    if incomplete_count:
+        return f"{incomplete_count} run(s) rejected source results"
+    return None
 
 
 def _identity(case: Any) -> Optional[str]:
@@ -526,15 +560,8 @@ def summarise(rollup: ReleaseRollup) -> dict[str, Any]:
         # Why it is unmeasured, in the same shape as ``insufficient_reason``.
         # ``None`` when it IS measured, so the key is never a bare empty string
         # that reads as "no reason" rather than "no problem".
-        "insufficient_reason": (
-            None
-            if measured
-            else (
-                f"{rollup.evidence_count} of {rollup.denominator} tests carry evidence; "
-                f"{MIN_EVIDENCE} required"
-                if not has_enough_evidence
-                else f"{len(rollup.incomplete_runs)} run(s) rejected source results"
-            )
+        "insufficient_reason": insufficient_reason(
+            rollup.evidence_count, rollup.denominator, len(rollup.incomplete_runs)
         ),
         # A partial rollup announces itself. Reported unconditionally so its
         # absence cannot be mistaken for a complete read.

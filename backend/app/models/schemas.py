@@ -4166,6 +4166,11 @@ class ProjectMemberResponse(BaseModel):
     email: str
     username: str
     full_name: Optional[str] = None
+    # W05 REL-02: what a picker needs to leave out the synthetic per-project QA
+    # lead, service accounts and deactivated users (a release owner is a person).
+    is_service_account: bool = False
+    is_synthetic: bool = False
+    is_active: bool = True
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -6251,6 +6256,36 @@ class CompliancePackRead(BaseModel):
     metadata_snapshot: Optional[Dict[str, Any]] = None
     notes: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
+
+
+class CompliancePackSummaryRead(BaseModel):
+    """One pack in the project-wide list (``GET /api/v1/compliance-packs``, W05 REL-04).
+
+    ``minio_key``, ``metadata_snapshot`` and ``notes`` are deliberately absent:
+    storage keys and evidence snapshots do not belong in a side rail.
+    """
+    id: uuid.UUID
+    release_id: Optional[uuid.UUID] = None
+    #: ``None`` when the release was deleted (the FK is ``SET NULL``).
+    release_name: Optional[str] = None
+    release_version: Optional[str] = None
+    project_id: uuid.UUID
+    project_name: Optional[str] = None
+    bytes: int
+    file_count: int
+    #: Full 64 hex; the UI shows the first 8.
+    manifest_sha256: str
+    generated_at: datetime
+    retention_expires_at: datetime
+    #: ``retention_expires_at <= now()``.
+    retired: bool
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CompliancePackListRead(BaseModel):
+    items: list[CompliancePackSummaryRead]
+    #: Packs in scope, counted -- not ``len(items)``.
+    total: int
 
 
 class CompliancePackDownloadResponse(BaseModel):

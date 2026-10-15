@@ -45,16 +45,16 @@ Use overrides for judgment calls, not as a recurring workaround — if you overr
 
 Releases have phases (Planning, Development, Code Freeze, QA Testing, UAT, Staging, Production). By default a QA lead can complete or skip any phase, and **Mark as Released** only requires every phase to be completed or skipped.
 
-The **`release_phase_gate_enforcement`** feature flag (ships **off**, deployment-wide) makes the server refuse to:
+The **`release_phase_gate_enforcement`** feature flag (**on** for a new install; an upgraded install keeps its stored value, off unless an admin turned it on: [feature flags](../docs/operations/feature-flags.md#release-flags-on-new-installs-only)) makes the server refuse to:
 
 - complete a phase whose gate verdict is not GO, unless the request carries `gate_override_reason`;
 - skip a phase, unless the request carries `skip_reason`.
 
-Both reasons are audited. The release page does not send these fields yet, so with the flag on a user sees "Failed to update phase"; overrides go through the release-phase API (see `/api-docs`, the Releases section). Turn the flag on only if your process expects phase overrides to go through the API.
+On the release page this is one step: setting a phase to **Completed** over a failing gate, or to **Skipped**, opens a dialog that quotes the gate's own sentence (for example `This phase's gate says NO_GO: test_pay (checkout-e2e) is FAILED. ...`) and asks for a reason of at least 3 characters; **Complete with override** / **Skip phase** resends the change with the reason. Cancel changes nothing. Each reason is recorded in the access audit log and in the project's activity feed (`/activity?category=release`), for example `Phase gate Regression overridden on release 2026.11: Customer waiver CAB-142`. The API takes the same two fields (see `/api-docs`, the Releases section).
 
 ## Compliance packs
 
-Generating a compliance pack for a release needs the `release_compliance_pack` flag (ships **off**; generating answers `503` until it is on). What a pack contains and its limits: [Compliance & governance](compliance.md).
+Generating a compliance pack for a release needs the `release_compliance_pack` flag (**on** for a new install, same rule as above; generating answers `503` while it is off). The releases page's side rail lists the packs that exist, with their size and the first 8 characters of the manifest hash, and downloads them; listing and downloading never need the flag. What a pack contains and its limits: [Compliance & governance](compliance.md).
 
 ## Gating a CI pipeline
 

@@ -8064,6 +8064,32 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## CompliancePackListRead
+
+```json
+{
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/CompliancePackSummaryRead"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "total": {
+      "title": "Total",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "items",
+    "total"
+  ],
+  "title": "CompliancePackListRead",
+  "type": "object"
+}
+```
+
 ## CompliancePackRead
 
 ```json
@@ -8176,6 +8202,109 @@ These are the full generated JSON Schema definitions, including required fields,
     "generated_at"
   ],
   "title": "CompliancePackRead",
+  "type": "object"
+}
+```
+
+## CompliancePackSummaryRead
+
+```json
+{
+  "description": "One pack in the project-wide list (``GET /api/v1/compliance-packs``, W05 REL-04).\n\n``minio_key``, ``metadata_snapshot`` and ``notes`` are deliberately absent:\nstorage keys and evidence snapshots do not belong in a side rail.",
+  "properties": {
+    "bytes": {
+      "title": "Bytes",
+      "type": "integer"
+    },
+    "file_count": {
+      "title": "File Count",
+      "type": "integer"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "title": "Generated At",
+      "type": "string"
+    },
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "manifest_sha256": {
+      "title": "Manifest Sha256",
+      "type": "string"
+    },
+    "project_id": {
+      "format": "uuid",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "project_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Project Name"
+    },
+    "release_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Release Id"
+    },
+    "release_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Release Name"
+    },
+    "release_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Release Version"
+    },
+    "retention_expires_at": {
+      "format": "date-time",
+      "title": "Retention Expires At",
+      "type": "string"
+    },
+    "retired": {
+      "title": "Retired",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "id",
+    "project_id",
+    "bytes",
+    "file_count",
+    "manifest_sha256",
+    "generated_at",
+    "retention_expires_at",
+    "retired"
+  ],
+  "title": "CompliancePackSummaryRead",
   "type": "object"
 }
 ```
@@ -23400,6 +23529,21 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Id",
       "type": "string"
     },
+    "is_active": {
+      "default": true,
+      "title": "Is Active",
+      "type": "boolean"
+    },
+    "is_service_account": {
+      "default": false,
+      "title": "Is Service Account",
+      "type": "boolean"
+    },
+    "is_synthetic": {
+      "default": false,
+      "title": "Is Synthetic",
+      "type": "boolean"
+    },
     "project_id": {
       "format": "uuid",
       "title": "Project Id",
@@ -25603,6 +25747,17 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Name",
       "type": "string"
     },
+    "owner_user_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Owner User Id"
+    },
     "phases": {
       "default": [],
       "items": {
@@ -25813,6 +25968,17 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Name"
+    },
+    "owner_user_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Owner User Id"
     },
     "planned_date": {
       "anyOf": [

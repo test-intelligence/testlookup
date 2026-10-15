@@ -1,7 +1,11 @@
 /**
- * PhasePipeline — six chips in a single bar showing where a release sits
- * in its pipeline. Active chips get a teal halo; failed chips show the
- * failure-mode note inline; skip chip is fully muted.
+ * PhasePipeline — one chip per phase of the release, in a single bar, showing
+ * where the release sits in its pipeline. The chips are the release's OWN
+ * phases (name and status, REL-01): there is no fixed template, so a release
+ * with "Build verification" and "Soak" shows exactly those two. At most
+ * `MAX_PHASE_CHIPS` chips, then a `+N` chip; no phases renders nothing.
+ * Active chips get a teal halo; failed chips show the failure-mode note
+ * inline; skip chip is fully muted.
  */
 import { clsx } from 'clsx'
 import type { DerivedPhase, PhaseState } from './types'
@@ -21,12 +25,18 @@ const STATE_STYLE: Record<PhaseState, {
   skipped: { dot: 'var(--color-text-faint)',   textColor: 'var(--color-text-faint)',    bg: 'var(--color-bg-secondary)', border: 'var(--color-border)' },
 }
 
+/** Chips drawn before the rest collapse into one `+N` chip. */
+export const MAX_PHASE_CHIPS = 8
+
 interface PhasePipelineProps {
   phases: DerivedPhase[]
   className?: string
 }
 
 export default function PhasePipeline({ phases, className }: PhasePipelineProps) {
+  if (phases.length === 0) return null
+  const shown = phases.slice(0, MAX_PHASE_CHIPS)
+  const hidden = phases.slice(MAX_PHASE_CHIPS)
   return (
     <div
       className={clsx('flex items-stretch overflow-hidden rounded-md border', className)}
@@ -34,7 +44,7 @@ export default function PhasePipeline({ phases, className }: PhasePipelineProps)
       role="list"
       aria-label="Release phase pipeline"
     >
-      {phases.map((p, i) => {
+      {shown.map((p, i) => {
         const s = STATE_STYLE[p.state]
         // Render the failure-mode note inline rather than the generic state
         // label — gives the user a one-glance reason without a tooltip.
@@ -53,7 +63,7 @@ export default function PhasePipeline({ phases, className }: PhasePipelineProps)
               borderLeftColor: 'var(--color-border)',
             }}
             aria-label={`${p.label} — ${p.state}`}
-            title={p.state === 'failed' && p.note ? p.note : `${p.label} — ${p.state}`}
+            title={p.state === 'failed' && p.note ? `${p.label} — ${p.state}: ${p.note}` : `${p.label} — ${p.state}`}
           >
             <span
               className="inline-block w-2 h-2 rounded-full shrink-0"
@@ -68,6 +78,18 @@ export default function PhasePipeline({ phases, className }: PhasePipelineProps)
           </div>
         )
       })}
+      {hidden.length > 0 && (
+        <div
+          role="listitem"
+          data-phase-more=""
+          className="shrink-0 flex items-center px-2.5 py-1.5 text-[11.5px] border-l text-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
+          style={{ borderLeftColor: 'var(--color-border)' }}
+          aria-label={`${hidden.length} more phase${hidden.length === 1 ? '' : 's'}`}
+          title={hidden.map(p => `${p.label} — ${p.state}`).join(', ')}
+        >
+          +{hidden.length}
+        </div>
+      )}
     </div>
   )
 }
