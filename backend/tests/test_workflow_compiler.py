@@ -470,3 +470,34 @@ def test_untrusted_condition_fuzz_never_escapes_validation() -> None:
         result = validate_workflow(body)
         assert isinstance(result.valid, bool)
         assert all(isinstance(error, str) for error in result.errors)
+
+
+def test_the_triage_projection_routes_on_the_frozen_pipeline_threshold() -> None:
+    """W04 AIC-03: production's summary->triage edge
+    (``triageable_analysis_count > 0``) counts against the Settings > AI value
+    the pipeline froze, not the summary step's ``thresholds.confidence_min``."""
+    from app.agents.workflow_compiler import _project_state
+
+    config = {"thresholds": {"confidence_min": 80}}
+    analyses = {
+        "a": {"confidence_score": 85},
+        "b": {"confidence_score": 96},
+        "c": {"confidence_score": 99, "is_flaky": True},
+    }
+
+    assert _project_state({"analyses": analyses, "confidence_threshold": 95}, config)[
+        "triageable_analysis_count"
+    ] == 1
+    assert _project_state({"analyses": analyses, "confidence_threshold": 40}, config)[
+        "triageable_analysis_count"
+    ] == 2
+    # No frozen value (custom fixtures, unit harnesses): the step config applies.
+    assert _project_state({"analyses": analyses}, config)["triageable_analysis_count"] == 2
+    # A junk frozen value never becomes the threshold.
+    assert _project_state({"analyses": analyses, "confidence_threshold": True}, config)[
+        "triageable_analysis_count"
+    ] == 2
+    assert _project_state({"analyses": analyses, "confidence_threshold": 101}, {})[
+        "triageable_analysis_count"
+    ] == 2  # falls back to the 0.7 default
+

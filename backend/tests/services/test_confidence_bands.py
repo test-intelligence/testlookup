@@ -214,7 +214,11 @@ def test_downstream_threshold_constants_unchanged():
     from app.agents import analysis_agent
 
     assert settings.AI_CONFIDENCE_THRESHOLD == 80
-    assert triage_agent._AUTO_TRIAGE_CONFIDENCE == settings.AI_CONFIDENCE_THRESHOLD
+    # W04 AIC-03: the import-time constant is gone; triage reads the frozen
+    # pipeline threshold per call, which with nothing frozen is the env default.
+    assert not hasattr(triage_agent, "_AUTO_TRIAGE_CONFIDENCE")
+    assert triage_agent._triage_threshold({}) == settings.AI_CONFIDENCE_THRESHOLD
+    assert triage_agent._triage_threshold({"confidence_threshold": 95}) == 95
     assert analysis_agent._RETRY_CONFIDENCE_THRESHOLD == 40
 
 

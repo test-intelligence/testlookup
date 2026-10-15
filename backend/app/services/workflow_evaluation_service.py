@@ -98,6 +98,24 @@ def replay_input_hash(
     })
 
 
+def _historical_gap_refinement_settings(metadata: Mapping[str, Any]) -> dict[str, bool]:
+    """``gap_refinement_settings`` of a historical run (W04 AGT-16).
+
+    A pre-W04 row has none; what its frozen plan decided for ``gap_detection``
+    is the same fact (an offline plan has no such stage: ``False``), so legacy
+    offline evidence keeps matching a candidate that resolves the flag off.
+    """
+    stored = metadata.get("gap_refinement_settings")
+    if isinstance(stored, Mapping) and isinstance(stored.get("enabled"), bool):
+        return {"enabled": bool(stored["enabled"])}
+    plan = metadata.get("initial_workflow_plan")
+    stages = plan.get("stages") if isinstance(plan, Mapping) else None
+    for item in stages if isinstance(stages, list) else []:
+        if isinstance(item, Mapping) and item.get("stage") == "gap_detection":
+            return {"enabled": item.get("planned") is True}
+    return {"enabled": False}
+
+
 def step_execution_authority(
     *,
     definition: Mapping[str, Any],
@@ -570,6 +588,8 @@ async def _load_replay_cases(
                 ),
                 "change_ownership_settings": metadata.get("change_ownership_settings"),
                 "defect_commander_settings": metadata.get("defect_commander_settings"),
+                # W04 AGT-16: mirrors the candidate side (_candidate_step_authority).
+                "gap_refinement_settings": _historical_gap_refinement_settings(metadata),
                 "run_budget": metadata.get("run_budget"),
             }
             authority = step_execution_authority(
@@ -755,9 +775,23 @@ async def _candidate_step_authority(
             "defect_commander", db=db, project_id=project_id, fresh=True
         ),
     }
+    # W04 AGT-16: resolved like the runtime does (deep only), so the evaluated
+    # plan matches the one _create_pipeline_run freezes.
+    gap_refinement_enabled = (
+        await is_enabled("aiq_gap_refinement", db=db, project_id=project_id, fresh=True)
+        if base == "deep"
+        else False
+    )
     run_budget = run_budget_from_policy(await get_effective_policy(db, project_id))
+    # W04 AIC-03: the runtime builds its plan with the Settings > AI threshold
+    # it freezes (part of the behaviour-plan hash); the candidate must too, or
+    # every replay mismatches on an install whose stored threshold differs.
+    from app.services.pipeline_ai_scope import build_ai_config_snapshot
+
+    frozen_threshold = int(build_ai_config_snapshot(global_ai_config)["confidence_threshold"])
     plan = build_workflow_plan(
         workflow_type=base,
+        threshold=frozen_threshold,
         cluster_children_enabled=bool(cluster_settings["enabled"]),
         cluster_children_aggregate_budget=dict(cluster_settings["aggregate_budget"]),
         decision_graph_aggregate_budget=dict(run_budget),
@@ -766,6 +800,7 @@ async def _candidate_step_authority(
         regression_watchman_enabled=specialist_flags["regression_watchman"],
         change_ownership_enabled=specialist_flags["change_ownership"],
         defect_commander_enabled=specialist_flags["defect_commander"],
+        gap_refinement_enabled=bool(gap_refinement_enabled),
     )
     by_capability = {
         str(item.get("stage")): dict(item)
@@ -822,6 +857,7 @@ async def _candidate_step_authority(
         "regression_watchman_settings": {"enabled": specialist_flags["regression_watchman"]},
         "change_ownership_settings": {"enabled": specialist_flags["change_ownership"]},
         "defect_commander_settings": {"enabled": specialist_flags["defect_commander"]},
+        "gap_refinement_settings": {"enabled": bool(gap_refinement_enabled)},
         "run_budget": run_budget,
     }
     return {
