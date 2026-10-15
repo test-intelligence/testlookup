@@ -31,6 +31,7 @@ from app.core.token_revocation import (
     is_jti_revoked,
     is_token_before_cutoff,
     revoke_jti,
+    unavailable_detail,
 )
 from app.db.postgres import get_db
 from app.models.postgres import IdentityEventType, User
@@ -126,13 +127,10 @@ async def _user_from_mfa_token(
     try:
         if await is_jti_revoked(str(jti)):
             raise _INVALID_TOKEN
-    except RevocationUnavailable:
+    except RevocationUnavailable as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "MFA token status cannot be verified right now (revocation store "
-                "unavailable). This is a server-side outage — retry shortly."
-            ),
+            detail=unavailable_detail(exc, subject="MFA token"),
             headers={"Retry-After": "5"},
         )
 
@@ -153,13 +151,10 @@ async def _user_from_mfa_token(
     try:
         if await is_token_before_cutoff(uid, iat_value):
             raise _INVALID_TOKEN
-    except RevocationUnavailable:
+    except RevocationUnavailable as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "MFA token revocation status cannot be verified right now "
-                "(revocation store unavailable). Retry shortly."
-            ),
+            detail=unavailable_detail(exc, subject="MFA token"),
             headers={"Retry-After": "5"},
         )
     setattr(user, "_mfa_token_jti", str(jti))

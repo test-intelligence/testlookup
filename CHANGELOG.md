@@ -327,6 +327,18 @@ locally by default.
 
 ### Fixed
 
+- **"Token revocation status cannot be verified" now says what failed.** It
+  read "revocation store unavailable", and the log said "Restore Redis", even
+  when Redis and the database were fine and the server had simply run out of
+  free database connections. The message now names the cause: no free
+  database connection (an overloaded server), the database unreachable, or
+  the token cache unreachable; the log names the matching remedy.
+- **Fewer requests hold two database connections at once.** Caching a
+  freshly computed run summary (on the page, on refresh, or for an export)
+  opened a second connection while the request still held its first, and a
+  release override did its work in a second connection beside the request's.
+  The summary paths now hand their connection back before the cache write,
+  and the override uses the request's own.
 - **The analysis mode set in Settings › AI no longer reverts** (W04, AIC-04).
   Thirty seconds after a worker read it, the mode fell back to the deployment's
   `ANALYSIS_MODE`, and a Redis expiry did the same after a day; a pipeline

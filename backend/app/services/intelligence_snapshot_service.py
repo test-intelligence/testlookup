@@ -252,11 +252,15 @@ async def get_or_compute(db: AsyncSession, run_id: uuid.UUID) -> dict:
 
     try:
         from app.db.postgres import AsyncSessionLocal as _AsyncSessionLocal
+        from app.db.postgres import release_read_connection
 
         provenance = payload.get("provenance") if isinstance(payload, dict) else None
         fallback = (
             provenance.get("fallback_used", False) if isinstance(provenance, dict) else False
         )
+        # One connection at a time: the caller's read session hands its own
+        # back before the write session takes one (2 + 1 pool).
+        await release_read_connection(db)
         async with _AsyncSessionLocal() as write_db:
             await save_snapshot(write_db, run_id, payload, fallback_used=fallback)
     except Exception as exc:  # noqa: BLE001 — caching is best-effort

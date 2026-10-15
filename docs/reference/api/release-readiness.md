@@ -120,7 +120,7 @@ Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_curren
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-run_id: uuid.UUID, body: ReleaseCouncilOverrideRequest, current_user: User=Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)), _: User=Depends(require_run_access())
+run_id: uuid.UUID, body: ReleaseCouncilOverrideRequest, current_user: User=Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)), _: User=Depends(require_run_access()), db: AsyncSession=Depends(get_db)
 ```
 
 Direct handler error branches (dependency/service errors can add others):
