@@ -288,9 +288,8 @@ def _iso_utc(value: Any) -> Optional[str]:
     if value is None:
         return None
     if isinstance(value, datetime):
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc).isoformat()
+        moment: datetime = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+        return moment.astimezone(timezone.utc).isoformat()
     return str(value)
 
 

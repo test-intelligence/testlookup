@@ -148,7 +148,8 @@ async def list_releases(
         for release, item in zip(rows, items):
             item["test_run_count"] = count_map.get(item["id"], 0)
             item["gate"] = gates.get(item["id"])
-            item["owner"] = owners.get(getattr(release, "owner_user_id", None))
+            owner_id = getattr(release, "owner_user_id", None)
+            item["owner"] = owners.get(owner_id) if owner_id is not None else None
 
     return {"items": items, "total": len(items)}
 
