@@ -903,12 +903,16 @@ describe('DefectsPage — renders only what it really does (P2)', () => {
     expect(open[0]).toHaveAccessibleName('Open ACME-7 in Jira')
     expect(open[0]).toHaveAttribute('href', 'https://acme.atlassian.net/browse/ACME-7')
     expect(open[0]).toHaveAttribute('target', '_blank')
-    // The Actions cell (the last one) of every row: the one safe link at most,
-    // and the "Defect actions" menu (DefectRowActions decides who sees it).
+    // The link is the Jira key itself (the Jira cell); the Actions cell (the
+    // last one) holds only the "Defect actions" menu (DefectRowActions decides
+    // who sees it) -- a second "Open" button there pushed the menu out of the
+    // card at 1280 px on CI's fonts.
     const bodyRows = within(screen.getByRole('table')).getAllByRole('row').slice(1)
     expect(bodyRows).toHaveLength(4)
+    expect(open[0].closest('td')).toBe(rowOf('checkout linked').querySelectorAll('td')[5])
+    expect(open[0]).toHaveTextContent('ACME-7')
     const actionCells = bodyRows.map(r => r.querySelectorAll('td')[7])
-    expect(actionCells.flatMap(c => [...c.querySelectorAll('a')])).toHaveLength(1)
+    expect(actionCells.flatMap(c => [...c.querySelectorAll('a')])).toHaveLength(0)
     expect(actionCells.map(c => within(c).getAllByTestId('row-actions').length)).toEqual([1, 1, 1, 1])
     // The unsafe URL renders no link anywhere in the row (the Jira cell shows the key as text).
     expect(rowOf('checkout unsafe').querySelector('a')).toBeNull()

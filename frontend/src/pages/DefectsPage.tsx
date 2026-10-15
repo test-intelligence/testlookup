@@ -25,8 +25,8 @@
  *             Status · Owner · Jira · Age · Actions, filtered by the status
  *             tabs (the `Tabs` primitive since P6; state in localStorage and
  *             saved views, not `?tab=`) and the search in its header. A row
- *             does not expand; its actions are "Open in Jira" (every role)
- *             and the "Defect actions" menu (QA engineer and above: status,
+ *             does not expand; its Jira key is the "Open in Jira" link (every
+ *             role) and its action is the "Defect actions" menu (QA engineer and above: status,
  *             assignee, Jira link — `DefectRowActions`), whose answer
  *             replaces the row in place. `?defect=<id>` (the activity feed's
  *             link) highlights and scrolls to that row.
@@ -983,9 +983,11 @@ function DefectRowEl({
     : row.ageTone === 'good' ? 'var(--status-passed)'
     : 'var(--color-text)'
 
-  // "Open in Jira" for a row with a safe ticket URL (every role); the
-  // "Defect actions" menu beside it renders for a QA engineer and above
-  // (`DefectRowActions` decides, and needs the row's project).
+  // A row with a safe ticket URL: its Jira key is the "Open … in Jira" link
+  // (every role). The Actions cell is the "Defect actions" menu, for a QA
+  // engineer and above (`DefectRowActions` decides, and needs the row's
+  // project). A second "Open" button there repeated the key's link and, on
+  // CI's fonts at 1280 px, pushed the menu out of the card (W06 baselines).
   const jiraHref = row.jira_ticket_url && isSafeExternalUrl(row.jira_ticket_url)
     ? row.jira_ticket_url
     : null
@@ -1059,8 +1061,10 @@ function DefectRowEl({
           <a
             href={jiraHref}
             target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1 text-[10.5px] font-mono px-1.5 py-0.5 rounded-md"
+            rel="noopener noreferrer"
+            aria-label={`Open ${row.jiraKey ?? row.keyLabel} in Jira`}
+            title={`Open ${row.jiraKey ?? row.keyLabel} in Jira`}
+            className="inline-flex items-center gap-1 whitespace-nowrap text-[10.5px] font-mono px-1.5 py-0.5 rounded-md"
             style={{ background: 'color-mix(in srgb, var(--color-accent) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--color-accent) 25%, transparent)', color: 'var(--color-accent)' }}
           >
             {row.jiraKey ?? row.jira_ticket_id}
@@ -1100,25 +1104,7 @@ function DefectRowEl({
         </span>
       </td>
       <td style={{ padding: '10px 12px', textAlign: 'right' }}>
-        <div className="inline-flex items-center justify-end gap-1.5">
-          {jiraHref && (
-            <a
-              href={jiraHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label={`Open ${row.jiraKey ?? row.keyLabel} in Jira`}
-              className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-md border transition-colors"
-              style={{
-                color: 'var(--color-accent)',
-                borderColor: 'color-mix(in srgb, var(--color-accent) 30%, transparent)',
-                background: 'var(--color-accent-bg-soft)',
-              }}
-            >
-              Open <ExternalLink className="h-3 w-3" />
-            </a>
-          )}
-          <DefectRowActions defect={row.source} onUpdated={onUpdated} />
-        </div>
+        <DefectRowActions defect={row.source} onUpdated={onUpdated} />
       </td>
     </tr>
   )
@@ -1300,12 +1286,15 @@ function CardShell({
       className="overflow-hidden rounded-xl"
       style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
     >
+      {/* Words never wrap here (a tab read "In / progress", the title "Age / ↓" on
+          CI's fonts at 1280 px); when the title and the right slot do not fit one
+          line, the right slot takes a second one. */}
       <div
-        className="flex items-center justify-between gap-2.5 px-4 py-3"
+        className="flex flex-wrap items-center justify-between gap-x-2.5 gap-y-2 px-4 py-3"
         style={{ borderBottom: '1px solid var(--color-border)' }}
       >
-        <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">{title}</h3>
-        {rightSlot && <div className="flex items-center gap-2.5 text-[12px] text-[var(--color-text-muted)]">{rightSlot}</div>}
+        <h3 className="whitespace-nowrap text-[13px] font-semibold m-0 text-[var(--color-text)]">{title}</h3>
+        {rightSlot && <div className="flex items-center gap-2.5 whitespace-nowrap text-[12px] text-[var(--color-text-muted)]">{rightSlot}</div>}
       </div>
       {children}
     </div>
