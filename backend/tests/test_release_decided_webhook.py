@@ -529,13 +529,13 @@ async def test_an_override_is_announced_after_the_route_commits(monkeypatch, wor
     async def _unused(_statement):
         raise AssertionError("the route's own session runs no query here")
 
-    monkeypatch.setattr(
-        route, "AsyncSessionLocal", lambda: _Session(_unused, log=world.log, name="override")
-    )
+    # The route works on the request's session (Depends(get_db)), not a
+    # second one of its own; the direct call passes it.
+    route_db = _Session(_unused, log=world.log, name="override")
     body = ReleaseCouncilOverrideRequest(override_recommendation="GO", reason=reason)
 
     assert await route.override_release_decision(
-        run_id=RUN, body=body, current_user=overrider, _=overrider
+        run_id=RUN, body=body, current_user=overrider, _=overrider, db=route_db
     ) is council
 
     assert world.log == ["override_commit", "stage", "webhook_commit"]
@@ -553,7 +553,10 @@ async def test_an_override_is_announced_after_the_route_commits(monkeypatch, wor
 
     # A second override is a second decision, and a second delivery.
     world.decision.override_audit = [*world.decision.override_audit, second_audit]
-    await route.override_release_decision(run_id=RUN, body=body, current_user=overrider, _=overrider)
+    await route.override_release_decision(
+        run_id=RUN, body=body, current_user=overrider, _=overrider,
+        db=_Session(_unused, log=world.log, name="override"),
+    )
     assert len(world.table.rows) == 2
     assert len(world.published) == 2
 

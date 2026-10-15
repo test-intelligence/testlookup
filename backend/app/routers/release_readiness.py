@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import require_role, require_run_access
-from app.db.postgres import AsyncSessionLocal, get_db
+from app.db.postgres import get_db
 from app.models.postgres import ReleaseDecision, TestRun, User, UserRole
 from app.models.schemas import (
     ReleaseCouncilOverrideRequest,
@@ -107,6 +107,10 @@ async def override_release_decision(
     body: ReleaseCouncilOverrideRequest,
     current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     _: User = Depends(require_run_access()),
+    # The request's own session -- the guards' -- not a second one: the
+    # handler used to open AsyncSessionLocal() while the guards held this,
+    # two of a worker's three connections at once.
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Override the AI release decision (QA Lead only).
@@ -124,74 +128,73 @@ async def override_release_decision(
             detail="Override reason is required.",
         )
 
-    async with AsyncSessionLocal() as db:
-        council = await apply_override(
-            run_id=run_id,
-            override_recommendation=body.override_recommendation,
-            reason=body.reason.strip(),
-            actor=current_user,
-            db=db,
+    council = await apply_override(
+        run_id=run_id,
+        override_recommendation=body.override_recommendation,
+        reason=body.reason.strip(),
+        actor=current_user,
+        db=db,
+    )
+    if not council:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No release decision found for this run.",
         )
-        if not council:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No release decision found for this run.",
-            )
-        # BL-03: drop the intelligence snapshot after a release override.
-        # ``apply_override`` and ``stage_invalidate`` are both stage-only, so
-        # the single commit below keeps the override and the invalidation
-        # atomic.
-        #
-        # DELETE, not mark-stale. A human has just written GO -> NO_GO; a row
-        # still saying GO must not be servable at all. Marking it stale leaves
-        # it servable until a background refresh converges, and handing a
-        # superseded GO to even one CI poller is exactly the defect.
-        try:
-            from app.services.intelligence_snapshot_service import stage_invalidate
-            await stage_invalidate(db, run_id)
-        except Exception:
-            pass  # Non-blocking
+    # BL-03: drop the intelligence snapshot after a release override.
+    # ``apply_override`` and ``stage_invalidate`` are both stage-only, so
+    # the single commit below keeps the override and the invalidation
+    # atomic.
+    #
+    # DELETE, not mark-stale. A human has just written GO -> NO_GO; a row
+    # still saying GO must not be servable at all. Marking it stale leaves
+    # it servable until a background refresh converges, and handing a
+    # superseded GO to even one CI poller is exactly the defect.
+    try:
+        from app.services.intelligence_snapshot_service import stage_invalidate
+        await stage_invalidate(db, run_id)
+    except Exception:
+        pass  # Non-blocking
 
-        # The activity ledger is the cross-cutting "what happened in this
-        # project" record, and a QA Lead reversing the product's own ship
-        # recommendation is the action most likely to be asked about later. It
-        # was the one release action missing from that ledger: the catalog has
-        # declared ``release.decision_overridden`` all along and nothing ever
-        # emitted it, while eleven other routers record activity — including
-        # the review-accept path, for a far less consequential act.
-        #
-        # Staged, not committed, so it lands in the same transaction as the
-        # override itself: an override that rolls back must not leave a ledger
-        # entry claiming it happened.
-        try:
-            project_id = (
-                await db.execute(select(TestRun.project_id).where(TestRun.id == run_id))
-            ).scalar_one_or_none()
-            if project_id is not None:
-                before_recommendation = council.original_recommendation
-                await record_activity(
-                    db,
-                    project_id=project_id,
-                    event_type="release.decision_overridden",
-                    actor=ActorRef.from_user(current_user),
-                    entity_id=run_id,
-                    entity_label=str(run_id),
-                    # The catalog template interpolates {recommendation}.
-                    context={
-                        "recommendation": council.recommendation,
-                        "run_id": str(run_id),
-                        "reason": body.reason.strip(),
-                    },
-                    before={"recommendation": before_recommendation},
-                    after={"recommendation": council.recommendation},
-                    changed_fields=["recommendation"],
-                )
-        except Exception as exc:  # noqa: BLE001 — the committed override stands
-            logger.warning(
-                "release override activity record failed for run %s: %s", run_id, exc
+    # The activity ledger is the cross-cutting "what happened in this
+    # project" record, and a QA Lead reversing the product's own ship
+    # recommendation is the action most likely to be asked about later. It
+    # was the one release action missing from that ledger: the catalog has
+    # declared ``release.decision_overridden`` all along and nothing ever
+    # emitted it, while eleven other routers record activity — including
+    # the review-accept path, for a far less consequential act.
+    #
+    # Staged, not committed, so it lands in the same transaction as the
+    # override itself: an override that rolls back must not leave a ledger
+    # entry claiming it happened.
+    try:
+        project_id = (
+            await db.execute(select(TestRun.project_id).where(TestRun.id == run_id))
+        ).scalar_one_or_none()
+        if project_id is not None:
+            before_recommendation = council.original_recommendation
+            await record_activity(
+                db,
+                project_id=project_id,
+                event_type="release.decision_overridden",
+                actor=ActorRef.from_user(current_user),
+                entity_id=run_id,
+                entity_label=str(run_id),
+                # The catalog template interpolates {recommendation}.
+                context={
+                    "recommendation": council.recommendation,
+                    "run_id": str(run_id),
+                    "reason": body.reason.strip(),
+                },
+                before={"recommendation": before_recommendation},
+                after={"recommendation": council.recommendation},
+                changed_fields=["recommendation"],
             )
+    except Exception as exc:  # noqa: BLE001 — the committed override stands
+        logger.warning(
+            "release override activity record failed for run %s: %s", run_id, exc
+        )
 
-        await db.commit()
+    await db.commit()
     # Outbound ``release.decided`` for the override. It runs after the commit,
     # never before: a rolled-back override must not reach a subscriber. The
     # emitter opens its own session and never raises. The guard also covers a
