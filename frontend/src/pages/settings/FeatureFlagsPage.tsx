@@ -192,7 +192,9 @@ export default function FeatureFlagsPage() {
         </div>
       )}
 
-      <div className="overflow-hidden rounded-md border border-[var(--color-border)]">
+      {/* Scrolls rather than clips: the 34-character async_decision_report_supersession key
+          widened the table past the settings column at 1280 px and hid Scope and Edit. */}
+      <div className="overflow-x-auto rounded-md border border-[var(--color-border)]">
         <table className="w-full text-sm">
           <thead className="bg-[var(--color-bg-secondary)] text-xs text-[var(--color-text-muted)]">
             <tr>
@@ -284,7 +286,7 @@ function FlagRow({
         </span>
       </td>
       <td
-        className="px-3 py-2 text-xs text-[var(--color-text-muted)] max-w-xs truncate"
+        className="px-3 py-2 text-xs text-[var(--color-text-muted)] max-w-0 w-full truncate"
         title={flag.description || undefined}
       >
         {flag.description || '—'}

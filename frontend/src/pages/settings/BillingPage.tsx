@@ -97,7 +97,9 @@ export default function BillingPage() {
       </div>
 
       {/* Project table */}
-      <div data-billing-table="" className="overflow-hidden rounded-md border border-[var(--color-border)]">
+      {/* Scrolls rather than clips: with the overage columns a wide row (a projection line,
+          a long project name) pushed Status, Cap hits and Edit out of an overflow-hidden box. */}
+      <div data-billing-table="" className="overflow-x-auto rounded-md border border-[var(--color-border)]">
         <table className="w-full text-sm">
           <thead className="bg-[var(--color-bg-secondary)] text-xs text-[var(--color-text-muted)]">
             <tr>
@@ -243,9 +245,11 @@ function ProjectRow({
           <div
             data-billing-projection=""
             title={projectionTitle(row.projection_basis, elapsed)}
-            className="text-[10px] font-sans text-[var(--color-text-muted)] whitespace-nowrap"
+            className="text-[10px] font-sans text-[var(--color-text-muted)]"
           >
-            proj. {formatUsd(row.projected_overage_charge_usd)} by month end
+            {/* Two unbreakable halves, so the Charge column stays as narrow as "proj. $47.14". */}
+            <span className="whitespace-nowrap">proj. {formatUsd(row.projected_overage_charge_usd)}</span>{' '}
+            <span className="whitespace-nowrap">by month end</span>
           </div>
         )}
       </td>
