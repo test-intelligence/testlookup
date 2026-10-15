@@ -661,7 +661,12 @@ def _diff_provenance(a: Mapping[str, Any], b: Mapping[str, Any], mode: str) -> d
     fallback = _pair(bool(a.get("fallback_used")), bool(b.get("fallback_used")))
     deterministic = _pair(bool(a.get("deterministic")), bool(b.get("deterministic")))
     mode_counts = _pair(dict(a.get("mode_counts") or {}), dict(b.get("mode_counts") or {}))
-    changed = any(x is not None for x in (engine, model, fallback, deterministic, mode_counts))
+    # The counts are reported, but only a different SET of modes is a provenance change: rules
+    # on 2 tests -> rules on 3 tests is the same engine with one more analysed test, and the UI
+    # said "The analysis engine changed" for it.
+    modes_from = sorted(k for k, n in (a.get("mode_counts") or {}).items() if k and n)
+    modes_to = sorted(k for k, n in (b.get("mode_counts") or {}).items() if k and n)
+    changed = any(x is not None for x in (engine, model, fallback, deterministic)) or modes_from != modes_to
     note = None
     if engine is not None:
         frm, to = _engine_word(engine["from"]), _engine_word(engine["to"])

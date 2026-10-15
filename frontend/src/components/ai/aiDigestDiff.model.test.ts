@@ -27,6 +27,22 @@ describe('buildDiffModel — sections', () => {
     expect(model.verdict).toMatchObject({ text: 'Verdict CONDITIONAL_GO -> NO_GO', direction: 'worse', risk: 'risk 55 -> 72 (+17)' })
   })
 
+  it('without a server note it never claims the engine changed, and a missing risk says "not reported"', () => {
+    // Regression (W03 local walk): a fallback-only change read "The analysis engine changed", and a baseline
+    // with no risk read "risk - -> 48".
+    const diff = versionsDiff()
+    const model = buildDiffModel({
+      ...diff,
+      provenance: { ...diff.provenance, changed: true, engine: null, model: null, deterministic: null, note: null,
+        fallback_used: { from: false, to: true } },
+      verdict: { ...diff.verdict, from_risk: null, to_risk: 48, risk_delta: null },
+    })
+    expect(model.provenance?.note).not.toMatch(/engine changed/)
+    expect(model.provenance?.note).toMatch(/^How these analyses were produced changed/)
+    expect(model.provenance?.changes).toEqual(['fallback no -> yes'])
+    expect(model.verdict?.risk).toBe('risk not reported -> 48')
+  })
+
   it('omits a section that has nothing to say', () => {
     const diff = versionsDiff()
     const model = buildDiffModel({

@@ -686,3 +686,17 @@ def test_goldens(name):
     if UPDATE:
         path.write_text(text, encoding="utf-8", newline="\n")
     assert json.loads(path.read_text(encoding="utf-8")) == actual
+
+
+def test_more_tests_analysed_by_the_same_engine_is_not_a_provenance_change():
+    """Regression (W03 local walk): rules on 2 tests -> rules on 3 tests set provenance.changed,
+    and the previous-run card said "The analysis engine changed between these analyses"."""
+    same = {"engine": "rules", "llm_provider": None, "llm_model": "rules_engine", "fallback_used": False,
+            "deterministic": True}
+    p = core._diff_provenance({**same, "mode_counts": {"rules": 2}}, {**same, "mode_counts": {"rules": 3}}, "cross_run")
+    assert p["changed"] is False and p["note"] is None
+    assert p["mode_counts"] == {"from": {"rules": 2}, "to": {"rules": 3}}  # still reported
+    mixed = core._diff_provenance(
+        {**same, "mode_counts": {"rules": 2}}, {**same, "mode_counts": {"rules": 2, "llm": 1}}, "cross_run",
+    )
+    assert mixed["changed"] is True

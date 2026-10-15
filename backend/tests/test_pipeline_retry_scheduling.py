@@ -166,7 +166,9 @@ def test_pipeline_task_no_longer_uses_celery_retries():
     assert "self.retry(" not in body
     assert "_schedule_pipeline_retry(" in body
     assert "_release_duplicate_lock(dedup_key, dedup_owner)" in body  # exhausted path still releases
-    assert body.count("requested_by=requested_by,") == 2
+    # The two retry schedules forward who asked, and so does the admission check (a person's
+    # trigger is not an automatic duplicate, W03).
+    assert body.count("requested_by=requested_by,") == 3
     assert tasks.run_agent_pipeline.max_retries == 0
     del src
 

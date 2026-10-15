@@ -49,6 +49,7 @@ from app.services.review_envelope import (
     envelope_from_review,
     review_envelope_for_run,
 )
+from app.services.analytics_scope import run_touches_suite_clause
 from app.services.run_compare_service import ensure_run_has_suite, normalize_suite_name
 
 logger = structlog.get_logger("services.ai_history_read")
@@ -661,14 +662,9 @@ async def resolve_previous_run(db: Any, *, run: TestRun, suite_name: str | None 
     if right_time is None:
         return no_previous
 
-    suite_exists = (
-        select(TestCase.id)
-        .where(
-            TestCase.test_run_id == TestRun.id,
-            func.lower(func.trim(TestCase.suite_name)) == suite_key,
-        )
-        .exists()
-    )
+    # The run's primary suite or one of its tests is the suite: analytics_scope's builder (the same
+    # strip+lower key as normalize_suite_name), not a clause spelled here (the scope ratchet).
+    touches_suite = run_touches_suite_clause(suite_key)
     finished = func.coalesce(TestRun.end_time, TestRun.created_at)
     branch_filter = TestRun.branch.is_(None) if run.branch is None else TestRun.branch == run.branch
     baseline = (
@@ -679,7 +675,7 @@ async def resolve_previous_run(db: Any, *, run: TestRun, suite_name: str | None 
                 TestRun.id != run.id,
                 TestRun.status != LaunchStatus.IN_PROGRESS,
                 branch_filter,
-                (func.lower(func.trim(TestRun.primary_suite_name)) == suite_key) | suite_exists,
+                touches_suite,
                 finished < right_time,
             )
             .order_by(finished.desc(), TestRun.id)

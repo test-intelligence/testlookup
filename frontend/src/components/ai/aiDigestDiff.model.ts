@@ -245,7 +245,10 @@ function provenanceModel(diff: AIDigestDiff): DiffProvenanceModel | null {
   if (p.model) changes.push(`model ${word(p.model.from)} -> ${word(p.model.to)}`)
   if (p.fallback_used) changes.push(`fallback ${yesNo(p.fallback_used.from)} -> ${yesNo(p.fallback_used.to)}`)
   if (p.deterministic) changes.push(`deterministic ${yesNo(p.deterministic.from)} -> ${yesNo(p.deterministic.to)}`)
-  const note = p.note || 'The analysis engine changed between these analyses: category changes may reflect the engine, not the product.'
+  // The server names an engine or model change in `note`; without one, say only what is known.
+  const note =
+    p.note ||
+    'How these analyses were produced changed (see below): category changes may reflect that, not the product.'
   return { note, changes, engineOnly: !!p.engine_only }
 }
 
@@ -257,7 +260,7 @@ function verdictModel(diff: AIDigestDiff): DiffVerdictModel | null {
   const text = v.changed ? `Verdict ${word(v.from, 'not decided')} -> ${word(v.to, 'not decided')}` : `Verdict ${word(v.to, 'not decided')} (unchanged)`
   const risk =
     v.from_risk != null || v.to_risk != null
-      ? `risk ${v.from_risk ?? '-'} -> ${v.to_risk ?? '-'}${v.risk_delta != null ? ` (${signed(v.risk_delta)})` : ''}`
+      ? `risk ${v.from_risk ?? 'not reported'} -> ${v.to_risk ?? 'not reported'}${v.risk_delta != null ? ` (${signed(v.risk_delta)})` : ''}`
       : null
   return { changed: v.changed, direction: v.direction || 'unknown', text, risk }
 }
