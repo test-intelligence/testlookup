@@ -190,8 +190,17 @@ export async function updatePolicy(id: string, payload: {
   return data;
 }
 
+/**
+ * GATE-03: the page renders a refused publish itself (one toast carrying the
+ * server's sentence, then a reload of the list), so the global interceptor's
+ * toast is suppressed for this one request; it would be the second toast.
+ */
 export async function publishPolicy(id: string): Promise<PolicySummary> {
-  const { data } = await api.post<PolicySummary>(`/api/v1/release-gate-policies/${id}/publish`);
+  const { data } = await api.post<PolicySummary>(
+    `/api/v1/release-gate-policies/${id}/publish`,
+    undefined,
+    { suppressToast: true },
+  );
   return data;
 }
 

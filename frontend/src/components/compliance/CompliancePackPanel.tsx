@@ -3,7 +3,8 @@ import { Archive, Download, FileCheck, ShieldCheck } from 'lucide-react'
 import toast from 'react-hot-toast'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useCompliancePacks } from '@/hooks/useCompliancePacks'
-import { compliancePackService } from '@/services/compliancePackService'
+import { refreshProjectCompliancePacks } from '@/hooks/useProjectCompliancePacks'
+import { compliancePackService, packSizeText } from '@/services/compliancePackService'
 import { usePermissions } from '@/hooks/usePermissions'
 
 interface Props {
@@ -39,9 +40,11 @@ export default function CompliancePackPanel({ releaseId, releaseName }: Props) {
         notes: notes || undefined,
       })
       await refresh()
+      // REL-04: the /releases rail lists the project's packs; it follows.
+      void refreshProjectCompliancePacks()
       setNotes('')
       toast.success(
-        `Compliance pack generated (${(pack.bytes / 1024).toFixed(1)} KB)`,
+        `Compliance pack generated (${packSizeText(pack.bytes)})`,
       )
     } catch (err) {
       const msg = (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
@@ -126,7 +129,7 @@ export default function CompliancePackPanel({ releaseId, releaseName }: Props) {
                     {new Date(pack.generated_at).toLocaleString()}
                   </span>
                   <span className="text-[var(--color-text-faint)]">
-                    {(pack.bytes / 1024).toFixed(1)} KB · {pack.file_count} files
+                    {packSizeText(pack.bytes)} · {pack.file_count} files
                   </span>
                 </div>
                 <div

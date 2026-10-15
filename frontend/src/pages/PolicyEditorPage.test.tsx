@@ -53,15 +53,26 @@ import { useProjectStore } from '@/store/projectStore'
 import { useAuthStore } from '@/store/authStore'
 
 const mockCreatePolicy = vi.fn()
+const mockPublishPolicy = vi.fn()
 const mockToastError = vi.fn()
+const mockAppMutate = vi.fn()
+/** Every `usePolicies(enabled)` call, so a test can see the list asked for after a refused publish. */
+const listHook = vi.hoisted(() => ({ enabledCalls: [] as boolean[] }))
 
 vi.mock('react-hot-toast', () => ({
   default: { error: (m: string) => mockToastError(m), success: vi.fn() },
 }))
 
 vi.mock('@/hooks/usePolicyEditor', () => ({
-  usePolicies: () => ({ policies: [], isLoading: false, isError: false, mutate: vi.fn() }),
+  usePolicies: (enabled: boolean) => {
+    listHook.enabledCalls.push(enabled)
+    return { policies: [], isLoading: false, isError: false, mutate: vi.fn() }
+  },
   usePolicy: () => ({ policy: null, isLoading: false, isError: false }),
+}))
+
+vi.mock('@/utils/swrCacheMutate', () => ({
+  appMutate: (...a: unknown[]) => mockAppMutate(...a),
 }))
 
 vi.mock('../services/policyService', async () => {
@@ -72,7 +83,7 @@ vi.mock('../services/policyService', async () => {
     ...actual,
     createPolicy: (...a: unknown[]) => mockCreatePolicy(...a),
     updatePolicy: vi.fn(),
-    publishPolicy: vi.fn(),
+    publishPolicy: (...a: unknown[]) => mockPublishPolicy(...a),
     deactivatePolicy: vi.fn(),
     simulatePolicy: vi.fn(),
   }
@@ -130,6 +141,7 @@ function nameIt(value = 'Release gate') {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  listHook.enabledCalls.length = 0
   // Every write on this page is ADMIN on the API; these tests author policies.
   // What a QA lead sees is PolicyEditorPage.roles.test.tsx.
   useAuthStore.setState({ user: { id: 'admin', role: 'ADMIN' } as never })
@@ -423,5 +435,62 @@ describe('the Performance regression rule is opt-in', () => {
     const [saved] = created.rules.rules.filter(r => r.type === 'perf_regression')
     expect(saved.enabled).toBe(true)
     expect(saved.params).toEqual({ max_spikes: 2, min_sigma: 3, suite_ratio: 1.5, max_suite_regressions: 0, action: 'BLOCK' })
+  })
+})
+
+/**
+ * GATE-03: two admins publishing two drafts of one scope at once. The database
+ * now keeps one active policy per scope, and the loser gets a 409 with a
+ * sentence. The page showed TWO toasts: the interceptor's (the server's detail)
+ * and its own `err.message`, Axios's "Request failed with status code 409".
+ * The request now suppresses the interceptor's toast (`policyService`); the
+ * page shows one, carrying the detail, and reloads the list so the winner's
+ * Active badge is what the reader sees next.
+ */
+describe('a refused publish', () => {
+  const RACE =
+    'Another policy was published for this scope at the same moment. Reload the policies and publish again if you still want this version.'
+
+  function refuse(status: number, detail: unknown) {
+    mockPublishPolicy.mockRejectedValue(
+      Object.assign(new Error(`Request failed with status code ${status}`), { response: { status, data: { detail } } }),
+    )
+  }
+
+  it('shows exactly one toast, the server sentence, and reloads the policy list', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    refuse(409, RACE)
+    renderAt('/policies/pol-9')
+    expect(listHook.enabledCalls.every((enabled) => !enabled)).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Publish' }))
+
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledTimes(1))
+    expect(mockPublishPolicy).toHaveBeenCalledWith('pol-9')
+    expect(mockToastError).toHaveBeenCalledWith(RACE)
+    expect(mockToastError).not.toHaveBeenCalledWith(expect.stringMatching(/status code/))
+    // The list is revalidated and shown: the winner's Active badge, not this draft's stale editor.
+    expect(mockAppMutate).toHaveBeenCalledWith(['release-gate-policies'])
+    await waitFor(() => expect(screen.getByRole('heading', { name: /release gate policies/i })).toBeInTheDocument())
+    expect(listHook.enabledCalls[listHook.enabledCalls.length - 1]).toBe(true)
+  })
+
+  it('says "Policy is already published" for the same draft published twice', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    refuse(409, 'Policy is already published')
+    renderAt('/policies/pol-9')
+    fireEvent.click(screen.getByRole('button', { name: 'Publish' }))
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledTimes(1))
+    expect(mockToastError).toHaveBeenCalledWith('Policy is already published')
+  })
+
+  it('stays on the editor for a failure that is not a conflict, still with one toast', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockPublishPolicy.mockRejectedValue(new Error('Network Error'))
+    renderAt('/policies/pol-9')
+    fireEvent.click(screen.getByRole('button', { name: 'Publish' }))
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledTimes(1))
+    expect(mockToastError).toHaveBeenCalledWith('Publish failed')
+    expect(screen.getByRole('heading', { name: /^edit:/i })).toBeInTheDocument()
   })
 })
