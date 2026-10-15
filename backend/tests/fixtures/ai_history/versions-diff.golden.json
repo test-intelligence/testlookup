@@ -1,0 +1,180 @@
+{
+  "actions": {
+    "added": [
+      "Fix tax rounding in checkout"
+    ],
+    "removed": [
+      "Restore payment-gateway connectivity"
+    ]
+  },
+  "categories": {
+    "changed": [
+      {
+        "category": "PRODUCT_BUG",
+        "delta": 3,
+        "from": 0,
+        "to": 3
+      },
+      {
+        "category": "INFRASTRUCTURE",
+        "delta": -2,
+        "from": 2,
+        "to": 0
+      }
+    ],
+    "from_total": 2,
+    "to_total": 3
+  },
+  "clusters": {
+    "added": [],
+    "counts": {
+      "added": 0,
+      "matched": 1,
+      "removed": 0,
+      "resized": 1
+    },
+    "matched": [
+      {
+        "delta": 1,
+        "jaccard": 0.67,
+        "label_from": "Payment gateway unreachable",
+        "label_to": "Timeout in checkout",
+        "matched_by": "overlap",
+        "resized": true,
+        "signature_from": "connectionerror: refused [redacted_ip]:#",
+        "signature_to": "assertionerror: total #.# != #.#",
+        "size_from": 2,
+        "size_to": 3
+      }
+    ],
+    "removed": []
+  },
+  "has_changes": true,
+  "identical": false,
+  "mode": "versions",
+  "provenance": {
+    "changed": true,
+    "deterministic": {
+      "from": true,
+      "to": false
+    },
+    "engine": {
+      "from": "rules",
+      "to": "llm"
+    },
+    "engine_only": false,
+    "fallback_used": null,
+    "mode_counts": {
+      "from": {
+        "rules": 2
+      },
+      "to": {
+        "llm": 3
+      }
+    },
+    "model": {
+      "from": null,
+      "provider_from": null,
+      "provider_to": "ollama",
+      "to": "llama3.1"
+    },
+    "note": "The analysis engine changed between these versions (rules -> llm)."
+  },
+  "schema_version": 1,
+  "tests": {
+    "added": [
+      {
+        "category": "PRODUCT_BUG",
+        "confidence": 70,
+        "suite_name": "checkout",
+        "test_fingerprint": "fp_login",
+        "test_id": "aaaaaaaa-0000-4000-8000-000000000003",
+        "test_name": "test_login"
+      }
+    ],
+    "changed": [
+      {
+        "category": {
+          "from": "INFRASTRUCTURE",
+          "to": "PRODUCT_BUG"
+        },
+        "confidence": {
+          "delta": 45,
+          "from": 40,
+          "to": 85
+        },
+        "current_category": "PRODUCT_BUG",
+        "current_confidence": 85,
+        "flaky": null,
+        "from_test_id": "aaaaaaaa-0000-4000-8000-000000000001",
+        "kinds": [
+          "category",
+          "confidence",
+          "root_cause"
+        ],
+        "material": true,
+        "previous_category": "INFRASTRUCTURE",
+        "previous_confidence": 40,
+        "root_cause_changed": true,
+        "root_cause_excerpt": {
+          "from": "Connection refused to payment-gateway",
+          "to": "Checkout total rounds the tax twice"
+        },
+        "suite_name": "checkout",
+        "test_fingerprint": "fp_pay",
+        "test_id": "aaaaaaaa-0000-4000-8000-000000000001",
+        "test_name": "test_pay"
+      },
+      {
+        "category": {
+          "from": "INFRASTRUCTURE",
+          "to": "PRODUCT_BUG"
+        },
+        "confidence": {
+          "delta": 35,
+          "from": 45,
+          "to": 80
+        },
+        "current_category": "PRODUCT_BUG",
+        "current_confidence": 80,
+        "flaky": null,
+        "from_test_id": "aaaaaaaa-0000-4000-8000-000000000002",
+        "kinds": [
+          "category",
+          "confidence",
+          "root_cause"
+        ],
+        "material": true,
+        "previous_category": "INFRASTRUCTURE",
+        "previous_confidence": 45,
+        "root_cause_changed": true,
+        "root_cause_excerpt": {
+          "from": "Connection refused to payment-gateway",
+          "to": "Checkout total rounds the tax twice"
+        },
+        "suite_name": "checkout",
+        "test_fingerprint": "fp_cart",
+        "test_id": "aaaaaaaa-0000-4000-8000-000000000002",
+        "test_name": "test_cart"
+      }
+    ],
+    "counts": {
+      "added": 1,
+      "changed": 2,
+      "material_changed": 2,
+      "removed": 0
+    },
+    "persisting_unchanged": 0,
+    "removed": [],
+    "truncated": false
+  },
+  "verdict": {
+    "changed": true,
+    "direction": "worse",
+    "from": "CONDITIONAL_GO",
+    "from_risk": 55,
+    "risk_delta": 17,
+    "to": "NO_GO",
+    "to_risk": 72
+  }
+}

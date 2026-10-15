@@ -1,0 +1,119 @@
+{
+  "actions": [
+    "Fix tax rounding in checkout"
+  ],
+  "actions_source": "decision_report",
+  "analysed_tests": 3,
+  "avg_confidence": 78.3,
+  "categories": {
+    "PRODUCT_BUG": 3
+  },
+  "clusters": [
+    {
+      "cluster_id": "cl_001",
+      "label": "Timeout in checkout",
+      "member_count": 3,
+      "member_fingerprints": [
+        "fp_cart",
+        "fp_login",
+        "fp_pay"
+      ],
+      "representative_error": "AssertionError: total 100.10 != 100.00",
+      "signature": "assertionerror: total #.# != #.#",
+      "size": 3
+    }
+  ],
+  "content_sha256": "bf3fc26b72b8d3d976de93bd791acdb41517eb640d1c2597d21870b78c3b0d3b",
+  "flaky_count": 0,
+  "kind": "analysis_digest",
+  "limits": {
+    "clusters_total": 1,
+    "clusters_truncated": false,
+    "tests_total": 3,
+    "tests_truncated": false
+  },
+  "provenance": {
+    "captured_at": "2026-10-14T11:00:00+00:00",
+    "carried_over_tests": 0,
+    "deterministic": false,
+    "engine": "llm",
+    "fallback_count": 0,
+    "fallback_used": false,
+    "llm_model": "llama3.1",
+    "llm_provider": "ollama",
+    "mode_counts": {
+      "llm": 3
+    },
+    "partial": [],
+    "pipeline_run_id": "bbbbbbbb-0000-4000-8000-000000000002",
+    "prompt_versions": {},
+    "source": "stored",
+    "stage_quality": "normal",
+    "summary_fallback_used": null
+  },
+  "requires_review_count": 0,
+  "run": {
+    "branch": "main",
+    "broken_tests": 1,
+    "build_number": "1234",
+    "failed_tests": 7,
+    "pass_rate": 93.3,
+    "primary_suite_name": "checkout",
+    "project_id": "22222222-2222-4222-8222-222222222222",
+    "run_id": "11111111-1111-4111-8111-111111111111",
+    "total_tests": 120
+  },
+  "schema_version": 1,
+  "tests": [
+    {
+      "analysis_mode": "llm",
+      "category": "PRODUCT_BUG",
+      "confidence": 80,
+      "is_flaky": false,
+      "requires_human_review": false,
+      "root_cause_excerpt": "Checkout total rounds the tax twice",
+      "root_cause_sha": "adc59d982e5ba93d",
+      "status": "FAILED",
+      "suite_name": "checkout",
+      "test_fingerprint": "fp_cart",
+      "test_id": "aaaaaaaa-0000-4000-8000-000000000002",
+      "test_name": "test_cart"
+    },
+    {
+      "analysis_mode": "llm",
+      "category": "PRODUCT_BUG",
+      "confidence": 70,
+      "is_flaky": false,
+      "requires_human_review": false,
+      "root_cause_excerpt": "Session cookie missing SameSite",
+      "root_cause_sha": "a817b3c4dd8965a3",
+      "status": "FAILED",
+      "suite_name": "checkout",
+      "test_fingerprint": "fp_login",
+      "test_id": "aaaaaaaa-0000-4000-8000-000000000003",
+      "test_name": "test_login"
+    },
+    {
+      "analysis_mode": "llm",
+      "category": "PRODUCT_BUG",
+      "confidence": 85,
+      "is_flaky": false,
+      "requires_human_review": false,
+      "root_cause_excerpt": "Checkout total rounds the tax twice",
+      "root_cause_sha": "adc59d982e5ba93d",
+      "status": "FAILED",
+      "suite_name": "checkout",
+      "test_fingerprint": "fp_pay",
+      "test_id": "aaaaaaaa-0000-4000-8000-000000000001",
+      "test_name": "test_pay"
+    }
+  ],
+  "verdict": {
+    "composite_risk": 68.5,
+    "decision_report_version": 2,
+    "overridden": false,
+    "recommendation": "NO_GO",
+    "risk_score": 72,
+    "source": "decision_report"
+  }
+}
