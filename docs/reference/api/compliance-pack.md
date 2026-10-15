@@ -4,6 +4,110 @@
 
 Generated from tracked source by `scripts/generate_reference.py`. Do not edit by hand. What the checks cover is recorded in [verification](../../maintainers/verification.md).
 
+## GET `/api/v1/compliance-packs`
+
+List Project Compliance Packs
+
+The newest packs in one project, or across every project the caller can
+see, and how many there are (``total`` is counted, not ``len(items)``).
+
+Not flag-gated, like the per-release list: generating a pack is what
+``release_compliance_pack`` controls. A project-bound API key is confined
+to its project by ``get_accessible_project_ids``.
+
+Source: [backend/app/routers/compliance_packs.py:59](../../../backend/app/routers/compliance_packs.py#L59).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+project_id: Optional[str]=Query(None), limit: int=Query(10, ge=1, le=50), current_user: User=Depends(get_current_active_user), db: AsyncSession=Depends(get_db)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "list_project_compliance_packs_api_v1_compliance_packs_get",
+  "parameters": [
+    {
+      "in": "query",
+      "name": "project_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Project Id"
+      }
+    },
+    {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+        "default": 10,
+        "maximum": 50,
+        "minimum": 1,
+        "title": "Limit",
+        "type": "integer"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/CompliancePackListRead"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## DELETE `/api/v1/compliance-packs/{pack_id}`
 
 Delete Compliance Pack
@@ -19,7 +123,7 @@ S9 adds the legal-hold check alongside this. It is deliberately absent
 rather than stubbed: a hold check against a table that does not exist
 reads as a working guard while never firing.
 
-Source: [backend/app/routers/compliance_packs.py:205](../../../backend/app/routers/compliance_packs.py#L205).
+Source: [backend/app/routers/compliance_packs.py:246](../../../backend/app/routers/compliance_packs.py#L246).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -104,7 +208,7 @@ Enforces tenant isolation via the pack's ``project_id``. The response
 includes the SHA-256 of the manifest in the ``X-Manifest-Sha256``
 header so automated verifiers can assert before reading the body.
 
-Source: [backend/app/routers/compliance_packs.py:112](../../../backend/app/routers/compliance_packs.py#L112).
+Source: [backend/app/routers/compliance_packs.py:153](../../../backend/app/routers/compliance_packs.py#L153).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -207,7 +311,7 @@ ADMIN, typed confirmation, and a reason — a pack is audit evidence
 generated with a seven-year default, so shortening that is a deliberate
 act and is recorded as one.
 
-Source: [backend/app/routers/compliance_packs.py:152](../../../backend/app/routers/compliance_packs.py#L152).
+Source: [backend/app/routers/compliance_packs.py:193](../../../backend/app/routers/compliance_packs.py#L193).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -305,7 +409,7 @@ Generate Compliance Pack
 
 Generate a new compliance pack for a release. QA_LEAD+ only.
 
-Source: [backend/app/routers/compliance_packs.py:52](../../../backend/app/routers/compliance_packs.py#L52).
+Source: [backend/app/routers/compliance_packs.py:93](../../../backend/app/routers/compliance_packs.py#L93).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -404,7 +508,7 @@ List Compliance Packs
 
 List every historical pack ever generated for a release.
 
-Source: [backend/app/routers/compliance_packs.py:95](../../../backend/app/routers/compliance_packs.py#L95).
+Source: [backend/app/routers/compliance_packs.py:136](../../../backend/app/routers/compliance_packs.py#L136).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`.
 
