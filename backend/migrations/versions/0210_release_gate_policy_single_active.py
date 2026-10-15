@@ -48,6 +48,7 @@ depends_on = None
 
 logger = logging.getLogger("alembic.runtime.migration")
 
+TABLE = "release_gate_policies"
 LOCK_SQL = "LOCK TABLE release_gate_policies IN SHARE ROW EXCLUSIVE MODE"
 
 #: Duplicate SYSTEM versions (the only scope without a version guard): the
@@ -115,18 +116,37 @@ def upgrade() -> None:
         logger.warning(
             "0210 renumbered duplicate system policy version: %s is now v%s", policy_id, version
         )
-    for name, column, predicate in INDEXES:
-        op.create_index(
-            name,
-            "release_gate_policies",
-            [column],
-            unique=True,
-            postgresql_where=sa.text(predicate),
-            if_not_exists=True,
-        )
+    # The data fix commits with the lock released as the autocommit block opens;
+    # the builds then run CONCURRENTLY (the 0166+ rule for an existing table,
+    # tests/regression/test_migration_index_builds_are_concurrent.py). A build
+    # that fails (a duplicate written between the fix and the build) leaves an
+    # INVALID index: the next run drops it first, re-runs the fix, and rebuilds.
+    invalid = [] if op.get_context().as_sql else _invalid_indexes(bind)
+    with op.get_context().autocommit_block():
+        for name in invalid:
+            op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {name}")
+        for name, column, predicate in INDEXES:
+            op.execute(
+                f"CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS {name} "
+                f"ON {TABLE} ({column}) WHERE {predicate}"
+            )
 
 
 def downgrade() -> None:
     # Indexes only: the demotions and the renumbering are not restored.
-    for name, _column, _predicate in reversed(INDEXES):
-        op.drop_index(name, table_name="release_gate_policies", if_exists=True)
+    with op.get_context().autocommit_block():
+        for name, _column, _predicate in reversed(INDEXES):
+            op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {name}")
+
+
+def _invalid_indexes(bind) -> list[str]:
+    """This migration's index names that exist but are INVALID (a failed concurrent build)."""
+    return list(
+        bind.execute(
+            sa.text(
+                "SELECT c.relname FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid "
+                "WHERE c.relname = ANY(:names) AND NOT i.indisvalid"
+            ),
+            {"names": [name for name, _column, _predicate in INDEXES]},
+        ).scalars().all()
+    )

@@ -49,14 +49,15 @@ def _revisions() -> dict[str, tuple[str, ...]]:
     return graph
 
 
-def test_it_follows_0208_and_is_the_single_head():
+def test_it_follows_0208_and_the_chain_keeps_one_head():
     migration = _module()
     assert (migration.revision, migration.down_revision) == ("0209", "0208")
     assert "Revision ID: 0209" in migration.__doc__ and "Revises: 0208" in migration.__doc__
     graph = _revisions()
     referenced = {d for downs in graph.values() for d in downs}
     heads = sorted(set(graph) - referenced)
-    assert heads == ["0209"], heads
+    # One head, at or after 0209 (later waves chain onto it; W05 adds 0210-0212).
+    assert len(heads) == 1 and heads[0] >= "0209", heads
     # The W04 chain is linear: 0206 -> 0207 -> 0208 -> 0209.
     assert graph["0207"] == ("0206",) and graph["0208"] == ("0207",) and graph["0209"] == ("0208",)
 

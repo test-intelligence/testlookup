@@ -77,24 +77,64 @@ def test_the_data_fix_statements():
     assert "r.rn > 1" in migration.DEMOTE_SQL and "RETURNING" in migration.DEMOTE_SQL
 
 
-def test_upgrade_runs_lock_fix_then_indexes_in_order():
+def _fake_op(invalid=()):
+    """A MagicMock ``op`` that records whether each statement ran inside the autocommit block."""
+    op = MagicMock()
+    op.get_context.return_value.as_sql = False
+    state = {"autocommit": False}
+    log: list[tuple[str, bool]] = []
+
+    class _Block:
+        def __enter__(self):
+            state["autocommit"] = True
+
+        def __exit__(self, *exc):
+            state["autocommit"] = False
+            return False
+
+    op.get_context.return_value.autocommit_block.side_effect = lambda: _Block()
+    op.execute.side_effect = lambda sql, *a, **k: log.append((str(sql), state["autocommit"]))
+    bind = op.get_bind.return_value
+    fix_result = MagicMock()
+    fix_result.fetchall.return_value = []
+    probe = MagicMock()
+    probe.scalars.return_value.all.return_value = list(invalid)
+
+    def _execute(statement, *args, **kwargs):
+        return probe if "indisvalid" in str(statement) else fix_result
+
+    bind.execute.side_effect = _execute
+    return op, log
+
+
+def test_upgrade_runs_lock_fix_then_concurrent_indexes_in_order():
     migration = _module()
-    migration.op = MagicMock()
-    bind = migration.op.get_bind.return_value
-    bind.execute.return_value.fetchall.return_value = []
+    migration.op, log = _fake_op()
     migration.upgrade()
-    executed = [str(c.args[0]) for c in migration.op.execute.call_args_list]
-    assert executed == [migration.LOCK_SQL]
-    fixes = [str(c.args[0]) for c in bind.execute.call_args_list]
+    bind = migration.op.get_bind.return_value
+    fixes = [str(c.args[0]) for c in bind.execute.call_args_list if "indisvalid" not in str(c.args[0])]
     # Demote BEFORE renumbering: renumbering first could lift a duplicate above
     # the row the evaluator was using, and keep a different policy active.
     assert fixes == [migration.DEMOTE_SQL, migration.RENUMBER_SQL]
-    created = [c.args[0] for c in migration.op.create_index.call_args_list]
-    assert created == list(EXPECTED_INDEXES)
-    for call in migration.op.create_index.call_args_list:
-        assert call.kwargs["unique"] is True
-        assert call.kwargs["if_not_exists"] is True
-        assert "postgresql_concurrently" not in call.kwargs, "plain builds, atomic with the data fix"
+    # The lock and the fix are transactional; every build is CONCURRENT and in the autocommit block.
+    assert log[0] == (migration.LOCK_SQL, False)
+    builds = log[1:]
+    assert [sql.split(" IF NOT EXISTS ")[1].split(" ")[0] for sql, _ in builds] == list(EXPECTED_INDEXES)
+    for (sql, in_block), (name, (column, predicate)) in zip(builds, EXPECTED_INDEXES.items()):
+        assert in_block, sql
+        assert sql == (
+            f"CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS {name} "
+            f"ON release_gate_policies ({column}) WHERE {predicate}"
+        )
+
+
+def test_an_invalid_leftover_is_dropped_before_the_rebuild():
+    migration = _module()
+    migration.op, log = _fake_op(invalid=["uq_rgp_one_active_system"])
+    migration.upgrade()
+    in_block = [sql for sql, block in log if block]
+    assert in_block[0] == "DROP INDEX CONCURRENTLY IF EXISTS uq_rgp_one_active_system"
+    assert len(in_block) == 1 + len(EXPECTED_INDEXES)
 
 
 def test_each_demotion_is_logged(caplog):
@@ -102,26 +142,35 @@ def test_each_demotion_is_logged(caplog):
     import uuid
 
     migration = _module()
-    migration.op = MagicMock()
+    migration.op, _log = _fake_op()
     bind = migration.op.get_bind.return_value
     demoted = uuid.uuid4()
     renumbered = uuid.uuid4()
-    bind.execute.return_value.fetchall.side_effect = [[(demoted, None, 3)], [(renumbered, 7)]]
+    answers = iter([[(demoted, None, 3)], [(renumbered, 7)]])
+    probe = MagicMock()
+    probe.scalars.return_value.all.return_value = []
+
+    def _execute(statement, *args, **kwargs):
+        if "indisvalid" in str(statement):
+            return probe
+        result = MagicMock()
+        result.fetchall.return_value = next(answers)
+        return result
+
+    bind.execute.side_effect = _execute
     with caplog.at_level(logging.WARNING, logger="alembic.runtime.migration"):
         migration.upgrade()
     assert f"0210 demoted duplicate active policy {demoted} (scope system, v3)" in caplog.text
     assert f"{renumbered} is now v7" in caplog.text
 
 
-def test_downgrade_drops_exactly_the_indexes_and_no_data():
+def test_downgrade_drops_exactly_the_indexes_concurrently_and_no_data():
     migration = _module()
-    migration.op = MagicMock()
+    migration.op, log = _fake_op()
     migration.downgrade()
-    dropped = [c.args[0] for c in migration.op.drop_index.call_args_list]
-    assert sorted(dropped) == sorted(EXPECTED_INDEXES)
-    for call in migration.op.drop_index.call_args_list:
-        assert call.kwargs["if_exists"] is True
-    assert not migration.op.execute.called, "the data fix is one-way"
+    assert all(in_block for _sql, in_block in log)
+    assert sorted(log) == sorted((f"DROP INDEX CONCURRENTLY IF EXISTS {name}", True) for name in EXPECTED_INDEXES)
+    assert not migration.op.get_bind.return_value.execute.called, "the data fix is one-way"
 
 
 def test_0210_is_the_parent_of_0211():

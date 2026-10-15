@@ -26,6 +26,7 @@ down_revision = "0210"
 branch_labels = None
 depends_on = None
 
+TABLE = "releases"
 COLUMN = "owner_user_id"
 INDEX = "ix_releases_owner"
 INDEX_WHERE = "owner_user_id IS NOT NULL"
@@ -40,7 +41,7 @@ BACKFILL_SQL = (
 
 def upgrade() -> None:
     op.add_column(
-        "releases",
+        TABLE,
         sa.Column(
             COLUMN,
             UUID(as_uuid=True),
@@ -48,15 +49,30 @@ def upgrade() -> None:
             nullable=True,
         ),
     )
-    op.create_index(
-        INDEX,
-        "releases",
-        [COLUMN],
-        postgresql_where=sa.text(INDEX_WHERE),
-    )
     op.execute(sa.text(BACKFILL_SQL))
+    # An index on an existing table is built CONCURRENTLY (the 0166+ rule,
+    # tests/regression/test_migration_index_builds_are_concurrent.py); an INVALID
+    # leftover of a failed build is dropped first.
+    invalid = False if op.get_context().as_sql else _index_is_invalid(op.get_bind())
+    with op.get_context().autocommit_block():
+        if invalid:
+            op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {INDEX}")
+        op.execute(f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {INDEX} ON {TABLE} ({COLUMN}) WHERE {INDEX_WHERE}")
 
 
 def downgrade() -> None:
-    op.drop_index(INDEX, table_name="releases")
-    op.drop_column("releases", COLUMN)
+    with op.get_context().autocommit_block():
+        op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {INDEX}")
+    op.drop_column(TABLE, COLUMN)
+
+
+def _index_is_invalid(bind) -> bool:
+    return bool(
+        bind.execute(
+            sa.text(
+                "SELECT 1 FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid "
+                "WHERE c.relname = :name AND NOT i.indisvalid"
+            ),
+            {"name": INDEX},
+        ).first()
+    )

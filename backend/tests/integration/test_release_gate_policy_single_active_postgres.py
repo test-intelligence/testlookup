@@ -309,26 +309,33 @@ async def _migrate(conn, step: str) -> None:
     module = _m0210()
 
     def _run(sync_conn):
-        module.op = Operations(MigrationContext.configure(sync_conn))
-        getattr(module, step)()
+        # Alembic owns the transaction, as in a real run: the migration's
+        # autocommit_block() commits it and builds its indexes CONCURRENTLY.
+        context = MigrationContext.configure(sync_conn)
+        with context.begin_transaction():
+            module.op = Operations(context)
+            getattr(module, step)()
 
+    await conn.commit()  # idle, so the migration context begins its own transaction
     await conn.run_sync(_run)
 
 
 async def test_migration_0210_repairs_duplicates_and_round_trips(world, caplog):
     engine = world.engine
     async with engine.connect() as conn:
-        tx = await conn.begin()
+        base = (await conn.execute(text("SELECT current_schema()"))).scalar_one()
+        scratch = f"g3_{uuid.uuid4().hex[:10]}"
         try:
-            base = (await conn.execute(text("SELECT current_schema()"))).scalar_one()
-            scratch = f"g3_{uuid.uuid4().hex[:10]}"
             await conn.execute(text(f'CREATE SCHEMA "{scratch}"'))
             # DEFAULTS only: no indexes (the base table has 0210's), no FKs.
             await conn.execute(text(
                 f'CREATE TABLE "{scratch}".release_gate_policies '
                 f'(LIKE "{base}".release_gate_policies INCLUDING DEFAULTS)'
             ))
-            await conn.execute(text(f'SET LOCAL search_path TO "{scratch}", "{base}"'))
+            # Session-level: the migration commits (its CONCURRENT builds run
+            # outside a transaction), so the scratch schema is committed and
+            # dropped in ``finally`` instead of rolled back.
+            await conn.execute(text(f'SET search_path TO "{scratch}", "{base}"'))
             project = uuid.uuid4()
             ids = {name: uuid.uuid4() for name in ("s1", "s2", "s3", "s4", "p1", "p2")}
             rows = [
@@ -390,4 +397,7 @@ async def test_migration_0210_repairs_duplicates_and_round_trips(world, caplog):
                 "SELECT id, version, is_active, updated_at FROM release_gate_policies ORDER BY id"
             ))).all() == snapshot
         finally:
-            await tx.rollback()
+            await conn.rollback()
+            await conn.execute(text("RESET search_path"))
+            await conn.execute(text(f'DROP SCHEMA IF EXISTS "{scratch}" CASCADE'))
+            await conn.commit()

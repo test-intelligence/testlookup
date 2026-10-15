@@ -69,9 +69,31 @@ async def conn():
         await engine.dispose()
 
 
-async def _scratch(conn) -> str:
+@pytest.fixture
+async def committed_conn():
+    """A connection whose work COMMITS: 0211 builds its index CONCURRENTLY, which no
+    transaction can hold. Every scratch schema it creates is dropped afterwards."""
+    engine = create_async_engine(_dsn(), pool_size=1, max_overflow=0)
+    try:
+        async with engine.connect() as connection:
+            connection.info["scratch_schemas"] = []
+            try:
+                yield connection
+            finally:
+                await connection.rollback()
+                await connection.execute(text("RESET search_path"))
+                for schema in connection.info["scratch_schemas"]:
+                    await connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+                await connection.commit()
+    finally:
+        await engine.dispose()
+
+
+async def _scratch(conn, *, local: bool = True) -> str:
     base = (await conn.execute(text("SELECT current_schema()"))).scalar_one()
     scratch = f"w05a_{uuid.uuid4().hex[:10]}"
+    if not local:
+        conn.info["scratch_schemas"].append(scratch)
     await conn.execute(text(f'CREATE SCHEMA "{scratch}"'))
     await conn.execute(text(
         f'CREATE TABLE "{scratch}".releases (LIKE "{base}".releases INCLUDING DEFAULTS)'
@@ -88,7 +110,8 @@ async def _scratch(conn) -> str:
     await conn.execute(text(
         f'CREATE TABLE "{scratch}".feature_flags (LIKE "{base}".feature_flags INCLUDING ALL)'
     ))
-    await conn.execute(text(f'SET LOCAL search_path TO "{scratch}", "{base}"'))
+    scope = "LOCAL " if local else ""
+    await conn.execute(text(f'SET {scope}search_path TO "{scratch}", "{base}"'))
     for key in KEYS:
         # The rows as 0066 / 0158 seeded them.
         await conn.execute(text(
@@ -98,7 +121,7 @@ async def _scratch(conn) -> str:
     return scratch
 
 
-async def _migrate(conn, step: str, names: tuple[str, ...]) -> None:
+async def _migrate(conn, step: str, names: tuple[str, ...], *, own_transaction: bool = False) -> None:
     from alembic.operations import Operations
     from alembic.runtime.migration import MigrationContext
 
@@ -108,8 +131,15 @@ async def _migrate(conn, step: str, names: tuple[str, ...]) -> None:
         context = MigrationContext.configure(sync_conn)
         for module in modules:
             module.op = Operations(context)
-            getattr(module, step)()
+            if own_transaction:
+                # As a real run: alembic owns the transaction, so autocommit_block() can commit it.
+                with context.begin_transaction():
+                    getattr(module, step)()
+            else:
+                getattr(module, step)()
 
+    if own_transaction:
+        await conn.commit()
     await conn.run_sync(_run)
 
 
@@ -142,8 +172,9 @@ async def _owners(conn) -> dict[uuid.UUID, uuid.UUID | None]:
     return {rid: owner for rid, owner in rows}
 
 
-async def test_0211_backfills_real_people_only_and_round_trips(conn):
-    await _scratch(conn)
+async def test_0211_backfills_real_people_only_and_round_trips(committed_conn):
+    conn = committed_conn
+    await _scratch(conn, local=False)
     human = await _user(conn)
     other_human = await _user(conn)
     service = await _user(conn, service=True)
@@ -156,7 +187,7 @@ async def test_0211_backfills_real_people_only_and_round_trips(conn):
     by_nobody = await _release(conn, None)
     kept = await _release(conn, human)
 
-    await _migrate(conn, "upgrade", (M0211,))
+    await _migrate(conn, "upgrade", (M0211,), own_transaction=True)
     owners = await _owners(conn)
     assert owners[by_human] == human
     assert owners[by_service] is None and owners[by_synthetic] is None
@@ -178,7 +209,7 @@ async def test_0211_backfills_real_people_only_and_round_trips(conn):
     await conn.execute(text("DELETE FROM users WHERE id = :u"), {"u": human})
     assert (await _owners(conn))[by_human] is None
 
-    await _migrate(conn, "downgrade", (M0211,))
+    await _migrate(conn, "downgrade", (M0211,), own_transaction=True)
     columns = {row[0] for row in (await conn.execute(text(
         "SELECT column_name FROM information_schema.columns "
         "WHERE table_schema = current_schema() AND table_name = 'releases'"

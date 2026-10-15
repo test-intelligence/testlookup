@@ -41,28 +41,57 @@ def test_the_backfill_copies_the_creator_only_for_a_real_person():
     assert "updated_at" not in migration.BACKFILL_SQL
 
 
-def test_upgrade_adds_the_column_index_and_backfill():
+def _fake_op(invalid=False):
+    """A MagicMock ``op`` that records each statement and whether it ran in the autocommit block."""
+    op = MagicMock()
+    op.get_context.return_value.as_sql = False
+    state = {"autocommit": False}
+    log: list[tuple[str, bool]] = []
+
+    class _Block:
+        def __enter__(self):
+            state["autocommit"] = True
+
+        def __exit__(self, *exc):
+            state["autocommit"] = False
+            return False
+
+    op.get_context.return_value.autocommit_block.side_effect = lambda: _Block()
+    op.execute.side_effect = lambda sql, *a, **k: log.append((str(sql), state["autocommit"]))
+    op.get_bind.return_value.execute.return_value.first.return_value = (1,) if invalid else None
+    return op, log
+
+
+CREATE = "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_releases_owner ON releases (owner_user_id) WHERE owner_user_id IS NOT NULL"
+
+
+def test_upgrade_adds_the_column_backfills_then_builds_the_index_concurrently():
     migration = _module()
-    migration.op = MagicMock()
+    migration.op, log = _fake_op()
     migration.upgrade()
     (table, column), _ = migration.op.add_column.call_args
     assert table == "releases"
     assert column.name == "owner_user_id" and column.nullable is True
     (fk,) = list(column.foreign_keys)
     assert fk.target_fullname == "users.id" and fk.ondelete == "SET NULL"
-    index_call = migration.op.create_index.call_args
-    assert index_call.args == ("ix_releases_owner", "releases", ["owner_user_id"])
-    assert str(index_call.kwargs["postgresql_where"]) == "owner_user_id IS NOT NULL"
-    assert [str(c.args[0]) for c in migration.op.execute.call_args_list] == [migration.BACKFILL_SQL]
+    assert not migration.op.create_index.called
+    assert log == [(migration.BACKFILL_SQL, False), (CREATE, True)]
 
 
-def test_downgrade_drops_the_index_then_the_column():
+def test_an_invalid_leftover_index_is_dropped_before_the_rebuild():
     migration = _module()
-    migration.op = MagicMock()
+    migration.op, log = _fake_op(invalid=True)
+    migration.upgrade()
+    assert log[1:] == [("DROP INDEX CONCURRENTLY IF EXISTS ix_releases_owner", True), (CREATE, True)]
+
+
+def test_downgrade_drops_the_index_concurrently_then_the_column():
+    migration = _module()
+    migration.op, log = _fake_op()
     migration.downgrade()
-    migration.op.drop_index.assert_called_once_with("ix_releases_owner", table_name="releases")
+    assert log == [("DROP INDEX CONCURRENTLY IF EXISTS ix_releases_owner", True)]
     migration.op.drop_column.assert_called_once_with("releases", "owner_user_id")
-    assert not migration.op.execute.called
+    assert not migration.op.drop_index.called
 
 
 def test_the_orm_declares_the_same_column_and_index():
