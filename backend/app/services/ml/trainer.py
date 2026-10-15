@@ -50,6 +50,10 @@ from app.core.config import settings
 
 logger = logging.getLogger("services.ml.trainer")
 
+#: A category needs this many labels to be trained on: enough to keep >= 2 per class through
+#: the 80/20 split, the CV folds and the classifier's stratified early-stopping split.
+MIN_SAMPLES_PER_CLASS = 10
+
 
 async def get_training_sample_count() -> int:
     """Count available labeled samples without running full training.
@@ -206,6 +210,24 @@ async def train_classifier() -> dict[str, Any]:
     class_dist = Counter(labels)
     logger.info("Training class distribution: %s", dict(class_dist))
 
+    # ── 2b. Categories too rare to train on are left out ────────────────
+    # A category with a handful of labels cannot survive the 80/20 split, the CV
+    # folds AND the classifier's own stratified early-stopping split: on the
+    # homelab one single-sample category failed the whole retrain ("The least
+    # populated classes in y have only 1 member"), so the ML tier never
+    # activated. Such categories are excluded and named; the model never
+    # predicts them, so their failures keep going to the rules / LLM engines.
+    rare = {idx: n for idx, n in Counter(int(v) for v in y).items() if n < MIN_SAMPLES_PER_CLASS}
+    excluded_classes = {CATEGORY_LABELS[idx]: n for idx, n in sorted(rare.items())}
+    if rare:
+        keep = np.array([int(v) not in rare for v in y])
+        X, y = X[keep], y[keep]
+        provenance_weights = [w for w, k in zip(provenance_weights, keep) if k]
+        logger.warning(
+            "Left out %s category(ies) with fewer than %s labels: %s",
+            len(rare), MIN_SAMPLES_PER_CLASS, excluded_classes,
+        )
+
     # ── Guard: stratified split + 5-fold CV require >=2 (>=5 for CV) samples
     # per class and at least 2 distinct classes. Early in a deployment the
     # labeled set is tiny and skewed, so without this the retrain job crashes
@@ -216,9 +238,13 @@ async def train_classifier() -> dict[str, Any]:
     if distinct_classes < 2:
         return {
             "status": "insufficient_class_diversity",
-            "message": f"Need >=2 distinct categories to train, have {distinct_classes}.",
+            "message": (
+                f"Need >=2 categories with at least {MIN_SAMPLES_PER_CLASS} labels each "
+                f"to train, have {distinct_classes}."
+            ),
             "sample_count": len(samples),
             "class_distribution": dict(class_dist),
+            "excluded_classes": excluded_classes,
             "label_composition": composition,
         }
     can_stratify = min_class_count >= 2
@@ -361,6 +387,7 @@ async def train_classifier() -> dict[str, Any]:
             "train_count": len(X_train),
             "test_count": len(X_test),
             "class_distribution": dict(class_dist),
+            "excluded_classes": excluded_classes,
             "class_weights": {CATEGORY_LABELS[k]: round(v, 2) for k, v in class_weights.items()},
             # AI-F1: label-provenance mix this model was actually trained on
             # (counts + fractions per human_direct/human_indirect/llm_pseudo,
@@ -404,6 +431,7 @@ async def train_classifier() -> dict[str, Any]:
             "version": version,
             "feature_importance": importances,
             "per_class_metrics": per_class,
+            "excluded_classes": excluded_classes,
             "label_composition": composition,
         }
     else:
@@ -418,6 +446,7 @@ async def train_classifier() -> dict[str, Any]:
             "threshold": settings.ML_ACCURACY_THRESHOLD,
             "sample_count": len(samples),
             "per_class_metrics": per_class,
+            "excluded_classes": excluded_classes,
             "label_composition": composition,
         }
 

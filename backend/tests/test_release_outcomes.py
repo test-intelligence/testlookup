@@ -97,7 +97,14 @@ def test_release_outcome_activity_event_renders_both_manual_actions() -> None:
 
 
 @pytest.mark.asyncio
-async def test_release_detail_includes_newest_production_outcomes() -> None:
+async def test_release_detail_includes_newest_production_outcomes(monkeypatch) -> None:
+    # W05 REL-01: the detail also embeds the current gate summary, read LAST so
+    # the statements below keep their order. A never-evaluated release -> {}.
+    from app.services import release_gate_service
+
+    monkeypatch.setattr(
+        release_gate_service, "current_gate_summaries", AsyncMock(return_value={})
+    )
     project_id = uuid.uuid4()
     release_id = uuid.uuid4()
     release = Release(
@@ -152,3 +159,6 @@ async def test_release_detail_includes_newest_production_outcomes() -> None:
     assert "release_outcomes.project_id" in outcome_statement
     assert "ORDER BY release_outcomes.marked_at DESC" in outcome_statement
     assert "LIMIT" in outcome_statement
+    # Never evaluated, nobody owns it: both keys present, both null.
+    assert detail["gate"] is None
+    assert detail["owner"] is None

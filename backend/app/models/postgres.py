@@ -3589,6 +3589,13 @@ class Release(Base):
             unique=True,
             postgresql_where=text("external_id IS NOT NULL"),
         ),
+        # Migration 0211 (REL-02). Partial: most releases made by ingest or
+        # sync carry no owner, and the only read is "releases this user owns".
+        Index(
+            "ix_releases_owner",
+            "owner_user_id",
+            postgresql_where=text("owner_user_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -3726,6 +3733,15 @@ class Release(Base):
 
     # Attribution
     created_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    # Migration 0211 (REL-02): the person accountable for the release. NULL =
+    # "No owner" (ingest- and sync-created releases, or an owner whose user row
+    # was deleted: ``SET NULL``). Distinct from ``created_by_id``: ownership is
+    # reassignable, authorship is not. A service / synthetic account is never a
+    # valid owner (``release_owner_service.validate_owner``).
+    owner_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
@@ -4610,7 +4626,32 @@ class ReleaseGatePolicy(Base):
     __tablename__ = "release_gate_policies"
     __table_args__ = (
         Index("ix_rgp_project_active", "project_id", "is_active"),
+        # Covers project scopes only: ``project_id`` is NULL for the system
+        # default, and Postgres treats NULLs as distinct, so the system scope's
+        # version guard is ``uq_rgp_system_version`` below (migration 0210).
         UniqueConstraint("project_id", "version", name="uq_rgp_project_version"),
+        # Migration 0210 (GATE-03): at most one ACTIVE policy per scope. Two
+        # partial indexes because the system scope is ``project_id IS NULL``,
+        # which a unique index on ``project_id`` cannot constrain. Names and
+        # predicates are identical to the migration's.
+        Index(
+            "uq_rgp_one_active_project",
+            "project_id",
+            unique=True,
+            postgresql_where=text("is_active IS TRUE AND project_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_rgp_one_active_system",
+            "is_active",
+            unique=True,
+            postgresql_where=text("is_active IS TRUE AND project_id IS NULL"),
+        ),
+        Index(
+            "uq_rgp_system_version",
+            "version",
+            unique=True,
+            postgresql_where=text("project_id IS NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

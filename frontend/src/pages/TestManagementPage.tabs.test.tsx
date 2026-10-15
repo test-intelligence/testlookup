@@ -193,12 +193,8 @@ describe('Test Cases — five tabs (P4 item 7)', () => {
   })
 
   it('a draft untouched for 30 days counts as stale', () => {
-    // The fixture draft is dated two days before the run, so a fixed date
-    // here (2026-10-15) stopped being 30 days after it. Move 29 days on from
-    // the real clock: the draft is then 31 days old.
-    const later = new Date(Date.now() + 29 * 86_400_000)
     vi.useFakeTimers({ toFake: ['Date'] })
-    vi.setSystemTime(later)
+    vi.setSystemTime(new Date('2026-10-15T00:00:00Z'))
     try {
       renderAt('/test-management')
       const banner = document.querySelector('[data-status-banner]') as HTMLElement

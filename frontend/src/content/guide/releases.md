@@ -16,7 +16,23 @@ A **release** is a named grouping of test runs in one project (for example `v2.5
 
 A release is also created automatically the first time a run arrives with a release name that does not exist yet. Creating or editing a release needs `QA_LEAD` or higher; deleting one needs an administrator.
 
-The list shows each release's gate badge (**Go**, **Conditional Go**, **No-Go** or **Not evaluated**), filters by status, and a search. Click a release for a side panel, or **Open full page** for its detail.
+The list shows each release's **recorded** gate verdict: **Go**, **Conditional Go**, **No-Go**, **Not evaluated** (it was evaluated, but too few tests carried results to decide) or **Not evaluated yet** (nobody has evaluated it), with when it was evaluated. An evaluated release also shows its **Pass rate**, **Evidence** (tests with results, of those in scope) and **Runs**, and a No-Go one its first blocking tests (`test_pay (checkout-e2e) is FAILED`); **Open gate →** goes to the full list on its page. The list filters by status and searches names, versions and owners. Click a release for a side panel, or **Open full page** for its detail.
+
+### Evaluating the release gate
+
+A verdict is a **snapshot**: TestLookup does not re-evaluate a release when new runs arrive. A QA lead records a fresh one with **Evaluate gate** on a release (**Re-evaluate** once it has one), or **Evaluate all in progress** above the list, which evaluates every in-progress release in turn and says how many came out Go, No-Go or not evaluated. Everyone else sees the verdict but not the buttons. Check **Evaluated …** on a release before relying on it: a Go from last week says nothing about the runs since.
+
+On a release's page, **Release gate** shows the verdict, its scorecard (pass rate, evidence, tests in scope, runs and the count per status), every blocking test, and how the release compares with its **baseline** (the previous release, or the one it names): the pass-rate change in percentage points and the change in tests in scope and evidence, or the reason no comparison is meaningful (no baseline, or too little evidence on either side).
+
+### Owner
+
+A release can have an **owner**: a person who can work on its project. A release created on the page is owned by whoever created it; one created by a run upload, an API key or a sync has none and reads **No owner**. Change it in **Edit** → **Owner**; the change is recorded in the activity feed with the old and new names. Service accounts and the project's built-in QA lead cannot own a release.
+
+### The active release and syncing
+
+A project's **active** release (marked **ACTIVE**) is where a run lands when nothing else names its release. A QA lead makes another release active with **Release actions** (**⋯** on the release) → **Set as active release**; a released or cancelled release cannot be made active.
+
+**Sync releases** (QA lead, one project selected) pulls releases in from **GitHub milestones** or **Jira fix versions** (optionally with a **Jira project key**; empty uses the configured default). It brings names and links only; phases, gate policy and run attribution stay in TestLookup. A synced release links to its milestone or fix version. While the deployment runs offline (`AI_OFFLINE_MODE`), or the integration has no credential, the sync says why and changes nothing; **Open Settings › Integrations** goes to the integration settings.
 
 ### Getting runs into a release
 
@@ -33,17 +49,18 @@ You can also link runs by hand: on a release's page, **Link Run**, pick a recent
 
 ### Phases
 
-A release's page lists **Release Phases**. **Add Phase** adds one, with a name and a type (**Planning**, **Development**, **Code Freeze**, **QA Testing**, **UAT**, **Staging**, **Production**). Move a phase on with its status (**Pending**, **In Progress**, **Completed**, **Skipped**).
+A release's page lists **Release Phases**. **Add Phase** adds one, with a name and a type (**Planning**, **Development**, **Code Freeze**, **QA Testing**, **UAT**, **Staging**, **Production**). Move a phase on with its status (**Pending**, **In Progress**, **Completed**, **Skipped**). Each phase shows its gate (**Gate: Go**, **No-Go** or **Not evaluated**), worked out live from the phase's linked runs and not recorded; a QA lead records one with **Record gate verdict**.
 
 When every phase is completed or skipped, **Mark as Released** sets the release to released; the server refuses it while any phase is still open.
 
-> **Phase enforcement is off by default.** With the `release_phase_gate_enforcement` feature flag on, the server refuses to complete a phase whose gate verdict is not GO, or to skip one, unless an override or skip reason is supplied, and audits both. The release page does not send that reason yet (you will see "Failed to update phase"), so an override has to go through the API (`gate_override_reason` or `skip_reason`). The flag is described in the repository's feature-flag reference (`docs/operations/feature-flags.md`).
+> **Phase enforcement.** With the `release_phase_gate_enforcement` feature flag on (the default on a new installation), completing a phase whose gate is not Go, or skipping one, needs a reason. The page asks for it: **Complete "…" anyway?** quotes what the gate found, and **Skip "…"?** explains why a skip needs one. Write the reason (at least 3 characters) and choose **Complete with override** or **Skip phase**; **Cancel** leaves the phase as it was. The override or skip is recorded in the audit log and in the activity feed with its reason. On the API the fields are `gate_override_reason` and `skip_reason`. The flag is described in the repository's feature-flag reference (`docs/operations/feature-flags.md`).
 
 ### Also on a release's page
 
 - **Runs**, **Tests**, **Passed**, **Failed** and **Pass Rate** across its linked runs, and the **Linked Test Runs** list.
+- **Release gate**: the recorded verdict and its evidence (see [Evaluating the release gate](#evaluating-the-release-gate)).
 - **Production outcome**: after shipping, **Mark incident** or **Record rollback** with a reason, so the release's history records how it went.
-- **Compliance Pack**: **Generate pack** (`QA_LEAD` or higher) builds a downloadable ZIP of the evidence behind the release decision. Compliance packs are off by default (`release_compliance_pack` flag); with it off, generating says the feature is disabled.
+- **Compliance Pack**: **Generate pack** (`QA_LEAD` or higher) builds a downloadable ZIP of the evidence behind the release decision. Compliance packs are on by default on a new installation (`release_compliance_pack` flag); with the flag off, generating says the feature is disabled. The packs that exist are also listed beside the release list, with their size, checksum and a **Download**.
 - **Release workflow**: the release's pipeline status.
 
 ## Gate policies

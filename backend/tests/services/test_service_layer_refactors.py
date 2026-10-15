@@ -596,12 +596,24 @@ async def test_release_service_list_releases_enriches_run_counts():
         ]
     )
 
-    result = await release_service.list_releases(db, str(uuid.uuid4()))
+    # W05 REL-01: the page's gate verdicts are one more batch read after the
+    # run counts (its own SQL is pinned by the live
+    # test_releases_list_gate_owner_postgres.py); this script answers by call
+    # order and has no row for it. The release has no owner, so the owner batch
+    # spends no statement.
+    with patch.object(
+        release_service.release_gate_service,
+        "current_gate_summaries",
+        AsyncMock(return_value={}),
+    ):
+        result = await release_service.list_releases(db, str(uuid.uuid4()))
 
     assert result["total"] == 1
     assert result["items"][0]["id"] == str(release_id)
     assert result["items"][0]["test_run_count"] == 3
     assert result["items"][0]["phases"][0]["name"] == "QA"
+    assert result["items"][0]["gate"] is None
+    assert result["items"][0]["owner"] is None
 
 
 @pytest.mark.asyncio

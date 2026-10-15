@@ -7,9 +7,10 @@ Authorization policy:
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
-from typing import Literal, Optional
+from datetime import datetime, timezone
+from typing import Any, Literal, Optional
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
@@ -31,13 +32,28 @@ from app.services import (
     github_release_sync,
     release_lifecycle_service,
     jira_release_sync,
+    release_gate_reasons,
     release_gate_service,
     release_outcome_service,
+    release_owner_service,
     release_phase_gate_service,
     release_service,
 )
 
 router = APIRouter(prefix="/api/v1/releases", tags=["Releases"])
+
+
+def _comparable(value: Any) -> Any:
+    """A value as the change test compares it: ids as strings, a naive datetime as UTC, else as is.
+
+    The row holds an aware UTC ``planned_date``; the edit dialog sends a bare date, which parses
+    naive. Compared raw they always differed, so every edit logged "changed: planned_date".
+    """
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    if isinstance(value, datetime) and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
 
 
 class PhaseIn(BaseModel):
@@ -112,6 +128,11 @@ class ReleaseIn(BaseModel):
     #: ``resolve_baseline``. Set it to override, which is what a hotfix needs:
     #: its baseline is its parent release, not whatever shipped most recently.
     baseline_release_id: Optional[str] = None
+    #: REL-02. A person who can work on the project (an ADMIN, or an active
+    #: non-service member); anyone else is a 422 with one text for every case.
+    #: Omitted -> the creating human (never an API key / service account);
+    #: ``null`` or ``""`` -> "No owner".
+    owner_user_id: Optional[str] = None
 
 
 class ReleaseUpdate(BaseModel):
@@ -126,6 +147,9 @@ class ReleaseUpdate(BaseModel):
     cutoff_start_at: Optional[datetime] = None
     cutoff_end_at: Optional[datetime] = None
     baseline_release_id: Optional[str] = None
+    #: REL-02. Sent at all (``model_fields_set``): ``null`` / ``""`` clears the
+    #: owner, anything else is validated against the release's project.
+    owner_user_id: Optional[str] = None
 
 
 class LinkRunRequest(BaseModel):
@@ -225,6 +249,16 @@ async def get_release_gate(
     gate = await release_gate_service.current_gate(db, release_id)
     if gate is None:
         raise HTTPException(status_code=404, detail="This release has not been evaluated yet")
+    reasons = gate.get("blocking_reasons") or []
+    if reasons:
+        # REL-01. The stored reasons name an ingested test by its opaque
+        # fingerprint ("checkout-e2e::3f9a... is FAILED"); the display strings
+        # sit BESIDE them (the raw list stays the record) and read "test_pay
+        # (checkout-e2e) is FAILED". Only when there is something to translate:
+        # a verdict with no blocking reason costs no further query.
+        gate["blocking_reasons_display"] = await release_gate_reasons.display_reasons_for_release(
+            db, uuid.UUID(str(release_id)), reasons[: release_gate_service.GATE_DETAIL_REASON_CAP]
+        )
     return gate
 
 
@@ -261,7 +295,9 @@ async def create_release(
     # ``PUT /{release_id}`` immediately below already carries
     # ``require_release_access()``: create was the odd one out.
     await resolve_project_scope(db, current_user, str(body.project_id))
-    release = await release_service.create_release(db, body)
+    # The actor is the creator (``created_by_id``) and, when an interactive
+    # human, the default owner (REL-02).
+    release = await release_service.create_release(db, body, actor=current_user)
 
     # Epic ACT. Staged on this session so the event and the release land
     # together: a "release created" row for a create that rolled back would be
@@ -331,6 +367,17 @@ async def sync_releases_from_external(
         # and collapsing them into one message is how an operator ends up
         # re-checking credentials that were never the issue.
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except httpx.HTTPError as exc:
+        # REL-08. The source could not be reached at all (DNS, refused
+        # connection, timeout): nothing caught it, so it answered an opaque 500
+        # that read like a TestLookup bug. 502 = the upstream failed. The class
+        # name only -- ``str(exc)`` carries the URL, which names the repository
+        # or Jira host and does not belong in a toast.
+        source = "GitHub" if body.source == "github" else "Jira"
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not reach {source}: {type(exc).__name__}",
+        ) from exc
 
     # The services deliberately do not commit -- the router owns the
     # transaction, so one commit covers the whole sync and a failure part-way
@@ -352,16 +399,37 @@ async def update_release(
     # equal and record nothing at all — a worse bug than the no-op events this
     # is fixing.
     submitted = body.model_dump(exclude_none=True)
+    # REL-02: the owner is compared on its own below (``null`` clears it, which
+    # ``exclude_none`` cannot carry) and reported by NAME, never by id.
+    submitted.pop("owner_user_id", None)
+    owner_sent = "owner_user_id" in body.model_fields_set
     existing = await release_service.get_release_or_404(db, release_id)
     before = {f: getattr(existing, f, None) for f in submitted}
+    owner_before = getattr(existing, "owner_user_id", None)
 
     release = await release_service.update_release(db, release_id, body)
 
     # A release's name, dates and status are what a gate decision is read
     # against later, so "who changed this release, and to what" is exactly the
     # question the feed exists to answer. Only fields that actually DIFFER
-    # count: a PUT that re-sends the current name is not a rename.
-    changed = sorted(f for f, v in submitted.items() if before.get(f) != v)
+    # count: a PUT that re-sends the current name is not a rename. Ids are
+    # compared as strings: the row holds a UUID and the body a str, so a
+    # re-sent baseline used to read as a change every time.
+    changed = sorted(
+        f for f, v in submitted.items() if _comparable(before.get(f)) != _comparable(v)
+    )
+    owner_after = getattr(release, "owner_user_id", None)
+    owner_changed = owner_sent and _comparable(owner_before) != _comparable(owner_after)
+    diff: dict[str, Any] = {}
+    if owner_changed:
+        changed = sorted([*changed, "owner"])
+        names = await release_owner_service.owners_by_id(db, [owner_before, owner_after])
+
+        def _label(owner_id):
+            owner = names.get(owner_id) if owner_id is not None else None
+            return owner["name"] if owner else release_owner_service.NO_OWNER_LABEL
+
+        diff = {"before": {"owner": _label(owner_before)}, "after": {"owner": _label(owner_after)}}
     if changed:
         await record_activity(
             db,
@@ -373,6 +441,7 @@ async def update_release(
             release_id=release.id,
             changed_fields=changed,
             context={"changed": ", ".join(changed)},
+            **diff,
         )
 
     await db.commit()
@@ -577,6 +646,24 @@ async def activate_release_endpoint(
 
     previous = await release_lifecycle_service.activate_release(
         db, release, reason="manual"
+    )
+
+    # REL-04. The access-audit row below is for an auditor; the activity
+    # ledger is what the release page's "Recent activity" and ``/activity``
+    # read, and nothing put this there. Outcome mode: staged on this session,
+    # so it commits with the swap or not at all. Only on a real change -- the
+    # idempotent no-op above returned before reaching here.
+    await record_activity(
+        db,
+        project_id=release.project_id,
+        event_type="release.activated",
+        actor=ActorRef.from_user(current_user),
+        entity_id=release.id,
+        entity_label=release.name,
+        release_id=release.id,
+        before={"active_release": previous.name if previous is not None else None},
+        after={"active_release": release.name},
+        changed_fields=["active_release"],
     )
 
     db.add(
