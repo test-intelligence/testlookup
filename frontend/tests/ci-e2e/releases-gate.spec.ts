@@ -23,7 +23,7 @@ import { QA_ENGINEER, RELEASE, releasesHandlers, VIEWER } from '../visual/produc
 test.use({ viewport: { width: 1440, height: 900 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
 const ready = (p: Page) => p.getByRole('heading', { name: 'Releases', level: 1 })
-const card = (page: Page, name: string) => page.getByRole('article', { name: new RegExp(`^${name.replace(/\./g, '\\.')} `) })
+const card = (page: Page, name: string) => page.getByRole('article', { name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `) })
 const badge = (page: Page, name: string) => card(page, name).locator('[data-gate-decision]').first()
 const readyToShip = (page: Page) => page.locator('[data-release-health] [data-banner-fact]').filter({ hasText: 'Ready to ship' })
 

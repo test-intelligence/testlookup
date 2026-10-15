@@ -20,7 +20,7 @@ import { RELEASE, releasesHandlers, SYNC_OFFLINE } from '../visual/production/fi
 test.use({ viewport: { width: 1440, height: 900 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
 const ready = (p: Page) => p.getByRole('heading', { name: 'Releases', level: 1 })
-const card = (page: Page, name: string) => page.getByRole('article', { name: new RegExp(`^${name.replace(/\./g, '\\.')} `) })
+const card = (page: Page, name: string) => page.getByRole('article', { name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `) })
 const activePill = (page: Page, name: string) => card(page, name).locator('[data-release-active]')
 const listReads = (api: Parameters<typeof requestsTo>[0]) => requestsTo(api, '/api/v1/releases').length
 

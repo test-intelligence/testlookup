@@ -19,7 +19,7 @@ import { RELEASE, RELEASE_PEOPLE, releasesHandlers } from '../visual/production/
 test.use({ viewport: { width: 1440, height: 900 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
 const ready = (p: Page) => p.getByRole('heading', { name: 'Releases', level: 1 })
-const card = (page: Page, name: string) => page.getByRole('article', { name: new RegExp(`^${name.replace(/\./g, '\\.')} `) })
+const card = (page: Page, name: string) => page.getByRole('article', { name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `) })
 const ownerChip = (page: Page, name: string) => card(page, name).locator('[data-owner-chip]')
 /** The chip's line: the avatar (initials, or a dashed dash), the name, the due date. */
 const ownerLine = (page: Page, name: string) => card(page, name).locator('div:has(> [data-owner-chip])')

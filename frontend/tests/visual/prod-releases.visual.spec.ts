@@ -21,7 +21,7 @@ import { HOTFIX_GO, RELEASE, releasesHandlers, SYNC_OFFLINE } from './production
 test.use(PINNED)
 
 const ready = (p: Page) => p.getByRole('heading', { name: 'Releases', level: 1 })
-const card = (page: Page, name: string) => page.getByRole('article', { name: new RegExp(`^${name.replace(/\./g, '\\.')} `) })
+const card = (page: Page, name: string) => page.getByRole('article', { name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `) })
 
 /** The list with the hotfix already GO: one in-progress release ready to ship. */
 function listWithReadyHotfix() {
