@@ -52,6 +52,33 @@ locally by default.
 
 ### Added
 
+- **AI history: every AI analysis is kept, and compared with the previous
+  run's** (deferred-features wave W03, AIH-01 to AIH-07). A re-analysis no longer
+  overwrites the last answer: each pipeline stores a numbered version of the
+  run's analysis digest and run summary (MongoDB `ai_run_versions`) and of each
+  test result's analysis (`ai_analysis_versions`, migration 0205, with a v1
+  backfill), with provenance (pipeline, mode, provider and model, prompt
+  versions, fallback, trigger; a human correction is a version with its author).
+  The run's **Analysis** tab shows a **History** control (pick a version to see
+  its stored snapshot, or diff two: verdict, categories, root-cause clusters,
+  per-test changes, the engine first) and a **vs previous run** card (the
+  previous run of the same suite on the same branch: verdict change, new /
+  resolved / persisting root causes, tests whose AI conclusion changed, a
+  deterministic summary offline or the AI narrative when an LLM is reachable);
+  Run Compare gains an **AI analysis** section and its AI report lists the AI
+  changes; a test's History shows its AI category per run and where it changed,
+  with each run's stored versions. API: `GET /runs/{id}/ai-history`
+  (`/{version_id}`, `/diff`, `/export`), `/runs/{id}/tests/{test_id}/ai-history`,
+  `/runs/{id}/previous`, `/runs/{id}/ai-compare`. Retention: AI history is on the
+  runs clock, capped at 20 versions per run per kind and 10 per test result
+  (migration 0206, set on `/settings/retention`; version 1, the newest and any
+  version a published decision report cites are never pruned); the compliance
+  pack carries `ai_history.json`; activity `analysis.completed`,
+  `analysis.verdict_changed`, `analysis.report_superseded`. CLI `testlookup
+  ai-history <run> [--diff 1..latest]`, `testlookup compare-ai <run>
+  [--fail-on-verdict-regression]` (exit 8); MCP `get_ai_history`,
+  `diff_ai_versions`, `compare_ai_with_previous`.
+
 - **Execution time for tests, suites and runs** (deferred-features wave W02,
   EXEC-01 to EXEC-06): every report format and the live reporters keep each
   test's start, finish, setup / test / teardown split and worker
@@ -118,6 +145,17 @@ locally by default.
   naming the actor and the key's owner.
 
 ### Changed
+
+- **"Compare to previous run" means the previous run on the same branch**
+  (W03, owner decision D42). The run menu, the Changes tab and the Runs list ask
+  the server (`GET /runs/{id}/previous`): the newest finished run of the same
+  primary suite on the same branch, the rule Run Compare's precompute and the
+  "vs previous run" card use. It used to pick from the 50 runs loaded in the
+  page, on any branch. Run Compare's cached AI reports from before this release
+  are regenerated once on first view (prompt `run_compare_v2`), and an
+  `ai_analysis` row re-analysed by another model now names that model and time
+  (the upsert kept the old ones), so value metrics count a re-analysed row in the
+  month of its latest analysis.
 
 - **A test case opens beside the list, not over it** (Test Management > Cases).
   The case view was a modal pinned to the top-right corner over a backdrop, so
@@ -249,6 +287,12 @@ locally by default.
   changed nothing.
 
 ### Fixed
+
+- **"Trigger pipeline" re-analyses a run again** (W03). The API answered
+  "Pipeline queued" and recorded the request, but the worker dropped the task as
+  a duplicate for two hours after any analysis of the run. A person's trigger
+  now runs (a double submit within two minutes still collapses, and automatic
+  triggers keep collapsing behind the run's two-hour key).
 
 - **Placeholders that pretended to work now work, or say what is true**
   (deferred-features wave W01, branch `feat/df-honest-ui-20261014`):
