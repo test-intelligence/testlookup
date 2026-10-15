@@ -37,6 +37,17 @@ vi.mock('@/hooks/useJiraDefects', () => ({
     isLoading: false, isError: false,
   }),
 }))
+// W06 DEF-03: New defect's "Affects release" select reads the top bar's cached release list.
+vi.mock('@/hooks/useReleases', () => ({
+  useReleases: () => ({
+    data: {
+      items: [{ id: 'rel-1', project_id: 'p-1', name: 'Checkout', version: '2.4', released_at: null }],
+      total: 1,
+    },
+    isLoading: false,
+    error: undefined,
+  }),
+}))
 vi.mock('@/hooks/useDefectPromotion', () => ({
   useDefectCandidate: () => ({ candidate: undefined, isLoading: false, isError: false, mutate: vi.fn() }),
   usePromoteCluster: () => ({

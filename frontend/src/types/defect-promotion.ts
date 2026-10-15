@@ -61,14 +61,38 @@ export interface DefectApprovalResponse {
   message: string
   jira_ticket: Record<string, unknown> | null
   jira_url: string | null
+  /** W06 DEF-06 (approve only): what the approval's Jira filing did:
+   *  'filed' | 'linked' | 'not_filed' | 'failed' | 'unknown' | 'not_requested'. */
+  jira_status?: string | null
+  /** not_filed: 'offline_mode' | 'disabled' | 'not_configured'. */
+  jira_reason?: string | null
+  /** failed / unknown: the server's detail text. */
+  jira_error?: string | null
 }
 
 export interface PendingDefect {
   defect_id: string
-  title: string
-  severity: string
+  /** W06 DEF-06: the defect's project (the queue is read per project). */
+  project_id: string
+  title: string | null
+  severity: string | null
   component: string | null
   owner_team: string | null
   created_at: string | null
   policy_reasons: string[]
+  /** The Jira project key given at promotion (approve files the ticket there); null = none. */
+  jira_project_key?: string | null
+  /** The run the defect was promoted from; null when unknown. */
+  run_id?: string | null
+  cluster_id?: string | null
+  ai_confidence_score?: number | null
+}
+
+/** GET /api/v1/deep-investigate/defects/pending-review (W06 D-10): `total` is a
+ *  COUNT over the same scope, not the page's length. */
+export interface PendingDefectList {
+  items: PendingDefect[]
+  total: number
+  page: number
+  page_size: number
 }

@@ -5,7 +5,7 @@ import type {
   DefectCandidateResponse,
   DefectPromotionRequest,
   DefectPromotionResponse,
-  PendingDefect,
+  PendingDefectList,
 } from '@/types/defect-promotion'
 
 export const defectPromotionService = {
@@ -42,9 +42,15 @@ export const defectPromotionService = {
     return data
   },
 
-  async listPendingDefects(): Promise<PendingDefect[]> {
-    const { data } = await api.get<PendingDefect[]>(
+  /**
+   * One project's defects awaiting a QA lead's approval (W06 DEF-06). QA_LEAD
+   * only on the server: callers ask only for a QA lead (`usePendingDefects`).
+   * `total` is the count over the whole scope, not this page's length.
+   */
+  async listPendingDefects(projectId: string, page = 1, pageSize = 100): Promise<PendingDefectList> {
+    const { data } = await api.get<PendingDefectList>(
       '/api/v1/deep-investigate/defects/pending-review',
+      { params: { project_id: projectId, page, page_size: pageSize } },
     )
     return data
   },

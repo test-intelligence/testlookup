@@ -7,6 +7,9 @@
  *   - `?tab=approvals` selects Approvals: AI reports (the old /reviews body),
  *     quarantine proposals and test-case approvals, filtered by source
  *     (`?source=`), the waiting count in the tab label;
+ *   - W06 DEF-06: a QA lead also sees the Defects source (promoted defects
+ *     awaiting approval); anyone else never requests that QA_LEAD-only queue,
+ *     sees no chip and no section, and `?source=defects` reads as All;
  *   - in All Projects mode Approvals shows the project prompt /reviews showed
  *     and asks for none of its queues;
  *   - links point at the new URLs (the run's Analysis tab, Flaky tests ›
@@ -31,6 +34,9 @@ vi.mock('@/services/flakyQuarantineService', () => ({ flakyQuarantineService: qu
 
 const cases = vi.hoisted(() => ({ listCases: vi.fn(), transitionCase: vi.fn(), reviewAction: vi.fn() }))
 vi.mock('@/services/testManagementService', () => ({ testManagementService: cases }))
+
+const defects = vi.hoisted(() => ({ listPendingDefects: vi.fn(), reviewDefect: vi.fn() }))
+vi.mock('@/services/defectPromotionService', () => ({ defectPromotionService: defects }))
 
 vi.mock('@/hooks/useFeatureFlags', () => ({ useFeatureEnabled: () => false }))
 
@@ -104,6 +110,14 @@ function proposal(id: string, status = 'PROPOSED') {
   }
 }
 
+function pendingDefect(id: string) {
+  return {
+    defect_id: id, project_id: 'p1', title: `Defect ${id}`, severity: 'CRITICAL', component: 'checkout',
+    owner_team: 'payments', created_at: '2026-09-12T10:00:00Z', policy_reasons: ['CRITICAL severity'],
+    jira_project_key: 'QA', run_id: `run-${id}`, cluster_id: `cl-${id}`, ai_confidence_score: 88,
+  }
+}
+
 function testCase(id: string, status: string) {
   return {
     id, project_id: 'p1', title: `Case ${id}`, test_type: 'functional', priority: 'high', severity: 'major',
@@ -150,6 +164,7 @@ beforeEach(() => {
       total: 1, page: 1, size: 50, pages: 1,
     }),
   )
+  defects.listPendingDefects.mockResolvedValue({ items: [pendingDefect('pd1')], total: 1, page: 1, page_size: 100 })
 })
 
 const tab = (name: RegExp) => screen.getByRole('tab', { name })
@@ -230,13 +245,17 @@ describe('Inbox — Assigned to me', () => {
 })
 
 describe('Inbox — Approvals (?tab=approvals)', () => {
-  it('?tab=approvals selects Approvals and renders the three sources under "All"', async () => {
+  it('?tab=approvals selects Approvals and renders the four sources under "All" for a QA lead', async () => {
     const { container } = renderPage('/my-failures?tab=approvals')
     expect(tab(/^Approvals/)).toHaveAttribute('aria-selected', 'true')
     const primary = container.querySelector('[data-primary]') as HTMLElement
     expect(within(primary).getByRole('region', { name: 'AI reports' })).toBeInTheDocument()
     expect(within(primary).getByRole('region', { name: 'Quarantine proposals' })).toBeInTheDocument()
     expect(within(primary).getByRole('region', { name: 'Test cases' })).toBeInTheDocument()
+    const defectRegion = within(primary).getByRole('region', { name: 'Defects' })
+    expect(await within(defectRegion).findByText('Defect pd1')).toBeInTheDocument()
+    expect(within(defectRegion).getByRole('link', { name: 'Open Defects' })).toHaveAttribute('href', '/defects')
+    expect(defects.listPendingDefects).toHaveBeenCalledWith('p1', 1, 100)
     expect(await screen.findAllByTestId('review-row')).toHaveLength(2)
     expect(await screen.findByText('test_quarantine_q1')).toBeInTheDocument()
     // Only the proposal is an approval; the quarantined request is not.
@@ -247,15 +266,69 @@ describe('Inbox — Approvals (?tab=approvals)', () => {
     expect(screen.queryByRole('table', { name: 'Assigned failures' })).toBeNull()
   })
 
-  it('counts what is waiting in the tab label and per source (2 reports + 1 proposal + 2 cases)', async () => {
+  it('counts what is waiting in the tab label and per source (2 reports + 1 proposal + 2 cases + 1 defect)', async () => {
     renderPage()
-    await waitFor(() => expect(tab(/^Approvals/)).toHaveTextContent('Approvals5'))
+    await waitFor(() => expect(tab(/^Approvals/)).toHaveTextContent('Approvals6'))
     fireEvent.click(tab(/^Approvals/))
     expect(currentUrl()).toBe('/my-failures?tab=approvals')
     await waitFor(() => expect(screen.getByRole('radio', { name: 'AI reports 2' })).toBeInTheDocument())
     expect(screen.getByRole('radio', { name: 'Quarantine proposals 1' })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: 'Test cases 2' })).toBeInTheDocument()
-    expect(screen.getByRole('radio', { name: 'All 5' })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByRole('radio', { name: 'Defects 1' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'All 6' })).toHaveAttribute('aria-checked', 'true')
+  })
+
+  it("counts the defects queue by the server's total, not the page's length", async () => {
+    defects.listPendingDefects.mockResolvedValue({ items: [pendingDefect('pd1')], total: 120, page: 1, page_size: 100 })
+    renderPage('/my-failures?tab=approvals')
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Defects 120' })).toBeInTheDocument())
+    expect(tab(/^Approvals/)).toHaveTextContent('Approvals125')
+  })
+
+  it('a QA engineer gets no Defects source, never requests that queue, and counts the other three', async () => {
+    state.isQaLead = false
+    const { container } = renderPage('/my-failures?tab=approvals')
+    await waitFor(() => expect(tab(/^Approvals/)).toHaveTextContent('Approvals5'))
+    expect(screen.getByRole('radio', { name: 'All 5' })).toBeInTheDocument()
+    expect(screen.queryByRole('radio', { name: /^Defects/ })).toBeNull()
+    expect(within(container.querySelector('[data-primary]') as HTMLElement).queryByRole('region', { name: 'Defects' })).toBeNull()
+    expect(defects.listPendingDefects).not.toHaveBeenCalled()
+  })
+
+  it('?source=defects narrows a QA lead to the defects queue', async () => {
+    renderPage('/my-failures?tab=approvals&source=defects')
+    expect(await screen.findByText('Defect pd1')).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /^Defects/ })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.queryByRole('region', { name: 'AI reports' })).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Test cases' })).toBeNull()
+  })
+
+  it('?source=defects reads as All for anyone but a QA lead', async () => {
+    state.isQaLead = false
+    renderPage('/my-failures?tab=approvals&source=defects')
+    const sources = screen.getByRole('radiogroup', { name: 'Approval source' })
+    expect(within(sources).getByRole('radio', { name: /^All/ })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByRole('region', { name: 'AI reports' })).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Defects' })).toBeNull()
+    await waitFor(() => expect(tab(/^Approvals/)).toHaveTextContent('Approvals5'))
+    expect(defects.listPendingDefects).not.toHaveBeenCalled()
+  })
+
+  it('approves a defect from the inbox: the row leaves and the count drops', async () => {
+    defects.reviewDefect.mockResolvedValue({
+      defect_id: 'pd1', approval_status: 'approved', message: 'Defect approved successfully.',
+      jira_ticket: null, jira_url: null, jira_status: 'not_filed', jira_reason: 'offline_mode',
+    })
+    renderPage('/my-failures?tab=approvals&source=defects')
+    await screen.findByText('Defect pd1')
+    defects.listPendingDefects.mockResolvedValue({ items: [], total: 0, page: 1, page_size: 100 })
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('defect-approve'))
+    })
+    expect(defects.reviewDefect).toHaveBeenCalledWith('pd1', { action: 'approve' })
+    expect(screen.queryByText('Defect pd1')).toBeNull()
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Defects 0' })).toBeInTheDocument())
+    expect(tab(/^Approvals/)).toHaveTextContent('Approvals5')
   })
 
   it('filters by source, kept in ?source=', async () => {
@@ -324,6 +397,7 @@ describe('Inbox — Approvals (?tab=approvals)', () => {
     expect(reviews.list).not.toHaveBeenCalled()
     expect(quarantine.list).not.toHaveBeenCalled()
     expect(cases.listCases).not.toHaveBeenCalled()
+    expect(defects.listPendingDefects).not.toHaveBeenCalled()
   })
 
   it('opens the reports help section on the Approvals tab', () => {

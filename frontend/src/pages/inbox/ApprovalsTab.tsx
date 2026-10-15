@@ -5,10 +5,14 @@
  *   - AI reports: the review queue that was `/reviews` (`ReviewsBody`);
  *   - Quarantine proposals: the requests Flaky tests › Proposed shows
  *     (`QuarantineBody`, Approve / Reject);
- *   - Test cases: the cases awaiting review (`CaseApprovals`).
+ *   - Test cases: the cases awaiting review (`CaseApprovals`);
+ *   - Defects (W06 DEF-06, QA leads only): promoted defects awaiting approval
+ *     (`DefectApprovals`). The list is QA_LEAD-only on the server, so for
+ *     anyone else the chip and the section are absent and the queue is never
+ *     requested (no 403 toast on every Inbox visit).
  *
- * A source filter (`?source=`) narrows it to one of them; "All" stacks the
- * three, each under its heading with its count. Every queue belongs to one
+ * A source filter (`?source=`) narrows it to one of them; "All" stacks them,
+ * each under its heading with its count. Every queue belongs to one
  * project, so in All Projects mode the tab shows the project prompt `/reviews`
  * showed and asks for nothing.
  */
@@ -18,15 +22,19 @@ import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState
 import { TabCount } from '@/components/ui/Tabs'
 import { useTabParam } from '@/components/ui/useTabParam'
 import ScopedLink from '@/components/ui/ScopedLink'
+import { usePermissions } from '@/hooks/usePermissions'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { ReviewsBody } from '../ReviewsPage'
 import { QuarantineBody } from '../QuarantinePage'
 import CaseApprovals from './CaseApprovals'
-import ChipFilter from './ChipFilter'
+import ChipFilter, { type ChipOption } from './ChipFilter'
+import DefectApprovals from './DefectApprovals'
 import { useApprovalCounts } from './approvalQueues'
 
-const APPROVAL_SOURCES = ['all', 'reports', 'quarantine', 'cases'] as const
+const APPROVAL_SOURCES = ['all', 'reports', 'quarantine', 'cases', 'defects'] as const
 type ApprovalSource = (typeof APPROVAL_SOURCES)[number]
+/** What anyone but a QA lead may pick: `?source=defects` then reads as "All". */
+const NON_LEAD_SOURCES: readonly ApprovalSource[] = APPROVAL_SOURCES.filter((s) => s !== 'defects')
 
 export default function ApprovalsTab() {
   const activeProjectId = useProjectStore((s) => s.activeProjectId)
@@ -34,7 +42,7 @@ export default function ApprovalsTab() {
     return (
       <ProjectRequiredEmptyState
         icon={<ClipboardCheck className="h-10 w-10" />}
-        description="Approvals belong to one project. Pick the project whose AI reports, quarantine proposals and test-case reviews you want to decide."
+        description="Approvals belong to one project. Pick the project whose AI reports, quarantine proposals, test-case reviews and defect promotions you want to decide."
       />
     )
   }
@@ -42,9 +50,17 @@ export default function ApprovalsTab() {
 }
 
 function Approvals({ projectId }: { projectId: string }) {
-  const [source, setSource] = useTabParam(APPROVAL_SOURCES, 'all', 'source')
+  const { isQaLead } = usePermissions()
+  const [source, setSource] = useTabParam(isQaLead ? APPROVAL_SOURCES : NON_LEAD_SOURCES, 'all', 'source')
   const counts = useApprovalCounts(projectId)
   const show = (which: Exclude<ApprovalSource, 'all'>) => source === 'all' || source === which
+  const options: ChipOption<ApprovalSource>[] = [
+    { id: 'all', label: 'All', count: counts.total },
+    { id: 'reports', label: 'AI reports', count: counts.reports },
+    { id: 'quarantine', label: 'Quarantine proposals', count: counts.quarantine },
+    { id: 'cases', label: 'Test cases', count: counts.cases },
+    ...(isQaLead ? [{ id: 'defects' as const, label: 'Defects', count: counts.defects }] : []),
+  ]
 
   return (
     <div className="space-y-4">
@@ -53,12 +69,7 @@ function Approvals({ projectId }: { projectId: string }) {
         ariaLabel="Approval source"
         value={source}
         onChange={setSource}
-        options={[
-          { id: 'all', label: 'All', count: counts.total },
-          { id: 'reports', label: 'AI reports', count: counts.reports },
-          { id: 'quarantine', label: 'Quarantine proposals', count: counts.quarantine },
-          { id: 'cases', label: 'Test cases', count: counts.cases },
-        ]}
+        options={options}
       />
 
       <div data-primary="" className="space-y-6">
@@ -85,6 +96,21 @@ function Approvals({ projectId }: { projectId: string }) {
         {show('cases') && (
           <ApprovalSection id="cases" title="Test cases" count={counts.cases} heading={source === 'all'}>
             <CaseApprovals />
+          </ApprovalSection>
+        )}
+        {isQaLead && show('defects') && (
+          <ApprovalSection
+            id="defects"
+            title="Defects"
+            count={counts.defects}
+            heading={source === 'all'}
+            more={
+              <ScopedLink to="/defects" className="text-xs text-[var(--color-accent)] hover:underline">
+                Open Defects
+              </ScopedLink>
+            }
+          >
+            <DefectApprovals projectId={projectId} />
           </ApprovalSection>
         )}
       </div>
