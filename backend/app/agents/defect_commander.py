@@ -40,6 +40,7 @@ from app.services.defect_promotion_service import (
     _find_duplicate_semantic,
     _generate_jira_content,
 )
+from app.services.cluster_snapshot import is_current_snapshot
 
 logger = structlog.get_logger("agents.defect_commander")
 
@@ -217,6 +218,7 @@ class DefectCommander(BaseAgent):
                 select(FailureCluster).where(
                     FailureCluster.cluster_id == cluster_id,
                     FailureCluster.test_run_id == test_run_id,
+                    is_current_snapshot(),
                 )
             )
             cluster = cluster_result.scalar_one_or_none()

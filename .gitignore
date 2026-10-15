@@ -125,6 +125,8 @@ test-results.xml
 test-results.txt
 allure-results/
 allure-report/
+# ...except the parser fixtures: Allure's result directory IS the format under test (EXEC-01).
+!backend/tests/fixtures/**/allure-results/
 
 # Local scratch + design / AI-prototype hand-off artifacts (removed in
 # chore/repo-cleanup — these are mockups/notes, not product source)

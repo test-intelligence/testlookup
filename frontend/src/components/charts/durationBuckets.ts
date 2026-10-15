@@ -419,13 +419,27 @@ export function slowestToChartSeries(model: SlowestTestsModel): SeriesChart {
 }
 
 /**
+ * A tick on a clock-stepped axis (`durationScale` from a minute up): "30s",
+ * "2m", "1m 30s", "1h", "1h 30m" -- no "2m 0s" beside every whole minute.
+ */
+export function clockTickLabel(ms: number): string {
+  const totalSeconds = Math.round(ms / 1000)
+  const h = Math.floor(totalSeconds / 3600)
+  const m = Math.floor((totalSeconds % 3600) / 60)
+  const s = totalSeconds % 60
+  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`
+  if (m > 0) return s > 0 ? `${m}m ${s}s` : `${m}m`
+  return `${s}s`
+}
+
+/**
  * One duration tick, in the AXIS's unit (Wave 2.6 R2-17). `formatDuration`
  * picks a unit per value, so the zero of a seconds axis read "0ms" among
  * "2.5s … 10.0s", and a 0-2 s axis mixed "500ms" with "1.0s". The unit follows
  * the axis's top: under a second, milliseconds; under a minute, seconds, to
  * the step's own decimal places (at least one, as `formatDuration` prints
- * them) so no label rounds to a value it is not; past a minute, the kit's
- * "1m 40s", with the zero as "0s".
+ * them) so no label rounds to a value it is not; past a minute, clock labels
+ * ("2m", "1m 30s", "1h") on `durationScale`'s clock steps, with the zero as "0s".
  */
 export function durationTickLabel(value: number, axis: Pick<NiceScale, 'domain' | 'step'> | null): string {
   const top = axis?.domain[1] ?? 0
@@ -435,7 +449,7 @@ export function durationTickLabel(value: number, axis: Pick<NiceScale, 'domain' 
     return places > 0 && value !== 0 ? `${value.toFixed(places)}ms` : formatDuration(value)
   }
   if (value === 0) return '0s'
-  if (top >= 60_000) return formatDuration(value)
+  if (top >= 60_000) return clockTickLabel(value)
   const places = Math.max(1, tickDecimals((axis?.step ?? 1000) / 1000))
   return `${(value / 1000).toFixed(places)}s`
 }

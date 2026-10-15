@@ -62,7 +62,7 @@ test('a timed run: the figures, two overlapping worker rows, the failed bar, the
 
   // The slowest tests, with the baseline.
   const slowest = page.getByRole('region', { name: 'Slowest tests' })
-  await expect(slowest.getByRole('heading', { name: '20 slowest tests' })).toBeVisible()
+  await expect(slowest.getByRole('heading', { name: 'Slowest tests', exact: true })).toBeVisible()
   await expect(slowest.locator('[data-timing-slow-test]')).toHaveCount(3)
   await expect(slowest.locator(`[data-timing-slow-test="${TEST_CASE_ID}"]`)).toContainText('2× baseline')
 

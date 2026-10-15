@@ -4,8 +4,10 @@ GitHub-hosted runners pull without credentials and share outbound IPs, so they
 share Docker Hub's unauthenticated pull limit. On 2026-10-09 both backend jobs
 of PR #225 failed at "Initialize containers" with "toomanyrequests: You have
 reached your unauthenticated pull rate limit", on the first run and on the
-re-run, before a single test ran. The jobs now pull the same official images
-from AWS's mirror (``public.ecr.aws/docker/library/...``).
+re-run, before a single test ran. The jobs then pulled the same official images
+from AWS's mirror (``public.ecr.aws/docker/library/...``), which hit its own
+anonymous data limit on 2026-10-15 (PR #255, two attempts); they now pull
+through Google's Docker Hub mirror (``mirror.gcr.io/library/...``).
 
 A bare ``postgres:16-alpine`` (or ``docker.io/...``) here would bring that back.
 """

@@ -65,6 +65,7 @@ from app.models.postgres import (
     TestRun,
     User,
 )
+from app.services.cluster_snapshot import is_current_snapshot
 
 logger = structlog.get_logger("services.compliance_pack")
 
@@ -329,7 +330,7 @@ async def _gather_clusters(
     if run_id is None:
         return []
     result = await db.execute(
-        select(FailureCluster).where(FailureCluster.test_run_id == run_id)
+        select(FailureCluster).where(FailureCluster.test_run_id == run_id, is_current_snapshot())
     )
     return [_to_jsonable(c) for c in result.scalars().all()]
 

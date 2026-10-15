@@ -46,6 +46,7 @@ from app.models.constants import DIMENSION_METADATA
 from app.services.criticality_service import score_cluster
 from app.services.run_diff_service import get_baseline_diff
 from app.services.decision_report_service import load_decision_report
+from app.services.cluster_snapshot import is_current_snapshot
 
 logger = logging.getLogger("services.run_intelligence")
 
@@ -216,7 +217,7 @@ async def get_run_intelligence(
     async def _fetch_clusters():
         r = await db.execute(
             select(FailureCluster)
-            .where(FailureCluster.test_run_id == run_id)
+            .where(FailureCluster.test_run_id == run_id, is_current_snapshot())
             .order_by(FailureCluster.size.desc())
             .limit(20)
         )
@@ -1065,7 +1066,7 @@ async def _generate_and_cache_mode_variant(
         try:
             clusters_result = await db.execute(
                 select(FailureCluster)
-                .where(FailureCluster.test_run_id == run_id)
+                .where(FailureCluster.test_run_id == run_id, is_current_snapshot())
                 .order_by(FailureCluster.size.desc())
                 .limit(10)
             )

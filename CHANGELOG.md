@@ -294,6 +294,18 @@ locally by default.
   now runs (a double submit within two minutes still collapses, and automatic
   triggers keep collapsing behind the run's two-hour key).
 
+- **Drafting a defect from a cluster no longer ties up a database
+  connection while the AI writes.** The draft request kept its connection
+  for the whole LLM call, which also needs a connection for its cost check;
+  with three per worker, a few drafts at once could stall other requests.
+  The connection is now handed back before the call and taken again after.
+- **A re-analysed run shows each failure cluster once.** Every analysis keeps
+  its own cluster set (investigations refer to those rows), so a run analysed
+  twice listed each cluster twice on the run page, in the release council,
+  digests, notifications, compliance packs and chat; "defects grouped" and
+  the hours-saved figure counted them twice; and actions on a cluster, such
+  as promoting it to a defect, failed with "multiple rows". Every reader now
+  uses the run's newest analysis; the older sets stay for history.
 - **Placeholders that pretended to work now work, or say what is true**
   (deferred-features wave W01, branch `feat/df-honest-ui-20261014`):
   - Test plan items record their execution: the buttons sent POST to a

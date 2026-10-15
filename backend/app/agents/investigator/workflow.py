@@ -69,6 +69,7 @@ from app.models.postgres import (
 from app.services.pipeline_event_log import emit_event
 from app.services.evidence_sanitizer import sanitize_reference_text
 from app.services.eval_provenance_service import current_eval_manifest_checksum
+from app.services.cluster_snapshot import is_current_snapshot
 
 logger = structlog.get_logger("agents.investigator.workflow")
 
@@ -366,7 +367,7 @@ async def _gather_bundle(investigation: AgentInvestigation) -> dict[str, Any]:
                 if scoped_cluster is not None
                 else (
                     await db.execute(
-                        select(FailureCluster).where(FailureCluster.test_run_id == run.id)
+                        select(FailureCluster).where(FailureCluster.test_run_id == run.id, is_current_snapshot())
                     )
                 ).scalars().all()
             )

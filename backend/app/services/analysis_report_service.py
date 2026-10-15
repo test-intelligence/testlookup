@@ -49,6 +49,7 @@ from app.models.postgres import (
     TestStatus,
 )
 from app.services.digest_content_service import CAUSE_DISPLAY
+from app.services.cluster_snapshot import is_current_snapshot
 
 logger = logging.getLogger("services.analysis_report")
 
@@ -447,6 +448,7 @@ async def _collect_failures(
                     TestRun.project_id == project_id,
                     TestRun.created_at >= start,
                     TestRun.created_at < now,
+                    is_current_snapshot(),
                 )
                 .order_by(FailureCluster.size.desc())
                 .limit(caps["clusters"] + 1)
