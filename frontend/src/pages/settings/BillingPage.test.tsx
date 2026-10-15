@@ -194,6 +194,112 @@ describe('the quota form is bounded to what the backend accepts', () => {
   })
 })
 
+// ── W04 AIC-06: "Included per month" and "Overage rate" compute an overage ──
+
+const OVERAGE: Partial<BillingOverviewProject> = {
+  project_id: 'p-over',
+  project_name: 'Payments',
+  current_cost_usd: 30,
+  included_usd: 20,
+  hard_cap_usd: 100,
+  utilization_pct: 30,
+  status: 'OK',
+  overage_rate_usd: 1.5,
+  covered_usd: 20,
+  overage_usd: 10,
+  overage_charge_usd: 15,
+  projected_period_cost_usd: 90,
+  projected_overage_usd: 70,
+  projected_overage_charge_usd: 105,
+  projection_basis: 'linear_elapsed_days',
+}
+
+const rowOf = (id: string) => document.querySelector(`[data-billing-project="${id}"]`) as HTMLElement
+const cell = (id: string, name: string) => rowOf(id).querySelector(`[data-billing-${name}]`) as HTMLElement
+
+describe('W04 AIC-06: covered, overage, charge and the month-end projection', () => {
+  it('the table has the overage columns between Spend and Cap', () => {
+    renderWith([project()])
+    const headers = screen.getAllByRole('columnheader').map((th) => th.textContent)
+    expect(headers).toEqual(['Project', 'Spend', 'Covered', 'Overage', 'Charge', 'Cap', 'Utilization', 'Status', 'Cap hits', ''])
+    expect(document.querySelector('[data-billing-table]')).not.toBeNull()
+  })
+
+  it('Included 20, rate 1.5, spend 30: Covered $20.00, Overage $10.00, Charge $15.00 and the projection', () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-08-11T00:00:00Z'))
+    try {
+      renderWith([project(OVERAGE)], { period_start: '2026-08-01T00:00:00Z', period_end: '2026-09-01T00:00:00Z' })
+      expect(cell('p-over', 'spend')).toHaveTextContent('$30.00')
+      expect(cell('p-over', 'covered')).toHaveTextContent('$20.00')
+      expect(cell('p-over', 'overage')).toHaveTextContent('$10.00')
+      expect(cell('p-over', 'charge')).toHaveTextContent(/^\$15\.00/)
+      const projection = cell('p-over', 'projection')
+      expect(projection).toHaveTextContent('proj. $105.00 by month end')
+      expect(projection).toHaveAttribute('title', 'linear projection from 10 of 31 days of the period')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a project without an enabled quota keeps UNLIMITED and shows — in the three new cells, with no projection', () => {
+    renderWith([project({ project_id: 'p-free', status: 'UNLIMITED', hard_cap_usd: null, utilization_pct: null })])
+    expect(screen.getByText('UNLIMITED')).toBeInTheDocument()
+    for (const name of ['covered', 'overage', 'charge']) expect(cell('p-free', name)).toHaveTextContent(/^—$/)
+    expect(cell('p-free', 'projection')).toBeNull()
+  })
+
+  it('a cap with no included allowance (the form default) prints no charge — the server sends nulls, never 0', () => {
+    renderWith([project({ project_id: 'p-cap', overage_rate_usd: 1, covered_usd: null, overage_usd: null, overage_charge_usd: null })])
+    for (const name of ['covered', 'overage', 'charge']) expect(cell('p-cap', name)).toHaveTextContent(/^—$/)
+    expect(cell('p-cap', 'charge')).not.toHaveTextContent('$0.00')
+  })
+
+  it('no projection line before enough of the period has elapsed (the server sends null)', () => {
+    renderWith([project({ ...OVERAGE, projected_overage_charge_usd: null, projected_overage_usd: null, projected_period_cost_usd: null, projection_basis: 'insufficient_elapsed_time' })])
+    expect(cell('p-over', 'charge')).toHaveTextContent(/^\$15\.00$/)
+    expect(cell('p-over', 'projection')).toBeNull()
+  })
+
+  it('the fourth tile sums the projected charges it has, and says — when there are none', () => {
+    const { unmount } = renderWith([
+      project(OVERAGE),
+      project({ ...OVERAGE, project_id: 'p-2', project_name: 'Search', projected_overage_charge_usd: 4.5 }),
+      project({ project_id: 'p-3', project_name: 'Free', status: 'UNLIMITED' }),
+    ])
+    expect(screen.getByTestId('billing-projected-charge')).toHaveTextContent('Projected overage charge')
+    expect(screen.getByTestId('billing-projected-charge')).toHaveTextContent('$109.50')
+    unmount()
+    renderWith([project({ status: 'UNLIMITED' })])
+    expect(screen.getByTestId('billing-projected-charge')).toHaveTextContent(/Projected overage charge—$/)
+  })
+
+  it('Spend uses 2 decimals from $1 up and 4 below', () => {
+    renderWith([
+      project({ project_id: 'a', current_cost_usd: 12.3456 }),
+      project({ project_id: 'b', current_cost_usd: 0.0012 }),
+      project({ project_id: 'c', current_cost_usd: 0 }),
+    ])
+    expect(cell('a', 'spend')).toHaveTextContent(/^\$12\.35$/)
+    expect(cell('b', 'spend')).toHaveTextContent(/^\$0\.0012$/)
+    expect(cell('c', 'spend')).toHaveTextContent(/^\$0\.00$/)
+  })
+
+  it('the quota editor says what Included and Overage rate do (and that the rate never limits spend)', () => {
+    renderWith([project()])
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }))
+    expect(document.querySelector('[data-billing-hint="included"]')).toHaveTextContent(
+      'Spend up to this amount each month is covered; spend above it is overage.',
+    )
+    expect(document.querySelector('[data-billing-hint="rate"]')).toHaveTextContent(
+      'Charge = overage × rate. Shown in the table; it does not limit spend (the hard cap does).',
+    )
+    // The form default for the rate stays 1.
+    const rate = screen.getByLabelText(/Overage rate/) as HTMLInputElement
+    expect(rate.value).toBe('1')
+  })
+})
+
 describe('the settings page template (UX redesign P5)', () => {
   it('has the compact header with the route help topic; the table needs no layout change', () => {
     renderWith([project()])

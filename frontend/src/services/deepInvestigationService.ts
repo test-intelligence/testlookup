@@ -6,6 +6,10 @@ export interface PipelineStatus {
   pipeline_run_id: string | null
   workflow_type: string
   status: 'never_run' | 'pending' | 'running' | 'retry_wait' | 'completed' | 'passed' | 'failed'
+  /** Four-value public projection (E7.5); optional for an older payload. */
+  public_status?: string
+  /** A completed run whose stages degraded (the old `partial`). */
+  degraded?: boolean
   started_at: string | null
   completed_at: string | null
   error: string | null

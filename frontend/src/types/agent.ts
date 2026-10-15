@@ -55,6 +55,62 @@ export function isDegradedPipeline(p: { status?: string | null; execution_metada
   const meta = p.execution_metadata as { stage_quality?: unknown } | null | undefined
   return (p.status ?? '').toLowerCase() === 'completed' && meta?.stage_quality === 'degraded'
 }
+
+/**
+ * W04 AGT-04: the run can be retried by a person (the `/agents` Retry button).
+ *
+ * Mirror of `workflow_run_state.is_resumable` (backend) WITHOUT `retry_wait`:
+ * a run waiting for its automatic retry is still in progress, so it offers
+ * Stop, not Retry. True for a failed run, a legacy `partial` row, and a
+ * completed run whose stages degraded. A clean completed/passed run is not
+ * retryable (the server answers 409 "finished successfully").
+ */
+export function isResumablePipeline(
+  p: { status?: string | null; execution_metadata?: unknown } | null | undefined,
+): boolean {
+  if (!p) return false
+  const raw = (p.status ?? '').toLowerCase()
+  if (raw === 'failed' || raw === 'partial') return true
+  return isDegradedPipeline(p)
+}
+
+/** `POST /api/v1/agents/pipelines/{id}/retry` (202). `mode` decided by the server. */
+export interface RetryPipelineResponse {
+  mode: 'resume' | 'rerun' | string
+  /** The same id for a resume; null for a rerun (the worker mints the new run's id). */
+  pipeline_run_id: string | null
+  rerun_of: string | null
+  attempt: number
+  max_attempts: number
+  /** `config_unchanged` | `config_changed` | `no_frozen_plan` (plain string). */
+  reason: string
+  status: string
+  public_status: string
+  links: Record<string, string>
+}
+
+/** `POST /api/v1/agents/pipelines/{id}/cancel` (200). */
+export interface CancelPipelineResponse {
+  pipeline_run_id: string
+  accepted: boolean
+  /** True: stopped now. False: the running worker was asked to stop at its next stage boundary. */
+  terminal: boolean
+  status: string
+  public_status: string
+  reason: string
+}
+
+/** The `detail` of a retry/cancel 409. `links.rerun` = a fresh run is the way forward. */
+export interface PipelineActionConflict {
+  message: string
+  reason?: string
+  pipeline_run_id?: string
+  status?: string
+  public_status?: string
+  attempt?: number
+  max_attempts?: number
+  links?: { rerun?: string }
+}
 export type StageStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
 
 export interface AgentStageResult {

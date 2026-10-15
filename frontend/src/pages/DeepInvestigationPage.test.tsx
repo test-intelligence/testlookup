@@ -13,6 +13,13 @@ vi.mock('@/hooks/useDeepInvestigation', () => ({
   usePipelineStatus: vi.fn(),
 }))
 
+// W04 AIC-01: the page reads `/settings/ai/mode` for the deep triggers; Auto
+// with deep investigation on offers them (the state these tests describe).
+vi.mock('@/hooks/useAIConfig', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/useAIConfig')>()),
+  useAIConfig: vi.fn(() => ({ data: { analysis_mode: 'auto', ai_offline_mode: false, deep_investigation_enabled: true } })),
+}))
+
 vi.mock('@/hooks/useRuns', () => ({
   useRuns: vi.fn(),
   // The page added a ``useRun`` fallback fetch (run-detail KPIs populate

@@ -31,6 +31,12 @@ const HELP_TOPIC = helpTopicParam('/settings/billing')
  * endpoints still respond but usage/quota values are zero/null until the
  * flag is enabled. Because the flag only changes metering behaviour the
  * UI itself can render unconditionally.
+ *
+ * W04 AIC-06: "Included per month" and "Overage rate" now compute something.
+ * The server returns Covered = min(spend, included), Overage = spend above
+ * it, Charge = overage × rate and a linear month-end projection; the table
+ * shows them (`—` where the server computed nothing: no enabled quota, or no
+ * included allowance). Display only — the hard cap is what limits spend.
  */
 export default function BillingPage() {
   const { isAdmin } = usePermissions()
@@ -41,6 +47,12 @@ export default function BillingPage() {
   if (isError || !overview) {
     return <DataUnavailable error={error} onRetry={() => void refresh()} testId="billing-data-unavailable" />
   }
+
+  const projections = overview.projects
+    .map((p) => p.projected_overage_charge_usd)
+    .filter((v): v is number => v != null)
+  const projectedCharge = projections.length > 0 ? projections.reduce((sum, v) => sum + v, 0) : null
+  const elapsed = elapsedOfPeriod(overview.period_start, overview.period_end)
 
   return (
     <div className="space-y-4">
@@ -53,11 +65,11 @@ export default function BillingPage() {
       />
 
       {/* Workspace tiles */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-4 gap-3">
         <SummaryTile
           icon={<DollarSign className="h-4 w-4" />}
           label="Total spend (period)"
-          value={`$${overview.total_cost_usd.toFixed(4)}`}
+          value={formatSpend(overview.total_cost_usd)}
         />
         <SummaryTile
           label="LLM calls"
@@ -77,15 +89,23 @@ export default function BillingPage() {
               : 'neutral'
           }
         />
+        <SummaryTile
+          label="Projected overage charge"
+          value={formatUsd(projectedCharge)}
+          testId="billing-projected-charge"
+        />
       </div>
 
       {/* Project table */}
-      <div className="overflow-hidden rounded-md border border-[var(--color-border)]">
+      <div data-billing-table="" className="overflow-hidden rounded-md border border-[var(--color-border)]">
         <table className="w-full text-sm">
           <thead className="bg-[var(--color-bg-secondary)] text-xs text-[var(--color-text-muted)]">
             <tr>
               <th className="text-left px-3 py-2">Project</th>
               <th className="text-right px-3 py-2">Spend</th>
+              <th className="text-right px-3 py-2" title="Spend up to the included amount">Covered</th>
+              <th className="text-right px-3 py-2" title="Spend above the included amount">Overage</th>
+              <th className="text-right px-3 py-2" title="Overage × overage rate">Charge</th>
               <th className="text-right px-3 py-2">Cap</th>
               <th className="text-right px-3 py-2">Utilization</th>
               <th className="text-center px-3 py-2">Status</th>
@@ -96,7 +116,7 @@ export default function BillingPage() {
           <tbody>
             {overview.projects.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-3 py-8 text-center text-[var(--color-text-muted)]">
+                <td colSpan={10} className="px-3 py-8 text-center text-[var(--color-text-muted)]">
                   No accessible projects in this period.
                 </td>
               </tr>
@@ -105,6 +125,7 @@ export default function BillingPage() {
               <ProjectRow
                 key={row.project_id}
                 row={row}
+                elapsed={elapsed}
                 onEdit={() => setSelectedProjectId(row.project_id)}
                 canEdit={isAdmin}
               />
@@ -133,11 +154,13 @@ function SummaryTile({
   label,
   value,
   tone = 'neutral',
+  testId,
 }: {
   icon?: React.ReactNode
   label: string
   value: string
   tone?: 'neutral' | 'warn' | 'error'
+  testId?: string
 }) {
   const borderClass =
     tone === 'error'
@@ -146,7 +169,7 @@ function SummaryTile({
       ? 'border-[var(--status-broken-bd)]/40'
       : 'border-[var(--color-border)]'
   return (
-    <div className={`rounded-md border ${borderClass} bg-[var(--color-bg-card)] p-3`}>
+    <div data-testid={testId} className={`rounded-md border ${borderClass} bg-[var(--color-bg-card)] p-3`}>
       <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
         {icon}
         {label}
@@ -156,20 +179,75 @@ function SummaryTile({
   )
 }
 
+/**
+ * Spend at a precision that does not hide it: 2 decimals from $1 up, 4 below
+ * (LLM spend is often a fraction of a cent: $0.0012 must not read "$0.00").
+ */
+function formatSpend(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—'
+  if (value === 0) return '$0.00'
+  return `$${value.toFixed(Math.abs(value) >= 1 ? 2 : 4)}`
+}
+
+/** Covered / Overage / Charge / projections: dollars and cents; `—` when the server computed nothing. */
+function formatUsd(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—'
+  return `$${value.toFixed(2)}`
+}
+
+/** "17.5 of 30 days": how much of the billing period has passed (the projection's basis). */
+function elapsedOfPeriod(startIso: string, endIso: string, now = Date.now()): string | null {
+  const start = Date.parse(startIso)
+  const end = Date.parse(endIso)
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null
+  const day = 86_400_000
+  const total = Math.round((end - start) / day)
+  const elapsed = Math.min(Math.max(now - start, 0), end - start) / day
+  return `${Math.round(elapsed * 10) / 10} of ${total} days`
+}
+
+/** The projection's tooltip, from the server's basis. */
+function projectionTitle(basis: string | null | undefined, elapsed: string | null): string {
+  if (basis === 'linear_elapsed_days') {
+    return elapsed ? `linear projection from ${elapsed} of the period` : 'linear projection from the elapsed part of the period'
+  }
+  return basis ? `projection basis: ${basis}` : 'projection'
+}
+
 function ProjectRow({
   row,
+  elapsed,
   onEdit,
   canEdit,
 }: {
   row: BillingOverviewProject
+  elapsed: string | null
   onEdit: () => void
   canEdit: boolean
 }) {
   return (
-    <tr className="border-t border-[var(--color-border)]">
+    <tr data-billing-project={row.project_id} className="border-t border-[var(--color-border)]">
       <td className="px-3 py-2 text-[var(--color-text)]">{row.project_name}</td>
-      <td className="px-3 py-2 text-right font-mono text-[var(--color-text)]">
-        ${row.current_cost_usd.toFixed(4)}
+      <td data-billing-spend="" className="px-3 py-2 text-right font-mono text-[var(--color-text)]">
+        {formatSpend(row.current_cost_usd)}
+      </td>
+      <td data-billing-covered="" className="px-3 py-2 text-right font-mono text-[var(--color-text-secondary)]">
+        {formatUsd(row.covered_usd)}
+      </td>
+      <td data-billing-overage="" className="px-3 py-2 text-right font-mono text-[var(--color-text-secondary)]">
+        {formatUsd(row.overage_usd)}
+      </td>
+      <td data-billing-charge="" className="px-3 py-2 text-right font-mono text-[var(--color-text)]">
+        <div>{formatUsd(row.overage_charge_usd)}</div>
+        {row.projected_overage_charge_usd != null && (
+          <div
+            data-billing-projection=""
+            title={projectionTitle(row.projection_basis, elapsed)}
+            className="text-[10px] font-sans text-[var(--color-text-muted)] whitespace-nowrap"
+          >
+            proj. {formatUsd(row.projected_overage_charge_usd)} by month end
+          </div>
+        )}
       </td>
       <td className="px-3 py-2 text-right text-[var(--color-text-muted)]">
         {row.hard_cap_usd != null ? `$${row.hard_cap_usd.toFixed(2)}` : '—'}
@@ -316,6 +394,7 @@ function QuotaEditor({
                 onChange={(v) => setForm({ ...form, included_usd: v })}
                 disabled={!canEdit}
                 step={0.01}
+                hint={{ key: 'included', text: 'Spend up to this amount each month is covered; spend above it is overage.' }}
               />
               <NumberInput
                 label="Hard cap ($)"
@@ -330,6 +409,7 @@ function QuotaEditor({
                 onChange={(v) => setForm({ ...form, overage_rate_usd: v })}
                 disabled={!canEdit}
                 step={0.01}
+                hint={{ key: 'rate', text: 'Charge = overage × rate. Shown in the table; it does not limit spend (the hard cap does).' }}
               />
               <NumberInput
                 label="Soft-warn threshold (%)"
@@ -410,6 +490,7 @@ function NumberInput({
   step = 1,
   min,
   max,
+  hint,
 }: {
   label: string
   value: number
@@ -418,6 +499,8 @@ function NumberInput({
   step?: number
   min?: number
   max?: number
+  /** A line under the input saying what the value does (`data-billing-hint={key}`). */
+  hint?: { key: string; text: string }
 }) {
   return (
     <label className="text-xs block">
@@ -432,6 +515,11 @@ function NumberInput({
         onChange={(e) => onChange(Number(e.target.value))}
         className="mt-1 w-full px-2 py-1.5 text-sm bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded"
       />
+      {hint && (
+        <span data-billing-hint={hint.key} className="mt-1 block text-[10.5px] leading-snug text-[var(--color-text-muted)]">
+          {hint.text}
+        </span>
+      )}
     </label>
   )
 }

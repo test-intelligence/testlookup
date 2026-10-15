@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
+import { groupFeatureFlags, MUTATING_FLAG_KEYS } from '@/config/featureFlagGroups'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -83,6 +84,14 @@ export default function FeatureFlagsPage() {
     } catch (err) {
       toast.error(`Failed to delete: ${(err as Error).message}`)
     }
+  }
+
+  const grouped = groupFeatureFlags(flags)
+  const rowActions = {
+    onToggle: (flag: FeatureFlag) => void toggleGlobal(flag),
+    onRollout: (flag: FeatureFlag, percent: number) => void updateRollout(flag, percent),
+    onEdit: (flag: FeatureFlag) => setEditing(flag),
+    onDelete: (flag: FeatureFlag) => void deleteFlag(flag),
   }
 
   async function createFlag() {
@@ -195,73 +204,38 @@ export default function FeatureFlagsPage() {
               <th className="text-right px-3 py-2"></th>
             </tr>
           </thead>
-          <tbody>
-            {flags.length === 0 && (
+          {flags.length === 0 && (
+            <tbody>
               <tr>
                 <td colSpan={6} className="px-3 py-6 text-center text-[var(--color-text-muted)]">
                   No feature flags defined yet.
                 </td>
               </tr>
-            )}
-            {flags.map((flag) => (
-              <tr key={flag.id} className="border-t border-[var(--color-border)]">
-                <td className="px-3 py-2 font-mono text-xs text-[var(--color-text)]">{flag.key}</td>
-                <td className="px-3 py-2 text-xs text-[var(--color-text-muted)] max-w-xs truncate">
-                  {flag.description || '—'}
-                </td>
-                <td className="px-3 py-2 text-center">
-                  <button
-                    type="button"
-                    onClick={() => toggleGlobal(flag)}
-                    className={`text-xs px-2 py-1 rounded border ${
-                      flag.enabled_global
-                        ? 'border-[var(--status-passed-bd)]/40 text-[var(--status-passed)] bg-[var(--status-passed-bg)]/10'
-                        : 'border-[var(--color-border)] text-[var(--color-text-muted)]'
-                    }`}
-                    aria-label={`Toggle ${flag.key}`}
-                  >
-                    {flag.enabled_global ? 'ON' : 'OFF'}
-                  </button>
-                </td>
-                <td className="px-3 py-2 text-center">
-                  <input
-                    type="number"
-                    min={0}
-                    max={100}
-                    defaultValue={flag.rollout_percent}
-                    onBlur={(e) => {
-                      const v = Number(e.target.value)
-                      if (v !== flag.rollout_percent) updateRollout(flag, v)
-                    }}
-                    className="w-14 px-1 py-0.5 text-xs text-center bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded"
-                  />
-                </td>
-                <td className="px-3 py-2 text-center text-[10px] text-[var(--color-text-muted)]">
-                  {flag.enabled_projects?.length || flag.enabled_roles?.length
-                    ? `${flag.enabled_projects?.length ?? 0}p / ${flag.enabled_roles?.length ?? 0}r`
-                    : 'all'}
-                </td>
-                <td className="px-3 py-2 text-right">
-                  <button
-                    type="button"
-                    onClick={() => setEditing(flag)}
-                    className="text-xs text-[var(--color-accent)] hover:underline mr-2"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => deleteFlag(flag)}
-                    aria-label={`Delete flag ${flag.key}`}
-                    title={`Delete flag ${flag.key}`}
-                    className="text-xs text-[var(--status-failed)] hover:underline"
-                  >
-                    <Trash2 className="h-3 w-3 inline" />
-                  </button>
-                </td>
+            </tbody>
+          )}
+          {/* W04 AIC-07: grouped flags first, each group its own <tbody>
+              under a header row, then every other flag, ungrouped, in the
+              server's order. */}
+          {grouped.groups.map(({ group, flags: members }) => (
+            <tbody key={group.id} data-flag-group-body={group.id}>
+              <tr data-flag-group={group.id} className="border-t border-[var(--color-border)] bg-[var(--color-bg-secondary)]/60">
+                <th colSpan={6} scope="colgroup" className="px-3 py-2 text-left font-normal">
+                  <span className="block text-xs font-semibold text-[var(--color-text)]">{group.title}</span>
+                  <span className="block text-[11px] text-[var(--color-text-muted)]">{group.blurb}</span>
+                </th>
               </tr>
-            ))}
-          </tbody>
+              {members.map((flag) => (
+                <FlagRow key={flag.id} flag={flag} {...rowActions} />
+              ))}
+            </tbody>
+          ))}
+          {grouped.ungrouped.length > 0 && (
+            <tbody>
+              {grouped.ungrouped.map((flag) => (
+                <FlagRow key={flag.id} flag={flag} {...rowActions} />
+              ))}
+            </tbody>
+          )}
         </table>
       </div>
 
@@ -276,6 +250,96 @@ export default function FeatureFlagsPage() {
         />
       )}
     </div>
+  )
+}
+
+/** One flag as one table row (`data-flag-key`); the ON/OFF button is named "Toggle {key}". */
+function FlagRow({
+  flag,
+  onToggle,
+  onRollout,
+  onEdit,
+  onDelete,
+}: {
+  flag: FeatureFlag
+  onToggle: (flag: FeatureFlag) => void
+  onRollout: (flag: FeatureFlag, percent: number) => void
+  onEdit: (flag: FeatureFlag) => void
+  onDelete: (flag: FeatureFlag) => void
+}) {
+  return (
+    <tr data-flag-key={flag.key} className="border-t border-[var(--color-border)]">
+      <td className="px-3 py-2 font-mono text-xs text-[var(--color-text)]">
+        <span className="inline-flex items-center gap-1.5">
+          {flag.key}
+          {MUTATING_FLAG_KEYS.has(flag.key) && (
+            <span
+              data-flag-mutating=""
+              title="This stage writes data (it creates defects), unlike the read-only stages"
+              className="font-sans text-[9.5px] font-semibold tracking-wide px-1.5 py-0.5 rounded border border-[var(--status-broken-bd)]/50 text-[var(--status-broken)] bg-[var(--status-broken-bg)]/20"
+            >
+              MUTATING
+            </span>
+          )}
+        </span>
+      </td>
+      <td
+        className="px-3 py-2 text-xs text-[var(--color-text-muted)] max-w-xs truncate"
+        title={flag.description || undefined}
+      >
+        {flag.description || '—'}
+      </td>
+      <td className="px-3 py-2 text-center">
+        <button
+          type="button"
+          onClick={() => onToggle(flag)}
+          className={`text-xs px-2 py-1 rounded border ${
+            flag.enabled_global
+              ? 'border-[var(--status-passed-bd)]/40 text-[var(--status-passed)] bg-[var(--status-passed-bg)]/10'
+              : 'border-[var(--color-border)] text-[var(--color-text-muted)]'
+          }`}
+          aria-label={`Toggle ${flag.key}`}
+        >
+          {flag.enabled_global ? 'ON' : 'OFF'}
+        </button>
+      </td>
+      <td className="px-3 py-2 text-center">
+        <input
+          type="number"
+          min={0}
+          max={100}
+          defaultValue={flag.rollout_percent}
+          onBlur={(e) => {
+            const v = Number(e.target.value)
+            if (v !== flag.rollout_percent) onRollout(flag, v)
+          }}
+          className="w-14 px-1 py-0.5 text-xs text-center bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded"
+        />
+      </td>
+      <td className="px-3 py-2 text-center text-[10px] text-[var(--color-text-muted)]">
+        {flag.enabled_projects?.length || flag.enabled_roles?.length
+          ? `${flag.enabled_projects?.length ?? 0}p / ${flag.enabled_roles?.length ?? 0}r`
+          : 'all'}
+      </td>
+      <td className="px-3 py-2 text-right">
+        <button
+          type="button"
+          onClick={() => onEdit(flag)}
+          className="text-xs text-[var(--color-accent)] hover:underline mr-2"
+        >
+          Edit
+        </button>
+        <button
+          type="button"
+          onClick={() => onDelete(flag)}
+          aria-label={`Delete flag ${flag.key}`}
+          title={`Delete flag ${flag.key}`}
+          className="text-xs text-[var(--status-failed)] hover:underline"
+        >
+          <Trash2 className="h-3 w-3 inline" />
+        </button>
+      </td>
+    </tr>
   )
 }
 

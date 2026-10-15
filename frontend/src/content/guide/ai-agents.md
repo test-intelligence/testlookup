@@ -63,10 +63,14 @@ run is much shorter — `ingestion`, `anomaly_detection`, `root_cause_analysis`,
 `summary`, `triage` — so a run's **Evidence → Agent stages** list will show five stages, not
 twenty, unless it was a deep run.
 
-Not every deep stage runs on every install. The planner skips a stage, and records why ("feature flag is off for this project"), when it is switched off:
+Not every deep stage runs on every install. Each optional stage has a feature flag, listed under **Settings › Feature flags** in the group **Agent stages (deep pipeline)**. The planner skips a stage whose flag is off for the project, and records why ("feature flag is off for this project"):
 
-- `contract_validation`, `log_intelligence`, `regression_watchman`, `change_ownership` and `defect_commander` each run only when a feature flag of the same name is on for the project. No install creates these flags, so they are **off** until an administrator adds and enables them (for `contract_validation` and `change_ownership`, a server environment setting can also turn them on).
-- `gap_detection` and `report_refinement` run only when the server setting `AIQ_GAP_REFINEMENT_ENABLED` is on; it is off by default.
+- `contract_validation`, `log_intelligence`, `regression_watchman` and `change_ownership` are read-only specialists, each with a flag of the same name. They are **on** for a new install. An install upgraded from an earlier version gets them **off** until an administrator switches them on (for `contract_validation` and `change_ownership`, a server environment setting that was already on keeps them on).
+- `defect_commander` is marked **MUTATING**: it creates defects from high-confidence failure clusters, so its flag is **off** until an administrator turns it on.
+- `gap_detection` and `report_refinement` run when the flag `aiq_gap_refinement` is on. Both are deterministic (no LLM, no network), and the flag is **on** for every install unless the server setting `AIQ_GAP_REFINEMENT_ENABLED` says otherwise. With them, the decision report carries an **Analysis coverage** line.
+- `async_decision_report_supersession` is listed in the same group and is **off** unless its server setting is on.
+
+A flag's **ON / OFF** button is the global switch. To run a stage for one project only, switch it on and list that project under the flag's **Edit**.
 
 The feature-flag reference in the repository (`docs/operations/feature-flags.md`) lists each of these switches.
 
@@ -146,11 +150,20 @@ The **standard** pipeline runs on its own when a run is finalised. You can also 
 
 If a pipeline is already queued or running for that run, a new request is not started twice.
 
+The deep-investigation buttons are offered only while **Deep Investigation** is ticked under **Settings › AI** and the analysis mode is not **Rules**. Otherwise the run's page, its **Analysis** tab and the **Deep Investigation** page show a note saying why instead (**Runs** keeps its deep actions; the server refuses them with the same reason). When a run's last deep investigation failed, the **Deep Investigation** page and the run's **Analysis** tab offer **Retry from last successful stage**: it resumes that investigation, keeping the stages it completed, or starts a new one when the analysis configuration changed since it ran.
+
 ## Pipeline runs
 
 **Pipeline runs** (`/agents`, listed under **AI** in the settings index) lists every AI pipeline run in the projects you can see, newest first. Pick a run under **Test suite & build** to see only its pipelines and to enable **Trigger pipeline**. The badge next to it shows the analysis mode in use (**LLM Mode**, **ML Mode**, **Rules Mode** or **Auto Mode**).
 
 Each pipeline shows its type, run, suite, start time, duration and status (**IN PROGRESS**, **COMPLETED**, **FAILED** or **PASSED**), plus **DEGRADED** when a stage fell back, **awaiting review** when its report is waiting for a human decision, and **retrying** while it retries. Select one to read its **AI Report** (**View AI report**), its **Agent stages** (each stage, its timing, the compute graph and the raw stage records) and its **Workflow Progress**.
+
+With the `QA_ENGINEER` role or above you can act on a pipeline from its row:
+
+- **Retry** is offered on a **FAILED** pipeline and on a **COMPLETED** one marked **DEGRADED**. The server decides what happens. If the analysis configuration is the same as when the pipeline started, the pipeline **resumes** and keeps the stages it already completed (the row reads "Resumed (attempt 2/5)"). If the configuration changed since then (for example the confidence threshold or the timeout under **Settings › AI**), it **starts a new run** instead. A pipeline that was rejected in review, finished successfully, or reached its attempt limit is not retried: the row says why and offers **Start a new run**.
+- **Stop** is offered while a pipeline is in progress, and asks you to confirm. A queued pipeline stops at once. A running one shows **stopping** and ends at its next stage boundary. A stopped pipeline ends **FAILED**, and can be retried.
+
+Both actions are recorded in the project's activity ("AI analysis for … was retried", "… was cancelled").
 
 The same report and stages for one run are on that run's **Evidence** tab. Anyone with access to the project can read this page.
 

@@ -18,7 +18,21 @@ import ReviewBanner from '@/components/reviews/ReviewBanner'
 import { useRuns } from '@/hooks/useRuns'
 import { usePermissions } from '@/hooks/usePermissions'
 import agentService from '@/services/agentService'
-import { isDegradedPipeline, PUBLIC_PIPELINE_STATUS_LABEL, isPipelineInProgress, publicPipelineStatus } from '@/types/agent'
+import {
+  cancelOutcomeText,
+  conflictText,
+  PIPELINE_QUEUED,
+  pipelineActionError,
+  readPipelineActionConflict,
+  retryOutcomeText,
+} from '@/services/pipelineActions'
+import {
+  isDegradedPipeline,
+  isPipelineInProgress,
+  isResumablePipeline,
+  PUBLIC_PIPELINE_STATUS_LABEL,
+  publicPipelineStatus,
+} from '@/types/agent'
 import type { ActiveLiveRun, AgentPipelineRun, AgentStageResult, PipelineTimeline } from '@/types/agent'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
 import Disclosure from '@/components/ui/Disclosure'
@@ -312,21 +326,112 @@ function StageCard({ stage, showLLMMetrics = true }: { stage: AgentStageResult; 
   )
 }
 
+type RowNote = { tone: 'ok' | 'error'; text: string }
+
+/**
+ * W04 AGT-04: Retry (resume) and Stop on one pipeline row, for QA engineers.
+ *
+ * The row's select control is itself a `<button>`, so these render in a
+ * SIBLING container (`pipeline-row-actions`), never inside it (a button in a
+ * button is invalid DOM). The server decides resume vs rerun; the note under
+ * the row says which, or shows the server's refusal verbatim. A 409 that
+ * carries `links.rerun` (review rejected, finished successfully, attempt
+ * ceiling) offers "Start a new run" — offline or deep, as the row was; a live
+ * pipeline gets no button.
+ */
+function usePipelineRowActions(pipeline: AgentPipelineRun, onChanged: () => void) {
+  const [pending, setPending] = useState<'retry' | 'stop' | 'start' | null>(null)
+  const [confirmingStop, setConfirmingStop] = useState(false)
+  const [note, setNote] = useState<RowNote | null>(null)
+  const [offerNewRun, setOfferNewRun] = useState(false)
+
+  async function retry() {
+    setPending('retry')
+    setNote(null)
+    setOfferNewRun(false)
+    try {
+      const res = await agentService.retryPipeline(pipeline.id)
+      setNote({ tone: 'ok', text: retryOutcomeText(res) })
+    } catch (err: unknown) {
+      const conflict = readPipelineActionConflict(err)
+      if (conflict) {
+        setNote({ tone: 'error', text: conflictText(conflict) })
+        setOfferNewRun(Boolean(conflict.links?.rerun) && pipeline.workflow_type !== 'live')
+      } else {
+        setNote({ tone: 'error', text: pipelineActionError(err, 'Retry failed') })
+      }
+    } finally {
+      setPending(null)
+      onChanged()
+    }
+  }
+
+  async function stop() {
+    setPending('stop')
+    setNote(null)
+    setOfferNewRun(false)
+    try {
+      const res = await agentService.cancelPipeline(pipeline.id)
+      setNote({ tone: 'ok', text: cancelOutcomeText(res) })
+    } catch (err: unknown) {
+      const conflict = readPipelineActionConflict(err)
+      setNote({ tone: 'error', text: conflict ? conflictText(conflict) : pipelineActionError(err, 'Stop failed') })
+    } finally {
+      setPending(null)
+      setConfirmingStop(false)
+      onChanged()
+    }
+  }
+
+  async function startNewRun() {
+    setPending('start')
+    try {
+      const res = await agentService.triggerPipeline(
+        pipeline.test_run_id,
+        pipeline.workflow_type === 'deep' ? 'deep' : 'offline',
+      )
+      // 200 "already in progress" is not a queued run: say what the server said.
+      if (res && !res.task_id && res.message) toast(res.message)
+      else toast.success(PIPELINE_QUEUED)
+      setOfferNewRun(false)
+      setNote(null)
+    } catch (err: unknown) {
+      setNote({ tone: 'error', text: pipelineActionError(err, 'Failed to start a new run') })
+    } finally {
+      setPending(null)
+      onChanged()
+    }
+  }
+
+  return { pending, confirmingStop, setConfirmingStop, note, offerNewRun, retry, stop, startNewRun }
+}
+
+const ROW_ACTION_BTN =
+  'inline-flex items-center gap-1 rounded border border-[var(--color-border)] px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50 disabled:hover:bg-transparent'
+
 /**
  * One pipeline run as one row of the pipelines list (UX redesign P5: a
  * one-line row, so the list stays short above the full-width AI report — it
  * was a card in a third-width column beside it). Same facts: status, workflow,
- * the run it analysed, when, how long, then the chips.
+ * the run it analysed, when, how long, then the chips. W04 AGT-04: QA
+ * engineers get Retry / Stop beside the row (siblings of its button).
  */
 function PipelineRow({
   pipeline,
   onSelect,
   selected,
+  canAct,
+  onChanged,
 }: {
   pipeline: AgentPipelineRun
   onSelect: () => void
   selected: boolean
+  canAct: boolean
+  onChanged: () => void
 }) {
+  const actions = usePipelineRowActions(pipeline, onChanged)
+  const showRetry = canAct && isResumablePipeline(pipeline)
+  const showStop = canAct && isPipelineInProgress(pipeline.status) && !pipeline.cancel_requested
   const started = pipeline.started_at ? new Date(pipeline.started_at).toLocaleString() : '—'
   const duration =
     pipeline.started_at && pipeline.completed_at
@@ -342,80 +447,159 @@ function PipelineRow({
       : null
 
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      aria-pressed={selected}
-      className={`w-full text-left px-3 py-2 flex flex-wrap items-center gap-x-3 gap-y-1 transition-colors hover:bg-[var(--color-bg-hover)] ${
-        selected ? 'bg-[var(--color-bg-secondary)]' : ''
-      }`}
-    >
-      <StatusIcon status={publicPipelineStatus(pipeline)} degraded={isDegradedPipeline(pipeline)} />
-      <span className="text-sm font-medium text-[var(--color-text)] capitalize">
-        {pipeline.workflow_type} pipeline
-      </span>
-      {/* Run context: which run / suite this pipeline analysed. ``run_seq`` is
-          the same per-(project, suite) "Run #N" shown on /runs + /live; falls
-          back to the SDK build number, then to the raw run id, so there's
-          always something identifying. */}
-      <span className="text-xs font-semibold text-[var(--color-text-secondary)]">
-        {pipeline.run_seq != null
-          ? `Run #${pipeline.run_seq}`
-          : pipeline.build_number
-            ? `Build ${pipeline.build_number}`
-            : `Run ${pipeline.test_run_id.slice(0, 8)}`}
-      </span>
-      {pipeline.suite_name && (
-        <SuiteBadge primary={pipeline.suite_name} all={[pipeline.suite_name]} />
-      )}
-      <span className="text-xs text-[var(--color-text-muted)]">{started}</span>
-      {duration !== null && (
-        <span className="text-xs text-[var(--color-text-muted)]">Duration: {duration}s</span>
-      )}
-      <span className="ml-auto flex flex-wrap items-center gap-2">
-        {/* E7.5: the chip only ever shows one of the four public statuses.
-            Degradation is a quality qualifier, not a fifth status, so it gets
-            its own tag and keeps the amber tone that BUG-004 needed. */}
-        {isDegradedPipeline(pipeline) && (
-          <span
-            data-testid="pipeline-quality-tag"
-            className={`text-[10px] font-mono ${STATUS_COLOUR.degraded}`}
-          >
-            DEGRADED
-          </span>
-        )}
-        <span
-          data-testid="pipeline-status-chip"
-          className={`text-xs font-mono ${
-            isDegradedPipeline(pipeline) ? STATUS_COLOUR.degraded : STATUS_COLOUR[publicPipelineStatus(pipeline)]
-          }`}
+    <div data-testid="pipeline-row" data-pipeline-id={pipeline.id}>
+      <div className={`flex items-center ${selected ? 'bg-[var(--color-bg-secondary)]' : ''}`}>
+        <button
+          type="button"
+          onClick={onSelect}
+          aria-pressed={selected}
+          className="flex-1 min-w-0 text-left px-3 py-2 flex flex-wrap items-center gap-x-3 gap-y-1 transition-colors hover:bg-[var(--color-bg-hover)]"
         >
-          {PUBLIC_PIPELINE_STATUS_LABEL[publicPipelineStatus(pipeline)]}
-        </span>
-        {reviewedAt && (
-          <span data-testid="pipeline-reviewed-at" className="text-[10px] font-mono text-[var(--color-text-muted)]">
-            · reviewed {reviewedAt}
+          <StatusIcon status={publicPipelineStatus(pipeline)} degraded={isDegradedPipeline(pipeline)} />
+          <span className="text-sm font-medium text-[var(--color-text)] capitalize">
+            {pipeline.workflow_type} pipeline
           </span>
-        )}
-        {/* E8.5: a finished report pipeline rests at `completed` until a person
-            accepts its report (section 7.2); accepting moves it to `passed`. */}
-        {publicPipelineStatus(pipeline) === 'completed' && (
-          <span data-testid="pipeline-awaiting-review" className="text-[10px] font-mono text-[var(--color-text-muted)]">
-            awaiting review
+          {/* Run context: which run / suite this pipeline analysed. ``run_seq`` is
+              the same per-(project, suite) "Run #N" shown on /runs + /live; falls
+              back to the SDK build number, then to the raw run id, so there's
+              always something identifying. */}
+          <span className="text-xs font-semibold text-[var(--color-text-secondary)]">
+            {pipeline.run_seq != null
+              ? `Run #${pipeline.run_seq}`
+              : pipeline.build_number
+                ? `Build ${pipeline.build_number}`
+                : `Run ${pipeline.test_run_id.slice(0, 8)}`}
           </span>
-        )}
-        {pipeline.status === 'retry_wait' && pipeline.attempt != null && (
-          <span data-testid="pipeline-retry-detail" className="text-[10px] font-mono text-[var(--color-text-muted)]">
-            retrying · {pipeline.attempt}/{pipeline.max_attempts ?? '?'}
+          {pipeline.suite_name && (
+            <SuiteBadge primary={pipeline.suite_name} all={[pipeline.suite_name]} />
+          )}
+          <span className="text-xs text-[var(--color-text-muted)]">{started}</span>
+          {duration !== null && (
+            <span className="text-xs text-[var(--color-text-muted)]">Duration: {duration}s</span>
+          )}
+          <span className="ml-auto flex flex-wrap items-center gap-2">
+            {/* E7.5: the chip only ever shows one of the four public statuses.
+                Degradation is a quality qualifier, not a fifth status, so it gets
+                its own tag and keeps the amber tone that BUG-004 needed. */}
+            {isDegradedPipeline(pipeline) && (
+              <span
+                data-testid="pipeline-quality-tag"
+                className={`text-[10px] font-mono ${STATUS_COLOUR.degraded}`}
+              >
+                DEGRADED
+              </span>
+            )}
+            <span
+              data-testid="pipeline-status-chip"
+              className={`text-xs font-mono ${
+                isDegradedPipeline(pipeline) ? STATUS_COLOUR.degraded : STATUS_COLOUR[publicPipelineStatus(pipeline)]
+              }`}
+            >
+              {PUBLIC_PIPELINE_STATUS_LABEL[publicPipelineStatus(pipeline)]}
+            </span>
+            {reviewedAt && (
+              <span data-testid="pipeline-reviewed-at" className="text-[10px] font-mono text-[var(--color-text-muted)]">
+                · reviewed {reviewedAt}
+              </span>
+            )}
+            {/* E8.5: a finished report pipeline rests at `completed` until a person
+                accepts its report (section 7.2); accepting moves it to `passed`. */}
+            {publicPipelineStatus(pipeline) === 'completed' && (
+              <span data-testid="pipeline-awaiting-review" className="text-[10px] font-mono text-[var(--color-text-muted)]">
+                awaiting review
+              </span>
+            )}
+            {pipeline.status === 'retry_wait' && pipeline.attempt != null && (
+              <span data-testid="pipeline-retry-detail" className="text-[10px] font-mono text-[var(--color-text-muted)]">
+                retrying · {pipeline.attempt}/{pipeline.max_attempts ?? '?'}
+              </span>
+            )}
+            {pipeline.cancel_requested && isPipelineInProgress(pipeline.status) && (
+              <span data-testid="pipeline-stopping" className="text-[10px] font-mono text-[var(--color-text-muted)]">
+                stopping
+              </span>
+            )}
           </span>
+        </button>
+        {(showRetry || showStop) && (
+          <div data-testid="pipeline-row-actions" className="flex shrink-0 items-center gap-1.5 pr-3">
+            {showRetry && (
+              <button
+                type="button"
+                data-testid="pipeline-retry"
+                onClick={() => void actions.retry()}
+                disabled={actions.pending !== null}
+                title="Retry this run: the server resumes it from its last completed stage, or starts a new run if the configuration changed"
+                className={ROW_ACTION_BTN}
+              >
+                <RefreshCw className={`h-3 w-3 ${actions.pending === 'retry' ? 'animate-spin' : ''}`} />
+                {actions.pending === 'retry' ? 'Retrying…' : 'Retry'}
+              </button>
+            )}
+            {showStop && !actions.confirmingStop && (
+              <button
+                type="button"
+                data-testid="pipeline-stop"
+                onClick={() => actions.setConfirmingStop(true)}
+                disabled={actions.pending !== null}
+                title="Stop this run"
+                className={ROW_ACTION_BTN}
+              >
+                <XCircle className="h-3 w-3" />
+                Stop
+              </button>
+            )}
+            {showStop && actions.confirmingStop && (
+              <span data-testid="pipeline-stop-confirm" className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-secondary)]">
+                Stop this run?
+                <button
+                  type="button"
+                  data-testid="pipeline-stop-confirm-yes"
+                  onClick={() => void actions.stop()}
+                  disabled={actions.pending !== null}
+                  className={`${ROW_ACTION_BTN} !text-[var(--status-failed)]`}
+                >
+                  {actions.pending === 'stop' ? 'Stopping…' : 'Stop run'}
+                </button>
+                <button
+                  type="button"
+                  data-testid="pipeline-stop-confirm-no"
+                  onClick={() => actions.setConfirmingStop(false)}
+                  disabled={actions.pending !== null}
+                  className={ROW_ACTION_BTN}
+                >
+                  Keep running
+                </button>
+              </span>
+            )}
+          </div>
         )}
-        {pipeline.cancel_requested && isPipelineInProgress(pipeline.status) && (
-          <span data-testid="pipeline-stopping" className="text-[10px] font-mono text-[var(--color-text-muted)]">
-            stopping
-          </span>
-        )}
-      </span>
-    </button>
+      </div>
+      {actions.note && (
+        <div className="flex flex-wrap items-center gap-2 px-3 pb-2">
+          <p
+            data-testid="pipeline-action-note"
+            data-tone={actions.note.tone}
+            role="status"
+            className={`text-xs ${actions.note.tone === 'error' ? 'text-[var(--status-failed)]' : 'text-[var(--color-text-secondary)]'}`}
+          >
+            {actions.note.text}
+          </p>
+          {actions.offerNewRun && (
+            <button
+              type="button"
+              data-testid="pipeline-start-new-run"
+              onClick={() => void actions.startNewRun()}
+              disabled={actions.pending !== null}
+              className={ROW_ACTION_BTN}
+            >
+              <Zap className="h-3 w-3" />
+              {actions.pending === 'start' ? 'Queuing…' : 'Start a new run'}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -890,7 +1074,10 @@ export default function AgentStatusPage() {
   // detail panel is keyed on the pipeline, so it remounts expanded.
   useProjectChangeReset(() => setSelection(null))
 
-  const { data: rawPipelines = [], isLoading: pipelinesLoading } = usePipelines(runId)
+  const { data: rawPipelines = [], isLoading: pipelinesLoading, mutate: mutatePipelines } = usePipelines(runId)
+  // W04 AGT-04: a Retry / Stop / new run is followed by a revalidation of the
+  // list. Optional call: page tests mock the hook without `mutate`.
+  const refreshPipelines = () => { void mutatePipelines?.() }
   // Sort descending by created_at client-side as a defensive guarantee
   const pipelines = [...rawPipelines].sort(
     (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
@@ -940,7 +1127,7 @@ export default function AgentStatusPage() {
     setTriggerSubmitting(true)
     try {
       await agentService.triggerPipeline(runId)
-      toast.success('Pipeline queued — it will appear in the list shortly.')
+      toast.success(PIPELINE_QUEUED)
     } catch (err: unknown) {
       const detail =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
@@ -1077,6 +1264,8 @@ export default function AgentStatusPage() {
                 pipeline={p}
                 selected={selectedPipeline === p.id}
                 onSelect={() => openPipeline(p)}
+                canAct={isQaEngineer}
+                onChanged={refreshPipelines}
               />
             ))}
           </div>

@@ -40,7 +40,7 @@ import { usePreviousRun } from '@/hooks/useAIHistory'
 import { useProjectChangeRedirect } from '@/hooks/useProjectChange'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useFeatureEnabled } from '@/hooks/useFeatureFlags'
-import { isLLMAvailable, useAIConfig } from '@/hooks/useAIConfig'
+import { deepInvestigationAvailability, isLLMAvailable, useAIConfig } from '@/hooks/useAIConfig'
 import { askAboutRunHref } from '@/components/chat/chatContent'
 import RunTimingFigures from '@/components/runs/RunTimingFigures'
 import { runsService } from '@/services/runsService'
@@ -289,6 +289,9 @@ export default function RunDetailPage() {
 
   const busy = triggeringPipeline || triggeringDeep
   const chatAvailable = chatFlagEnabled && !!aiConfig && isLLMAvailable(aiConfig)
+  // W04 AIC-01: no "Deep investigation" item while Settings › AI has it off or
+  // the mode is Rules (the server would answer 422). While the mode loads it is offered.
+  const deepAvailable = deepInvestigationAvailability(aiConfig).available
   const overflow: OverflowItem[] = [
     ...(isQaEngineer
       ? [
@@ -298,12 +301,14 @@ export default function RunDetailPage() {
             onClick: () => void handleTriggerPipeline(),
             disabled: busy,
           },
-          {
-            label: triggeringDeep ? 'Queuing investigation…' : 'Deep investigation',
-            icon: <Stethoscope className="h-3.5 w-3.5" />,
-            onClick: () => void handleTriggerDeep(),
-            disabled: busy,
-          },
+          ...(deepAvailable
+            ? [{
+                label: triggeringDeep ? 'Queuing investigation…' : 'Deep investigation',
+                icon: <Stethoscope className="h-3.5 w-3.5" />,
+                onClick: () => void handleTriggerDeep(),
+                disabled: busy,
+              }]
+            : []),
         ]
       : []),
     {
