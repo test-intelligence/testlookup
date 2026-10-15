@@ -753,6 +753,14 @@ jobs:
           tests/integration/test_release_gate_summary_postgres.py
           tests/integration/test_releases_list_gate_owner_postgres.py
           tests/test_compliance_packs_project_list.py
+          tests/integration/test_migration_0213_postgres.py
+          tests/integration/test_defect_list_owner_postgres.py
+          tests/integration/test_defects_affects_release_postgres.py
+          tests/integration/test_defect_trend_postgres.py
+          tests/integration/test_defect_escape_rate_postgres.py
+          tests/integration/test_defect_triage_postgres.py
+          tests/integration/test_defect_review_postgres.py
+          tests/integration/test_defect_promoted_webhook_postgres.py
           tests/integration/test_test_case_execution_timing_postgres.py
           tests/integration/test_every_get_route_answers_without_500_postgres.py
           tests/integration/test_key_mint_revoke_race_postgres.py

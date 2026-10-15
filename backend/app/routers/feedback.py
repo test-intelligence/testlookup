@@ -305,17 +305,18 @@ async def jira_resolution_webhook(
         raise
     if isinstance(result, dict) and result.get("defect_id"):
         # VIZ-212: a resolved defect leaves the cached dashboard's open counts.
+        # W06: the webhook closes EVERY defect linked to the key, which can sit
+        # in several projects; each one's dashboard is refreshed.
         from sqlalchemy import select
 
         from app.models.postgres import Defect
-        from app.services.cache_service import bump_analytics_epoch
+        from app.services.cache_service import bump_analytics_epochs
 
-        defect_project = (
-            await db.execute(
-                select(Defect.project_id).where(Defect.id == uuid.UUID(result["defect_id"]))
-            )
-        ).scalar_one_or_none()
-        await bump_analytics_epoch(defect_project)
+        ids = [uuid.UUID(i) for i in (result.get("defect_ids") or [result["defect_id"]])]
+        projects = (
+            await db.execute(select(Defect.project_id).where(Defect.id.in_(ids)).distinct())
+        ).scalars().all()
+        await bump_analytics_epochs(projects)
     return result
 
 
