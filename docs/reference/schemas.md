@@ -8935,6 +8935,39 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Defect Id",
       "type": "string"
     },
+    "jira_error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Jira Error"
+    },
+    "jira_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Jira Reason"
+    },
+    "jira_status": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Jira Status"
+    },
     "jira_ticket": {
       "anyOf": [
         {
@@ -9318,6 +9351,190 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## DefectJiraLinkResult
+
+```json
+{
+  "description": "What linking a Jira key did. ``status``: \"validated\" | \"saved_locally\" | \"unlinked\".",
+  "properties": {
+    "jira_key": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Jira Key"
+    },
+    "jira_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Jira Url"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    },
+    "summary": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Summary"
+    }
+  },
+  "required": [
+    "status"
+  ],
+  "title": "DefectJiraLinkResult",
+  "type": "object"
+}
+```
+
+## DefectPatchRequest
+
+```json
+{
+  "additionalProperties": false,
+  "description": "PATCH /api/v1/projects/{project_id}/defects/{defect_id}.\n\nOnly the fields SENT are applied (``model_fields_set``); ``null`` or ``\"\"``\nclears ``assignee_user_id``, ``owner_team`` and ``jira_key``. No field takes\na URL: a Jira link is built by the server from the configured domain, and\n``extra=\"forbid\"`` makes a client-sent ``jira_url`` a 422, never stored.",
+  "properties": {
+    "assignee_user_id": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Assignee User Id"
+    },
+    "jira_key": {
+      "anyOf": [
+        {
+          "maxLength": 50,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Jira Key"
+    },
+    "note": {
+      "anyOf": [
+        {
+          "maxLength": 1000,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Note"
+    },
+    "owner_team": {
+      "anyOf": [
+        {
+          "maxLength": 255,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Owner Team"
+    },
+    "resolution_status": {
+      "anyOf": [
+        {
+          "maxLength": 20,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Resolution Status"
+    }
+  },
+  "title": "DefectPatchRequest",
+  "type": "object"
+}
+```
+
+## DefectPatchResponse
+
+```json
+{
+  "description": "The PATCH answer: the defect's list row as the server now reads it (the\n``GET /analytics/defects`` row shape), so the page replaces its row.",
+  "properties": {
+    "changed_fields": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Changed Fields",
+      "type": "array"
+    },
+    "defect": {
+      "additionalProperties": true,
+      "title": "Defect",
+      "type": "object"
+    },
+    "jira": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/DefectJiraLinkResult"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "write_back": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/DefectWriteBackResult"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "defect",
+    "changed_fields"
+  ],
+  "title": "DefectPatchResponse",
+  "type": "object"
+}
+```
+
 ## DefectPromotionRequest
 
 ```json
@@ -9502,6 +9719,36 @@ These are the full generated JSON Schema definitions, including required fields,
     "title"
   ],
   "title": "DefectPromotionResponse",
+  "type": "object"
+}
+```
+
+## DefectWriteBackResult
+
+```json
+{
+  "description": "The Jira status write-back after a status change. ``status``: \"sent\" | \"skipped\" | \"not_sent\" | \"failed\".",
+  "properties": {
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "status"
+  ],
+  "title": "DefectWriteBackResult",
   "type": "object"
 }
 ```
@@ -21918,6 +22165,173 @@ These are the full generated JSON Schema definitions, including required fields,
     }
   },
   "title": "OwnershipRuleUpdate",
+  "type": "object"
+}
+```
+
+## PendingDefectItem
+
+```json
+{
+  "description": "One defect awaiting approval (GET /deep-investigate/defects/pending-review).",
+  "properties": {
+    "ai_confidence_score": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Ai Confidence Score"
+    },
+    "cluster_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cluster Id"
+    },
+    "component": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Component"
+    },
+    "created_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Created At"
+    },
+    "defect_id": {
+      "title": "Defect Id",
+      "type": "string"
+    },
+    "jira_project_key": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Jira Project Key"
+    },
+    "owner_team": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Owner Team"
+    },
+    "policy_reasons": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Policy Reasons",
+      "type": "array"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "run_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Run Id"
+    },
+    "severity": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Severity"
+    },
+    "title": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Title"
+    }
+  },
+  "required": [
+    "defect_id",
+    "project_id"
+  ],
+  "title": "PendingDefectItem",
+  "type": "object"
+}
+```
+
+## PendingDefectList
+
+```json
+{
+  "description": "A page of the approval queue. ``total`` is a COUNT over the same scope, not ``len(items)``.",
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/PendingDefectItem"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "page": {
+      "title": "Page",
+      "type": "integer"
+    },
+    "page_size": {
+      "title": "Page Size",
+      "type": "integer"
+    },
+    "total": {
+      "title": "Total",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "items",
+    "total",
+    "page",
+    "page_size"
+  ],
+  "title": "PendingDefectList",
   "type": "object"
 }
 ```

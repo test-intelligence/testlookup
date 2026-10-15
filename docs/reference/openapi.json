@@ -8357,6 +8357,39 @@
             "title": "Defect Id",
             "type": "string"
           },
+          "jira_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jira Error"
+          },
+          "jira_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jira Reason"
+          },
+          "jira_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jira Status"
+          },
           "jira_ticket": {
             "anyOf": [
               {
@@ -8723,6 +8756,175 @@
         "title": "DefectIntakeResponse",
         "type": "object"
       },
+      "DefectJiraLinkResult": {
+        "description": "What linking a Jira key did. ``status``: \"validated\" | \"saved_locally\" | \"unlinked\".",
+        "properties": {
+          "jira_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jira Key"
+          },
+          "jira_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jira Url"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DefectJiraLinkResult",
+        "type": "object"
+      },
+      "DefectPatchRequest": {
+        "additionalProperties": false,
+        "description": "PATCH /api/v1/projects/{project_id}/defects/{defect_id}.\n\nOnly the fields SENT are applied (``model_fields_set``); ``null`` or ``\"\"``\nclears ``assignee_user_id``, ``owner_team`` and ``jira_key``. No field takes\na URL: a Jira link is built by the server from the configured domain, and\n``extra=\"forbid\"`` makes a client-sent ``jira_url`` a 422, never stored.",
+        "properties": {
+          "assignee_user_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee User Id"
+          },
+          "jira_key": {
+            "anyOf": [
+              {
+                "maxLength": 50,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jira Key"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "owner_team": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Team"
+          },
+          "resolution_status": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution Status"
+          }
+        },
+        "title": "DefectPatchRequest",
+        "type": "object"
+      },
+      "DefectPatchResponse": {
+        "description": "The PATCH answer: the defect's list row as the server now reads it (the\n``GET /analytics/defects`` row shape), so the page replaces its row.",
+        "properties": {
+          "changed_fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Changed Fields",
+            "type": "array"
+          },
+          "defect": {
+            "additionalProperties": true,
+            "title": "Defect",
+            "type": "object"
+          },
+          "jira": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DefectJiraLinkResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "write_back": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DefectWriteBackResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "defect",
+          "changed_fields"
+        ],
+        "title": "DefectPatchResponse",
+        "type": "object"
+      },
       "DefectPromotionRequest": {
         "description": "User-editable fields submitted from the promotion modal.",
         "properties": {
@@ -8899,6 +9101,31 @@
           "title"
         ],
         "title": "DefectPromotionResponse",
+        "type": "object"
+      },
+      "DefectWriteBackResult": {
+        "description": "The Jira status write-back after a status change. ``status``: \"sent\" | \"skipped\" | \"not_sent\" | \"failed\".",
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DefectWriteBackResult",
         "type": "object"
       },
       "DeleteRunAcceptedResponse": {
@@ -20490,6 +20717,163 @@
           }
         },
         "title": "OwnershipRuleUpdate",
+        "type": "object"
+      },
+      "PendingDefectItem": {
+        "description": "One defect awaiting approval (GET /deep-investigate/defects/pending-review).",
+        "properties": {
+          "ai_confidence_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ai Confidence Score"
+          },
+          "cluster_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Id"
+          },
+          "component": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Component"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "defect_id": {
+            "title": "Defect Id",
+            "type": "string"
+          },
+          "jira_project_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jira Project Key"
+          },
+          "owner_team": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Team"
+          },
+          "policy_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Policy Reasons",
+            "type": "array"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "severity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Severity"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "defect_id",
+          "project_id"
+        ],
+        "title": "PendingDefectItem",
+        "type": "object"
+      },
+      "PendingDefectList": {
+        "description": "A page of the approval queue. ``total`` is a COUNT over the same scope, not ``len(items)``.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PendingDefectItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size"
+        ],
+        "title": "PendingDefectList",
         "type": "object"
       },
       "PerTestRouting": {
@@ -41950,7 +42334,7 @@
     },
     "/api/v1/analytics/defects": {
       "get": {
-        "description": "Return defects for a project with optional resolution status filter.\n\nVIZ-202: ``release_id`` / ``suite_name`` (repeatable) keep the defects\nwhose originating execution ran in one of the releases (the run's primary\nrelease) and suites (effective suite). A defect with no linked execution\ncannot be placed and is left out while either filter is set. The list has\nno time window (``meta.ignored_filters``): open defects of any age.",
+        "description": "Return defects for a project with optional resolution status filter.\n\nVIZ-202: ``release_id`` / ``suite_name`` (repeatable) keep the defects\nwhose originating execution ran in one of the releases (the run's primary\nrelease) and suites (effective suite). A defect with no linked execution\ncannot be placed and is left out while either filter is set. The list has\nno time window (``meta.ignored_filters``): open defects of any age.\n\nW06: ``resolution_status=ACTIVE`` lists every live defect (OPEN and\nIN_PROGRESS). ``release_match=affects`` places a defect in a release by\nthe release gate's own rule instead (asserted impact, else where it was\nfound), so the page and the gate count the same set; the suite filter\nstill places it through its execution.",
         "operationId": "list_defects_api_v1_analytics_defects_get",
         "parameters": [
           {
@@ -41990,6 +42374,17 @@
               "minimum": 1,
               "title": "Size",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "release_match",
+            "required": false,
+            "schema": {
+              "default": "found_in",
+              "pattern": "^(found_in|affects)$",
+              "title": "Release Match",
+              "type": "string"
             }
           },
           {
@@ -42158,6 +42553,267 @@
           }
         ],
         "summary": "Create Defect",
+        "tags": [
+          "Analytics"
+        ]
+      }
+    },
+    "/api/v1/analytics/defects/escape-rate": {
+      "get": {
+        "description": "The share of the window's defects that were filed after a release they\naffect had shipped, among those that affect a shipped release.\n\n``measured`` is false (and ``rate`` null, never 0) below\n``ESCAPE_RATE_MIN_SAMPLE`` attributed defects, with the reason. Not cached\non purpose: marking a release shipped bumps no analytics epoch. The suite\nfilter does not apply (declared in ``meta.ignored_filters``).",
+        "operationId": "defect_escape_rate_api_v1_analytics_defects_escape_rate_get",
+        "parameters": [
+          {
+            "description": "One project (single-valued). Omit for every project you can read.",
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "One project (single-valued). Omit for every project you can read.",
+              "title": "Project Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+            "in": "query",
+            "name": "release_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+              "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
+            }
+          },
+          {
+            "description": "Window in days, 1-365.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "description": "Window in days, 1-365.",
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Defect Escape Rate",
+        "tags": [
+          "Analytics"
+        ]
+      }
+    },
+    "/api/v1/analytics/defects/trend": {
+      "get": {
+        "description": "One point per UTC day of the window: defects opened, closed, the open\nbacklog at the end of the day, the P0/P1 part of it, and a 7-day rolling\nmean time to resolve; plus totals over EVERY defect in scope (no row cap).\n\n``points[-1].open_backlog == totals.open``. Closed rows without a\n``resolved_at`` (legacy INVALID closes) cannot be placed on a day: they are\nin no point and counted in ``totals.closed_without_time``. Release, suite\nand ``release_match`` scope it exactly as the defect list.",
+        "operationId": "defect_trend_api_v1_analytics_defects_trend_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "release_match",
+            "required": false,
+            "schema": {
+              "default": "found_in",
+              "pattern": "^(found_in|affects)$",
+              "title": "Release Match",
+              "type": "string"
+            }
+          },
+          {
+            "description": "One project (single-valued). Omit for every project you can read.",
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "One project (single-valued). Omit for every project you can read.",
+              "title": "Project Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+            "in": "query",
+            "name": "release_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+              "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
+            }
+          },
+          {
+            "description": "Window in days, 1-365.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "description": "Window in days, 1-365.",
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Defect Trend",
         "tags": [
           "Analytics"
         ]
@@ -47182,7 +47838,7 @@
     },
     "/api/v1/deep-investigate/defects/pending-review": {
       "get": {
-        "description": "List defects awaiting approval in the caller's projects (QA Lead+, paginated).\n\n``require_role(QA_LEAD)`` gates by ROLE, not by project membership, and this\nquery previously had no project filter at all — so a QA lead of one project\nreceived the titles, components and owner teams of pending defects belonging\nto every OTHER project on the deployment.\n\n``get_accessible_project_ids()`` returning ``None`` means ADMIN, who is\nlegitimately unscoped; the defect was that non-admins were unscoped too.\n``defects.project_id`` is indexed (``ix_defects_project_id``), so the schema\nalready anticipated this filter.",
+        "description": "List defects awaiting approval in the caller's projects (QA Lead+, paginated).\n\n``require_role(QA_LEAD)`` gates by ROLE, not by project membership, and this\nquery previously had no project filter at all — so a QA lead of one project\nreceived the titles, components and owner teams of pending defects belonging\nto every OTHER project on the deployment.\n\n``get_accessible_project_ids()`` returning ``None`` means ADMIN, who is\nlegitimately unscoped; the defect was that non-admins were unscoped too.\n``defects.project_id`` is indexed (``ix_defects_project_id``), so the schema\nalready anticipated this filter.\n\nDEF-06: ``{items, total, page, page_size}``. ``total`` is a COUNT over the\nsame scope, not the page length, so the Inbox badge never reads\n``min(n, page_size)``. ``project_id`` pins one project (400 malformed, 403\nnot accessible); soft-deleted projects' defects never wait for anyone.",
         "operationId": "list_pending_defects_api_v1_deep_investigate_defects_pending_review_get",
         "parameters": [
           {
@@ -47213,6 +47869,24 @@
             }
           },
           {
+            "description": "Only this project's queue (must be accessible)",
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only this project's queue (must be accessible)",
+              "title": "Project Id"
+            }
+          },
+          {
             "in": "header",
             "name": "X-API-Key",
             "required": false,
@@ -47233,7 +47907,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/PendingDefectList"
+                }
               }
             },
             "description": "Successful Response"
@@ -47262,7 +47938,7 @@
     },
     "/api/v1/deep-investigate/defects/{defect_id}/review": {
       "post": {
-        "description": "Approve or reject a defect that is pending review (QA Lead+ only).\n\nWhen approved with a Jira project key, the Jira ticket is created.",
+        "description": "Approve or reject a defect that is pending review (QA Lead+ only).\n\nApprove (DEF-06): the approval is committed FIRST, so a slow or failing\nJira never undoes it. Then, when a Jira project key was given at\npromotion, the ticket is filed ON this defect (or linked to the open issue\nalready filed for the same failure) and committed; offline it says so.\n``defect.promoted`` (ledger + webhook) covers cluster promotions only, the\nwebhook after the last commit.\n\nReject (D-11): the defect is also closed as ``INVALID`` with the reason in\nthe activity ledger, so a rejected suggestion stops blocking the gate.",
         "operationId": "review_defect_api_v1_deep_investigate_defects__defect_id__review_post",
         "parameters": [
           {
@@ -56140,6 +56816,91 @@
           }
         ],
         "summary": "Jira Defect Preview",
+        "tags": [
+          "Defects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/defects/{defect_id}": {
+      "patch": {
+        "description": "Triage a defect: status, assignee, owner team, Jira link (DEF-01). QA_ENGINEER+.\n\nOnly the fields SENT change. Each step's failure leaves nothing written:\nthe Jira lookup (online only) runs with the request's connection handed\nback and BEFORE any write; the writes and their ledger rows commit\ntogether; the Jira status write-back runs after the commit and never\nundoes it.",
+        "operationId": "update_defect_api_v1_projects__project_id__defects__defect_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "defect_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Defect Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DefectPatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DefectPatchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Update Defect",
         "tags": [
           "Defects"
         ]

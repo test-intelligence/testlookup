@@ -10,7 +10,7 @@ Create Jira Defect
 
 Create a Jira Bug ticket from AI triage analysis output.
 
-Source: [backend/app/routers/integrations.py:22](../../../backend/app/routers/integrations.py#L22).
+Source: [backend/app/routers/integrations.py:24](../../../backend/app/routers/integrations.py#L24).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
