@@ -87,6 +87,7 @@ from app.services.github_checks_service import (
 )
 from app.services.run_compare_service import _status_bucket
 from app.services.github_urls import github_html_root
+from app.services.cluster_snapshot import is_current_snapshot
 
 logger = structlog.get_logger("services.commit_attribution")
 
@@ -974,6 +975,7 @@ async def _target_test_cases(
             select(FailureCluster).where(
                 FailureCluster.test_run_id == run.id,
                 FailureCluster.cluster_id == cluster_id,
+                is_current_snapshot(),
             )
         )
         cluster = cluster_result.scalar_one_or_none()

@@ -29,6 +29,7 @@ from app.models.postgres import (
     TestRun,
     TestStatus,
 )
+from app.services.cluster_snapshot import is_current_snapshot
 
 logger = logging.getLogger("services.run_diff")
 
@@ -351,7 +352,7 @@ async def _classify_failure_clusters(
     """
     clusters_result = await db.execute(
         select(FailureCluster)
-        .where(FailureCluster.test_run_id == run_id)
+        .where(FailureCluster.test_run_id == run_id, is_current_snapshot())
         .order_by(FailureCluster.size.desc())
         .limit(20)
     )

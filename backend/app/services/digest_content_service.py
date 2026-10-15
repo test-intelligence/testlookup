@@ -43,6 +43,7 @@ from app.models.postgres import (
     TestRun,
     TestStatus,
 )
+from app.services.cluster_snapshot import is_current_snapshot
 
 logger = logging.getLogger("services.digest_content")
 
@@ -340,7 +341,7 @@ async def generate_digest(
     if run_ids:
         cluster_result = await db.execute(
             select(FailureCluster)
-            .where(FailureCluster.test_run_id.in_(run_ids))
+            .where(FailureCluster.test_run_id.in_(run_ids), is_current_snapshot())
             .order_by(FailureCluster.size.desc())
             .limit(5)
         )
