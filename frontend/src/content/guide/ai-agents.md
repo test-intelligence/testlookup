@@ -66,7 +66,7 @@ twenty, unless it was a deep run.
 Not every deep stage runs on every install. Each optional stage has a feature flag, listed under **Settings › Feature flags** in the group **Agent stages (deep pipeline)**. The planner skips a stage whose flag is off for the project, and records why ("feature flag is off for this project"):
 
 - `contract_validation`, `log_intelligence`, `regression_watchman` and `change_ownership` are read-only specialists, each with a flag of the same name. They are **on** for a new install. An install upgraded from an earlier version gets them **off** until an administrator switches them on (for `contract_validation` and `change_ownership`, a server environment setting that was already on keeps them on).
-- `defect_commander` is marked **MUTATING**: it creates defects from high-confidence failure clusters, so its flag is **off** until an administrator turns it on.
+- `defect_commander` is marked **MUTATING**: it creates defects from high-confidence failure clusters, so its flag is **off** until an administrator turns it on. The agent must also be enabled in **Act** mode on **Settings › AI agents**; with only the flag on, the run says the agent is disabled.
 - `gap_detection` and `report_refinement` run when the flag `aiq_gap_refinement` is on. Both are deterministic (no LLM, no network), and the flag is **on** for every install unless the server setting `AIQ_GAP_REFINEMENT_ENABLED` says otherwise. With them, the decision report carries an **Analysis coverage** line.
 - `async_decision_report_supersession` is listed in the same group and is **off** unless its server setting is on.
 
@@ -82,7 +82,7 @@ The capability registry gives every stage a permission, and it is enforced as a 
 
 - **`read_only`** — the overwhelming majority. Reads run data, writes only its own stage record and findings.
 - **`propose_action`** — `triage`. Proposes work; ticket creation is gated by confidence thresholds and configuration.
-- **`mutating`** — `defect_commander` alone. It writes a `Defect` row and, when Jira is configured, files a ticket. **It is off unless a project feature flag is explicitly enabled**, and a missing flag evaluates to off.
+- **`mutating`** — `defect_commander` alone. It writes a `Defect` row and, when Jira is configured, files a ticket. **It is off unless a project feature flag is explicitly enabled and the agent is enabled in Act mode** (Settings › AI agents; it starts disabled, in Shadow mode), and a missing flag evaluates to off.
 
 > **Warning.** Turning on `defect_commander` means deep runs start creating defect records. Ticket filing additionally requires Jira to be enabled. See [Administration](/docs/administration).
 

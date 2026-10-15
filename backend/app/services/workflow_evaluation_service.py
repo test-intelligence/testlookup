@@ -696,6 +696,7 @@ async def _candidate_step_authority(
         run_budget_from_policy,
     )
     from app.services.agent_planner import (
+        agent_disabled_rationale,
         build_workflow_plan,
         compute_workflow_behavior_plan_hash,
     )
@@ -824,13 +825,15 @@ async def _candidate_step_authority(
         agent_id = str(step.get("agent_id") or "")
         capability_stage = agent_id.removeprefix("agent.").removesuffix(".v1")
         planned = dict(by_capability.get(capability_stage) or {})
+        agent_enabled = bool(workflow_configs[agent_id]["enabled"])
+        if bool(planned.get("planned", True)) and not agent_enabled:
+            planned["rationale"] = agent_disabled_rationale(agent_id)
         planned.update({
             "stage": step_id,
             "capability_id": agent_id,
             "tools": list(step.get("tools") or []),
             "dependencies": incoming[step_id],
-            "planned": bool(planned.get("planned", True))
-            and bool(workflow_configs[agent_id]["enabled"]),
+            "planned": bool(planned.get("planned", True)) and agent_enabled,
             "required": bool(planned.get("required", False)),
         })
         # Fail closed if the registry changes between validation and evaluation.

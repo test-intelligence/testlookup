@@ -69,6 +69,7 @@ from app.models.postgres import AgentInvocation, AgentPipelineRun, AgentStageRes
 from app.services.agent_planner import (
     _DEEP_STAGES as _PLANNER_DEEP_STAGES,
     _LIVE_STAGES as _PLANNER_LIVE_STAGES,
+    agent_disabled_rationale,
     attach_workflow_plan_and_verification,
     build_workflow_plan,
     compute_workflow_behavior_plan_hash,
@@ -3692,13 +3693,15 @@ async def _create_pipeline_run(
         for step in body.steps:
             capability_stage = step.agent_id.removeprefix("agent.").removesuffix(".v1")
             planned = dict(by_capability.get(capability_stage) or {})
+            agent_enabled = bool(workflow_agent_configs[step.agent_id]["enabled"])
+            if bool(planned.get("planned", True)) and not agent_enabled:
+                planned["rationale"] = agent_disabled_rationale(step.agent_id)
             planned.update({
                 "stage": step.id,
                 "capability_id": step.agent_id,
                 "tools": list(step.tools),
                 "dependencies": incoming[step.id],
-                "planned": bool(planned.get("planned", True))
-                and bool(workflow_agent_configs[step.agent_id]["enabled"]),
+                "planned": bool(planned.get("planned", True)) and agent_enabled,
                 "required": bool(planned.get("required", False)),
             })
             selected_plan.append(planned)

@@ -344,6 +344,35 @@ async def test_the_claim_returns_defect_commander_settings(world, monkeypatch):
     assert claimed["defect_commander_settings"] == {"enabled": True}
 
 
+async def test_a_flag_on_stage_whose_agent_is_off_says_the_agent_is_off(world, monkeypatch):
+    """W04 local walk: defect_commander's flag ON for the project, its agent still disabled (a
+    mutating agent starts disabled in shadow mode). The stage was skipped with "Planner did not
+    select stage: project DefectCommander flag enabled for failed tests"."""
+    from app.agents import workflow
+    from app.services import feature_flags
+    from app.services.agent_planner import agent_disabled_rationale
+
+    wrapped = feature_flags.is_enabled
+
+    async def _on(key, **kwargs):
+        if key == "defect_commander":
+            return True
+        return await wrapped(key, **kwargs)
+
+    monkeypatch.setattr(feature_flags, "is_enabled", _on)
+    pipeline_id = str(uuid.uuid4())
+    await workflow._create_pipeline_run(pipeline_id, world["run"], world["project"], "deep")
+
+    plan = (await _metadata(world, pipeline_id))["initial_workflow_plan"]
+    assert plan["specialist_flags"]["defect_commander"] is True
+    entry = _stage_plan(plan, "defect_commander")
+    assert entry["planned"] is False
+    assert entry["rationale"] == agent_disabled_rationale("agent.defect_commander.v1")
+    assert "Settings › AI agents" in entry["rationale"]
+    # A stage whose agent is on keeps the planner's own reason.
+    assert _stage_plan(plan, "gap_detection")["rationale"] == "AIQ-P4 gap/refinement stage enabled by feature flag"
+
+
 # ── P5: a pre-W04 row ───────────────────────────────────────────────────────
 
 

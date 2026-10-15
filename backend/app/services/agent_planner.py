@@ -116,6 +116,16 @@ def invocation_stage_closure(workflow_type: str, stage_name: str) -> list[str]:
     return [stage for stage in order if stage in needed]
 
 
+def agent_disabled_rationale(agent_id: str) -> str:
+    """Why a stage the planner selected does not run: its agent is switched off.
+
+    A mutating agent (``defect_commander``) starts disabled in shadow mode, so
+    its feature flag alone never runs it; the plan said "flag enabled" while
+    the stage was skipped, and the run page repeated that as the skip reason.
+    """
+    return f"agent {agent_id} is disabled in this project's agent configuration (Settings › AI agents)"
+
+
 def compute_workflow_plan_hash(plan: dict[str, Any]) -> str:
     """Hash the authoritative plan projection, excluding digest metadata."""
     projection = {key: value for key, value in plan.items() if key not in {"plan_id", "plan_sha256"}}
