@@ -792,7 +792,7 @@ def _diff_clusters(a_list: Sequence[Mapping[str, Any]], b_list: Sequence[Mapping
         used_b.add(j)
         pairs.append((i, j, "overlap"))
 
-    matched = []
+    matched: list[dict[str, Any]] = []
     for i, j, how in pairs:
         ca, cb = a_list[i], b_list[j]
         size_from = _int_or_none(ca.get("size")) or 0
@@ -860,7 +860,7 @@ def _diff_tests(a_list: Sequence[Mapping[str, Any]], b_list: Sequence[Mapping[st
     b_by = {str(t.get("test_fingerprint")): t for t in b_list if isinstance(t, Mapping)}
     added = sorted((_test_ref(b_by[fp]) for fp in b_by if fp not in a_by), key=_ref_sort_key)
     removed = sorted((_test_ref(a_by[fp]) for fp in a_by if fp not in b_by), key=_ref_sort_key)
-    changed = []
+    changed: list[dict[str, Any]] = []
     unchanged = 0
     for fp in sorted(set(a_by) & set(b_by)):
         ta, tb = a_by[fp], b_by[fp]

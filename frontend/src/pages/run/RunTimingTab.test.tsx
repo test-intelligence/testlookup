@@ -182,7 +182,8 @@ describe('RunTimingTab — a timed run', () => {
   it('lists the slowest tests with the baseline ratio and the phases', () => {
     show({ data: TIMED })
     const slow = screen.getByRole('region', { name: 'Slowest tests' })
-    expect(within(slow).getByRole('heading', { name: '20 slowest tests' })).toBeInTheDocument()
+    // 12 tests under a limit of 20: every one is listed, so no "20 slowest" (W02 baselines: "20 slowest" over 3 rows).
+    expect(within(slow).getByRole('heading', { level: 2 })).toHaveTextContent(/^Slowest tests$/)
     const pay = slow.querySelector('[data-timing-slow-test="t-0-2"]') as HTMLElement
     expect(pay).toHaveTextContent('test_pay')
     expect(pay).toHaveTextContent('1.8s')
@@ -194,6 +195,12 @@ describe('RunTimingTab — a timed run', () => {
     const other = slow.querySelector('[data-timing-slow-test="t-1-0"]') as HTMLElement
     expect(other).toHaveTextContent('no baseline yet')
     expect(other).toHaveTextContent(NOT_REPORTED)
+  })
+
+  it('names the limit only when it cut the list', () => {
+    show({ data: { ...TIMED, slowest: { ...TIMED.slowest, total: 240 } } })
+    const slow = screen.getByRole('region', { name: 'Slowest tests' })
+    expect(within(slow).getByRole('heading', { level: 2 })).toHaveTextContent(/^20 slowest tests$/)
   })
 
   it('shows suites, workers and phases, and hands the findings to the regressions card (no second read)', () => {

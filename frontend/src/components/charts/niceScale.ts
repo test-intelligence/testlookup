@@ -107,6 +107,26 @@ export function zeroBasedScale(max: number, { intervals = 5, integer = false }: 
   return niceScale(0, max, { intervals, integer })
 }
 
+/** Clock steps for a duration axis that reaches a minute, ms: 15 s up to a day. */
+const CLOCK_STEPS_MS = [
+  15e3, 30e3, 60e3, 120e3, 300e3, 600e3, 900e3, 1_800e3, 3_600e3, 7_200e3, 10_800e3, 21_600e3, 43_200e3, 86_400e3,
+] as const
+
+/**
+ * A zero-based DURATION axis in ms. Below a minute it is `zeroBasedScale`
+ * (0.5 s, 2.5 s, 25 s read fine); from a minute up the step is a clock step
+ * (30 s, 1 m, 2 m, 5 m, 15 m, 1 h ...). The decimal ladder put ticks at
+ * 1m 40s / 3m 20s and 4m 10s / 8m 20s (100 s and 250 s steps).
+ */
+export function durationScale(maxMs: number, { intervals = 4 }: { intervals?: number } = {}): NiceScale {
+  if (!Number.isFinite(maxMs) || maxMs < 60_000) return zeroBasedScale(maxMs, { intervals })
+  const rough = maxMs / intervals
+  const day = CLOCK_STEPS_MS[CLOCK_STEPS_MS.length - 1]
+  const step = CLOCK_STEPS_MS.find((s) => s >= rough) ?? Math.ceil(rough / day) * day
+  const hi = Math.ceil(maxMs / step - 1e-9) * step
+  return { domain: [0, hi], ticks: ticksOf(0, hi, step), step }
+}
+
 /**
  * A change axis, SYMMETRIC about zero so "down 8" and "up 8" are the same
  * length — and nice on both sides, so the ticks read -10, -5, 0, 5, 10 rather

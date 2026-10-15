@@ -341,7 +341,10 @@ function Slowest({ timing, onSelect }: { timing: RunTiming; onSelect: (testId: s
   const max = Math.max(0, ...slowest.items.map((t) => t.duration_ms ?? 0), ...slowest.items.map((t) => t.baseline?.mean_ms ?? 0))
   return (
     <section aria-label="Slowest tests" className="card">
-      <h2 className={SECTION_TITLE}>{formatNumber(slowest.limit)} slowest tests</h2>
+      {/* "20 slowest tests" only when the limit cut the list: a 6-test run read "20 slowest tests" over six rows. */}
+      <h2 className={SECTION_TITLE}>
+        {slowest.total > slowest.limit ? `${formatNumber(slowest.limit)} slowest tests` : 'Slowest tests'}
+      </h2>
       {!slowest.measured ? (
         <Unmeasured block="slowest" reason={slowest.reason} />
       ) : (

@@ -113,8 +113,12 @@ export function previousWindowWords(days: number): string {
 
 // ── Slowest tests (TRND-09) ──────────────────────────────────────────────────
 
-/** "20 slowest tests (p95)": the frame's title, from the server's own limit. */
-export const slowestTitle = (limit: number): string => `${limit} slowest tests (p95)`
+/**
+ * "20 slowest tests (p95)" when the server's limit cut the list; "Slowest tests (p95)" when every test with a
+ * duration is listed (a 6-test window read "20 slowest tests" over six rows).
+ */
+export const slowestTitle = (limit: number, shown: number): string =>
+  shown >= limit ? `${limit} slowest tests (p95)` : 'Slowest tests (p95)'
 
 /** A slow test's display name: the test, then its suite in parentheses. Untrusted text, printed as text. */
 export function slowTestName(row: Pick<SlowestTestRow, 'test_name' | 'suite_name' | 'test_fingerprint'>): string {

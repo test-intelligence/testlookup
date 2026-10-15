@@ -97,10 +97,16 @@ describe('R2-17: every duration tick is printed in the axis\'s unit', () => {
     expect(quarter?.ticks.map((value) => durationTickLabel(value, quarter))).toEqual(['0s', '0.25s', '0.50s', '0.75s', '1.00s'])
   })
 
-  it('durationTickLabel: a minutes axis keeps the kit\'s minutes, with a zero in seconds', () => {
-    const axis = durationAxis(250_000)
-    const labels = axis?.ticks.map((value) => durationTickLabel(value, axis)) ?? []
-    expect(labels[0]).toBe('0s')
-    expect(labels.slice(1).every((label) => /^\d+m \d+s$/.test(label))).toBe(true)
+  it('durationTickLabel: a minutes axis steps on the clock (2m, not 1m 40s / 4m 10s), with a zero in seconds', () => {
+    // Regression (W02 baselines): the decimal ladder ticked a 250 s axis at 100 s steps (1m 40s, 3m 20s) and a
+    // 16-minute one at 250 s steps (4m 10s, 8m 20s, 12m 30s).
+    const label = (max: number) => {
+      const axis = durationAxis(max)
+      return axis?.ticks.map((value) => durationTickLabel(value, axis))
+    }
+    expect(label(250_000)).toEqual(['0s', '2m', '4m', '6m'])
+    expect(label(1_000_000)).toEqual(['0s', '5m', '10m', '15m', '20m'])
+    expect(label(70_000)).toEqual(['0s', '30s', '1m', '1m 30s'])
+    expect(label(5_400_000)).toEqual(['0s', '30m', '1h', '1h 30m'])
   })
 })

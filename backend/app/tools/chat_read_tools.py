@@ -38,6 +38,7 @@ from langchain_core.tools import tool
 
 from app.core.config import settings
 from app.services.resilience import estimate_token_count, truncate_to_token_budget
+from app.services.cluster_snapshot import is_current_snapshot
 
 logger = structlog.get_logger("tools.chat_read_tools")
 
@@ -310,7 +311,7 @@ async def _fetch_failure_clusters(state: ChatToolState, build: str) -> tuple[str
                     FailureCluster.regression_classification,
                     FailureCluster.member_test_ids,
                 )
-                .where(FailureCluster.test_run_id == run_row.id)
+                .where(FailureCluster.test_run_id == run_row.id, is_current_snapshot())
                 .order_by(FailureCluster.size.desc())
                 .limit(10)
             )

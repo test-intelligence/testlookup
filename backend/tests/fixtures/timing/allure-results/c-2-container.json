@@ -1,0 +1,1 @@
+{"uuid": "c-2", "name": "CartSuite", "children": ["r-1", "r-2"], "befores": [{"name": "seed database", "status": "passed", "stage": "finished", "start": 1791972000000, "stop": 1791972000400}], "afters": [{"name": "drop database", "status": "passed", "stage": "finished", "start": 1791972003900, "stop": 1791972004000}], "start": 1791972000000, "stop": 1791972004000}

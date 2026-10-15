@@ -32,7 +32,7 @@ from typing import Any, Mapping, Optional, Sequence
 
 import structlog
 from pymongo.errors import DuplicateKeyError
-from sqlalchemy import bindparam, func, select, text, tuple_
+from sqlalchemy import bindparam, func, literal, select, text, tuple_
 from sqlalchemy.dialects.postgresql import ARRAY, insert as pg_insert
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.exc import SQLAlchemyError
@@ -934,7 +934,7 @@ async def _find_idempotent(
 ) -> Optional[dict]:
     if not pipeline_run_id:
         return None
-    return await mongo[Collections.AI_RUN_VERSIONS].find_one(
+    doc = await mongo[Collections.AI_RUN_VERSIONS].find_one(
         {
             "test_run_id": test_run_id,
             "kind": kind,
@@ -943,6 +943,7 @@ async def _find_idempotent(
         },
         {"_id": 0},
     )
+    return doc if isinstance(doc, dict) else None
 
 
 async def record_run_version(
@@ -1327,7 +1328,8 @@ async def backfill_chunk(
         TestRun.created_at, TestRun.id
     )
     if cursor is not None:
-        query = query.where(tuple_(TestRun.created_at, TestRun.id) > tuple_(cursor[0], cursor[1]))
+        after = tuple_(literal(cursor[0], TestRun.created_at.type), literal(cursor[1], TestRun.id.type))
+        query = query.where(tuple_(TestRun.created_at, TestRun.id) > after)
     runs = (await db.execute(query.limit(max(1, int(limit))))).all()
     out.done = len(runs) < max(1, int(limit))
     versions = mongo[Collections.AI_RUN_VERSIONS]

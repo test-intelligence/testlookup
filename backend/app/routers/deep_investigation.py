@@ -38,6 +38,7 @@ from app.services.cluster_ranking_service import rank_clusters
 from app.services.deep_investigation_gate import require_deep_investigation
 from app.services.defect_promotion_service import get_defect_candidate, promote_cluster
 from app.worker.tasks import run_agent_pipeline
+from app.services.cluster_snapshot import is_current_snapshot
 
 logger = logging.getLogger("routers.deep_investigation")
 
@@ -143,7 +144,7 @@ async def get_failure_clusters(
     """Return semantic failure clusters for a test run."""
     result = await db.execute(
         select(FailureCluster)
-        .where(FailureCluster.test_run_id == run_id)
+        .where(FailureCluster.test_run_id == run_id, is_current_snapshot())
         .order_by(FailureCluster.size.desc())
         .limit(200)  # Scalability: prevent unbounded results on large runs
     )
@@ -274,7 +275,7 @@ async def get_ranked_clusters(
     """Return failure clusters ranked by impact score for triage prioritization."""
     result = await db.execute(
         select(FailureCluster)
-        .where(FailureCluster.test_run_id == run_id)
+        .where(FailureCluster.test_run_id == run_id, is_current_snapshot())
         .order_by(FailureCluster.size.desc())
         .limit(20)
     )

@@ -66,6 +66,7 @@ from app.models.postgres import (
     TestRun,
     TestStatus,
 )
+from app.services.cluster_snapshot import is_current_snapshot
 
 logger = structlog.get_logger("services.notification_transitions")
 
@@ -922,7 +923,8 @@ async def evaluate_run_transitions(run_id: uuid.UUID) -> dict[str, Any]:
             cluster_rows = (
                 await db.execute(
                     select(FailureCluster).where(
-                        FailureCluster.test_run_id == run_id
+                        FailureCluster.test_run_id == run_id,
+                        is_current_snapshot(),
                     )
                 )
             ).scalars().all()

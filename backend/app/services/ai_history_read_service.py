@@ -665,6 +665,8 @@ async def resolve_previous_run(db: Any, *, run: TestRun, suite_name: str | None 
     # The run's primary suite or one of its tests is the suite: analytics_scope's builder (the same
     # strip+lower key as normalize_suite_name), not a clause spelled here (the scope ratchet).
     touches_suite = run_touches_suite_clause(suite_key)
+    if touches_suite is None:
+        return no_previous
     finished = func.coalesce(TestRun.end_time, TestRun.created_at)
     branch_filter = TestRun.branch.is_(None) if run.branch is None else TestRun.branch == run.branch
     baseline = (

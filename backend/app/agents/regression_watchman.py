@@ -44,6 +44,7 @@ from app.services.llm_json_parser import parse_llm_json
 from app.services.pipeline_ai_scope import effective_llm_timeout
 from app.services.prompt_registry import get_prompt_text
 from app.services.redaction_service import redact_text
+from app.services.cluster_snapshot import is_current_snapshot
 
 # AIC-02: the classification call waits at most this long, and never longer than
 # the Settings > AI timeout frozen into the pipeline (computed per run, not at import).
@@ -543,7 +544,7 @@ async def run_regression_watchman(
         )).scalar_one_or_none()
 
         clusters_result = await db.execute(
-            select(FailureCluster).where(FailureCluster.test_run_id == test_run_id).limit(50)
+            select(FailureCluster).where(FailureCluster.test_run_id == test_run_id, is_current_snapshot()).limit(50)
         )
         clusters = [
             {

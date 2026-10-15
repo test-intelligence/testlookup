@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import Defect, FailureCluster
+from app.services.cluster_snapshot import is_current_snapshot
 
 logger = logging.getLogger("services.cluster")
 
@@ -30,6 +31,7 @@ async def check_duplicate(
         select(FailureCluster).where(
             FailureCluster.test_run_id == run_id,
             FailureCluster.cluster_id == cluster_id,
+            is_current_snapshot(),
         )
     )
     cluster = result.scalar_one_or_none()

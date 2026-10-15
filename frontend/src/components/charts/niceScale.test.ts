@@ -6,12 +6,32 @@
 import { describe, expect, it } from 'vitest'
 import {
   alignedZeroBasedScale,
+  durationScale,
   niceScale,
   niceStep,
   symmetricScale,
   tickDecimals,
   zeroBasedScale,
 } from './niceScale'
+
+describe('durationScale', () => {
+  it('below a minute it is the decimal zero-based scale', () => {
+    expect(durationScale(9_000)).toEqual(zeroBasedScale(9_000, { intervals: 4 }))
+  })
+
+  it('from a minute up every tick is a clock step (no 100 s / 250 s steps)', () => {
+    expect(durationScale(250_000).ticks).toEqual([0, 120_000, 240_000, 360_000])
+    expect(durationScale(1_000_000).ticks).toEqual([0, 300_000, 600_000, 900_000, 1_200_000])
+    expect(durationScale(5_400_000).ticks).toEqual([0, 1_800_000, 3_600_000, 5_400_000])
+    for (const max of [61_000, 250_000, 1_000_000, 7_777_777, 200_000_000]) {
+      const { ticks, step, domain } = durationScale(max)
+      expect(domain[1]).toBeGreaterThanOrEqual(max)
+      expect(ticks.length - 1).toBeLessThanOrEqual(4)
+      // A clock step divides a minute, an hour or a day evenly.
+      expect([15_000, 30_000].includes(step) || step % 60_000 === 0).toBe(true)
+    }
+  })
+})
 
 /** 1, 2, 2.5 or 5 times a power of ten (1.5, 3, 4, 6, 8 too for `fine`). */
 function onLadder(step: number, fine = false): boolean {
