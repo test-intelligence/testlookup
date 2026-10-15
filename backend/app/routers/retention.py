@@ -7,8 +7,10 @@ Endpoints (contract — frontend built in parallel):
   member: effective policy (+``source``) and the latest execute-mode
   purge summary (``last_purge``).
 * ``PUT /api/v1/projects/{project_id}/retention-policy`` — ADMIN: partial
-  update of ``enabled`` + the four day windows. Bounds 422 at the schema;
-  the audit≥runs cross-check 422s from the service on merged values.
+  update of ``enabled`` + the four day windows + the two AI-history caps
+  (``ai_versions_per_run`` / ``ai_versions_per_test``, 1-100, AIH-06). Bounds
+  422 at the schema; the audit≥runs cross-check 422s from the service on
+  merged values.
 * ``POST /api/v1/projects/{project_id}/retention-policy/preview`` — ADMIN:
   runs the purge service in preview mode NOW, synchronously. Read-only —
   works even while the policy is disabled (preview is how admins decide
@@ -106,6 +108,8 @@ async def put_retention_policy(
             runs_days=payload.runs_days,
             artifacts_days=payload.artifacts_days,
             audit_days=payload.audit_days,
+            ai_versions_per_run=payload.ai_versions_per_run,
+            ai_versions_per_test=payload.ai_versions_per_test,
         )
     except svc.RetentionValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

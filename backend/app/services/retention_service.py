@@ -16,6 +16,15 @@ class                   what it covers
                         Mongo docs (``execution_logs``, ``ocp_pod_events``,
                         ``run_summaries`` by test_run_id;
                         ``ai_analysis_payloads`` by test_case_id).
+                        AI history (AIH-06, owner decision D41: runs clock):
+                        Postgres ``ai_analysis_versions`` CASCADE with the run
+                        (counted before the delete); Mongo ``ai_run_versions``
+                        by test_run_id. Plus two CAPS on the surviving runs
+                        (``ai_versions_per_run`` per kind, default 20;
+                        ``ai_versions_per_test``, default 10), swept by
+                        ``ai_history_retention`` — oldest first, never v1, never
+                        a version cited by a published decision report, and
+                        nothing at all when the citations cannot be read.
 ``artifacts_days``      revoked ``report_share_links`` (dead on revoke, but the row
                         only ever died via the run CASCADE), and
                         MinIO objects: ``TestRun.minio_prefix`` +
@@ -104,7 +113,15 @@ from app.models.postgres import (
     TestCaseAuditLog,
     TestRun,
 )
-from app.services import deletion_job_service
+from app.services import ai_history_retention, deletion_job_service
+from app.services.ai_history_core import (
+    CAP_MAX,
+    CAP_MIN,
+    DEFAULT_CAP_PER_RUN,
+    DEFAULT_CAP_PER_TEST,
+    AIHistoryCaps,
+    clamp_cap,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -122,6 +139,13 @@ FIELD_BOUNDS: dict[str, tuple[int, int]] = {
     "runs_days": (30, 3650),
     "artifacts_days": (7, 3650),
     "audit_days": (365, 3650),
+}
+
+#: AI-history caps (AIH-06): versions kept per (run, kind) and per test result.
+#: NULL in the row = the code default; bounds mirrored by the Pydantic schema.
+CAP_FIELDS: dict[str, int] = {
+    "ai_versions_per_run": DEFAULT_CAP_PER_RUN,
+    "ai_versions_per_test": DEFAULT_CAP_PER_TEST,
 }
 
 def deletion_job_purge_filter(project_id: uuid.UUID, cutoff: datetime) -> tuple:
@@ -193,6 +217,10 @@ class EffectiveRetentionPolicy:
     runs_days: int = DEFAULT_RUNS_DAYS
     artifacts_days: int = DEFAULT_ARTIFACTS_DAYS
     audit_days: int = DEFAULT_AUDIT_DAYS
+    #: AIH-06 caps. They apply at WRITE time whatever ``enabled`` says (the
+    #: owner-accepted defaults, D41); ``enabled`` only gates the scheduled sweep.
+    ai_versions_per_run: int = DEFAULT_CAP_PER_RUN
+    ai_versions_per_test: int = DEFAULT_CAP_PER_TEST
     source: str = "default"  # "default" | "custom"
 
     def as_dict(self) -> dict:
@@ -202,7 +230,19 @@ class EffectiveRetentionPolicy:
             "runs_days": self.runs_days,
             "artifacts_days": self.artifacts_days,
             "audit_days": self.audit_days,
+            "ai_versions_per_run": self.ai_versions_per_run,
+            "ai_versions_per_test": self.ai_versions_per_test,
         }
+
+    @property
+    def ai_history_caps(self) -> AIHistoryCaps:
+        return AIHistoryCaps(per_run=self.ai_versions_per_run, per_test=self.ai_versions_per_test)
+
+
+def _stored_cap(row: Any, field: str) -> int:
+    """The effective cap of a policy row: its stored value, or the default when
+    NULL (the column is nullable; the CHECK keeps a stored value in 1-100)."""
+    return clamp_cap(getattr(row, field, None), CAP_FIELDS[field])
 
 
 # ── Policy resolution + upsert ───────────────────────────────────────────────
@@ -234,6 +274,8 @@ async def get_effective_policy(
         runs_days=int(row.runs_days or DEFAULT_RUNS_DAYS),
         artifacts_days=int(row.artifacts_days or DEFAULT_ARTIFACTS_DAYS),
         audit_days=int(row.audit_days or DEFAULT_AUDIT_DAYS),
+        ai_versions_per_run=_stored_cap(row, "ai_versions_per_run"),
+        ai_versions_per_test=_stored_cap(row, "ai_versions_per_test"),
         source="custom",
     )
 
@@ -265,12 +307,19 @@ async def upsert_policy(
     runs_days: Optional[int] = None,
     artifacts_days: Optional[int] = None,
     audit_days: Optional[int] = None,
+    ai_versions_per_run: Optional[int] = None,
+    ai_versions_per_test: Optional[int] = None,
 ) -> EffectiveRetentionPolicy:
     """Upsert the project's policy row from a PARTIAL update.
 
     Omitted (``None``) fields keep their current (or default) value.
     Validates bounds AND the audit≥runs cross-check on the merged result —
     raises :class:`RetentionValidationError` (router maps to 422).
+
+    The two AI-history caps (AIH-06) are 1-100 versions; omitted keeps the
+    current value, and there is no reset-to-NULL: sending 20 / 10 restores the
+    defaults' behaviour. A cap that changes the effective value is in the
+    ``changed`` audit dict like any other field.
 
     Stages only (``flush``) — the router session owns the commit. A
     ``settings_audit_log`` row records the change (``changed_fields`` is a
@@ -294,6 +343,16 @@ async def upsert_policy(
         for field, value in provided.items()
     }
     _validate_merged(merged)
+    caps_provided = {
+        "ai_versions_per_run": ai_versions_per_run,
+        "ai_versions_per_test": ai_versions_per_test,
+    }
+    for field, value in caps_provided.items():
+        if value is not None and not (CAP_MIN <= int(value) <= CAP_MAX):
+            raise RetentionValidationError(
+                f"{field} must be between {CAP_MIN} and {CAP_MAX} versions (got {value})"
+            )
+    caps_current = {field: _stored_cap(row, field) for field in CAP_FIELDS}
 
     changed: dict[str, Any] = {}
     if row is None:
@@ -302,10 +361,17 @@ async def upsert_policy(
             enabled=bool(enabled) if enabled is not None else False,
             updated_by_user_id=actor_id,
             **merged,
+            # NULL (= the code default) unless the admin set the cap.
+            **{field: value for field, value in caps_provided.items() if value is not None},
         )
         db.add(row)
         action = "created"
-        changed = {"enabled": row.enabled, **merged}
+        changed = {
+            "enabled": row.enabled,
+            **merged,
+            **{field: (value if value is not None else caps_current[field])
+               for field, value in caps_provided.items()},
+        }
     else:
         action = "updated"
         if enabled is not None and bool(enabled) != bool(row.enabled):
@@ -315,6 +381,10 @@ async def upsert_policy(
             if new_value != current[field]:
                 changed[field] = {"old": current[field], "new": new_value}
                 setattr(row, field, new_value)
+        for field, cap_value in caps_provided.items():
+            if cap_value is not None and int(cap_value) != caps_current[field]:
+                changed[field] = {"old": caps_current[field], "new": int(cap_value)}
+                setattr(row, field, int(cap_value))
         row.updated_by_user_id = actor_id
 
     db.add(
@@ -684,6 +754,11 @@ _MONGO_PLANS: tuple[tuple[str, str, str], ...] = (
     (Collections.EXECUTION_LOGS, "test_run_id", "purge_run_strs"),
     (Collections.OCP_POD_EVENTS, "test_run_id", "purge_run_strs"),
     (Collections.RUN_SUMMARIES, "test_run_id", "purge_run_strs"),
+    # AIH-06 (D41): the versioned run summaries and analysis digests ride the
+    # RUNS clock, like the latest-pointer ``run_summaries`` above. The single-run
+    # delete (``resolve_run_candidates`` -> ``execute_candidates``) takes them
+    # through this same entry, so a deleted run leaves no orphan version.
+    (Collections.AI_RUN_VERSIONS, "test_run_id", "purge_run_strs"),
     (Collections.DECISION_EVIDENCE_SNAPSHOTS, "test_run_id", "purge_run_strs"),
     (Collections.AI_ANALYSIS_PAYLOADS, "test_case_id", "purge_tc_strs"),
     (_PIPELINE_EVENT_LOG, "pipeline_run_id", "audit_pipeline_strs"),
@@ -813,6 +888,20 @@ async def run_purge(
         expired_packs=expired_packs,
     )
 
+    # AIH-06. Both counted BEFORE any delete and in BOTH modes, so the preview
+    # reports exactly what the execute removes: the per-test versions the run
+    # delete will cascade, and the ONE over-cap plan (runs being purged left
+    # out — their versions go with them). An unreadable citation store yields
+    # an empty plan: nothing is pruned over the cap until the next sweep.
+    ai_cascaded = await ai_history_retention.count_cascaded(db, cand.purge_run_ids)
+    ai_plan = await ai_history_retention.plan_over_cap(
+        db,
+        mongo,
+        project_id=project_id,
+        caps=policy.ai_history_caps,
+        exclude_run_ids=cand.purge_run_ids,
+    )
+
     cutoffs_iso = {k: v.isoformat() for k, v in cutoffs.items()}
     # None, not 0 — these stores are SKIPPED entirely when external stores are
     # injected (the test path), so a zero here would report "nothing in the
@@ -895,6 +984,11 @@ async def run_purge(
             "analysis_cache_entries": _sum_measured(cache_counts.values()),
             "search_index_documents": search_index_documents,
             "memory_entries_expired": len(memory_expired_ids),
+            "ai_history_versions": (
+                mongo_docs.get(Collections.AI_RUN_VERSIONS, 0)
+                + ai_cascaded
+                + ai_plan.total
+            ),
         }
         return {
             "mode": "preview",
@@ -920,6 +1014,14 @@ async def run_purge(
         search_index_documents=search_index_documents,
         now=now,
     )
+    # The cap sweep runs on the SURVIVING runs, so after the run delete; it
+    # deletes exactly ``ai_plan`` (the object the preview counted).
+    over_cap = await ai_history_retention.execute_over_cap(db, mongo, ai_plan)
+    counts["ai_history"] = {
+        "analysis_versions_cascaded": ai_cascaded,
+        "analysis_versions_over_cap": over_cap["analysis_versions_over_cap"],
+        "run_versions_over_cap": over_cap["run_versions_over_cap"],
+    }
 
     logger.info(
         "retention_purge_executed",

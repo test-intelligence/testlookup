@@ -7,11 +7,14 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Literal
 
+import structlog
 from pydantic import BaseModel, ConfigDict, Field
 from pymongo.errors import DuplicateKeyError
 
 from app.db.mongo import Collections
 from app.services.privacy_service import sanitize_for_persistence
+
+logger = structlog.get_logger(__name__)
 
 REPORT_SCHEMA_VERSION = 1
 
@@ -235,6 +238,8 @@ async def publish_decision_report(
     if existing is not None:
         return deepcopy(existing)
 
+    published: dict[str, Any] | None = None
+    superseded: dict[str, Any] | None = None
     async with _lock_report_subject(test_run_id):
         # The lock may have waited behind another publisher. Re-check the
         # idempotency key while serialization is held.
@@ -270,7 +275,6 @@ async def publish_decision_report(
             document = report.model_dump(mode="json")
             try:
                 await db[Collections.DECISION_REPORTS].insert_one(document)
-                return document
             except DuplicateKeyError:
                 # Another terminal critic won the version race. If it was this
                 # pipeline, publication is idempotently complete; otherwise loop
@@ -282,7 +286,47 @@ async def publish_decision_report(
                     return deepcopy(existing)
                 if attempt == 2:
                     raise
-    raise RuntimeError("decision_report_publication_retry_exhausted")
+                continue
+            published, superseded = document, previous
+            break
+    if published is None:
+        raise RuntimeError("decision_report_publication_retry_exhausted")
+    # Only a REAL insert that replaced an earlier version reaches here: every
+    # idempotent return above (a replay of the same pipeline) emits nothing.
+    # Outside the subject lock, so the ledger write never holds it.
+    if superseded is not None:
+        await _record_report_superseded(state, published)
+    return published
+
+
+async def _record_report_superseded(state: dict[str, Any], document: dict[str, Any]) -> None:
+    """``analysis.report_superseded`` (AIH-06): a new decision-report version
+    replaced an earlier one.
+
+    An ATTEMPT-mode event (``record(None, ...)`` writes on its own session):
+    this producer holds only a Mongo handle. A ledger fault never fails the
+    publication it describes, so everything is inside ``try``.
+    """
+    try:
+        from app.services.activity.service import ActorRef, record
+
+        test_run_id = str(document.get("test_run_id") or state.get("test_run_id"))
+        build = state.get("build_number")
+        await record(
+            None,
+            project_id=str(state["project_id"]),
+            event_type="analysis.report_superseded",
+            actor=ActorRef.system("decision-report"),
+            entity_id=test_run_id,
+            entity_label=f"Build {build}" if build else f"Run {test_run_id[:8]}",
+            context={
+                "version": document.get("report_version"),
+                "supersedes_report_id": document.get("supersedes_report_id"),
+                "pipeline_run_id": document.get("pipeline_run_id"),
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 - a ledger fault never fails a publication
+        logger.warning("decision_report_superseded_event_failed", error_type=type(exc).__name__)
 
 
 async def record_decision_report_attempt(
