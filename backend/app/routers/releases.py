@@ -7,7 +7,7 @@ Authorization policy:
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 
 import httpx
@@ -44,8 +44,16 @@ router = APIRouter(prefix="/api/v1/releases", tags=["Releases"])
 
 
 def _comparable(value: Any) -> Any:
-    """A value as the change test compares it: ids as strings, else as is."""
-    return str(value) if isinstance(value, uuid.UUID) else value
+    """A value as the change test compares it: ids as strings, a naive datetime as UTC, else as is.
+
+    The row holds an aware UTC ``planned_date``; the edit dialog sends a bare date, which parses
+    naive. Compared raw they always differed, so every edit logged "changed: planned_date".
+    """
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    if isinstance(value, datetime) and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
 
 
 class PhaseIn(BaseModel):
