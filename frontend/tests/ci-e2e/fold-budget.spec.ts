@@ -260,8 +260,9 @@ const ROUTES: FoldRoute[] = [
     // W05 REL-01: 1,007 on Windows. The cards now carry the RECORDED gate (Pass rate /
     // Evidence / Runs tiles, the pass-fail bar, the server's blockers + "+N more" on
     // the 25-reason No-Go fixture) where they used to say "not evaluated"; still
-    // under the list-page target. Re-check against CI's FOLD line.
-    budget: 1_050,
+    // under the list-page target. 1,100 on CI once the tiles got a row of their own
+    // under the card header (beside the name they squeezed it to "2.."): AT the target.
+    budget: 1_150,
     target: 1_100,
     table: false,
   },
