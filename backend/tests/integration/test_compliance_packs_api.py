@@ -214,3 +214,89 @@ async def test_download_sets_manifest_sha_header(
     assert resp.headers["x-manifest-sha256"] == "a" * 64
     assert resp.headers["x-pack-id"] == str(pack.id)
     assert resp.content == b"fake-zip-bytes"
+
+
+# ── GET /compliance-packs (W05 REL-04: the releases rail) ───────────────────
+
+
+def _summary(project_id: uuid.UUID) -> dict:
+    now = datetime.now(timezone.utc)
+    return {
+        "id": uuid.uuid4(), "release_id": None, "release_name": None, "release_version": None,
+        "project_id": project_id, "project_name": "Checkout", "bytes": 422_195, "file_count": 11,
+        "manifest_sha256": "ab12cd34" + "0" * 56, "generated_at": now,
+        "retention_expires_at": now + timedelta(days=2557), "retired": False,
+    }
+
+
+@pytest.mark.parametrize("limit", [0, 51])
+async def test_project_list_limit_outside_1_to_50_is_422(client, auth_as, override_db, fake_db, limit):
+    auth_as(role=UserRole.ADMIN)
+    resp = await client.get("/api/v1/compliance-packs", params={"limit": limit})
+    assert resp.status_code == 422
+
+
+async def test_project_list_malformed_project_id_is_400(client, auth_as, override_db, fake_db):
+    auth_as(role=UserRole.QA_ENGINEER, accessible_projects={uuid.uuid4()})
+    resp = await client.get("/api/v1/compliance-packs", params={"project_id": "not-a-uuid"})
+    assert resp.status_code == 400
+
+
+async def test_project_list_a_project_the_caller_is_not_in_is_403(client, auth_as, override_db, fake_db):
+    auth_as(role=UserRole.QA_ENGINEER, accessible_projects={uuid.uuid4()})
+    spy = AsyncMock(return_value=([], 0))
+    with patch("app.services.compliance_pack_service.list_packs_for_projects", spy):
+        resp = await client.get("/api/v1/compliance-packs", params={"project_id": str(uuid.uuid4())})
+    assert resp.status_code == 403
+    spy.assert_not_called()
+
+
+async def test_project_list_scopes_a_member_and_returns_the_counted_total(
+    client, auth_as, override_db, fake_db,
+):
+    mine = uuid.uuid4()
+    auth_as(role=UserRole.VIEWER, accessible_projects={mine})
+    spy = AsyncMock(return_value=([_summary(mine)], 12))
+    with patch("app.services.compliance_pack_service.list_packs_for_projects", spy):
+        resp = await client.get("/api/v1/compliance-packs", params={"limit": 1})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["total"] == 12 and len(body["items"]) == 1
+    item = body["items"][0]
+    assert "minio_key" not in item and "metadata_snapshot" not in item and "notes" not in item
+    assert item["manifest_sha256"].startswith("ab12cd34") and item["bytes"] == 422_195
+    args, kwargs = spy.call_args
+    assert args[1] == {mine} and kwargs == {"limit": 1}
+
+
+async def test_project_list_an_admin_naming_no_project_reads_every_project(
+    client, auth_as, override_db, fake_db,
+):
+    auth_as(role=UserRole.ADMIN)
+    spy = AsyncMock(return_value=([], 0))
+    with patch("app.services.compliance_pack_service.list_packs_for_projects", spy):
+        resp = await client.get("/api/v1/compliance-packs")
+    assert resp.status_code == 200
+    assert resp.json() == {"items": [], "total": 0}
+    args, kwargs = spy.call_args
+    assert args[1] is None and kwargs == {"limit": 10}
+
+
+async def test_project_list_a_bound_key_is_confined_to_its_project(
+    client, auth_as, override_db, fake_db, monkeypatch,
+):
+    bound = uuid.uuid4()
+    auth_as(role=UserRole.ADMIN, bound_project_id=bound)
+
+    async def _bound_scope(_db, _user):
+        return {bound}
+
+    # The real get_accessible_project_ids returns {bound} for a bound key
+    # before it looks at the role; the fixture's stand-in models roles only.
+    monkeypatch.setattr("app.core.deps.get_accessible_project_ids", _bound_scope)
+    spy = AsyncMock(return_value=([], 0))
+    with patch("app.services.compliance_pack_service.list_packs_for_projects", spy):
+        ok = await client.get("/api/v1/compliance-packs")
+        assert ok.status_code == 200 and spy.call_args.args[1] == {bound}
+        other = await client.get("/api/v1/compliance-packs", params={"project_id": str(uuid.uuid4())})
+    assert other.status_code == 403

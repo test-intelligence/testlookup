@@ -72,8 +72,8 @@ Default = the value on a fresh install after `alembic upgrade head`. "Not seeded
 | `outbound_webhooks` | 0068 | **off** | global | Outbound webhook deliveries, test sends and replays (`backend/app/services/webhook_service.py`). Also requires `AI_OFFLINE_MODE=false`. See [Outbound webhooks](integrations.md#outbound-webhooks). |
 | `github_checks` | 0067 | **off** | global | GitHub check runs and the sticky PR comment (`backend/app/services/github_checks_service.py`). Also requires `AI_OFFLINE_MODE=false`. Setup: the GitHub section of [user-guide/administration.md](../../user-guide/administration.md). |
 | `gitlab` | 0111 | **off** | global | GitLab merge-request notes and commit statuses (`backend/app/services/gitlab_integration_service.py`). Also requires `AI_OFFLINE_MODE=false`. Setup: the GitLab section of [user-guide/administration.md](../../user-guide/administration.md). |
-| `release_compliance_pack` | 0066 | **off** | global | Release compliance-pack generation; 503 while off (`backend/app/services/compliance_pack_service.py`). See [user-guide/compliance.md](../../user-guide/compliance.md). |
-| `release_phase_gate_enforcement` | 0158 | **off** | global | Completing a release phase consults the phase gate: anything but GO is refused with 409 and the gate's blocking reasons, unless the caller supplies an override reason (the override is audited) (`backend/app/services/release_service.py`). Off: phases complete without the check. Reading the flag fails to off. |
+| `release_compliance_pack` | 0066 (off); 0212 turns it on for new installs | **on** for a new install; an upgraded install keeps its stored value (off unless an admin changed it) | global (evaluated per project) | Release compliance-pack generation; 503 while off (`backend/app/services/compliance_pack_service.py`). Listing and downloading existing packs (including the releases page's side rail, `GET /api/v1/compliance-packs`) is never gated. See [below](#release-flags-on-new-installs-only) and [user-guide/compliance.md](../../user-guide/compliance.md). |
+| `release_phase_gate_enforcement` | 0158 (off); 0212 turns it on for new installs | **on** for a new install; an upgraded install keeps its stored value (off unless an admin changed it) | global (evaluated per project) | Completing a release phase consults the phase gate: anything but GO is refused with 409 and the gate's blocking reasons unless the caller supplies `gate_override_reason`; skipping a phase needs `skip_reason`. Both are recorded in the access audit log and as `release.phase_gate_overridden` / `release.phase_skipped` activity with the reason; the release page asks for the reason in a dialog (`backend/app/services/release_service.py`). Off: phases complete without the check. Reading the flag fails to off. See [below](#release-flags-on-new-installs-only). |
 | `weekly_retro_digest` | 0069 | **off** | global (the digests page reads it per project) | The "weekly retro" digest type (`backend/app/services/retro_digest_service.py`, `frontend/src/pages/settings/DigestsPage.tsx`). |
 | `llm_cost_budget` | 0064 (off); 0207 turns it on for new installs | **on** for a new install; an upgraded install keeps its stored value (off unless an admin changed it) | global | LLM spend metering, per-project caps and the billing overage figures. Same fresh-install rule as [`manual_upload`](#manual_upload-on-new-installs-only). See [LLM cost budget](#llm-cost-budget). |
 | `perf_regression_detection` | 0069 (off); 0204 turns it on for new installs | **on** for a new install; an upgraded install keeps its stored value (off unless an admin changed it) | project | Per-test duration regressions: each run's PASSED tests judged against their rolling baselines (a spike is 3σ above the mean over 10+ runs), the baselines fed once per run on ingest, and the nightly baseline refresh (`backend/app/services/perf_regression_service.py`, `duration_regression_service.py`). Off: the run page's "Did anything get slower?" says detection is off instead of listing tests, and only suite regressions (no flag) are checked. Same fresh-install rule as [`manual_upload`](#manual_upload-on-new-installs-only). |
@@ -135,6 +135,20 @@ curl -X PATCH "$TL_URL/api/v1/feature-flags/manual_upload" \
   -H "Authorization: Bearer $TL_TOKEN" -H 'Content-Type: application/json' \
   -d '{"enabled_global": true}'
 ```
+
+## Release flags on new installs only
+
+Migration 0066 seeded `release_compliance_pack` off and 0158 seeded `release_phase_gate_enforcement` off, so a new install could neither generate a compliance pack nor ask for a reason when a phase was completed over a failing gate. Migration 0212 turns both on **only for a new install**, by the rule of [`manual_upload`](#manual_upload-on-new-installs-only): no users and no projects yet, and each row still holds its seed's off. An upgraded install keeps whatever it has. To turn them on for an existing install (ADMIN token):
+
+```bash
+for key in release_phase_gate_enforcement release_compliance_pack; do
+  curl -X PATCH "$TL_URL/api/v1/feature-flags/$key" \
+    -H "Authorization: Bearer $TL_TOKEN" -H 'Content-Type: application/json' \
+    -d '{"enabled_global": true}'
+done
+```
+
+`GET /api/v1/feature-flags/release_phase_gate_enforcement/status` then reports `enabled: true`. With enforcement on, a release manager moving a phase to Completed while its gate is not GO, or to Skipped, gets a dialog quoting the gate and asking for a reason; the reason is stored with the change.
 
 ## LLM cost budget
 
