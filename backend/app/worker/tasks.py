@@ -2006,6 +2006,86 @@ def dispatch_transition_notifications(self, run_id: str):
         raise self.retry(exc=exc)
 
 
+async def _capture_ai_history(
+    task_id: Any,
+    test_run_id: str,
+    project_id: str,
+    final_state: dict,
+) -> dict:
+    """AIH-01/AIH-03 pipeline success hook (W03 contract §5.7).
+
+    1. Record this pipeline's analysis digest as a new ``ai_run_versions``
+       version (``capture_analysis_digest``; an idempotent replay of the same
+       pipeline records nothing new) and commit the activity rows it staged.
+    2. Only for a NEW version: re-enqueue the AI compare report of this run
+       against its D42 previous run. ``generate_run_compare_report``
+       regenerates unconditionally, unlike the ingest-time precompute that
+       skips an already-ready report -- so a report cached BEFORE this
+       analysis existed does not stay AI-less. Skipped without a primary suite
+       or a previous run.
+    """
+    from app.db.mongo import get_mongo_db
+    from app.db.postgres import AsyncSessionLocal
+    from app.models.postgres import TestRun
+    from app.services import ai_history_read_service, ai_history_service
+
+    pipeline_run_id = final_state.get("pipeline_run_id")
+    if not pipeline_run_id:
+        logger.info("[Task %s] AI history capture skipped: the pipeline state has no pipeline_run_id", task_id)
+        return {"status": "skipped", "reason": "no_pipeline_run_id"}
+    run_uuid = uuid.UUID(str(test_run_id))
+    async with AsyncSessionLocal() as db:
+        result = await ai_history_service.capture_analysis_digest(
+            db,
+            get_mongo_db(),
+            run_id=run_uuid,
+            pipeline_run_id=uuid.UUID(str(pipeline_run_id)),
+            stage_quality=final_state.get("stage_quality"),
+        )
+        await db.commit()
+        recorded = result.version
+        if recorded is None or not recorded.created:
+            return {"status": "not_new", "reason": result.skipped_reason or "replay"}
+        run = await db.get(TestRun, run_uuid)
+        suite_name = run.primary_suite_name if run is not None else None
+        if not suite_name:
+            return {"status": "captured", "version": recorded.version, "compare": "no_primary_suite"}
+        previous = await ai_history_read_service.resolve_previous_run(db, run=run)
+        if previous.baseline is None:
+            return {"status": "captured", "version": recorded.version, "compare": previous.reason}
+        baseline_id = str(previous.baseline.id)
+    try:
+        generate_run_compare_report.delay(
+            project_id=project_id,
+            left_run_id=baseline_id,
+            right_run_id=str(test_run_id),
+            suite_name=suite_name,
+        )
+    except Exception as exc:  # noqa: BLE001 -- a broker hiccup must not fail a finished pipeline
+        logger.warning(
+            "[Task %s] AI compare report enqueue failed (non-blocking, %s)", task_id, type(exc).__name__,
+        )
+        return {"status": "captured", "version": recorded.version, "compare": "enqueue_failed"}
+    return {"status": "captured", "version": recorded.version, "compare": "enqueued"}
+
+
+def _capture_ai_history_after_pipeline(
+    task_id: Any,
+    test_run_id: str,
+    project_id: str,
+    final_state: dict,
+) -> dict | None:
+    """Run :func:`_capture_ai_history` synchronously. NEVER raises: the pipeline
+    already succeeded, so a Mongo or Postgres fault here is logged and dropped."""
+    try:
+        return cast(dict, _run_async(_capture_ai_history(task_id, test_run_id, project_id, final_state)))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "[Task %s] AI history capture failed (non-blocking, %s)", task_id, type(exc).__name__,
+        )
+        return None
+
+
 @celery_app.task(
     name="app.worker.tasks.run_agent_pipeline",
     base=DownstreamTrackedTask,
@@ -2151,6 +2231,11 @@ def run_agent_pipeline(
             "[Task %s] Pipeline complete. stages=%s errors=%d",
             self.request.id, stages_done, len(errors),
         )
+
+        # AIH-01/03: keep this analysis as an immutable version and refresh the
+        # AI compare report against the previous run. Never fails the pipeline.
+        if not final_state.get("duplicate"):
+            _capture_ai_history_after_pipeline(self.request.id, test_run_id, project_id, final_state)
 
         # BL-03: Invalidate cached intelligence snapshot so next read recomputes
         try:
@@ -2890,6 +2975,7 @@ def generate_run_compare_report(
                 right,
                 suite_name=suite_name,
                 selection=selection,
+                include_ai_analysis=True,
             )
             try:
                 report = await run_compare_ai_service.generate_and_save_report(
@@ -3045,6 +3131,7 @@ def precompute_suite_comparisons_for_run(self, test_run_id: str, project_id: str
                         latest.id,
                         suite_name=suite,
                         selection=selection,
+                        include_ai_analysis=True,
                     )
                     # Re-evaluate immediately before each possible LLM call.
                     # A run may contain many suites, and usage from this or a
@@ -5186,6 +5273,136 @@ def backfill_suite_executions(
 
     result = cast(dict[str, Any], _run_async(_run()))
     logger.info("[Task %s] backfill_suite_executions: %s", self.request.id, result)
+    return result
+
+
+#: AIH-01 backfill: the Redis cursor and the per-pass lock (the W02 precedent's shape).
+AI_HISTORY_BACKFILL_CURSOR_KEY = "ai_history.backfill_cursor"
+AI_HISTORY_BACKFILL_LOCK_KEY = "ai_history.backfill_lock"
+
+
+async def _load_ai_history_backfill_state(redis: Any) -> dict:
+    import json as _json
+
+    raw = await redis.get(AI_HISTORY_BACKFILL_CURSOR_KEY)
+    if not raw:
+        return {}
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", errors="ignore")
+    try:
+        value = _json.loads(raw)
+    except ValueError:
+        logger.warning("ai_history backfill cursor unreadable; starting from the oldest run")
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+async def _backfill_ai_run_versions_pass(
+    owner: str,
+    *,
+    chunk_size: int,
+    max_chunks: int,
+    time_budget_s: float,
+) -> dict:
+    """One pass of :func:`backfill_ai_run_versions` (an awaitable, so it is testable on one loop)."""
+    import json as _json
+
+    from app.db.mongo import get_mongo_db
+    from app.db.postgres import AsyncSessionLocal
+    from app.db.redis_client import get_redis
+    from app.services import ai_history_service as ahs
+    # The keyset cursor and RSS helpers are generic (any chunk with scanned/
+    # written/skipped/done/last_created_at/last_id); only the keys differ.
+    from app.services import suite_execution_service as ses
+
+    def _totals(state: dict) -> dict:
+        return {key: int(state.get(key) or 0) for key in ("scanned", "written", "skipped")}
+
+    if await _is_duplicate(AI_HISTORY_BACKFILL_LOCK_KEY, ttl=900, owner=owner):
+        return {"status": "locked"}
+    try:
+        redis = get_redis()
+        state = await _load_ai_history_backfill_state(redis)
+        if state.get("done"):
+            return {"status": "done", "chunks": 0, **_totals(state)}
+        started = time.monotonic()
+        baseline_rss = ses.current_rss_bytes()
+        chunks = 0
+        stopped = "max_chunks"
+        while chunks < max_chunks:
+            chunk_started = time.monotonic()
+            async with AsyncSessionLocal() as db:
+                try:
+                    chunk = await ahs.backfill_chunk(
+                        db, get_mongo_db(), ses.cursor_from_state(state), chunk_size,
+                    )
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    raise
+            chunks += 1
+            # advance_state reads only the fields both BackfillChunk classes share.
+            state = ses.advance_state(state, cast(Any, chunk))
+            await redis.set(AI_HISTORY_BACKFILL_CURSOR_KEY, _json.dumps(state, sort_keys=True))
+            logger.info(
+                "ai_history_backfill_chunk scanned=%s written=%s skipped=%s elapsed_ms=%s",
+                chunk.scanned, chunk.written, chunk.skipped,
+                int((time.monotonic() - chunk_started) * 1000),
+            )
+            if chunk.done:
+                stopped = "done"
+                break
+            if time.monotonic() - started > time_budget_s:
+                stopped = "time_budget"
+                break
+            rss = ses.current_rss_bytes()
+            if (
+                baseline_rss is not None and rss is not None
+                and rss - baseline_rss > ses.BACKFILL_RSS_GROWTH_CAP_BYTES
+            ):
+                stopped = "rss_cap"
+                break
+        return {"status": stopped, "chunks": chunks, **_totals(state)}
+    finally:
+        await _release_duplicate_lock(AI_HISTORY_BACKFILL_LOCK_KEY, owner)
+
+
+@celery_app.task(
+    name="app.worker.tasks.backfill_ai_run_versions",
+    bind=True,
+    queue="default",
+    max_retries=0,
+    soft_time_limit=540,
+    time_limit=600,
+)
+def backfill_ai_run_versions(
+    self,
+    chunk_size: int = 100,
+    max_chunks: int = 40,
+    time_budget_s: float = 300.0,
+) -> dict:
+    """AIH-01: give every run analysed before AI history existed its first versions -- one-shot,
+    chunked, re-entrant.
+
+    A chunk is ``chunk_size`` runs in ``(created_at, id)`` order after the Redis
+    cursor ``ai_history.backfill_cursor``: ``ai_history_service.backfill_chunk``
+    records a ``run_summary`` version from ``run_summaries`` and an
+    ``analysis_digest`` version from the run's current analysis, each only
+    when the run has none of that kind yet (a run a live pipeline already
+    versioned is skipped, so re-running from any cursor is idempotent). Each
+    chunk runs on its own session, committed on its own; then the cursor
+    advances. A pass stops after ``max_chunks`` chunks, ``time_budget_s``
+    seconds, or once its own RSS grew by 256 MiB; the beat entry
+    ``backfill-ai-run-versions`` resumes it. A short chunk marks the cursor
+    ``done``, after which every tick is one Redis read. Deleting the Redis key
+    runs it again from the oldest run. ``ai_analysis_versions`` needs no
+    backfill here: migration 0205 wrote it.
+    """
+    owner = str(self.request.id or uuid.uuid4())
+    result = cast(dict[str, Any], _run_async(_backfill_ai_run_versions_pass(
+        owner, chunk_size=chunk_size, max_chunks=max_chunks, time_budget_s=time_budget_s,
+    )))
+    logger.info("[Task %s] backfill_ai_run_versions: %s", self.request.id, result)
     return result
 
 

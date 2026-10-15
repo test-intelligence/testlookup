@@ -684,6 +684,11 @@ jobs:
           tests/integration/test_duration_regressions_postgres.py
           tests/integration/test_exec_finalize_wiring_postgres.py
           tests/integration/test_execution_metrics_postgres.py
+          tests/integration/test_ai_analysis_versions_postgres.py
+          tests/integration/test_ai_run_versions_mongo.py
+          tests/integration/test_ai_history_routes_postgres.py
+          tests/integration/test_ai_history_retention_postgres.py
+          tests/services/test_ai_history_writers.py
           tests/integration/test_investigator_budget_postgres.py
           tests/integration/test_investigator_claim_provider_postgres.py
           tests/integration/test_investigator_resume_postgres.py

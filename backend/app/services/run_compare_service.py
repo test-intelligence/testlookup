@@ -566,12 +566,19 @@ async def compare_runs(
     suite_name: Optional[str] = None,
     selection: Optional[dict[str, Any]] = None,
     ai_report: Optional[dict[str, Any]] = None,
+    include_ai_analysis: bool = False,
 ) -> dict[str, Any]:
     """Build the compare document. Returns a plain dict suitable for
     passing straight into ``RunCompareResponse``.
 
     Caller is expected to have already enforced tenant isolation via
     ``resolve_project_scope`` on both runs' projects.
+
+    ``include_ai_analysis`` (AIH-03) adds ``ai_analysis_diff``: how the AI
+    analysis of the right run differs from the left run's (left = baseline).
+    It never fails the compare: any error reads ``{"available": false,
+    "reason": "ai_history_unavailable"}``. The Run Compare routes and the two
+    compare-report tasks ask for it; the investigator and the chat tool do not.
 
     Raises ``LookupError`` when either run is missing.
     """
@@ -815,7 +822,7 @@ async def compare_runs(
         suite_name and (not left_tests or not right_tests)
     )
 
-    return {
+    payload: dict[str, Any] = {
         "left": left_summary,
         "right": right_summary,
         # Fixed order (before, then after, by status order), zero flows dropped.
@@ -851,3 +858,18 @@ async def compare_runs(
         "truncated": truncated,
         "data_gap": data_gap,
     }
+    if include_ai_analysis:
+        payload["ai_analysis_diff"] = await _ai_analysis_diff(db, left_run, right_run)
+    return payload
+
+
+async def _ai_analysis_diff(db: AsyncSession, left_run: TestRun, right_run: TestRun) -> dict[str, Any]:
+    """AIH-03 ``ai_analysis_diff`` (left = baseline, right = current). Never raises."""
+    try:
+        # Function-local: the read service imports this module (suite rules).
+        from app.db.mongo import get_mongo_db
+        from app.services.ai_history_read_service import compare_brief
+
+        return await compare_brief(db, get_mongo_db(), baseline=left_run, run=right_run)
+    except Exception:  # noqa: BLE001 -- a compare must never fail because of AI history
+        return {"available": False, "reason": "ai_history_unavailable"}

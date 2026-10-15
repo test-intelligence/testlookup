@@ -1,0 +1,86 @@
+{
+  "requires_human_review": true,
+  "review": {
+    "state": "pending_review",
+    "message": "AI-generated. No human review has been recorded for this report; treat it as a draft.",
+    "review_id": null,
+    "reviewed_at": null
+  },
+  "ai_disclaimer": "AI-generated. This report is a draft until a human reviewer accepts it.",
+  "ai_disclaimer_version": "2026-09-12.v1",
+  "run_id": "00000000-0000-4000-8000-000000000001",
+  "kind": "analysis_digest",
+  "total": 2,
+  "limit": 100,
+  "truncated": false,
+  "latest_version": 2,
+  "live": {
+    "available": true
+  },
+  "versions": [
+    {
+      "version_id": "00000000-0000-4000-8000-000000000002",
+      "kind": "analysis_digest",
+      "version": 2,
+      "trigger": "pipeline",
+      "pipeline_run_id": "00000000-0000-4000-8000-000000000003",
+      "generated_at": "2026-01-01T00:00:00Z",
+      "created_at": "2026-01-01T00:00:00Z",
+      "analysis_mode": "llm",
+      "llm_provider": "ollama",
+      "llm_model": "llama3.1",
+      "fallback_used": false,
+      "deterministic": false,
+      "verdict": "NO_GO",
+      "risk_score": 72,
+      "failing_tests": 2,
+      "categories": {
+        "PRODUCT_BUG": 2
+      },
+      "cluster_count": 1,
+      "headline": null,
+      "content_sha256": "0000000000000000000000000000000000000000000000000000000000000001",
+      "decision_report_ref": null,
+      "summary_version": 1,
+      "review": {
+        "state": "pending_review",
+        "message": "AI-generated. No human review has been recorded for this report; treat it as a draft.",
+        "review_id": null,
+        "reviewed_at": null
+      },
+      "is_latest": true
+    },
+    {
+      "version_id": "00000000-0000-4000-8000-000000000004",
+      "kind": "analysis_digest",
+      "version": 1,
+      "trigger": "pipeline",
+      "pipeline_run_id": "00000000-0000-4000-8000-000000000005",
+      "generated_at": "2026-01-01T00:00:00Z",
+      "created_at": "2026-01-01T00:00:00Z",
+      "analysis_mode": "rules",
+      "llm_provider": null,
+      "llm_model": null,
+      "fallback_used": false,
+      "deterministic": true,
+      "verdict": "CONDITIONAL_GO",
+      "risk_score": 55,
+      "failing_tests": 2,
+      "categories": {
+        "INFRASTRUCTURE": 2
+      },
+      "cluster_count": 1,
+      "headline": null,
+      "content_sha256": "0000000000000000000000000000000000000000000000000000000000000002",
+      "decision_report_ref": null,
+      "summary_version": null,
+      "review": {
+        "state": "pending_review",
+        "message": "AI-generated. No human review has been recorded for this report; treat it as a draft.",
+        "review_id": null,
+        "reviewed_at": null
+      },
+      "is_latest": false
+    }
+  ]
+}
