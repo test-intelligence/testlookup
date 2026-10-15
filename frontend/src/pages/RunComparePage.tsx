@@ -19,6 +19,7 @@ import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import StatusFlowSection from '@/components/runs/StatusFlowSection'
+import AIAnalysisCompareSection from '@/components/ai/AIAnalysisCompareSection'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import { extractCompareErrorMessage, useLatestSuiteCompare, useRunCompare } from '@/hooks/useRunCompare'
 import { useRuns } from '@/hooks/useRuns'
@@ -258,6 +259,15 @@ export default function RunComparePage() {
           <SummaryTiles compare={compare} />
           {compare.selection && <SelectionNotice compare={compare} />}
           {compare.ai_report && <AIReportPanel report={compare.ai_report} />}
+          {/* W03 AIH-03/04: both runs' AI analyses side by side and what changed between them. */}
+          <AIAnalysisCompareSection
+            leftRunId={compare.left.id}
+            rightRunId={compare.right.id}
+            suiteName={compare.suite_name}
+            sameProject={compare.left.project_id === compare.right.project_id}
+            leftLabel={`Build #${compare.left.build_number || compare.left.id.slice(0, 8)}`}
+            rightLabel={`Build #${compare.right.build_number || compare.right.id.slice(0, 8)}`}
+          />
           {/* VIZ-507: the status flows; a click filters the table below to that flow's tests. */}
           <StatusFlowSection
             transitions={compare.transitions}
@@ -480,13 +490,19 @@ function AIReportPanel({ report }: { report: RunCompareAIReport }) {
             <MiniList title="New risks" items={report.new_risks} />
             <MiniList title="Actions" items={report.recommended_actions} />
           </div>
+          {/* W03 AIH-03: the v2 report's AI-analysis changes (computed server-side, deterministic). */}
+          {(report.ai_changes ?? []).length > 0 && (
+            <div data-ai-report-changes="">
+              <MiniList title="AI analysis changes" items={report.ai_changes ?? []} max={12} />
+            </div>
+          )}
         </>
       )}
     </section>
   )
 }
 
-function MiniList({ title, items }: { title: string; items: string[] }) {
+function MiniList({ title, items, max = 4 }: { title: string; items: string[]; max?: number }) {
   return (
     <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-2">
       <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)] mb-1">{title}</div>
@@ -494,7 +510,7 @@ function MiniList({ title, items }: { title: string; items: string[] }) {
         <p className="text-xs text-[var(--color-text-faint)] m-0">None</p>
       ) : (
         <ul className="space-y-1 m-0 p-0 list-none">
-          {items.slice(0, 4).map((item, idx) => (
+          {items.slice(0, max).map((item, idx) => (
             <li key={`${title}-${idx}`} className="text-xs text-[var(--color-text-secondary)] truncate" title={item}>
               {item}
             </li>

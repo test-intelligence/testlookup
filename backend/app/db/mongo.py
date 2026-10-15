@@ -115,6 +115,31 @@ async def ensure_indexes() -> None:
         # docs keyed by run_id (routers/live.py), and the purge deletes by
         # run_id — without this index every purge collection-scans.
         (Collections.LIVE_EXECUTION_EVENTS, [("run_id", 1)], {}),
+        # AIH-01: immutable run-level AI versions (run_summary + analysis_digest).
+        # Version allocation is max+1 per (run, kind); the unique key turns a
+        # lost race into a DuplicateKeyError the writer retries.
+        (
+            Collections.AI_RUN_VERSIONS,
+            [("test_run_id", 1), ("kind", 1), ("version", 1)],
+            {"unique": True},
+        ),
+        # The public id is only ever looked up together with its run, so a
+        # version id of another run can never resolve (IDOR by construction).
+        (
+            Collections.AI_RUN_VERSIONS,
+            [("test_run_id", 1), ("version_id", 1)],
+            {"unique": True},
+        ),
+        # Idempotency key: a replayed pipeline (broker redelivery) hits this
+        # and returns the existing doc. Partial, so backfill rows with no
+        # pipeline are not constrained by it.
+        (
+            Collections.AI_RUN_VERSIONS,
+            [("test_run_id", 1), ("kind", 1), ("pipeline_run_id", 1), ("content_sha256", 1)],
+            {"unique": True, "partialFilterExpression": {"pipeline_run_id": {"$type": "string"}}},
+        ),
+        # Retention sweep / project-wide reads.
+        (Collections.AI_RUN_VERSIONS, [("project_id", 1), ("generated_at", -1)], {}),
     ]
     for coll, keys, kwargs in specs:
         try:
@@ -140,3 +165,4 @@ class Collections:
     DECISION_REPORTS = "decision_reports"
     DECISION_REPORT_ATTEMPTS = "decision_report_attempts"
     LIVE_EXECUTION_EVENTS = "live_execution_events"  # Sanitized events from live runner
+    AI_RUN_VERSIONS = "ai_run_versions"       # AIH-01: immutable run_summary / analysis_digest versions

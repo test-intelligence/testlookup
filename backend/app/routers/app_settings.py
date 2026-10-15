@@ -285,6 +285,11 @@ _DERIVED_AI_KEYS = (
     "ai_offline_mode_source",
     "ai_offline_mode_env_pinned",
     "ai_confidence_threshold_source",
+    # AIC-04 / AIC-01 / AIC-02 provenance (ai_config_resolver.resolve_stored_toggles).
+    "analysis_mode_source",
+    "ai_timeout_seconds_source",
+    "deep_investigation_enabled_source",
+    "finetune_enabled_source",
 )
 
 
@@ -296,6 +301,7 @@ async def _load_ai_config(db: AsyncSession) -> dict:
         CONFIDENCE_SOURCE_ENV_DEFAULT,
         env_offline_pinned,
         resolve_offline_mode,
+        resolve_stored_toggles,
     )
     from app.services.confidence_gate import normalize_threshold
 
@@ -303,6 +309,11 @@ async def _load_ai_config(db: AsyncSession) -> dict:
     row = result.scalar_one_or_none()
     overrides = dict(row.value) if row and row.value else {}
     _stored_threshold = normalize_threshold(overrides.get("ai_confidence_threshold"))
+    # analysis_mode / ai_timeout_seconds / deep_investigation_enabled /
+    # finetune_enabled + their *_source: the SAME helper the runtime resolver
+    # uses, so this page shows exactly what the runtime obeys (an invalid stored
+    # value is ignored by both and reported as "env_default").
+    toggles = resolve_stored_toggles(overrides)
     # AI_OFFLINE_MODE in the environment is a hard ceiling on outbound LLM
     # egress — the stored override may tighten it, never loosen it. Resolved
     # through the same helper the runtime resolver uses so this page and
@@ -334,14 +345,18 @@ async def _load_ai_config(db: AsyncSession) -> dict:
             if _stored_threshold is not None
             else CONFIDENCE_SOURCE_ENV_DEFAULT
         ),
-        "ai_timeout_seconds": overrides.get("ai_timeout_seconds", settings.AI_TIMEOUT_SECONDS),
-        "deep_investigation_enabled": overrides.get("deep_investigation_enabled", settings.DEEP_INVESTIGATION_ENABLED),
-        "finetune_enabled": overrides.get("finetune_enabled", settings.FINETUNE_ENABLED),
+        "ai_timeout_seconds": toggles["ai_timeout_seconds"],
+        "ai_timeout_seconds_source": toggles["ai_timeout_seconds_source"],
+        "deep_investigation_enabled": toggles["deep_investigation_enabled"],
+        "deep_investigation_enabled_source": toggles["deep_investigation_enabled_source"],
+        "finetune_enabled": toggles["finetune_enabled"],
+        "finetune_enabled_source": toggles["finetune_enabled_source"],
         "openai_api_key": overrides.get("openai_api_key") or settings.OPENAI_API_KEY,
         "google_api_key": overrides.get("google_api_key") or settings.GOOGLE_API_KEY,
         "anthropic_api_key": overrides.get("anthropic_api_key") or getattr(settings, "ANTHROPIC_API_KEY", None),
         "openrouter_api_key": overrides.get("openrouter_api_key") or getattr(settings, "OPENROUTER_API_KEY", None),
-        "analysis_mode": overrides.get("analysis_mode", settings.ANALYSIS_MODE),
+        "analysis_mode": toggles["analysis_mode"],
+        "analysis_mode_source": toggles["analysis_mode_source"],
         # knowledge_rag_enabled is deliberately absent: it lives in the
         # feature_flags row, not here. Keeping a copy in ai_config is what let
         # this page advertise "Active" for a feature the gate had switched off.
@@ -419,14 +434,19 @@ async def get_ai_config(
         ai_confidence_threshold=cfg["ai_confidence_threshold"],
         ai_confidence_threshold_source=cfg["ai_confidence_threshold_source"],
         ai_timeout_seconds=cfg["ai_timeout_seconds"],
+        ai_timeout_seconds_source=cfg.get("ai_timeout_seconds_source", "env_default"),
         deep_investigation_enabled=cfg["deep_investigation_enabled"],
+        deep_investigation_enabled_source=cfg.get("deep_investigation_enabled_source", "env_default"),
         finetune_enabled=cfg["finetune_enabled"],
+        finetune_enabled_source=cfg.get("finetune_enabled_source", "env_default"),
         openai_key_set=bool(cfg.get("openai_api_key")),
         google_key_set=bool(cfg.get("google_api_key")),
         anthropic_key_set=bool(cfg.get("anthropic_api_key")),
         openrouter_key_set=bool(cfg.get("openrouter_api_key")),
         analysis_mode=cfg.get("analysis_mode", "auto"),
+        analysis_mode_source=cfg.get("analysis_mode_source", "env_default"),
         knowledge_rag_enabled=cfg.get("knowledge_rag_enabled", False),
+        ml_min_training_samples=settings.ML_MIN_TRAINING_SAMPLES,
         **ml,
     )
 
@@ -487,6 +507,11 @@ class AIModeRead(BaseModel):
     # from a build-time default, also on deployments that send failure context
     # to a cloud model; the claim is now made only when it is true.
     ai_offline_mode: bool
+    # AIC-01: whether deep investigation is offered at all (Settings > AI over
+    # env, the value POST /deep-investigate obeys). Every role reads this
+    # route, so the deep CTAs can be hidden for everyone; default True so a
+    # client reading an older server's payload keeps today's behaviour.
+    deep_investigation_enabled: bool = True
 
 
 @router.get("/ai/mode", response_model=AIModeRead)
@@ -507,6 +532,7 @@ async def get_ai_mode(
     return AIModeRead(
         analysis_mode=cfg.get("analysis_mode", "auto"),
         ai_offline_mode=bool(cfg.get("ai_offline_mode")),
+        deep_investigation_enabled=bool(cfg.get("deep_investigation_enabled", True)),
     )
 
 
@@ -543,10 +569,16 @@ async def update_ai_config(
 
     from app.services.agent_authority_lock import lock_global_agent_authority
     from app.services.ai_config_resolver import (
+        ANALYSIS_MODE_CACHE_KEY,
+        CONFIDENCE_SOURCE_AI_CONFIG,
+        CONFIDENCE_SOURCE_ENV_DEFAULT,
         env_offline_pinned,
         invalidate_ai_config_cache,
         resolve_offline_mode,
+        resolve_stored_toggles,
+        valid_analysis_mode,
     )
+    from app.services.confidence_gate import normalize_threshold
 
     await lock_global_agent_authority(db)
     existing = await _load_ai_config(db)
@@ -634,14 +666,20 @@ async def update_ai_config(
     await log_settings_change(db, _AI_CONFIG_KEY, "updated", current_user, changed_fields=list(updates.keys()))
     await db.commit()
     await invalidate_ai_config_cache()
-    # Cache in Redis for fast sync reads by analysis_router / knowledge services
-    try:
-        from app.db.redis_client import get_redis
-        redis = get_redis()
-        if "analysis_mode" in updates:
-            await redis.set("config:analysis_mode", updates["analysis_mode"], ex=86400)
-    except Exception:
-        pass  # Redis cache is best-effort
+    # AIC-04: re-seed the analysis-mode accelerator with the STORED mode, with
+    # NO expiry (it used to be ex=86400, after which every reader silently fell
+    # back to the env value), and whenever a valid mode is stored -- not only
+    # when this request changed it: invalidate_ai_config_cache() just deleted
+    # the key. analysis_router.resolve_configured_analysis_mode re-seeds it the
+    # same way on a miss (flush, restart).
+    _stored_mode = valid_analysis_mode(store_value.get("analysis_mode"))
+    if _stored_mode is not None:
+        try:
+            from app.db.redis_client import get_redis
+            redis = get_redis()
+            await redis.set(ANALYSIS_MODE_CACHE_KEY, _stored_mode)
+        except Exception:
+            pass  # Redis cache is best-effort
 
     logger.info("AI configuration updated by user_id=%s (fields: %s)", current_user.id, list(updates.keys()))
 
@@ -663,6 +701,16 @@ async def update_ai_config(
     # Re-resolve rather than echo the request: the response must report what
     # is actually in force after the ceiling, not what was asked for.
     effective_offline, offline_source = resolve_offline_mode(merged["ai_offline_mode"])
+    # Provenance of the row just written, through the same helpers a GET uses.
+    # After a save every key is stored (the form posts every field and the
+    # merge keeps the rest), so these read "ai_config"; the confidence source
+    # used to be omitted here, so a save echoed "env_default" (contract §0.9).
+    saved_toggles = resolve_stored_toggles(store_value)
+    saved_threshold_source = (
+        CONFIDENCE_SOURCE_AI_CONFIG
+        if normalize_threshold(store_value.get("ai_confidence_threshold")) is not None
+        else CONFIDENCE_SOURCE_ENV_DEFAULT
+    )
 
     return AIConfigRead(
         llm_provider=merged["llm_provider"],
@@ -675,15 +723,21 @@ async def update_ai_config(
         embedding_provider=merged["embedding_provider"],
         embedding_model=merged["embedding_model"],
         ai_confidence_threshold=merged["ai_confidence_threshold"],
+        ai_confidence_threshold_source=saved_threshold_source,
         ai_timeout_seconds=merged["ai_timeout_seconds"],
+        ai_timeout_seconds_source=saved_toggles["ai_timeout_seconds_source"],
         deep_investigation_enabled=merged["deep_investigation_enabled"],
+        deep_investigation_enabled_source=saved_toggles["deep_investigation_enabled_source"],
         finetune_enabled=merged["finetune_enabled"],
+        finetune_enabled_source=saved_toggles["finetune_enabled_source"],
         openai_key_set=bool(merged.get("openai_api_key")),
         google_key_set=bool(merged.get("google_api_key")),
         anthropic_key_set=bool(merged.get("anthropic_api_key")),
         openrouter_key_set=bool(merged.get("openrouter_api_key")),
         analysis_mode=merged.get("analysis_mode", "auto"),
+        analysis_mode_source=saved_toggles["analysis_mode_source"],
         knowledge_rag_enabled=rag_enabled_after,
+        ml_min_training_samples=settings.ML_MIN_TRAINING_SAMPLES,
         **ml,
     )
 

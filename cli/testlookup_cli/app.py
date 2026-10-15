@@ -19,6 +19,7 @@ from testlookup_cli.commands.reviews import reviews_app
 from testlookup_cli.commands.keys import keys_app
 from testlookup_cli.commands.upload import upload_app
 from testlookup_cli.commands.ci_verdict import ci_verdict
+from testlookup_cli.commands.ai_history import ai_history, compare_ai
 
 app = typer.Typer(
     name="testlookup",
@@ -73,6 +74,11 @@ app.add_typer(upload_app, name="upload")
 # Single top-level command (not a group): `testlookup ci-verdict --run <id>`.
 # US-5.2 — exits 0 when the only failures in a run are quarantined tests.
 app.command("ci-verdict")(ci_verdict)
+
+# AIH-07: the stored versions of a run's AI analysis, and what changed in it
+# since the previous run (``ai-history`` is also ``intelligence history``).
+app.command("ai-history")(ai_history)
+app.command("compare-ai")(compare_ai)
 
 
 if __name__ == "__main__":

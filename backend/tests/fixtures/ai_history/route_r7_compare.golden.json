@@ -1,0 +1,284 @@
+{
+  "requires_human_review": true,
+  "review": {
+    "state": "pending_review",
+    "message": "AI-generated. No human review has been recorded for this report; treat it as a draft.",
+    "review_id": null,
+    "reviewed_at": null
+  },
+  "ai_disclaimer": "AI-generated. This report is a draft until a human reviewer accepts it.",
+  "ai_disclaimer_version": "2026-09-12.v1",
+  "run_id": "00000000-0000-4000-8000-000000000001",
+  "project_id": "00000000-0000-4000-8000-000000000002",
+  "baseline": {
+    "run_id": "00000000-0000-4000-8000-000000000003",
+    "build_number": "100",
+    "run_seq": 7,
+    "branch": "main",
+    "primary_suite_name": "checkout",
+    "status": "FAILED",
+    "created_at": "2026-01-01T00:00:00Z",
+    "finished_at": "2026-01-01T00:00:00Z",
+    "selection": "default",
+    "selection_reason": "Same suite and branch, newest completed run before this one.",
+    "branch_mismatch": false
+  },
+  "reason": null,
+  "message": null,
+  "current_ref": {
+    "ref": "live",
+    "source": "live",
+    "version": null,
+    "kind": "analysis_digest",
+    "generated_at": null,
+    "pipeline_run_id": null,
+    "content_sha256": "0000000000000000000000000000000000000000000000000000000000000001",
+    "analysis_mode": "llm",
+    "llm_model": "llama3.1",
+    "run_id": "00000000-0000-4000-8000-000000000001",
+    "build_number": "101"
+  },
+  "baseline_ref": {
+    "ref": "live",
+    "source": "live",
+    "version": null,
+    "kind": "analysis_digest",
+    "generated_at": null,
+    "pipeline_run_id": null,
+    "content_sha256": "0000000000000000000000000000000000000000000000000000000000000002",
+    "analysis_mode": "rules",
+    "llm_model": null,
+    "run_id": "00000000-0000-4000-8000-000000000003",
+    "build_number": "100"
+  },
+  "sides": {
+    "baseline": {
+      "verdict": "GO",
+      "risk_score": 35,
+      "composite_risk": null,
+      "analysed_tests": 2,
+      "categories": {
+        "INFRASTRUCTURE": 2
+      },
+      "avg_confidence": 42.5,
+      "top_clusters": [
+        {
+          "label": "DB connection refused",
+          "size": 1,
+          "signature": "db connection refused"
+        }
+      ],
+      "engine": "rules",
+      "llm_provider": null,
+      "llm_model": null,
+      "deterministic": true,
+      "fallback_used": false,
+      "decision_report_version": null,
+      "generated_at": null
+    },
+    "current": {
+      "verdict": "NO_GO",
+      "risk_score": 72,
+      "composite_risk": null,
+      "analysed_tests": 2,
+      "categories": {
+        "AUTOMATION_DEFECT": 1,
+        "PRODUCT_BUG": 1
+      },
+      "avg_confidence": 82.5,
+      "top_clusters": [
+        {
+          "label": "Timeout waiting for payment-gateway",
+          "size": 1,
+          "signature": "timeout waiting for payment-gateway"
+        }
+      ],
+      "engine": "llm",
+      "llm_provider": "ollama",
+      "llm_model": "llama3.1",
+      "deterministic": false,
+      "fallback_used": false,
+      "decision_report_version": null,
+      "generated_at": null
+    }
+  },
+  "diff": {
+    "schema_version": 1,
+    "mode": "cross_run",
+    "identical": false,
+    "has_changes": true,
+    "provenance": {
+      "changed": true,
+      "engine": {
+        "from": "rules",
+        "to": "llm"
+      },
+      "model": {
+        "from": null,
+        "to": "llama3.1",
+        "provider_from": null,
+        "provider_to": "ollama"
+      },
+      "fallback_used": null,
+      "deterministic": {
+        "from": true,
+        "to": false
+      },
+      "mode_counts": {
+        "from": {
+          "rules": 2
+        },
+        "to": {
+          "llm": 2
+        }
+      },
+      "engine_only": false,
+      "note": "Baseline analysed by rules; current by llm. Category changes may reflect the engine, not the product."
+    },
+    "verdict": {
+      "changed": true,
+      "from": "GO",
+      "to": "NO_GO",
+      "direction": "worse",
+      "from_risk": 35,
+      "to_risk": 72,
+      "risk_delta": 37
+    },
+    "categories": {
+      "changed": [
+        {
+          "category": "INFRASTRUCTURE",
+          "from": 2,
+          "to": 0,
+          "delta": -2
+        },
+        {
+          "category": "AUTOMATION_DEFECT",
+          "from": 0,
+          "to": 1,
+          "delta": 1
+        },
+        {
+          "category": "PRODUCT_BUG",
+          "from": 0,
+          "to": 1,
+          "delta": 1
+        }
+      ],
+      "from_total": 2,
+      "to_total": 2
+    },
+    "clusters": {
+      "added": [
+        {
+          "signature": "timeout waiting for payment-gateway",
+          "label": "Timeout waiting for payment-gateway",
+          "size": 1,
+          "member_count": 1
+        }
+      ],
+      "removed": [
+        {
+          "signature": "db connection refused",
+          "label": "DB connection refused",
+          "size": 1,
+          "member_count": 1
+        }
+      ],
+      "matched": [],
+      "counts": {
+        "added": 1,
+        "removed": 1,
+        "matched": 0,
+        "resized": 0
+      }
+    },
+    "tests": {
+      "added": [
+        {
+          "test_fingerprint": "fp-cart",
+          "test_id": "00000000-0000-4000-8000-000000000004",
+          "test_name": "test_cart",
+          "suite_name": "checkout",
+          "category": "PRODUCT_BUG",
+          "confidence": 80
+        }
+      ],
+      "removed": [
+        {
+          "test_fingerprint": "fp-db",
+          "test_id": "00000000-0000-4000-8000-000000000005",
+          "test_name": "test_db",
+          "suite_name": "checkout",
+          "category": "INFRASTRUCTURE",
+          "confidence": 45
+        }
+      ],
+      "changed": [
+        {
+          "test_fingerprint": "fp-pay",
+          "test_id": "00000000-0000-4000-8000-000000000006",
+          "from_test_id": "00000000-0000-4000-8000-000000000007",
+          "test_name": "test_pay",
+          "suite_name": "checkout",
+          "kinds": [
+            "category",
+            "confidence",
+            "root_cause"
+          ],
+          "material": true,
+          "category": {
+            "from": "INFRASTRUCTURE",
+            "to": "AUTOMATION_DEFECT"
+          },
+          "confidence": {
+            "from": 40,
+            "to": 85,
+            "delta": 45
+          },
+          "flaky": null,
+          "root_cause_changed": true,
+          "root_cause_excerpt": {
+            "from": "DB connection refused",
+            "to": "Timeout waiting for payment-gateway"
+          },
+          "previous_category": "INFRASTRUCTURE",
+          "current_category": "AUTOMATION_DEFECT",
+          "previous_confidence": 40,
+          "current_confidence": 85
+        }
+      ],
+      "persisting_unchanged": 0,
+      "counts": {
+        "added": 1,
+        "removed": 1,
+        "changed": 1,
+        "material_changed": 1
+      },
+      "truncated": false
+    },
+    "actions": {
+      "added": [],
+      "removed": []
+    }
+  },
+  "narrative": {
+    "status": "deterministic",
+    "source": "deterministic",
+    "label": "deterministic summary",
+    "fallback_used": true,
+    "executive_summary": "Compared with the baseline run: verdict GO -> NO_GO, 1 new root cause(s), 1 resolved, 1 test(s) changed category, confidence or flakiness, 1 new failing test(s), 1 resolved test(s).",
+    "ai_changes": [
+      "Baseline analysed by rules; current by llm. Category changes may reflect the engine, not the product.",
+      "Verdict GO -> NO_GO (risk 35 -> 72)",
+      "New root cause: Timeout waiting for payment-gateway (1 tests)",
+      "Resolved: DB connection refused (1 tests)",
+      "test_pay: INFRASTRUCTURE -> AUTOMATION_DEFECT (confidence 40 -> 85)"
+    ],
+    "risk_level": null,
+    "prompt_version": "run_compare_v2",
+    "model_name": null,
+    "generated_at": null,
+    "report_status": "absent"
+  }
+}

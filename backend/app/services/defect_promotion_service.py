@@ -63,18 +63,14 @@ def _failure_category_value(category: Any) -> str:
 async def _release_connection_for_llm(db: AsyncSession) -> None:
     """Hand the session's pooled connection back before an LLM call.
 
-    A worker has three connections. The defect-draft request held its own
-    across the call while the call's cost-cap check took a second, so a few
-    drafts at once starved the pool the way the run-intelligence GET did
-    (#247). ``close()`` ends the read transaction: not ``commit()`` (this
-    service is stage-only) and not ``rollback()`` (it expires the loaded
-    rows). Loaded attributes stay readable and the session opens a new
-    transaction on its next query. A session with pending writes keeps its
-    connection, because closing it would discard them.
+    The defect-draft request held its own across the call while the call's
+    cost-cap check took a second, so a few drafts at once starved the pool
+    the way the run-intelligence GET did (#247). See
+    ``app.db.postgres.release_read_connection``.
     """
-    if db.new or db.dirty or db.deleted:
-        return
-    await db.close()
+    from app.db.postgres import release_read_connection
+
+    await release_read_connection(db)
 
 
 async def get_defect_candidate(

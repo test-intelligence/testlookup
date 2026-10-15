@@ -271,6 +271,27 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
 
+async def release_read_connection(db: AsyncSession) -> bool:
+    """Give a read-only session's pooled connection back; True if it did.
+
+    A worker's pool is three connections (2 + 1), and a request that holds
+    one while it opens a second session -- to cache a result, or while an LLM
+    call takes another for its cost check -- needs two at once; a few such
+    requests together wait out the 30 s pool timeout (homelab, 2026-10-13/14).
+
+    ``close()`` ends the read transaction: not ``commit()`` (a read path
+    must not commit, and stage-only services never do) and not
+    ``rollback()`` (it expires the loaded rows). Loaded attributes stay
+    readable and the session opens a new transaction on its next query. A
+    session with pending writes keeps its connection, because closing it
+    would discard them.
+    """
+    if db.new or db.dirty or db.deleted:
+        return False
+    await db.close()
+    return True
+
+
 async def init_db() -> None:
     """Create all tables on startup (development only). Use migrations in production."""
     async with get_engine().begin() as conn:

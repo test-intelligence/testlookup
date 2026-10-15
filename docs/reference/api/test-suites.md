@@ -816,6 +816,11 @@ history timeline exists to answer (roadmap Phase 1).
 ``None`` with ``environment_source: "unknown"`` rather than being folded
 into a synthetic default group.
 
+AIH-05: each row's ``ai`` is that execution's AI analysis (category,
+confidence, engine/model, review flag, root-cause excerpt, version count) or
+``None``; only the newest 2,000 rows get it (``ai_truncated``). The case ids
+are this canonical's own, so the project scope is the canonical's.
+
 Source: [backend/app/routers/suites.py:564](../../../backend/app/routers/suites.py#L564).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
@@ -892,7 +897,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-{'items': [{'test_case_id': case.id, 'test_run_id': case.test_run_id, 'status': case.status, 'duration_ms': case.duration_ms, 'suite_name': case.suite_name, 'created_at': case.created_at, 'build_number': run.build_number, 'branch': run.branch, **resolve_environment(run).to_dict(), 'retry_count': case.retry_count, 'is_flaky_run': case.is_flaky_run} for case, run in rows], 'total': len(rows)}
+{'items': [{'test_case_id': case.id, 'test_run_id': case.test_run_id, 'status': case.status, 'duration_ms': case.duration_ms, 'suite_name': case.suite_name, 'created_at': case.created_at, 'build_number': run.build_number, 'branch': run.branch, **resolve_environment(run).to_dict(), 'retry_count': case.retry_count, 'is_flaky_run': case.is_flaky_run, 'ai': ai_by_case.get(case.id)} for case, run in rows], 'total': len(rows), 'ai_truncated': ai_truncated}
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.

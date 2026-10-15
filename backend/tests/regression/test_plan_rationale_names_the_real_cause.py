@@ -14,7 +14,7 @@ change would alter that.
 This was not academic. Establishing why four capabilities had never executed on
 a live deployment took five queries, because the plan would not say which case
 it was. The rest of the planner is already precise —
-``"AIQ_GAP_REFINEMENT_ENABLED is off — stage skipped"``,
+``"AIQ gap/refinement feature flag is off for this project"`` (W04 AGT-16),
 ``"no analyses meet confidence threshold 0.8 for defect triage"`` — so these
 four were the exception, not the convention.
 
@@ -120,3 +120,25 @@ def test_an_enabled_stage_on_a_failing_run_is_planned(stage, flag):
 
     assert entry["planned"] is True
     assert "enabled" in entry["rationale"]
+
+
+# ── W04 AGT-16: the gap/refinement stages follow the same convention ─────────
+
+
+@pytest.mark.parametrize("stage", ["gap_detection", "report_refinement"])
+def test_the_gap_refinement_stages_say_the_project_flag_is_off(stage):
+    """Off -> one actionable cause naming the project flag; on -> planned."""
+    off = _entry(_plan(failed_test_ids=["t1"], gap_refinement_enabled=False), stage)
+    on = _entry(_plan(failed_test_ids=["t1"], gap_refinement_enabled=True), stage)
+
+    assert off["planned"] is False
+    assert off["rationale"] == "AIQ gap/refinement feature flag is off for this project"
+    assert "feature flag is off for this project" in off["rationale"]
+    assert " or " not in off["rationale"]
+    assert on["planned"] is True
+    assert on["rationale"] == "AIQ-P4 gap/refinement stage enabled by feature flag"
+
+
+def test_gap_refinement_enabled_must_be_a_boolean():
+    with pytest.raises(ValueError, match="gap_refinement_enabled must be a boolean"):
+        _plan(failed_test_ids=["t1"], gap_refinement_enabled="yes")

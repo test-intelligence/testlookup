@@ -52,6 +52,63 @@ locally by default.
 
 ### Added
 
+- **Settings › AI does what it says** (deferred-features wave W04, AIC-01 to
+  AIC-07, AGT-04, AGT-16). The analysis mode, Deep Investigation and Fine-Tuning
+  toggles, the confidence threshold and the timeout are now read from the stored
+  settings by every path, and each value on `GET /settings/ai` says whether it
+  is set here or is the deployment default (`*_source`). A pipeline freezes the
+  threshold and the timeout when it starts (`ai_config_snapshot`), so a resume
+  replays the same numbers and a manual retry after a change starts a new run.
+  The threshold decides triage in the pipeline that runs (the decision trail
+  records "no analyses above confidence threshold 95 — skipping triage"); the
+  timeout (now 5 to 1800 s) bounds every LLM call, an agent can only lower it,
+  and a timed-out analysis records "LLM timed out after 5 s" as its fallback.
+  Deep investigation answers 422 "Deep investigation is disabled in Settings ›
+  AI" on all four ways to start one when it is off, and its buttons are replaced
+  by a note. **The ML tier can train**: scikit-learn ships in the image, an
+  ADMIN's **Train now** and a nightly retrain at 03:10 UTC
+  (`POST /settings/ai/ml/retrain`, `GET /settings/ai/ml/status`: labelled
+  samples against the 200 floor, model age and accuracy, the last run), and a
+  trained model is published to every pod (`ML_MODEL_SYNC_ENABLED` defaults to
+  true). **Billing** shows covered spend, overage, its charge at the overage rate
+  and a month-end projection when a project has an included allowance
+  (`llm_cost_budget` on for new installs, migration 0207). **Agent stages** are
+  listed under Settings › Feature flags, grouped (migration 0208: the four
+  read-only deep stages on for new installs, `defect_commander` off), and gap
+  detection + report refinement run in deep pipelines behind the project flag
+  `aiq_gap_refinement` (migration 0209, on unless `AIQ_GAP_REFINEMENT_ENABLED`
+  says otherwise). The Agents page gains **Retry** (resume from the last
+  successful stage, or a new run when the configuration changed) and **Stop**
+  on each pipeline, and a failed deep investigation offers "Retry from last
+  successful stage".
+
+- **AI history: every AI analysis is kept, and compared with the previous
+  run's** (deferred-features wave W03, AIH-01 to AIH-07). A re-analysis no longer
+  overwrites the last answer: each pipeline stores a numbered version of the
+  run's analysis digest and run summary (MongoDB `ai_run_versions`) and of each
+  test result's analysis (`ai_analysis_versions`, migration 0205, with a v1
+  backfill), with provenance (pipeline, mode, provider and model, prompt
+  versions, fallback, trigger; a human correction is a version with its author).
+  The run's **Analysis** tab shows a **History** control (pick a version to see
+  its stored snapshot, or diff two: verdict, categories, root-cause clusters,
+  per-test changes, the engine first) and a **vs previous run** card (the
+  previous run of the same suite on the same branch: verdict change, new /
+  resolved / persisting root causes, tests whose AI conclusion changed, a
+  deterministic summary offline or the AI narrative when an LLM is reachable);
+  Run Compare gains an **AI analysis** section and its AI report lists the AI
+  changes; a test's History shows its AI category per run and where it changed,
+  with each run's stored versions. API: `GET /runs/{id}/ai-history`
+  (`/{version_id}`, `/diff`, `/export`), `/runs/{id}/tests/{test_id}/ai-history`,
+  `/runs/{id}/previous`, `/runs/{id}/ai-compare`. Retention: AI history is on the
+  runs clock, capped at 20 versions per run per kind and 10 per test result
+  (migration 0206, set on `/settings/retention`; version 1, the newest and any
+  version a published decision report cites are never pruned); the compliance
+  pack carries `ai_history.json`; activity `analysis.completed`,
+  `analysis.verdict_changed`, `analysis.report_superseded`. CLI `testlookup
+  ai-history <run> [--diff 1..latest]`, `testlookup compare-ai <run>
+  [--fail-on-verdict-regression]` (exit 8); MCP `get_ai_history`,
+  `diff_ai_versions`, `compare_ai_with_previous`.
+
 - **Execution time for tests, suites and runs** (deferred-features wave W02,
   EXEC-01 to EXEC-06): every report format and the live reporters keep each
   test's start, finish, setup / test / teardown split and worker
@@ -118,6 +175,26 @@ locally by default.
   naming the actor and the key's owner.
 
 ### Changed
+
+- **Every LLM call is bounded by the AI timeout** (W04). Calls that had no
+  limit (the decision-report and critic agents, flaky and test-health
+  reasoning) now stop at Settings › AI "Timeout" (default 300 s) and fall back
+  as a timed-out analysis does; a timeout counts towards the provider's circuit
+  breaker. Triage in a pipeline follows the Settings › AI confidence threshold,
+  no longer the summary agent's own `confidence_min`. An analysis records the
+  configured provider and model, not the deployment's. The ML tier adds
+  scikit-learn and SciPy to the backend image (about 190 MB).
+
+- **"Compare to previous run" means the previous run on the same branch**
+  (W03, owner decision D42). The run menu, the Changes tab and the Runs list ask
+  the server (`GET /runs/{id}/previous`): the newest finished run of the same
+  primary suite on the same branch, the rule Run Compare's precompute and the
+  "vs previous run" card use. It used to pick from the 50 runs loaded in the
+  page, on any branch. Run Compare's cached AI reports from before this release
+  are regenerated once on first view (prompt `run_compare_v2`), and an
+  `ai_analysis` row re-analysed by another model now names that model and time
+  (the upsert kept the old ones), so value metrics count a re-analysed row in the
+  month of its latest analysis.
 
 - **A test case opens beside the list, not over it** (Test Management > Cases).
   The case view was a modal pinned to the top-right corner over a backdrop, so
@@ -258,6 +335,35 @@ locally by default.
   mode is on (from the environment or the stored setting), and the label names
   the configured provider. Ragas 0.2+ scores are read correctly, and a failed
   Ragas score now counts as 0, not a pass.
+- **"Token revocation status cannot be verified" now says what failed.** It
+  read "revocation store unavailable", and the log said "Restore Redis", even
+  when Redis and the database were fine and the server had simply run out of
+  free database connections. The message now names the cause: no free
+  database connection (an overloaded server), the database unreachable, or
+  the token cache unreachable; the log names the matching remedy.
+- **Fewer requests hold two database connections at once.** Caching a
+  freshly computed run summary (on the page, on refresh, or for an export)
+  opened a second connection while the request still held its first, and a
+  release override did its work in a second connection beside the request's.
+  The summary paths now hand their connection back before the cache write,
+  and the override uses the request's own.
+- **The analysis mode set in Settings › AI no longer reverts** (W04, AIC-04).
+  Thirty seconds after a worker read it, the mode fell back to the deployment's
+  `ANALYSIS_MODE`, and a Redis expiry did the same after a day; a pipeline
+  recorded the deployment's provider and model rather than the configured ones.
+  The stored value is now the truth and Redis only a cache. Also fixed: the ML
+  trainer queried a column that does not exist (`test_runs.started_at`) and
+  never trained on a real database, and a resumed deep pipeline dropped its
+  `defect_commander` setting.
+
+- **"Trigger pipeline" re-analyses a run again** (W03). The API answered
+  "Pipeline queued" and recorded the request, but the worker dropped the task as
+  a duplicate for two hours after any analysis of the run. A person's trigger
+  now runs, including one right after their previous pipeline finished (a
+  double submit while the first is still queued collapses, for up to two
+  minutes, and automatic triggers keep collapsing behind the run's two-hour
+  key).
+
 - **Drafting a defect from a cluster no longer ties up a database
   connection while the AI writes.** The draft request kept its connection
   for the whole LLM call, which also needs a connection for its cost check;

@@ -53,11 +53,15 @@ async def test_answers_the_mode_and_the_offline_flag_and_nothing_else(monkeypatc
 
     async def _config(_db):
         return {"analysis_mode": "rules", "ai_offline_mode": False, "llm_provider": "openai",
-                "openai_api_key": "sk-not-for-viewers"}
+                "openai_api_key": "sk-not-for-viewers", "deep_investigation_enabled": False}
 
     monkeypatch.setattr(app_settings, "_load_ai_config", _config)
     result = await app_settings.get_ai_mode(_=SimpleNamespace(id="viewer"), db=SimpleNamespace())
-    assert result.model_dump() == {"analysis_mode": "rules", "ai_offline_mode": False}
+    # W04 AIC-01: whether deep investigation is offered (effective, DB over env)
+    # joins the mode, so every role's screens can hide the deep CTAs.
+    assert result.model_dump() == {
+        "analysis_mode": "rules", "ai_offline_mode": False, "deep_investigation_enabled": False,
+    }
 
 
 @pytest.mark.asyncio

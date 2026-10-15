@@ -6,6 +6,12 @@
  * there). The body that tab hosts is exported from here as
  * `RunIntelligenceBody`, in the page template's order:
  *
+ *   AI history   → (W03 AIH-04) "vs previous run" and the version picker with
+ *                  its diff drawer (`components/ai/AIAnalysisHistory`). A
+ *                  stored version that is not the latest (`?ai_version=`, or an
+ *                  old `?report_version=` link mapped to the version that
+ *                  published it) is shown as a read-only snapshot INSTEAD of
+ *                  the live sections below (`AIVersionSnapshot`).
  *   StatusBanner → the release verdict in one line (gate · action, risk,
  *                  blockers, AI confidence; "Decision trail" opens the drawer),
  *                  its reasoning and first blocking issue under it.
@@ -49,6 +55,16 @@ import DecisionIntelligencePanel from '@/components/ai/DecisionIntelligencePanel
 import { deriveDecisionTrustState } from '@/components/ai/decisionTrustState'
 import DefectPromotionModal from '@/components/ai/DefectPromotionModal'
 import RunStepFlipCard from '@/components/runs/RunStepFlipCard'
+import AIAnalysisHistory from '@/components/ai/AIAnalysisHistory'
+import AIVersionSnapshot from '@/components/ai/AIVersionSnapshot'
+import { SectionErrorBoundary } from '@/components/ui/SectionErrorBoundary'
+import {
+  applyReportVersion,
+  isSnapshotVersion,
+  readAiVersion,
+  selectedDigestVersion,
+} from '@/components/ai/aiHistoryUrl'
+import { useAIHistory } from '@/hooks/useAIHistory'
 import { useDecisionReportVersions, useRunIntelligence } from '@/hooks/useRunIntelligence'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useReleaseCouncil } from '@/hooks/useReleaseCouncil'
@@ -1487,6 +1503,43 @@ export function RunIntelligenceBody({
   // Filing a defect needs QA engineer (POST .../promote, like /analytics/defects).
   const { isQaEngineer } = usePermissions()
 
+  // W03 AIH-04: the run's AI history. `?ai_version=` (or an old `?report_version=`
+  // link, mapped to the version that published that report) naming a stored
+  // version that is not the latest shows that snapshot INSTEAD of the live
+  // sections; the history control and "vs previous run" sit on top of both.
+  const [searchParams] = useSearchParams()
+  const aiHistory = useAIHistory(runId)
+  const requestedAiVersion = readAiVersion(searchParams)
+  const viewedAiVersion = selectedDigestVersion(
+    aiHistory.data?.versions ?? [],
+    requestedAiVersion,
+    readReportVersion(searchParams),
+  )
+  const snapshotVersion = aiHistory.data && isSnapshotVersion(viewedAiVersion, aiHistory.data.latest_version)
+    ? viewedAiVersion
+    : null
+  // A link to a stored version waits for the version list instead of flashing the live view first.
+  const waitingForHistory = requestedAiVersion != null && !aiHistory.data && !aiHistory.error
+  const history = (
+    <SectionErrorBoundary message="The AI history failed to load">
+      <AIAnalysisHistory runId={runId} />
+    </SectionErrorBoundary>
+  )
+  if (snapshotVersion != null || waitingForHistory) {
+    return (
+      <div className="space-y-4" data-run-analysis="">
+        {history}
+        {snapshotVersion != null ? (
+          <SectionErrorBoundary message="The stored AI version failed to load">
+            <AIVersionSnapshot runId={runId} version={snapshotVersion} />
+          </SectionErrorBoundary>
+        ) : (
+          <div className="flex items-center justify-center h-32"><LoadingSpinner /></div>
+        )}
+      </div>
+    )
+  }
+
   if (isLoading) {
     return (
       <div className="space-y-4">
@@ -1526,6 +1579,8 @@ export function RunIntelligenceBody({
 
   return (
     <div className="space-y-4" data-run-analysis="">
+      {history}
+
       <VerdictBanner
         runId={runId}
         verdict={verdict}
@@ -1655,6 +1710,9 @@ export function RunDecisionReport({ runId }: { runId: string }) {
   const selectedReportVersion = readReportVersion(searchParams)
   const { intelligence } = useRunIntelligence(runId, selectedReportVersion)
   const { versions } = useDecisionReportVersions(runId)
+  // W03 AIH-04, "one picker drives both": choosing a report version also moves
+  // `?ai_version=` to the AI version that published it (the Analysis tab's picker).
+  const { data: aiHistory } = useAIHistory(runId)
   if (!intelligence) return null
   const summary = intelligence.structured_summary
   return (
@@ -1668,12 +1726,7 @@ export function RunDecisionReport({ runId }: { runId: string }) {
       selectedReportVersion={selectedReportVersion}
       onSelectReportVersion={(version) => {
         // Functional: the other keys (`tab`, the Tests filters) stay.
-        setSearchParams((current) => {
-          const next = new URLSearchParams(current)
-          if (version == null) next.delete('report_version')
-          else next.set('report_version', String(version))
-          return next
-        })
+        setSearchParams((current) => applyReportVersion(current, version, aiHistory?.versions ?? []))
       }}
     />
   )

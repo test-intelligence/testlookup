@@ -31,7 +31,9 @@ Install from the repository root with `pip install ./cli` (Python 3.11 or newer)
 | `runs` | `list`, `get` | List runs (filter by project and status) and inspect one |
 | `tests` | `list <run-id>`, `get <run-id> <test-id>` | A run's test cases; one test case, with `--show-steps` for its step tree |
 | `search` | (run as `testlookup search "<query>"`) | Global search across tests, runs, suites, defects and more |
-| `intelligence` | `show`, `refresh` | Run-intelligence summary, including the release recommendation; force a refresh |
+| `intelligence` | `show`, `refresh`, `history` | Run-intelligence summary, including the release recommendation; force a refresh; `history` is `ai-history` |
+| `ai-history` | (top-level command) | The stored versions of a run's AI analysis, and with `--diff 1..latest` what changed between two of them |
+| `compare-ai` | (top-level command) | What changed in a run's AI analysis since the previous run of its suite and branch |
 | `deep` | `start`, `status`, `clusters`, `findings` | Deep-investigation workflow for a run |
 | `reports` | `pdf`, `share` | Download a run's PDF report; create a time-limited share link |
 | `reviews` | `list`, `accept`, `reject` | Human review of AI-generated reports (accept and reject need a login, not an API key) |
@@ -43,6 +45,8 @@ Install from the repository root with `pip install ./cli` (Python 3.11 or newer)
 Upload syntax: `testlookup upload file results.xml --project <project-uuid> --build <build-id>`. `--project` is the project's UUID; `--format` defaults to `auto` (detected from the content) and accepts `junit`, `testng`, `allure`, `cypress`, `playwright`, `pytest`, `robot`, `cucumber`, `nunit`, `trx` and `xunit`. Add `--wait` to wait for ingestion and fail the step when the server refuses the report.
 
 `ci-verdict` does not read the release-gate verdict. `testlookup ci-verdict --run <run-id>` compares the run's `FAILED` and `BROKEN` tests with the project's quarantine manifest and exits **0** when every failure is quarantined (or there are none), **1** on any real (non-quarantined) failure, or on any failure with `--strict`, and **2** on an API or network error or when the run is still in progress after `--timeout-seconds`. It fails closed; `--fail-open` turns infrastructure errors into exit 0 with a warning. Details: [Flaky tests](flaky-tests.md#gating-ci-on-real-failures-only-testlookup-ci-verdict).
+
+AI history: `testlookup ai-history <run-id>` lists one row per stored version of the run's AI analysis (`v3  2026-10-14 10:00  llm llama3.1  NO_GO risk 72  failing 7`), newest first; `--kind summary` lists the run-summary versions; `--diff A..B` (A a version number; B a number, `latest` or `live` for the current data) prints what changed, the analysis engine first, because a category change between a rules version and an LLM version may reflect the engine rather than the product. `testlookup compare-ai <run-id>` compares the run with the newest completed run of the same suite on the same branch (`--baseline <run-id>` picks another) and prints, for example, `vs #1233 (checkout · main): verdict GO → NO_GO · new root causes 1 · resolved 1 · 3 tests changed category`, then the summary, labelled `deterministic summary` when no LLM wrote it. `--fail-on-verdict-regression` exits **8** when the AI verdict got worse; when there is no previous run, or a side has no AI analysis, it warns and exits 0, because it cannot judge. Both take `--json` for the REST body.
 
 The CLI has its own configuration and does not read `testlookup.properties` or `testlookup.yaml`. It keeps saved profiles in `profiles.json` in the per-user config directory. When the selected profile (`--profile`, else `TESTLOOKUP_PROFILE`, else the profile `auth login` made active, else `default`) is not saved there, it falls back to `TESTLOOKUP_URL` (default `http://localhost:8000`) and `TESTLOOKUP_API_KEY`. A saved profile wins over those variables. The full reference, including exit codes, CI-context detection and the analytics flags, is [cli/README.md](../cli/README.md).
 
@@ -94,7 +98,7 @@ The CLI honours the options and environment variables only.
 
 ## The MCP server
 
-The `mcp/` directory runs a Model Context Protocol server exposing **68 tools**, **11 resources** and **7 prompts** over your TestLookup data, so an AI assistant can query runs, failures, flakiness, release readiness, compliance packs and more, with the same role and project checks as the API.
+The `mcp/` directory runs a Model Context Protocol server exposing **73 tools**, **11 resources** and **7 prompts** over your TestLookup data, so an AI assistant can query runs, failures, flakiness, release readiness, compliance packs and more, with the same role and project checks as the API.
 
 ```bash
 pip install -r mcp/requirements.txt
@@ -105,6 +109,8 @@ python mcp/server.py --transport sse    # SSE on port 8002: for networked agent 
 Authentication: on stdio the server logs in as `TESTLOOKUP_USERNAME` / `TESTLOOKUP_PASSWORD` and holds the JWT; on SSE every request must carry the client's own `Authorization: Bearer <access token>`, validated against the API on each request. API keys are not accepted. `TESTLOOKUP_API_URL` (default `http://localhost:8000`) points it at the API.
 
 Tool coverage mirrors the app's domains, one module each under `mcp/tools/`: `agents`, `analysis`, `analytics`, `assignments`, `auth`, `billing`, `compliance_pack`, `decision_trail`, `deep`, `defects`, `feedback`, `governance`, `intelligence`, `investigations`, `metrics`, `notifications`, `projects`, `quarantine`, `release`, `reports`, `reviews`, `runs` (including `get_test_step_flips` for step-level flakiness) and `search`. `health_check` reports the API's per-dependency health.
+
+For AI history, `get_ai_history` lists a run's stored AI versions, `diff_ai_versions` shows what changed between two of them, and `compare_ai_with_previous` answers "what changed in the AI analysis since the previous checkout run?": the verdict, new and resolved root causes, tests whose category changed, and `verdict_regressed`. Each returns compact markdown beside the REST body; the summary says `deterministic summary` when no LLM wrote it, and a side that was never analysed is reported as not compared, not as "no change".
 
 For charts, `get_chart_data` returns the same series the report pages draw: a metric (executions by default), up to two grouping dimensions, and optional project, releases, suites and window. A point with no data comes back as `y: null` with `measured: false`, never 0, and a rate-limited call returns `retry_after` (chart reads allow 120 requests a minute per user).
 

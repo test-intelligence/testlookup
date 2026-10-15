@@ -579,10 +579,18 @@ async def list_canonical_run_history(
     ``environment`` is resolved, not raw: a run that never recorded one yields
     ``None`` with ``environment_source: "unknown"`` rather than being folded
     into a synthetic default group.
+
+    AIH-05: each row's ``ai`` is that execution's AI analysis (category,
+    confidence, engine/model, review flag, root-cause excerpt, version count) or
+    ``None``; only the newest 2,000 rows get it (``ai_truncated``). The case ids
+    are this canonical's own, so the project scope is the canonical's.
     """
+    from app.services.ai_history_read_service import canonical_runs_ai
+
     canonical = await svc.get_canonical_or_404(db, canonical_id)
     await _enforce_project_access(db, current_user, canonical.project_id)
     rows = await svc.list_runs_for_canonical(db, canonical)
+    ai_by_case, ai_truncated = await canonical_runs_ai(db, [case.id for case, _run in rows])
     return {
         "items": [
             {
@@ -600,8 +608,10 @@ async def list_canonical_run_history(
                 # build green, so it is reported rather than absorbed.
                 "retry_count": case.retry_count,
                 "is_flaky_run": case.is_flaky_run,
+                "ai": ai_by_case.get(case.id),
             }
             for case, run in rows
         ],
         "total": len(rows),
+        "ai_truncated": ai_truncated,
     }

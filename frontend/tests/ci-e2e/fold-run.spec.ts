@@ -109,7 +109,8 @@ test('each tab renders its section and makes its own requests only when opened',
   await expect(page.locator('[data-primary]')).toContainText('Gateway timeouts')
   const deep = page.getByRole('region', { name: 'Deep investigation' })
   await expect(deep).toContainText('Payment gateway timeout')
-  await expect(deep.getByRole('button', { name: /Analyze failures/ })).toBeVisible()
+  // W04 AIC-01: the shared LAYOUT answers mode "rules", so the deep control gives way to its note.
+  await expect(deep.getByTestId('deep-disabled-note')).toHaveText('Deep investigation needs LLM or Auto mode (current mode: Rules).')
   await expect(page.locator('[data-disclosure][data-open="false"]')).toHaveCount(2)
   await networkQuiet(page, api)
   for (const path of TAB_ONLY.analysis) expect(requestsTo(api, path).length, String(path)).toBeGreaterThan(0)

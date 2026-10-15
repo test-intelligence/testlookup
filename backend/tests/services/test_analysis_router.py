@@ -6,8 +6,9 @@ Every analysis call must go through this module (never call
 codify the contract callers depend on:
 
   - ``get_analysis_mode()`` resolves configured → auto → fallback chain
-    (ML if trained → LLM if provider configured → Rules) with a 30s
-    in-process cache.
+    (ML if trained → LLM if provider configured → Rules). The configured
+    mode is the last value refreshed into the process (no expiry, AIC-04),
+    else env.
   - ``classify_test()`` always attaches a ``_routing`` dict describing
     mode_requested / mode_resolved / mode_used / fallback_from /
     fallback_reason / auto_probe — this is the authoritative decision
@@ -39,17 +40,35 @@ from app.services.analysis_router import (  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
+def _no_external_stores(monkeypatch):
+    """classify_test's confidence gate resolves the effective AI config; with no
+    stores patched it dialled the real Redis and Postgres and waited ~8 s per
+    test on Windows for both refusals. Refuse at once: the resolver degrades to
+    env defaults, which is what these tests assume."""
+
+    def _refuse(*_a, **_kw):
+        raise RuntimeError("no external store in this test")
+
+    monkeypatch.setattr("app.db.redis_client.get_redis", _refuse)
+    monkeypatch.setattr("app.db.postgres.AsyncSessionLocal", _refuse)
+
+
+@pytest.fixture(autouse=True)
 def _reset_module_state():
     """Module-level caches leak across tests; reset before AND after each."""
-    analysis_router._cached_mode = None
-    analysis_router._cached_mode_ts = 0
-    analysis_router._ollama_model_available = None
-    analysis_router._ollama_probe_ts = 0
+    def _reset():
+        analysis_router._cached_mode = None
+        analysis_router._cached_mode_ts = 0
+        analysis_router._ollama_model_available = None
+        analysis_router._ollama_probe_ts = 0
+        analysis_router._ollama_probe_target = None
+        analysis_router._effective_provider = None
+        analysis_router._effective_model = None
+        analysis_router._effective_base_url = None
+
+    _reset()
     yield
-    analysis_router._cached_mode = None
-    analysis_router._cached_mode_ts = 0
-    analysis_router._ollama_model_available = None
-    analysis_router._ollama_probe_ts = 0
+    _reset()
 
 
 @pytest.fixture
@@ -76,14 +95,34 @@ def test_get_analysis_mode_lowercases_configured_value(settings_mode):
     assert get_analysis_mode() == AnalysisMode.LLM
 
 
-def test_get_analysis_mode_30s_cache_serves_stale_value(settings_mode):
-    """First call caches; changing settings inside 30s window must NOT take effect."""
-    settings_mode(AnalysisMode.LLM)
-    assert get_analysis_mode() == AnalysisMode.LLM
+def test_refreshed_configured_mode_wins_over_env_with_no_expiry(settings_mode, monkeypatch):
+    """AIC-04: the configured mode refreshed into the process (from the stored
+    setting) wins over env and never expires back to it. The old 30 s window
+    re-read ``settings.ANALYSIS_MODE`` on expiry, which reverted a stored mode
+    mid-pipeline and in every API process."""
+    import time
 
-    # Change the underlying setting mid-window. The cached value must win.
-    analysis_router.settings.ANALYSIS_MODE = AnalysisMode.RULES
-    assert get_analysis_mode() == AnalysisMode.LLM
+    settings_mode(AnalysisMode.LLM)
+    assert get_analysis_mode() == AnalysisMode.LLM  # nothing refreshed: env
+
+    analysis_router._remember_configured_mode(AnalysisMode.RULES)
+    later = time.monotonic() + 3_600
+    monkeypatch.setattr(time, "monotonic", lambda: later)
+    assert get_analysis_mode() == AnalysisMode.RULES
+
+
+def test_explicit_configured_keyword_wins_over_the_process_cache(settings_mode):
+    settings_mode(AnalysisMode.AUTO)
+    analysis_router._remember_configured_mode(AnalysisMode.LLM)
+    mode, reason = analysis_router.resolve_analysis_mode_with_reason(configured="rules")
+    assert mode == AnalysisMode.RULES
+    assert "mode explicitly set to 'rules'" in reason
+
+
+def test_invalid_configured_value_resolves_as_auto(settings_mode):
+    settings_mode("turbo", provider="none")
+    with patch("app.services.ml.classifier.MLClassifier.is_available", return_value=False):
+        assert get_analysis_mode() == AnalysisMode.RULES  # auto -> no provider -> rules
 
 
 # ── get_analysis_mode() — auto resolution ────────────────────────────────────

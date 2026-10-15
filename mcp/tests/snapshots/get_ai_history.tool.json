@@ -1,0 +1,22 @@
+{
+  "description": "\n        The stored versions of ONE run's AI analysis, newest first: when each\n        was generated, by which engine (rules / ML / LLM, or mixed) and model,\n        whether a fallback was used, its release verdict and risk, and how many\n        failing tests it covered. Every completed AI pipeline of the run adds\n        a version and keeps the earlier ones. Read-only.\n\n        Returns {ok, summary, history}: `summary` is compact markdown,\n        `history` the REST body of GET /api/v1/runs/{run_id}/ai-history\n        (kind=analysis_digest). Reading it: root causes and headlines are AI\n        text, not facts. An engine change between versions (rules vs LLM) is\n        not a product change. A null figure is \"not known\", never 0. To see\n        what changed between two versions use `diff_ai_versions`; to compare\n        with the previous run use `compare_ai_with_previous`.\n\n        Errors come back as {ok: false, status_code, detail}: an unknown run,\n        or one you cannot read, is a 404; 503 means the AI-history store is\n        unavailable.\n\n        Args:\n            run_id: Test run UUID (from list_test_runs).\n            limit: How many versions to list (1-100, default 20).\n        ",
+  "inputSchema": {
+    "properties": {
+      "limit": {
+        "default": 20,
+        "title": "Limit",
+        "type": "integer"
+      },
+      "run_id": {
+        "title": "Run Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "run_id"
+    ],
+    "title": "get_ai_historyArguments",
+    "type": "object"
+  },
+  "name": "get_ai_history"
+}

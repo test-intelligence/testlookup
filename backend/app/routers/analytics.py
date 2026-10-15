@@ -875,6 +875,12 @@ async def classify_uncategorized_failures(
         .where(AIAnalysis.test_case_id.in_(tc_ids))
         .values(failure_category=new_category)
     )
+    # AIH-01: one immutable version per reclassified analysis (one INSERT ...
+    # SELECT per 5,000 ids, over the UPDATED rows; flush only, in this
+    # transaction; a history error never fails the reclassify).
+    from app.services.ai_history_service import stage_bulk_reclassify_versions
+
+    await stage_bulk_reclassify_versions(db, tc_ids, actor_user_id=current_user.id)
     # VIZ-212: commit explicitly (not in the get_db teardown, which runs after
     # the handler returns) so the epoch bump can follow the commit.
     await db.commit()

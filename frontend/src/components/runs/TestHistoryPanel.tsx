@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { clsx } from "clsx";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
+import TestAIHistoryStrip from "@/components/ai/TestAIHistoryStrip";
 import TestDurationHistory from "@/components/charts/TestDurationHistory";
 import {
   OUTLIER_RATIO,
@@ -13,6 +14,10 @@ import {
   formatRunWhen,
 } from "@/utils/formatters";
 import type { TestHistoryDurationFields } from "@/types/executionMetrics";
+import type {
+  TestHistoryAIFields,
+  TestHistoryAIPoint,
+} from "@/types/aiTestHistory";
 import type { TestCaseHistory, TestCaseHistoryPoint } from "@/types/runs";
 
 const PASSED_STATUSES = ["PASSED"];
@@ -198,6 +203,10 @@ export default function TestHistoryPanel({
   }
 
   const { history, flakiness, metadata } = data;
+  // W03 AIH-05: the AI block per point and `ai_changes` ride the same read
+  // (absent on an older server: no strip, nothing claimed).
+  const aiHistory = history as TestHistoryAIPoint[];
+  const hasAI = aiHistory.some((point) => point.ai);
   const classBadge =
     CLASSIFICATION_BADGE[flakiness.classification?.toUpperCase()] ?? "badge";
 
@@ -260,6 +269,14 @@ export default function TestHistoryPanel({
         <p className="text-xs text-[var(--color-text-muted)]">
           No prior runs for this test.
         </p>
+      )}
+
+      {hasAI && (
+        <TestAIHistoryStrip
+          history={aiHistory}
+          changes={(data as TestCaseHistory & TestHistoryAIFields).ai_changes}
+          runId={runId}
+        />
       )}
 
       {history.length > 0 && (

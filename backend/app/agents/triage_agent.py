@@ -31,10 +31,18 @@ from app.services.tool_call_idempotency import JIRA_TICKET_TOOL, prior_tool_call
 
 logger = structlog.get_logger("agents.triage")
 
-# Only auto-triage when confidence is high enough
-_AUTO_TRIAGE_CONFIDENCE = settings.AI_CONFIDENCE_THRESHOLD
+# Only auto-triage when confidence is high enough. W04 AIC-03: the threshold is
+# the Settings > AI value the pipeline froze at start (``state["confidence_threshold"]``),
+# read per call; it used to be an import-time copy of the env default.
 # Categories that always get a ticket (even at lower confidence)
 _HIGH_PRIORITY_CATEGORIES = {"PRODUCT_BUG", "INFRASTRUCTURE"}
+
+
+def _triage_threshold(state: dict) -> int:
+    """The frozen pipeline threshold, else the scope's, else the env default."""
+    from app.services.pipeline_ai_scope import state_confidence_threshold
+
+    return state_confidence_threshold(state)[0]
 
 
 async def _recurring_open_defect(db, project_id, fingerprint, tc_id, occurred_at=None):
@@ -112,6 +120,9 @@ class DefectTriageAgent(BaseAgent):
         project_id = state["project_id"]
         analyses = state.get("analyses") or {}
         test_run_data = state.get("test_run_data") or {}
+        from app.services.pipeline_ai_scope import state_confidence_threshold
+
+        auto_triage_confidence, threshold_source = state_confidence_threshold(state)
 
         await self.mark_stage_running(pipeline_run_id)
         await self.broadcast_progress(
@@ -155,7 +166,7 @@ class DefectTriageAgent(BaseAgent):
 
             # Determine if this failure warrants a ticket
             should_triage = (
-                (confidence >= _AUTO_TRIAGE_CONFIDENCE)
+                (confidence >= auto_triage_confidence)
                 or (category in _HIGH_PRIORITY_CATEGORIES and confidence >= 50)
             ) and not analysis.get("is_flaky", False)
 
@@ -204,14 +215,15 @@ class DefectTriageAgent(BaseAgent):
             rationale=(
                 f"{created} ticket(s) created, {skipped} skipped, {len(errors)} error(s) "
                 f"across {len(analyses)} analysis/analyses; gate is confidence >= "
-                f"{_AUTO_TRIAGE_CONFIDENCE}, or >= 50 for "
+                f"{auto_triage_confidence}, or >= 50 for "
                 f"{sorted(_HIGH_PRIORITY_CATEGORIES)}, and never for flaky"
             ),
             context={
                 "created": created,
                 "skipped": skipped,
                 "errors": len(errors),
-                "confidence_threshold": _AUTO_TRIAGE_CONFIDENCE,
+                "confidence_threshold": auto_triage_confidence,
+                "confidence_threshold_source": threshold_source,
             },
         )
 

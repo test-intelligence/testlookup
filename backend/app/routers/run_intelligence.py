@@ -227,6 +227,11 @@ async def get_run_intelligence_endpoint(
             try:
                 fallback = result.get("provenance", {}).get("fallback_used", False) if isinstance(result.get("provenance"), dict) else False
                 from app.db.postgres import AsyncSessionLocal as _AsyncSessionLocal
+                from app.db.postgres import release_read_connection
+
+                # One connection at a time: the request session hands its own
+                # back before the write session takes one (2 + 1 pool).
+                await release_read_connection(db)
                 async with _AsyncSessionLocal() as write_db:
                     await save_snapshot(write_db, run_id, result, fallback_used=fallback)
             except Exception as cache_err:
@@ -398,6 +403,9 @@ async def refresh_intelligence(
         try:
             fallback = result.get("provenance", {}).get("fallback_used", False) if isinstance(result.get("provenance"), dict) else False
             from app.db.postgres import AsyncSessionLocal as _AsyncSessionLocal
+            from app.db.postgres import release_read_connection
+
+            await release_read_connection(db)  # one connection at a time, as in the GET
             async with _AsyncSessionLocal() as write_db:
                 await save_snapshot(write_db, run_id, result, fallback_used=fallback)
         except Exception as cache_err:

@@ -406,6 +406,7 @@ async def get_current_user(
         RevocationUnavailable,
         is_jti_revoked,
         is_token_before_cutoff,
+        unavailable_detail,
     )
     jti = payload.get("jti")
     iat = payload.get("iat")
@@ -419,14 +420,13 @@ async def get_current_user(
         if await is_token_before_cutoff(uid, iat_value):
             _count_auth_failure("invalid_token")
             raise credentials_exception
-    except RevocationUnavailable:
+    except RevocationUnavailable as exc:
+        # Name what failed: "revocation store unavailable" sent the 2026-10-13
+        # investigation to Redis when the worker had simply run out of
+        # database connections.
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "Token revocation status cannot be verified right now "
-                "(revocation store unavailable). This is a server-side outage, "
-                "not a credential problem — retry shortly."
-            ),
+            detail=unavailable_detail(exc),
             headers={"Retry-After": "5"},
         )
 

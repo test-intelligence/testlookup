@@ -12,8 +12,9 @@
  *
  * Tabs and what they ask for:
  *   Tests     the run, its tests, its attribution verdicts, the suite's runs
- *   Analysis  run intelligence (+ decision reports, step flips, onboarding)
- *             and the deep investigation's clusters, findings and status
+ *   Analysis  run intelligence (+ decision reports, step flips, onboarding),
+ *             the deep investigation's clusters, findings and status, and
+ *             (W03) the AI history: versions, previous run, AI compare
  *   Changes   the regression diff and the duration regressions (EXEC-05)
  *   Evidence  run intelligence (decision report) and the run's AI pipeline:
  *             pipelines, the newest one's stages and timeline, the AI report
@@ -260,6 +261,35 @@ export const RUN_RELEASE_DECISION = {
   updated_at: isoAgo(0, 1.1),
 }
 
+const NO_PREVIOUS = 'No earlier completed run of "Auth" on branch "main" found.'
+const AI_ENVELOPE = { requires_human_review: true, review: null, ai_disclaimer: null, ai_disclaimer_version: null }
+
+/**
+ * W03 AIH-04: the run's AI history, quiet — no stored version yet and no previous run, so the Analysis tab's top
+ * (the "vs previous run" card and the history control) stays one line each. `GET /runs/{id}/previous` is read on
+ * every tab (the ⋯ menu's "Compare to previous run"), the version list on Analysis and Evidence. A spec about the
+ * AI history puts `fixtures-ai-history.ts` `AI_HISTORY` before `RUN_PAGE` (first match wins).
+ */
+export const AI_HISTORY_QUIET: ApiHandlers = [
+  [/^\/api\/v1\/runs\/[^/]+\/ai-history$/, ({ path, url }) => ({
+    run_id: path.split('/')[4], kind: url.searchParams.get('kind') ?? 'analysis_digest', total: 0, limit: 100,
+    truncated: false, latest_version: null, live: { available: true }, versions: [], ...AI_ENVELOPE,
+  })],
+  [/^\/api\/v1\/runs\/[^/]+\/previous$/, ({ path }) => ({
+    run_id: path.split('/')[4],
+    rule: { scope: 'project+primary_suite+branch', suite_name: 'Auth', branch: 'main', candidate_status: 'not IN_PROGRESS (any outcome)', order: 'finished before this run, newest first' },
+    current: {
+      run_id: RUN.id, build_number: String(RUN.build_number), run_seq: RUN.run_seq, branch: RUN.branch,
+      primary_suite_name: RUN.primary_suite_name, status: RUN.status, created_at: RUN.created_at, finished_at: RUN.end_time,
+    },
+    baseline: null, reason: 'no_previous_run', message: NO_PREVIOUS,
+  })],
+  [/^\/api\/v1\/runs\/[^/]+\/ai-compare$/, ({ path }) => ({
+    run_id: path.split('/')[4], project_id: PROJECT_ID, baseline: null, reason: 'no_previous_run', message: NO_PREVIOUS,
+    current_ref: null, baseline_ref: null, sides: null, diff: null, narrative: null, ...AI_ENVELOPE,
+  })],
+]
+
 /** Everything `/runs/:runId` asks for, on every tab. */
 export const RUN_PAGE: ApiHandlers = [
   ...LAYOUT,
@@ -280,4 +310,6 @@ export const RUN_PAGE: ApiHandlers = [
   [`/api/v1/agents/pipelines/${PIPELINE_ID}/stages`, () => STAGES],
   [`/api/v1/agents/pipelines/${PIPELINE_ID}/timeline`, () => TIMELINE],
   [`/api/v1/agents/runs/${RUN_ID}/summary`, () => RUN_SUMMARY],
+  // Analysis (+ Evidence, + the ⋯ menu's previous run): the AI history, quiet (W03).
+  ...AI_HISTORY_QUIET,
 ]

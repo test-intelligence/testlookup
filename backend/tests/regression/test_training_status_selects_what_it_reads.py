@@ -46,7 +46,11 @@ async def test_the_training_status_query_selects_every_count_it_reads():
     from app.services import feedback_service as svc
 
     db = _SelectedColumnsOnly(value=3)
-    with patch("app.services.model_registry.ModelRegistry.get_all_status", AsyncMock(return_value={})):
+    # W04 AIC-01: finetune_enabled comes from the effective config (a cached
+    # resolver read), not from these aggregate statements.
+    effective = AsyncMock(return_value={"finetune_enabled": False, "finetune_enabled_source": "env_default"})
+    with patch("app.services.model_registry.ModelRegistry.get_all_status", AsyncMock(return_value={})), \
+         patch("app.services.ai_config_resolver.get_effective_ai_config", effective):
         out = await svc.get_training_status(db, SETTINGS)
 
     [stmt] = db.statements  # still one aggregate, not a second round-trip

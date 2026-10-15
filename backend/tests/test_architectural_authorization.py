@@ -69,6 +69,11 @@ UNGUARDED_SCOPED_PARAMS: frozenset[str] = frozenset({
     "workflow_id",
     # VIZ-607: a background report export, reached by id alone.
     "export_id",
+    # W03 AIH-02: a stored AI history version. Only ever nested under
+    # ``/runs/{run_id}`` (require_run_access), and the read service resolves it
+    # with ``test_run_id`` in the same Mongo query, so another run's version id
+    # is a 404. Listed so a future route reaching it by id ALONE needs a guard.
+    "version_id",
 })
 
 # ── Known backlog of unprotected scoped routes ──────────────────────────────

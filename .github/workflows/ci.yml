@@ -688,6 +688,11 @@ jobs:
           tests/integration/test_duration_regressions_postgres.py
           tests/integration/test_exec_finalize_wiring_postgres.py
           tests/integration/test_execution_metrics_postgres.py
+          tests/integration/test_ai_analysis_versions_postgres.py
+          tests/integration/test_ai_run_versions_mongo.py
+          tests/integration/test_ai_history_routes_postgres.py
+          tests/integration/test_ai_history_retention_postgres.py
+          tests/services/test_ai_history_writers.py
           tests/integration/test_investigator_budget_postgres.py
           tests/integration/test_investigator_claim_provider_postgres.py
           tests/integration/test_investigator_resume_postgres.py
@@ -739,6 +744,10 @@ jobs:
           tests/integration/test_jira_fake_contract_postgres.py
           tests/integration/test_case_latest_execution_postgres.py
           tests/integration/test_manual_upload_default_postgres.py
+          tests/integration/test_migration_0207_0209_postgres.py
+          tests/integration/test_ai_config_resolver_postgres.py
+          tests/integration/test_ai_config_snapshot_postgres.py
+          tests/integration/test_ml_training_postgres.py
           tests/integration/test_test_case_execution_timing_postgres.py
           tests/integration/test_every_get_route_answers_without_500_postgres.py
           tests/integration/test_key_mint_revoke_race_postgres.py

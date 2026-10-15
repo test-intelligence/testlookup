@@ -273,9 +273,11 @@ class ClusterSemaphore:
 async def cluster_llm_slot(provider: str, *, timeout: Optional[float] = None) -> AsyncIterator[bool]:
     """The configured cluster bound for ``provider``'s calls.
 
-    ``timeout`` bounds the wait for a free slot (default ``AI_TIMEOUT_SECONDS``);
-    an interactive caller (chat) passes a short one so a saturated cluster is
-    reported as busy instead of waited out.
+    ``timeout`` bounds the wait for a free slot (default: the Settings > AI
+    timeout frozen into the pipeline this call runs in, else the env default;
+    ``BudgetedLLM`` passes its own configured timeout); an interactive caller
+    (chat) passes a short one so a saturated cluster is reported as busy
+    instead of waited out.
     """
     from app.core.config import settings
 
@@ -288,6 +290,11 @@ async def cluster_llm_slot(provider: str, *, timeout: Optional[float] = None) ->
         limit,
         lease_seconds=float(settings.LLM_CLUSTER_SLOT_LEASE_SECONDS or 60),
     )
-    wait = float(timeout) if timeout is not None else float(settings.AI_TIMEOUT_SECONDS or 300)
+    if timeout is not None:
+        wait = float(timeout)
+    else:
+        from app.services.pipeline_ai_scope import effective_llm_timeout
+
+        wait = float(effective_llm_timeout(None))
     async with semaphore.slot(timeout=wait) as held:
         yield held

@@ -187,9 +187,15 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("run.live_finalized", "runs", "run", "Live run {entity_label} finalized"),
     _spec("run.live_recovered", "runs", "run", "Live run {entity_label} was recovered", "attempt"),
     # ── analysis ────────────────────────────────────────────────────────────
-    _spec("analysis.completed", "analysis", "run", "AI analysis completed for {entity_label}"),
+    # AIH-01/06: emitted by ai_history_service.capture_analysis_digest once per
+    # NEW digest version (never on an idempotent pipeline replay), as outcome
+    # rows on the pipeline task's session.
+    _spec("analysis.completed", "analysis", "run", "AI analysis v{version} completed for {entity_label}"),
+    _spec("analysis.verdict_changed", "analysis", "run", "AI verdict for {entity_label} changed {from_verdict} -> {to_verdict}"),
     _spec("analysis.failed", "analysis", "run", "AI analysis failed for {entity_label}: {error}"),
-    _spec("analysis.report_superseded", "analysis", "run", "Decision report for {entity_label} was superseded"),
+    # An attempt write: its producer (decision_report_service.publish_decision_report)
+    # holds only a Mongo handle, and record(None, ...) of an outcome event is dropped.
+    _spec("analysis.report_superseded", "analysis", "run", "Decision report for {entity_label} was superseded by v{version}", "attempt"),
     _spec("investigation.started", "analysis", "run", "Deep investigation started for {entity_label}"),
     _spec("investigation.completed", "analysis", "run", "Deep investigation completed for {entity_label}"),
     _spec("analysis.triggered", "analysis", "run", "AI analysis was requested for {entity_label}", "attempt"),

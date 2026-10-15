@@ -91,6 +91,8 @@ Self-registration is off unless the deployment turns it on (`REGISTRATION_ENABLE
 - **Purge now** (policy enabled) asks you to type the project's name, then queues the purge.
 - **Delete by criteria** removes a selected subset.
 
+**AI history** keeps every AI analysis of a run as a version: up to 20 per run (per kind: the analysis digest and the run summary) and 10 per test result by default, each settable from 1 to 100. The oldest go first; version 1, the newest and any version a published decision report cites never do. The caps apply whenever a version is stored, even with scheduled purging off, and AI history goes with its run.
+
 Purging is irreversible. The operator guide in the repository (`user-guide/administration.md`) lists exactly what each class covers.
 
 ### Project data
@@ -191,7 +193,7 @@ Saving a policy needs `QA_LEAD`. **Agent activity** (`/settings/agent-activity`)
 
 **LLM cost budget** (`/settings/billing`) shows each project's language-model spend this month against its budget (**OK**, **SOFT_WARN**, **CAPPED** or **UNLIMITED**). Administrators set a project's monthly budget: the included amount, a hard cap, a soft-warn threshold, and what happens past it (**Soft warn**, **Auto-downgrade to ML**, **Auto-downgrade to rules** or **Hard block**). At the hard cap, model calls are blocked, and Ask AI says the project's budget for the month is used up.
 
-> **Off by default.** Budgets are only recorded and enforced when the `llm_cost_budget` feature flag is on. With it off, the page shows no spend and every project as **UNLIMITED**.
+> **On for new installs.** Budgets are recorded and enforced while the `llm_cost_budget` feature flag is on: on for a new install since W04, off on an install upgraded with it off until an admin turns it on. With it off, the page shows no spend and every project as **UNLIMITED**.
 
 ## Security & access
 
@@ -236,7 +238,7 @@ A flag is evaluated as: **the global switch is the master switch**, then the pro
 
 > **Note.** Setting only the project list does nothing — with the global switch off the flag is off everywhere. To enable a flag for one project you need all three: global on, that project listed, rollout 100.
 
-A flag with no record at all evaluates **off**, except for a few older flags that a deployment setting can still switch on. Several workflows ship **off** and say so on their page: quarantine proposals (`flaky_auto_quarantine`), outbound webhooks (`outbound_webhooks`), LLM cost budgets (`llm_cost_budget`), release phase enforcement (`release_phase_gate_enforcement`), compliance packs (`release_compliance_pack`), GitHub (`github_checks`) and GitLab (`gitlab`). **Upload report** (`manual_upload`) and Ask AI (`ask_ai_chat`) ship on. The full list is the feature-flag reference in the repository docs (`docs/operations/feature-flags.md`). Changes can take up to about 30 seconds to reach every page.
+A flag with no record at all evaluates **off**, except for a few older flags that a deployment setting can still switch on. Several workflows ship **off** and say so on their page: quarantine proposals (`flaky_auto_quarantine`), outbound webhooks (`outbound_webhooks`), release phase enforcement (`release_phase_gate_enforcement`), compliance packs (`release_compliance_pack`), GitHub (`github_checks`) and GitLab (`gitlab`). **Upload report** (`manual_upload`), Ask AI (`ask_ai_chat`) and, on a new install, LLM cost budgets (`llm_cost_budget`) ship on. The full list is the feature-flag reference in the repository docs (`docs/operations/feature-flags.md`). Changes can take up to about 30 seconds to reach every page.
 
 ### `defect_commander`
 

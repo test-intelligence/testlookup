@@ -17,6 +17,8 @@ GO/NO_GO, and by what policy?":
   * ``clusters.json``        — failure clusters with member test IDs
   * ``defects.json``         — defect rows + Jira ticket links
   * ``audit_events.json``    — release overrides, settings changes, access events
+  * ``ai_history.json``      — every stored version of the run's AI analysis, the
+                               diffs between them and the per-test versions (AIH-06)
 
 Integrity model — **tamper-evident, NOT signed.** The manifest's SHA-256
 (recorded in the ``compliance_packs`` row) is the root of a plain SHA-256
@@ -285,6 +287,43 @@ async def _gather_decision_trail(
         return {"error": f"decision trail collection failed: {exc}"}
 
 
+#: How much AI history a pack carries: the newest versions per kind and the
+#: per-test rows. The export route (``GET /runs/{id}/ai-history/export``) keeps
+#: up to 100 / 1000; a pack is attached to an audit, so it stays smaller.
+AI_HISTORY_MAX_VERSIONS = 20
+AI_HISTORY_MAX_TEST_ROWS = 500
+
+
+async def _gather_ai_history(db: AsyncSession, run: TestRun) -> dict[str, Any]:
+    """AIH-06: the decided run's AI history (``AIHistoryExportBundle``).
+
+    Best-effort surrounding context, like ``_gather_decision_trail``: the
+    versions live in Mongo, and a pack must not fail because that store is
+    down. A failure is stated in the file (``available: false``), never left
+    out, so a reviewer can tell "no history" from "history not reachable".
+    The bundle already carries the review-envelope fields (whether a person
+    accepted the AI content).
+    """
+    try:
+        from app.db.mongo import get_mongo_db
+        from app.services.ai_history_read_service import export_bundle
+
+        # A SAVEPOINT: a failed read must not leave the pack's own transaction
+        # aborted (the compliance_packs row is staged on this session next).
+        async with db.begin_nested():
+            bundle = await export_bundle(
+                db,
+                get_mongo_db(),
+                run=run,
+                max_versions=AI_HISTORY_MAX_VERSIONS,
+                max_test_rows=AI_HISTORY_MAX_TEST_ROWS,
+            )
+        return {"available": True, **_to_jsonable(bundle)}
+    except Exception as exc:  # noqa: BLE001 - best-effort context, stated in the file
+        logger.warning("ai history collection failed", error_type=type(exc).__name__)
+        return {"available": False, "error": "ai_history_unavailable"}
+
+
 async def _gather_clusters(
     db: AsyncSession, run_id: Optional[uuid.UUID],
 ) -> list[dict[str, Any]]:
@@ -449,6 +488,13 @@ def _build_readme(
     lines.append("| `clusters.json` | Failure clusters identified in the run. |")
     lines.append("| `defects.json` | Defects linked to the run's failed tests with Jira ticket references. |")
     lines.append("| `audit_events.json` | Settings + access audit events scoped to the release project. |")
+    lines.append(
+        "| `ai_history.json` | Every stored version of the run's AI analysis (analysis digests and "
+        "run summaries, newest 20 per kind), the diffs between consecutive versions, the per-test "
+        "analysis versions, and their provenance (engine, model, fallback) and review status. "
+        "`available: false` means the AI-history store could not be read when the pack was "
+        "generated, not that the run has no history. |"
+    )
     lines.append("")
     lines.append("## Verification (tamper-evident checksum chain — not a signature)")
     lines.append("")
@@ -579,6 +625,8 @@ async def _build_pack_payload(
     defects = await _gather_defects(db, release.project_id, run.id)
     audit_events = await _gather_audit_events(db, release, run.id)
     agent_activity = await _gather_agent_activity(db, release.project_id, run.id)
+    # Best-effort like the decision trail: {"available": false, ...} on failure.
+    ai_history = await _gather_ai_history(db, run)
 
     # Build the files dict. Keys are ZIP paths; values are the raw bytes.
     files: dict[str, bytes] = {
@@ -596,6 +644,8 @@ async def _build_pack_payload(
         "defects.json": _serialize(defects),
         "audit_events.json": _serialize(audit_events),
         "agent_activity.json": _serialize(agent_activity),
+        # AIH-06: hashed into manifest.json.files[] like every other file.
+        "ai_history.json": _serialize(ai_history),
     }
 
     scope = ExportScope.for_release(
@@ -627,6 +677,7 @@ async def _build_pack_payload(
         "file_count": len(files) + 1,  # +1 for manifest itself
         "manifest_sha256": manifest_hash,
         "bytes": len(zip_bytes),
+        "ai_history_versions": len(ai_history.get("versions") or []),
     }
     return zip_bytes, metadata
 

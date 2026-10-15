@@ -744,7 +744,7 @@ Disable Mfa
 
 Turn MFA off. Requires the password **and** a live second factor.
 
-Source: [backend/app/routers/mfa.py:462](../../../backend/app/routers/mfa.py#L462).
+Source: [backend/app/routers/mfa.py:457](../../../backend/app/routers/mfa.py#L457).
 
 Dependency chain: `OAuth2PasswordBearer`, `_require_interactive_user`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -831,7 +831,7 @@ Recovery codes are minted in the same unit of work as the flag flip — an
 account must never reach ``mfa_enabled=True`` without a way back in. They
 are returned once and only digests are kept.
 
-Source: [backend/app/routers/mfa.py:306](../../../backend/app/routers/mfa.py#L306).
+Source: [backend/app/routers/mfa.py:301](../../../backend/app/routers/mfa.py#L301).
 
 Dependency chain: `_optional_session_user`, `get_db`.
 
@@ -901,7 +901,7 @@ verify against, but ``users.mfa_enabled`` stays false until a code proves
 the authenticator actually holds it. An abandoned enrollment therefore
 changes nothing about how the account authenticates.
 
-Source: [backend/app/routers/mfa.py:266](../../../backend/app/routers/mfa.py#L266).
+Source: [backend/app/routers/mfa.py:261](../../../backend/app/routers/mfa.py#L261).
 
 Dependency chain: `_optional_session_user`, `get_db`.
 
@@ -965,7 +965,7 @@ Reissue Recovery Codes
 
 Replace the recovery-code set. The previous codes stop working.
 
-Source: [backend/app/routers/mfa.py:517](../../../backend/app/routers/mfa.py#L517).
+Source: [backend/app/routers/mfa.py:512](../../../backend/app/routers/mfa.py#L512).
 
 Dependency chain: `OAuth2PasswordBearer`, `_require_interactive_user`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1057,7 +1057,7 @@ Current MFA state for the caller.
 Readable with an API key (unlike the mutating endpoints) so a CI job can
 report on its owner's posture without being able to change it.
 
-Source: [backend/app/routers/mfa.py:555](../../../backend/app/routers/mfa.py#L555).
+Source: [backend/app/routers/mfa.py:550](../../../backend/app/routers/mfa.py#L550).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1128,7 +1128,7 @@ Verify Mfa
 
 Exchange a challenge token plus a second factor for a real session.
 
-Source: [backend/app/routers/mfa.py:357](../../../backend/app/routers/mfa.py#L357).
+Source: [backend/app/routers/mfa.py:352](../../../backend/app/routers/mfa.py#L352).
 
 Dependency chain: `get_db`.
 

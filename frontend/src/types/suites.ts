@@ -1,6 +1,7 @@
 // Types for the TestSuite + CanonicalTestCase API (Phase 5 of the test-case
 // <-> test-suite linking feature). Shapes mirror
 // backend/app/models/schemas.py:TestSuiteResponse / CanonicalTestCaseResponse.
+import type { CanonicalRunAI } from './aiTestHistory'
 
 export interface TestSuite {
   id: string
@@ -98,11 +99,19 @@ export interface CanonicalRunHistoryItem {
   // Retry evidence: a retry is evidence, not a way to make the build green.
   retry_count: number | null
   is_flaky_run: boolean | null
+  /**
+   * W03 AIH-05: that run's AI analysis of this test. null = no analysis (e.g. a
+   * passed run) or beyond the newest 2,000 rows (see `ai_truncated`); absent on
+   * an older server.
+   */
+  ai?: CanonicalRunAI | null
 }
 
 export interface CanonicalRunHistoryResponse {
   items: CanonicalRunHistoryItem[]
   total: number
+  /** W03 AIH-05: true when only the newest 2,000 rows carry `ai` (older rows read `ai: null`). */
+  ai_truncated?: boolean
 }
 
 // Shape of POST /api/v1/canonical-test-cases/bulk-link — backend caps the

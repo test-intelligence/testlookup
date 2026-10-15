@@ -6,6 +6,395 @@ Generated from tracked source by `scripts/generate_reference.py`. Do not edit by
 
 These are the full generated JSON Schema definitions, including required fields, defaults, enums, nested references and declared constraints. Custom validators and cross-field checks live in the Pydantic models under `backend/app/models/`; JSON Schema does not encode every service-level rule.
 
+## AIActor
+
+```json
+{
+  "properties": {
+    "name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Name"
+    },
+    "user_id": {
+      "title": "User Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "user_id"
+  ],
+  "title": "AIActor",
+  "type": "object"
+}
+```
+
+## AIAnalysisDiffBrief
+
+```json
+{
+  "description": "``RunCompareResponse.ai_analysis_diff``. Only ``available`` is required, so\n``{\"available\": false, \"reason\": ...}`` validates.",
+  "properties": {
+    "ai_changes": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Ai Changes",
+      "type": "array"
+    },
+    "available": {
+      "title": "Available",
+      "type": "boolean"
+    },
+    "clusters_added": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Clusters Added",
+      "type": "array"
+    },
+    "clusters_removed": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Clusters Removed",
+      "type": "array"
+    },
+    "counts": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Counts",
+      "type": "object"
+    },
+    "left_ref": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Left Ref"
+    },
+    "provenance": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Provenance"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    },
+    "right_ref": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Right Ref"
+    },
+    "test_changes": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Test Changes",
+      "type": "array"
+    },
+    "verdict": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Verdict"
+    }
+  },
+  "required": [
+    "available"
+  ],
+  "title": "AIAnalysisDiffBrief",
+  "type": "object"
+}
+```
+
+## AICompareNarrative
+
+```json
+{
+  "properties": {
+    "ai_changes": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Ai Changes",
+      "type": "array"
+    },
+    "executive_summary": {
+      "default": "",
+      "title": "Executive Summary",
+      "type": "string"
+    },
+    "fallback_used": {
+      "default": false,
+      "title": "Fallback Used",
+      "type": "boolean"
+    },
+    "generated_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Generated At"
+    },
+    "label": {
+      "title": "Label",
+      "type": "string"
+    },
+    "model_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Model Name"
+    },
+    "prompt_version": {
+      "default": "run_compare_v2",
+      "title": "Prompt Version",
+      "type": "string"
+    },
+    "report_status": {
+      "default": "absent",
+      "title": "Report Status",
+      "type": "string"
+    },
+    "risk_level": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Risk Level"
+    },
+    "source": {
+      "title": "Source",
+      "type": "string"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "source",
+    "label"
+  ],
+  "title": "AICompareNarrative",
+  "type": "object"
+}
+```
+
+## AICompareResponse
+
+```json
+{
+  "properties": {
+    "ai_disclaimer": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Ai Disclaimer"
+    },
+    "ai_disclaimer_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Ai Disclaimer Version"
+    },
+    "baseline": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Baseline"
+    },
+    "baseline_ref": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AIVersionRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "current_ref": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AIVersionRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "diff": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Diff"
+    },
+    "message": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Message"
+    },
+    "narrative": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AICompareNarrative"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    },
+    "requires_human_review": {
+      "default": true,
+      "title": "Requires Human Review",
+      "type": "boolean"
+    },
+    "review": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AIHistoryReviewBlock"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "sides": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DigestSide"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Sides"
+    }
+  },
+  "required": [
+    "run_id",
+    "project_id"
+  ],
+  "title": "AICompareResponse",
+  "type": "object"
+}
+```
+
 ## AIConfigRead
 
 ```json
@@ -39,8 +428,18 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Ai Timeout Seconds",
       "type": "integer"
     },
+    "ai_timeout_seconds_source": {
+      "default": "env_default",
+      "title": "Ai Timeout Seconds Source",
+      "type": "string"
+    },
     "analysis_mode": {
       "title": "Analysis Mode",
+      "type": "string"
+    },
+    "analysis_mode_source": {
+      "default": "env_default",
+      "title": "Analysis Mode Source",
       "type": "string"
     },
     "anthropic_key_set": {
@@ -63,6 +462,11 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Deep Investigation Enabled",
       "type": "boolean"
     },
+    "deep_investigation_enabled_source": {
+      "default": "env_default",
+      "title": "Deep Investigation Enabled Source",
+      "type": "string"
+    },
     "embedding_model": {
       "title": "Embedding Model",
       "type": "string"
@@ -74,6 +478,11 @@ These are the full generated JSON Schema definitions, including required fields,
     "finetune_enabled": {
       "title": "Finetune Enabled",
       "type": "boolean"
+    },
+    "finetune_enabled_source": {
+      "default": "env_default",
+      "title": "Finetune Enabled Source",
+      "type": "string"
     },
     "google_key_set": {
       "title": "Google Key Set",
@@ -114,6 +523,11 @@ These are the full generated JSON Schema definitions, including required fields,
       "default": "not_trained",
       "title": "Ml Maturity",
       "type": "string"
+    },
+    "ml_min_training_samples": {
+      "default": 200,
+      "title": "Ml Min Training Samples",
+      "type": "integer"
     },
     "ml_model_accuracy": {
       "anyOf": [
@@ -201,7 +615,7 @@ These are the full generated JSON Schema definitions, including required fields,
       "anyOf": [
         {
           "maximum": 1800.0,
-          "minimum": 30.0,
+          "minimum": 5.0,
           "type": "integer"
         },
         {
@@ -526,6 +940,76 @@ These are the full generated JSON Schema definitions, including required fields,
     }
   },
   "title": "AICoverageAnalysisResponse",
+  "type": "object"
+}
+```
+
+## AIDigestDiffResponse
+
+```json
+{
+  "description": "``from`` / ``to`` are emitted under those JSON keys (aliases).",
+  "properties": {
+    "ai_disclaimer": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Ai Disclaimer"
+    },
+    "ai_disclaimer_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Ai Disclaimer Version"
+    },
+    "diff": {
+      "additionalProperties": true,
+      "title": "Diff",
+      "type": "object"
+    },
+    "from": {
+      "$ref": "#/components/schemas/AIVersionRef"
+    },
+    "requires_human_review": {
+      "default": true,
+      "title": "Requires Human Review",
+      "type": "boolean"
+    },
+    "review": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AIHistoryReviewBlock"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "to": {
+      "$ref": "#/components/schemas/AIVersionRef"
+    }
+  },
+  "required": [
+    "run_id",
+    "from",
+    "to",
+    "diff"
+  ],
+  "title": "AIDigestDiffResponse",
   "type": "object"
 }
 ```
@@ -1115,6 +1599,150 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## AIHistoryListResponse
+
+```json
+{
+  "properties": {
+    "ai_disclaimer": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Ai Disclaimer"
+    },
+    "ai_disclaimer_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Ai Disclaimer Version"
+    },
+    "kind": {
+      "title": "Kind",
+      "type": "string"
+    },
+    "latest_version": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Latest Version"
+    },
+    "limit": {
+      "title": "Limit",
+      "type": "integer"
+    },
+    "live": {
+      "additionalProperties": true,
+      "title": "Live",
+      "type": "object"
+    },
+    "requires_human_review": {
+      "default": true,
+      "title": "Requires Human Review",
+      "type": "boolean"
+    },
+    "review": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AIHistoryReviewBlock"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "total": {
+      "title": "Total",
+      "type": "integer"
+    },
+    "truncated": {
+      "title": "Truncated",
+      "type": "boolean"
+    },
+    "versions": {
+      "items": {
+        "$ref": "#/components/schemas/AIVersionSummary"
+      },
+      "title": "Versions",
+      "type": "array"
+    }
+  },
+  "required": [
+    "run_id",
+    "kind",
+    "total",
+    "limit",
+    "truncated"
+  ],
+  "title": "AIHistoryListResponse",
+  "type": "object"
+}
+```
+
+## AIHistoryReviewBlock
+
+```json
+{
+  "description": "E8.3 review status of an AI artefact (state is a plain string here).\n\nNamed apart from ``schemas.ReviewBlock`` (whose ``state`` is a Literal) so\nthe OpenAPI schema keeps one component per name.",
+  "properties": {
+    "message": {
+      "title": "Message",
+      "type": "string"
+    },
+    "review_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Review Id"
+    },
+    "reviewed_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reviewed At"
+    },
+    "state": {
+      "title": "State",
+      "type": "string"
+    }
+  },
+  "required": [
+    "state",
+    "message"
+  ],
+  "title": "AIHistoryReviewBlock",
+  "type": "object"
+}
+```
+
 ## AIModeRead
 
 ```json
@@ -1128,6 +1756,11 @@ These are the full generated JSON Schema definitions, including required fields,
     "analysis_mode": {
       "title": "Analysis Mode",
       "type": "string"
+    },
+    "deep_investigation_enabled": {
+      "default": true,
+      "title": "Deep Investigation Enabled",
+      "type": "boolean"
     }
   },
   "required": [
@@ -1255,6 +1888,66 @@ These are the full generated JSON Schema definitions, including required fields,
     "project_id"
   ],
   "title": "AIOptimizePlanRequest",
+  "type": "object"
+}
+```
+
+## AIPreviousRunResponse
+
+```json
+{
+  "properties": {
+    "baseline": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/RunBrief"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "current": {
+      "$ref": "#/components/schemas/RunBrief"
+    },
+    "message": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Message"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    },
+    "rule": {
+      "additionalProperties": true,
+      "title": "Rule",
+      "type": "object"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "rule",
+    "current"
+  ],
+  "title": "AIPreviousRunResponse",
   "type": "object"
 }
 ```
@@ -1550,6 +2243,785 @@ These are the full generated JSON Schema definitions, including required fields,
     "status"
   ],
   "title": "AITaskStatusResponse",
+  "type": "object"
+}
+```
+
+## AITestHistoryResponse
+
+```json
+{
+  "properties": {
+    "current": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AITestVersion"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "test_fingerprint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Test Fingerprint"
+    },
+    "test_id": {
+      "title": "Test Id",
+      "type": "string"
+    },
+    "test_name": {
+      "title": "Test Name",
+      "type": "string"
+    },
+    "total": {
+      "default": 0,
+      "title": "Total",
+      "type": "integer"
+    },
+    "versions": {
+      "items": {
+        "$ref": "#/components/schemas/AITestVersion"
+      },
+      "title": "Versions",
+      "type": "array"
+    }
+  },
+  "required": [
+    "run_id",
+    "test_id",
+    "test_name"
+  ],
+  "title": "AITestHistoryResponse",
+  "type": "object"
+}
+```
+
+## AITestVersion
+
+```json
+{
+  "properties": {
+    "actor": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AIActor"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "analysis_mode": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Analysis Mode"
+    },
+    "confidence_score": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Confidence Score"
+    },
+    "content_sha256": {
+      "title": "Content Sha256",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "failure_category": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Failure Category"
+    },
+    "is_flaky": {
+      "default": false,
+      "title": "Is Flaky",
+      "type": "boolean"
+    },
+    "llm_model": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Llm Model"
+    },
+    "llm_provider": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Llm Provider"
+    },
+    "pipeline_run_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Pipeline Run Id"
+    },
+    "requires_human_review": {
+      "default": false,
+      "title": "Requires Human Review",
+      "type": "boolean"
+    },
+    "root_cause_excerpt": {
+      "default": "",
+      "title": "Root Cause Excerpt",
+      "type": "string"
+    },
+    "trigger": {
+      "title": "Trigger",
+      "type": "string"
+    },
+    "version": {
+      "title": "Version",
+      "type": "integer"
+    },
+    "version_id": {
+      "title": "Version Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "version_id",
+    "version",
+    "trigger",
+    "content_sha256",
+    "created_at"
+  ],
+  "title": "AITestVersion",
+  "type": "object"
+}
+```
+
+## AIVersionRef
+
+```json
+{
+  "description": "One side of a diff or a compare.",
+  "properties": {
+    "analysis_mode": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Analysis Mode"
+    },
+    "build_number": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Build Number"
+    },
+    "content_sha256": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Content Sha256"
+    },
+    "generated_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Generated At"
+    },
+    "kind": {
+      "default": "analysis_digest",
+      "title": "Kind",
+      "type": "string"
+    },
+    "llm_model": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Llm Model"
+    },
+    "pipeline_run_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Pipeline Run Id"
+    },
+    "ref": {
+      "title": "Ref",
+      "type": "string"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "source": {
+      "title": "Source",
+      "type": "string"
+    },
+    "version": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Version"
+    }
+  },
+  "required": [
+    "ref",
+    "source",
+    "run_id"
+  ],
+  "title": "AIVersionRef",
+  "type": "object"
+}
+```
+
+## AIVersionResponse
+
+```json
+{
+  "properties": {
+    "ai_disclaimer": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Ai Disclaimer"
+    },
+    "ai_disclaimer_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Ai Disclaimer Version"
+    },
+    "analysis_mode": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Analysis Mode"
+    },
+    "categories": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Categories"
+    },
+    "cluster_count": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cluster Count"
+    },
+    "content_sha256": {
+      "title": "Content Sha256",
+      "type": "string"
+    },
+    "created_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Created At"
+    },
+    "decision_report_ref": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/DecisionReportRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "deterministic": {
+      "default": false,
+      "title": "Deterministic",
+      "type": "boolean"
+    },
+    "failing_tests": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Failing Tests"
+    },
+    "fallback_used": {
+      "default": false,
+      "title": "Fallback Used",
+      "type": "boolean"
+    },
+    "generated_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Generated At"
+    },
+    "headline": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Headline"
+    },
+    "is_latest": {
+      "default": false,
+      "title": "Is Latest",
+      "type": "boolean"
+    },
+    "kind": {
+      "title": "Kind",
+      "type": "string"
+    },
+    "llm_model": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Llm Model"
+    },
+    "llm_provider": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Llm Provider"
+    },
+    "payload": {
+      "additionalProperties": true,
+      "title": "Payload",
+      "type": "object"
+    },
+    "pipeline_run_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Pipeline Run Id"
+    },
+    "requires_human_review": {
+      "default": true,
+      "title": "Requires Human Review",
+      "type": "boolean"
+    },
+    "review": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AIHistoryReviewBlock"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "risk_score": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Risk Score"
+    },
+    "summary_version": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Summary Version"
+    },
+    "trigger": {
+      "title": "Trigger",
+      "type": "string"
+    },
+    "verdict": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Verdict"
+    },
+    "version": {
+      "title": "Version",
+      "type": "integer"
+    },
+    "version_id": {
+      "title": "Version Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "version_id",
+    "kind",
+    "version",
+    "trigger",
+    "content_sha256",
+    "payload"
+  ],
+  "title": "AIVersionResponse",
+  "type": "object"
+}
+```
+
+## AIVersionSummary
+
+```json
+{
+  "description": "One row of a run's AI history list, and the head of a single version.",
+  "properties": {
+    "analysis_mode": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Analysis Mode"
+    },
+    "categories": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Categories"
+    },
+    "cluster_count": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cluster Count"
+    },
+    "content_sha256": {
+      "title": "Content Sha256",
+      "type": "string"
+    },
+    "created_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Created At"
+    },
+    "decision_report_ref": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/DecisionReportRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "deterministic": {
+      "default": false,
+      "title": "Deterministic",
+      "type": "boolean"
+    },
+    "failing_tests": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Failing Tests"
+    },
+    "fallback_used": {
+      "default": false,
+      "title": "Fallback Used",
+      "type": "boolean"
+    },
+    "generated_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Generated At"
+    },
+    "headline": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Headline"
+    },
+    "is_latest": {
+      "default": false,
+      "title": "Is Latest",
+      "type": "boolean"
+    },
+    "kind": {
+      "title": "Kind",
+      "type": "string"
+    },
+    "llm_model": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Llm Model"
+    },
+    "llm_provider": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Llm Provider"
+    },
+    "pipeline_run_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Pipeline Run Id"
+    },
+    "review": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AIHistoryReviewBlock"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "risk_score": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Risk Score"
+    },
+    "summary_version": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Summary Version"
+    },
+    "trigger": {
+      "title": "Trigger",
+      "type": "string"
+    },
+    "verdict": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Verdict"
+    },
+    "version": {
+      "title": "Version",
+      "type": "integer"
+    },
+    "version_id": {
+      "title": "Version Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "version_id",
+    "kind",
+    "version",
+    "trigger",
+    "content_sha256"
+  ],
+  "title": "AIVersionSummary",
   "type": "object"
 }
 ```
@@ -4888,6 +6360,17 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Cap Hits",
       "type": "integer"
     },
+    "covered_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Covered Usd"
+    },
     "current_cost_usd": {
       "title": "Current Cost Usd",
       "type": "number"
@@ -4903,6 +6386,50 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Hard Cap Usd"
     },
+    "included_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Included Usd"
+    },
+    "overage_charge_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Overage Charge Usd"
+    },
+    "overage_rate_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Overage Rate Usd"
+    },
+    "overage_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Overage Usd"
+    },
     "project_id": {
       "format": "uuid",
       "title": "Project Id",
@@ -4911,6 +6438,50 @@ These are the full generated JSON Schema definitions, including required fields,
     "project_name": {
       "title": "Project Name",
       "type": "string"
+    },
+    "projected_overage_charge_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Projected Overage Charge Usd"
+    },
+    "projected_overage_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Projected Overage Usd"
+    },
+    "projected_period_cost_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Projected Period Cost Usd"
+    },
+    "projection_basis": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Projection Basis"
     },
     "status": {
       "title": "Status",
@@ -6909,6 +8480,29 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## DecisionReportRef
+
+```json
+{
+  "properties": {
+    "report_id": {
+      "title": "Report Id",
+      "type": "string"
+    },
+    "report_version": {
+      "title": "Report Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "report_id",
+    "report_version"
+  ],
+  "title": "DecisionReportRef",
+  "type": "object"
+}
+```
+
 ## DecisionTrailResponse
 
 ```json
@@ -8353,6 +9947,148 @@ These are the full generated JSON Schema definitions, including required fields,
     "generated_at"
   ],
   "title": "DigestContentResponse",
+  "type": "object"
+}
+```
+
+## DigestSide
+
+```json
+{
+  "description": "Compact per-side summary for the Run Compare columns (core.digest_side).",
+  "properties": {
+    "analysed_tests": {
+      "default": 0,
+      "title": "Analysed Tests",
+      "type": "integer"
+    },
+    "avg_confidence": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Avg Confidence"
+    },
+    "categories": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Categories",
+      "type": "object"
+    },
+    "composite_risk": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Composite Risk"
+    },
+    "decision_report_version": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Decision Report Version"
+    },
+    "deterministic": {
+      "default": false,
+      "title": "Deterministic",
+      "type": "boolean"
+    },
+    "engine": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Engine"
+    },
+    "fallback_used": {
+      "default": false,
+      "title": "Fallback Used",
+      "type": "boolean"
+    },
+    "generated_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Generated At"
+    },
+    "llm_model": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Llm Model"
+    },
+    "llm_provider": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Llm Provider"
+    },
+    "risk_score": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Risk Score"
+    },
+    "top_clusters": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Top Clusters",
+      "type": "array"
+    },
+    "verdict": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Verdict"
+    }
+  },
+  "title": "DigestSide",
   "type": "object"
 }
 ```
@@ -16536,6 +18272,17 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Cap Hits",
       "type": "integer"
     },
+    "covered_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Covered Usd"
+    },
     "hard_cap_usd": {
       "anyOf": [
         {
@@ -16558,6 +18305,39 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Included Usd"
     },
+    "overage_charge_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Overage Charge Usd"
+    },
+    "overage_rate_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Overage Rate Usd"
+    },
+    "overage_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Overage Usd"
+    },
     "period_end": {
       "format": "date-time",
       "title": "Period End",
@@ -16572,6 +18352,50 @@ These are the full generated JSON Schema definitions, including required fields,
       "format": "uuid",
       "title": "Project Id",
       "type": "string"
+    },
+    "projected_overage_charge_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Projected Overage Charge Usd"
+    },
+    "projected_overage_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Projected Overage Usd"
+    },
+    "projected_period_cost_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Projected Period Cost Usd"
+    },
+    "projection_basis": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Projection Basis"
     },
     "status": {
       "anyOf": [
@@ -16623,6 +18447,314 @@ These are the full generated JSON Schema definitions, including required fields,
     "cap_hits"
   ],
   "title": "LlmUsageRead",
+  "type": "object"
+}
+```
+
+## MLLastRun
+
+```json
+{
+  "description": "The outcome of the most recent training attempt (``ml:retrain:last``).",
+  "properties": {
+    "accuracy": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Accuracy"
+    },
+    "finished_at": {
+      "format": "date-time",
+      "title": "Finished At",
+      "type": "string"
+    },
+    "message": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Message"
+    },
+    "sample_count": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Sample Count"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    },
+    "triggered_by": {
+      "title": "Triggered By",
+      "type": "string"
+    },
+    "version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Version"
+    }
+  },
+  "required": [
+    "status",
+    "finished_at",
+    "triggered_by"
+  ],
+  "title": "MLLastRun",
+  "type": "object"
+}
+```
+
+## MLRetrainAccepted
+
+```json
+{
+  "description": "``202`` of ``POST /settings/ai/ml/retrain``.",
+  "properties": {
+    "already_running": {
+      "title": "Already Running",
+      "type": "boolean"
+    },
+    "state": {
+      "title": "State",
+      "type": "string"
+    },
+    "task_id": {
+      "title": "Task Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "task_id",
+    "state",
+    "already_running"
+  ],
+  "title": "MLRetrainAccepted",
+  "type": "object"
+}
+```
+
+## MLStatusRead
+
+```json
+{
+  "description": "What the Settings > AI ML card shows (QA lead and above).",
+  "properties": {
+    "accuracy": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Accuracy"
+    },
+    "available_samples": {
+      "title": "Available Samples",
+      "type": "integer"
+    },
+    "can_train": {
+      "title": "Can Train",
+      "type": "boolean"
+    },
+    "cannot_train_message": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cannot Train Message"
+    },
+    "cannot_train_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cannot Train Reason"
+    },
+    "deps_installed": {
+      "title": "Deps Installed",
+      "type": "boolean"
+    },
+    "human_label_floor": {
+      "title": "Human Label Floor",
+      "type": "integer"
+    },
+    "human_labels": {
+      "title": "Human Labels",
+      "type": "integer"
+    },
+    "last_run": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/MLLastRun"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "maturity": {
+      "title": "Maturity",
+      "type": "string"
+    },
+    "min_training_samples": {
+      "title": "Min Training Samples",
+      "type": "integer"
+    },
+    "model_available": {
+      "title": "Model Available",
+      "type": "boolean"
+    },
+    "model_sample_count": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Model Sample Count"
+    },
+    "retrain_enabled": {
+      "title": "Retrain Enabled",
+      "type": "boolean"
+    },
+    "trained_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Trained At"
+    },
+    "training": {
+      "$ref": "#/components/schemas/MLTrainingState"
+    },
+    "version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Version"
+    }
+  },
+  "required": [
+    "model_available",
+    "available_samples",
+    "min_training_samples",
+    "human_labels",
+    "human_label_floor",
+    "maturity",
+    "deps_installed",
+    "retrain_enabled",
+    "can_train",
+    "training"
+  ],
+  "title": "MLStatusRead",
+  "type": "object"
+}
+```
+
+## MLTrainingState
+
+```json
+{
+  "description": "Whether a training job holds the retrain lock right now.",
+  "properties": {
+    "queued_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Queued At"
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Started At"
+    },
+    "state": {
+      "title": "State",
+      "type": "string"
+    },
+    "task_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Task Id"
+    },
+    "triggered_by": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Triggered By"
+    }
+  },
+  "required": [
+    "state"
+  ],
+  "title": "MLTrainingState",
   "type": "object"
 }
 ```
@@ -24272,6 +26404,16 @@ These are the full generated JSON Schema definitions, including required fields,
 {
   "description": "GET/PUT response — the EFFECTIVE policy plus its source\n(``default`` = no row, ``custom`` = project row exists).",
   "properties": {
+    "ai_versions_per_run": {
+      "default": 20,
+      "title": "Ai Versions Per Run",
+      "type": "integer"
+    },
+    "ai_versions_per_test": {
+      "default": 10,
+      "title": "Ai Versions Per Test",
+      "type": "integer"
+    },
     "artifacts_days": {
       "title": "Artifacts Days",
       "type": "integer"
@@ -24326,6 +26468,32 @@ These are the full generated JSON Schema definitions, including required fields,
 {
   "description": "PUT body for ``/projects/{id}/retention-policy``.\n\nAll fields optional — omitted fields keep their current (or default)\nvalue. Per-field bounds 422 here; the cross-field ``audit_days >=\nruns_days`` check runs in the service on the MERGED values (a partial\nbody can't be validated field-locally).",
   "properties": {
+    "ai_versions_per_run": {
+      "anyOf": [
+        {
+          "maximum": 100.0,
+          "minimum": 1.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Ai Versions Per Run"
+    },
+    "ai_versions_per_test": {
+      "anyOf": [
+        {
+          "maximum": 100.0,
+          "minimum": 1.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Ai Versions Per Test"
+    },
     "artifacts_days": {
       "anyOf": [
         {
@@ -24401,6 +26569,11 @@ These are the full generated JSON Schema definitions, including required fields,
 {
   "description": "Per-class candidate counts a purge WOULD delete right now.\n\n**Every class ``run_purge`` counts must have a field here.** FastAPI\nfilters the handler's return through this model, so a class the service\ncounts but the model omits is dropped from the response *silently* — no\nerror, no warning, just a smaller object.\n\nThat happened: the service computed twelve counts and this model declared\neight, so ``evidence_artifact_rows``, ``analysis_cache_entries``,\n``memory_entries_expired`` and ``search_index_documents`` never reached\nthe operator. The preview is what an ADMIN authorises an irreversible\ncross-store purge from, so under-reporting it is not cosmetic — four\ncategories of data were deleted by execute without ever appearing in the\ndry run.",
   "properties": {
+    "ai_history_versions": {
+      "default": 0,
+      "title": "Ai History Versions",
+      "type": "integer"
+    },
     "analysis_cache_entries": {
       "anyOf": [
         {
@@ -25262,11 +27435,115 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## RunBrief
+
+```json
+{
+  "properties": {
+    "branch": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Branch"
+    },
+    "build_number": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Build Number"
+    },
+    "created_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Created At"
+    },
+    "finished_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Finished At"
+    },
+    "primary_suite_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Primary Suite Name"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "run_seq": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Run Seq"
+    },
+    "status": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Status"
+    }
+  },
+  "required": [
+    "run_id"
+  ],
+  "title": "RunBrief",
+  "type": "object"
+}
+```
+
 ## RunCompareAIReport
 
 ```json
 {
   "properties": {
+    "ai_changes": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Ai Changes",
+      "type": "array"
+    },
     "confidence": {
       "default": 0,
       "title": "Confidence",
@@ -25370,6 +27647,16 @@ These are the full generated JSON Schema definitions, including required fields,
 ```json
 {
   "properties": {
+    "ai_analysis_diff": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AIAnalysisDiffBrief"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "ai_report": {
       "anyOf": [
         {
@@ -31667,6 +33954,16 @@ These are the full generated JSON Schema definitions, including required fields,
 {
   "description": "One cross-run point in a logical test's timeline (most-recent-first).",
   "properties": {
+    "ai": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/TestHistoryAI"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "build_number": {
       "anyOf": [
         {
@@ -31826,6 +34123,14 @@ These are the full generated JSON Schema definitions, including required fields,
 {
   "description": "Wrapper for GET /runs/{run_id}/tests/{test_id}/history.",
   "properties": {
+    "ai_changes": {
+      "default": [],
+      "items": {
+        "$ref": "#/components/schemas/TestHistoryAIChange"
+      },
+      "title": "Ai Changes",
+      "type": "array"
+    },
     "baseline": {
       "anyOf": [
         {
@@ -33433,6 +35738,179 @@ These are the full generated JSON Schema definitions, including required fields,
     "severity"
   ],
   "title": "TestHealthViolation",
+  "type": "object"
+}
+```
+
+## TestHistoryAI
+
+```json
+{
+  "properties": {
+    "analysis_mode": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Analysis Mode"
+    },
+    "category": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Category"
+    },
+    "confidence": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Confidence"
+    },
+    "is_flaky": {
+      "default": false,
+      "title": "Is Flaky",
+      "type": "boolean"
+    },
+    "model": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Model"
+    },
+    "requires_human_review": {
+      "default": false,
+      "title": "Requires Human Review",
+      "type": "boolean"
+    },
+    "root_cause_excerpt": {
+      "default": "",
+      "title": "Root Cause Excerpt",
+      "type": "string"
+    },
+    "root_cause_sha": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Root Cause Sha"
+    },
+    "test_id": {
+      "title": "Test Id",
+      "type": "string"
+    },
+    "version_count": {
+      "default": 0,
+      "title": "Version Count",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "test_id"
+  ],
+  "title": "TestHistoryAI",
+  "type": "object"
+}
+```
+
+## TestHistoryAIChange
+
+```json
+{
+  "properties": {
+    "from_category": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "From Category"
+    },
+    "from_confidence": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "From Confidence"
+    },
+    "kinds": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Kinds",
+      "type": "array"
+    },
+    "run_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Run Id"
+    },
+    "run_label": {
+      "title": "Run Label",
+      "type": "string"
+    },
+    "to_category": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "To Category"
+    },
+    "to_confidence": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "To Confidence"
+    }
+  },
+  "required": [
+    "run_label"
+  ],
+  "title": "TestHistoryAIChange",
   "type": "object"
 }
 ```

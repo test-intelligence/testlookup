@@ -16,6 +16,7 @@ from app.routers import (
     agent_memory,
     agents,
     ai_evaluation,
+    ai_history,
     admin_dlq,
     admin_maintenance,
     admin_storage,
@@ -58,6 +59,7 @@ from app.routers import (
     llm_cost_budget as llm_cost_budget_router,
     metrics,
     mfa,
+    ml_training,
     my_failures,
     notifications,
     onboarding,
@@ -172,6 +174,10 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     integrations.router,
     notifications.router,
     app_settings.router,
+    # W04 AIC-05: GET /settings/ai/ml/status, POST /settings/ai/ml/retrain. Right
+    # after app_settings.router; both paths end in literals under the literal
+    # ``ai/ml`` segment, and app_settings has no ``/ai/{...}`` route to shadow them.
+    ml_training.router,
     agents.router,
     # E1.2: AFTER agents.router, so /agents/{agent_id}/invoke is matched only
     # once every literal /agents/... route has had its chance.
@@ -186,6 +192,13 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     releases.router,
     reports.router,
     run_intelligence.router,
+    # W03 (AIH-02/03/05/06): /runs/{run_id}/ai-history[/diff|/export|/{version_id}],
+    # /runs/{run_id}/tests/{test_id}/ai-history, /runs/{run_id}/previous and
+    # /runs/{run_id}/ai-compare. AFTER run_intelligence.router; every path ends in
+    # a literal or sits under the literal ``ai-history`` segment, so it shadows
+    # nothing, and inside the router the literal /diff and /export are declared
+    # before /{version_id}.
+    ai_history.router,
     commit_attribution.router,       # Epic 8 US-8.1/US-8.2: commit range + suspect ranking
     scoring.router,
     onboarding.router,

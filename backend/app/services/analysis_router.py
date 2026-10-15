@@ -20,7 +20,7 @@ Usage:
     summary = await generate_summary(run_data, classifications, anomalies)
 """
 import uuid
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, Mapping, NamedTuple
 
 import structlog
 
@@ -36,6 +36,9 @@ from app.services.model_router import (
 )
 from app.services.step_llm_budget import StepLLMBudget
 
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
 logger = structlog.get_logger("services.analysis_router")
 
 
@@ -46,14 +49,37 @@ class AnalysisMode:
     AUTO = "auto"
 
 
+class ConfiguredMode(NamedTuple):
+    """The CONFIGURED analysis mode (before ``auto`` is resolved) and where it
+    came from: ``"ai_config"`` (stored on Settings > AI) | ``"env_default"``."""
+
+    mode: str
+    source: str
+
+
+# The last CONFIGURED mode resolved from Redis/DB (AIC-04). Written only by
+# resolve_configured_analysis_mode() / refresh_analysis_mode_from_cache(); it
+# has NO expiry: falling back to env after 30 s is what silently reverted a
+# stored "rules" mid-pipeline and in every API process. ``_cached_mode_ts`` is
+# when it was last refreshed (informational only).
 _cached_mode: str | None = None
 _cached_mode_ts: float = 0
+
+# The EFFECTIVE provider/model/base_url (Settings > AI over env) the auto
+# resolution and the Ollama probe use when the caller passes none. Written by
+# refresh_analysis_mode_from_cache().
+_effective_provider: str | None = None
+_effective_model: str | None = None
+_effective_base_url: str | None = None
 
 # Ollama model availability probe result. None = not probed yet, True/False = last result.
 # Refreshed asynchronously by refresh_analysis_mode_from_cache() to avoid blocking the
 # event loop with a synchronous httpx.get() call inside async code paths.
 _ollama_model_available: bool | None = None
 _ollama_probe_ts: float = 0
+# (provider, model, base_url) the cached probe result is about; a change of the
+# effective target re-probes at once instead of reusing another model's answer.
+_ollama_probe_target: tuple[str | None, str | None, str | None] | None = None
 _OLLAMA_PROBE_TTL_SECONDS = 60
 
 
@@ -324,30 +350,51 @@ async def classify_root_cause_tiered(
     return classification
 
 
-async def _probe_ollama_model_async() -> bool | None:
+async def _probe_ollama_model_async(
+    provider: str | None = None,
+    model: str | None = None,
+    base_url: str | None = None,
+) -> bool | None:
     """Async, non-blocking probe for Ollama model availability.
 
-    Returns True if the configured model is installed, False if Ollama is reachable
-    but the model is missing, None if the probe itself could not run.
+    Probes the EFFECTIVE provider/model (Settings > AI over env): the explicit
+    arguments, else the module caches refresh_analysis_mode_from_cache() writes,
+    else env. Returns True if the model is installed, False if Ollama is
+    reachable but the model is missing, None if the probe itself could not run
+    (or the provider is not Ollama).
     """
-    if settings.LLM_PROVIDER != "ollama":
+    provider = _pick(provider, _effective_provider, settings.LLM_PROVIDER)
+    model = _pick(model, _effective_model, settings.LLM_MODEL) or ""
+    base_url = base_url or _effective_base_url or settings.OLLAMA_BASE_URL
+    if provider != "ollama":
         return None
     try:
         import httpx
         from app.core.http_client import http_verify
         async with httpx.AsyncClient(verify=http_verify(), timeout=3.0) as client:
-            resp = await client.get(f"{settings.OLLAMA_BASE_URL}/api/tags")
+            resp = await client.get(f"{str(base_url).rstrip('/')}/api/tags")
         if resp.status_code != 200:
             return None
         installed = [m.get("name", "") for m in resp.json().get("models", [])]
-        model_base = settings.LLM_MODEL.split(":")[0]
+        model_base = model.split(":")[0]
         return any(
-            settings.LLM_MODEL in name or name.startswith(model_base)
+            model in name or name.startswith(model_base)
             for name in installed
         )
     except Exception as exc:
         logger.debug("ollama_probe_failed", error=str(exc))
         return None
+
+
+def _pick(explicit: str | None, cached: str | None, env: str | None) -> str | None:
+    """``explicit`` when given (even ``""``/``"none"``), else the cached effective
+    value, else env. ``None`` means "not given"; a given empty provider is a
+    real "no provider" and must not fall through to env."""
+    if explicit is not None:
+        return explicit
+    if cached is not None:
+        return cached
+    return env
 
 
 def get_analysis_mode() -> str:
@@ -356,12 +403,24 @@ def get_analysis_mode() -> str:
     return resolve_analysis_mode_with_reason()[0]
 
 
-def resolve_analysis_mode_with_reason() -> tuple[str, str]:
+def resolve_analysis_mode_with_reason(
+    *,
+    configured: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+) -> tuple[str, str]:
     """Resolve the effective analysis mode **and why**.
 
-    Priority: Redis cache (set by Settings UI) → env var → "auto".
-    For "auto": checks ML model availability, then LLM availability,
-    then falls back to rules.
+    The CONFIGURED mode is ``configured`` when the caller resolved it (async,
+    :func:`resolve_configured_analysis_mode`), else the last configured mode
+    refreshed into this process (no expiry), else ``settings.ANALYSIS_MODE``.
+    It never falls back to env while a configured value is known: the 30 s
+    expiry that used to do that silently reverted a stored "rules" in every
+    API process and mid-pipeline (AIC-04).
+
+    For "auto": checks ML model availability, then LLM availability (the
+    EFFECTIVE provider/model: ``provider``/``model`` when given, else the
+    cached effective values, else env), then falls back to rules.
 
     The reason used to exist only as a log line, so ``routing_metadata`` recorded
     ``mode_resolved: "rules"`` with ``fallback_reason: null`` and the decision
@@ -369,20 +428,17 @@ def resolve_analysis_mode_with_reason() -> tuple[str, str]:
     question an operator asks when AI analysis looks thin: *why didn't the LLM
     run?* Returning it alongside the mode lets the caller persist it.
     """
-    global _cached_mode, _cached_mode_ts
-    import time
+    from app.services.ai_config_resolver import valid_analysis_mode
 
-    # In-process cache: re-read from Redis at most once per 30 seconds
-    now = time.monotonic()
-    if _cached_mode and (now - _cached_mode_ts) < 30:
-        configured = _cached_mode
-    else:
-        configured = settings.ANALYSIS_MODE.lower()
-        _cached_mode = configured
-        _cached_mode_ts = now
+    # An invalid value (a typo in ANALYSIS_MODE) resolves as "auto", the same
+    # default ai_config_resolver.env_default_analysis_mode() applies.
+    mode = (
+        valid_analysis_mode(configured or _cached_mode or settings.ANALYSIS_MODE)
+        or AnalysisMode.AUTO
+    )
 
-    if configured != AnalysisMode.AUTO:
-        return configured, f"mode explicitly set to '{configured}' — no auto resolution"
+    if mode != AnalysisMode.AUTO:
+        return mode, f"mode explicitly set to '{mode}' — no auto resolution"
 
     # Auto resolution: ML → LLM → Rules
     try:
@@ -393,28 +449,31 @@ def resolve_analysis_mode_with_reason() -> tuple[str, str]:
     except Exception:
         pass
 
+    llm_provider = _pick(provider, _effective_provider, settings.LLM_PROVIDER)
+    llm_model = _pick(model, _effective_model, settings.LLM_MODEL)
+
     # Check if LLM is likely reachable (heuristic: provider is configured)
-    if settings.LLM_PROVIDER and settings.LLM_PROVIDER != "none":
+    if llm_provider and llm_provider != "none":
         # Ollama probe result is refreshed asynchronously by refresh_analysis_mode_from_cache().
         # Only degrade to rules when we have a *definitive* False result — unknown (None)
         # means we haven't probed yet; attempt LLM and let _classify_llm fall back on error.
-        if settings.LLM_PROVIDER == "ollama" and _ollama_model_available is False:
+        if llm_provider == "ollama" and _ollama_model_available is False:
             # structlog's BoundLogger doesn't accept printf-style positional
             # interpolation args — pass the model name as a kwarg instead.
             logger.warning(
                 "auto_mode_ollama_model_unavailable",
-                model=settings.LLM_MODEL,
+                model=llm_model,
                 detail="cached probe definitively False — falling back to rules",
             )
             return AnalysisMode.RULES, (
                 f"auto: no trained ML model, and the cached probe reports "
-                f"ollama model '{settings.LLM_MODEL}' unavailable — fell back to rules"
+                f"ollama model '{llm_model}' unavailable — fell back to rules"
             )
 
         logger.debug("Auto mode: LLM provider configured — using LLM")
         return AnalysisMode.LLM, (
             f"auto: no trained ML model; LLM provider "
-            f"'{settings.LLM_PROVIDER}' configured and not known-unavailable"
+            f"'{llm_provider}' configured and not known-unavailable"
         )
 
     logger.debug("Auto mode: no ML model or LLM — using rules")
@@ -423,42 +482,147 @@ def resolve_analysis_mode_with_reason() -> tuple[str, str]:
     )
 
 
-async def refresh_analysis_mode_from_cache() -> str:
-    """Read analysis_mode from Redis (set by Settings UI) and update in-process cache.
-
-    Also refreshes the Ollama model availability probe using an async HTTP client, so
-    the synchronous get_analysis_mode() can consult a cached result instead of blocking
-    the event loop.
-
-    Called at the start of pipeline tasks so the worker picks up UI changes.
-    """
-    global _cached_mode, _cached_mode_ts, _ollama_model_available, _ollama_probe_ts
+def _remember_configured_mode(mode: str) -> None:
+    global _cached_mode, _cached_mode_ts
     import time
 
-    # Re-audit M14: pull any model version another pod trained, before the
-    # synchronous availability check below reads ML_MODEL_DIR. Throttled and
-    # never raises.
-    from app.services.ml import model_store
+    _cached_mode = mode
+    _cached_mode_ts = time.monotonic()
 
-    await model_store.sync_down()
 
-    # Refresh Ollama probe (throttled to TTL) — never raises.
-    now = time.monotonic()
-    if (now - _ollama_probe_ts) > _OLLAMA_PROBE_TTL_SECONDS:
-        _ollama_model_available = await _probe_ollama_model_async()
-        _ollama_probe_ts = now
+async def resolve_configured_analysis_mode(
+    db: "AsyncSession | None" = None,
+) -> ConfiguredMode:
+    """The CONFIGURED analysis mode, with the stored value as the truth (AIC-04).
 
+    Precedence: Redis ``config:analysis_mode`` (a valid value) -> the stored
+    ``ai_config.analysis_mode`` -> ``settings.ANALYSIS_MODE`` -> ``"auto"``.
+
+    Redis only accelerates the stored value: only stored values are ever
+    written there, so a hit is reported as ``"ai_config"``. On a miss (expiry
+    of a pre-W04 entry, a flush, a restart) the value is read from the
+    effective config and, when it came from the stored row, Redis is
+    re-seeded WITHOUT a TTL. An env default is never seeded (it is not a
+    choice anyone made, and seeding it would make it look like one).
+
+    With ``db`` given, a cache miss reads through that session and never
+    opens a second one (a guarded request handler holds one connection of a
+    2+1 pool).
+    """
+    from app.services.ai_config_resolver import (
+        ANALYSIS_MODE_CACHE_KEY,
+        SOURCE_AI_CONFIG,
+        SOURCE_ENV_DEFAULT,
+        env_default_analysis_mode,
+        get_effective_ai_config,
+        valid_analysis_mode,
+    )
+
+    redis: Any = None
     try:
         from app.db.redis_client import get_redis
+
         redis = get_redis()
-        cached = await redis.get("config:analysis_mode")
-        if cached and cached in ("llm", "ml", "rules", "auto"):
-            _cached_mode = cached
-            _cached_mode_ts = time.monotonic()
-            return cast(str, cached)
+        cached = await redis.get(ANALYSIS_MODE_CACHE_KEY)
+        if isinstance(cached, bytes):
+            cached = cached.decode("utf-8", errors="ignore")
+        hit = valid_analysis_mode(cached)
+        if hit is not None:
+            _remember_configured_mode(hit)
+            return ConfiguredMode(hit, SOURCE_AI_CONFIG)
     except Exception:
-        pass
-    return get_analysis_mode()
+        redis = None  # Redis unavailable: the stored row is still the truth
+
+    cfg = await get_effective_ai_config(db=db)
+    mode = valid_analysis_mode(cfg.get("analysis_mode")) or env_default_analysis_mode()
+    source = str(cfg.get("analysis_mode_source") or SOURCE_ENV_DEFAULT)
+    if source == SOURCE_AI_CONFIG and redis is not None:
+        try:
+            # No ``ex``: the accelerator must not expire back to env.
+            await redis.set(ANALYSIS_MODE_CACHE_KEY, mode)
+        except Exception:
+            pass  # best-effort; the next call reads the row again
+    _remember_configured_mode(mode)
+    return ConfiguredMode(mode, source)
+
+
+async def resolve_effective_analysis_mode(
+    db: "AsyncSession | None" = None,
+    *,
+    config: Mapping[str, Any] | None = None,
+) -> tuple[str, str, ConfiguredMode]:
+    """``(resolved, reason, configured)``: the configured mode (above) with the
+    ``auto`` step applied through the EFFECTIVE provider/model. ``config`` is
+    an already-resolved effective config (saves a second read); otherwise it
+    is read through ``db``. Used by the deep-investigation gate."""
+    from app.services.ai_config_resolver import get_effective_ai_config
+
+    configured = await resolve_configured_analysis_mode(db)
+    cfg = config if config is not None else await get_effective_ai_config(db=db)
+    resolved, reason = resolve_analysis_mode_with_reason(
+        configured=configured.mode,
+        provider=cfg.get("provider"),
+        model=cfg.get("model"),
+    )
+    return resolved, reason, configured
+
+
+async def refresh_analysis_mode_from_cache(db: "AsyncSession | None" = None) -> str:
+    """Refresh this process's view of the configured mode and the effective
+    LLM target, then return the CONFIGURED mode.
+
+    - pulls any ML model version another pod trained (``model_store.sync_down``);
+    - resolves the configured mode (Redis -> stored row -> env, re-seeding
+      Redis on a miss) into the in-process cache, which has no expiry;
+    - caches the effective provider/model/base_url for the synchronous auto
+      resolution;
+    - refreshes the Ollama probe for that effective target (throttled to the
+      TTL, immediately when the target changed), so the synchronous
+      get_analysis_mode() can consult a cached result instead of blocking the
+      event loop.
+
+    Called at the start of pipeline tasks so the worker picks up UI changes.
+
+    ``db`` (a request handler, e.g. the manual retry) is passed through to
+    every config read, and the ML model sync is SKIPPED: ``sync_down`` resolves
+    the storage provider through its own session on a cache miss and lists the
+    object store, so inside a guarded handler it would take a second pooled
+    connection (the 2+1 pool stall). The worker (``db=None``) still syncs at
+    every pipeline start, and so does the ML status route.
+    """
+    global _effective_provider, _effective_model, _effective_base_url
+    global _ollama_model_available, _ollama_probe_ts, _ollama_probe_target
+    import time
+
+    if db is None:
+        # Re-audit M14: pull any model version another pod trained, before the
+        # synchronous availability check reads ML_MODEL_DIR. Throttled and
+        # never raises.
+        from app.services.ml import model_store
+
+        await model_store.sync_down()
+
+    configured = await resolve_configured_analysis_mode(db)
+
+    try:
+        from app.services.ai_config_resolver import get_effective_ai_config
+
+        cfg = await get_effective_ai_config(db=db)
+        _effective_provider = cfg.get("provider")
+        _effective_model = cfg.get("model")
+        _effective_base_url = cfg.get("base_url")
+    except Exception as exc:  # pragma: no cover — the resolver degrades to env itself
+        logger.debug("effective_llm_target_refresh_failed", error=str(exc))
+
+    # Refresh Ollama probe (throttled to TTL, or at once for a new target) — never raises.
+    now = time.monotonic()
+    target = (_effective_provider, _effective_model, _effective_base_url)
+    if target != _ollama_probe_target or (now - _ollama_probe_ts) > _OLLAMA_PROBE_TTL_SECONDS:
+        _ollama_model_available = await _probe_ollama_model_async()
+        _ollama_probe_ts = now
+        _ollama_probe_target = target
+
+    return configured.mode
 
 
 async def classify_test(

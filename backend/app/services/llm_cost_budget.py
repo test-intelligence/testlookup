@@ -475,23 +475,103 @@ def _serialize_quota(quota: ProjectLlmQuota) -> dict[str, Any]:
     }
 
 
+#: ``projection_basis`` vocabulary (plain strings; the response field is ``str``).
+PROJECTION_LINEAR = "linear_elapsed_days"
+PROJECTION_TOO_EARLY = "insufficient_elapsed_time"
+PROJECTION_NO_SPEND = "no_spend"
+
+#: The AIC-06 billing figures. All ``None`` = not computed (no enabled quota,
+#: or no included allowance), never a stand-in for 0.
+OVERAGE_FIELDS = (
+    "overage_rate_usd",
+    "covered_usd",
+    "overage_usd",
+    "overage_charge_usd",
+    "projected_period_cost_usd",
+    "projected_overage_usd",
+    "projected_overage_charge_usd",
+    "projection_basis",
+)
+
+
+def _money(value: float) -> float:
+    """Six decimal places: no float tail (0.1 + 0.2 - 0.1 is 0.2, not 0.20000000000000004)."""
+    return round(float(value), 6)
+
+
+def overage_figures(
+    *,
+    spend_usd: float,
+    included_usd: float,
+    overage_rate_usd: float,
+    period_start: datetime,
+    period_end: datetime,
+    now: datetime,
+) -> dict[str, Any]:
+    """Covered / overage / charge for the period so far, and a month-end projection.
+
+    Display only: the hard cap and the at-cap action are what limit spend;
+    nothing here is enforced. ``included_usd <= 0`` means no included
+    allowance was configured (the form default): no figure is computed, so a
+    project that only set a cap is never shown a charge. The projection is
+    linear in elapsed time (``spend / elapsed_fraction``) and is withheld when
+    there is no spend yet or less than one day of the period has elapsed.
+    """
+    figures: dict[str, Any] = dict.fromkeys(OVERAGE_FIELDS)
+    rate = float(overage_rate_usd)
+    figures["overage_rate_usd"] = _money(rate)
+    included = float(included_usd)
+    if included <= 0:
+        return figures
+
+    spend = max(0.0, float(spend_usd))
+    overage = max(0.0, spend - included)
+    figures["covered_usd"] = _money(min(spend, included))
+    figures["overage_usd"] = _money(overage)
+    figures["overage_charge_usd"] = _money(overage * rate)
+
+    period_seconds = (period_end - period_start).total_seconds()
+    elapsed = (now - period_start).total_seconds() / period_seconds if period_seconds > 0 else 0.0
+    elapsed = min(1.0, max(0.0, elapsed))
+    if spend <= 0:
+        figures["projection_basis"] = PROJECTION_NO_SPEND
+        return figures
+    if elapsed * (period_seconds / 86400.0) < 1.0:
+        figures["projection_basis"] = PROJECTION_TOO_EARLY
+        return figures
+    projected = spend / elapsed
+    projected_overage = max(0.0, projected - included)
+    figures["projected_period_cost_usd"] = _money(projected)
+    figures["projected_overage_usd"] = _money(projected_overage)
+    figures["projected_overage_charge_usd"] = _money(projected_overage * rate)
+    figures["projection_basis"] = PROJECTION_LINEAR
+    return figures
+
+
 async def get_current_usage(
-    db: AsyncSession, project_id: uuid.UUID,
+    db: AsyncSession, project_id: uuid.UUID, *, now: Optional[datetime] = None,
 ) -> dict[str, Any]:
     """Return the current-period usage row merged with its quota config.
 
     Used by the billing router. The merged shape mirrors ``LlmUsageRead``
     so the response can be passed straight to the Pydantic model.
+
+    AIC-06: an enabled quota also yields the overage figures
+    (:func:`overage_figures`), computed from the two rows already loaded: no
+    extra query, because the workspace overview calls this once per project.
+    ``now`` pins the clock (tests; the overview uses one instant for every row).
     """
-    period_start, period_end = current_period_bounds()
+    now = now or datetime.now(timezone.utc)
+    period_start, period_end = current_period_bounds(now)
     usage = await _load_usage_row(db, project_id, period_start)
     quota = await _load_quota(db, project_id)
+    spend = float(usage.total_cost_usd) if usage else 0.0
 
     base = {
         "project_id": project_id,
         "period_start": period_start,
         "period_end": period_end,
-        "total_cost_usd": float(usage.total_cost_usd) if usage else 0.0,
+        "total_cost_usd": spend,
         "total_input_tokens": int(usage.total_input_tokens) if usage else 0,
         "total_output_tokens": int(usage.total_output_tokens) if usage else 0,
         "total_llm_calls": int(usage.total_llm_calls) if usage else 0,
@@ -501,11 +581,22 @@ async def get_current_usage(
         "utilization_pct": None,
         "status": "UNLIMITED",
     }
+    base.update(dict.fromkeys(OVERAGE_FIELDS))
     if quota is None or not quota.enabled:
         return base
 
     base["included_usd"] = float(quota.included_usd)
     base["hard_cap_usd"] = float(quota.hard_cap_usd)
+    base.update(
+        overage_figures(
+            spend_usd=spend,
+            included_usd=float(quota.included_usd or 0.0),
+            overage_rate_usd=float(quota.overage_rate_usd or 0.0),
+            period_start=period_start,
+            period_end=period_end,
+            now=now,
+        )
+    )
     if quota.hard_cap_usd > 0:
         util = (base["total_cost_usd"] / quota.hard_cap_usd) * 100.0
         base["utilization_pct"] = round(util, 2)

@@ -147,6 +147,18 @@ celery_app.conf.update(
             "task": "app.worker.training_tasks.check_finetune_trigger",
             "schedule": crontab(hour=3, minute=0),
         },
+        # W04 AIC-05: nightly ML classifier retrain (services/ml/training_job).
+        # 03:10 UTC, between the finetune trigger check (03:00) and the
+        # flaky-confidence retrain (03:30): the trainer is CPU-bound sklearn on
+        # the worker child. Gated by ML_RETRAIN_ENABLED (the nightly run only;
+        # "Train now" ignores it); a no-op below ML_MIN_TRAINING_SAMPLES, and
+        # skipped while a manual run holds ml:retrain:lock. Routed to `default`
+        # by the app.worker.tasks.* wildcard.
+        "nightly-ml-classifier-training": {
+            "task": "app.worker.tasks.train_ml_classifier",
+            "schedule": crontab(hour=3, minute=10),
+            "kwargs": {"triggered_by": "beat"},
+        },
         "hourly-search-reindex": {
             "task": "app.worker.tasks.reindex_search",
             "schedule": crontab(minute=30),
@@ -443,6 +455,16 @@ celery_app.conf.update(
         "backfill-suite-executions": {
             "task": "app.worker.tasks.backfill_suite_executions",
             "schedule": crontab(minute="*/10"),
+        },
+        # AIH-01 one-shot: give every run analysed before AI history existed its
+        # first ``ai_run_versions`` (a run_summary and an analysis_digest), 100
+        # runs a chunk behind the Redis cursor ``ai_history.backfill_cursor``.
+        # Offset from the suite backfill's ticks; once the cursor says ``done``
+        # a tick is a single Redis read. New analyses are versioned by the
+        # pipeline hook, not by this.
+        "backfill-ai-run-versions": {
+            "task": "app.worker.tasks.backfill_ai_run_versions",
+            "schedule": crontab(minute="5,15,25,35,45,55"),
         },
         # Auto-recovery for completed live_stream runs whose
         # close_session → persist_live_session handoff dropped on the

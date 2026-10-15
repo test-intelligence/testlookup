@@ -226,7 +226,7 @@ Source declarations only; no `.env` or running secrets are read. Compose/Helm/Ku
 | `KNOWLEDGE_SYNC_STUCK_MINUTES` | `int` | `45` |
 | `ANALYSIS_MODE` | `str` | `'auto'` |
 | `ML_MODEL_DIR` | `str` | `'models'` |
-| `ML_MODEL_SYNC_ENABLED` | `bool` | `False` |
+| `ML_MODEL_SYNC_ENABLED` | `bool` | `True` |
 | `ML_MODEL_STORE_PREFIX` | `str` | `'ml-models/'` |
 | `ML_MIN_TRAINING_SAMPLES` | `int` | `200` |
 | `ML_RETRAIN_ENABLED` | `bool` | `True` |

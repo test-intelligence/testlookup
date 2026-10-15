@@ -54,12 +54,16 @@ from app.services.criticality_service import (
 from app.models.llm_schemas import ReleaseReasoning, validate_llm_output
 from app.services.llm_factory import get_llm
 from app.services.llm_json_parser import parse_llm_json
+from app.services.pipeline_ai_scope import effective_llm_timeout
 from app.services.prompt_registry import get_prompt_text
 from app.services.redaction_service import redact_text
 
 logger = structlog.get_logger("agents.release_risk")
 
-_LLM_REASONING_TIMEOUT = min(90, settings.AI_TIMEOUT_SECONDS)
+# AIC-02: the reasoning call waits at most this long, and never longer than the
+# Settings > AI timeout frozen into the pipeline (computed per run, not at import).
+_AGENT_ID = "agent.release_risk.v1"
+_LLM_REASONING_TIMEOUT_CAP = 90
 
 # Prompt text lives in the prompt registry (AI-F2) — edit there, with a
 # manifest bump + eval-gate attestation.
@@ -326,7 +330,10 @@ class ReleaseRiskAgent(BaseAgent):
             }
         else:
             llm_extras = await self._get_llm_reasoning(
-                dim_scores, composite, recommendation, executive_summary, analyses
+                dim_scores, composite, recommendation, executive_summary, analyses,
+                timeout=effective_llm_timeout(
+                    state, agent_id=_AGENT_ID, cap=_LLM_REASONING_TIMEOUT_CAP
+                ),
             )
 
         result = {
@@ -440,7 +447,13 @@ class ReleaseRiskAgent(BaseAgent):
         recommendation: str,
         executive_summary: str,
         analyses: dict,
+        *,
+        timeout: int | None = None,
     ) -> dict:
+        if timeout is None:
+            timeout = effective_llm_timeout(
+                None, agent_id=_AGENT_ID, cap=_LLM_REASONING_TIMEOUT_CAP
+            )
         failure_lines = []
         for tc_id, a in list(analyses.items())[:10]:
             cat = a.get("failure_category", "UNKNOWN")
@@ -460,7 +473,7 @@ class ReleaseRiskAgent(BaseAgent):
             llm = await get_llm(temperature=0.0)
             response = await asyncio.wait_for(
                 llm.ainvoke(prompt),
-                timeout=_LLM_REASONING_TIMEOUT,
+                timeout=timeout,
             )
             _raw = response.content if hasattr(response, "content") else str(response)
             content = str(_raw).strip()
@@ -477,7 +490,7 @@ class ReleaseRiskAgent(BaseAgent):
                 return validated
             logger.warning("LLM reasoning parse issue", reason=error)
         except asyncio.TimeoutError:
-            logger.warning("LLM reasoning timed out", timeout=_LLM_REASONING_TIMEOUT)
+            logger.warning("LLM reasoning timed out", timeout=timeout)
         except Exception as exc:
             logger.warning("LLM reasoning step failed (non-blocking)", error=str(exc))
 
