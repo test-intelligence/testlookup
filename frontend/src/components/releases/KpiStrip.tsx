@@ -16,7 +16,7 @@ import type { ReactNode } from 'react'
 import { clsx } from 'clsx'
 import { TrendingDown, TrendingUp } from 'lucide-react'
 import type { DerivedRelease } from './types'
-import { countReleases } from './health'
+import { countReleases, openBlockerCount } from './health'
 
 type Tone = 'good' | 'warn' | 'bad' | 'neutral'
 
@@ -103,6 +103,9 @@ interface KpiStripProps {
  */
 function deriveKpis(releases: DerivedRelease[]): KpiCardProps[] {
   const { planning, inProgress, readyToShip, blocked, released30d } = countReleases(releases)
+  // Every blocker the server recorded on an in-progress release (its
+  // `blockerCount`), not the few a card has room for.
+  const openBlockers = openBlockerCount(releases.filter(r => r.stage === 'in_progress'))
   // When the project has releases but they're all stuck at Planning,
   // the KPI strip used to render four zeros — accurate but useless.
   // Surface the Planning count as the In Progress sub-line so the
@@ -132,7 +135,9 @@ function deriveKpis(releases: DerivedRelease[]): KpiCardProps[] {
       label: 'Blocked',
       value: blocked,
       tone: blocked > 0 ? 'bad' : 'neutral',
-      sub: blocked > 0 ? undefined : 'no blockers',
+      sub: blocked > 0
+        ? (openBlockers > 0 ? <><strong>{openBlockers}</strong> blocking item{openBlockers === 1 ? '' : 's'} open</> : undefined)
+        : 'no blockers',
     },
     {
       label: 'Released · 30d',

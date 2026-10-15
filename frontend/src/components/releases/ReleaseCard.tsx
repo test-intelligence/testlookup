@@ -1,29 +1,51 @@
 /**
  * ReleaseCard — the always-visible card per release. Four state variants:
  *
- *   in_progress: identity + gate cluster + 4-segment pass/fail bar + phase pipeline + blocker rows
- *   planning:    identity + phase pipeline (all idle) + a dashed "no phases scoped yet" note
- *   released:    identity + gate snapshot (no progress bar, no blockers)
+ *   in_progress: identity + verdict cluster + pass/fail bar + phase pipeline + blocker rows
+ *   planning:    identity + the release's phases, or a dashed "no phases scoped yet" note
+ *   released:    identity + verdict snapshot (no blockers)
  *   cancelled:   identity only, muted
+ *
+ * The verdict is the server's CURRENT recorded one (REL-01): the tiles are
+ * Pass rate · Evidence · Runs of that verdict, coloured by the verdict itself
+ * (GO green, NO_GO red, otherwise neutral) — there is no threshold in the
+ * browser. "Evaluated {age}" says how old the snapshot is. A QA lead (the
+ * page passes `onEvaluate` only to one) records a fresh verdict with
+ * "Evaluate gate" / "Re-evaluate".
  *
  * On the list the whole card is clickable — selecting one opens the release's
  * detail (``ReleaseDetailPanel``) in a side panel. On a release's own page
- * the card has no ``onClick``: the detail is already the page.
+ * the card has no ``onClick``: the detail is already the page. The Evaluate
+ * button, the external link, the blocker links and the "Release actions"
+ * menu never also open the card.
  */
+import type { MouseEvent } from 'react'
 import { clsx } from 'clsx'
 import { useNow } from '@/hooks/useNow'
-import { Clock, CheckCircle2, BadgeCheck, ChevronRight } from 'lucide-react'
+import { Clock, CheckCircle2, BadgeCheck, ChevronRight, ExternalLink } from 'lucide-react'
+import OverflowMenu, { type OverflowItem } from '@/components/ui/OverflowMenu'
 import type { DerivedRelease, GateDecision } from './types'
 import GateBadge from './GateBadge'
 import PhasePipeline from './PhasePipeline'
 import BlockerRow from './BlockerRow'
+import { passRateText, verdictAge } from './health'
+import { safeHttpUrl } from './mapping'
 
 const ICON_TILE: Record<GateDecision, { bg: string; fg: string; icon: typeof Clock }> = {
-  go:            { bg: 'color-mix(in srgb, var(--status-passed) 14%, transparent)',  fg: 'var(--status-passed)', icon: CheckCircle2 },
-  conditional:   { bg: 'color-mix(in srgb, var(--status-skipped) 14%, transparent)',  fg: 'var(--status-skipped)', icon: BadgeCheck },
-  no_go:         { bg: 'color-mix(in srgb, var(--status-failed) 14%, transparent)',  fg: 'var(--status-failed)', icon: BadgeCheck },
-  not_evaluated: { bg: 'var(--color-accent-muted)', fg: 'var(--color-accent)', icon: Clock },
-  cancelled:     { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-muted)', icon: Clock },
+  go:              { bg: 'color-mix(in srgb, var(--status-passed) 14%, transparent)',  fg: 'var(--status-passed)', icon: CheckCircle2 },
+  conditional:     { bg: 'color-mix(in srgb, var(--status-skipped) 14%, transparent)',  fg: 'var(--status-skipped)', icon: BadgeCheck },
+  no_go:           { bg: 'color-mix(in srgb, var(--status-failed) 14%, transparent)',  fg: 'var(--status-failed)', icon: BadgeCheck },
+  not_evaluated:   { bg: 'var(--color-accent-muted)', fg: 'var(--color-accent)', icon: Clock },
+  never_evaluated: { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-muted)', icon: Clock },
+  cancelled:       { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-muted)', icon: Clock },
+}
+
+/** The source a synced release links back to. */
+const SOURCE_LABEL: Record<string, string> = { github: 'GitHub', jira: 'Jira' }
+
+/** The button, the links and the menu act on their own; the card must not also open. */
+function stopToCard(e: MouseEvent) {
+  e.stopPropagation()
 }
 
 interface GateCellProps {
@@ -31,16 +53,15 @@ interface GateCellProps {
   value: string
   sub: string
   /** Drives the value colour — defaults to neutral. */
-  tone?: 'good' | 'warn' | 'bad' | 'neutral'
+  tone?: 'good' | 'bad' | 'neutral'
 }
 function GateCell({ label, value, sub, tone = 'neutral' }: GateCellProps) {
   const color =
     tone === 'good' ? 'var(--status-passed)'
-    : tone === 'warn' ? 'var(--status-broken)'
     : tone === 'bad'  ? 'var(--status-failed)'
     : 'var(--color-text)'
   return (
-    <div className="text-right">
+    <div className="text-right" data-gate-tile={label}>
       <div className="text-[9.5px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">{label}</div>
       <div className="text-[16px] tabular-nums font-semibold leading-none mt-1" style={{ color }}>{value}</div>
       <div className="text-[10.5px] text-[var(--color-text-faint)] mt-0.5">{sub}</div>
@@ -48,16 +69,45 @@ function GateCell({ label, value, sub, tone = 'neutral' }: GateCellProps) {
   )
 }
 
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? '' : 's'}`
+}
+
+/** The recorded verdict's numbers: Pass rate · Evidence · Runs. */
+function GateTiles({ gate }: { gate: DerivedRelease['gate'] }) {
+  const tone = gate.decision === 'go' ? 'good' : gate.decision === 'no_go' ? 'bad' : 'neutral'
+  return (
+    <>
+      <GateCell
+        label="Pass rate"
+        value={passRateText(gate.passRate)}
+        sub={gate.evidence ? `over ${plural(gate.evidence, 'test')}` : 'no test has run'}
+        tone={tone}
+      />
+      <GateCell
+        label="Evidence"
+        value={gate.evidence != null ? String(gate.evidence) : '—'}
+        sub={`of ${gate.denominator ?? '—'} in scope`}
+      />
+      <GateCell
+        label="Runs"
+        value={gate.runCount != null ? String(gate.runCount) : '—'}
+        sub="in the last verdict"
+      />
+    </>
+  )
+}
+
 function PassFailBar({ totals }: { totals: NonNullable<DerivedRelease['totals']> }) {
-  const total = Math.max(1, totals.passed + totals.failed + totals.flaky + totals.skipped)
+  const total = Math.max(1, totals.passed + totals.failed + totals.broken + totals.skipped)
   const segs: { color: string; flex: number; label: string }[] = [
     { color: 'var(--status-passed)', flex: totals.passed,  label: 'passed' },
     { color: 'var(--status-failed)', flex: totals.failed,  label: 'failed' },
-    { color: 'var(--status-flaky)', flex: totals.flaky,   label: 'flaky' },
+    { color: 'var(--status-broken)', flex: totals.broken,  label: 'broken' },
     { color: '#9ca3af', flex: totals.skipped, label: 'skipped' },
   ]
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex items-center gap-3" data-pass-fail-bar="">
       <div
         className="flex flex-1 h-1.5 rounded-full overflow-hidden border"
         style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-secondary)' }}
@@ -68,21 +118,21 @@ function PassFailBar({ totals }: { totals: NonNullable<DerivedRelease['totals']>
         ))}
       </div>
       <div className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)] tabular-nums shrink-0">
-        <Dot color="var(--status-passed)" /> {totals.passed}
-        <Dot color="var(--status-failed)" /> {totals.failed}
-        <Dot color="var(--status-flaky)" /> {totals.flaky}
-        <Dot color="#9ca3af" /> {totals.skipped}
+        <Dot color="var(--status-passed)" label="passed" /> {totals.passed}
+        <Dot color="var(--status-failed)" label="failed" /> {totals.failed}
+        <Dot color="var(--status-broken)" label="broken" /> {totals.broken}
+        <Dot color="#9ca3af" label="skipped" /> {totals.skipped}
         <span className="text-[var(--color-text-faint)]">/ {total}</span>
       </div>
     </div>
   )
 }
-function Dot({ color }: { color: string }) {
-  return <span aria-hidden className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: color }} />
+function Dot({ color, label }: { color: string; label: string }) {
+  return <span aria-hidden title={label} className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: color }} />
 }
 
 /**
- * A planned release with no phases. Says how to scope it with what exists
+ * A release with no phases. Says how to scope it with what exists
  * (the release's detail has "Add Phase"). The two "(planned)" controls that
  * sat here — Clone from …, Generate from PRD, disabled since BUG-006 — are
  * gone: what is not built is not rendered (UX redesign P2/P5).
@@ -107,29 +157,60 @@ interface ReleaseCardProps {
   /** When true, the body collapses to the identity row only. */
   collapsed?: boolean
   onClick?: () => void
+  /** Present => QA lead: the Evaluate button renders (in-progress and released stages only). */
+  onEvaluate?: (releaseId: string) => void
+  /** The evaluation of this release is in flight. */
+  evaluating?: boolean
+  /** Present => QA lead: "Set as active release" is in the Release actions menu (planning / in progress, not already active). */
+  onSetActive?: (releaseId: string) => void
 }
 
-export default function ReleaseCard({ release, collapsed = false, onClick }: ReleaseCardProps) {
-  const tile = ICON_TILE[release.gate.decision]
+export default function ReleaseCard({
+  release,
+  collapsed = false,
+  onClick,
+  onEvaluate,
+  evaluating = false,
+  onSetActive,
+}: ReleaseCardProps) {
+  const { gate } = release
+  const tile = ICON_TILE[gate.decision]
   const Icon = tile.icon
   const now = useNow()  // captured at mount — avoids impure Date.now() in render
   const muted = release.stage === 'cancelled'
   const isReleased = release.stage === 'released'
   const isPlanning = release.stage === 'planning'
+  const isInProgress = release.stage === 'in_progress'
+  const evaluated = gate.decision !== 'never_evaluated' && gate.decision !== 'cancelled'
 
-  const composite = release.gate.composite
-  const coverage  = release.gate.coverage
-  const flakePct  = release.gate.flakePct
-  const compTone = composite == null ? 'neutral' : composite >= 95 ? 'good' : composite >= 90 ? 'warn' : 'bad'
-  const covTone  = coverage  == null ? 'neutral' : coverage  >= 80 ? 'good' : coverage  >= 70 ? 'warn' : 'bad'
-  const flakeTone = flakePct == null ? 'neutral' : flakePct <= 1.5 ? 'good' : flakePct <= 3.0 ? 'warn' : 'bad'
+  const showTiles = !isPlanning && !muted && evaluated
+  const canEvaluate = onEvaluate != null && (isInProgress || isReleased)
+  const externalUrl = safeHttpUrl(release.externalUrl)
+  const sourceLabel = (release.sourceSystem && SOURCE_LABEL[release.sourceSystem.toLowerCase()]) || 'Source'
+
+  const menuItems: OverflowItem[] = []
+  if (onSetActive && (isPlanning || isInProgress) && !release.isActive) {
+    menuItems.push({ label: 'Set as active release', onClick: () => onSetActive(release.id) })
+  }
 
   const dueLabel = release.dueAt
     ? new Date(release.dueAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
     : null
   const overdue = release.dueAt
-    ? new Date(release.dueAt).getTime() < now && release.stage === 'in_progress'
+    ? new Date(release.dueAt).getTime() < now && isInProgress
     : false
+
+  const verdictLine = evaluated && gate.decidedAt
+    ? (gate.decision === 'not_evaluated' && gate.insufficientReason
+        ? gate.insufficientReason
+        : `Evaluated ${verdictAge(gate.decidedAt, now)}`)
+    : null
+
+  const showPhases = release.phases.length > 0
+  const showCallout = (isPlanning || isInProgress) && release.phases.length === 0
+  const showBar = !isPlanning && release.totals != null
+  const showBlockers = isInProgress && release.blockers.length > 0
+  const hasBody = !collapsed && !muted && (showPhases || showCallout || showBar || showBlockers)
 
   return (
     <article
@@ -140,9 +221,10 @@ export default function ReleaseCard({ release, collapsed = false, onClick }: Rel
         muted && 'opacity-60',
       )}
       style={{ borderColor: 'var(--color-border)' }}
-      aria-label={`${release.name}${release.version ? ' ' + release.version : ''} — ${release.gate.decision}`}
+      aria-label={`${release.name}${release.version ? ' ' + release.version : ''} — ${gate.decision}`}
+      data-release-id={release.id}
     >
-      {/* Identity + gate cluster */}
+      {/* Identity + verdict cluster */}
       <header className="grid grid-cols-[minmax(0,1fr)_auto] gap-4 items-start px-4 pt-3.5 pb-3">
         <div className="min-w-0 flex items-start gap-3">
           <div
@@ -160,13 +242,52 @@ export default function ReleaseCard({ release, collapsed = false, onClick }: Rel
               <span className="text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded-sm border border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
                 {release.stage.replace('_', ' ')}
               </span>
+              {release.isActive && (
+                <span
+                  data-release-active=""
+                  title="The project's active release: runs that no other rule matches land here"
+                  className="text-[10px] font-semibold tracking-[0.08em] px-1.5 py-0.5 rounded-sm border text-[var(--color-accent)] bg-[var(--color-accent-muted)]"
+                  style={{ borderColor: 'color-mix(in srgb, var(--color-accent) 40%, transparent)' }}
+                >
+                  ACTIVE
+                </span>
+              )}
+              {externalUrl && (
+                <a
+                  href={externalUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={stopToCard}
+                  data-release-external=""
+                  title={`Open in ${sourceLabel}`}
+                  className="inline-flex items-center gap-1 text-[11px] text-[var(--color-accent)] hover:underline"
+                >
+                  <ExternalLink aria-hidden className="h-3 w-3" />
+                  {sourceLabel}
+                </a>
+              )}
             </div>
             <div className="mt-1 flex items-center gap-2 text-[11.5px] text-[var(--color-text-muted)] flex-wrap">
-              <span
-                className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-[var(--color-accent-muted)] text-[var(--color-accent)] text-[9px] font-semibold"
-                title={release.ownerName}
-              >{release.ownerInitials}</span>
-              <span>{release.ownerName}</span>
+              {release.hasOwner ? (
+                <>
+                  <span
+                    data-owner-chip="set"
+                    className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-[var(--color-accent-muted)] text-[var(--color-accent)] text-[9px] font-semibold"
+                    title={release.ownerName}
+                  >{release.ownerInitials}</span>
+                  <span>{release.ownerName}</span>
+                </>
+              ) : (
+                <>
+                  <span
+                    data-owner-chip="none"
+                    aria-hidden
+                    className="inline-flex items-center justify-center w-5 h-5 rounded-full border border-dashed text-[var(--color-text-faint)] text-[9px]"
+                    style={{ borderColor: 'var(--color-border)' }}
+                  >–</span>
+                  <span className="text-[var(--color-text-faint)]">No owner</span>
+                </>
+              )}
               {dueLabel && (
                 <>
                   <span aria-hidden>·</span>
@@ -184,57 +305,67 @@ export default function ReleaseCard({ release, collapsed = false, onClick }: Rel
             </div>
           </div>
         </div>
-        <div className="flex items-end gap-4 shrink-0">
-          {!isPlanning && release.gate.decision !== 'not_evaluated' && (
-            <>
-              <GateCell
-                label="Composite"
-                value={composite != null ? `${composite.toFixed(1)}%` : '—'}
-                sub="need ≥ 95%"
-                tone={compTone}
-              />
-              <GateCell
-                label="Coverage"
-                value={coverage != null ? `${coverage.toFixed(1)}%` : '—'}
-                sub="need ≥ 80%"
-                tone={covTone}
-              />
-              <GateCell
-                label="Flake"
-                value={flakePct != null ? `${flakePct.toFixed(1)}%` : '—'}
-                sub="cap 1.5%"
-                tone={flakeTone}
-              />
-            </>
+        <div className="flex items-center gap-4 shrink-0">
+          {showTiles && <GateTiles gate={gate} />}
+          <div className="flex flex-col items-end gap-1">
+            <GateBadge decision={gate.decision} reason={gate.decision === 'not_evaluated' ? gate.insufficientReason ?? undefined : undefined} />
+            {verdictLine && (
+              <span
+                data-gate-evaluated=""
+                title={gate.decidedAt ?? undefined}
+                className="text-[10.5px] text-[var(--color-text-faint)] text-right max-w-[240px]"
+              >
+                {verdictLine}
+              </span>
+            )}
+          </div>
+          {(canEvaluate || menuItems.length > 0) && (
+            <div className="flex items-center gap-2">
+              {canEvaluate && (
+                <button
+                  type="button"
+                  data-testid="release-evaluate"
+                  disabled={evaluating}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onEvaluate(release.id)
+                  }}
+                  className="h-8 px-2.5 rounded-md border text-[12px] font-medium text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] disabled:opacity-60 disabled:cursor-wait whitespace-nowrap"
+                  style={{ borderColor: 'var(--color-border)' }}
+                >
+                  {evaluating ? 'Evaluating…' : evaluated ? 'Re-evaluate' : 'Evaluate gate'}
+                </button>
+              )}
+              {menuItems.length > 0 && (
+                <span onClick={stopToCard} className="inline-flex">
+                  <OverflowMenu items={menuItems} label="Release actions" />
+                </span>
+              )}
+            </div>
           )}
-          <GateBadge decision={release.gate.decision} />
         </div>
       </header>
 
       {/* Body — body sections per state */}
-      {!collapsed && !muted && (
+      {hasBody && (
         <div className="px-4 pb-4 space-y-3">
-          {/* Progress bar — only when we have real totals (in-progress / released) */}
-          {!isPlanning && release.totals && release.stage !== 'cancelled' && (
-            <PassFailBar totals={release.totals} />
-          )}
+          {/* The recorded verdict's status counts (in-progress / released). */}
+          {showBar && release.totals && <PassFailBar totals={release.totals} />}
 
-          {/* Phase pipeline — every non-cancelled state shows the 6 chips. */}
-          {!muted && <PhasePipeline phases={release.phases} />}
+          {/* The release's own phases, in order. */}
+          {showPhases && <PhasePipeline phases={release.phases} />}
 
-          {/* Planning empty state */}
-          {isPlanning && release.phases.every(p => p.state === 'idle') && (
-            <PlanningCallout releaseName={release.name} />
-          )}
+          {/* No phases yet */}
+          {showCallout && <PlanningCallout releaseName={release.name} />}
 
           {/* Blocker rows (in-progress only) */}
-          {!isReleased && !isPlanning && release.blockers.length > 0 && (
+          {showBlockers && (
             <div className="space-y-1.5">
               {release.blockers.slice(0, 3).map(b => <BlockerRow key={b.id} blocker={b} />)}
-              {release.blockers.length > 3 && (
-                <div className="text-[11.5px] text-[var(--color-text-muted)] flex items-center gap-1">
+              {release.blockerCount > 3 && (
+                <div data-blockers-more="" className="text-[11.5px] text-[var(--color-text-muted)] flex items-center gap-1">
                   <ChevronRight className="h-3 w-3" />
-                  +{release.blockers.length - 3} more · open release for full list
+                  +{release.blockerCount - 3} more · open the release for the full list
                 </div>
               )}
             </div>

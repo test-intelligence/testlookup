@@ -8,22 +8,24 @@
  *   pill   the gate decision of the release that ships next (the in-progress
  *          release with the nearest due date);
  *   title  the band's sentence about it ("2026.11 is blocked — was due …");
- *   facts  the composite pass rate when the gate has one, the open blockers
- *          across in-progress releases, and the counts Ready to ship,
- *          Blocked and Released · 30d (at most four: `releaseHealthFacts`);
+ *   facts  the pass rate when the release's recorded verdict was measured,
+ *          the open blockers across in-progress releases, and the counts
+ *          Ready to ship, Blocked and Released · 30d (at most four:
+ *          `releaseHealthFacts`);
  *   action opens that release in the side panel.
  *
  * Nothing the band and the strip said is gone: what does not fit the one
  * line is in the collapsed "Release health · this week" disclosure under the
- * list (`ReleaseHealthDetails`) — the composite against the 95 % gate, the
- * release's top three blockers, and the four count cards with their
- * sub-lines (`KpiStrip`) — and its summary keeps the In progress and
- * Released · 30d counts on screen while it is closed.
+ * list (`ReleaseHealthDetails`) — what the recorded verdict said and when
+ * (`releaseLede`), the release's top three blockers, and the four count
+ * cards with their sub-lines (`KpiStrip`) — and its summary keeps the In
+ * progress and Released · 30d counts on screen while it is closed.
  *
- * Everything is counted client-side from the release list (`health.ts`):
- * no request of its own.
+ * The verdict is the server's (REL-01): every count here is taken from the
+ * release list (`health.ts`), no request of its own and no threshold.
  */
 import { AlertCircle, AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { useNow } from '@/hooks/useNow'
 import StatusBanner, { type BannerState } from '@/components/ui/StatusBanner'
 import Disclosure from '@/components/ui/Disclosure'
 import KpiStrip from './KpiStrip'
@@ -36,6 +38,7 @@ const GATE_BANNER: Record<GateDecision, { state: BannerState; pill?: string }> =
   conditional: { state: 'conditional', pill: 'CONDITIONAL GO' },
   no_go: { state: 'no_go' },
   not_evaluated: { state: 'pending', pill: 'NOT EVALUATED' },
+  never_evaluated: { state: 'pending', pill: 'NOT EVALUATED' },
   cancelled: { state: 'pending', pill: 'CANCELLED' },
 }
 
@@ -79,6 +82,7 @@ function BlockerIcon({ tone }: { tone: DerivedBlocker['severity'] }) {
 /** The collapsed disclosure under the list: the gate's detail, the top blockers, the four count cards. */
 export function ReleaseHealthDetails({ highlighted, releases }: Omit<HealthProps, 'inProgressReleases'>) {
   const counts = countReleases(releases)
+  const now = useNow()  // captured at mount: the verdict's age without an impure Date.now() in render
   return (
     <Disclosure
       title="Release health · this week"
@@ -88,7 +92,7 @@ export function ReleaseHealthDetails({ highlighted, releases }: Omit<HealthProps
       <div className="space-y-3" data-release-health-details="">
         {highlighted && (
           <div>
-            <p className="m-0 text-[13px] text-[var(--color-text-secondary)]">{releaseLede(highlighted)}</p>
+            <p className="m-0 text-[13px] text-[var(--color-text-secondary)]">{releaseLede(highlighted, now)}</p>
             {highlighted.blockers.length > 0 && (
               <ul aria-label={`Top blockers on ${highlighted.name}`} className="mt-2.5 space-y-1.5 m-0 p-0 list-none">
                 {highlighted.blockers.slice(0, 3).map((b) => (

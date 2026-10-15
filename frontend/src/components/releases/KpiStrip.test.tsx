@@ -21,15 +21,54 @@ import { describe, expect, it } from 'vitest'
 import KpiStrip from './KpiStrip'
 
 type Release = Parameters<typeof KpiStrip>[0]['releases'][number]
+type Gate = Release['gate']
 
-function release(overrides: Partial<Release> = {}): Release {
+/** A recorded verdict in the §1.4 shape; only `decision` matters to the counts. */
+function gate(decision: Gate['decision']): Gate {
   return {
+    decision,
+    passRate: null,
+    denominator: null,
+    evidence: null,
+    runCount: null,
+    decidedAt: null,
+    measured: false,
+    insufficientReason: null,
+    blockingTotal: 0,
+  }
+}
+
+const RED_BLOCKER: Release['blockers'][number] = {
+  id: 'b-red',
+  severity: 'red',
+  title: 'checkout::test_pay is FAILED',
+  context: 'release gate',
+  action: { label: 'Open gate →', href: '/releases/r#gate' },
+}
+
+/** A full `DerivedRelease` (in progress, No-Go, no blockers) with `overrides` applied. */
+function release(overrides: Partial<Release> = {}): Release {
+  const blockers = overrides.blockers ?? []
+  return {
+    source: {} as Release['source'],
+    id: 'rel',
+    name: 'Release',
+    version: '',
     stage: 'in_progress',
-    gate: { decision: 'no_go' },
-    blockers: [],
-    source: {},
+    ownerInitials: '–',
+    ownerName: 'No owner',
+    hasOwner: false,
+    isActive: false,
+    externalUrl: null,
+    sourceSystem: null,
+    dueAt: null,
+    gate: gate('no_go'),
+    totals: null,
+    phases: [],
+    blockers,
+    blockerCount: blockers.length,
     ...overrides,
-  } as Release
+  }
 }
 
 describe('KpiStrip states only what it counted', () => {
@@ -54,13 +93,13 @@ describe('KpiStrip states only what it counted', () => {
     render(
       <KpiStrip
         releases={[
-          release({ gate: { decision: 'go' } } as Partial<Release>),
-          release({ blockers: [{ severity: 'red' }] } as Partial<Release>),
+          release({ gate: gate('go') }),
+          release({ blockers: [RED_BLOCKER] }),
           release({
             stage: 'released',
-            gate: { decision: 'go' },
-            source: { released_at: new Date().toISOString() },
-          } as Partial<Release>),
+            gate: gate('go'),
+            source: { released_at: new Date().toISOString() } as Release['source'],
+          }),
         ]}
       />,
     )
@@ -79,7 +118,7 @@ describe('KpiStrip states only what it counted', () => {
   })
 
   it('states no gate percentage or audit-pack rate it did not compute', () => {
-    render(<KpiStrip releases={[release(), release({ gate: { decision: 'go' } } as Partial<Release>)]} />)
+    render(<KpiStrip releases={[release(), release({ gate: gate('go') })]} />)
     const text = document.body.textContent ?? ''
     expect(text).not.toMatch(/97\.1/)
     expect(text).not.toMatch(/audit-packed/i)
@@ -91,9 +130,9 @@ describe('KpiStrip states only what it counted', () => {
     render(
       <KpiStrip
         releases={[
-          release({ gate: { decision: 'go' } } as Partial<Release>),
+          release({ gate: gate('go') }),
           release(),
-          release({ blockers: [{ severity: 'red' }] } as Partial<Release>),
+          release({ blockers: [RED_BLOCKER] }),
         ]}
       />,
     )
@@ -101,6 +140,26 @@ describe('KpiStrip states only what it counted', () => {
     expect(screen.getByText('Ready to ship')).toBeInTheDocument()
     expect(screen.getByText('Blocked')).toBeInTheDocument()
     expect(screen.getByText('Released · 30d')).toBeInTheDocument()
+  })
+
+  it('counts every blocker the server recorded on an in-progress release under Blocked', () => {
+    // 25 recorded blocking reasons, 5 kept on the derived release: the strip
+    // states the server's 25 (`blockerCount`), not the 5 rows.
+    render(
+      <KpiStrip
+        releases={[
+          release({ blockers: Array.from({ length: 5 }, (_, i) => ({ ...RED_BLOCKER, id: `b${i}` })), blockerCount: 25 }),
+          // A released release's blockers are not open ones.
+          release({ stage: 'released', blockers: [RED_BLOCKER], blockerCount: 7 }),
+        ]}
+      />,
+    )
+    expect(screen.getByText('25', { selector: 'strong' }).parentElement).toHaveTextContent('25 blocking items open')
+  })
+
+  it('says "no blockers" under Blocked when nothing in progress is blocked', () => {
+    render(<KpiStrip releases={[release({ gate: gate('go') })]} />)
+    expect(screen.getByText('no blockers')).toBeInTheDocument()
   })
 
   it('surfaces the Planning count when nothing has been promoted yet', () => {

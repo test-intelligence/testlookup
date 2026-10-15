@@ -1,13 +1,21 @@
 /**
- * Derive the /releases page's release shape from the existing ``Release`` rows the
- * backend already returns. Anything the backend doesn't expose (coverage,
- * flake rate, owner, blockers, compliance packs) lands as ``null`` /
- * ``[]`` and the UI shows the appropriate empty treatment.
+ * Derive the /releases page's release shape from the ``Release`` rows the
+ * backend returns. Nothing is decided here: the gate is the server's CURRENT
+ * recorded verdict (``release.gate``, ``null`` = never evaluated), the phases
+ * are the release's own, the owner is ``release.owner`` and the blockers are
+ * the server's blocking reasons plus the release's failed phases.
+ *
+ * There are no thresholds in this file, on purpose. The former
+ * ``decideGate`` judged a composite / coverage / flake triple against
+ * 95/90 · 80/70 · 1.5/3 that nothing ever supplied, so every release read
+ * "not evaluated" and "Ready to ship" was always 0; and a six-bucket phase
+ * template (Smoke … Sign & ship) painted placeholders over the release's real
+ * phases. Both are gone (REL-01).
  *
  * This is intentionally pure — no fetching, no side effects — so the page
  * can re-derive on every render without churn.
  */
-import type { Release, ReleasePhase } from '@/types/releases'
+import type { Release, ReleaseGateSummary, ReleasePhase } from '@/types/releases'
 import type {
   DerivedBlocker,
   DerivedGate,
@@ -17,6 +25,9 @@ import type {
   PhaseState,
   ReleaseStage,
 } from './types'
+
+/** Server blocking reasons kept on a derived release (the card shows the first 3; `blockerCount` has the total). */
+export const BLOCKER_REASON_CAP = 5
 
 /** Backend release.status string → DerivedRelease.stage. */
 function mapStage(s: string): ReleaseStage {
@@ -28,46 +39,22 @@ function mapStage(s: string): ReleaseStage {
 }
 
 /**
- * Gate thresholds: composite go >= 95, warn >= 90; coverage go >= 80, warn >= 70;
- * flake go <= 1.5%, warn <= 3%. The worst tone decides (fail → no-go,
- * warn → conditional). A missing signal counts as go; with all three missing
- * the gate is not evaluated.
+ * The server's verdict word → the card's decision. Anything the table
+ * vocabulary does not hold reads "not evaluated": a drifted word must never
+ * read as a pass.
  */
-function decideGate(composite: number | null, coverage: number | null, flakePct: number | null, stage: ReleaseStage): GateDecision {
-  if (stage === 'cancelled') return 'cancelled'
-  // Need at least one signal to evaluate.
-  if (composite == null && coverage == null && flakePct == null) return 'not_evaluated'
-
-  type Tone = 'go' | 'warn' | 'fail'
-  const compTone: Tone = composite == null ? 'go' : composite >= 95 ? 'go' : composite >= 90 ? 'warn' : 'fail'
-  const covTone:  Tone = coverage  == null ? 'go' : coverage  >= 80 ? 'go' : coverage  >= 70 ? 'warn' : 'fail'
-  const flakeTone: Tone = flakePct == null ? 'go' : flakePct <= 1.5 ? 'go' : flakePct <= 3.0 ? 'warn' : 'fail'
-  const worst = [compTone, covTone, flakeTone].reduce<Tone>((acc, t) => {
-    if (acc === 'fail' || t === 'fail') return 'fail'
-    if (acc === 'warn' || t === 'warn') return 'warn'
-    return 'go'
-  }, 'go')
-  return worst === 'fail' ? 'no_go' : worst === 'warn' ? 'conditional' : 'go'
-}
-
-/** Phase-name → phase key. Anything unrecognised falls back to ``e2e``. */
-const PHASE_KEYS: DerivedPhase['key'][] = ['smoke', 'regression', 'e2e', 'perf', 'uat', 'sign']
-const PHASE_LABELS: Record<DerivedPhase['key'], string> = {
-  smoke: 'Smoke',
-  regression: 'Regression',
-  e2e: 'E2E suites',
-  perf: 'Perf',
-  uat: 'UAT sign-off',
-  sign: 'Sign & ship',
-}
-function classifyPhase(name: string, phaseType: string | null): DerivedPhase['key'] {
-  const blob = `${name} ${phaseType ?? ''}`.toLowerCase()
-  if (/smoke/.test(blob)) return 'smoke'
-  if (/regress/.test(blob)) return 'regression'
-  if (/perf/.test(blob)) return 'perf'
-  if (/uat|user.?accept/.test(blob)) return 'uat'
-  if (/sign|ship|release|deploy/.test(blob)) return 'sign'
-  return 'e2e'
+export function mapVerdict(verdict: string): GateDecision {
+  switch (verdict) {
+    case 'GO':
+      return 'go'
+    case 'NO_GO':
+      return 'no_go'
+    case 'CONDITIONAL_GO':
+      return 'conditional'
+    case 'NOT_EVALUATED':
+    default:
+      return 'not_evaluated'
+  }
 }
 
 function mapPhaseState(status: string): PhaseState {
@@ -79,76 +66,117 @@ function mapPhaseState(status: string): PhaseState {
   return 'idle'
 }
 
-/**
- * Build six phase chips, prefilled from any matching backend phases. Phases
- * the backend hasn't recorded yet render as ``idle`` so the pipeline always
- * shows all six steps regardless of where the release is.
- */
-function buildPhases(phases: ReleasePhase[]): DerivedPhase[] {
-  const slots: Record<DerivedPhase['key'], DerivedPhase> = Object.fromEntries(
-    PHASE_KEYS.map(k => [k, { key: k, label: PHASE_LABELS[k], state: 'idle' as PhaseState }]),
-  ) as Record<DerivedPhase['key'], DerivedPhase>
+/** The release's own phases, in their order: name and status, nothing invented. */
+function buildPhases(phases: ReleasePhase[] | null | undefined): DerivedPhase[] {
+  return [...(phases ?? [])]
+    .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
+    .map(p => ({
+      key: p.id,
+      label: p.name,
+      phaseType: p.phase_type ?? null,
+      state: mapPhaseState(p.status),
+    }))
+}
 
-  for (const p of phases ?? []) {
-    const key = classifyPhase(p.name, p.phase_type)
-    const next = mapPhaseState(p.status)
-    // A more advanced state wins over idle so two backend phases collapsing
-    // onto the same chip don't drop signal.
-    const RANK: Record<PhaseState, number> = { idle: 0, skipped: 1, active: 2, done: 3, failed: 4 }
-    if (RANK[next] >= RANK[slots[key].state]) {
-      slots[key] = { ...slots[key], state: next }
+/** The server's recorded verdict as the card renders it; `null` = never evaluated. */
+function buildGate(gate: ReleaseGateSummary | null | undefined, stage: ReleaseStage): DerivedGate {
+  if (!gate) {
+    return {
+      decision: stage === 'cancelled' ? 'cancelled' : 'never_evaluated',
+      passRate: null,
+      denominator: null,
+      evidence: null,
+      runCount: null,
+      decidedAt: null,
+      measured: false,
+      insufficientReason: null,
+      blockingTotal: 0,
     }
   }
-
-  return PHASE_KEYS.map(k => slots[k])
-}
-
-/** Owner initials/name from the project name if no real owner data is present. */
-function ownerFromProject(name?: string | null): { initials: string; name: string } {
-  const base = name?.trim() || 'TestLookup'
-  const parts = base.split(/[\s/_-]+/).filter(Boolean)
-  const initials = ((parts[0]?.[0] ?? base[0] ?? '?').toUpperCase()
-    + (parts[1]?.[0] ?? '').toUpperCase()).slice(0, 2) || '??'
-  return { initials, name: base }
+  const reasons = gate.blocking_reasons ?? []
+  return {
+    decision: stage === 'cancelled' ? 'cancelled' : mapVerdict(gate.verdict),
+    passRate: gate.pass_rate ?? null,
+    denominator: gate.denominator ?? null,
+    evidence: gate.evidence_count ?? null,
+    runCount: gate.run_count ?? null,
+    decidedAt: gate.decided_at ?? null,
+    measured: Boolean(gate.measured),
+    insufficientReason: gate.insufficient_reason ?? null,
+    blockingTotal: Math.max(gate.blocking_total ?? 0, reasons.length),
+  }
 }
 
 /**
- * Derive blockers from per-release signals. Pure UI shimming — every entry
- * carries a destination action so the row stays useful even when the
- * dedicated blockers endpoint hasn't shipped yet.
+ * The status counts of the recorded verdict as the pass/fail bar's four
+ * segments: FAILED → failed, BROKEN → broken, SKIPPED + UNKNOWN → skipped.
+ * `null` without counts (never evaluated, or a legacy row's `{}`).
  */
-function buildBlockers(release: Release, gate: DerivedGate): DerivedBlocker[] {
+function buildTotals(gate: ReleaseGateSummary | null | undefined): DerivedRelease['totals'] {
+  const counts = gate?.status_counts
+  if (!counts || Object.keys(counts).length === 0) return null
+  const n = (k: string) => (Number.isFinite(counts[k]) ? counts[k] : 0)
+  return {
+    passed: n('PASSED'),
+    failed: n('FAILED'),
+    broken: n('BROKEN'),
+    skipped: n('SKIPPED') + n('UNKNOWN'),
+  }
+}
+
+/** Two letters for the owner chip: first and last word of the name, or the first two letters of a one-word name. */
+export function initialsOf(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return '?'
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+}
+
+/**
+ * An external link only for an `http(s)://` URL (it comes from GitHub /
+ * Jira): `javascript:`, `data:` or anything else — or a string with
+ * whitespace / control characters, or one the URL parser refuses — is `null`
+ * and renders no link.
+ */
+export function safeHttpUrl(url: string | null | undefined): string | null {
+  if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return null
+  // eslint-disable-next-line no-control-regex
+  if (/[\s\u0000-\u001F\u007F]/.test(url)) return null
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? url : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The release's blockers: the server's blocking reasons (red, the first
+ * `BLOCKER_REASON_CAP`, each opening the release's gate panel), then each
+ * failed phase (red, opening that phase).
+ */
+function buildBlockers(release: Release): DerivedBlocker[] {
   const blockers: DerivedBlocker[] = []
-  // Failed phases each become a red blocker.
+  const reasons = release.gate?.blocking_reasons ?? []
+  reasons.slice(0, BLOCKER_REASON_CAP).forEach((reason, i) => {
+    blockers.push({
+      id: `gate-${release.id}-${i}`,
+      severity: 'red',
+      title: reason,
+      context: 'release gate',
+      action: { label: 'Open gate →', href: `/releases/${release.id}#gate` },
+    })
+  })
   for (const p of release.phases ?? []) {
     if (mapPhaseState(p.status) === 'failed') {
       blockers.push({
         id: `phase-${p.id}`,
         severity: 'red',
         title: `${p.name} failed`,
-        context: p.notes || PHASE_LABELS[classifyPhase(p.name, p.phase_type)],
+        context: p.notes || p.phase_type || 'phase',
         action: { label: 'Open phase →', href: `/releases/${release.id}#phase-${p.id}` },
       })
     }
-  }
-  // Composite below cap → warn-level blocker against the gate.
-  if (gate.composite != null && gate.composite < 95 && gate.composite >= 90) {
-    blockers.push({
-      id: `gate-composite-${release.id}`,
-      severity: 'warn',
-      title: `Composite ${gate.composite.toFixed(1)}% below ≥ 95% cap`,
-      context: 'release gate',
-      action: { label: 'Review gate →', href: `/release-gate/${release.id}` },
-    })
-  }
-  if (gate.flakePct != null && gate.flakePct > 1.5) {
-    blockers.push({
-      id: `gate-flake-${release.id}`,
-      severity: gate.flakePct > 3 ? 'red' : 'warn',
-      title: `Flake rate ${gate.flakePct.toFixed(1)}% over cap`,
-      context: 'flake budget',
-      action: { label: 'View flaky tests →', href: `/flaky` },
-    })
   }
   return blockers
 }
@@ -156,32 +184,28 @@ function buildBlockers(release: Release, gate: DerivedGate): DerivedBlocker[] {
 /** Map one Release into the renderer-ready DerivedRelease shape. */
 export function deriveRelease(release: Release): DerivedRelease {
   const stage = mapStage(release.status)
-  const owner = ownerFromProject(release.project_name)
-  // Coverage + flake aren't on the Release list endpoint today; pulled from
-  // the detail endpoint when the user expands a card. List view shows ``—``.
-  const gate: DerivedGate = {
-    decision: 'not_evaluated',
-    composite: null,
-    coverage: null,
-    flakePct: null,
-    updatedAt: release.updated_at,
-  }
-  gate.decision = decideGate(gate.composite, gate.coverage, gate.flakePct, stage)
-  const phases = buildPhases(release.phases ?? [])
-  const blockers = buildBlockers(release, gate)
+  const gate = buildGate(release.gate, stage)
+  const phases = buildPhases(release.phases)
+  const failedPhases = phases.filter(p => p.state === 'failed').length
+  const ownerName = release.owner?.name?.trim() || null
   return {
     source: release,
     id: release.id,
     name: release.name,
     version: release.version ?? '',
     stage,
-    ownerInitials: owner.initials,
-    ownerName: owner.name,
+    ownerInitials: ownerName ? initialsOf(ownerName) : '–',
+    ownerName: ownerName ?? 'No owner',
+    hasOwner: ownerName != null,
+    isActive: release.is_active === true,
+    externalUrl: safeHttpUrl(release.external_url),
+    sourceSystem: release.source_system ?? null,
     dueAt: release.planned_date,
     gate,
-    totals: null,
+    totals: buildTotals(release.gate),
     phases,
-    blockers,
+    blockers: buildBlockers(release),
+    blockerCount: gate.blockingTotal + failedPhases,
   }
 }
 
