@@ -10,8 +10,9 @@ reason surfaced in the UI.
 Design
 ------
 
-The evaluator is **pluggable** via the ``rag_faithfulness_evaluator``
-app setting. Two backends ship out of the box:
+The evaluator is **pluggable** via the ``rag_faithfulness_evaluator`` key
+of the ``ai_config`` app setting, read through ``get_effective_ai_config``.
+Two backends ship out of the box:
 
 * ``"ollama"`` (default, offline-safe) — Uses the already-configured
   Ollama LLM to answer a single yes/no question about each generated
@@ -19,9 +20,10 @@ app setting. Two backends ship out of the box:
   answer is parsed into a 0.0-1.0 score. Works in air-gapped mode.
 
 * ``"ragas"`` (cloud) — Delegates to the Ragas library's
-  ``faithfulness`` metric which calls a hosted LLM. Only used when
-  ``AI_OFFLINE_MODE=false`` — the service degrades to ``ollama`` when
-  offline mode is on, regardless of the setting.
+  ``faithfulness`` metric which calls a hosted LLM. Only used when the
+  effective offline mode is off — the service degrades to ``ollama`` when
+  ``AI_OFFLINE_MODE`` or the stored override turns it on, regardless of
+  the setting.
 
 Both backends return a ``(score, reason)`` tuple so the caller can
 surface a human-readable explanation when the gate fires.
@@ -33,6 +35,7 @@ lets every case through so existing deployments see zero change.
 from __future__ import annotations
 
 import json
+import math
 import re
 import uuid
 from datetime import datetime, timezone
@@ -99,13 +102,17 @@ async def _resolve_backend() -> str:
     # env in the right order for the LLM provider. The evaluator
     # backend is an extension of that same config namespace.
     try:
-        from app.services.ai_config_resolver import resolve_ai_config
-        cfg = await resolve_ai_config()
-        backend = (cfg.get("rag_faithfulness_evaluator") or "ollama").lower()
+        from app.services.ai_config_resolver import get_effective_ai_config
+        cfg = await get_effective_ai_config()
+        # The effective flag, not just the env var: a stored override can make
+        # the deployment offline too, and Ragas calls a hosted LLM.
+        if cfg.get("offline_mode"):
+            return "ollama"
+        backend = str(cfg.get("rag_faithfulness_evaluator") or "ollama").lower()
         if backend in ("ollama", "ragas"):
             return backend
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("evaluator backend resolve failed", error=str(exc))
     return "ollama"
 
 
@@ -124,9 +131,9 @@ async def _active_llm_provider() -> str:
     """
     provider = ""
     try:
-        from app.services.ai_config_resolver import resolve_ai_config  # noqa: PLC0415
-        cfg = await resolve_ai_config()
-        provider = str(cfg.get("llm_provider") or "").strip()
+        from app.services.ai_config_resolver import get_effective_ai_config  # noqa: PLC0415
+        cfg = await get_effective_ai_config()
+        provider = str(cfg.get("provider") or "").strip()
     except Exception as exc:  # noqa: BLE001
         logger.debug("provider resolve failed for evaluator label", error=str(exc))
     provider = (provider or str(getattr(settings, "LLM_PROVIDER", "") or "")).strip().lower()
@@ -219,17 +226,27 @@ async def _evaluate_via_ragas(
     if not citations:
         return (0.0, "no citations attached to the generated case")
     try:
-        from ragas.metrics import faithfulness  # type: ignore[import]
-        from ragas import evaluate as ragas_evaluate  # type: ignore[import]
-        from datasets import Dataset  # type: ignore[import]
+        from ragas.metrics import faithfulness
+        from ragas import evaluate as ragas_evaluate
+        from datasets import Dataset
 
         ds = Dataset.from_dict({
             "question": ["Is the generated test case grounded in the citations?"],
             "answer": [generated_content],
             "contexts": [citations],
         })
-        result = ragas_evaluate(ds, metrics=[faithfulness])
-        score = float(result.get("faithfulness", 0.0))
+        # ragas 0.1 returns a dict holding the mean score. 0.2+ returns an
+        # EvaluationResult, which has no ``.get`` and maps the metric to one
+        # score per sample. ``Any`` because the declared type is version-bound.
+        result: Any = ragas_evaluate(ds, metrics=[faithfulness])
+        value = result["faithfulness"]
+        if isinstance(value, list):
+            value = value[0] if value else float("nan")
+        score = float(value)
+        if math.isnan(score):
+            # ragas records a failed judgement as NaN, which the clamp below
+            # would turn into 1.0 — a pass.
+            return (0.0, "ragas returned no faithfulness score")
         return (
             max(0.0, min(1.0, score)),
             f"ragas faithfulness metric (sample size {len(citations)} citations)",

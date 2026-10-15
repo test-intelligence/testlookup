@@ -180,6 +180,9 @@ async def _load_from_db_and_env(*, db: Any = None) -> dict[str, Any]:
         # threshold check — see services/confidence_gate.py.
         "confidence_threshold": settings.AI_CONFIDENCE_THRESHOLD,
         "confidence_threshold_source": CONFIDENCE_SOURCE_ENV_DEFAULT,
+        # Strategy for the RAG faithfulness gate: "ollama" (single prompt
+        # through get_llm) or "ragas". No env var; only a stored override.
+        "rag_faithfulness_evaluator": "ollama",
         "openai_api_key": settings.OPENAI_API_KEY,
         "google_api_key": settings.GOOGLE_API_KEY,
         "anthropic_api_key": getattr(settings, "ANTHROPIC_API_KEY", None),
@@ -201,6 +204,9 @@ async def _load_from_db_and_env(*, db: Any = None) -> dict[str, Any]:
             config["base_url"] = overrides.get("base_url", config["base_url"])
             config["offline_mode"] = overrides.get("ai_offline_mode", config["offline_mode"])
             config["timeout_seconds"] = overrides.get("ai_timeout_seconds", config["timeout_seconds"])
+            config["rag_faithfulness_evaluator"] = overrides.get(
+                "rag_faithfulness_evaluator", config["rag_faithfulness_evaluator"]
+            )
             from app.services.confidence_gate import normalize_threshold
 
             stored_threshold = normalize_threshold(overrides.get("ai_confidence_threshold"))

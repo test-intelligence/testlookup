@@ -35,6 +35,7 @@ async def test_evaluate_redacts_content_and_citations_before_backend():
 
     with patch.object(svc, "_feature_enabled", AsyncMock(return_value=True)), \
          patch.object(svc, "_resolve_backend", AsyncMock(return_value="ollama")), \
+         patch.object(svc, "_active_llm_provider", AsyncMock(return_value="ollama")), \
          patch.object(svc, "_evaluate_via_ollama", _fake_backend), \
          patch("app.services.rag_redaction_service.redact_prompt", _spy_redact):
         result = await svc.evaluate("secret body", ["cite-secret-1", "cite-secret-2"])
