@@ -15,7 +15,7 @@ see everything. The response is optimised for a single render —
 every project row already has its cost, cap, utilization, and status
 computed so the frontend is a pure table.
 
-Source: [backend/app/routers/llm_cost_budget.py:139](../../../backend/app/routers/llm_cost_budget.py#L139).
+Source: [backend/app/routers/llm_cost_budget.py:140](../../../backend/app/routers/llm_cost_budget.py#L140).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -86,7 +86,7 @@ Get Project Quota
 
 Read the billing config for a project. QA_LEAD+ or project member.
 
-Source: [backend/app/routers/llm_cost_budget.py:52](../../../backend/app/routers/llm_cost_budget.py#L52).
+Source: [backend/app/routers/llm_cost_budget.py:53](../../../backend/app/routers/llm_cost_budget.py#L53).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -173,7 +173,7 @@ Upsert Project Quota
 
 Create or replace the billing config for a project. ADMIN only.
 
-Source: [backend/app/routers/llm_cost_budget.py:69](../../../backend/app/routers/llm_cost_budget.py#L69).
+Source: [backend/app/routers/llm_cost_budget.py:70](../../../backend/app/routers/llm_cost_budget.py#L70).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -264,7 +264,7 @@ Get Current Usage
 
 Current-period usage with cap status, for the project overview card.
 
-Source: [backend/app/routers/llm_cost_budget.py:99](../../../backend/app/routers/llm_cost_budget.py#L99).
+Source: [backend/app/routers/llm_cost_budget.py:100](../../../backend/app/routers/llm_cost_budget.py#L100).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -345,7 +345,7 @@ Get Usage History
 
 Most recent ``limit`` billing periods for a project (default 12).
 
-Source: [backend/app/routers/llm_cost_budget.py:110](../../../backend/app/routers/llm_cost_budget.py#L110).
+Source: [backend/app/routers/llm_cost_budget.py:111](../../../backend/app/routers/llm_cost_budget.py#L111).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 

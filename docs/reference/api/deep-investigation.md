@@ -20,7 +20,7 @@ legitimately unscoped; the defect was that non-admins were unscoped too.
 ``defects.project_id`` is indexed (``ix_defects_project_id``), so the schema
 already anticipated this filter.
 
-Source: [backend/app/routers/deep_investigation.py:431](../../../backend/app/routers/deep_investigation.py#L431).
+Source: [backend/app/routers/deep_investigation.py:424](../../../backend/app/routers/deep_investigation.py#L424).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -126,7 +126,7 @@ Approve or reject a defect that is pending review (QA Lead+ only).
 
 When approved with a Jira project key, the Jira ticket is created.
 
-Source: [backend/app/routers/deep_investigation.py:333](../../../backend/app/routers/deep_investigation.py#L333).
+Source: [backend/app/routers/deep_investigation.py:326](../../../backend/app/routers/deep_investigation.py#L326).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -227,7 +227,7 @@ Trigger the deep investigation pipeline for a completed test run.
 Uses workflow_type="deep" which adds failure clustering, flaky sentinel,
 test health analysis, and release risk on top of the standard 5-stage pipeline.
 
-Source: [backend/app/routers/deep_investigation.py:88](../../../backend/app/routers/deep_investigation.py#L88).
+Source: [backend/app/routers/deep_investigation.py:87](../../../backend/app/routers/deep_investigation.py#L87).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 
@@ -241,8 +241,6 @@ Direct handler error branches (dependency/service errors can add others):
 
 ```python
 HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Test run not found')
-HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='Deep investigation is disabled. Enable it in Settings > AI Configuration.')
-HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='Deep investigation requires LLM or Auto mode. Current mode: rules.')
 HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
 ```
 
@@ -327,7 +325,7 @@ Get Failure Clusters
 
 Return semantic failure clusters for a test run.
 
-Source: [backend/app/routers/deep_investigation.py:144](../../../backend/app/routers/deep_investigation.py#L144).
+Source: [backend/app/routers/deep_investigation.py:137](../../../backend/app/routers/deep_investigation.py#L137).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -412,7 +410,7 @@ Get Ranked Clusters
 
 Return failure clusters ranked by impact score for triage prioritization.
 
-Source: [backend/app/routers/deep_investigation.py:275](../../../backend/app/routers/deep_investigation.py#L275).
+Source: [backend/app/routers/deep_investigation.py:268](../../../backend/app/routers/deep_investigation.py#L268).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -500,7 +498,7 @@ Get Cluster Defect Candidate
 
 Get a pre-assembled defect candidate for a failure cluster.
 
-Source: [backend/app/routers/deep_investigation.py:208](../../../backend/app/routers/deep_investigation.py#L208).
+Source: [backend/app/routers/deep_investigation.py:201](../../../backend/app/routers/deep_investigation.py#L201).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -598,7 +596,7 @@ Check if a cluster likely duplicates an existing open defect.
 Returns duplicate info without creating anything.
 P3-9: Business logic extracted to cluster_service.
 
-Source: [backend/app/routers/deep_investigation.py:310](../../../backend/app/routers/deep_investigation.py#L310).
+Source: [backend/app/routers/deep_investigation.py:303](../../../backend/app/routers/deep_investigation.py#L303).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -700,7 +698,7 @@ Promote Cluster To Defect
 
 Promote a failure cluster to a defect record (optionally with Jira ticket).
 
-Source: [backend/app/routers/deep_investigation.py:226](../../../backend/app/routers/deep_investigation.py#L226).
+Source: [backend/app/routers/deep_investigation.py:219](../../../backend/app/routers/deep_investigation.py#L219).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 
@@ -807,7 +805,7 @@ Get Deep Findings
 
 Return deep investigation findings per failure cluster for a test run.
 
-Source: [backend/app/routers/deep_investigation.py:172](../../../backend/app/routers/deep_investigation.py#L172).
+Source: [backend/app/routers/deep_investigation.py:165](../../../backend/app/routers/deep_investigation.py#L165).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 

@@ -24,7 +24,7 @@ the endpoint leaked every tenant's live run (slug, build number, counts,
 timing) to any authenticated user — the ``/active-runs/{run_id}`` sibling
 already gates on ``require_run_access`` but the list did not.
 
-Source: [backend/app/routers/agents.py:1084](../../../backend/app/routers/agents.py#L1084).
+Source: [backend/app/routers/agents.py:1116](../../../backend/app/routers/agents.py#L1116).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -101,7 +101,7 @@ Get Live Run State
 
 Get the current state for a single live test run.
 
-Source: [backend/app/routers/agents.py:1140](../../../backend/app/routers/agents.py#L1140).
+Source: [backend/app/routers/agents.py:1172](../../../backend/app/routers/agents.py#L1172).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -197,7 +197,7 @@ Clients read agent ids here instead of hard-coding stage names. Declared
 first in this router: the planned ``/agents/{agent_id}/invoke`` route must
 come after every literal ``/agents/...`` path (architecture section 3.5).
 
-Source: [backend/app/routers/agents.py:196](../../../backend/app/routers/agents.py#L196).
+Source: [backend/app/routers/agents.py:197](../../../backend/app/routers/agents.py#L197).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -272,7 +272,7 @@ Get Agent Catalog Entry
 
 One agent, with its generated input wrapper and JSON Schemas (E1.1).
 
-Source: [backend/app/routers/agents.py:209](../../../backend/app/routers/agents.py#L209).
+Source: [backend/app/routers/agents.py:210](../../../backend/app/routers/agents.py#L210).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -361,7 +361,7 @@ Run the Defect Commander on a failure cluster.
 Scores the cluster on 7 criticality dimensions, generates a Jira-ready
 defect description, and optionally creates a Jira ticket.
 
-Source: [backend/app/routers/agents.py:1341](../../../backend/app/routers/agents.py#L1341).
+Source: [backend/app/routers/agents.py:1373](../../../backend/app/routers/agents.py#L1373).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -483,7 +483,7 @@ Get Pipeline Event Log Health
 
 Return write-health details for the pipeline audit event log.
 
-Source: [backend/app/routers/agents.py:1051](../../../backend/app/routers/agents.py#L1051).
+Source: [backend/app/routers/agents.py:1083](../../../backend/app/routers/agents.py#L1083).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -554,7 +554,7 @@ List Pipelines
 
 List agent pipeline runs, optionally filtered by test run, project, or status.
 
-Source: [backend/app/routers/agents.py:226](../../../backend/app/routers/agents.py#L226).
+Source: [backend/app/routers/agents.py:227](../../../backend/app/routers/agents.py#L227).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -705,7 +705,7 @@ burst. Celery's existing dedup on (run_id, workflow_type) for 7200s
 handles re-triggers gracefully, so this endpoint doesn't need to dedup
 itself — repeats just resolve to ``{duplicate: true}`` per task.
 
-Source: [backend/app/routers/agents.py:697](../../../backend/app/routers/agents.py#L697).
+Source: [backend/app/routers/agents.py:723](../../../backend/app/routers/agents.py#L723).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -787,7 +787,7 @@ Trigger Pipeline
 Manually trigger the agent pipeline for an existing test run.
 Returns 202 Accepted — pipeline runs asynchronously via Celery.
 
-Source: [backend/app/routers/agents.py:297](../../../backend/app/routers/agents.py#L297).
+Source: [backend/app/routers/agents.py:298](../../../backend/app/routers/agents.py#L298).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -883,7 +883,7 @@ Get Pipeline
 
 Get a single pipeline run with all stage results.
 
-Source: [backend/app/routers/agents.py:281](../../../backend/app/routers/agents.py#L281).
+Source: [backend/app/routers/agents.py:282](../../../backend/app/routers/agents.py#L282).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -968,7 +968,7 @@ This additive adapter keeps the established timeline API stable while
 exposing selected/skipped capabilities, parent-child task identity,
 allocated budgets, actual usage and terminal stop reasons in one model.
 
-Source: [backend/app/routers/agents.py:943](../../../backend/app/routers/agents.py#L943).
+Source: [backend/app/routers/agents.py:975](../../../backend/app/routers/agents.py#L975).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1059,7 +1059,7 @@ Cancellation is sticky either way — an automatic retry can never bring a
 cancelled run back. See ``app/services/pipeline_cancellation.py`` for why
 both orderings of the cancel-vs-retry race end ``failed``.
 
-Source: [backend/app/routers/agents.py:627](../../../backend/app/routers/agents.py#L627).
+Source: [backend/app/routers/agents.py:653](../../../backend/app/routers/agents.py#L653).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1152,7 +1152,7 @@ Get Pipeline Replay
 
 Return a deterministic replay document for audit reconstruction.
 
-Source: [backend/app/routers/agents.py:1066](../../../backend/app/routers/agents.py#L1066).
+Source: [backend/app/routers/agents.py:1098](../../../backend/app/routers/agents.py#L1098).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1257,7 +1257,7 @@ run explicitly to produce a fresh proposal. The rejection and ceiling responses
 carry ``links.rerun`` so the caller can deliberately start a fresh run
 rather than being told only "no".
 
-Source: [backend/app/routers/agents.py:457](../../../backend/app/routers/agents.py#L457).
+Source: [backend/app/routers/agents.py:465](../../../backend/app/routers/agents.py#L465).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1356,7 +1356,7 @@ Get Pipeline Stages
 
 Get detailed stage results for a pipeline run.
 
-Source: [backend/app/routers/agents.py:790](../../../backend/app/routers/agents.py#L790).
+Source: [backend/app/routers/agents.py:822](../../../backend/app/routers/agents.py#L822).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1444,7 +1444,7 @@ Get the full agent timeline with per-stage observability data:
 tokens, cost, latency, confidence, evidence count, route rationale,
 error taxonomy, fallback status, and alerts.
 
-Source: [backend/app/routers/agents.py:829](../../../backend/app/routers/agents.py#L829).
+Source: [backend/app/routers/agents.py:861](../../../backend/app/routers/agents.py#L861).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1527,7 +1527,7 @@ Run the Regression Watchman on an existing test run.
 Returns classification of each failure cluster as:
   - new_regression | known_flaky_recurrence | environmental_anomaly
 
-Source: [backend/app/routers/agents.py:1382](../../../backend/app/routers/agents.py#L1382).
+Source: [backend/app/routers/agents.py:1414](../../../backend/app/routers/agents.py#L1414).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1627,7 +1627,7 @@ WF-1: Return the latest pipeline execution status for a run and workflow type.
 Enables the frontend to know when deep/offline analysis ran, whether it
 completed fully, partially, or failed, without scanning the full timeline.
 
-Source: [backend/app/routers/agents.py:1153](../../../backend/app/routers/agents.py#L1153).
+Source: [backend/app/routers/agents.py:1185](../../../backend/app/routers/agents.py#L1185).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1735,7 +1735,7 @@ Carries the human-review envelope (E8.3): ``requires_human_review``,
 ``review`` and the ``X-TestLookup-AI-Generated`` / ``X-TestLookup-Review-State``
 headers. A deterministic fallback is ``not_applicable``: no AI wrote it.
 
-Source: [backend/app/routers/agents.py:1228](../../../backend/app/routers/agents.py#L1228).
+Source: [backend/app/routers/agents.py:1260](../../../backend/app/routers/agents.py#L1260).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
