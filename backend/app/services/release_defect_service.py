@@ -146,7 +146,7 @@ def affects_release_sql(params: dict, release_ids: Sequence[str], *, alias: str 
     asserted = asserted_impact_sql(alias)
     parts: list[str] = []
     if ids:
-        names = []
+        names: list[str] = []
         for value in ids:
             name = f"affects_rid_{len(names)}"
             params[name] = value

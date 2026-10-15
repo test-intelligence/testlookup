@@ -28,7 +28,6 @@
 4 app/routers/health.py
 1 app/routers/ingest.py
 1 app/routers/integration_health.py
-2 app/routers/integrations.py
 1 app/routers/my_failures.py
 1 app/routers/ownership.py
 1 app/routers/rag_generation.py

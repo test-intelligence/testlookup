@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Optional
 
-from sqlalchemy import case, func, select
+from sqlalchemy import ColumnElement, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -324,7 +324,7 @@ async def get_dashboard_summary(
     # Sixth surface in this family, and the one the F-066 guard could not have
     # caught: that test scans for functions summing ``test_runs`` columns, and
     # this counts the ``defects`` table.
-    defect_conditions = [
+    defect_conditions: list[ColumnElement[bool]] = [
         # Live = OPEN or IN_PROGRESS (W06 DEF-01): an in-progress defect is still active.
         Defect.resolution_status.in_(ACTIVE_STATUSES),
         Defect.project_id.in_(select(Project.id).where(Project.is_active.is_(True))),
