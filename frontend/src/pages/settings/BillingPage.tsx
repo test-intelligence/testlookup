@@ -258,8 +258,9 @@ function ProjectRow({
       <td className="px-3 py-2 text-center">
         <StatusPill status={row.status} />
       </td>
-      <td className="px-3 py-2 text-right text-xs text-[var(--color-text-muted)]">
-        {row.cap_hits || '—'}
+      <td data-billing-cap-hits="" className="px-3 py-2 text-right text-xs text-[var(--color-text-muted)]">
+        {/* No quota, no cap to hit; with one, 0 hits is a measured count, not a blank. */}
+        {row.status === 'UNLIMITED' ? '—' : row.cap_hits}
       </td>
       <td className="px-3 py-2 text-right">
         <button

@@ -140,6 +140,18 @@ describe('capped and warning projects are distinguishable', () => {
   })
 })
 
+describe('cap hits are a count once a quota exists', () => {
+  it('a capped project with no hits shows 0, a project without a quota shows —', () => {
+    renderWith([
+      project({ project_id: 'p-1', project_name: 'Quota', cap_hits: 0 }),
+      project({ project_id: 'p-2', project_name: 'Hit', cap_hits: 3, status: 'CAPPED' }),
+      project({ project_id: 'p-3', project_name: 'Open', cap_hits: 0, status: 'UNLIMITED', hard_cap_usd: null, utilization_pct: null }),
+    ])
+    const cells = Array.from(document.querySelectorAll('[data-billing-cap-hits]')).map((c) => c.textContent)
+    expect(cells).toEqual(['0', '3', '—'])
+  })
+})
+
 describe('money is rendered at a precision that does not hide spend', () => {
   it('shows sub-cent LLM cost rather than rounding it away', () => {
     // LLM costs are frequently fractions of a cent; 2dp would render a
