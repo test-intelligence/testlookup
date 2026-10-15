@@ -292,13 +292,16 @@ jobs:
     name: Backend — Test & Lint
     runs-on: ubuntu-latest
 
-    # Service images come from AWS's mirror of the Docker official images, not
-    # Docker Hub: hosted runners pull Docker Hub anonymously and share IPs, and
+    # Service images come from Google's mirror of Docker Hub (mirror.gcr.io, the
+    # mirror the buildx steps already use). ECR Public replaced Docker Hub on
+    # 2026-10-09 and then ran out too: on 2026-10-15 both backend jobs failed at
+    # "Initialize containers" with "toomanyrequests: Data limit exceeded" on two
+    # attempts in a row. Never bare Docker Hub: hosted runners pull Docker Hub anonymously and share IPs, and
     # on 2026-10-09 both backend jobs failed at "Initialize containers" with
     # "toomanyrequests: unauthenticated pull rate limit" twice in a row.
     services:
       postgres:
-        image: public.ecr.aws/docker/library/postgres:16-alpine
+        image: mirror.gcr.io/library/postgres:16-alpine
         env:
           POSTGRES_DB: testlookup_test
           POSTGRES_USER: testlookup_user
@@ -310,9 +313,9 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
-      # Valkey (BSD-3-Clause), the image every deployment ships, from ECR Public.
+      # Valkey (BSD-3-Clause), the image every deployment ships, through mirror.gcr.io.
       redis:
-        image: public.ecr.aws/valkey/valkey:8.1-alpine
+        image: mirror.gcr.io/valkey/valkey:8.1-alpine
         ports: ["6379:6379"]
         options: >-
           --health-cmd "valkey-cli ping"
@@ -472,7 +475,7 @@ jobs:
     # Mirror, not Docker Hub: see backend-test's services.
     services:
       postgres:
-        image: public.ecr.aws/docker/library/postgres:16-alpine
+        image: mirror.gcr.io/library/postgres:16-alpine
         env:
           POSTGRES_DB: testlookup_test
           POSTGRES_USER: testlookup_user
@@ -485,7 +488,7 @@ jobs:
           --health-retries 5
 
       mongo:
-        image: public.ecr.aws/docker/library/mongo:7
+        image: mirror.gcr.io/library/mongo:7
         ports: ["27017:27017"]
         options: >-
           --health-cmd "mongosh --quiet --eval 'db.adminCommand({ ping: 1 }).ok'"
@@ -494,7 +497,7 @@ jobs:
           --health-retries 10
 
       redis:
-        image: public.ecr.aws/valkey/valkey:8.1-alpine
+        image: mirror.gcr.io/valkey/valkey:8.1-alpine
         ports: ["6379:6379"]
         options: >-
           --health-cmd "valkey-cli ping"
