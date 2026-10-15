@@ -285,6 +285,15 @@ class DefectCommander(BaseAgent):
         # .value, not str() — see defect_promotion_service for why.
         initial_status = ActionStatus(policy_result["initial_status"]).value
         offline = settings.AI_OFFLINE_MODE
+        # DEF-06: the approval queue links the run and, on approve, files the
+        # ticket in the project key the commander was given. Its defects are
+        # always pending_review (the Jira policy), so they reach the ledger
+        # and the defect.promoted webhook through review-approve, not here.
+        policy_result = {
+            **policy_result,
+            "source_run_id": str(test_run_id) if test_run_id else None,
+            "jira_project_key": (project_key or "").strip() or None,
+        }
 
         # Persist as Defect record
         defect_id = await self._persist_defect(

@@ -180,6 +180,17 @@ async def test_the_defect_row_is_written_as_pending_review(harness):
 
 
 @pytest.mark.asyncio
+async def test_the_proposal_carries_its_run_and_jira_key_for_the_approval_queue(harness):
+    """DEF-06: the Inbox queue links the run, and approving files in this key."""
+    await DefectCommander()._promote({**STATE, "project_key": "  QA "})
+
+    policy = harness.persist.await_args.kwargs["policy_evaluation"]
+    assert policy["source_run_id"] == STATE["test_run_id"]
+    assert policy["jira_project_key"] == "QA"
+    assert policy["requires_approval"] is True
+
+
+@pytest.mark.asyncio
 async def test_offline_mode_blocks_the_write_even_if_a_policy_approved_it(
     harness, monkeypatch
 ):

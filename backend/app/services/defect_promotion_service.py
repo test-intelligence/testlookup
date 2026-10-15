@@ -36,6 +36,7 @@ from app.services.action_policy import (
     check_defect_promotion_policy,
 )
 from app.services.criticality_service import get_scoring_model_info, score_cluster
+from app.services.defect_status import ACTIVE_STATUSES
 from app.services.prompt_registry import get_prompt_text
 from app.services.cluster_snapshot import is_current_snapshot
 
@@ -211,10 +212,19 @@ async def promote_cluster(
     project_id: str,
     request: dict,
     db: AsyncSession,
+    *,
+    actor: Any = None,
 ) -> dict:
     """
     Persist a promoted defect from a cluster.
     Called by POST /runs/{run_id}/clusters/{cluster_id}/promote.
+
+    The Jira project key and the source run are kept on ``policy_evaluation``
+    (``jira_project_key`` / ``source_run_id``) so approving the defect later
+    can file the ticket and the approval queue can link the run (DEF-06). A
+    promotion that takes effect at once (``approved`` / ``executed``) stages
+    the ``defect.promoted`` ledger row on this session (DEF-07); the router
+    sends the webhook after its commit.
     """
     # Load cluster for evidence bundle
     cluster_result = await db.execute(
@@ -355,7 +365,11 @@ async def promote_cluster(
         is_duplicate=duplicate_detected,
         duplicate_of=_uuid.UUID(duplicate_id) if duplicate_id else None,
         approval_status=initial_status,
-        policy_evaluation=policy_result,
+        policy_evaluation={
+            **policy_result,
+            "jira_project_key": (project_key or "").strip() or None,
+            "source_run_id": run_id,
+        },
     )
     db.add(defect)
     await db.flush()  # materialize defect.id so jira ticket writes can reference it
@@ -403,6 +417,25 @@ async def promote_cluster(
     else:
         # No project_key, offline mode, or otherwise persisted locally only.
         defect_promotions_total.labels(result="local_only").inc()
+
+    # DEF-07: a promotion that is effective at once is in the activity feed.
+    # Pending, rejected (duplicate) and suggested promotions record nothing:
+    # they reach the feed (and the webhook) when a QA lead approves them.
+    effective_status = str(getattr(defect.approval_status, "value", defect.approval_status) or "")
+    if effective_status in (ActionStatus.APPROVED.value, ActionStatus.EXECUTED.value):
+        from app.services.activity.service import ActorRef, record as record_activity
+
+        await record_activity(
+            db,
+            project_id=defect.project_id,
+            event_type="defect.promoted",
+            actor=ActorRef.from_user(actor) if actor is not None else ActorRef.system("defect_promotion"),
+            entity_id=defect.id,
+            entity_label=(defect.jira_ticket_id or (defect.title or "")[:120] or str(defect.id)[:8]),
+            entity_type="defect",
+            release_id=run_release_id,
+            context={"cluster_id": cluster_id, "severity": severity},
+        )
 
     return {
         "defect_id": str(defect.id),
@@ -675,7 +708,7 @@ async def _find_duplicate_semantic(
             select(Defect)
             .where(
                 Defect.project_id == _uuid.UUID(project_id),
-                Defect.resolution_status == "OPEN",
+                Defect.resolution_status.in_(ACTIVE_STATUSES),
                 Defect.is_duplicate.is_(False),
             )
             .order_by(Defect.created_at.desc())

@@ -68,6 +68,20 @@ def _eligible(user: Any) -> bool:
     return True
 
 
+def is_eligible_person(user: Any) -> bool:
+    """Public name of the "active, interactive human" rule (DEF-01 assignees).
+
+    The defect assignee check (``defect_triage_service.validate_assignee``)
+    applies the SAME rule as a release owner, so the two cannot drift.
+    """
+    return _eligible(user)
+
+
+def is_admin_user(user: Any) -> bool:
+    """Whether ``user`` is an ADMIN, read the way the auth guards read a role."""
+    return _is_admin(getattr(user, "role", None))
+
+
 def display_name(user: Any) -> str:
     return getattr(user, "full_name", None) or getattr(user, "username", None) or ""
 

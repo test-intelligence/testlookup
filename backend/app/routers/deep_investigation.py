@@ -8,7 +8,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
@@ -22,6 +22,7 @@ from app.models.postgres import (
     Defect,
     DeepFinding,
     FailureCluster,
+    Project,
     TestRun,
     User,
     UserRole,
@@ -32,11 +33,16 @@ from app.models.schemas import (
     DefectCandidateResponse,
     DefectPromotionRequest,
     DefectPromotionResponse,
+    PendingDefectItem,
+    PendingDefectList,
 )
 from app.services.action_policy import ActionStatus, approve_action, reject_action
+from app.services.activity.service import ActorRef, record as record_activity
 from app.services.cluster_ranking_service import rank_clusters
 from app.services.deep_investigation_gate import require_deep_investigation
+from app.services.defect_jira_service import file_issue_for_defect
 from app.services.defect_promotion_service import get_defect_candidate, promote_cluster
+from app.services.defect_triage_service import defect_label, reject_pending_defect
 from app.worker.tasks import run_agent_pipeline
 from app.services.cluster_snapshot import is_current_snapshot
 
@@ -247,10 +253,12 @@ async def promote_cluster_to_defect(
             project_id=str(run.project_id),
             request=body.model_dump(),
             db=db,
+            actor=current_user,
         )
         # BL-03: Mark intelligence snapshot stale after defect promotion.
         # mark_stale also only flushes, so a single commit below covers the
-        # defect row, any Jira ticket link updates, and the staleness flag.
+        # defect row, any Jira ticket link updates, the staleness flag and
+        # the defect.promoted ledger row (when the promotion is effective).
         try:
             from app.services.intelligence_snapshot_service import mark_stale
             await mark_stale(db, run_id)
@@ -261,9 +269,17 @@ async def promote_cluster_to_defect(
         from app.services.cache_service import bump_analytics_epoch
 
         await bump_analytics_epoch(run.project_id)
-        return DefectPromotionResponse(**result_dict)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    # DEF-07: after the commit (the request's connection is back in the pool),
+    # never inside it. A failing webhook does not undo the promotion.
+    try:
+        from app.services.defect_promoted_webhook import emit_defect_promoted
+
+        await emit_defect_promoted(result_dict["defect_id"])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("defect.promoted webhook failed for %s: %s", result_dict.get("defect_id"), exc)
+    return DefectPromotionResponse(**result_dict)
 
 
 @router.get("/{run_id}/clusters/ranked")
@@ -337,7 +353,15 @@ async def review_defect(
     """
     Approve or reject a defect that is pending review (QA Lead+ only).
 
-    When approved with a Jira project key, the Jira ticket is created.
+    Approve (DEF-06): the approval is committed FIRST, so a slow or failing
+    Jira never undoes it. Then, when a Jira project key was given at
+    promotion, the ticket is filed ON this defect (or linked to the open issue
+    already filed for the same failure) and committed; offline it says so.
+    ``defect.promoted`` (ledger + webhook) covers cluster promotions only, the
+    webhook after the last commit.
+
+    Reject (D-11): the defect is also closed as ``INVALID`` with the reason in
+    the activity ledger, so a rejected suggestion stops blocking the gate.
     """
     if body.action not in ("approve", "reject"):
         raise HTTPException(
@@ -367,6 +391,8 @@ async def review_defect(
             detail="Defect not found or not in pending_review status.",
         )
     await resolve_project_scope(db, current_user, str(target.project_id))
+    # Read before any commit / rollback: a rollback expires the loaded row.
+    project_id = target.project_id
 
     if body.action == "approve":
         success = await approve_action(
@@ -381,24 +407,75 @@ async def review_defect(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Defect not found or not in pending_review status.",
             )
-
-        # After approval, execute pending Jira ticket creation if applicable
-        defect = await db.get(Defect, defect_id)
-        jira_ticket = None
-        jira_url = None
-        if defect and defect.policy_evaluation:
-            # Check if a Jira project key was specified at promotion time
-            policy_eval = defect.policy_evaluation or {}
-            if any("Jira" in r for r in policy_eval.get("policy_reasons", [])):
-                logger.info("Approved defect %s — Jira creation deferred to manual step", defect_id)
-
+        # The bulk UPDATE left the identity-map copy stale.
+        await db.refresh(target)
+        pe = dict(target.policy_evaluation or {})
+        jira_project_key = (
+            str(pe.get("jira_project_key") or pe.get("requested_project_key") or "").strip() or None
+        )
+        if target.cluster_id:
+            await record_activity(
+                db,
+                project_id=project_id,
+                event_type="defect.promoted",
+                actor=ActorRef.from_user(current_user),
+                entity_id=target.id,
+                entity_label=defect_label(target),
+                entity_type="defect",
+                release_id=target.release_id,
+                context={"cluster_id": target.cluster_id, "severity": target.severity},
+            )
+        # Commit 1: the approval stands whatever Jira does next.
         await db.commit()
+
+        filing: dict = {"status": "not_requested", "reason": None, "error": None}
+        if jira_project_key:
+            try:
+                filing = await file_issue_for_defect(
+                    db, target, current_user, jira_project_key=jira_project_key,
+                )
+                if filing.get("status") == "filed":
+                    await record_activity(
+                        db,
+                        project_id=project_id,
+                        event_type="defect.ticket_created",
+                        actor=ActorRef.from_user(current_user),
+                        entity_id=target.id,
+                        entity_label=defect_label(target),
+                        entity_type="defect",
+                        release_id=target.release_id,
+                        context={"ticket_key": filing.get("jira_key")},
+                    )
+                # Commit 2: the ticket link (or the record that filing failed).
+                await db.commit()
+            except Exception as exc:  # noqa: BLE001 — commit 1 already holds the approval
+                await db.rollback()
+                logger.warning("Jira filing after approving defect %s failed: %s", defect_id, exc)
+                filing = {"status": "failed", "reason": None, "error": type(exc).__name__}
+        from app.services.cache_service import bump_analytics_epoch
+
+        await bump_analytics_epoch(project_id)
+        try:
+            from app.services.defect_promoted_webhook import emit_defect_promoted
+
+            await emit_defect_promoted(defect_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("defect.promoted webhook failed for %s: %s", defect_id, exc)
+
+        # The row as committed (after a rollback, re-read from the database).
+        approved = await db.get(Defect, defect_id)
+        status_word = getattr(approved, "approval_status", None) or ActionStatus.APPROVED.value
+        jira_key = getattr(approved, "jira_ticket_id", None)
+        jira_url = getattr(approved, "jira_ticket_url", None)
         return DefectApprovalResponse(
             defect_id=str(defect_id),
-            approval_status=ActionStatus.APPROVED,
-            message="Defect approved successfully.",
-            jira_ticket=jira_ticket,
+            approval_status=str(getattr(status_word, "value", status_word)),
+            message=_approval_message(filing),
+            jira_ticket={"key": jira_key, "url": jira_url} if jira_key else None,
             jira_url=jira_url,
+            jira_status=filing.get("status"),
+            jira_reason=filing.get("reason") if filing.get("status") == "not_filed" else None,
+            jira_error=filing.get("error") if filing.get("status") in ("failed", "unknown") else None,
         )
     else:
         success = await reject_action(
@@ -414,7 +491,14 @@ async def review_defect(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Defect not found or not in pending_review status.",
             )
+        await db.refresh(target)
+        await reject_pending_defect(
+            db, defect=target, actor=current_user, reason=(body.reason or "").strip(),
+        )
         await db.commit()
+        from app.services.cache_service import bump_analytics_epoch
+
+        await bump_analytics_epoch(project_id)
         return DefectApprovalResponse(
             defect_id=str(defect_id),
             approval_status=ActionStatus.REJECTED,
@@ -422,10 +506,33 @@ async def review_defect(
         )
 
 
-@router.get("/defects/pending-review")
+_NOT_FILED_LABELS = {
+    "offline_mode": "offline mode",
+    "disabled": "Jira integration disabled",
+    "not_configured": "Jira not configured",
+}
+
+
+def _approval_message(filing: dict) -> str:
+    """One sentence for API callers; the UI writes its own toast from ``jira_status``."""
+    status_word = filing.get("status")
+    if status_word == "filed":
+        return f"Defect approved; Jira {filing.get('jira_key')} filed."
+    if status_word == "linked":
+        return f"Defect approved; linked to the open Jira issue {filing.get('jira_key')}."
+    if status_word == "not_filed":
+        why = _NOT_FILED_LABELS.get(str(filing.get("reason")), str(filing.get("reason")))
+        return f"Defect approved; Jira not filed ({why})."
+    if status_word in ("failed", "unknown"):
+        return f"Defect approved; Jira filing failed: {filing.get('error')}"
+    return "Defect approved successfully."
+
+
+@router.get("/defects/pending-review", response_model=PendingDefectList)
 async def list_pending_defects(
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(50, ge=1, le=100, description="Items per page"),
+    project_id: Optional[str] = Query(None, description="Only this project's queue (must be accessible)"),
     current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     db: AsyncSession = Depends(get_db),
 ):
@@ -440,6 +547,11 @@ async def list_pending_defects(
     legitimately unscoped; the defect was that non-admins were unscoped too.
     ``defects.project_id`` is indexed (``ix_defects_project_id``), so the schema
     already anticipated this filter.
+
+    DEF-06: ``{items, total, page, page_size}``. ``total`` is a COUNT over the
+    same scope, not the page length, so the Inbox badge never reads
+    ``min(n, page_size)``. ``project_id`` pins one project (400 malformed, 403
+    not accessible); soft-deleted projects' defects never wait for anyone.
     """
     accessible = await get_accessible_project_ids(db, current_user)
 
@@ -448,22 +560,45 @@ async def list_pending_defects(
         # Non-admin: restrict to projects the caller actually belongs to. An
         # empty set must yield NO rows, not every row.
         stmt = stmt.where(Defect.project_id.in_(accessible))
+    if project_id:
+        pinned, _ = await resolve_project_scope(db, current_user, project_id)
+        stmt = stmt.where(Defect.project_id == pinned)
+    # Live projects only: a soft-deleted project's queue is nobody's work.
+    stmt = stmt.where(Defect.project_id.in_(select(Project.id).where(Project.is_active.is_(True))))
 
+    total = int(
+        await db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    )
     result = await db.execute(
         stmt.order_by(Defect.created_at.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
     defects = result.scalars().all()
-    return [
-        {
-            "defect_id": str(d.id),
-            "title": d.title,
-            "severity": d.severity,
-            "component": d.component,
-            "owner_team": d.owner_team,
-            "created_at": d.created_at.isoformat() if d.created_at else None,
-            "policy_reasons": (d.policy_evaluation or {}).get("policy_reasons", []),
-        }
-        for d in defects
-    ]
+    return PendingDefectList(
+        items=[_pending_item(d) for d in defects],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+def _pending_item(d: Defect) -> PendingDefectItem:
+    pe = d.policy_evaluation if isinstance(d.policy_evaluation, dict) else {}
+    key = pe.get("jira_project_key") or pe.get("requested_project_key")
+    run_id = pe.get("source_run_id") or pe.get("requested_run_id")
+    reasons = pe.get("policy_reasons") or []
+    return PendingDefectItem(
+        defect_id=str(d.id),
+        project_id=str(d.project_id),
+        title=d.title,
+        severity=d.severity,
+        component=d.component,
+        owner_team=d.owner_team,
+        created_at=d.created_at.isoformat() if d.created_at else None,
+        policy_reasons=[str(r) for r in reasons] if isinstance(reasons, list) else [],
+        jira_project_key=str(key) if key else None,
+        run_id=str(run_id) if run_id else None,
+        cluster_id=d.cluster_id,
+        ai_confidence_score=d.ai_confidence_score,
+    )

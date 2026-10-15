@@ -927,7 +927,7 @@ APP = Path(__file__).resolve().parents[1] / "app"
 
 #: Offered in the catalog with no producer yet. Remove an entry when its producer
 #: lands; the test fails if a listed event gains a producer and stays listed.
-KNOWN_UNSENT = {"defect.promoted"}
+KNOWN_UNSENT: set[str] = set()
 
 
 def _emitted_event_literals() -> set[str]:

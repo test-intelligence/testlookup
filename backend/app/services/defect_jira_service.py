@@ -29,6 +29,13 @@ Three surfaces:
   Done-category status while the signature still produced failures in the
   recent window ("closed in Jira but still failing").
 
+* **Triage + approval (DEF-01 / DEF-06)** — ``get_issue`` validates a key a
+  person links, ``transition_issue`` writes a status change back (idempotent
+  by state), ``jira_browse_url`` is the only builder of a typed key's link,
+  and ``file_issue_for_defect`` files the ticket ON an approved defect through
+  the same filing core (``_file_or_reuse``) and claim namespace as the
+  one-click create, so the two paths never file one failure twice.
+
 Transaction discipline: every function stages mutations on the injected
 session and lets the caller commit — the router handler for the create
 path, the Celery task for the sync path. ``AI_OFFLINE_MODE`` is the hard
@@ -39,8 +46,10 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import re
 import time
 import uuid as _uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, NoReturn, Optional
 
@@ -63,6 +72,7 @@ from app.models.postgres import (
     User,
 )
 from app.services import tool_call_idempotency as tci
+from app.services.defect_status import ACTIVE_STATUSES, parse_jira_key
 
 logger = structlog.get_logger("services.defect_jira")
 
@@ -539,7 +549,7 @@ async def find_open_linked_defect(
         .where(
             Defect.project_id == project_id,
             Defect.signature_fingerprint == signature,
-            Defect.resolution_status == "OPEN",
+            Defect.resolution_status.in_(ACTIVE_STATUSES),
             Defect.jira_ticket_id.isnot(None),
         )
         .order_by(Defect.created_at.desc())
@@ -619,7 +629,7 @@ async def _signature_generation(
             .where(
                 Defect.project_id == project_id,
                 Defect.signature_fingerprint == signature,
-                Defect.resolution_status != "OPEN",
+                Defect.resolution_status.notin_(ACTIVE_STATUSES),
                 Defect.jira_ticket_id.isnot(None),
             )
             .order_by(Defect.created_at.desc())
@@ -705,57 +715,48 @@ def _raise_outcome_unknown(label: str, *, cause: Optional[str] = None) -> NoRetu
     )
 
 
-# ── Create-or-link (US-6.1 step 3 + US-6.3 webhook target) ──────────────────
+@dataclass(frozen=True)
+class _Filing:
+    """What the filing core did for one signature.
 
-
-async def create_or_link_issue(
-    db: AsyncSession,
-    project_id: str,
-    actor: User,
-    *,
-    fingerprint: Optional[str] = None,
-    cluster_id: Optional[str] = None,
-    issue_type: str = "Bug",
-    jira_project_key: Optional[str] = None,
-    assignee: Optional[str] = None,
-    extra_comment: Optional[str] = None,
-    target: str = "jira",
-    confirm_not_filed: bool = False,
-) -> dict[str, Any]:
-    """One-click defect creation. Stage-only — the router handler commits.
-
-    ``target="jira"``  → dedup-or-create against the Jira REST API.
-    ``target="webhook"`` → emit ``defect.create_requested`` with the same
-    prefilled payload through the customer-managed webhook subsystem.
-
-    At most one Jira issue per signature generation, however the request ends:
-
-    * a transaction-scoped advisory lock serializes requests for one
-      signature, so a double-submit waits and then deduplicates;
-    * the filing is claimed in ``agent_action_ledger`` (E7.6 ``run_once``)
-      before the POST, so a retry after a lost outcome replays the recorded
-      issue instead of filing again;
-    * a claim whose outcome is unknown is reconciled by searching Jira for
-      the issue's ``testlookup-sig-*`` label; when nothing is found the
-      request gets a 409 and files only when retried with
-      ``confirm_not_filed=True``.
+    ``how``: ``deduplicated`` (an ACTIVE linked defect of the signature exists:
+    ``existing`` is it, its recurrence was bumped and commented), ``created``
+    (this request POSTed the issue), ``replayed`` (an earlier request's claim
+    recorded the issue) or ``reconciled`` (found in Jira by the claim label).
     """
-    pid = _uuid.UUID(str(project_id))
-    prefill = await build_prefill(
-        db, project_id, fingerprint=fingerprint, cluster_id=cluster_id,
-    )
 
-    if target == "webhook":
-        return await _emit_create_requested(
-            db, pid, actor, prefill,
-            issue_type=issue_type, extra_comment=extra_comment,
-        )
+    how: str
+    issue_key: Optional[str] = None
+    issue_url: Optional[str] = None
+    existing: Optional[Defect] = None
+    commented: bool = False
+    other_keys: tuple[str, ...] = ()
 
-    cfg = await resolve_jira_config(db)
-    reason = availability_reason(cfg)
-    if reason:
-        _raise_unavailable(reason)
 
+async def _file_or_reuse(
+    db: AsyncSession,
+    pid: _uuid.UUID,
+    actor: Any,
+    prefill: dict[str, Any],
+    cfg: dict[str, Any],
+    *,
+    jira_project_key: Optional[str],
+    issue_type: Optional[str],
+    assignee: Optional[str],
+    extra_comment: Optional[str],
+    confirm_not_filed: bool,
+    exclude_defect_id: Optional[_uuid.UUID] = None,
+) -> _Filing:
+    """The filing core shared by the one-click create and the approval path.
+
+    Lock the signature, deduplicate onto an ACTIVE linked defect, else claim
+    the filing in ``agent_action_ledger`` (namespace ``one-click:{pid}`` /
+    ``{signature}:{generation}``) and POST the issue exactly once. Both callers
+    use the SAME claim namespace, so the one-click path and approving a
+    promoted defect can never file one failure twice. Raises the same
+    ``HTTPException`` texts as before (502 never-sent / rejected, 409
+    ``jira_outcome_unknown``). Stage-only.
+    """
     signature = prefill["signature"]
 
     # Serialize creates for this signature. A double-submit waits here until
@@ -765,6 +766,8 @@ async def create_or_link_issue(
 
     # Dedup before create — never file a duplicate for a known-open defect.
     existing = await find_open_linked_defect(db, pid, signature)
+    if existing is not None and exclude_defect_id is not None and existing.id == exclude_defect_id:
+        existing = None
     if existing is not None:
         existing.recurrence_count = int(existing.recurrence_count or 0) + 1
         existing.last_recurrence_at = datetime.now(timezone.utc)
@@ -772,19 +775,13 @@ async def create_or_link_issue(
             cfg, existing.jira_ticket_id, prefill, existing.recurrence_count,
         )
         await db.flush()
-        return {
-            "target": "jira",
-            "deduplicated": True,
-            "defect_id": str(existing.id),
-            "jira_key": existing.jira_ticket_id,
-            "jira_url": existing.jira_ticket_url,
-            "external_status": existing.jira_status,
-            "recurrence_count": existing.recurrence_count,
-            "recurrence_comment_posted": commented,
-            "message": (
-                f"Linked to existing {existing.jira_ticket_id} (recurrence noted)."
-            ),
-        }
+        return _Filing(
+            how="deduplicated",
+            issue_key=existing.jira_ticket_id,
+            issue_url=existing.jira_ticket_url,
+            existing=existing,
+            commented=commented,
+        )
 
     # The filing is claimed in the ledger before Jira is called, keyed on the
     # signature and its generation, so a request whose outcome was lost (the
@@ -874,6 +871,90 @@ async def create_or_link_issue(
         # A claim recorded executed without a key is not something to guess at.
         _raise_outcome_unknown(label)
     issue_url = str(outcome.result.get("jira_url") or f"{_base_url(cfg)}/browse/{issue_key}")
+    return _Filing(
+        how=how, issue_key=issue_key, issue_url=issue_url, other_keys=tuple(other_keys),
+    )
+
+
+# ── Create-or-link (US-6.1 step 3 + US-6.3 webhook target) ──────────────────
+
+
+async def create_or_link_issue(
+    db: AsyncSession,
+    project_id: str,
+    actor: User,
+    *,
+    fingerprint: Optional[str] = None,
+    cluster_id: Optional[str] = None,
+    issue_type: str = "Bug",
+    jira_project_key: Optional[str] = None,
+    assignee: Optional[str] = None,
+    extra_comment: Optional[str] = None,
+    target: str = "jira",
+    confirm_not_filed: bool = False,
+) -> dict[str, Any]:
+    """One-click defect creation. Stage-only — the router handler commits.
+
+    ``target="jira"``  → dedup-or-create against the Jira REST API.
+    ``target="webhook"`` → emit ``defect.create_requested`` with the same
+    prefilled payload through the customer-managed webhook subsystem.
+
+    At most one Jira issue per signature generation, however the request ends:
+
+    * a transaction-scoped advisory lock serializes requests for one
+      signature, so a double-submit waits and then deduplicates;
+    * the filing is claimed in ``agent_action_ledger`` (E7.6 ``run_once``)
+      before the POST, so a retry after a lost outcome replays the recorded
+      issue instead of filing again;
+    * a claim whose outcome is unknown is reconciled by searching Jira for
+      the issue's ``testlookup-sig-*`` label; when nothing is found the
+      request gets a 409 and files only when retried with
+      ``confirm_not_filed=True``.
+    """
+    pid = _uuid.UUID(str(project_id))
+    prefill = await build_prefill(
+        db, project_id, fingerprint=fingerprint, cluster_id=cluster_id,
+    )
+
+    if target == "webhook":
+        return await _emit_create_requested(
+            db, pid, actor, prefill,
+            issue_type=issue_type, extra_comment=extra_comment,
+        )
+
+    cfg = await resolve_jira_config(db)
+    reason = availability_reason(cfg)
+    if reason:
+        _raise_unavailable(reason)
+
+    signature = prefill["signature"]
+    filing = await _file_or_reuse(
+        db, pid, actor, prefill, cfg,
+        jira_project_key=jira_project_key,
+        issue_type=issue_type,
+        assignee=assignee,
+        extra_comment=extra_comment,
+        confirm_not_filed=confirm_not_filed,
+    )
+    if filing.existing is not None:
+        existing = filing.existing
+        return {
+            "target": "jira",
+            "deduplicated": True,
+            "defect_id": str(existing.id),
+            "jira_key": existing.jira_ticket_id,
+            "jira_url": existing.jira_ticket_url,
+            "external_status": existing.jira_status,
+            "recurrence_count": existing.recurrence_count,
+            "recurrence_comment_posted": filing.commented,
+            "message": (
+                f"Linked to existing {existing.jira_ticket_id} (recurrence noted)."
+            ),
+        }
+    how = filing.how
+    issue_key = filing.issue_key or ""
+    issue_url = filing.issue_url or f"{_base_url(cfg)}/browse/{issue_key}"
+    other_keys = list(filing.other_keys)
 
     # Attach to the newest failing TestCase when we have a fingerprint so
     # the defect shows up on /defects (its list JOINs test_cases).
@@ -901,7 +982,7 @@ async def create_or_link_issue(
                 await db.execute(
                     select(Defect.id).where(
                         Defect.test_case_id == tc_row[0],
-                        Defect.resolution_status == "OPEN",
+                        Defect.resolution_status.in_(ACTIVE_STATUSES),
                     )
                 )
             ).first()
@@ -1025,6 +1106,338 @@ async def _emit_create_requested(
             )
         ),
     }
+
+
+# ── Triage: link validation + status write-back (DEF-01) ─────────────────────
+
+#: The Jira status CATEGORY each TestLookup status maps to. A write-back moves
+#: the issue to the first transition into that category, and is idempotent by
+#: state: an issue already in the category is skipped (no ledger claim, D-4).
+TARGET_CATEGORY: dict[str, str] = {
+    "OPEN": "new",
+    "IN_PROGRESS": "indeterminate",
+    "RESOLVED": "done",
+    "INVALID": "done",
+}
+
+# A bare host, optionally with a port: no scheme, no path, no userinfo.
+_JIRA_HOST_RE = re.compile(r"^[A-Za-z0-9.-]+(:[0-9]{1,5})?$")
+
+
+def jira_browse_url(cfg: dict[str, Any], key: str) -> Optional[str]:
+    """``https://{configured domain}/browse/{KEY}``, or ``None``.
+
+    The ONLY way a Jira link is built for a key a person typed: no request
+    accepts a URL. ``domain`` loses an ``https://`` prefix and a trailing
+    ``/``; anything that is still not a bare host (a path, another scheme,
+    userinfo) gives ``None``, as does an empty domain or a non-key.
+    """
+    issue_key = parse_jira_key(key) if isinstance(key, str) else None
+    if issue_key is None:
+        return None
+    domain = str((cfg or {}).get("domain") or "").strip()
+    if domain.lower().startswith("https://"):
+        domain = domain[len("https://"):]
+    domain = domain.rstrip("/")
+    if not domain or not _JIRA_HOST_RE.match(domain):
+        return None
+    return f"https://{domain}/browse/{issue_key}"
+
+
+async def get_issue(cfg: dict[str, Any], key: str) -> dict[str, Any]:
+    """Look an issue up before linking it: ``{key, status, status_category, summary}``.
+
+    404 is the person's mistake (422 ``Jira has no issue {KEY}.``); any other
+    HTTP error, or no answer, is a 502 that saves nothing (D-5). The texts name
+    the exception CLASS only: no URL, no token.
+    """
+    try:
+        resp = await _jira_get(
+            cfg, f"/rest/api/3/issue/{key}", params={"fields": "status,summary"},
+        )
+    except Exception as exc:
+        logger.warning("jira_issue_lookup_failed", issue_key=key, error_type=type(exc).__name__)
+        raise HTTPException(status_code=502, detail=f"Could not reach Jira: {type(exc).__name__}")
+    if resp.status_code == 404:
+        raise HTTPException(status_code=422, detail=f"Jira has no issue {key}.")
+    if resp.status_code >= 400:
+        raise HTTPException(
+            status_code=502, detail=f"Jira answered HTTP {resp.status_code} for {key}.",
+        )
+    try:
+        body = resp.json() or {}
+        fields = body.get("fields") or {}
+        status_obj = fields.get("status") or {}
+        category = ((status_obj.get("statusCategory") or {}).get("key") or "").lower()
+        summary = fields.get("summary")
+        return {
+            "key": str(body.get("key") or key),
+            "status": (str(status_obj["name"])[:50] if status_obj.get("name") else None),
+            "status_category": category or None,
+            "summary": (str(summary) if summary is not None else None),
+        }
+    except Exception as exc:
+        logger.warning("jira_issue_lookup_unreadable", issue_key=key, error_type=type(exc).__name__)
+        raise HTTPException(
+            status_code=502, detail=f"Jira answered HTTP {resp.status_code} for {key}.",
+        )
+
+
+def _category_of(payload: Any) -> str:
+    status_obj = ((payload or {}).get("fields") or {}).get("status") or {}
+    return str((status_obj.get("statusCategory") or {}).get("key") or "").lower()
+
+
+async def transition_issue(cfg: dict[str, Any], key: str, target_status: str) -> dict[str, Any]:
+    """Move a linked issue to the category of ``target_status``. NEVER raises.
+
+    ``{"status": "sent" | "skipped" | "failed", "reason": str | None}``. Read
+    the issue's category first: already there → ``skipped / already_in_status``
+    (so a re-run after a lost answer does nothing); no transition into the
+    category → ``skipped / no_transition``; the POST's ``HTTP {code}`` or the
+    exception CLASS → ``failed``. Called only after the router's commit.
+    """
+    try:
+        category = TARGET_CATEGORY[target_status]
+        current = await _jira_get(cfg, f"/rest/api/3/issue/{key}", params={"fields": "status"})
+        if current.status_code >= 400:
+            logger.warning(
+                "jira_transition_failed", issue_key=key, target=target_status,
+                status_code=current.status_code,
+            )
+            return {"status": "failed", "reason": f"HTTP {current.status_code}"}
+        if _category_of(current.json()) == category:
+            logger.info(
+                "jira_transition_skipped", issue_key=key, target=target_status,
+                reason="already_in_status",
+            )
+            return {"status": "skipped", "reason": "already_in_status"}
+
+        listed = await _jira_get(cfg, f"/rest/api/3/issue/{key}/transitions")
+        if listed.status_code >= 400:
+            logger.warning(
+                "jira_transition_failed", issue_key=key, target=target_status,
+                status_code=listed.status_code,
+            )
+            return {"status": "failed", "reason": f"HTTP {listed.status_code}"}
+        transitions = (listed.json() or {}).get("transitions") or []
+        chosen = next(
+            (
+                t for t in transitions
+                if str(((t.get("to") or {}).get("statusCategory") or {}).get("key") or "").lower()
+                == category
+                and t.get("id") is not None
+            ),
+            None,
+        )
+        if chosen is None:
+            logger.info(
+                "jira_transition_skipped", issue_key=key, target=target_status,
+                reason="no_transition",
+            )
+            return {"status": "skipped", "reason": "no_transition"}
+
+        posted = await _jira_post(
+            cfg, f"/rest/api/3/issue/{key}/transitions",
+            {"transition": {"id": str(chosen["id"])}},
+        )
+        if posted.status_code >= 400:
+            logger.warning(
+                "jira_transition_failed", issue_key=key, target=target_status,
+                status_code=posted.status_code,
+            )
+            return {"status": "failed", "reason": f"HTTP {posted.status_code}"}
+        logger.info("jira_transition_sent", issue_key=key, target=target_status)
+        return {"status": "sent", "reason": None}
+    except Exception as exc:  # noqa: BLE001 — the saved status stands whatever Jira does
+        logger.warning(
+            "jira_transition_failed", issue_key=key, target=target_status,
+            error_type=type(exc).__name__,
+        )
+        return {"status": "failed", "reason": type(exc).__name__}
+
+
+# ── Approval filing (DEF-06) ─────────────────────────────────────────────────
+
+NO_SIGNATURE_DETAIL = "This defect names no failing test or cluster to file."
+
+
+async def _prefill_for_defect(db: AsyncSession, defect: Defect) -> Optional[dict[str, Any]]:
+    """The filing payload for an EXISTING defect, or ``None`` when it names nothing.
+
+    Signature: the defect's own ``signature_fingerprint``, else its test
+    case's ``test_fingerprint`` (read through the run, scoped to the defect's
+    project), else the cluster signature ``build_prefill(cluster_id=…)`` gives.
+    The ticket text is the prefill's evidence with the defect's own (reviewed)
+    title as the summary; its description travels as the extra comment.
+    """
+    pid = defect.project_id
+    fingerprint: Optional[str] = None
+    if defect.test_case_id is not None:
+        row = (
+            await db.execute(
+                select(TestCase.test_fingerprint)
+                .join(TestRun, TestCase.test_run_id == TestRun.id)
+                .where(TestCase.id == defect.test_case_id, TestRun.project_id == pid)
+                .limit(1)
+            )
+        ).first()
+        fingerprint = row[0] if row is not None and row[0] else None
+
+    prefill: Optional[dict[str, Any]] = None
+    if fingerprint:
+        try:
+            prefill = await build_prefill(db, str(pid), fingerprint=fingerprint)
+        except HTTPException:
+            prefill = None
+    if prefill is None and defect.cluster_id:
+        try:
+            prefill = await build_prefill(db, str(pid), cluster_id=defect.cluster_id)
+        except HTTPException:
+            prefill = None
+
+    signature = defect.signature_fingerprint or fingerprint or (prefill or {}).get("signature")
+    if not signature:
+        return None
+    if prefill is None:
+        prefill = {
+            "summary": "",
+            "description": defect.description or "",
+            "error_message": None,
+            "occurrences": {"first_seen": None, "last_seen": None, "failing_runs": 0},
+            "context": {},
+            "ai_analysis": None,
+            "deep_link": f"{settings.public_base_url}/defects?defect={defect.id}",
+        }
+    prefill = {**prefill, "signature": str(signature)[:64]}
+    if defect.title:
+        prefill["summary"] = " ".join(f"[TestLookup] {defect.title}".split())[:255]
+    elif not prefill.get("summary"):
+        prefill["summary"] = f"[TestLookup] defect {str(defect.id)[:8]}"
+    return prefill
+
+
+def _filing_detail_text(detail: Any) -> str:
+    if isinstance(detail, dict):
+        return str(detail.get("message") or detail.get("code") or detail)[:500]
+    return str(detail)[:500]
+
+
+async def file_issue_for_defect(
+    db: AsyncSession,
+    defect: Defect,
+    actor: Any,
+    *,
+    jira_project_key: Optional[str],
+    issue_type: str = "Bug",
+) -> dict[str, Any]:
+    """File (or link) the Jira issue ON an approved defect. NEVER raises ``HTTPException``.
+
+    Unlike ``create_or_link_issue`` it creates no Defect row: the key lands on
+    ``defect`` itself. Returns ``{"status", "reason", "error", "jira_key",
+    "jira_url"}`` with ``status``:
+
+    * ``not_filed`` — Jira is unavailable (``reason``: the availability reason);
+      no HTTP call is made;
+    * ``linked`` — the defect was already linked, or an ACTIVE linked twin of
+      the same signature exists (its key, URL and status are copied here,
+      ``duplicate_of`` = the twin, the twin's recurrence bumped), or an earlier
+      request's claim had filed it;
+    * ``filed`` — this call POSTed a new issue;
+    * ``failed`` / ``unknown`` — Jira refused it, or did not confirm (the
+      ``jira_outcome_unknown`` 409), with the server's text in ``error``.
+
+    Always records ``policy_evaluation["jira_filing"] = {status, reason, at}``
+    and flushes. Stage-only: the review route commits (after it has already
+    committed the approval itself, so a failing Jira never undoes it).
+    """
+    now = datetime.now(timezone.utc)
+    result: dict[str, Any] = {
+        "status": "failed", "reason": None, "error": None, "jira_key": None, "jira_url": None,
+    }
+    try:
+        cfg = await resolve_jira_config(db)
+        reason = availability_reason(cfg)
+        if reason:
+            result = {**result, "status": "not_filed", "reason": reason}
+        elif defect.jira_ticket_id:
+            # Linked by hand before the approval: nothing to file.
+            defect.approval_status = "executed"
+            result = {
+                **result, "status": "linked",
+                "jira_key": defect.jira_ticket_id, "jira_url": defect.jira_ticket_url,
+            }
+        else:
+            prefill = await _prefill_for_defect(db, defect)
+            if prefill is None:
+                result = {**result, "status": "failed", "error": NO_SIGNATURE_DETAIL}
+            else:
+                try:
+                    filing = await _file_or_reuse(
+                        db, defect.project_id, actor, prefill, cfg,
+                        jira_project_key=(jira_project_key or "").strip() or None,
+                        issue_type=issue_type,
+                        assignee=None,
+                        extra_comment=(defect.description or None),
+                        confirm_not_filed=False,
+                        exclude_defect_id=defect.id,
+                    )
+                except HTTPException as exc:
+                    outcome_unknown = (
+                        isinstance(exc.detail, dict)
+                        and exc.detail.get("code") == "jira_outcome_unknown"
+                    )
+                    result = {
+                        **result,
+                        "status": "unknown" if outcome_unknown else "failed",
+                        "error": _filing_detail_text(exc.detail),
+                    }
+                else:
+                    if filing.existing is not None:
+                        twin = filing.existing
+                        defect.jira_ticket_id = twin.jira_ticket_id
+                        defect.jira_ticket_url = twin.jira_ticket_url
+                        defect.jira_status = twin.jira_status
+                        defect.duplicate_of = twin.id
+                        status = "linked"
+                    else:
+                        defect.jira_ticket_id = filing.issue_key
+                        defect.jira_ticket_url = jira_browse_url(cfg, filing.issue_key or "")
+                        defect.jira_status = "Open"
+                        status = "filed" if filing.how == "created" else "linked"
+                    defect.external_status_at = now
+                    defect.external_status_conflict = False
+                    if not defect.signature_fingerprint:
+                        defect.signature_fingerprint = prefill["signature"]
+                    defect.approval_status = "executed"
+                    result = {
+                        **result, "status": status,
+                        "jira_key": defect.jira_ticket_id, "jira_url": defect.jira_ticket_url,
+                    }
+    except Exception as exc:  # noqa: BLE001 — the approval is already committed
+        logger.warning(
+            "jira_filing_on_approval_error",
+            defect_id=str(defect.id), error_type=type(exc).__name__,
+        )
+        result = {**result, "status": "failed", "error": type(exc).__name__}
+
+    defect.policy_evaluation = {
+        **(defect.policy_evaluation or {}),
+        "jira_filing": {
+            "status": result["status"],
+            "reason": result["reason"] or result["error"],
+            "at": now.isoformat(),
+        },
+    }
+    await db.flush()
+    logger.info(
+        "jira_filing_on_approval",
+        defect_id=str(defect.id), project_id=str(defect.project_id),
+        status=result["status"], reason=result["reason"],
+        issue_key=result["jira_key"],
+        actor_id=str(getattr(actor, "id", None)),
+    )
+    return result
 
 
 # ── Metadata for the dialog pickers (US-6.1 step 4) ─────────────────────────
@@ -1193,7 +1606,7 @@ async def sync_external_statuses(
             select(Defect)
             .where(
                 Defect.jira_ticket_id.isnot(None),
-                Defect.resolution_status == "OPEN",
+                Defect.resolution_status.in_(ACTIVE_STATUSES),
             )
             .order_by(Defect.external_status_at.asc().nullsfirst())
             .limit(max(1, cap))

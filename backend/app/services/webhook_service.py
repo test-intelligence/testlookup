@@ -68,7 +68,12 @@ _MAX_WEBHOOK_DISPATCH_ATTEMPTS = 8
 
 SUPPORTED_EVENTS: dict[str, str] = {
     "run.completed": "Fired after a test run has finished ingestion and post-processing.",
-    "defect.promoted": "Fired when a failure cluster is promoted into a defect with a ticket link.",
+    "defect.promoted": (
+        "Fired when a promoted defect takes effect: on promotion when no approval "
+        "is needed, or when a QA lead approves it in Inbox › Approvals. data: "
+        "defect_id, project_id, cluster_id, run_id, title, severity, jira_key and "
+        "jira_url (null until a ticket exists), approval_status, deep_link, promoted_at."
+    ),
     "defect.create_requested": (
         "Fired when a user files a one-click defect with target=\"webhook\" "
         "(US-6.3 — Jira-less fallback). data carries the full prefilled ticket: "
