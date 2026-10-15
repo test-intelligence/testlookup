@@ -5911,8 +5911,8 @@ class ProjectLlmQuota(Base):
     # Dollars included in the plan per period (what the customer pre-paid for).
     included_usd: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
 
-    # Overage rate charged per dollar above ``included_usd``. Used purely for
-    # display on the billing dashboard — the gate does not use it.
+    # Billing-dashboard figure (overage_usd x this = charge, AIC-06:
+    # ``llm_cost_budget.overage_figures``); never enforced.
     overage_rate_usd: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
 
     # The absolute ceiling. Below ``hard_cap_usd`` the ``at_cap_action`` may

@@ -97,9 +97,16 @@ def harness(monkeypatch):
     monkeypatch.setattr(router, "record_activity", AsyncMock())
     monkeypatch.setattr(router, "ActorRef", SimpleNamespace(from_user=lambda _u: "actor"))
     monkeypatch.setattr(router, "_current_mode_snapshot", AsyncMock(return_value={}))
+    monkeypatch.setattr(router, "_current_ai_config", AsyncMock(return_value={}))
     original_config_changed = router._invocation_config_changed
     monkeypatch.setattr(router, "_invocation_config_changed", AsyncMock(return_value=False))
-    monkeypatch.setattr(router, "decide_retry_mode", lambda _meta, _snap: SimpleNamespace(is_rerun=False, reason="config_unchanged"))
+    retry_calls: list = []
+
+    def _decide(meta, snap, current_ai_config=None):
+        retry_calls.append(current_ai_config)
+        return SimpleNamespace(is_rerun=False, reason="config_unchanged")
+
+    monkeypatch.setattr(router, "decide_retry_mode", _decide)
 
     def _use(db):
         holder["db"] = db
@@ -111,6 +118,7 @@ def harness(monkeypatch):
         dispatched=dispatched,
         use=_use,
         original_config_changed=original_config_changed,
+        retry_calls=retry_calls,
     )
 
 
@@ -216,7 +224,7 @@ async def test_retry_is_refused_by_the_pipeline_rules(harness, pipeline_fields, 
 @pytest.mark.asyncio
 async def test_retry_is_refused_when_the_configuration_changed(harness, monkeypatch):
     monkeypatch.setattr(
-        harness.router, "decide_retry_mode", lambda _m, _s: SimpleNamespace(is_rerun=True, reason="config_changed"),
+        harness.router, "decide_retry_mode", lambda _m, _s, current_ai_config=None: SimpleNamespace(is_rerun=True, reason="config_changed"),
     )
     invocation = _invocation()
     db = harness.use(_Db(invocation=invocation, pipeline=_pipeline(invocation)))
@@ -307,6 +315,9 @@ async def test_retry_resumes_the_same_run_after_the_commit(harness):
     assert "FOR UPDATE" in str(pipeline_select)
     activity = harness.router.record_activity.await_args.kwargs
     assert activity["event_type"] == "analysis.retried" and activity["context"]["mode"] == "resume"
+    # W04 §1.3: the live threshold / timeout go to the resume-or-rerun decision, as on /agents/pipelines.
+    assert harness.retry_calls == [{}]
+    harness.router._current_ai_config.assert_awaited_once_with(db)
 
 
 @pytest.mark.asyncio

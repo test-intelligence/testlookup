@@ -444,6 +444,8 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/search/similar/{test_case_id}` | Find Similar Failures | [Search](api/search.md) |
 | GET | `/api/v1/settings/ai` | Get Ai Config | [Settings](api/settings.md) |
 | PUT | `/api/v1/settings/ai` | Update Ai Config | [Settings](api/settings.md) |
+| POST | `/api/v1/settings/ai/ml/retrain` | Retrain Ml Classifier | [AI Settings](api/ai-settings.md) |
+| GET | `/api/v1/settings/ai/ml/status` | Get Ml Status | [AI Settings](api/ai-settings.md) |
 | GET | `/api/v1/settings/ai/mode` | Get Ai Mode | [Settings](api/settings.md) |
 | GET | `/api/v1/settings/ai/model-status` | Get Ai Model Status | [Settings](api/settings.md) |
 | GET | `/api/v1/settings/audit-log` | Get Audit Log | [Settings](api/settings.md) |
@@ -588,4 +590,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **579 HTTP operations**, **488 paths**, **83 domain pages**.
+Total: **581 HTTP operations**, **490 paths**, **84 domain pages**.

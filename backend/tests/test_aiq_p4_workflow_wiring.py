@@ -4,8 +4,8 @@ Wiring coverage for the AIQ-P4 deep-graph integration.
 Verifies the deterministic facts the reviewers checked by inspecting topology
 and node-function behavior rather than running a full DB-backed graph:
 
-  * The deep graph's node + edge sets are identical whether
-    ``AIQ_GAP_REFINEMENT_ENABLED`` is on or off — the flag gates *behavior*
+  * The deep graph's node + edge sets are identical whether the
+    ``aiq_gap_refinement`` flag is on or off — the flag gates *behavior*
     inside the nodes, never the topology.
   * The two new stages and the triage -> gap_detection -> report_refinement ->
     flaky_sentinel chain are present.
@@ -16,9 +16,12 @@ and node-function behavior rather than running a full DB-backed graph:
     _DEEP_STAGES (agent_planner) list the two new stages.
 
 DB-free: graph topology is pure structure; node functions are called directly
-with a minimal state. The flag is toggled via monkeypatch on ``settings`` and
-the agent singletons' DB/broadcast side-effects are stubbed with AsyncMock so
-the ON path exercises the real analytic logic without touching a database.
+with a minimal state. W04 AGT-16: the flag is the per-project
+``aiq_gap_refinement`` value frozen into ``state["gap_refinement_enabled"]``;
+the legacy env setting is set to the OPPOSITE value in every node test to pin
+that the nodes no longer read it. The agent singletons' DB/broadcast
+side-effects are stubbed with AsyncMock so the ON path exercises the real
+analytic logic without touching a database.
 """
 from __future__ import annotations
 
@@ -63,7 +66,11 @@ def _minimal_state(**overrides):
 
 
 def test_deep_graph_topology_is_identical_regardless_of_flag(monkeypatch):
-    """Node set + edge set must be equal whether the flag is off or on."""
+    """Node set + edge set must be equal whether the flag is off or on.
+
+    The flag lives in the pipeline STATE now, so no build input can carry it;
+    the legacy env switch is flipped to show it does not reach the topology.
+    """
     monkeypatch.setattr(settings, "AIQ_GAP_REFINEMENT_ENABLED", False)
     nodes_off, edges_off = _topology(wf._build_deep_graph())
 
@@ -133,12 +140,15 @@ async def test_gap_detection_node_skips_when_flag_off(monkeypatch):
     """Flag off -> skip delta (completed + skipped include the stage), no
     gap_report populated, and the agent's validate_agent_contract is NOT called.
     """
-    monkeypatch.setattr(settings, "AIQ_GAP_REFINEMENT_ENABLED", False)
+    # The legacy env switch says ON; the frozen project flag says OFF and wins.
+    monkeypatch.setattr(settings, "AIQ_GAP_REFINEMENT_ENABLED", True)
+    skipped = AsyncMock()
+    monkeypatch.setattr(wf, "_write_stage_skipped", skipped)
 
     sentinel = AsyncMock(side_effect=AssertionError("agent must not run when flag off"))
     monkeypatch.setattr(wf._gap_detection, "run", sentinel)
 
-    result = await wf.gap_detection_node(_minimal_state())
+    result = await wf.gap_detection_node(_minimal_state(gap_refinement_enabled=False))
 
     assert "gap_detection" in result["completed_stages"]
     assert "gap_detection" in result["skipped_stages"]
@@ -146,16 +156,23 @@ async def test_gap_detection_node_skips_when_flag_off(monkeypatch):
     assert "gap_report" not in result
     assert "agent_contracts" not in result
     sentinel.assert_not_called()
+    reason = skipped.await_args.kwargs["skipped_reason"]
+    assert reason == (
+        "aiq_gap_refinement feature flag is off for this project — gap detection not run"
+    )
 
 
 @pytest.mark.asyncio
 async def test_report_refinement_node_skips_when_flag_off(monkeypatch):
     """Flag off -> skip delta, no refined_report, agent never runs."""
-    monkeypatch.setattr(settings, "AIQ_GAP_REFINEMENT_ENABLED", False)
+    monkeypatch.setattr(settings, "AIQ_GAP_REFINEMENT_ENABLED", True)
+    skipped = AsyncMock()
+    monkeypatch.setattr(wf, "_write_stage_skipped", skipped)
 
     sentinel = AsyncMock(side_effect=AssertionError("agent must not run when flag off"))
     monkeypatch.setattr(wf._report_refinement, "run", sentinel)
 
+    # A state without the field (a pre-W04 harness) is OFF, never the env value.
     result = await wf.report_refinement_node(_minimal_state())
 
     assert "report_refinement" in result["completed_stages"]
@@ -164,6 +181,9 @@ async def test_report_refinement_node_skips_when_flag_off(monkeypatch):
     assert "refined_report" not in result
     assert "agent_contracts" not in result
     sentinel.assert_not_called()
+    reason = skipped.await_args.kwargs["skipped_reason"]
+    assert "feature flag is off for this project" in reason
+    assert reason.endswith("report refinement not run")
 
 
 # ── Flag ON: nodes run the agent and populate the report ──────────────────────
@@ -172,12 +192,13 @@ async def test_report_refinement_node_skips_when_flag_off(monkeypatch):
 @pytest.mark.asyncio
 async def test_gap_detection_node_runs_agent_when_flag_on(monkeypatch):
     """Flag on -> the agent runs and populates gap_report (no skip marker)."""
-    monkeypatch.setattr(settings, "AIQ_GAP_REFINEMENT_ENABLED", True)
+    # The legacy env switch says OFF; the frozen project flag says ON and wins.
+    monkeypatch.setattr(settings, "AIQ_GAP_REFINEMENT_ENABLED", False)
     monkeypatch.setattr(wf._gap_detection, "mark_stage_running", AsyncMock())
     monkeypatch.setattr(wf._gap_detection, "mark_stage_done", AsyncMock())
     monkeypatch.setattr(wf._gap_detection, "broadcast_progress", AsyncMock())
 
-    result = await wf.gap_detection_node(_minimal_state())
+    result = await wf.gap_detection_node(_minimal_state(gap_refinement_enabled=True))
 
     assert "gap_report" in result
     assert "skipped_stages" not in result
@@ -188,7 +209,7 @@ async def test_gap_detection_node_runs_agent_when_flag_on(monkeypatch):
 @pytest.mark.asyncio
 async def test_report_refinement_node_runs_agent_when_flag_on(monkeypatch):
     """Flag on -> the agent runs and populates refined_report (no skip marker)."""
-    monkeypatch.setattr(settings, "AIQ_GAP_REFINEMENT_ENABLED", True)
+    monkeypatch.setattr(settings, "AIQ_GAP_REFINEMENT_ENABLED", False)
     monkeypatch.setattr(wf._report_refinement, "mark_stage_running", AsyncMock())
     monkeypatch.setattr(wf._report_refinement, "mark_stage_done", AsyncMock())
     monkeypatch.setattr(wf._report_refinement, "broadcast_progress", AsyncMock())
@@ -197,6 +218,7 @@ async def test_report_refinement_node_runs_agent_when_flag_on(monkeypatch):
         analyses={"a": {"failure_category": "PRODUCT_BUG"}},
         anomalies=[{"test_ids": ["a"]}],
         cluster_map={"a": "cluster-1"},
+        gap_refinement_enabled=True,
     )
     result = await wf.report_refinement_node(state)
 

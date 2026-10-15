@@ -15,6 +15,11 @@ from app.services.category_normalizer import VALID_CATEGORIES  # noqa: E402
 
 
 class TestAnalysisAgentFallbacks:
+    def test_build_timeout_analysis_names_the_timeout_that_expired(self):
+        """W04 AIC-02: the message carries the frozen timeout, not the env value."""
+        agent = AnalysisAgent()
+        assert "timed out after 5s" in agent._build_timeout_analysis(5)["root_cause_summary"]
+
     def test_build_timeout_analysis_sets_expected_flags(self):
         agent = AnalysisAgent()
 

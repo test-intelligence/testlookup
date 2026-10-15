@@ -248,9 +248,9 @@ async def _call_llm_generate(prompt: str, config: Optional[dict], *, project_id:
     ``config`` may contain ``test_type``, ``priority``, ``count`` or
     other generation preferences — appended as instructions when present.
 
-    The LLM call is wrapped in ``asyncio.wait_for`` with a timeout derived
-    from ``AI_TIMEOUT_SECONDS`` (default 90 s) so a slow or unreachable
-    Ollama instance cannot hang the request beyond the Axios budget.
+    The LLM call is wrapped in ``asyncio.wait_for`` with the Settings > AI
+    "Timeout (seconds)" (AIC-02: the live effective value, DB over env) so a
+    slow or unreachable Ollama instance cannot hang the request beyond it.
     """
     effective_prompt = prompt
     if config:
@@ -264,7 +264,9 @@ async def _call_llm_generate(prompt: str, config: Optional[dict], *, project_id:
         if extras:
             effective_prompt = prompt + "\n\n" + " ".join(extras)
 
-    llm_timeout = getattr(settings, "AI_TIMEOUT_SECONDS", 90)
+    from app.services.llm_factory import live_llm_timeout_seconds
+
+    llm_timeout = await live_llm_timeout_seconds()
 
     try:
         from app.services.test_case_ai_agent import ai_generate_test_cases

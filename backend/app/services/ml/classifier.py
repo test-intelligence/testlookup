@@ -68,11 +68,17 @@ class MLClassifier:
         }
 
     @staticmethod
-    def classify(features: dict[str, float]) -> dict[str, Any]:
+    def classify(
+        features: dict[str, float],
+        *,
+        confidence_threshold: int | None = None,
+    ) -> dict[str, Any]:
         """Classify a single test case from its feature vector.
 
         Args:
             features: Dict of 31 numeric features from feature_extractor.
+            confidence_threshold: the review gate. Default: the threshold the
+                running pipeline froze (W04 AIC-03), else the env default.
 
         Returns:
             Dict matching AIAnalysis shape with failure_category,
@@ -107,7 +113,11 @@ class MLClassifier:
         # Use second-highest probability as uncertainty indicator
         sorted_probs = sorted(probabilities, reverse=True)
         uncertainty = sorted_probs[1] / sorted_probs[0] if sorted_probs[0] > 0 else 1.0
-        needs_review = confidence < settings.AI_CONFIDENCE_THRESHOLD or uncertainty > 0.7
+        if confidence_threshold is None:
+            from app.services.pipeline_ai_scope import current_confidence_threshold
+
+            confidence_threshold = current_confidence_threshold()[0]
+        needs_review = confidence < confidence_threshold or uncertainty > 0.7
 
         return {
             "root_cause_summary": _generate_summary(predicted_category, confidence, features),

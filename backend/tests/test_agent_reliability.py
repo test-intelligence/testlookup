@@ -374,34 +374,60 @@ class TestClusterValidation:
 
 class TestWatchmanLLMTimeout:
     @pytest.mark.asyncio
-    async def test_llm_classify_returns_empty_on_timeout(self):
-        """_llm_classify should return {} when LLM times out, not hang."""
+    async def test_llm_classify_returns_empty_on_timeout(self, monkeypatch):
+        """_llm_classify returns {} when the LLM times out, instead of hanging.
+
+        AIC-02: the timeout is a per-run parameter (the frozen Settings > AI
+        value, capped at 90 s), not a module constant. The call goes through
+        the REAL BudgetedLLM over a model that never answers; before, a
+        MagicMock get_llm made ``await get_llm()`` raise TypeError and offline
+        mode returned early, so the test passed without ever timing out.
+        """
         import asyncio
-        from unittest.mock import MagicMock
+        import time
 
-        agent = RegressionWatchman()
-        mock_llm = MagicMock()
-
-        async def _slow_invoke(*args, **kwargs):
-            await asyncio.sleep(9999)
-
-        mock_llm.ainvoke = _slow_invoke
+        from langchain_core.language_models import FakeListChatModel
 
         import app.agents.regression_watchman as rwm
-        original_get_llm = rwm.get_llm
-        rwm.get_llm = lambda **kwargs: mock_llm
-        rwm._LLM_CLASSIFY_TIMEOUT = 0.1  # Very short timeout for test
+        from app.services import llm_circuit_breaker, llm_cost_reservation as cost
+        from app.services.llm_factory import BudgetedLLM
 
-        try:
-            result = await agent._llm_classify(
-                uncertain={"cl_1": {"classification": "new_regression", "confidence": 40}},
-                all_clusters=[{"cluster_id": "cl_1", "member_test_ids": ["t1"], "label": "test"}],
-                history={"cl_1": {"seen_in_baseline": False}},
-            )
-            assert result == {}
-        finally:
-            rwm.get_llm = original_get_llm
-            rwm._LLM_CLASSIFY_TIMEOUT = min(90, settings.AI_TIMEOUT_SECONDS)
+        class _NeverAnswers(FakeListChatModel):
+            calls: int = 0
+
+            async def ainvoke(self, *args, **kwargs):
+                self.calls += 1
+                await asyncio.sleep(9999)
+
+        async def _nothing(*_args, **_kwargs):
+            return None
+
+        monkeypatch.setattr(settings, "AI_OFFLINE_MODE", False)
+        monkeypatch.setattr(settings, "LLM_CLUSTER_MAX_CONCURRENT", 0)
+        monkeypatch.setattr(llm_circuit_breaker, "require_available", _nothing)
+        monkeypatch.setattr(
+            llm_circuit_breaker.LLMCircuitBreaker, "record_failure", staticmethod(_nothing)
+        )
+        monkeypatch.setattr(cost, "reserve", _nothing)
+        monkeypatch.setattr(cost, "settle", _nothing)
+        inner = _NeverAnswers(responses=["{}"])
+        llm = BudgetedLLM(inner, provider="ollama", model="slow")
+
+        async def _get_llm(**_kwargs):
+            return llm
+
+        monkeypatch.setattr(rwm, "get_llm", _get_llm)
+
+        started = time.monotonic()
+        result = await RegressionWatchman()._llm_classify(
+            uncertain={"cl_1": {"classification": "new_regression", "confidence": 40}},
+            all_clusters=[{"cluster_id": "cl_1", "member_test_ids": ["t1"], "label": "test"}],
+            history={"cl_1": {"seen_in_baseline": False}},
+            timeout=0.1,
+        )
+        assert result == {}
+        assert inner.calls == 1, "the provider must actually have been called"
+        assert time.monotonic() - started < 5
 
 
 # ============================================================================

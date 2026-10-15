@@ -588,8 +588,21 @@ async def get_training_status(db: AsyncSession, settings) -> dict:
             "but no trained model is present yet"
         )
 
+    # AIC-01: the EFFECTIVE fine-tuning switch (Settings > AI over env, the
+    # value the training tasks obey) and where it came from; it used to report
+    # the env flag only, so ticking the box changed nothing here. Read through
+    # the request session (a cache miss never opens a second one).
+    from app.services.ai_config_resolver import SOURCE_ENV_DEFAULT, get_effective_ai_config
+
+    ai_cfg = await get_effective_ai_config(db=db)
+    finetune_enabled = ai_cfg.get("finetune_enabled")
+    if not isinstance(finetune_enabled, bool):
+        finetune_enabled = bool(settings.FINETUNE_ENABLED)
+    finetune_source = str(ai_cfg.get("finetune_enabled_source") or SOURCE_ENV_DEFAULT)
+
     return {
-        "finetune_enabled": settings.FINETUNE_ENABLED,
+        "finetune_enabled": finetune_enabled,
+        "finetune_enabled_source": finetune_source,
         "feedback": {"total": total, "unexported": unexported},
         "ml_activation": {
             "labelled_corrections": labelled,

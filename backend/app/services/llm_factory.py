@@ -114,6 +114,7 @@ class BudgetedLLM:
         model: str = "unknown",
         base_url: str | None = None,
         connect_retries: int = 0,
+        default_timeout_seconds: float | None = None,
     ):
         self._inner = inner
         self._provider = provider
@@ -126,6 +127,36 @@ class BudgetedLLM:
         # wall clock by the retry count). Clients with native retries get
         # AI_MAX_RETRIES through their own ``max_retries`` instead.
         self._connect_retries = max(0, int(connect_retries or 0))
+        # AIC-02: the Settings > AI "Timeout (seconds)" in force when the model
+        # was built (``get_llm`` stamps the frozen pipeline value, else the
+        # live effective config). It bounds EVERY provider call made through
+        # this wrapper, so a call site without its own ``wait_for`` is bounded
+        # too. ``None`` = unbounded (a wrapper built by hand, e.g. in a test).
+        self._default_timeout_seconds = _timeout_or_none(default_timeout_seconds)
+
+    @property
+    def default_timeout_seconds(self) -> float | None:
+        """The per-call timeout this wrapper enforces, or ``None`` (unbounded)."""
+        return self._default_timeout_seconds
+
+    def _slot_kwargs(self, slot_timeout: Optional[float]) -> dict[str, float]:
+        """``cluster_llm_slot`` keywords: the caller's slot wait, else this
+        wrapper's call timeout, else nothing (the slot's own default)."""
+        wait = slot_timeout if slot_timeout is not None else self._default_timeout_seconds
+        return {"timeout": wait} if wait is not None else {}
+
+    def _derive(self, inner: Any) -> "BudgetedLLM":
+        """A wrapper around a derived client (``bind``, ``bind_tools``,
+        ``with_structured_output``) that keeps EVERY gate setting of this one:
+        a derived model that forgot one would be a call without that gate."""
+        return BudgetedLLM(
+            inner,
+            provider=self._provider,
+            model=self._model,
+            base_url=self._base_url,
+            connect_retries=self._connect_retries,
+            default_timeout_seconds=self._default_timeout_seconds,
+        )
 
     def _retryable(self, exc: BaseException) -> bool:
         """Only a failure that PROVES nothing was sent: the connect phase.
@@ -317,11 +348,19 @@ class BudgetedLLM:
         record_meter = False
         tokens: Optional[tuple[int, int]] = None
         try:
-            # Re-audit M12: one cluster-wide slot per in-flight call.
-            async with cluster_llm_slot(self._provider):
+            # Re-audit M12: one cluster-wide slot per in-flight call. The wait
+            # for a slot is bounded by the same timeout as the call (when this
+            # wrapper has none, the slot's own default applies).
+            async with cluster_llm_slot(self._provider, **self._slot_kwargs(None)):
                 started = time.perf_counter()
                 try:
-                    result = await self._call_async(args, kwargs)
+                    # AIC-02: the call itself, after admission, is bounded by
+                    # the configured timeout. Expiry raises TimeoutError, which
+                    # is observed as status="timeout", counted by the circuit
+                    # breaker and kept at its reserved worst case (the request
+                    # was sent), like any read timeout.
+                    async with asyncio.timeout(self._default_timeout_seconds):
+                        result = await self._call_async(args, kwargs)
                 except BaseException as exc:
                     self._observe(self._status_for(exc), time.perf_counter() - started)
                     await LLMCircuitBreaker.record_failure(
@@ -412,7 +451,8 @@ class BudgetedLLM:
 
         ``idle_timeout`` bounds the wait for the first chunk and for every gap
         after it, measured from admission (``slot_timeout`` bounds the wait for
-        a cluster slot). A stall raises ``TimeoutError`` through the failure
+        a cluster slot); either defaults to this wrapper's configured timeout
+        when the caller gives none. A stall raises ``TimeoutError`` through the failure
         path: observed as a timeout and counted by the circuit breaker, so a
         provider that hangs every call gets its circuit opened instead of
         being waited on by each chat turn.
@@ -432,6 +472,13 @@ class BudgetedLLM:
             require_available,
         )
 
+        # AIC-02: a caller that gives no idle bound gets the configured timeout
+        # (a provider that stops sending is bounded like a non-streamed call),
+        # and the slot wait defaults to it too.
+        if idle_timeout is None:
+            idle_timeout = self._default_timeout_seconds
+        if slot_timeout is None:
+            slot_timeout = self._default_timeout_seconds
         await require_available(self._provider, self._base_url)
         args, kwargs = self._prepare_invocation(args, kwargs)
         kwargs = self._stream_kwargs(kwargs)
@@ -565,13 +612,7 @@ class BudgetedLLM:
         return result
 
     def bind(self, *args, **kwargs):
-        return BudgetedLLM(
-            self._inner.bind(*args, **kwargs),
-            provider=self._provider,
-            model=self._model,
-            base_url=self._base_url,
-            connect_retries=self._connect_retries,
-        )
+        return self._derive(self._inner.bind(*args, **kwargs))
 
     def as_runnable(self) -> "BudgetedRunnable":
         """This wrapper as a LangChain ``Runnable``, for code that composes the
@@ -585,13 +626,7 @@ class BudgetedLLM:
         a provider call with no budget check, cost reservation, circuit breaker
         or cluster slot.
         """
-        return BudgetedLLM(
-            self._inner.bind_tools(*args, **kwargs),
-            provider=self._provider,
-            model=self._model,
-            base_url=self._base_url,
-            connect_retries=self._connect_retries,
-        )
+        return self._derive(self._inner.bind_tools(*args, **kwargs))
 
     @property
     def provider_name(self) -> str:
@@ -602,13 +637,7 @@ class BudgetedLLM:
         return self._model
 
     def with_structured_output(self, *args, **kwargs):
-        return BudgetedLLM(
-            self._inner.with_structured_output(*args, **kwargs),
-            provider=self._provider,
-            model=self._model,
-            base_url=self._base_url,
-            connect_retries=self._connect_retries,
-        )
+        return self._derive(self._inner.with_structured_output(*args, **kwargs))
 
     def __getattr__(self, name):
         return getattr(self._inner, name)
@@ -648,6 +677,7 @@ def _budgeted(
     model_name: str,
     base_url: str | None = None,
     connect_retries: int = 0,
+    default_timeout_seconds: float | None = None,
 ) -> BudgetedLLM:
     return BudgetedLLM(
         model,
@@ -655,7 +685,79 @@ def _budgeted(
         model=model_name,
         base_url=base_url,
         connect_retries=connect_retries,
+        default_timeout_seconds=default_timeout_seconds,
     )
+
+
+def _timeout_or_none(raw: Any) -> float | None:
+    """A usable timeout in seconds (> 0, finite, not a bool), else ``None``."""
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if value != value or value <= 0 or value == float("inf"):
+        return None
+    return value
+
+
+def _stamped_timeout(effective: dict) -> int:
+    """The timeout ``get_llm`` stamps on a model: the frozen pipeline value when
+    the call runs inside a pipeline, else the effective config's (DB over env)."""
+    from app.services.pipeline_ai_scope import current_ai_scope, effective_llm_timeout
+
+    if current_ai_scope() is None:
+        live = _timeout_or_none(effective.get("timeout_seconds"))
+        if live is not None:
+            return max(1, int(live))
+    # In a pipeline: the frozen value. With no usable effective value: the
+    # env default (pipeline_ai_scope owns that read).
+    return effective_llm_timeout(None)
+
+
+def llm_call_timeout(llm: Any, *, cap: Optional[int] = None) -> int:
+    """The timeout a caller that already holds a model should wait on it.
+
+    A ``BudgetedLLM`` from ``get_llm`` carries the Settings > AI timeout it was
+    built with (frozen pipeline value, else the effective config): that value,
+    tightened by ``cap``, with no second config read. Any other model (a test
+    double) gets the pipeline scope's value or the env default. No I/O.
+    """
+    from app.services.pipeline_ai_scope import effective_llm_timeout
+
+    stamped = llm.default_timeout_seconds if isinstance(llm, BudgetedLLM) else None
+    if stamped is None:
+        return effective_llm_timeout(None, cap=cap)
+    seconds = max(1, int(stamped))
+    return max(1, min(seconds, int(cap))) if cap is not None else seconds
+
+
+async def live_llm_timeout_seconds(*, cap: Optional[int] = None) -> int:
+    """The LLM call timeout for a caller with no pipeline state in hand.
+
+    Inside a pipeline: the value frozen at its start (``pipeline_ai_scope``).
+    Outside one (RAG generation): the live Settings > AI value
+    (``get_effective_ai_config``, 60 s cache). Tightened by ``cap``. Never
+    raises; an unreadable config falls back to the env default. A caller that
+    already holds a model from ``get_llm`` uses :func:`llm_call_timeout`
+    instead (no second read).
+    """
+    from app.services.pipeline_ai_scope import current_ai_scope, effective_llm_timeout
+
+    if current_ai_scope() is not None:
+        return effective_llm_timeout(None, cap=cap)
+    value: Optional[float] = None
+    try:
+        from app.services.ai_config_resolver import get_effective_ai_config  # noqa: PLC0415
+
+        value = _timeout_or_none((await get_effective_ai_config()).get("timeout_seconds"))
+    except Exception:  # noqa: BLE001 -- the env default below
+        value = None
+    if value is None:
+        return effective_llm_timeout(None, cap=cap)
+    seconds = max(1, int(value))
+    return max(1, min(seconds, int(cap))) if cap is not None else seconds
 
 
 def _pinned_http_clients(offline: bool) -> dict:
@@ -714,6 +816,12 @@ async def get_llm(
             _effective = await get_effective_ai_config()
         except Exception:
             pass  # Fall through to env defaults
+    # AIC-02: every model this builds is bounded by the Settings > AI timeout:
+    # the value frozen into the pipeline when called inside one, else the
+    # effective config's. An explicit ``provider`` (no app caller passes one:
+    # it is the tests' and tools' resolver-free path) keeps skipping the config
+    # read and gets the pipeline value or the env default.
+    _timeout = _stamped_timeout(_effective)
 
     endpoint_provider = endpoint.provider if endpoint is not None else None
     endpoint_model = endpoint.model if endpoint is not None else None
@@ -776,6 +884,7 @@ async def get_llm(
             model_name=_model,
             base_url=_base_url or settings.OLLAMA_BASE_URL,
             connect_retries=_retries,
+            default_timeout_seconds=_timeout,
         )
 
     elif _provider == "lmstudio":
@@ -788,7 +897,7 @@ async def get_llm(
             max_tokens=_max_tokens,
             max_retries=_retries,
             **_pinned_http_clients(bool(_offline)),
-        ), provider=_provider, model_name=_model, base_url=_base_url or settings.LMSTUDIO_BASE_URL)
+        ), provider=_provider, model_name=_model, base_url=_base_url or settings.LMSTUDIO_BASE_URL, default_timeout_seconds=_timeout)
 
     elif _provider == "localai":
         from langchain_openai import ChatOpenAI
@@ -800,7 +909,7 @@ async def get_llm(
             max_tokens=_max_tokens,
             max_retries=_retries,
             **_pinned_http_clients(bool(_offline)),
-        ), provider=_provider, model_name=_model, base_url=_base_url or settings.LOCALAI_BASE_URL)
+        ), provider=_provider, model_name=_model, base_url=_base_url or settings.LOCALAI_BASE_URL, default_timeout_seconds=_timeout)
 
     elif _provider == "vllm":
         from langchain_openai import ChatOpenAI
@@ -812,7 +921,7 @@ async def get_llm(
             max_tokens=_max_tokens,
             max_retries=_retries,
             **_pinned_http_clients(bool(_offline)),
-        ), provider=_provider, model_name=_model, base_url=_base_url or settings.VLLM_BASE_URL)
+        ), provider=_provider, model_name=_model, base_url=_base_url or settings.VLLM_BASE_URL, default_timeout_seconds=_timeout)
 
     elif _provider == "openai":
         if _offline:
@@ -835,7 +944,7 @@ async def get_llm(
             temperature=_temperature,
             max_tokens=_max_tokens,
             max_retries=_retries,
-        ), provider=_provider, model_name=_model, base_url=_openai_breaker_url)
+        ), provider=_provider, model_name=_model, base_url=_openai_breaker_url, default_timeout_seconds=_timeout)
 
     elif _provider == "gemini":
         if _offline:
@@ -847,7 +956,7 @@ async def get_llm(
             google_api_key=_api_key,
             temperature=_temperature,
             max_retries=_retries,
-        ), provider=_provider, model_name=_model, base_url=_base_url)
+        ), provider=_provider, model_name=_model, base_url=_base_url, default_timeout_seconds=_timeout)
 
     elif _provider == "anthropic":
         if _offline:
@@ -862,7 +971,7 @@ async def get_llm(
             temperature=_temperature,
             max_tokens=_max_tokens,
             max_retries=_retries,
-        ), provider=_provider, model_name=_model, base_url=_base_url)
+        ), provider=_provider, model_name=_model, base_url=_base_url, default_timeout_seconds=_timeout)
 
     elif _provider == "openrouter":
         if _offline:
@@ -888,7 +997,7 @@ async def get_llm(
                 "HTTP-Referer": settings.OPENROUTER_SITE_URL,
                 "X-Title": settings.OPENROUTER_APP_NAME,
             },
-        ), provider=_provider, model_name=_model, base_url=_base_url or settings.OPENROUTER_BASE_URL)
+        ), provider=_provider, model_name=_model, base_url=_base_url or settings.OPENROUTER_BASE_URL, default_timeout_seconds=_timeout)
 
     else:
         raise ValueError(f"Unknown LLM provider: '{_provider}'. "

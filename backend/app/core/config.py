@@ -724,8 +724,13 @@ class Settings(BaseSettings):
     ML_MODEL_DIR: str = "models"                     # directory for trained .joblib artifacts
     # Re-audit M14: with several pods, ML_MODEL_DIR is a pod-local cache and the
     # object store is the source of truth. A retrain publishes there; every pod
-    # pulls new versions (services/ml/model_store.py). On in the k8s base config.
-    ML_MODEL_SYNC_ENABLED: bool = False
+    # pulls new versions (services/ml/model_store.py). On by default since W04
+    # (AIC-05): the model is trained in the worker, and the API (a separate
+    # container in Compose, with no shared model volume) only sees it through the
+    # store; off, "Train now" would train a model the settings page never shows.
+    # Best-effort both ways: a store outage logs a warning and the local model
+    # keeps serving. A single-host install with one shared ML_MODEL_DIR may set false.
+    ML_MODEL_SYNC_ENABLED: bool = True
     ML_MODEL_STORE_PREFIX: str = "ml-models/"
     ML_MIN_TRAINING_SAMPLES: int = 200               # minimum labeled samples before ML activates
     ML_RETRAIN_ENABLED: bool = True                  # enable nightly Celery-beat retraining

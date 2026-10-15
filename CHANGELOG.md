@@ -52,6 +52,36 @@ locally by default.
 
 ### Added
 
+- **Settings › AI does what it says** (deferred-features wave W04, AIC-01 to
+  AIC-07, AGT-04, AGT-16). The analysis mode, Deep Investigation and Fine-Tuning
+  toggles, the confidence threshold and the timeout are now read from the stored
+  settings by every path, and each value on `GET /settings/ai` says whether it
+  is set here or is the deployment default (`*_source`). A pipeline freezes the
+  threshold and the timeout when it starts (`ai_config_snapshot`), so a resume
+  replays the same numbers and a manual retry after a change starts a new run.
+  The threshold decides triage in the pipeline that runs (the decision trail
+  records "no analyses above confidence threshold 95 — skipping triage"); the
+  timeout (now 5 to 1800 s) bounds every LLM call, an agent can only lower it,
+  and a timed-out analysis records "LLM timed out after 5 s" as its fallback.
+  Deep investigation answers 422 "Deep investigation is disabled in Settings ›
+  AI" on all four ways to start one when it is off, and its buttons are replaced
+  by a note. **The ML tier can train**: scikit-learn ships in the image, an
+  ADMIN's **Train now** and a nightly retrain at 03:10 UTC
+  (`POST /settings/ai/ml/retrain`, `GET /settings/ai/ml/status`: labelled
+  samples against the 200 floor, model age and accuracy, the last run), and a
+  trained model is published to every pod (`ML_MODEL_SYNC_ENABLED` defaults to
+  true). **Billing** shows covered spend, overage, its charge at the overage rate
+  and a month-end projection when a project has an included allowance
+  (`llm_cost_budget` on for new installs, migration 0207). **Agent stages** are
+  listed under Settings › Feature flags, grouped (migration 0208: the four
+  read-only deep stages on for new installs, `defect_commander` off), and gap
+  detection + report refinement run in deep pipelines behind the project flag
+  `aiq_gap_refinement` (migration 0209, on unless `AIQ_GAP_REFINEMENT_ENABLED`
+  says otherwise). The Agents page gains **Retry** (resume from the last
+  successful stage, or a new run when the configuration changed) and **Stop**
+  on each pipeline, and a failed deep investigation offers "Retry from last
+  successful stage".
+
 - **AI history: every AI analysis is kept, and compared with the previous
   run's** (deferred-features wave W03, AIH-01 to AIH-07). A re-analysis no longer
   overwrites the last answer: each pipeline stores a numbered version of the
@@ -145,6 +175,15 @@ locally by default.
   naming the actor and the key's owner.
 
 ### Changed
+
+- **Every LLM call is bounded by the AI timeout** (W04). Calls that had no
+  limit (the decision-report and critic agents, flaky and test-health
+  reasoning) now stop at Settings › AI "Timeout" (default 300 s) and fall back
+  as a timed-out analysis does; a timeout counts towards the provider's circuit
+  breaker. Triage in a pipeline follows the Settings › AI confidence threshold,
+  no longer the summary agent's own `confidence_min`. An analysis records the
+  configured provider and model, not the deployment's. The ML tier adds
+  scikit-learn and SciPy to the backend image (about 190 MB).
 
 - **"Compare to previous run" means the previous run on the same branch**
   (W03, owner decision D42). The run menu, the Changes tab and the Runs list ask
@@ -300,6 +339,15 @@ locally by default.
   release override did its work in a second connection beside the request's.
   The summary paths now hand their connection back before the cache write,
   and the override uses the request's own.
+- **The analysis mode set in Settings › AI no longer reverts** (W04, AIC-04).
+  Thirty seconds after a worker read it, the mode fell back to the deployment's
+  `ANALYSIS_MODE`, and a Redis expiry did the same after a day; a pipeline
+  recorded the deployment's provider and model rather than the configured ones.
+  The stored value is now the truth and Redis only a cache. Also fixed: the ML
+  trainer queried a column that does not exist (`test_runs.started_at`) and
+  never trained on a real database, and a resumed deep pipeline dropped its
+  `defect_commander` setting.
+
 - **"Trigger pipeline" re-analyses a run again** (W03). The API answered
   "Pipeline queued" and recorded the request, but the worker dropped the task as
   a duplicate for two hours after any analysis of the run. A person's trigger

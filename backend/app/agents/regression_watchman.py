@@ -41,11 +41,15 @@ from app.services.category_normalizer import normalize_category
 from app.models.llm_schemas import ClusterClassification, validate_llm_output
 from app.services.llm_factory import get_llm
 from app.services.llm_json_parser import parse_llm_json
+from app.services.pipeline_ai_scope import effective_llm_timeout
 from app.services.prompt_registry import get_prompt_text
 from app.services.redaction_service import redact_text
 from app.services.cluster_snapshot import is_current_snapshot
 
-_LLM_CLASSIFY_TIMEOUT = min(90, settings.AI_TIMEOUT_SECONDS)
+# AIC-02: the classification call waits at most this long, and never longer than
+# the Settings > AI timeout frozen into the pipeline (computed per run, not at import).
+_AGENT_ID = "agent.regression_watchman.v1"
+_LLM_CLASSIFY_TIMEOUT_CAP = 90
 
 logger = structlog.get_logger("agents.regression_watchman")
 
@@ -213,7 +217,12 @@ class RegressionWatchman(BaseAgent):
             "_cost_budget_mode_override"
         ) in {"ml", "rules"}
         if uncertain and not deterministic_only:
-            llm_results = await self._llm_classify(uncertain, failure_clusters, history)
+            llm_results = await self._llm_classify(
+                uncertain, failure_clusters, history,
+                timeout=effective_llm_timeout(
+                    state, agent_id=_AGENT_ID, cap=_LLM_CLASSIFY_TIMEOUT_CAP
+                ),
+            )
             det_results.update(llm_results)
 
         return det_results
@@ -308,7 +317,13 @@ class RegressionWatchman(BaseAgent):
         uncertain: dict,
         all_clusters: list[dict],
         history: dict,
+        *,
+        timeout: float | None = None,
     ) -> dict:
+        if timeout is None:
+            timeout = effective_llm_timeout(
+                None, agent_id=_AGENT_ID, cap=_LLM_CLASSIFY_TIMEOUT_CAP
+            )
         cluster_lookup = {c.get("cluster_id", c.get("id", "")): c for c in all_clusters}
         cluster_subset = [cluster_lookup[cid] for cid in uncertain if cid in cluster_lookup]
 
@@ -324,7 +339,7 @@ class RegressionWatchman(BaseAgent):
             llm = await get_llm(temperature=0.0)
             response = await asyncio.wait_for(
                 llm.ainvoke(prompt),
-                timeout=_LLM_CLASSIFY_TIMEOUT,
+                timeout=timeout,
             )
             _raw = response.content if hasattr(response, "content") else str(response)
             content = str(_raw).strip()
@@ -348,7 +363,7 @@ class RegressionWatchman(BaseAgent):
         except asyncio.TimeoutError:
             logger.warning(
                 "LLM classification timed out — returning deterministic results",
-                timeout=_LLM_CLASSIFY_TIMEOUT,
+                timeout=timeout,
             )
             return {}
         except Exception as exc:

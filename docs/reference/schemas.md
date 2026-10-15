@@ -428,8 +428,18 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Ai Timeout Seconds",
       "type": "integer"
     },
+    "ai_timeout_seconds_source": {
+      "default": "env_default",
+      "title": "Ai Timeout Seconds Source",
+      "type": "string"
+    },
     "analysis_mode": {
       "title": "Analysis Mode",
+      "type": "string"
+    },
+    "analysis_mode_source": {
+      "default": "env_default",
+      "title": "Analysis Mode Source",
       "type": "string"
     },
     "anthropic_key_set": {
@@ -452,6 +462,11 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Deep Investigation Enabled",
       "type": "boolean"
     },
+    "deep_investigation_enabled_source": {
+      "default": "env_default",
+      "title": "Deep Investigation Enabled Source",
+      "type": "string"
+    },
     "embedding_model": {
       "title": "Embedding Model",
       "type": "string"
@@ -463,6 +478,11 @@ These are the full generated JSON Schema definitions, including required fields,
     "finetune_enabled": {
       "title": "Finetune Enabled",
       "type": "boolean"
+    },
+    "finetune_enabled_source": {
+      "default": "env_default",
+      "title": "Finetune Enabled Source",
+      "type": "string"
     },
     "google_key_set": {
       "title": "Google Key Set",
@@ -503,6 +523,11 @@ These are the full generated JSON Schema definitions, including required fields,
       "default": "not_trained",
       "title": "Ml Maturity",
       "type": "string"
+    },
+    "ml_min_training_samples": {
+      "default": 200,
+      "title": "Ml Min Training Samples",
+      "type": "integer"
     },
     "ml_model_accuracy": {
       "anyOf": [
@@ -590,7 +615,7 @@ These are the full generated JSON Schema definitions, including required fields,
       "anyOf": [
         {
           "maximum": 1800.0,
-          "minimum": 30.0,
+          "minimum": 5.0,
           "type": "integer"
         },
         {
@@ -1731,6 +1756,11 @@ These are the full generated JSON Schema definitions, including required fields,
     "analysis_mode": {
       "title": "Analysis Mode",
       "type": "string"
+    },
+    "deep_investigation_enabled": {
+      "default": true,
+      "title": "Deep Investigation Enabled",
+      "type": "boolean"
     }
   },
   "required": [
@@ -6330,6 +6360,17 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Cap Hits",
       "type": "integer"
     },
+    "covered_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Covered Usd"
+    },
     "current_cost_usd": {
       "title": "Current Cost Usd",
       "type": "number"
@@ -6345,6 +6386,50 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Hard Cap Usd"
     },
+    "included_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Included Usd"
+    },
+    "overage_charge_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Overage Charge Usd"
+    },
+    "overage_rate_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Overage Rate Usd"
+    },
+    "overage_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Overage Usd"
+    },
     "project_id": {
       "format": "uuid",
       "title": "Project Id",
@@ -6353,6 +6438,50 @@ These are the full generated JSON Schema definitions, including required fields,
     "project_name": {
       "title": "Project Name",
       "type": "string"
+    },
+    "projected_overage_charge_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Projected Overage Charge Usd"
+    },
+    "projected_overage_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Projected Overage Usd"
+    },
+    "projected_period_cost_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Projected Period Cost Usd"
+    },
+    "projection_basis": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Projection Basis"
     },
     "status": {
       "title": "Status",
@@ -18143,6 +18272,17 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Cap Hits",
       "type": "integer"
     },
+    "covered_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Covered Usd"
+    },
     "hard_cap_usd": {
       "anyOf": [
         {
@@ -18165,6 +18305,39 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Included Usd"
     },
+    "overage_charge_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Overage Charge Usd"
+    },
+    "overage_rate_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Overage Rate Usd"
+    },
+    "overage_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Overage Usd"
+    },
     "period_end": {
       "format": "date-time",
       "title": "Period End",
@@ -18179,6 +18352,50 @@ These are the full generated JSON Schema definitions, including required fields,
       "format": "uuid",
       "title": "Project Id",
       "type": "string"
+    },
+    "projected_overage_charge_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Projected Overage Charge Usd"
+    },
+    "projected_overage_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Projected Overage Usd"
+    },
+    "projected_period_cost_usd": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Projected Period Cost Usd"
+    },
+    "projection_basis": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Projection Basis"
     },
     "status": {
       "anyOf": [
@@ -18230,6 +18447,314 @@ These are the full generated JSON Schema definitions, including required fields,
     "cap_hits"
   ],
   "title": "LlmUsageRead",
+  "type": "object"
+}
+```
+
+## MLLastRun
+
+```json
+{
+  "description": "The outcome of the most recent training attempt (``ml:retrain:last``).",
+  "properties": {
+    "accuracy": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Accuracy"
+    },
+    "finished_at": {
+      "format": "date-time",
+      "title": "Finished At",
+      "type": "string"
+    },
+    "message": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Message"
+    },
+    "sample_count": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Sample Count"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    },
+    "triggered_by": {
+      "title": "Triggered By",
+      "type": "string"
+    },
+    "version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Version"
+    }
+  },
+  "required": [
+    "status",
+    "finished_at",
+    "triggered_by"
+  ],
+  "title": "MLLastRun",
+  "type": "object"
+}
+```
+
+## MLRetrainAccepted
+
+```json
+{
+  "description": "``202`` of ``POST /settings/ai/ml/retrain``.",
+  "properties": {
+    "already_running": {
+      "title": "Already Running",
+      "type": "boolean"
+    },
+    "state": {
+      "title": "State",
+      "type": "string"
+    },
+    "task_id": {
+      "title": "Task Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "task_id",
+    "state",
+    "already_running"
+  ],
+  "title": "MLRetrainAccepted",
+  "type": "object"
+}
+```
+
+## MLStatusRead
+
+```json
+{
+  "description": "What the Settings > AI ML card shows (QA lead and above).",
+  "properties": {
+    "accuracy": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Accuracy"
+    },
+    "available_samples": {
+      "title": "Available Samples",
+      "type": "integer"
+    },
+    "can_train": {
+      "title": "Can Train",
+      "type": "boolean"
+    },
+    "cannot_train_message": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cannot Train Message"
+    },
+    "cannot_train_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cannot Train Reason"
+    },
+    "deps_installed": {
+      "title": "Deps Installed",
+      "type": "boolean"
+    },
+    "human_label_floor": {
+      "title": "Human Label Floor",
+      "type": "integer"
+    },
+    "human_labels": {
+      "title": "Human Labels",
+      "type": "integer"
+    },
+    "last_run": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/MLLastRun"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "maturity": {
+      "title": "Maturity",
+      "type": "string"
+    },
+    "min_training_samples": {
+      "title": "Min Training Samples",
+      "type": "integer"
+    },
+    "model_available": {
+      "title": "Model Available",
+      "type": "boolean"
+    },
+    "model_sample_count": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Model Sample Count"
+    },
+    "retrain_enabled": {
+      "title": "Retrain Enabled",
+      "type": "boolean"
+    },
+    "trained_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Trained At"
+    },
+    "training": {
+      "$ref": "#/components/schemas/MLTrainingState"
+    },
+    "version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Version"
+    }
+  },
+  "required": [
+    "model_available",
+    "available_samples",
+    "min_training_samples",
+    "human_labels",
+    "human_label_floor",
+    "maturity",
+    "deps_installed",
+    "retrain_enabled",
+    "can_train",
+    "training"
+  ],
+  "title": "MLStatusRead",
+  "type": "object"
+}
+```
+
+## MLTrainingState
+
+```json
+{
+  "description": "Whether a training job holds the retrain lock right now.",
+  "properties": {
+    "queued_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Queued At"
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Started At"
+    },
+    "state": {
+      "title": "State",
+      "type": "string"
+    },
+    "task_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Task Id"
+    },
+    "triggered_by": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Triggered By"
+    }
+  },
+  "required": [
+    "state"
+  ],
+  "title": "MLTrainingState",
   "type": "object"
 }
 ```
