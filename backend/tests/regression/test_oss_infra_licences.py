@@ -148,11 +148,12 @@ def test_the_air_gap_override_still_repoints_mongo_for_operators_who_mirror_it()
 
 # ── CI pulls nothing from Docker Hub and runs the real S3 suite ───────────────
 
-def test_ci_brokers_are_valkey_from_ecr_and_s3_is_versitygw():
+def test_ci_brokers_are_valkey_from_a_mirror_and_s3_is_versitygw():
     jobs = yaml.safe_load(CI.read_text(encoding="utf-8"))["jobs"]
     brokers = {job: spec["services"]["redis"]["image"]
                for job, spec in jobs.items() if "redis" in (spec.get("services") or {})}
-    assert brokers and set(brokers.values()) == {"public.ecr.aws/valkey/valkey:8.1-alpine"}
+    # Valkey (BSD-3-Clause), never Redis; pulled through mirror.gcr.io since ECR Public ran out (2026-10-15).
+    assert brokers and set(brokers.values()) == {"mirror.gcr.io/valkey/valkey:8.1-alpine"}
     for job, spec in jobs.items():
         if "redis" in (spec.get("services") or {}):
             assert "valkey-cli ping" in spec["services"]["redis"]["options"], job
