@@ -1,0 +1,80 @@
+{
+  "run_id": "00000000-0000-4000-8000-000000000001",
+  "test_id": "00000000-0000-4000-8000-000000000002",
+  "test_fingerprint": "fp-pay",
+  "test_name": "test_pay",
+  "current": {
+    "version_id": "00000000-0000-4000-8000-000000000003",
+    "version": 3,
+    "trigger": "current",
+    "pipeline_run_id": null,
+    "actor": null,
+    "failure_category": "AUTOMATION_DEFECT",
+    "confidence_score": 85,
+    "analysis_mode": "llm",
+    "llm_provider": "ollama",
+    "llm_model": "llama3.1",
+    "is_flaky": false,
+    "requires_human_review": false,
+    "root_cause_excerpt": "Timeout waiting for payment-gateway",
+    "content_sha256": "0000000000000000000000000000000000000000000000000000000000000001",
+    "created_at": "2026-01-01T00:00:00Z"
+  },
+  "versions": [
+    {
+      "version_id": "00000000-0000-4000-8000-000000000004",
+      "version": 3,
+      "trigger": "human_correction",
+      "pipeline_run_id": null,
+      "actor": {
+        "user_id": "00000000-0000-4000-8000-000000000005",
+        "name": "Anna QA"
+      },
+      "failure_category": "AUTOMATION_DEFECT",
+      "confidence_score": 85,
+      "analysis_mode": "llm",
+      "llm_provider": "ollama",
+      "llm_model": "llama3.1",
+      "is_flaky": false,
+      "requires_human_review": false,
+      "root_cause_excerpt": "Timeout waiting for payment-gateway",
+      "content_sha256": "0000000000000000000000000000000000000000000000000000000000000001",
+      "created_at": "2026-01-01T00:00:00Z"
+    },
+    {
+      "version_id": "00000000-0000-4000-8000-000000000006",
+      "version": 2,
+      "trigger": "pipeline",
+      "pipeline_run_id": "00000000-0000-4000-8000-000000000007",
+      "actor": null,
+      "failure_category": "PRODUCT_BUG",
+      "confidence_score": 85,
+      "analysis_mode": "llm",
+      "llm_provider": "ollama",
+      "llm_model": "llama3.1",
+      "is_flaky": false,
+      "requires_human_review": false,
+      "root_cause_excerpt": "Timeout waiting for payment-gateway",
+      "content_sha256": "0000000000000000000000000000000000000000000000000000000000000002",
+      "created_at": "2026-01-01T00:00:00Z"
+    },
+    {
+      "version_id": "00000000-0000-4000-8000-000000000008",
+      "version": 1,
+      "trigger": "pipeline",
+      "pipeline_run_id": "00000000-0000-4000-8000-000000000009",
+      "actor": null,
+      "failure_category": "INFRASTRUCTURE",
+      "confidence_score": 40,
+      "analysis_mode": "rules",
+      "llm_provider": null,
+      "llm_model": null,
+      "is_flaky": false,
+      "requires_human_review": false,
+      "root_cause_excerpt": "Gateway returned 502",
+      "content_sha256": "0000000000000000000000000000000000000000000000000000000000000003",
+      "created_at": "2026-01-01T00:00:00Z"
+    }
+  ],
+  "total": 3
+}

@@ -48,7 +48,8 @@ The **⋯** menu:
 | **Refresh AI analysis** | Recomputes the Analysis tab's report from the stored results, instead of showing the cached copy. It does not re-run the pipeline |
 | **Export PDF** | The run report as a PDF |
 | **Download evidence bundle** | The run's evidence as a file |
-| **Compare to previous run** | Opens Compare against the previous run of the same suite |
+| **Export AI history** | Every stored AI analysis of the run, the differences between consecutive versions and each test's versions, as `run-<build>-ai-history.json` (see [AI history](#ai-history)) |
+| **Compare to previous run** | Opens Compare against the previous run of the same suite **on the same branch**: the newest run that finished before this one, whatever its outcome. The server picks it, so the Runs list, this menu and the Analysis tab's **vs previous run** always open the same pair. A run without suite attribution has no previous run |
 | **Release gate** | The release-gate view for this run (`/release-gate/<run id>`) |
 | **Ask AI about this run** | Opens [Ask AI](/docs/ask-ai) with the question "What failed in this build, and why?" written for you. Shown only when Ask AI is available |
 
@@ -66,6 +67,8 @@ While a run is still streaming, the list is read from the live buffer, so it mat
 
 The run's AI analysis report. Old links to `/runs/<id>/intelligence` and `/deep-investigate/<id>` open here.
 
+- **vs previous run**: this run's AI analysis against the previous run's (the same pair as **Compare to previous run**): **Compared with #58 (Auth, main, 3 hours earlier)**, the verdict change (**Verdict GO -> NO_GO**), the suggested root causes that are new, resolved or persisting, and the tests whose AI conclusion changed (click one to open it). When the two runs were analysed by different engines (rules on one, a language model on the other) a note says so first: a category change may then reflect the engine, not the product. The summary under it is labelled **AI narrative** when a language model wrote it, or **deterministic summary** when it was built without one (offline, or over the cost budget). **Change baseline** compares with another run of the suite instead (`?ai_baseline=`). When nothing changed the card is one line; it also says when there is no previous run on the branch, or when one of the two runs has no AI analysis.
+- **AI history**: which analysis you are looking at, for example **v2 · LLM llama3.1 · about 2 hours ago**. See [AI history](#ai-history) below.
 - **The verdict banner**: **Go · ship cleared**, **Conditional Go · proceed with mitigation**, **No-Go · ship blocked** or **Pending · awaiting evidence**, with the risk score, the number of blocking issues and the AI confidence. **Decision trail** shows how the verdict was reached, step by step.
 - **The review banner**, when the report is waiting for or has had a human review. See [Your inbox and approvals](/docs/inbox#approvals).
 - **What failed**: each failure, with **Open test case**, **Decision trail** and **File defect** (`QA_ENGINEER` or above).
@@ -73,6 +76,16 @@ The run's AI analysis report. Old links to `/runs/<id>/intelligence` and `/deep-
 - Two collapsed sections: **How this score is computed**, and **Evidence behind the verdict** (the pipeline stages that ran, the test outcome, recommended actions for your role, the AI confidence, failure categories, step flips and provenance).
 
 The verdict is computed, not written by a model; see [Releases and gates](/docs/releases#how-it-is-produced). The stages behind it are described in [AI agents and the pipeline](/docs/ai-agents).
+
+### AI history
+
+Every time the pipeline analyses a run (**Trigger pipeline**, or the analysis that follows ingestion), TestLookup keeps that analysis as a new **version** instead of overwriting the last one: the verdict and risk, the failure categories and clusters, each analysed test's category, confidence and suggested root cause, and how it was produced (rules, ML or a language model, which model, whether it fell back). Single-test re-analyses, corrections and bulk reclassifications are kept per test (the test's **History** tab shows them).
+
+- The first select picks the version to view. **Current** is the live analysis above; an older version replaces it with a read-only **stored snapshot** (its verdict, the run summary written with it, categories, clusters and per-test conclusions, and how it was produced), with **Back to current** and, when that version published a decision report, **Open decision report v<n>**.
+- **Compare with…** opens what changed between two versions, or between a version and **Current data**: the engine change first, then the verdict, categories, failure clusters (added, removed, resized), the tests whose conclusion changed (category or confidence moves of 10 points or more first; a reworded root cause on its own is listed apart), and the recommended actions.
+- The choice is in the address (`?ai_version=`, `?ai_compare=`), and it moves the **Evidence** tab's **Report version** with it: picking a version shows the decision report that version published, and picking a report version there selects the version that published it. Old `?report_version=` links open the version that published that report.
+
+"First analysis of this run" means only one analysis exists so far. How many versions are kept, and for how long, is set on [Retention and purge](/docs/administration#retention-and-purge); **Export AI history** in the ⋯ menu downloads them all.
 
 ### Changes
 
@@ -82,7 +95,7 @@ The verdict is computed, not written by a model; see [Releases and gates](/docs/
 
 The detail behind the analysis. Old links to `/agents/run/<id>` open here.
 
-- **Decision intelligence** — the agentic decision report, with a **Report version** picker when the run has been analysed more than once. Absent when no decision report exists for the run.
+- **Decision intelligence** — the agentic decision report, with a **Report version** picker when the run has been analysed more than once. The picker and the Analysis tab's [AI history](#ai-history) move together. Absent when no decision report exists for the run.
 - **The pipeline's AI report** — **View AI report** to read it, and **Agent stages** to see each stage the pipeline ran. When the run has several pipeline runs, a **Pipeline** picker chooses between them.
 
 "No agent pipeline has analysed this run yet." means no pipeline has run; **Trigger pipeline** in the ⋯ menu starts one.
@@ -118,7 +131,9 @@ Open a test from the Tests tab (**Open full page**) to reach `/runs/<run id>/tes
 - **Latest suite comparison** — choose a suite and **Compare latest** to diff its two most recent runs. Needs one project selected.
 - **Manual historical comparison** — choose **Left run (baseline)** and **Right run (target)**, optionally limited to one suite, then **Compare**. The pickers list the 100 newest runs.
 
-The result leads with what changed: **Pass rate**, **Failed tests**, **New failures** and **Duration** for each side, an **AI Comparison Report** (key differences, new risks, actions), and **Status changes** — how many tests moved from one status to another. Click a flow to filter the table to those tests. Filter chips narrow the table to **New failures**, **Regressed**, **Still failing**, **Duration spikes**, **Fixed**, **New tests**, **Removed** or **Renamed**.
+The result leads with what changed: **Pass rate**, **Failed tests**, **New failures** and **Duration** for each side, an **AI Comparison Report** (key differences, new risks, actions and, when the two runs' AI analyses differ, **AI analysis changes**), an **AI analysis** section, and **Status changes** — how many tests moved from one status to another.
+
+**AI analysis** puts the two runs' AI analyses side by side (**Baseline** on the left, **Target** on the right): the verdict and risk, the engine and model that produced each (**deterministic** when no language model did), the failure categories and the top suggested root causes. Under them, what changed between the two analyses, the same way as the Analysis tab's **vs previous run**, and the label of the narrative (**AI narrative** or **deterministic summary**). Two runs of different projects are not compared. Click a flow to filter the table to those tests. Filter chips narrow the table to **New failures**, **Regressed**, **Still failing**, **Duration spikes**, **Fixed**, **New tests**, **Removed** or **Renamed**.
 
 The comparison is in the address (`/runs/compare?mode=manual&left=<run id>&right=<run id>&suite=<suite>`), so you can share it.
 

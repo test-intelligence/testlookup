@@ -1,4 +1,5 @@
 import { getData } from './http'
+import type { AIAnalysisDiffBrief } from '@/types/aiHistory'
 
 export interface RunCompareSummary {
   id: string
@@ -47,6 +48,11 @@ export interface RunCompareAIReport {
   confidence_reason: string
   fallback_used: boolean
   message?: string | null
+  /**
+   * W03 (`run_compare_v2`): what changed between the two runs' AI analyses, one line each, computed
+   * deterministically server-side whatever the model wrote. Absent from v1 reports and older servers.
+   */
+  ai_changes?: string[]
 }
 
 export type RunCompareClassification =
@@ -89,6 +95,8 @@ export interface RunCompareResponse {
   suite_name?: string | null
   selection?: RunCompareSelection | null
   ai_report?: RunCompareAIReport | null
+  /** W03: the bounded diff of the two runs' AI analyses (absent from older servers). */
+  ai_analysis_diff?: AIAnalysisDiffBrief | null
   delta_total: number
   delta_passed: number
   delta_failed: number

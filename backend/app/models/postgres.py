@@ -1417,7 +1417,13 @@ class TestCaseHistory(Base):
 
 
 class AIAnalysis(Base):
-    """Stored AI triage results per test case."""
+    """Stored AI triage results per test case: the LATEST answer (fast read).
+
+    ``created_at`` means "last generated at" (AIH-01): the pipeline upsert
+    rewrites it, with ``llm_provider`` / ``llm_model``, on every re-analysis,
+    so readers that order by it pick the newest analysis. Every earlier answer
+    is kept as an immutable row of :class:`AIAnalysisVersion`.
+    """
     __tablename__ = "ai_analysis"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -1450,6 +1456,104 @@ class AIAnalysis(Base):
 
     # Relationships
     test_case: Mapped["TestCase"] = relationship("TestCase", back_populates="ai_analysis")
+
+
+class AIAnalysisVersion(Base):
+    """One immutable version of a test result's AI analysis (AIH-01, migration 0205).
+
+    ``ai_analysis`` holds the latest answer per test case; every answer any of
+    the four writers produced (pipeline, single-test analyze, human correction,
+    bulk reclassify) is appended here, with its trigger, its pipeline or actor
+    and a ``content_sha256`` (``ai_history_core.analysis_content_sha256``,
+    byte-identical to ``ANALYSIS_CONTENT_SHA256_SQL``).
+
+    Dedup: a pipeline version is unique per ``(test_case_id, pipeline_run_id)``
+    (a replayed pipeline inserts nothing); the other triggers are skipped when
+    the hash equals the latest version's. Rows die with their run (runs clock,
+    D41: CASCADE) and are capped per test by the retention policy.
+    ``test_run_id`` / ``project_id`` / ``test_fingerprint`` are denormalised so
+    retention, export and history lists need no join.
+    """
+    __tablename__ = "ai_analysis_versions"
+    __table_args__ = (
+        UniqueConstraint("test_case_id", "version", name="uq_ai_analysis_versions_case_version"),
+        CheckConstraint("version >= 1", name="ck_ai_analysis_versions_version"),
+        Index("ix_ai_analysis_versions_run", "test_run_id"),
+        Index(
+            "ix_ai_analysis_versions_project_fp",
+            "project_id", "test_fingerprint", text("created_at DESC"),
+        ),
+        Index(
+            "ix_ai_analysis_versions_pipeline",
+            "pipeline_run_id",
+            postgresql_where=text("pipeline_run_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_ai_analysis_versions_case_pipeline",
+            "test_case_id", "pipeline_run_id",
+            unique=True,
+            postgresql_where=text("trigger = 'pipeline' AND pipeline_run_id IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    test_case_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("test_cases.id", ondelete="CASCADE"), nullable=False,
+    )
+    test_run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False,
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False,
+    )
+    test_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    # pipeline | manual_analyze | human_correction | bulk_reclassify | backfill
+    # (ai_history_core.TEST_TRIGGERS; a code constant, no CHECK).
+    trigger: Mapped[str] = mapped_column(String(24), nullable=False)
+    pipeline_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("agent_pipeline_runs.id", ondelete="SET NULL"), nullable=True,
+    )
+    actor_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    failure_category: Mapped[Optional[str]] = mapped_column(String(30))
+    confidence_score: Mapped[Optional[int]] = mapped_column(Integer)
+    root_cause_summary: Mapped[Optional[str]] = mapped_column(Text)
+    is_flaky: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False,
+    )
+    backend_error_found: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False,
+    )
+    pod_issue_found: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False,
+    )
+    requires_human_review: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False,
+    )
+    # JSON (not JSONB), mirroring ai_analysis: the backfill copies the values
+    # verbatim and a ``\u0000`` inside one would fail a JSONB cast.
+    recommended_actions: Mapped[Optional[list]] = mapped_column(JSON)
+    evidence_references: Mapped[Optional[list]] = mapped_column(JSON)
+    tools_used: Mapped[Optional[list]] = mapped_column(JSON)
+    role_actions: Mapped[Optional[dict]] = mapped_column(JSON)
+    llm_provider: Mapped[Optional[str]] = mapped_column(String(50))
+    llm_model: Mapped[Optional[str]] = mapped_column(String(100))
+    analysis_mode: Mapped[Optional[str]] = mapped_column(String(20))
+    # Slim provenance: analysis_mode, mode_requested, fallback_from,
+    # fallback_reason, prompt_versions, eval_manifest_checksum,
+    # model_config_snapshot{provider, model}, confidence_basis, source.
+    provenance: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
 
 
 class Defect(Base):
@@ -6921,8 +7025,24 @@ class ProjectRetentionPolicy(Base):
 
     Every defaulted column carries a matching ``server_default`` so the
     migration DDL and the ORM cannot drift (the #433 lesson).
+
+    AI history caps (AIH-06, migration 0206): ``ai_versions_per_run`` (per
+    kind) and ``ai_versions_per_test``; NULL = the code defaults 20 / 10
+    (``ai_history_core.DEFAULT_CAP_PER_RUN`` / ``DEFAULT_CAP_PER_TEST``). They
+    apply at write time whatever ``enabled`` says; ``enabled`` only gates the
+    scheduled sweep.
     """
     __tablename__ = "project_retention_policies"
+    __table_args__ = (
+        CheckConstraint(
+            "ai_versions_per_run IS NULL OR ai_versions_per_run BETWEEN 1 AND 100",
+            name="ck_retention_ai_versions_per_run",
+        ),
+        CheckConstraint(
+            "ai_versions_per_test IS NULL OR ai_versions_per_test BETWEEN 1 AND 100",
+            name="ck_retention_ai_versions_per_test",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID] = mapped_column(
@@ -6944,6 +7064,8 @@ class ProjectRetentionPolicy(Base):
     audit_days: Mapped[int] = mapped_column(
         Integer, default=2555, server_default=text("2555"), nullable=False,
     )
+    ai_versions_per_run: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    ai_versions_per_test: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

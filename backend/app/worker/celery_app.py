@@ -444,6 +444,16 @@ celery_app.conf.update(
             "task": "app.worker.tasks.backfill_suite_executions",
             "schedule": crontab(minute="*/10"),
         },
+        # AIH-01 one-shot: give every run analysed before AI history existed its
+        # first ``ai_run_versions`` (a run_summary and an analysis_digest), 100
+        # runs a chunk behind the Redis cursor ``ai_history.backfill_cursor``.
+        # Offset from the suite backfill's ticks; once the cursor says ``done``
+        # a tick is a single Redis read. New analyses are versioned by the
+        # pipeline hook, not by this.
+        "backfill-ai-run-versions": {
+            "task": "app.worker.tasks.backfill_ai_run_versions",
+            "schedule": crontab(minute="5,15,25,35,45,55"),
+        },
         # Auto-recovery for completed live_stream runs whose
         # close_session → persist_live_session handoff dropped on the
         # floor (silent apply_async failure, queue backpressure, worker

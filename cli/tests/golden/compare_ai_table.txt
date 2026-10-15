@@ -1,0 +1,7 @@
+vs #1233 (checkout · main): verdict GO → NO_GO · new root causes 1 · resolved 1 · 3 tests changed category
+deterministic summary: The AI verdict went from GO to NO_GO: 1 new root cause, 1 resolved.
+  - Baseline analysed by rules; current by llm. Category changes may reflect the engine, not the product.
+  - Verdict GO -> NO_GO (risk 35 -> 72)
+  - New root cause: Timeout in checkout (4 tests)
+  - Resolved: DB pool exhausted (6 tests)
+  - checkout::test_pay: INFRASTRUCTURE -> PRODUCT_BUG (confidence 40 -> 85)

@@ -168,7 +168,7 @@ so the table view and CSV export need no transformation. Each point carries
 ``y`` and ``n`` (the sample behind it); a rate with nothing evaluated is
 ``y: null`` with ``measured: false`` and a reason, never 0.
 
-Source: [backend/app/routers/analytics.py:934](../../../backend/app/routers/analytics.py#L934).
+Source: [backend/app/routers/analytics.py:940](../../../backend/app/routers/analytics.py#L940).
 
 Dependency chain: `OAuth2PasswordBearer`, `_gate_dependency.<locals>.analytics_gate`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 

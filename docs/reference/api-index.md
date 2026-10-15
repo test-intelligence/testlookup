@@ -380,6 +380,11 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/runs/failed-ids` | List Failed Run Ids | [Test Runs](api/test-runs.md) |
 | DELETE | `/api/v1/runs/{run_id}` | Delete Run | [Test Runs](api/test-runs.md) |
 | GET | `/api/v1/runs/{run_id}` | Get Run | [Test Runs](api/test-runs.md) |
+| GET | `/api/v1/runs/{run_id}/ai-compare` | Compare Ai With Baseline | [AI History](api/ai-history.md) |
+| GET | `/api/v1/runs/{run_id}/ai-history` | List Ai History | [AI History](api/ai-history.md) |
+| GET | `/api/v1/runs/{run_id}/ai-history/diff` | Diff Ai History | [AI History](api/ai-history.md) |
+| GET | `/api/v1/runs/{run_id}/ai-history/export` | Export Ai History | [AI History](api/ai-history.md) |
+| GET | `/api/v1/runs/{run_id}/ai-history/{version_id}` | Get Ai History Version | [AI History](api/ai-history.md) |
 | GET | `/api/v1/runs/{run_id}/attribution` | Run Attribution | [Test Runs](api/test-runs.md) |
 | GET | `/api/v1/runs/{run_id}/baseline-diff` | Get Run Baseline Diff | [Run Intelligence](api/run-intelligence.md) |
 | GET | `/api/v1/runs/{run_id}/commit-range` | Get Run Commit Range | [Commit Attribution](api/commit-attribution.md) |
@@ -392,6 +397,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/runs/{run_id}/intelligence` | Get Run Intelligence Endpoint | [Run Intelligence](api/run-intelligence.md) |
 | POST | `/api/v1/runs/{run_id}/intelligence/refresh` | Refresh Intelligence | [Run Intelligence](api/run-intelligence.md) |
 | POST | `/api/v1/runs/{run_id}/investigations` | Start Investigation | [Agent Investigations](api/agent-investigations.md) |
+| GET | `/api/v1/runs/{run_id}/previous` | Get Previous Run | [AI History](api/ai-history.md) |
 | POST | `/api/v1/runs/{run_id}/recover-live` | Recover Live Run From Buffer | [Test Runs](api/test-runs.md) |
 | GET | `/api/v1/runs/{run_id}/regression-diff` | Get Regression Diff | [Test Runs](api/test-runs.md) |
 | POST | `/api/v1/runs/{run_id}/release` | Set Run Release | [Test Runs](api/test-runs.md) |
@@ -401,6 +407,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/runs/{run_id}/test-health` | Get Test Health | [Test Health](api/test-health.md) |
 | GET | `/api/v1/runs/{run_id}/tests` | List Test Cases | [Test Runs](api/test-runs.md) |
 | GET | `/api/v1/runs/{run_id}/tests/{test_id}` | Get Test Case | [Test Runs](api/test-runs.md) |
+| GET | `/api/v1/runs/{run_id}/tests/{test_id}/ai-history` | Get Test Ai History | [AI History](api/ai-history.md) |
 | GET | `/api/v1/runs/{run_id}/tests/{test_id}/history` | Get Test Case History Endpoint | [Test Runs](api/test-runs.md) |
 | GET | `/api/v1/runs/{run_id}/tests/{test_id}/rich-detail` | Get Enriched Test Case Detail Endpoint | [Test Runs](api/test-runs.md) |
 | GET | `/api/v1/runs/{run_id}/tests/{test_id}/step-flips` | Get Test Case Step Flips | [Test Runs](api/test-runs.md) |
@@ -581,4 +588,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **572 HTTP operations**, **481 paths**, **82 domain pages**.
+Total: **579 HTTP operations**, **488 paths**, **83 domain pages**.

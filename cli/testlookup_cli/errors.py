@@ -13,6 +13,8 @@ EXIT_TIMEOUT = 6
 #: Its own code, not 3: 3 is "authentication failed", and a CI job that lets a
 #: slowdown through as a warning must not let an expired token through with it.
 EXIT_REGRESSION = 7
+#: compare-ai --fail-on-verdict-regression: the AI verdict got worse. Its own code: 3 is authentication, 7 is duration regressions.
+EXIT_VERDICT_REGRESSION = 8
 
 
 class CLIError(Exception):

@@ -12,7 +12,15 @@ from app.services.prompt_registry import get_prompt_text
 
 logger = structlog.get_logger("agents.run_compare")
 
-PROMPT_VERSION = "run_compare_v1"
+#: Part of ``uq_run_comparison_report_scope`` and of ``run_compare_ai_service._get_row``'s
+#: filter, so v2 reports (they carry ``ai_changes``, AIH-03) never serve a cached v1 row.
+#: The prompt TEXT is unchanged (W03 contract 0.12): the AI-analysis changes ride in the
+#: LLM context as plain data, and ``ai_changes`` is attached deterministically after
+#: parsing, whatever the model returned.
+PROMPT_VERSION = "run_compare_v2"
+
+#: ``ai_analysis_changes`` in the LLM context keeps at most this many test changes.
+_CONTEXT_TEST_CHANGES = 10
 
 # Prompt texts live in the prompt registry (AI-F2) — edit there, with a
 # manifest bump + eval-gate attestation.
@@ -58,8 +66,9 @@ class RunCompareAgent:
                 parsed = fallback
             parsed["status"] = "ready"
             parsed["fallback_used"] = bool(err)
+            parsed["ai_changes"] = ai_changes_of(compare_payload)
             parsed["markdown_report"] = _markdown_from_report(parsed)
-            return validate_agent_contract(
+            report = validate_agent_contract(
                 RunCompareAgentOutput,
                 parsed,
                 agent_name="run_compare",
@@ -69,6 +78,8 @@ class RunCompareAgent:
                 evidence_refs=[{"type": "risk_level", "id": str(parsed.get("risk_level"))}],
                 decision_reason=str(parsed.get("confidence_reason") or "run_compare_ai_report"),
             )
+            report["ai_changes"] = ai_changes_of(compare_payload)
+            return report
         except Exception as exc:
             # structlog's BoundLogger doesn't accept positional ``%s``-style
             # args; passing them raises TypeError mid-except, which would
@@ -85,8 +96,9 @@ def build_validated_fallback_report(
     fallback = build_fallback_report(compare_payload)
     fallback["status"] = "ready"
     fallback["fallback_used"] = True
+    fallback["ai_changes"] = ai_changes_of(compare_payload)
     fallback["markdown_report"] = _markdown_from_report(fallback)
-    return validate_agent_contract(
+    report = validate_agent_contract(
         RunCompareAgentOutput,
         fallback,
         agent_name="run_compare",
@@ -98,6 +110,24 @@ def build_validated_fallback_report(
         ],
         decision_reason="run_compare_deterministic_fallback",
     )
+    report["ai_changes"] = ai_changes_of(compare_payload)
+    return report
+
+
+def _available_ai_diff(compare_payload: dict[str, Any]) -> dict[str, Any] | None:
+    brief = compare_payload.get("ai_analysis_diff")
+    if isinstance(brief, dict) and brief.get("available"):
+        return brief
+    return None
+
+
+def ai_changes_of(compare_payload: dict[str, Any]) -> list[str]:
+    """The report's ``ai_changes``: the deterministic lines of the payload's
+    ``ai_analysis_diff`` (``ai_history_core.build_ai_changes``), or ``[]``. Never
+    model output, so the list is the same whether the LLM answered or not."""
+    brief = _available_ai_diff(compare_payload)
+    changes = brief.get("ai_changes") if brief else None
+    return [str(item) for item in changes] if isinstance(changes, list) else []
 
 
 def _top_deltas(compare_payload: dict[str, Any], classification: str, limit: int = 8) -> list[dict[str, Any]]:
@@ -144,7 +174,21 @@ def _build_context(compare_payload: dict[str, Any]) -> dict[str, Any]:
         "top_still_failing": _top_deltas(compare_payload, "still_failing"),
         "top_duration_spikes": _top_deltas(compare_payload, "duration_spike"),
         "top_fixed": _top_deltas(compare_payload, "fixed"),
+        **_ai_analysis_context(compare_payload),
     }
+
+
+def _ai_analysis_context(compare_payload: dict[str, Any]) -> dict[str, Any]:
+    """AIH-03: how the AI analysis changed between the two runs, as plain data for the
+    model (only when it could be computed; at most ``_CONTEXT_TEST_CHANGES`` test changes)."""
+    brief = _available_ai_diff(compare_payload)
+    if brief is None:
+        return {}
+    changes = dict(brief)
+    test_changes = changes.get("test_changes")
+    if isinstance(test_changes, list):
+        changes["test_changes"] = test_changes[:_CONTEXT_TEST_CHANGES]
+    return {"ai_analysis_changes": changes}
 
 
 def build_fallback_report(compare_payload: dict[str, Any]) -> dict[str, Any]:
@@ -225,9 +269,13 @@ def _markdown_from_report(report: dict[str, Any]) -> str:
     def bullets(items: list[str]) -> str:
         return "\n".join(f"- {item}" for item in items) or "- None"
 
-    return "\n\n".join([
+    sections = [
         "## Executive Summary\n" + str(report.get("executive_summary") or ""),
         "## Key Differences\n" + bullets(report.get("key_differences") or []),
         "## Recommended Actions\n" + bullets(report.get("recommended_actions") or []),
         f"## Confidence\n{report.get('confidence', 0)}/100 - {report.get('confidence_reason', '')}",
-    ])
+    ]
+    ai_changes = report.get("ai_changes") or []
+    if ai_changes:
+        sections.append("## AI analysis changes\n" + bullets([str(item) for item in ai_changes]))
+    return "\n\n".join(sections)

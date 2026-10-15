@@ -91,6 +91,8 @@ Self-registration is off unless the deployment turns it on (`REGISTRATION_ENABLE
 - **Purge now** (policy enabled) asks you to type the project's name, then queues the purge.
 - **Delete by criteria** removes a selected subset.
 
+**AI history** keeps every AI analysis of a run as a version: up to 20 per run (per kind: the analysis digest and the run summary) and 10 per test result by default, each settable from 1 to 100. The oldest go first; version 1, the newest and any version a published decision report cites never do. The caps apply whenever a version is stored, even with scheduled purging off, and AI history goes with its run.
+
 Purging is irreversible. The operator guide in the repository (`user-guide/administration.md`) lists exactly what each class covers.
 
 ### Project data

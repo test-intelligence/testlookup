@@ -112,6 +112,18 @@ Whether an unreviewed report may leave the app is the server setting **`REVIEW_G
 
 Run with it `false` for a while, read the would-refuse audit rows, make sure reviewers are keeping up with the Approvals queue, then turn it on.
 
+## AI history: every analysis is kept
+
+A run can be analysed more than once (a re-triggered pipeline, a different engine or model, a correction). Each analysis is kept as an immutable **version** instead of overwriting the previous one, with its provenance (rules, ML or a language model, which model, whether it fell back):
+
+- **Per run**: a digest of each pipeline's analysis (verdict and risk, categories, failure clusters, each analysed test's category, confidence and suggested root cause) and the run summary written with it. The run's Analysis tab lists them (**v2 · LLM llama3.1 · about 2 hours ago**), shows an older one read-only and diffs any two; the Evidence tab's decision-report version follows the same choice. In-app: `/docs/runs#ai-history`.
+- **Per test result**: every pipeline analysis, single-test re-analysis, human correction and bulk reclassification of that result, shown on the test's History tab.
+- **vs previous run**: the Analysis tab and Run Compare also diff a run's AI analysis with another run's. The default baseline is the previous run of the same suite **on the same branch** (the newest that finished before this run, any outcome); **Compare to previous run** on the Runs list and the run's ⋯ menu use the same server rule, so they open the same pair (they used to pick from the runs loaded on the page, on any branch). When the two analyses came from different engines, the diff says so first, so an engine change is not read as a product change.
+
+The diff itself never needs a language model. Its one-paragraph narrative is written by the language model when one is reachable and the project's cost budget allows (labelled **AI narrative**); otherwise it is built from the diff and labelled **deterministic summary**. Viewing the history makes no model call.
+
+How many versions are kept (by default 20 per run and kind, 10 per test result; version 1 and any version cited by a published decision report are never pruned) is part of the project's retention policy: see [Administration & settings](administration.md). **Export AI history** in a run's ⋯ menu downloads them as JSON; like other AI report exports it goes through the [human review gate](#the-human-review-gate-for-ai-reports) (`409` while enforced and unreviewed).
+
 ## How the ML classifier learns
 
 The local ML classifier trains on two kinds of labels, and the difference is tracked end to end.
@@ -127,6 +139,7 @@ Below **50 human labels** (`ML_HUMAN_LABEL_FLOOR`) the ML tier reports itself as
 |---|---|---|
 | Failure categories, clusters, flaky scores, release verdicts | Yes | — |
 | A run's Analysis tab | Yes (rules and ML content) | Richer narratives |
+| AI history, version diffs, "vs previous run" | Yes, with a **deterministic summary** | The **AI narrative** of a run-to-run comparison |
 | Root cause (AI) deep investigation | Yes, clustering and evidence (not in **Rules** mode) | Richer per-cluster analysis |
 | Ask AI | — | Yes |
 | Generated test cases (knowledge base) | A stub | Yes |

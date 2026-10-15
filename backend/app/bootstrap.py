@@ -16,6 +16,7 @@ from app.routers import (
     agent_memory,
     agents,
     ai_evaluation,
+    ai_history,
     admin_dlq,
     admin_maintenance,
     admin_storage,
@@ -186,6 +187,13 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     releases.router,
     reports.router,
     run_intelligence.router,
+    # W03 (AIH-02/03/05/06): /runs/{run_id}/ai-history[/diff|/export|/{version_id}],
+    # /runs/{run_id}/tests/{test_id}/ai-history, /runs/{run_id}/previous and
+    # /runs/{run_id}/ai-compare. AFTER run_intelligence.router; every path ends in
+    # a literal or sits under the literal ``ai-history`` segment, so it shadows
+    # nothing, and inside the router the literal /diff and /export are declared
+    # before /{version_id}.
+    ai_history.router,
     commit_attribution.router,       # Epic 8 US-8.1/US-8.2: commit range + suspect ranking
     scoring.router,
     onboarding.router,

@@ -151,7 +151,7 @@ Compare Latest Suite Runs
 Compare the latest completed run for a suite against the previous latest
 completed run for the same suite and branch.
 
-Source: [backend/app/routers/run_compare.py:121](../../../backend/app/routers/run_compare.py#L121).
+Source: [backend/app/routers/run_compare.py:124](../../../backend/app/routers/run_compare.py#L124).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 

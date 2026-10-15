@@ -72,7 +72,8 @@ import { useFeatureEnabled } from '@/hooks/useFeatureFlags'
 import agentService from '@/services/agentService'
 import type { TestRun } from '@/types/runs'
 import { shortAgo } from '@/utils/formatters'
-import { buildCompareWithPreviousHref, findPreviousRunOfSuite } from '@/utils/runComparisons'
+import { buildCompareWithPreviousHref } from '@/utils/runComparisons'
+import { aiHistoryService } from '@/services/aiHistoryService'
 import { isRunInProgress, measuredRunPassRate } from '@/utils/runPassRate'
 
 /** The page's help topic (the header's **?**). */
@@ -1510,20 +1511,29 @@ export default function RunsPage() {
     navigate(href)
   }
 
-  // Per-row "Compare to previous run" handler — picks the chronologically
-  // immediately preceding run with the same ``primary_suite_name`` from
-  // the full fetched ``runs`` list (not the paginated ``tableRuns`` slice,
-  // so the previous-of-same-suite can live on a different page).
-  const handleCompareWithPrevious = (run: TestRun): void => {
+  // Per-row "Compare to previous run" handler — asks the SERVER for the
+  // previous run (W03, D42: same suite AND branch, the newest that finished
+  // before this one), the same pair the run page's ⋯ menu and its Analysis
+  // tab open. An event handler's one-off read, not a page read (no SWR).
+  const handleCompareWithPrevious = async (run: TestRun): Promise<void> => {
     if (!run.primary_suite_name) {
       toast('This run has no suite attribution — cannot pick a previous-of-same-suite.', { icon: '⚠️' })
       return
     }
-    const previous = findPreviousRunOfSuite(run, runs)
-    const href = buildCompareWithPreviousHref(run, previous)
+    let answer
+    try {
+      answer = await aiHistoryService.getPreviousRun(run.id)
+    } catch {
+      toast.error('Could not look up the previous run — try again in a moment.')
+      return
+    }
+    const baseline = answer?.baseline
+    const href = baseline
+      ? buildCompareWithPreviousHref(run, { id: baseline.run_id, primary_suite_name: baseline.primary_suite_name })
+      : null
     if (!href) {
       toast(
-        `No earlier run of "${run.primary_suite_name}" in this window — widen the window or pick a different run.`,
+        answer?.message || `No earlier run of "${run.primary_suite_name}" on this branch was found.`,
         { icon: '⚠️' },
       )
       return
@@ -1752,7 +1762,7 @@ export default function RunsPage() {
           setSelectedIds={setSelectedIds}
           onTrigger={handleTrigger}
           onDeep={handleDeep}
-          onCompareWithPrevious={handleCompareWithPrevious}
+          onCompareWithPrevious={(run) => void handleCompareWithPrevious(run)}
           onOpenSignatures={() => setSignaturesOpen(true)}
           isQaEngineer={isQaEngineer}
           page={tablePage}

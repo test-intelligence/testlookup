@@ -20,6 +20,7 @@ Current SQLAlchemy metadata, without a database connection. All columns, server/
 | [agent_runs](#agent_runs) | AgentRun | 16 |
 | [agent_stage_results](#agent_stage_results) | AgentStageResult | 36 |
 | [ai_analysis](#ai_analysis) | AIAnalysis | 17 |
+| [ai_analysis_versions](#ai_analysis_versions) | AIAnalysisVersion | 26 |
 | [ai_eval_baselines](#ai_eval_baselines) | AIEvalBaseline | 18 |
 | [ai_eval_datasets](#ai_eval_datasets) | AIEvalDataset | 10 |
 | [ai_eval_gate_runs](#ai_eval_gate_runs) | AIEvalGateRun | 16 |
@@ -84,7 +85,7 @@ Current SQLAlchemy metadata, without a database connection. All columns, server/
 | [project_llm_quota](#project_llm_quota) | ProjectLlmQuota | 12 |
 | [project_llm_usage](#project_llm_usage) | ProjectLlmUsage | 10 |
 | [project_members](#project_members) | ProjectMember | 5 |
-| [project_retention_policies](#project_retention_policies) | ProjectRetentionPolicy | 10 |
+| [project_retention_policies](#project_retention_policies) | ProjectRetentionPolicy | 12 |
 | [projects](#projects) | Project | 18 |
 | [quality_gates](#quality_gates) | QualityGate | 6 |
 | [quarantine_lifecycle_policies](#quarantine_lifecycle_policies) | QuarantineLifecyclePolicy | 11 |
@@ -152,7 +153,7 @@ Current SQLAlchemy metadata, without a database connection. All columns, server/
 
 ## access_audit_logs
 
-[backend/app/models/postgres.py:4211](../../backend/app/models/postgres.py#L4211)
+[backend/app/models/postgres.py:4315](../../backend/app/models/postgres.py#L4315)
 
 Append-only audit trail for user role and project membership changes.
 
@@ -197,7 +198,7 @@ Constraints and indexes:
 
 ## agent_action_dispatch_outbox
 
-[backend/app/models/postgres.py:5674](../../backend/app/models/postgres.py#L5674)
+[backend/app/models/postgres.py:5778](../../backend/app/models/postgres.py#L5778)
 
 Durable delivery intent for approved actions; never contains prompts.
 
@@ -229,7 +230,7 @@ Constraints and indexes:
 
 ## agent_action_ledger
 
-[backend/app/models/postgres.py:5270](../../backend/app/models/postgres.py#L5270)
+[backend/app/models/postgres.py:5374](../../backend/app/models/postgres.py#L5374)
 
 Append-only proposal/execution ledger for agent-originated actions.
 
@@ -280,7 +281,7 @@ Constraints and indexes:
 
 ## agent_child_dispatch_outbox
 
-[backend/app/models/postgres.py:1920](../../backend/app/models/postgres.py#L1920)
+[backend/app/models/postgres.py:2024](../../backend/app/models/postgres.py#L2024)
 
 Durable dispatch record for a planner-spawned Investigator child.
 
@@ -316,7 +317,7 @@ Constraints and indexes:
 
 ## agent_configs
 
-[backend/app/models/postgres.py:5499](../../backend/app/models/postgres.py#L5499)
+[backend/app/models/postgres.py:5603](../../backend/app/models/postgres.py#L5603)
 
 A project's configuration of one agent (architecture E4.1, section 4.2).
 
@@ -348,7 +349,7 @@ Constraints and indexes:
 
 ## agent_investigations
 
-[backend/app/models/postgres.py:1776](../../backend/app/models/postgres.py#L1776)
+[backend/app/models/postgres.py:1880](../../backend/app/models/postgres.py#L1880)
 
 One Investigator run against a test run (shadow mode).
 
@@ -417,7 +418,7 @@ Constraints and indexes:
 
 ## agent_invocations
 
-[backend/app/models/postgres.py:5436](../../backend/app/models/postgres.py#L5436)
+[backend/app/models/postgres.py:5540](../../backend/app/models/postgres.py#L5540)
 
 One call of a single agent through the public API (architecture E1.2).
 
@@ -458,7 +459,7 @@ Constraints and indexes:
 
 ## agent_memory_entries
 
-[backend/app/models/postgres.py:5215](../../backend/app/models/postgres.py#L5215)
+[backend/app/models/postgres.py:5319](../../backend/app/models/postgres.py#L5319)
 
 Unified memory linking a run/snapshot to related entities (clusters, defects,
 release decisions, ownership) for project-scoped historical recall.
@@ -506,7 +507,7 @@ Constraints and indexes:
 
 ## agent_pipeline_runs
 
-[backend/app/models/postgres.py:2088](../../backend/app/models/postgres.py#L2088)
+[backend/app/models/postgres.py:2192](../../backend/app/models/postgres.py#L2192)
 
 Tracks a single execution of the multi-agent pipeline for a test run.
 
@@ -557,7 +558,7 @@ stages: Mapped[list['AgentStageResult']] = relationship('AgentStageResult', back
 
 ## agent_runs
 
-[backend/app/models/postgres.py:1986](../../backend/app/models/postgres.py#L1986)
+[backend/app/models/postgres.py:2090](../../backend/app/models/postgres.py#L2090)
 
 Agent activity ledger: one row per agent
 execution — what ran, why, what it proposed, what it actually did
@@ -595,7 +596,7 @@ Constraints and indexes:
 
 ## agent_stage_results
 
-[backend/app/models/postgres.py:2157](../../backend/app/models/postgres.py#L2157)
+[backend/app/models/postgres.py:2261](../../backend/app/models/postgres.py#L2261)
 
 Per-stage result for an AgentPipelineRun.
 
@@ -660,7 +661,12 @@ pipeline_run: Mapped['AgentPipelineRun'] = relationship('AgentPipelineRun', back
 
 [backend/app/models/postgres.py:1419](../../backend/app/models/postgres.py#L1419)
 
-Stored AI triage results per test case.
+Stored AI triage results per test case: the LATEST answer (fast read).
+
+``created_at`` means "last generated at" (AIH-01): the pipeline upsert
+rewrites it, with ``llm_provider`` / ``llm_model``, on every re-analysis,
+so readers that order by it pick the newest analysis. Every earlier answer
+is kept as an immutable row of :class:`AIAnalysisVersion`.
 
 | Column | SQL type | Nullable | PK | Default | Foreign key / on delete |
 |---|---|---|---|---|---|
@@ -694,9 +700,72 @@ ORM navigation and cascade declarations:
 test_case: Mapped['TestCase'] = relationship('TestCase', back_populates='ai_analysis')
 ```
 
+## ai_analysis_versions
+
+[backend/app/models/postgres.py:1461](../../backend/app/models/postgres.py#L1461)
+
+One immutable version of a test result's AI analysis (AIH-01, migration 0205).
+
+``ai_analysis`` holds the latest answer per test case; every answer any of
+the four writers produced (pipeline, single-test analyze, human correction,
+bulk reclassify) is appended here, with its trigger, its pipeline or actor
+and a ``content_sha256`` (``ai_history_core.analysis_content_sha256``,
+byte-identical to ``ANALYSIS_CONTENT_SHA256_SQL``).
+
+Dedup: a pipeline version is unique per ``(test_case_id, pipeline_run_id)``
+(a replayed pipeline inserts nothing); the other triggers are skipped when
+the hash equals the latest version's. Rows die with their run (runs clock,
+D41: CASCADE) and are capped per test by the retention policy.
+``test_run_id`` / ``project_id`` / ``test_fingerprint`` are denormalised so
+retention, export and history lists need no join.
+
+| Column | SQL type | Nullable | PK | Default | Foreign key / on delete |
+|---|---|---|---|---|---|
+| `id` | `UUID` | False | True | `server=gen_random_uuid(); application=uuid4` |  |
+| `test_case_id` | `UUID` | False | False | `—` | test_cases.id / CASCADE |
+| `test_run_id` | `UUID` | False | False | `—` | test_runs.id / CASCADE |
+| `project_id` | `UUID` | False | False | `—` | projects.id / CASCADE |
+| `test_fingerprint` | `VARCHAR(64)` | False | False | `—` |  |
+| `version` | `INTEGER` | False | False | `—` |  |
+| `trigger` | `VARCHAR(24)` | False | False | `—` |  |
+| `pipeline_run_id` | `UUID` | True | False | `—` | agent_pipeline_runs.id / SET NULL |
+| `actor_user_id` | `UUID` | True | False | `—` | users.id / SET NULL |
+| `content_sha256` | `VARCHAR(64)` | False | False | `—` |  |
+| `failure_category` | `VARCHAR(30)` | True | False | `—` |  |
+| `confidence_score` | `INTEGER` | True | False | `—` |  |
+| `root_cause_summary` | `TEXT` | True | False | `—` |  |
+| `is_flaky` | `BOOLEAN` | False | False | `server=false; application=False` |  |
+| `backend_error_found` | `BOOLEAN` | False | False | `server=false; application=False` |  |
+| `pod_issue_found` | `BOOLEAN` | False | False | `server=false; application=False` |  |
+| `requires_human_review` | `BOOLEAN` | False | False | `server=false; application=False` |  |
+| `recommended_actions` | `JSON` | True | False | `—` |  |
+| `evidence_references` | `JSON` | True | False | `—` |  |
+| `tools_used` | `JSON` | True | False | `—` |  |
+| `role_actions` | `JSON` | True | False | `—` |  |
+| `llm_provider` | `VARCHAR(50)` | True | False | `—` |  |
+| `llm_model` | `VARCHAR(100)` | True | False | `—` |  |
+| `analysis_mode` | `VARCHAR(20)` | True | False | `—` |  |
+| `provenance` | `JSONB` | False | False | `server='{}'::jsonb; application=dict` |  |
+| `created_at` | `DATETIME` | False | False | `server=now()` |  |
+
+Constraints and indexes:
+
+- `CheckConstraint` `ck_ai_analysis_versions_version`: `version >= 1`
+- `ForeignKeyConstraint` `unnamed`: `actor_user_id`
+- `ForeignKeyConstraint` `unnamed`: `pipeline_run_id`
+- `ForeignKeyConstraint` `unnamed`: `project_id`
+- `ForeignKeyConstraint` `unnamed`: `test_case_id`
+- `ForeignKeyConstraint` `unnamed`: `test_run_id`
+- `PrimaryKeyConstraint` `unnamed`: `id`
+- `UniqueConstraint` `uq_ai_analysis_versions_case_version`: `test_case_id, version`
+- Index `ix_ai_analysis_versions_pipeline` (unique=False): `ai_analysis_versions.pipeline_run_id`; options `{"postgresql_where": "pipeline_run_id IS NOT NULL"}`
+- Index `ix_ai_analysis_versions_project_fp` (unique=False): `ai_analysis_versions.project_id, ai_analysis_versions.test_fingerprint, created_at DESC`; options `{}`
+- Index `ix_ai_analysis_versions_run` (unique=False): `ai_analysis_versions.test_run_id`; options `{}`
+- Index `uq_ai_analysis_versions_case_pipeline` (unique=True): `ai_analysis_versions.test_case_id, ai_analysis_versions.pipeline_run_id`; options `{"postgresql_where": "trigger = 'pipeline' AND pipeline_run_id IS NOT NULL"}`
+
 ## ai_eval_baselines
 
-[backend/app/models/postgres.py:4938](../../backend/app/models/postgres.py#L4938)
+[backend/app/models/postgres.py:5042](../../backend/app/models/postgres.py#L5042)
 
 Baseline metrics per agent/task_type for comparison gating.
 
@@ -732,7 +801,7 @@ Constraints and indexes:
 
 ## ai_eval_datasets
 
-[backend/app/models/postgres.py:4882](../../backend/app/models/postgres.py#L4882)
+[backend/app/models/postgres.py:4986](../../backend/app/models/postgres.py#L4986)
 
 Labeled evaluation dataset for measuring AI quality over time.
 
@@ -757,7 +826,7 @@ Constraints and indexes:
 
 ## ai_eval_gate_runs
 
-[backend/app/models/postgres.py:4969](../../backend/app/models/postgres.py#L4969)
+[backend/app/models/postgres.py:5073](../../backend/app/models/postgres.py#L5073)
 
 Historical record of an agent-stack release gate decision.
 
@@ -793,7 +862,7 @@ Constraints and indexes:
 
 ## ai_eval_reviewer_quality
 
-[backend/app/models/postgres.py:5036](../../backend/app/models/postgres.py#L5036)
+[backend/app/models/postgres.py:5140](../../backend/app/models/postgres.py#L5140)
 
 A G3 reviewer-quality observation batch or scheduled 30-day rollup.
 
@@ -838,7 +907,7 @@ Constraints and indexes:
 
 ## ai_eval_runs
 
-[backend/app/models/postgres.py:4902](../../backend/app/models/postgres.py#L4902)
+[backend/app/models/postgres.py:5006](../../backend/app/models/postgres.py#L5006)
 
 Record of running an evaluation dataset against a model version.
 
@@ -871,7 +940,7 @@ Constraints and indexes:
 
 ## ai_eval_shadow_pairs
 
-[backend/app/models/postgres.py:5006](../../backend/app/models/postgres.py#L5006)
+[backend/app/models/postgres.py:5110](../../backend/app/models/postgres.py#L5110)
 
 A bounded live tier pair awaiting a human or golden-input label.
 
@@ -906,7 +975,7 @@ Constraints and indexes:
 
 ## ai_feedback
 
-[backend/app/models/postgres.py:2288](../../backend/app/models/postgres.py#L2288)
+[backend/app/models/postgres.py:2392](../../backend/app/models/postgres.py#L2392)
 
 Human feedback on AI triage results — the primary training signal.
 
@@ -947,7 +1016,7 @@ Constraints and indexes:
 
 ## ai_provenance_records
 
-[backend/app/models/postgres.py:4042](../../backend/app/models/postgres.py#L4042)
+[backend/app/models/postgres.py:4146](../../backend/app/models/postgres.py#L4146)
 
 Tracks which model/method produced each AI conclusion.
 
@@ -984,7 +1053,7 @@ Constraints and indexes:
 
 ## api_keys
 
-[backend/app/models/postgres.py:3921](../../backend/app/models/postgres.py#L3921)
+[backend/app/models/postgres.py:4025](../../backend/app/models/postgres.py#L4025)
 
 Scoped personal access token (PAT) for CI/CD and API access.
 
@@ -1020,7 +1089,7 @@ Constraints and indexes:
 
 ## app_settings
 
-[backend/app/models/postgres.py:3852](../../backend/app/models/postgres.py#L3852)
+[backend/app/models/postgres.py:3956](../../backend/app/models/postgres.py#L3956)
 
 Key-value store for application-level configuration (e.g. SMTP settings).
 
@@ -1104,7 +1173,7 @@ attachments: Mapped[list['TestAttachment']] = relationship('TestAttachment', bac
 
 ## chat_messages
 
-[backend/app/models/postgres.py:2264](../../backend/app/models/postgres.py#L2264)
+[backend/app/models/postgres.py:2368](../../backend/app/models/postgres.py#L2368)
 
 A single message in a ChatSession.
 
@@ -1131,7 +1200,7 @@ session: Mapped['ChatSession'] = relationship('ChatSession', back_populates='mes
 
 ## chat_sessions
 
-[backend/app/models/postgres.py:2242](../../backend/app/models/postgres.py#L2242)
+[backend/app/models/postgres.py:2346](../../backend/app/models/postgres.py#L2346)
 
 A conversation session between a user and the Conversation Agent.
 
@@ -1164,7 +1233,7 @@ messages: Mapped[list['ChatMessage']] = relationship('ChatMessage', back_populat
 
 ## compliance_packs
 
-[backend/app/models/postgres.py:6451](../../backend/app/models/postgres.py#L6451)
+[backend/app/models/postgres.py:6555](../../backend/app/models/postgres.py#L6555)
 
 Generated compliance export pack (ZIP) for a release decision.
 
@@ -1196,7 +1265,7 @@ Constraints and indexes:
 
 ## contract_violations
 
-[backend/app/models/postgres.py:2537](../../backend/app/models/postgres.py#L2537)
+[backend/app/models/postgres.py:2641](../../backend/app/models/postgres.py#L2641)
 
 API contract violation detected by ContractAgent.
 
@@ -1223,7 +1292,7 @@ Constraints and indexes:
 
 ## coverage_snapshots
 
-[backend/app/models/postgres.py:1620](../../backend/app/models/postgres.py#L1620)
+[backend/app/models/postgres.py:1724](../../backend/app/models/postgres.py#L1724)
 
 Daily test coverage snapshots for trend charts.
 
@@ -1245,7 +1314,7 @@ Constraints and indexes:
 
 ## decision_report_eval_cycles
 
-[backend/app/models/postgres.py:5098](../../backend/app/models/postgres.py#L5098)
+[backend/app/models/postgres.py:5202](../../backend/app/models/postgres.py#L5202)
 
 Durable evidence for a report-level evaluation corpus cycle.
 
@@ -1297,7 +1366,7 @@ Constraints and indexes:
 
 ## decision_report_feedback
 
-[backend/app/models/postgres.py:2328](../../backend/app/models/postgres.py#L2328)
+[backend/app/models/postgres.py:2432](../../backend/app/models/postgres.py#L2432)
 
 Structured human feedback bound to one immutable DecisionReport version.
 
@@ -1337,7 +1406,7 @@ Constraints and indexes:
 
 ## decision_report_supersession_requests
 
-[backend/app/models/postgres.py:5160](../../backend/app/models/postgres.py#L5160)
+[backend/app/models/postgres.py:5264](../../backend/app/models/postgres.py#L5264)
 
 Durable, idempotent request to publish a child-enriched report version.
 
@@ -1376,7 +1445,7 @@ Constraints and indexes:
 
 ## deep_findings
 
-[backend/app/models/postgres.py:2470](../../backend/app/models/postgres.py#L2470)
+[backend/app/models/postgres.py:2574](../../backend/app/models/postgres.py#L2574)
 
 Deep investigation result per failure cluster.
 
@@ -1414,7 +1483,7 @@ Constraints and indexes:
 
 ## defect_candidates
 
-[backend/app/models/postgres.py:1571](../../backend/app/models/postgres.py#L1571)
+[backend/app/models/postgres.py:1675](../../backend/app/models/postgres.py#L1675)
 
 Staging area for defect candidates before promotion to full defects.
 
@@ -1450,7 +1519,7 @@ Constraints and indexes:
 
 ## defects
 
-[backend/app/models/postgres.py:1455](../../backend/app/models/postgres.py#L1455)
+[backend/app/models/postgres.py:1559](../../backend/app/models/postgres.py#L1559)
 
 Defect records linked to test cases or failure clusters.
 
@@ -1512,7 +1581,7 @@ approver: Mapped[Optional['User']] = relationship('User', foreign_keys=[approved
 
 ## deletion_jobs
 
-[backend/app/models/postgres.py:6768](../../backend/app/models/postgres.py#L6768)
+[backend/app/models/postgres.py:6872](../../backend/app/models/postgres.py#L6872)
 
 One record of a deletion actually happening (migration 0147, S2b).
 
@@ -1566,7 +1635,7 @@ Constraints and indexes:
 
 ## digest_subscriptions
 
-[backend/app/models/postgres.py:4819](../../backend/app/models/postgres.py#L4819)
+[backend/app/models/postgres.py:4923](../../backend/app/models/postgres.py#L4923)
 
 User subscription to a scheduled or event-driven report delivery.
 
@@ -1604,7 +1673,7 @@ Constraints and indexes:
 
 ## dismissed_duplicate_pairs
 
-[backend/app/models/postgres.py:2887](../../backend/app/models/postgres.py#L2887)
+[backend/app/models/postgres.py:2991](../../backend/app/models/postgres.py#L2991)
 
 Suppression record so a dismissed duplicate pair stays dismissed (Phase 4).
 
@@ -1635,7 +1704,7 @@ Constraints and indexes:
 
 ## duplicate_test_case_candidates
 
-[backend/app/models/postgres.py:2844](../../backend/app/models/postgres.py#L2844)
+[backend/app/models/postgres.py:2948](../../backend/app/models/postgres.py#L2948)
 
 One detected near-duplicate PAIR of authored ManagedTestCases (Phase 4).
 
@@ -1679,7 +1748,7 @@ Constraints and indexes:
 
 ## evidence_artifacts
 
-[backend/app/models/postgres.py:3974](../../backend/app/models/postgres.py#L3974)
+[backend/app/models/postgres.py:4078](../../backend/app/models/postgres.py#L4078)
 
 Tenant-bound immutable evidence captured from an executed tool.
 
@@ -1727,7 +1796,7 @@ Constraints and indexes:
 
 ## failure_attribution
 
-[backend/app/models/postgres.py:5914](../../backend/app/models/postgres.py#L5914)
+[backend/app/models/postgres.py:6018](../../backend/app/models/postgres.py#L6018)
 
 
 
@@ -1756,7 +1825,7 @@ Constraints and indexes:
 
 ## failure_clusters
 
-[backend/app/models/postgres.py:2394](../../backend/app/models/postgres.py#L2394)
+[backend/app/models/postgres.py:2498](../../backend/app/models/postgres.py#L2498)
 
 Semantic cluster of failures grouped by root-cause similarity.
 
@@ -1784,7 +1853,7 @@ Constraints and indexes:
 
 ## feature_flags
 
-[backend/app/models/postgres.py:5722](../../backend/app/models/postgres.py#L5722)
+[backend/app/models/postgres.py:5826](../../backend/app/models/postgres.py#L5826)
 
 Named capability toggle gated by project, role, and rollout percent.
 
@@ -1809,7 +1878,7 @@ Constraints and indexes:
 
 ## federated_identities
 
-[backend/app/models/postgres.py:4423](../../backend/app/models/postgres.py#L4423)
+[backend/app/models/postgres.py:4527](../../backend/app/models/postgres.py#L4527)
 
 Links an external IdP subject to a local User.
 
@@ -1836,7 +1905,7 @@ Constraints and indexes:
 
 ## fix_attempts
 
-[backend/app/models/postgres.py:2024](../../backend/app/models/postgres.py#L2024)
+[backend/app/models/postgres.py:2128](../../backend/app/models/postgres.py#L2128)
 
 One (fixer run, candidate test, attempt) of the Fixer.
 
@@ -1890,7 +1959,7 @@ Constraints and indexes:
 
 ## flaky_classifier_calibration
 
-[backend/app/models/postgres.py:6051](../../backend/app/models/postgres.py#L6051)
+[backend/app/models/postgres.py:6155](../../backend/app/models/postgres.py#L6155)
 
 
 
@@ -1915,7 +1984,7 @@ Constraints and indexes:
 
 ## flaky_coach_results
 
-[backend/app/models/postgres.py:4286](../../backend/app/models/postgres.py#L4286)
+[backend/app/models/postgres.py:4390](../../backend/app/models/postgres.py#L4390)
 
 Project-level flaky test coaching results with quarantine recommendations.
 
@@ -1951,7 +2020,7 @@ Constraints and indexes:
 
 ## flaky_detection_state
 
-[backend/app/models/postgres.py:6087](../../backend/app/models/postgres.py#L6087)
+[backend/app/models/postgres.py:6191](../../backend/app/models/postgres.py#L6191)
 
 
 
@@ -1981,7 +2050,7 @@ Constraints and indexes:
 
 ## flaky_quarantine_requests
 
-[backend/app/models/postgres.py:6515](../../backend/app/models/postgres.py#L6515)
+[backend/app/models/postgres.py:6619](../../backend/app/models/postgres.py#L6619)
 
 Workflow record for proposing, approving, and enforcing quarantine
 of a flaky test.
@@ -2043,7 +2112,7 @@ Constraints and indexes:
 
 ## flaky_score
 
-[backend/app/models/postgres.py:6017](../../backend/app/models/postgres.py#L6017)
+[backend/app/models/postgres.py:6121](../../backend/app/models/postgres.py#L6121)
 
 
 
@@ -2070,7 +2139,7 @@ Constraints and indexes:
 
 ## generation_batches
 
-[backend/app/models/postgres.py:3149](../../backend/app/models/postgres.py#L3149)
+[backend/app/models/postgres.py:3253](../../backend/app/models/postgres.py#L3253)
 
 One row per AI test-case generation request (grounded or raw).
 
@@ -2104,7 +2173,7 @@ Constraints and indexes:
 
 ## generation_case_sources
 
-[backend/app/models/postgres.py:3180](../../backend/app/models/postgres.py#L3180)
+[backend/app/models/postgres.py:3284](../../backend/app/models/postgres.py#L3284)
 
 Maps a generated ManagedTestCase to the KnowledgeChunks cited for it.
 
@@ -2137,7 +2206,7 @@ Constraints and indexes:
 
 ## github_integrations
 
-[backend/app/models/postgres.py:6309](../../backend/app/models/postgres.py#L6309)
+[backend/app/models/postgres.py:6413](../../backend/app/models/postgres.py#L6413)
 
 Per-project GitHub Checks API integration config.
 
@@ -2168,7 +2237,7 @@ Constraints and indexes:
 
 ## gitlab_integrations
 
-[backend/app/models/postgres.py:6368](../../backend/app/models/postgres.py#L6368)
+[backend/app/models/postgres.py:6472](../../backend/app/models/postgres.py#L6472)
 
 Per-project GitLab integration config (PMF Epic 3 US-3.1).
 
@@ -2205,7 +2274,7 @@ Constraints and indexes:
 
 ## identity_events
 
-[backend/app/models/postgres.py:4462](../../backend/app/models/postgres.py#L4462)
+[backend/app/models/postgres.py:4566](../../backend/app/models/postgres.py#L4566)
 
 Append-only audit trail for SSO, SCIM, and identity lifecycle events.
 
@@ -2251,7 +2320,7 @@ Constraints and indexes:
 
 ## integration_health_checks
 
-[backend/app/models/postgres.py:4148](../../backend/app/models/postgres.py#L4148)
+[backend/app/models/postgres.py:4252](../../backend/app/models/postgres.py#L4252)
 
 Integration provider health status (latest snapshot per provider).
 
@@ -2271,7 +2340,7 @@ Constraints and indexes:
 
 ## integration_probe_results
 
-[backend/app/models/postgres.py:4161](../../backend/app/models/postgres.py#L4161)
+[backend/app/models/postgres.py:4265](../../backend/app/models/postgres.py#L4265)
 
 Historical record of each integration health probe (OPS-01).
 
@@ -2293,7 +2362,7 @@ Constraints and indexes:
 
 ## knowledge_chunks
 
-[backend/app/models/postgres.py:3119](../../backend/app/models/postgres.py#L3119)
+[backend/app/models/postgres.py:3223](../../backend/app/models/postgres.py#L3223)
 
 PostgreSQL metadata for each chunk stored in ChromaDB knowledge_chunks collection.
 
@@ -2324,7 +2393,7 @@ Constraints and indexes:
 
 ## knowledge_sources
 
-[backend/app/models/postgres.py:3058](../../backend/app/models/postgres.py#L3058)
+[backend/app/models/postgres.py:3162](../../backend/app/models/postgres.py#L3162)
 
 Registry of external knowledge sources attached to a project for RAG-grounded test generation.
 
@@ -2359,7 +2428,7 @@ Constraints and indexes:
 
 ## knowledge_sync_events
 
-[backend/app/models/postgres.py:3093](../../backend/app/models/postgres.py#L3093)
+[backend/app/models/postgres.py:3197](../../backend/app/models/postgres.py#L3197)
 
 Audit log for every sync attempt on a KnowledgeSource.
 
@@ -2463,7 +2532,7 @@ Constraints and indexes:
 
 ## live_sessions
 
-[backend/app/models/postgres.py:3227](../../backend/app/models/postgres.py#L3227)
+[backend/app/models/postgres.py:3331](../../backend/app/models/postgres.py#L3331)
 
 Tracks an active live test execution session from a client machine.
 
@@ -2510,7 +2579,7 @@ Constraints and indexes:
 
 ## managed_test_cases
 
-[backend/app/models/postgres.py:2621](../../backend/app/models/postgres.py#L2621)
+[backend/app/models/postgres.py:2725](../../backend/app/models/postgres.py#L2725)
 
 Manually authored or AI-generated test case with full lifecycle management.
 
@@ -2623,7 +2692,7 @@ Constraints and indexes:
 
 ## model_versions
 
-[backend/app/models/postgres.py:2357](../../backend/app/models/postgres.py#L2357)
+[backend/app/models/postgres.py:2461](../../backend/app/models/postgres.py#L2461)
 
 Registry of fine-tuned model versions per training track.
 
@@ -2656,7 +2725,7 @@ Constraints and indexes:
 
 ## notification_logs
 
-[backend/app/models/postgres.py:2557](../../backend/app/models/postgres.py#L2557)
+[backend/app/models/postgres.py:2661](../../backend/app/models/postgres.py#L2661)
 
 Audit trail for every dispatched notification.
 
@@ -2701,7 +2770,7 @@ Constraints and indexes:
 
 ## notification_preferences
 
-[backend/app/models/postgres.py:1636](../../backend/app/models/postgres.py#L1636)
+[backend/app/models/postgres.py:1740](../../backend/app/models/postgres.py#L1740)
 
 Per-user, per-channel notification configuration.
 
@@ -2729,7 +2798,7 @@ Constraints and indexes:
 
 ## notification_test_states
 
-[backend/app/models/postgres.py:1664](../../backend/app/models/postgres.py#L1664)
+[backend/app/models/postgres.py:1768](../../backend/app/models/postgres.py#L1768)
 
 Per-(project, test_fingerprint) rolling state for transition-based
 notifications (PMF US-7.1).
@@ -2765,7 +2834,7 @@ Constraints and indexes:
 
 ## notification_transition_policies
 
-[backend/app/models/postgres.py:1710](../../backend/app/models/postgres.py#L1710)
+[backend/app/models/postgres.py:1814](../../backend/app/models/postgres.py#L1814)
 
 Per-project policy for transition-based notifications (PMF US-7.1).
 
@@ -2794,7 +2863,7 @@ Constraints and indexes:
 
 ## perf_baselines
 
-[backend/app/models/postgres.py:6137](../../backend/app/models/postgres.py#L6137)
+[backend/app/models/postgres.py:6241](../../backend/app/models/postgres.py#L6241)
 
 Per-test running duration statistics.
 
@@ -2824,7 +2893,7 @@ Constraints and indexes:
 
 ## product_usage_events
 
-[backend/app/models/postgres.py:4194](../../backend/app/models/postgres.py#L4194)
+[backend/app/models/postgres.py:4298](../../backend/app/models/postgres.py#L4298)
 
 Tracks product adoption events for analytics.
 
@@ -2848,7 +2917,7 @@ Constraints and indexes:
 
 ## project_activity_events
 
-[backend/app/models/postgres.py:6997](../../backend/app/models/postgres.py#L6997)
+[backend/app/models/postgres.py:7119](../../backend/app/models/postgres.py#L7119)
 
 Append-only, project-scoped product feed of everything that happens.
 
@@ -2925,7 +2994,7 @@ Constraints and indexes:
 
 ## project_llm_quota
 
-[backend/app/models/postgres.py:5791](../../backend/app/models/postgres.py#L5791)
+[backend/app/models/postgres.py:5895](../../backend/app/models/postgres.py#L5895)
 
 Per-project LLM spend config used by the usage-based billing gate.
 
@@ -2953,7 +3022,7 @@ Constraints and indexes:
 
 ## project_llm_usage
 
-[backend/app/models/postgres.py:6957](../../backend/app/models/postgres.py#L6957)
+[backend/app/models/postgres.py:7079](../../backend/app/models/postgres.py#L7079)
 
 Running per-period LLM cost meter for a project.
 
@@ -2984,7 +3053,7 @@ Constraints and indexes:
 
 ## project_members
 
-[backend/app/models/postgres.py:3907](../../backend/app/models/postgres.py#L3907)
+[backend/app/models/postgres.py:4011](../../backend/app/models/postgres.py#L4011)
 
 Per-project role assignment for a user.
 
@@ -3005,7 +3074,7 @@ Constraints and indexes:
 
 ## project_retention_policies
 
-[backend/app/models/postgres.py:6901](../../backend/app/models/postgres.py#L6901)
+[backend/app/models/postgres.py:7005](../../backend/app/models/postgres.py#L7005)
 
 Per-project data retention policy (PMF US-11.4, migration 0113).
 
@@ -3030,6 +3099,12 @@ Four retention classes, each with its own clock:
 Every defaulted column carries a matching ``server_default`` so the
 migration DDL and the ORM cannot drift (the #433 lesson).
 
+AI history caps (AIH-06, migration 0206): ``ai_versions_per_run`` (per
+kind) and ``ai_versions_per_test``; NULL = the code defaults 20 / 10
+(``ai_history_core.DEFAULT_CAP_PER_RUN`` / ``DEFAULT_CAP_PER_TEST``). They
+apply at write time whatever ``enabled`` says; ``enabled`` only gates the
+scheduled sweep.
+
 | Column | SQL type | Nullable | PK | Default | Foreign key / on delete |
 |---|---|---|---|---|---|
 | `id` | `UUID` | False | True | `application=uuid4` |  |
@@ -3039,12 +3114,16 @@ migration DDL and the ORM cannot drift (the #433 lesson).
 | `runs_days` | `INTEGER` | False | False | `server=365; application=365` |  |
 | `artifacts_days` | `INTEGER` | False | False | `server=180; application=180` |  |
 | `audit_days` | `INTEGER` | False | False | `server=2555; application=2555` |  |
+| `ai_versions_per_run` | `INTEGER` | True | False | `—` |  |
+| `ai_versions_per_test` | `INTEGER` | True | False | `—` |  |
 | `created_at` | `DATETIME` | False | False | `server=now()` |  |
 | `updated_at` | `DATETIME` | False | False | `server=now(); onupdate=now()` |  |
 | `updated_by_user_id` | `UUID` | True | False | `—` | users.id / SET NULL |
 
 Constraints and indexes:
 
+- `CheckConstraint` `ck_retention_ai_versions_per_run`: `ai_versions_per_run IS NULL OR ai_versions_per_run BETWEEN 1 AND 100`
+- `CheckConstraint` `ck_retention_ai_versions_per_test`: `ai_versions_per_test IS NULL OR ai_versions_per_test BETWEEN 1 AND 100`
 - `ForeignKeyConstraint` `unnamed`: `project_id`
 - `ForeignKeyConstraint` `unnamed`: `updated_by_user_id`
 - `PrimaryKeyConstraint` `unnamed`: `id`
@@ -3098,7 +3177,7 @@ canonical_test_cases: Mapped[list['CanonicalTestCase']] = relationship('Canonica
 
 ## quality_gates
 
-[backend/app/models/postgres.py:1600](../../backend/app/models/postgres.py#L1600)
+[backend/app/models/postgres.py:1704](../../backend/app/models/postgres.py#L1704)
 
 Quality gate rule configuration per project.
 
@@ -3125,7 +3204,7 @@ project: Mapped['Project'] = relationship('Project', back_populates='quality_gat
 
 ## quarantine_lifecycle_policies
 
-[backend/app/models/postgres.py:6645](../../backend/app/models/postgres.py#L6645)
+[backend/app/models/postgres.py:6749](../../backend/app/models/postgres.py#L6749)
 
 Per-project quarantine lifecycle configuration (PMF US-5.4/5.5/5.6).
 
@@ -3157,7 +3236,7 @@ Constraints and indexes:
 
 ## refresh_token_records
 
-[backend/app/models/postgres.py:4558](../../backend/app/models/postgres.py#L4558)
+[backend/app/models/postgres.py:4662](../../backend/app/models/postgres.py#L4662)
 
 Server-side record of issued refresh tokens for rotation and replay detection.
 
@@ -3187,7 +3266,7 @@ Constraints and indexes:
 
 ## release_attribution_rules
 
-[backend/app/models/postgres.py:3689](../../backend/app/models/postgres.py#L3689)
+[backend/app/models/postgres.py:3793](../../backend/app/models/postgres.py#L3793)
 
 Per-project rule mapping run metadata to a release (migration 0154).
 
@@ -3219,7 +3298,7 @@ Constraints and indexes:
 
 ## release_decisions
 
-[backend/app/models/postgres.py:2503](../../backend/app/models/postgres.py#L2503)
+[backend/app/models/postgres.py:2607](../../backend/app/models/postgres.py#L2607)
 
 Release gate decision produced by ReleaseRiskAgent.
 
@@ -3259,7 +3338,7 @@ Constraints and indexes:
 
 ## release_gate_decisions
 
-[backend/app/models/postgres.py:4641](../../backend/app/models/postgres.py#L4641)
+[backend/app/models/postgres.py:4745](../../backend/app/models/postgres.py#L4745)
 
 A go/no-go verdict for a RELEASE, not for a run (migration 0156).
 
@@ -3332,7 +3411,7 @@ Constraints and indexes:
 
 ## release_gate_policies
 
-[backend/app/models/postgres.py:4504](../../backend/app/models/postgres.py#L4504)
+[backend/app/models/postgres.py:4608](../../backend/app/models/postgres.py#L4608)
 
 Versioned release gate policy — per-project or system-wide default.
 
@@ -3363,7 +3442,7 @@ Constraints and indexes:
 
 ## release_outcomes
 
-[backend/app/models/postgres.py:3639](../../backend/app/models/postgres.py#L3639)
+[backend/app/models/postgres.py:3743](../../backend/app/models/postgres.py#L3743)
 
 A human-marked production incident or rollback for a release (E9.9).
 
@@ -3390,7 +3469,7 @@ Constraints and indexes:
 
 ## release_phases
 
-[backend/app/models/postgres.py:3735](../../backend/app/models/postgres.py#L3735)
+[backend/app/models/postgres.py:3839](../../backend/app/models/postgres.py#L3839)
 
 A phase / milestone within a Release lifecycle.
 
@@ -3426,7 +3505,7 @@ release: Mapped['Release'] = relationship('Release', back_populates='phases')
 
 ## release_test_run_links
 
-[backend/app/models/postgres.py:3770](../../backend/app/models/postgres.py#L3770)
+[backend/app/models/postgres.py:3874](../../backend/app/models/postgres.py#L3874)
 
 Links a test run to a release for metrics aggregation.
 
@@ -3462,7 +3541,7 @@ release: Mapped['Release'] = relationship('Release', back_populates='test_run_li
 
 ## releases
 
-[backend/app/models/postgres.py:3456](../../backend/app/models/postgres.py#L3456)
+[backend/app/models/postgres.py:3560](../../backend/app/models/postgres.py#L3560)
 
 A software release tracked through the QA lifecycle.
 
@@ -3516,7 +3595,7 @@ test_run_links: Mapped[list['ReleaseTestRunLink']] = relationship('ReleaseTestRu
 
 ## report_exports
 
-[backend/app/models/postgres.py:6850](../../backend/app/models/postgres.py#L6850)
+[backend/app/models/postgres.py:6954](../../backend/app/models/postgres.py#L6954)
 
 VIZ-607: one background export of a report (migration 0194).
 
@@ -3557,7 +3636,7 @@ Constraints and indexes:
 
 ## report_share_links
 
-[backend/app/models/postgres.py:4530](../../backend/app/models/postgres.py#L4530)
+[backend/app/models/postgres.py:4634](../../backend/app/models/postgres.py#L4634)
 
 Time-limited share token for run intelligence reports.
 
@@ -3593,7 +3672,7 @@ Constraints and indexes:
 
 ## requirement_coverage
 
-[backend/app/models/postgres.py:3208](../../backend/app/models/postgres.py#L3208)
+[backend/app/models/postgres.py:3312](../../backend/app/models/postgres.py#L3312)
 
 Tracks which requirements are covered/uncovered by a generation batch.
 
@@ -3619,7 +3698,7 @@ Constraints and indexes:
 
 ## review_requests
 
-[backend/app/models/postgres.py:5338](../../backend/app/models/postgres.py#L5338)
+[backend/app/models/postgres.py:5442](../../backend/app/models/postgres.py#L5442)
 
 One human review for one AI report-producing run (architecture section 8.1).
 
@@ -3679,7 +3758,7 @@ Constraints and indexes:
 
 ## run_baselines
 
-[backend/app/models/postgres.py:4075](../../backend/app/models/postgres.py#L4075)
+[backend/app/models/postgres.py:4179](../../backend/app/models/postgres.py#L4179)
 
 Records which baseline was selected for a run and why.
 
@@ -3707,7 +3786,7 @@ Constraints and indexes:
 
 ## run_commit_ranges
 
-[backend/app/models/postgres.py:2419](../../backend/app/models/postgres.py#L2419)
+[backend/app/models/postgres.py:2523](../../backend/app/models/postgres.py#L2523)
 
 Commit range associated with a run — Epic 8 US-8.1 (migration 0110).
 
@@ -3754,7 +3833,7 @@ Constraints and indexes:
 
 ## run_comparison_reports
 
-[backend/app/models/postgres.py:4114](../../backend/app/models/postgres.py#L4114)
+[backend/app/models/postgres.py:4218](../../backend/app/models/postgres.py#L4218)
 
 Cached AI report for a run or suite comparison.
 
@@ -3790,7 +3869,7 @@ Constraints and indexes:
 
 ## run_diffs
 
-[backend/app/models/postgres.py:4095](../../backend/app/models/postgres.py#L4095)
+[backend/app/models/postgres.py:4199](../../backend/app/models/postgres.py#L4199)
 
 Persisted diff payload for a run — avoids recomputation.
 
@@ -3857,7 +3936,7 @@ Constraints and indexes:
 
 ## run_intelligence_snapshots
 
-[backend/app/models/postgres.py:3955](../../backend/app/models/postgres.py#L3955)
+[backend/app/models/postgres.py:4059](../../backend/app/models/postgres.py#L4059)
 
 Cached run intelligence payload for fast page loads.
 
@@ -3883,7 +3962,7 @@ Constraints and indexes:
 
 ## run_tombstones
 
-[backend/app/models/postgres.py:6727](../../backend/app/models/postgres.py#L6727)
+[backend/app/models/postgres.py:6831](../../backend/app/models/postgres.py#L6831)
 
 A run that was deliberately deleted, and must not come back (0148, S2c).
 
@@ -3922,7 +4001,7 @@ Constraints and indexes:
 
 ## saved_views
 
-[backend/app/models/postgres.py:4614](../../backend/app/models/postgres.py#L4614)
+[backend/app/models/postgres.py:4718](../../backend/app/models/postgres.py#L4718)
 
 Persisted filter/scope configuration — personal or shared.
 
@@ -3955,7 +4034,7 @@ Constraints and indexes:
 
 ## scim_tokens
 
-[backend/app/models/postgres.py:4443](../../backend/app/models/postgres.py#L4443)
+[backend/app/models/postgres.py:4547](../../backend/app/models/postgres.py#L4547)
 
 Bearer token for SCIM 2.0 provisioning endpoints.
 
@@ -3982,7 +4061,7 @@ Constraints and indexes:
 
 ## secret_refs
 
-[backend/app/models/postgres.py:3833](../../backend/app/models/postgres.py#L3833)
+[backend/app/models/postgres.py:3937](../../backend/app/models/postgres.py#L3937)
 
 Stores sensitive values (API keys, tokens, passwords) separately from settings.
 
@@ -4043,7 +4122,7 @@ Constraints and indexes:
 
 ## service_ownership_rules
 
-[backend/app/models/postgres.py:4586](../../backend/app/models/postgres.py#L4586)
+[backend/app/models/postgres.py:4690](../../backend/app/models/postgres.py#L4690)
 
 Maps a matcher pattern (suite, component, package, path) to a team/service owner.
 
@@ -4072,7 +4151,7 @@ Constraints and indexes:
 
 ## settings_audit_log
 
-[backend/app/models/postgres.py:3869](../../backend/app/models/postgres.py#L3869)
+[backend/app/models/postgres.py:3973](../../backend/app/models/postgres.py#L3973)
 
 Append-only audit trail for settings and secret changes.
 
@@ -4113,7 +4192,7 @@ Constraints and indexes:
 
 ## sso_configurations
 
-[backend/app/models/postgres.py:4378](../../backend/app/models/postgres.py#L4378)
+[backend/app/models/postgres.py:4482](../../backend/app/models/postgres.py#L4482)
 
 Tenant/system-level SSO configuration for a SAML identity provider.
 
@@ -4206,7 +4285,7 @@ Constraints and indexes:
 
 ## suite_membership_events
 
-[backend/app/models/postgres.py:3380](../../backend/app/models/postgres.py#L3380)
+[backend/app/models/postgres.py:3484](../../backend/app/models/postgres.py#L3484)
 
 Immutable audit log of suite membership changes detected during sync.
 
@@ -4234,7 +4313,7 @@ Constraints and indexes:
 
 ## suite_memberships
 
-[backend/app/models/postgres.py:3350](../../backend/app/models/postgres.py#L3350)
+[backend/app/models/postgres.py:3454](../../backend/app/models/postgres.py#L3454)
 
 Tracks which test cases belong to which suite, linked to the run that confirmed membership.
 
@@ -4307,7 +4386,7 @@ Constraints and indexes:
 
 ## systemic_flake_cluster
 
-[backend/app/models/postgres.py:5952](../../backend/app/models/postgres.py#L5952)
+[backend/app/models/postgres.py:6056](../../backend/app/models/postgres.py#L6056)
 
 
 
@@ -4334,7 +4413,7 @@ Constraints and indexes:
 
 ## systemic_flake_cluster_member
 
-[backend/app/models/postgres.py:5987](../../backend/app/models/postgres.py#L5987)
+[backend/app/models/postgres.py:6091](../../backend/app/models/postgres.py#L6091)
 
 
 
@@ -4354,7 +4433,7 @@ Constraints and indexes:
 
 ## team_notification_channels
 
-[backend/app/models/postgres.py:1740](../../backend/app/models/postgres.py#L1740)
+[backend/app/models/postgres.py:1844](../../backend/app/models/postgres.py#L1844)
 
 Per-(project, team) notification target for ownership-routed
 transition notifications (PMF US-7.3).
@@ -4387,7 +4466,7 @@ Constraints and indexes:
 
 ## tenant_metric_snapshots
 
-[backend/app/models/postgres.py:4860](../../backend/app/models/postgres.py#L4860)
+[backend/app/models/postgres.py:4964](../../backend/app/models/postgres.py#L4964)
 
 Per-project observability metric snapshot — aggregated periodically.
 
@@ -4412,7 +4491,7 @@ Constraints and indexes:
 
 ## tenant_onboarding_status
 
-[backend/app/models/postgres.py:4178](../../backend/app/models/postgres.py#L4178)
+[backend/app/models/postgres.py:4282](../../backend/app/models/postgres.py#L4282)
 
 Tracks onboarding wizard progress per project.
 
@@ -4473,7 +4552,7 @@ test_step: Mapped[Optional['TestStep']] = relationship('TestStep', back_populate
 
 ## test_case_audit_logs
 
-[backend/app/models/postgres.py:3292](../../backend/app/models/postgres.py#L3292)
+[backend/app/models/postgres.py:3396](../../backend/app/models/postgres.py#L3396)
 
 Append-only compliance audit trail for all test management actions.
 
@@ -4529,7 +4608,7 @@ Constraints and indexes:
 
 ## test_case_comments
 
-[backend/app/models/postgres.py:2823](../../backend/app/models/postgres.py#L2823)
+[backend/app/models/postgres.py:2927](../../backend/app/models/postgres.py#L2927)
 
 Threaded comment on a ManagedTestCase.
 
@@ -4589,7 +4668,7 @@ test_case: Mapped['TestCase'] = relationship('TestCase', back_populates='history
 
 ## test_case_reviews
 
-[backend/app/models/postgres.py:2787](../../backend/app/models/postgres.py#L2787)
+[backend/app/models/postgres.py:2891](../../backend/app/models/postgres.py#L2891)
 
 Review cycle for a ManagedTestCase.
 
@@ -4621,7 +4700,7 @@ Constraints and indexes:
 
 ## test_case_versions
 
-[backend/app/models/postgres.py:2742](../../backend/app/models/postgres.py#L2742)
+[backend/app/models/postgres.py:2846](../../backend/app/models/postgres.py#L2846)
 
 Immutable snapshot of a ManagedTestCase at each save.
 
@@ -4802,7 +4881,7 @@ Constraints and indexes:
 
 ## test_health_recommendations
 
-[backend/app/models/postgres.py:4265](../../backend/app/models/postgres.py#L4265)
+[backend/app/models/postgres.py:4369](../../backend/app/models/postgres.py#L4369)
 
 Persisted test health findings per run from TestHealthAgent.
 
@@ -4830,7 +4909,7 @@ Constraints and indexes:
 
 ## test_plan_items
 
-[backend/app/models/postgres.py:2961](../../backend/app/models/postgres.py#L2961)
+[backend/app/models/postgres.py:3065](../../backend/app/models/postgres.py#L3065)
 
 A test case entry within a TestPlan.
 
@@ -4861,7 +4940,7 @@ Constraints and indexes:
 
 ## test_plans
 
-[backend/app/models/postgres.py:2918](../../backend/app/models/postgres.py#L2918)
+[backend/app/models/postgres.py:3022](../../backend/app/models/postgres.py#L3022)
 
 Named collection of test cases forming an executable test plan.
 
@@ -5078,7 +5157,7 @@ attachments: Mapped[list['TestAttachment']] = relationship('TestAttachment', bac
 
 ## test_strategies
 
-[backend/app/models/postgres.py:2990](../../backend/app/models/postgres.py#L2990)
+[backend/app/models/postgres.py:3094](../../backend/app/models/postgres.py#L3094)
 
 AI-generated or manually authored test strategy document for a project.
 
@@ -5183,7 +5262,7 @@ canonical_test_cases: Mapped[list['CanonicalTestCase']] = relationship('Canonica
 
 ## user_invitations
 
-[backend/app/models/postgres.py:4249](../../backend/app/models/postgres.py#L4249)
+[backend/app/models/postgres.py:4353](../../backend/app/models/postgres.py#L4353)
 
 Email invite token for onboarding new users.
 
@@ -5207,7 +5286,7 @@ Constraints and indexes:
 
 ## user_ui_dismissals
 
-[backend/app/models/postgres.py:4776](../../backend/app/models/postgres.py#L4776)
+[backend/app/models/postgres.py:4880](../../backend/app/models/postgres.py#L4880)
 
 A UI prompt this user has dismissed (migration 0145).
 
@@ -5274,7 +5353,7 @@ Constraints and indexes:
 
 ## value_metric_assumptions
 
-[backend/app/models/postgres.py:6686](../../backend/app/models/postgres.py#L6686)
+[backend/app/models/postgres.py:6790](../../backend/app/models/postgres.py#L6790)
 
 Per-project tunable assumptions for the engineer-hours-saved model
 (PMF US-12.1, migration 0112).
@@ -5307,7 +5386,7 @@ Constraints and indexes:
 
 ## webhook_deliveries
 
-[backend/app/models/postgres.py:6233](../../backend/app/models/postgres.py#L6233)
+[backend/app/models/postgres.py:6337](../../backend/app/models/postgres.py#L6337)
 
 Audit trail for every webhook delivery attempt.
 
@@ -5350,7 +5429,7 @@ Constraints and indexes:
 
 ## webhook_subscriptions
 
-[backend/app/models/postgres.py:6187](../../backend/app/models/postgres.py#L6187)
+[backend/app/models/postgres.py:6291](../../backend/app/models/postgres.py#L6291)
 
 Customer-managed outbound webhook subscription.
 
@@ -5383,7 +5462,7 @@ Constraints and indexes:
 
 ## workflow_definitions
 
-[backend/app/models/postgres.py:5532](../../backend/app/models/postgres.py#L5532)
+[backend/app/models/postgres.py:5636](../../backend/app/models/postgres.py#L5636)
 
 One immutable-on-publish version of a project workflow (E3.1).
 
@@ -5433,7 +5512,7 @@ Constraints and indexes:
 
 ## workflow_replay_corpus
 
-[backend/app/models/postgres.py:5626](../../backend/app/models/postgres.py#L5626)
+[backend/app/models/postgres.py:5730](../../backend/app/models/postgres.py#L5730)
 
 A project run output cached for deterministic workflow evaluation (E9.5).
 

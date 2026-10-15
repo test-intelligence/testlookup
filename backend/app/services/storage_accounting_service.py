@@ -54,6 +54,8 @@ _RUN_SCOPED_COLLECTIONS = (
     Collections.EXECUTION_LOGS,
     Collections.OCP_POD_EVENTS,
     Collections.RUN_SUMMARIES,
+    # AIH-06: the versioned run summaries and analysis digests (runs clock).
+    Collections.AI_RUN_VERSIONS,
     Collections.DECISION_EVIDENCE_SNAPSHOTS,
 )
 

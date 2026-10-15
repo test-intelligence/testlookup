@@ -83,6 +83,7 @@ vi.mock('@/services/onboardingService', () => ({
   onboardingService: { completeStep: vi.fn(() => Promise.resolve()) },
 }))
 vi.mock('swr', () => ({ default: hooks.useSWR, mutate: vi.fn() }))
+vi.mock('react-hot-toast', () => ({ default: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() }) }))
 
 const RUN = {
   id: 'run-1',
@@ -405,6 +406,7 @@ describe('Run page — one header', () => {
       'Refresh AI analysis',
       'Export PDF',
       'Download evidence bundle',
+      'Export AI history',
       'Compare to previous run',
       'Release gate',
     ])
@@ -425,6 +427,57 @@ describe('Run page — one header', () => {
     // region is in the DOM: under a loaded full suite the bare read saw the old URL.
     await waitFor(() => expect(location).toBe('/runs/run-1?tab=analysis'))
     trigger.mockRestore()
+  })
+
+  it('"Export AI history" downloads through the authed service with the run\'s build (W03 AIH-06)', async () => {
+    const { aiHistoryService } = await import('@/services/aiHistoryService')
+    const download = vi.spyOn(aiHistoryService, 'downloadExport').mockResolvedValue(true)
+    renderAt('/runs/run-1')
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Export AI history' }))
+    await waitFor(() => expect(download).toHaveBeenCalledWith('run-1', '42'))
+    download.mockRestore()
+  })
+
+  it('"Compare to previous run" opens the SERVER\'s previous run (D42), not a pick from a page of runs', async () => {
+    hooks.useSWR.mockImplementation((key: unknown) => ({
+      data: Array.isArray(key) && key[0] === 'run-previous' && key[1] === 'run-1'
+        ? {
+            run_id: 'run-1',
+            rule: { scope: 'project+primary_suite+branch', suite_name: 'Checkout', branch: 'main', candidate_status: '', order: '' },
+            current: { run_id: 'run-1', build_number: '42', run_seq: 7, branch: 'main', primary_suite_name: 'Checkout', status: 'FAILED', created_at: null, finished_at: null },
+            baseline: { run_id: 'run-0', build_number: '41', run_seq: 6, branch: 'main', primary_suite_name: 'Checkout', status: 'PASSED', created_at: null, finished_at: null },
+            reason: null,
+            message: null,
+          }
+        : undefined,
+      isLoading: false,
+      error: undefined,
+    }))
+    renderAt('/runs/run-1')
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Compare to previous run' }))
+    await waitFor(() => expect(location).toBe('/runs/compare?mode=manual&left=run-0&right=run-1&suite=Checkout'))
+    // The server was asked (the SWR key), and the old 50-run client pool is gone.
+    expect(hooks.useSWR.mock.calls.some((c) => Array.isArray(c[0]) && c[0][0] === 'run-previous' && c[0][1] === 'run-1')).toBe(true)
+    expect(hooks.useRuns.mock.calls.some((c) => (c[0] as { size?: number } | undefined)?.size === 50)).toBe(false)
+  })
+
+  it('"Compare to previous run" says why when the server has no previous run on this branch', async () => {
+    const toast = (await import('react-hot-toast')).default
+    const message = 'No earlier completed run of "Checkout" on branch "main" found.'
+    hooks.useSWR.mockImplementation((key: unknown) => ({
+      data: Array.isArray(key) && key[0] === 'run-previous'
+        ? { run_id: 'run-1', rule: null, current: null, baseline: null, reason: 'no_previous_run', message }
+        : undefined,
+      isLoading: false,
+      error: undefined,
+    }))
+    renderAt('/runs/run-1')
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Compare to previous run' }))
+    await waitFor(() => expect(toast).toHaveBeenCalledWith(message, expect.anything()))
+    expect(location).toBe('/runs/run-1')
   })
 
   it.each(['tests', 'analysis', 'changes', 'evidence', 'timing'])('links nowhere old on the %s tab', (tab) => {

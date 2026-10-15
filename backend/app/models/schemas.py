@@ -15,6 +15,13 @@ from pydantic import (
 )
 
 from app.core.config import MAX_RESULTS_PER_INGEST
+# W03 (AI history): the types live in their own module; the existing models
+# below only gain optional fields of these types.
+from app.models.ai_history_schemas import (
+    AIAnalysisDiffBrief,
+    TestHistoryAI,
+    TestHistoryAIChange,
+)
 from app.models.postgres import (
     FailureCategory,
     IdentityEventType,
@@ -4388,6 +4395,9 @@ class TestCaseHistoryPointResponse(BaseModel):
     teardown_ms: Optional[int] = None
     worker_id: Optional[str] = None
     timing_source: Optional[str] = None
+    # AIH-05 (additive): the AI analysis of this point's test result; null
+    # when it has none (a passed test) or an older server answered.
+    ai: Optional[TestHistoryAI] = None
 
 
 class TestCaseDurationStatsResponse(BaseModel):
@@ -4456,6 +4466,9 @@ class TestCaseHistoryResponse(BaseModel):
     duration_stats: Optional[TestCaseDurationStatsResponse] = None
     #: Null when the test has no duration baseline in this project.
     baseline: Optional[TestDurationBaselineResponse] = None
+    #: AIH-05 (additive): points where the AI changed its category or root
+    #: cause versus the previous point that had an analysis (oldest -> newest).
+    ai_changes: List[TestHistoryAIChange] = []
 
 
 # ── SSO / SAML / SCIM Schemas (ENT-01) ──────────────────────────────────────
@@ -6433,6 +6446,9 @@ class RunCompareAIReport(BaseModel):
     confidence_reason: str = ""
     fallback_used: bool = False
     message: Optional[str] = None
+    # AIH-03 (run_compare_v2): what changed between the two runs' AI analyses,
+    # computed deterministically server-side (never the model's own list).
+    ai_changes: List[str] = Field(default_factory=list)
 
 
 class RunCompareTestDelta(BaseModel):
@@ -6521,6 +6537,10 @@ class RunCompareResponse(BaseModel):
     suite_name: Optional[str] = None
     selection: Optional[RunCompareSelection] = None
     ai_report: Optional[RunCompareAIReport] = None
+    # AIH-03 (additive): the AI-analysis diff of the two runs (left =
+    # baseline, right = current); {"available": false, "reason": ...} when it
+    # could not be built. Absent from callers that do not ask for it.
+    ai_analysis_diff: Optional[AIAnalysisDiffBrief] = None
     # Aggregate deltas (right - left).
     delta_total: int = 0
     delta_passed: int = 0
@@ -6688,6 +6708,11 @@ class RetentionPolicyWrite(BaseModel):
     runs_days: Optional[int] = Field(None, ge=30, le=3650)
     artifacts_days: Optional[int] = Field(None, ge=7, le=3650)
     audit_days: Optional[int] = Field(None, ge=365, le=3650)
+    # AIH-06 (D41): AI history versions kept per run (per kind) and per test
+    # result. Omitted = keep the current value; send 20 / 10 to restore the
+    # defaults (there is no null-reset).
+    ai_versions_per_run: Optional[int] = Field(None, ge=1, le=100)
+    ai_versions_per_test: Optional[int] = Field(None, ge=1, le=100)
 
 
 class RetentionLastPurge(BaseModel):
@@ -6706,6 +6731,9 @@ class RetentionPolicyRead(BaseModel):
     runs_days: int
     artifacts_days: int
     audit_days: int
+    # AIH-06: the effective caps (code defaults when the row holds NULL).
+    ai_versions_per_run: int = 20
+    ai_versions_per_test: int = 10
     source: str = "default"
     last_purge: Optional[RetentionLastPurge] = None
 
@@ -6747,6 +6775,10 @@ class RetentionPreviewCandidates(BaseModel):
     # response's ``unmeasured`` list names which.
     analysis_cache_entries: Optional[int] = None
     search_index_documents: Optional[int] = None
+    #: AIH-06: AI history versions the purge would remove (ai_run_versions of
+    #: purged runs + ai_analysis_versions their delete cascades + the
+    #: over-cap versions of the sweep).
+    ai_history_versions: int = 0
 
 
 class RetentionPreviewResponse(BaseModel):
