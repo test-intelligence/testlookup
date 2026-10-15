@@ -230,9 +230,13 @@ const READY_SHOWN = 3
 const packFilename = (pack: ProjectCompliancePack) =>
   `testlookup-compliance-${pack.release_name || pack.release_id || pack.id}-${pack.generated_at.slice(0, 10)}.zip`
 
-/** Released, or in progress with a gate that is not a hard no: where a pack can be produced. */
+/**
+ * Released, or in progress with a gate that is not a hard no, AND at least one linked run: a
+ * pack snapshots a run, so generating one for a release with none answers "not available".
+ */
 const canTakePack = (r: DerivedRelease) =>
-  r.stage === 'released' || (r.stage === 'in_progress' && r.gate.decision !== 'no_go')
+  (r.source.test_run_count ?? 0) > 0 &&
+  (r.stage === 'released' || (r.stage === 'in_progress' && r.gate.decision !== 'no_go'))
 
 async function downloadPack(pack: ProjectCompliancePack) {
   try {

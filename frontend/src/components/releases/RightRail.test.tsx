@@ -71,7 +71,7 @@ function renderRail(node: ReactNode) {
  */
 function makeRelease(overrides: Partial<DerivedRelease> & { stage: ReleaseStage }): DerivedRelease {
   return {
-    source: { updated_at: '2026-09-18T11:00:00Z', created_at: '2026-09-01T00:00:00Z' } as DerivedRelease['source'],
+    source: { updated_at: '2026-09-18T11:00:00Z', created_at: '2026-09-01T00:00:00Z', test_run_count: 3 } as DerivedRelease['source'],
     id: 'rel-1',
     name: 'Release',
     version: 'v1.0',
@@ -321,6 +321,18 @@ describe('CompliancePacks — the packs that exist', () => {
     expect(within(section).queryByText(/Plan/)).not.toBeInTheDocument()
     fireEvent.click(within(section).getByRole('button', { name: /View packs/ }))
     expect(onOpen).toHaveBeenCalledWith('rel-wip')
+  })
+
+  it('a release with no linked run is not "ready for a pack" (a pack snapshots a run)', async () => {
+    svc.listForProject.mockResolvedValue({ items: [], total: 0 })
+    const empty = makeRelease({ stage: 'released', id: 'rel-empty', name: 'Empty' })
+    empty.source = { ...empty.source, test_run_count: 0 }
+    renderRail(<CompliancePacks releases={[empty, shipped]} onOpen={vi.fn()} projectId={PROJECT} />)
+
+    const ready = await screen.findByText('Ready for a pack')
+    const section = ready.closest('[data-rail-ready]') as HTMLElement
+    expect(within(section).getByText('2026.10 v1.0')).toBeInTheDocument()
+    expect(within(section).queryByText(/Empty/)).not.toBeInTheDocument()
   })
 
   it('with no pack at all: the honest empty line, and the releases ready for one', async () => {
