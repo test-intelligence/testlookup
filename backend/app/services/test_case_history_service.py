@@ -17,6 +17,10 @@ machinery:
   * Metadata: owner / suite from the per-run ``test_cases`` row (effective suite
     via ``_effective_suite_sql``); first/last seen + created/updated from
     ``canonical_test_cases``.
+  * AI (AIH-05): each point's ``ai`` (category, confidence, root-cause excerpt,
+    engine/model, version count) by the point's own ``test_cases.id`` -- two
+    queries by unique/indexed key, NOT a join inside the ranked SELECT -- and
+    ``ai_changes``, where the AI changed its mind along the timeline.
 
 The router owns the (no-op) transaction; this module only reads.
 """
@@ -82,6 +86,9 @@ async def get_test_case_history(
     fingerprint = tc.test_fingerprint
 
     history = await _history_timeline(db, project_id, fingerprint)
+    from app.services.ai_history_read_service import history_ai_changes
+
+    ai_changes = history_ai_changes(history)
     flakiness = await _flakiness_in_window(db, project_id, fingerprint)
     metadata = await _metadata(db, project_id, fingerprint, tc, run)
     duration_stats = await _duration_stats_in_window(db, project_id, fingerprint)
@@ -93,6 +100,7 @@ async def get_test_case_history(
         "test_fingerprint": fingerprint,
         "test_name": tc.test_name,
         "history": history,
+        "ai_changes": ai_changes,
         "flakiness": flakiness,
         "metadata": metadata,
         "duration_stats": duration_stats,
@@ -165,7 +173,9 @@ async def _history_timeline(
         except Exception:
             seq_map = {}
 
-    timings = await _point_timings(db, [getattr(r, "test_case_id", None) for r in rows])
+    case_ids = [getattr(r, "test_case_id", None) for r in rows]
+    timings = await _point_timings(db, case_ids)
+    ai_by_case = await _point_ai(db, case_ids)
 
     timeline: list[dict] = []
     for r in rows:
@@ -186,8 +196,23 @@ async def _history_timeline(
             # EXEC-03: the row's execution timing; every key None when the
             # format carried none (never 0).
             **timings.get(getattr(r, "test_case_id", None), _NO_TIMING),
+            # AIH-05: that execution's own AI analysis, None when it has none.
+            "ai": ai_by_case.get(getattr(r, "test_case_id", None)),
         })
     return timeline
+
+
+async def _point_ai(db: AsyncSession, test_case_ids: list) -> dict:
+    """AIH-05: the AI analysis of each history point's own ``test_cases`` row --
+    at most ``_HISTORY_LIMIT`` ids, already project-scoped by the timeline query
+    that produced them (a same-fingerprint test of another project never gets
+    here). Two queries by unique/indexed key; none when no id is known."""
+    ids = [i for i in test_case_ids if i is not None]
+    if not ids:
+        return {}
+    from app.services.ai_history_read_service import test_history_ai
+
+    return await test_history_ai(db, ids)
 
 
 #: The timing keys of a history point whose row carries none.

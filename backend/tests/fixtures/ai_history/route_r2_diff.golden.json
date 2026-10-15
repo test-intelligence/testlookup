@@ -1,0 +1,206 @@
+{
+  "requires_human_review": true,
+  "review": {
+    "state": "pending_review",
+    "message": "AI-generated. No human review has been recorded for this report; treat it as a draft.",
+    "review_id": null,
+    "reviewed_at": null
+  },
+  "ai_disclaimer": "AI-generated. This report is a draft until a human reviewer accepts it.",
+  "ai_disclaimer_version": "2026-09-12.v1",
+  "run_id": "00000000-0000-4000-8000-000000000001",
+  "from": {
+    "ref": "00000000-0000-4000-8000-000000000002",
+    "source": "stored",
+    "version": 1,
+    "kind": "analysis_digest",
+    "generated_at": "2026-01-01T00:00:00Z",
+    "pipeline_run_id": "00000000-0000-4000-8000-000000000003",
+    "content_sha256": "0000000000000000000000000000000000000000000000000000000000000001",
+    "analysis_mode": "rules",
+    "llm_model": null,
+    "run_id": "00000000-0000-4000-8000-000000000001",
+    "build_number": "101"
+  },
+  "to": {
+    "ref": "00000000-0000-4000-8000-000000000004",
+    "source": "stored",
+    "version": 2,
+    "kind": "analysis_digest",
+    "generated_at": "2026-01-01T00:00:00Z",
+    "pipeline_run_id": "00000000-0000-4000-8000-000000000005",
+    "content_sha256": "0000000000000000000000000000000000000000000000000000000000000002",
+    "analysis_mode": "llm",
+    "llm_model": "llama3.1",
+    "run_id": "00000000-0000-4000-8000-000000000001",
+    "build_number": "101"
+  },
+  "diff": {
+    "schema_version": 1,
+    "mode": "versions",
+    "identical": false,
+    "has_changes": true,
+    "provenance": {
+      "changed": true,
+      "engine": {
+        "from": "rules",
+        "to": "llm"
+      },
+      "model": {
+        "from": null,
+        "to": "llama3.1",
+        "provider_from": null,
+        "provider_to": "ollama"
+      },
+      "fallback_used": null,
+      "deterministic": {
+        "from": true,
+        "to": false
+      },
+      "mode_counts": {
+        "from": {
+          "rules": 2
+        },
+        "to": {
+          "llm": 2
+        }
+      },
+      "engine_only": false,
+      "note": "The analysis engine changed between these versions (rules -> llm)."
+    },
+    "verdict": {
+      "changed": true,
+      "from": "CONDITIONAL_GO",
+      "to": "NO_GO",
+      "direction": "worse",
+      "from_risk": 55,
+      "to_risk": 72,
+      "risk_delta": 17
+    },
+    "categories": {
+      "changed": [
+        {
+          "category": "INFRASTRUCTURE",
+          "from": 2,
+          "to": 0,
+          "delta": -2
+        },
+        {
+          "category": "PRODUCT_BUG",
+          "from": 0,
+          "to": 2,
+          "delta": 2
+        }
+      ],
+      "from_total": 2,
+      "to_total": 2
+    },
+    "clusters": {
+      "added": [
+        {
+          "signature": "timeout waiting for payment-gateway",
+          "label": "Timeout waiting for payment-gateway",
+          "size": 1,
+          "member_count": 1
+        }
+      ],
+      "removed": [
+        {
+          "signature": "db connection refused",
+          "label": "DB connection refused",
+          "size": 1,
+          "member_count": 1
+        }
+      ],
+      "matched": [],
+      "counts": {
+        "added": 1,
+        "removed": 1,
+        "matched": 0,
+        "resized": 0
+      }
+    },
+    "tests": {
+      "added": [],
+      "removed": [],
+      "changed": [
+        {
+          "test_fingerprint": "fp-pay",
+          "test_id": "00000000-0000-4000-8000-000000000006",
+          "from_test_id": "00000000-0000-4000-8000-000000000006",
+          "test_name": "test_pay",
+          "suite_name": "checkout",
+          "kinds": [
+            "category",
+            "confidence",
+            "root_cause"
+          ],
+          "material": true,
+          "category": {
+            "from": "INFRASTRUCTURE",
+            "to": "PRODUCT_BUG"
+          },
+          "confidence": {
+            "from": 40,
+            "to": 85,
+            "delta": 45
+          },
+          "flaky": null,
+          "root_cause_changed": true,
+          "root_cause_excerpt": {
+            "from": "Gateway returned 502",
+            "to": "Timeout waiting for payment-gateway"
+          },
+          "previous_category": "INFRASTRUCTURE",
+          "current_category": "PRODUCT_BUG",
+          "previous_confidence": 40,
+          "current_confidence": 85
+        },
+        {
+          "test_fingerprint": "fp-cart",
+          "test_id": "00000000-0000-4000-8000-000000000007",
+          "from_test_id": "00000000-0000-4000-8000-000000000007",
+          "test_name": "test_cart",
+          "suite_name": "checkout",
+          "kinds": [
+            "category",
+            "confidence",
+            "root_cause"
+          ],
+          "material": true,
+          "category": {
+            "from": "INFRASTRUCTURE",
+            "to": "PRODUCT_BUG"
+          },
+          "confidence": {
+            "from": 45,
+            "to": 80,
+            "delta": 35
+          },
+          "flaky": null,
+          "root_cause_changed": true,
+          "root_cause_excerpt": {
+            "from": "DB connection refused",
+            "to": "Timeout waiting for payment-gateway"
+          },
+          "previous_category": "INFRASTRUCTURE",
+          "current_category": "PRODUCT_BUG",
+          "previous_confidence": 45,
+          "current_confidence": 80
+        }
+      ],
+      "persisting_unchanged": 0,
+      "counts": {
+        "added": 0,
+        "removed": 0,
+        "changed": 2,
+        "material_changed": 2
+      },
+      "truncated": false
+    },
+    "actions": {
+      "added": [],
+      "removed": []
+    }
+  }
+}

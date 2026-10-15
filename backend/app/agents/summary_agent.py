@@ -1638,6 +1638,31 @@ class SummaryAgent(BaseAgent):
         # whose own text said the LLM had been unavailable.
         fallback_used = bool(summary_provenance.get("fallback_used", False))
 
+        # The content fields, built once: the ``$set`` below keeps them as the
+        # LATEST summary (the fast read), and AIH-01 appends the same dict as
+        # an immutable ``run_summary`` version (W03 contract section 1.4).
+        payload = {
+            # Layer 1: backward-compat field
+            "executive_summary": structured.get("layer1_executive_summary"),
+            # Legacy markdown report built from all layers
+            "markdown_report": self._build_markdown(structured),
+            # All 4 layers stored independently for structured API access
+            "layer1_executive_summary": structured.get("layer1_executive_summary"),
+            "layer2_incident_view": structured.get("layer2_incident_view"),
+            "layer3_evidence_pack": structured.get("layer3_evidence_pack"),
+            "layer4_action_plan": structured.get("layer4_action_plan"),
+            # Structured executive panel (ES-2)
+            "executive_panel": structured.get("executive_panel"),
+            # Pipeline metadata
+            "anomaly_count": len(state.get("anomalies") or []),
+            "is_regression": state.get("is_regression", False),
+            "analysis_count": len(state.get("analyses") or {}),
+            # Epic 6 additions
+            "fallback_used": fallback_used,
+            "citations": citations,
+            "summary_provenance": summary_provenance,
+        }
+
         await db[Collections.RUN_SUMMARIES].update_one(
             {"test_run_id": test_run_id},
             {
@@ -1645,27 +1670,9 @@ class SummaryAgent(BaseAgent):
                     "test_run_id": test_run_id,
                     "project_id": state.get("project_id"),
                     "build_number": state.get("build_number"),
-                    # Layer 1: backward-compat field
-                    "executive_summary": structured.get("layer1_executive_summary"),
-                    # Legacy markdown report built from all layers
-                    "markdown_report": self._build_markdown(structured),
-                    # All 4 layers stored independently for structured API access
-                    "layer1_executive_summary": structured.get("layer1_executive_summary"),
-                    "layer2_incident_view": structured.get("layer2_incident_view"),
-                    "layer3_evidence_pack": structured.get("layer3_evidence_pack"),
-                    "layer4_action_plan": structured.get("layer4_action_plan"),
-                    # Structured executive panel (ES-2)
-                    "executive_panel": structured.get("executive_panel"),
-                    # Pipeline metadata
-                    "anomaly_count": len(state.get("anomalies") or []),
-                    "is_regression": state.get("is_regression", False),
-                    "analysis_count": len(state.get("analyses") or {}),
+                    **payload,
                     "generated_at": now,
                     "schema_version": 4,  # v4 = v3 + executive_panel
-                    # Epic 6 additions
-                    "fallback_used": fallback_used,
-                    "citations": citations,
-                    "summary_provenance": summary_provenance,
                     "provenance": {
                         "schema_version": 4,
                         "data_sources_used": data_sources,
@@ -1676,6 +1683,17 @@ class SummaryAgent(BaseAgent):
                 }
             },
             upsert=True,
+        )
+        # AIH-01: the immutable version. Never raises: the summary is stored.
+        from app.services.ai_history_service import record_run_summary_version
+
+        await record_run_summary_version(
+            mongo=db,
+            test_run_id=test_run_id,
+            project_id=state.get("project_id"),
+            pipeline_run_id=state.get("pipeline_run_id"),
+            payload=payload,
+            generated_at=now,
         )
 
 

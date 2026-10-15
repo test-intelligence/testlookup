@@ -1,6 +1,6 @@
 # TestLookup MCP Server
 
-The MCP (Model Context Protocol) server exposes TestLookup to AI assistants, IDEs and CI agents. It ships **68 tools**, **11 resources** and **7 prompts**, over two transports: stdio for a local client and SSE for networked clients. Every tool call becomes a REST call to the TestLookup API, authenticated as a TestLookup user, so the backend's role and project checks apply unchanged.
+The MCP (Model Context Protocol) server exposes TestLookup to AI assistants, IDEs and CI agents. It ships **73 tools**, **11 resources** and **7 prompts**, over two transports: stdio for a local client and SSE for networked clients. Every tool call becomes a REST call to the TestLookup API, authenticated as a TestLookup user, so the backend's role and project checks apply unchanged.
 
 Beyond reads, the server carries **write-path tools** so an agent can close the triage loop: propose and release quarantines, bulk-promote recovered tests, file deduplicated Jira defects (with an optional dry-run preview), correct AI classifications, reassign failures, and manage notification policy. Stdio writes run under the configured login; SSE writes run under each caller's own bearer token. Both are audit-logged with that identity. See the [agent cookbook](../user-guide/agent-cookbook.md) for worked recipes.
 
@@ -141,7 +141,7 @@ Show the LLM cost budget overview: which projects are closest to their cap?
 List open quarantine proposals and approve the one with the highest flip rate
 ```
 
-## Tool reference (70 tools)
+## Tool reference (73 tools)
 
 A `?` marks an optional parameter.
 
@@ -216,6 +216,9 @@ touched a suite whole, so under a suite filter it differs from
 | `get_run_intelligence` | `run_id` | Unified snapshot: summary, clusters, release decision, risk score |
 | `refresh_intelligence` | `run_id` | Force-refresh the cached snapshot |
 | `get_run_summary` | `run_id`, `mode?` | Narrative summary (`executive`, `developer` or `manager`) |
+| `get_ai_history` | `run_id`, `limit?` | The stored versions of a run's AI analysis, newest first: engine and model, fallback, verdict, risk, failing tests. Returns `{ok, summary, history}` |
+| `diff_ai_versions` | `run_id`, `from_version`, `to_version?` (number, `latest` or `live`) | What changed between two versions of a run's AI analysis, provenance first (an engine change, rules vs LLM, is not a product change). Returns `{ok, summary, diff}`; an unstored version number is answered without a diff |
+| `compare_ai_with_previous` | `run_id`, `baseline_run_id?` | The run's AI analysis against the previous run of the same suite and branch: verdict, new and resolved root causes, tests that changed category. The summary says `deterministic summary` when no LLM wrote it. Returns `{ok, summary, verdict_regressed, compare}`; "not analysed" is not "no change" |
 | `trigger_deep_analysis` | `run_id` | Queue a multi-agent deep investigation; returns a task ID |
 | `get_pipeline_status` | `run_id`, `workflow_type?` | Pipeline execution status and stage summary |
 | `get_failure_clusters` | `run_id` | Failure clusters with representative errors |

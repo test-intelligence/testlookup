@@ -50,6 +50,30 @@ def _require_correction_role(body, current_user) -> None:
         )
 
 
+async def _stage_correction_version(db: AsyncSession, analysis, current_user) -> None:
+    """AIH-01: keep the corrected analysis as a new immutable version (``version+1``,
+    trigger ``human_correction``, the correcting user as actor). Flush only, in
+    the caller's transaction; skipped when identical to the latest version; a
+    history error never fails the correction."""
+    from app.db.mongo import get_mongo_db  # noqa: PLC0415
+    from app.services.ai_history_service import (  # noqa: PLC0415
+        snapshot_from_orm,
+        stage_analysis_version,
+    )
+
+    try:
+        snapshot = snapshot_from_orm(analysis)
+    except (AttributeError, TypeError, ValueError):
+        return
+    await stage_analysis_version(
+        db,
+        snapshot,
+        trigger="human_correction",
+        actor_user_id=getattr(current_user, "id", None),
+        mongo=get_mongo_db(),
+    )
+
+
 def _apply_correction(analysis, body) -> None:
     """Push a correction onto the analysis every product surface renders.
 
@@ -148,6 +172,7 @@ async def submit_feedback(db: AsyncSession, analysis_id: uuid.UUID, body, curren
         # renders; the AIFeedback row is only the training label.
         _apply_correction(analysis, body)
         await apply_human_category(db, analysis.test_case_id, body.corrected_category)
+        await _stage_correction_version(db, analysis, current_user)
 
     # stage-only: router handler commits
     return {"feedback_id": str(feedback.id), "message": "Feedback recorded — thank you!"}
@@ -418,11 +443,11 @@ async def update_feedback(db: AsyncSession, analysis_id: uuid.UUID, body, curren
     if _is_correction(body):
         _apply_correction(analysis, body)
         await apply_human_category(db, analysis.test_case_id, body.corrected_category)
+        await _stage_correction_version(db, analysis, current_user)
     # A retraction (INCORRECT -> CORRECT, or the category cleared) deliberately
-    # leaves the analysis alone: AIAnalysis keeps no pre-correction original, so
-    # the AI's first verdict is unrecoverable once a correction overwrote it.
-    # Guessing a revert would invent a value no one supplied. Restoring it would
-    # need a new column and is an owner decision.
+    # leaves the analysis alone. Since AIH-01 the pre-correction AI answer is
+    # kept as the previous ``ai_analysis_versions`` row, but restoring it on a
+    # retraction is a separate feature (an owner decision), not done here.
 
     # stage-only: router handler commits; the cache is evicted after that.
     return {"message": "Feedback updated"}

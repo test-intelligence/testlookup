@@ -35,7 +35,8 @@ import StatusBadge from '@/components/ui/StatusBadge'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import { SectionErrorBoundary } from '@/components/ui/SectionErrorBoundary'
 import { helpTopicParam } from '@/components/help/helpTopics'
-import { useRun, useRuns } from '@/hooks/useRuns'
+import { useRun } from '@/hooks/useRuns'
+import { usePreviousRun } from '@/hooks/useAIHistory'
 import { useProjectChangeRedirect } from '@/hooks/useProjectChange'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useFeatureEnabled } from '@/hooks/useFeatureFlags'
@@ -44,8 +45,7 @@ import { askAboutRunHref } from '@/components/chat/chatContent'
 import RunTimingFigures from '@/components/runs/RunTimingFigures'
 import { runsService } from '@/services/runsService'
 import agentService from '@/services/agentService'
-import type { TestRun } from '@/types/runs'
-import { buildCompareWithPreviousHref, findPreviousRunOfSuite } from '@/utils/runComparisons'
+import { buildCompareWithPreviousHref } from '@/utils/runComparisons'
 import { formatDateTime } from '@/utils/formatters'
 import { RunDeepClusters } from './DeepInvestigationPage'
 import { RunIntelligenceBody } from './RunIntelligencePage'
@@ -53,7 +53,7 @@ import RunTestsTab from './run/RunTestsTab'
 import RunChangesTab from './run/RunChangesTab'
 import RunEvidenceTab from './run/RunEvidenceTab'
 import RunTimingTab from './run/RunTimingTab'
-import { downloadRunEvidenceBundle, downloadRunPdf, readReportVersion } from './run/runActions'
+import { downloadAIHistory, downloadRunEvidenceBundle, downloadRunPdf, readReportVersion } from './run/runActions'
 
 const HELP_TOPIC = helpTopicParam('/runs')
 
@@ -181,29 +181,37 @@ export default function RunDetailPage() {
 
   const { data: run } = useRun(runId)
 
-  // A small page of recent runs of THIS run's suite, so "Compare to previous
-  // run" can pick the chronologically preceding one. Idle for a run without
-  // suite attribution; 50 is plenty (the previous run is almost always one
-  // or two slots away).
-  const suiteForCompare = run?.primary_suite_name ?? null
-  const { data: suiteRunsData } = useRuns(
-    suiteForCompare
-      ? { page: 1, size: 50, days: 0, suite_name: suiteForCompare }
-      : undefined,
-  )
-  const suiteRuns = (suiteRunsData?.items ?? []) as TestRun[]
+  // "Compare to previous run" opens the SERVER's previous run (W03, D42: same
+  // suite and branch, the newest that finished before this one) — the same
+  // pair as the Analysis tab's "vs previous run" card, which reads the same
+  // SWR entry. Idle for a run without suite attribution.
+  const previousRun = usePreviousRun(run?.primary_suite_name ? runId : null)
 
-  function handleCompareWithPrevious() {
+  async function handleCompareWithPrevious() {
     if (!run) return
     if (!run.primary_suite_name) {
       toast('This run has no suite attribution — cannot pick a previous-of-same-suite.', { icon: '⚠️' })
       return
     }
-    const previous = findPreviousRunOfSuite(run, suiteRuns)
-    const href = buildCompareWithPreviousHref(run, previous)
+    let answer = previousRun.data
+    if (!answer) {
+      try {
+        answer = await previousRun.mutate()
+      } catch {
+        answer = undefined
+      }
+    }
+    if (!answer) {
+      toast.error('Could not look up the previous run — try again in a moment.')
+      return
+    }
+    const baseline = answer.baseline
+    const href = baseline
+      ? buildCompareWithPreviousHref(run, { id: baseline.run_id, primary_suite_name: baseline.primary_suite_name })
+      : null
     if (!href) {
       toast(
-        `No earlier run of "${run.primary_suite_name}" found — this may be the first ingested run for the suite.`,
+        answer.message || `No earlier run of "${run.primary_suite_name}" on this branch was found.`,
         { icon: '⚠️' },
       )
       return
@@ -316,10 +324,17 @@ export default function RunDetailPage() {
       onClick: () => { if (runId) void downloadRunEvidenceBundle(runId) },
       disabled: !runId,
     },
+    // W03 AIH-06: every stored AI version of the run, as one JSON file.
+    {
+      label: 'Export AI history',
+      icon: <FileDown className="h-3.5 w-3.5" />,
+      onClick: () => { if (runId) void downloadAIHistory(runId, run?.build_number ?? null) },
+      disabled: !runId,
+    },
     {
       label: 'Compare to previous run',
       icon: <GitCompare className="h-3.5 w-3.5" />,
-      onClick: handleCompareWithPrevious,
+      onClick: () => void handleCompareWithPrevious(),
       disabled: !run?.primary_suite_name,
     },
     ...(runId

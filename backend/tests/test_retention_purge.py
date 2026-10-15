@@ -424,6 +424,9 @@ async def test_preview_writes_nothing_and_returns_all_count_keys():
         # (``test_case_search``). Folding them together is how an executed
         # purge read as complete while never visiting the second store.
         "search_index_documents",
+        # AIH-06: ai_run_versions on the runs clock + ai_analysis_versions the
+        # run delete cascades + the over-cap sweep (tests/test_ai_history_retention.py).
+        "ai_history_versions",
     }
     assert set(out["cutoffs"]) == {"raw_events", "runs", "artifacts", "audit"}
     assert out["candidates"]["runs"] == 1

@@ -1,0 +1,32 @@
+{
+  "run_id": "00000000-0000-4000-8000-000000000001",
+  "rule": {
+    "scope": "project+primary_suite+branch",
+    "candidate_status": "not IN_PROGRESS (any outcome)",
+    "order": "finished before this run, newest first",
+    "suite_name": "checkout",
+    "branch": "main"
+  },
+  "current": {
+    "run_id": "00000000-0000-4000-8000-000000000001",
+    "build_number": "101",
+    "run_seq": 8,
+    "branch": "main",
+    "primary_suite_name": "checkout",
+    "status": "FAILED",
+    "created_at": "2026-01-01T00:00:00Z",
+    "finished_at": "2026-01-01T00:00:00Z"
+  },
+  "baseline": {
+    "run_id": "00000000-0000-4000-8000-000000000002",
+    "build_number": "100",
+    "run_seq": 7,
+    "branch": "main",
+    "primary_suite_name": "checkout",
+    "status": "FAILED",
+    "created_at": "2026-01-01T00:00:00Z",
+    "finished_at": "2026-01-01T00:00:00Z"
+  },
+  "reason": null,
+  "message": null
+}

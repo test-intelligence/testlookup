@@ -10,6 +10,7 @@ from app.core.deps import (
     require_role,
     resolve_authorized_test_case,
 )
+from app.db.mongo import get_mongo_db
 from app.db.postgres import get_db
 from app.models.postgres import AIAnalysis, FailureCategory, TestCase, User, UserRole
 from app.models.schemas import (
@@ -21,6 +22,7 @@ from app.models.schemas import (
     ThresholdCheck,
 )
 from app.services import analysis_router
+from app.services.ai_history_service import snapshot_from_orm, stage_analysis_version
 from app.services.confidence_validation import validate_confidence
 
 router = APIRouter(prefix="/api/v1", tags=["AI Analysis"])
@@ -376,6 +378,16 @@ async def analyze_test_case(
         update(TestCase)
         .where(TestCase.id == tc.id)
         .values(failure_category=fc)
+    )
+    # AIH-01: keep this answer as an immutable version (skipped when it is
+    # identical to the latest one, e.g. merely re-opening the finding). Flush
+    # only, in this transaction; a history error never fails the analysis.
+    await stage_analysis_version(
+        db,
+        snapshot_from_orm(ai_row),
+        trigger="manual_analyze",
+        actor_user_id=getattr(current_user, "id", None),
+        mongo=get_mongo_db(),
     )
     await db.commit()
     # VIZ-212: a new ai_analysis row feeds the cached hours-saved model.

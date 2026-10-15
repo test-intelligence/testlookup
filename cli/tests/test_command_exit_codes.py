@@ -27,6 +27,8 @@ from typer.testing import CliRunner
         (("reviews", "list", "project-id"), EXIT_AUTH),
         (("keys", "list"), EXIT_PERMISSION),
         (("health",), EXIT_TIMEOUT),
+        (("ai-history", "run-id"), EXIT_PERMISSION),
+        (("compare-ai", "run-id"), EXIT_NOT_FOUND),
     ],
 )
 def test_commands_preserve_mapped_client_exit_codes(monkeypatch, argv, code):

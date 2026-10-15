@@ -98,6 +98,9 @@ async def compare_two_runs(
             right,
             suite_name=suite_name,
             selection=selection,
+            # AIH-03: the AI analysis diff of the two runs (left = baseline);
+            # "different_projects" when they are not comparable.
+            include_ai_analysis=True,
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
@@ -167,6 +170,7 @@ async def compare_latest_suite_runs(
             latest.id,
             suite_name=suite_name,
             selection=selection,
+            include_ai_analysis=True,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))

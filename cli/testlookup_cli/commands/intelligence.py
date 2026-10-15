@@ -1,9 +1,10 @@
-"""Intelligence commands — show, refresh."""
+"""Intelligence commands — show, refresh, history (= ``testlookup ai-history``)."""
 import asyncio
 
 import typer
 
 from testlookup_cli import client, output
+from testlookup_cli.commands.ai_history import ai_history
 from testlookup_cli.errors import exit_code_for
 
 intelligence_app = typer.Typer(name="intelligence", help="Run intelligence and AI analysis")
@@ -57,3 +58,7 @@ def refresh(
     except Exception as e:
         output.print_error(str(e))
         raise typer.Exit(exit_code_for(e))
+
+
+# AIH-07: ``testlookup intelligence history <run>`` is ``testlookup ai-history``.
+intelligence_app.command("history")(ai_history)

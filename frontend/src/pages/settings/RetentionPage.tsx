@@ -7,6 +7,10 @@
  *     mirroring the pinned contract (raw_events/artifacts 7–3650,
  *     runs 30–3650, audit 365–3650, audit ≥ runs). PUT sends only the
  *     changed fields. The backend re-validates everything.
+ *     Plus the two AI-history caps (W03 AIH-06): stored AI versions kept per
+ *     run (per kind) and per test result, 1–100, applied whenever a version is
+ *     stored whatever `enabled` says; a cap the server does not report is shown
+ *     as "not reported" and never sent.
  *   • Preview — dry-run POST that renders the cutoff timestamps and the
  *     purge-candidate counts (computed now; the nightly job may differ).
  *   • Danger zone — "Purge now" behind a typed-project-name confirmation
@@ -45,7 +49,9 @@ import {
   useRetentionPolicy,
 } from '@/hooks/useRetentionPolicy'
 import {
+  CAP_BOUNDS,
   RETENTION_BOUNDS,
+  type RetentionCapField,
   type RetentionDayField,
   type RetentionPolicy,
   type RetentionPolicyWrite,
@@ -80,6 +86,24 @@ const DAY_FIELDS: Array<{ field: RetentionDayField; label: string; help: string 
   },
 ]
 
+/**
+ * Copy for the two AI-history caps (W03 AIH-06). Counts of stored versions, not
+ * days; the pruning rule is the same for both (oldest first, never v1, never a
+ * version cited by a published decision report).
+ */
+const CAP_FIELDS: Array<{ field: RetentionCapField; label: string; help: string }> = [
+  {
+    field: 'ai_versions_per_run',
+    label: 'AI versions kept per run (per kind)',
+    help: 'Oldest are pruned first; version 1 and any version cited by a published decision report are never pruned.',
+  },
+  {
+    field: 'ai_versions_per_test',
+    label: 'AI versions kept per test result',
+    help: 'Per test result of a run (pipeline, manual analysis, human correction). Oldest are pruned first; version 1 is never pruned.',
+  },
+]
+
 /** Rows of the preview candidates table, in render order. */
 const CANDIDATE_ROWS: Array<{
   key: keyof Omit<RetentionPreview['candidates'], 'mongo_docs'>
@@ -100,16 +124,25 @@ const CANDIDATE_ROWS: Array<{
   { key: 'memory_entries_expired', label: 'Agent-memory entries' },
   { key: 'analysis_cache_entries', label: 'Analysis-cache entries' },
   { key: 'search_index_documents', label: 'Search-index documents' },
+  // W03 AIH-06: versions of purged runs, the per-test rows their delete
+  // cascades, and every version over a cap. Absent on an older server, which
+  // the `== null` render below shows as "not measured".
+  { key: 'ai_history_versions', label: 'AI history versions' },
 ]
 
-/** Editable form shape — day counts as strings so typing is never fought. */
+/** Editable form shape — counts as strings so typing is never fought. */
 interface FormState {
   enabled: boolean
   raw_events_days: string
   runs_days: string
   artifacts_days: string
   audit_days: string
+  /** '' when the server does not report the cap (the input is then disabled). */
+  ai_versions_per_run: string
+  ai_versions_per_test: string
 }
+
+type FormField = RetentionDayField | RetentionCapField
 
 function toFormState(policy: RetentionPolicy): FormState {
   return {
@@ -118,7 +151,45 @@ function toFormState(policy: RetentionPolicy): FormState {
     runs_days: String(policy.runs_days),
     artifacts_days: String(policy.artifacts_days),
     audit_days: String(policy.audit_days),
+    ai_versions_per_run: policy.ai_versions_per_run == null ? '' : String(policy.ai_versions_per_run),
+    ai_versions_per_test: policy.ai_versions_per_test == null ? '' : String(policy.ai_versions_per_test),
   }
+}
+
+/** The caps the saved policy reports. An older server reports none: nothing to edit or send. */
+function reportedCaps(saved: RetentionPolicy): RetentionCapField[] {
+  return CAP_FIELDS.map(({ field }) => field).filter((field) => saved[field] != null)
+}
+
+/** "AI history: keep 20 versions per run, 10 per test." from the SAVED policy. */
+function aiHistorySummary(saved: RetentionPolicy): string {
+  const run = saved.ai_versions_per_run
+  const test = saved.ai_versions_per_test
+  if (run == null && test == null) return 'AI history caps: not reported by this server.'
+  const perRun = run == null ? 'not reported' : `${run} ${run === 1 ? 'version' : 'versions'}`
+  const perTest = test == null ? 'not reported' : String(test)
+  return `AI history: keep ${perRun} per run, ${perTest} per test.`
+}
+
+/**
+ * One value of the last purge's counts. The server nests them by store
+ * (`postgres: {runs: 3, …}`, `ai_history: {…}`): a block reads "key: value, …"
+ * instead of "[object Object]"; null means the store was not counted.
+ */
+function formatPurgeCount(value: unknown): string {
+  if (value == null) return 'not measured'
+  if (typeof value === 'number') return value.toLocaleString()
+  if (typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+    if (entries.length === 0) return 'none'
+    return entries
+      .map(([key, v]) => {
+        const text = formatPurgeCount(v)
+        return `${key}: ${v !== null && typeof v === 'object' ? `(${text})` : text}`
+      })
+      .join(', ')
+  }
+  return String(value)
 }
 
 /** Parse a day-count field; NaN for anything that is not a plain integer. */
@@ -130,8 +201,11 @@ function parseDays(raw: string): number {
  * Client-side mirror of the contract bounds (inline feedback only — the
  * backend re-validates). Returns a field→message map; empty means valid.
  */
-function validate(form: FormState): Partial<Record<RetentionDayField, string>> {
-  const errors: Partial<Record<RetentionDayField, string>> = {}
+function validate(
+  form: FormState,
+  caps: readonly RetentionCapField[],
+): Partial<Record<FormField, string>> {
+  const errors: Partial<Record<FormField, string>> = {}
   for (const { field, label } of DAY_FIELDS) {
     const { min, max } = RETENTION_BOUNDS[field]
     const value = parseDays(form[field])
@@ -146,6 +220,15 @@ function validate(form: FormState): Partial<Record<RetentionDayField, string>> {
     if (audit < runs)
       errors.audit_days = 'Audit trail must be kept at least as long as Runs & analysis'
   }
+  // The AI-history caps: whole numbers of versions, 1–100 (only those the server reports).
+  for (const { field, label } of CAP_FIELDS) {
+    if (!caps.includes(field)) continue
+    const { min, max } = CAP_BOUNDS[field]
+    const value = parseDays(form[field])
+    if (Number.isNaN(value)) errors[field] = `${label} must be a whole number of versions`
+    else if (value < min || value > max)
+      errors[field] = `${label} must be between ${min} and ${max} versions`
+  }
   return errors
 }
 
@@ -154,6 +237,11 @@ function diffPayload(form: FormState, saved: RetentionPolicy): RetentionPolicyWr
   const payload: RetentionPolicyWrite = {}
   if (form.enabled !== saved.enabled) payload.enabled = form.enabled
   for (const { field } of DAY_FIELDS) {
+    const value = parseDays(form[field])
+    if (value !== saved[field]) payload[field] = value
+  }
+  // A cap the server does not report is never sent.
+  for (const field of reportedCaps(saved)) {
     const value = parseDays(form[field])
     if (value !== saved[field]) payload[field] = value
   }
@@ -359,7 +447,8 @@ export default function RetentionPage() {
   }
 
   const projectName = activeProject?.name ?? ''
-  const errors = validate(form)
+  const caps = reportedCaps(seededPolicy)
+  const errors = validate(form, caps)
   const hasErrors = Object.keys(errors).length > 0
   const payload = diffPayload(form, seededPolicy)
   const hasChanges = Object.keys(payload).length > 0
@@ -369,7 +458,7 @@ export default function RetentionPage() {
     setDirty(true)
   }
 
-  function editDay(field: RetentionDayField, value: string) {
+  function editDay(field: FormField, value: string) {
     setForm((f) => (f ? { ...f, [field]: value } : f))
     setDirty(true)
   }
@@ -511,6 +600,63 @@ export default function RetentionPage() {
               </label>
             )
           })}
+        </div>
+
+        {/* ── AI history caps (W03 AIH-06) ─────────────────────────────
+            Versions kept, not days. Enforced whenever a version is stored,
+            whether or not scheduled purging is on; the purge also removes
+            anything over a cap. */}
+        <div
+          data-retention-ai-caps=""
+          className="space-y-2 border-t border-[var(--color-border)] pt-3"
+        >
+          <p data-retention-ai-summary="" className="text-xs text-[var(--color-text)]">
+            {aiHistorySummary(seededPolicy)}
+          </p>
+          <p className="text-[11px] text-[var(--color-text-faint)]">
+            Every AI analysis is kept as a version: the run summary and analysis digest of each
+            run, and the analysis of each test result. The caps apply each time a version is
+            stored, even while scheduled purging is off.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {CAP_FIELDS.map(({ field, label, help }) => {
+              const { min, max } = CAP_BOUNDS[field]
+              const reported = caps.includes(field)
+              const fieldError = errors[field]
+              return (
+                <label key={field} htmlFor={`retention-${field}`} className="text-xs block">
+                  <span className="text-[var(--color-text-muted)]">
+                    {label}{' '}
+                    <span className="text-[var(--color-text-faint)]">
+                      ({min}–{max} versions)
+                    </span>
+                  </span>
+                  <input
+                    id={`retention-${field}`}
+                    type="number"
+                    inputMode="numeric"
+                    min={min}
+                    max={max}
+                    value={form[field]}
+                    placeholder={reported ? undefined : 'not reported'}
+                    disabled={!reported}
+                    onChange={(e) => editDay(field, e.target.value)}
+                    aria-invalid={Boolean(fieldError)}
+                    className={`mt-1 w-full px-2 py-1.5 text-sm bg-[var(--color-bg-secondary)] border rounded disabled:cursor-not-allowed disabled:opacity-60 ${
+                      fieldError ? 'border-[var(--status-failed-bd)]/60' : 'border-[var(--color-border)]'
+                    }`}
+                  />
+                  {fieldError ? (
+                    <span className="mt-1 block text-[var(--status-failed)]">{fieldError}</span>
+                  ) : (
+                    <span className="mt-1 block text-[var(--color-text-faint)]">
+                      {reported ? help : 'Not reported by this server, so it cannot be changed here.'}
+                    </span>
+                  )}
+                </label>
+              )
+            })}
+          </div>
         </div>
 
         <div className="flex items-center gap-2 pt-1">
@@ -694,7 +840,7 @@ export default function RetentionPage() {
               <ul className="mt-1 ml-4 list-disc space-y-0.5 text-[var(--color-text-muted)]">
                 {Object.entries(policy.last_purge.counts).map(([what, count]) => (
                   <li key={what}>
-                    <span className="font-mono">{what}</span>: {String(count)}
+                    <span className="font-mono">{what}</span>: {formatPurgeCount(count)}
                   </li>
                 ))}
               </ul>

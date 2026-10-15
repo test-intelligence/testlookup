@@ -479,6 +479,7 @@ class AnalysisAgent(BaseAgent):
             analyses,
             eval_manifest_checksum=state.get("eval_manifest_checksum"),
             project_id=project_id,
+            pipeline_run_id=pipeline_run_id,
         )
 
         # Summarise routing across all analyses — the dominant mode is what
@@ -1532,22 +1533,40 @@ class AnalysisAgent(BaseAgent):
         *,
         eval_manifest_checksum: str | None = None,
         project_id: str | None = None,
+        pipeline_run_id: str | None = None,
     ) -> None:
         """Batch upsert all analysis results in chunked commits (single session per chunk).
 
         VIZ-212: once any chunk has committed, the project's analytics epoch
         is bumped — new ai_analysis rows feed the cached hours-saved model.
+
+        AIH-01: each chunk also appends one ``ai_analysis_versions`` row per
+        upserted test (trigger ``pipeline``, keyed by ``pipeline_run_id`` so a
+        replayed pipeline adds nothing), flushed in the chunk's session before
+        its commit. A history error never fails the upsert.
         """
+        from app.services.ai_history_service import (
+            snapshot_from_analysis_dict,
+            stage_analysis_versions,
+        )
+
         items = list(analyses.items())
         if not items:
             return
 
         now = datetime.now(timezone.utc)
+        pipeline_key: uuid.UUID | None = None
+        if pipeline_run_id:
+            try:
+                pipeline_key = uuid.UUID(str(pipeline_run_id))
+            except (TypeError, ValueError):
+                pipeline_key = None
         committed = False
         for i in range(0, len(items), chunk_size):
             chunk = items[i:i + chunk_size]
             try:
                 async with AsyncSessionLocal() as db:
+                    snapshots = []
                     for tc_id, analysis in chunk:
                         if analysis.get("error") and not analysis.get("root_cause_summary"):
                             continue  # Skip error-only entries with no useful data
@@ -1586,13 +1605,35 @@ class AnalysisAgent(BaseAgent):
                                 "evidence_references": analysis.get("evidence_references", []),
                                 "tools_used": analysis.get("tools_used"),
                                 "role_actions": analysis.get("role_actions"),
+                                # AIH-01 (bug fix): a re-analysis by another model must
+                                # name THAT model, and created_at is "last generated at".
+                                "llm_provider": analysis.get("llm_provider"),
+                                "llm_model": analysis.get("llm_model"),
                                 "requires_human_review": analysis.get("requires_human_review", True),
                                 "routing_metadata": routing_metadata,
+                                "created_at": now,
                             },
                         )
                         await db.execute(stmt)
                         await _mirror_category_to_test_case(
                             db, tc_id, analysis.get("failure_category"),
+                        )
+                        try:
+                            snapshots.append(
+                                snapshot_from_analysis_dict(tc_id, analysis, routing_metadata)
+                            )
+                        except (TypeError, ValueError):
+                            pass  # a malformed id is the upsert's problem, not history's
+                    if snapshots:
+                        from app.db.mongo import get_mongo_db
+
+                        await stage_analysis_versions(
+                            db,
+                            snapshots,
+                            trigger="pipeline",
+                            pipeline_run_id=pipeline_key,
+                            mongo=get_mongo_db(),
+                            created_at=now,
                         )
                     await db.commit()
                     committed = True

@@ -1,0 +1,5 @@
+AI history · run 33333333 · analysis digest · 3 versions · latest v3
+
+v3  2026-10-14 10:00  llm llama3.1  NO_GO risk 72           failing 7  [fallback] [latest]
+v2  2026-10-14 09:30  llm llama3.1  CONDITIONAL_GO risk 55  failing 6
+v1  2026-10-13 08:05  rules         -                       failing 8  [deterministic] [backfilled]
