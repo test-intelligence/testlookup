@@ -103,16 +103,16 @@ export default function BillingPage() {
         <table className="w-full text-sm">
           <thead className="bg-[var(--color-bg-secondary)] text-xs text-[var(--color-text-muted)]">
             <tr>
-              <th className="text-left px-3 py-2">Project</th>
-              <th className="text-right px-3 py-2">Spend</th>
-              <th className="text-right px-3 py-2" title="Spend up to the included amount">Covered</th>
-              <th className="text-right px-3 py-2" title="Spend above the included amount">Overage</th>
-              <th className="text-right px-3 py-2" title="Overage × overage rate">Charge</th>
-              <th className="text-right px-3 py-2">Cap</th>
-              <th className="text-right px-3 py-2">Utilization</th>
-              <th className="text-center px-3 py-2">Status</th>
-              <th className="text-right px-3 py-2">Cap hits</th>
-              <th className="text-right px-3 py-2"></th>
+              <th className="text-left px-2 py-2">Project</th>
+              <th className="text-right px-2 py-2">Spend</th>
+              <th className="text-right px-2 py-2" title="Spend up to the included amount">Covered</th>
+              <th className="text-right px-2 py-2" title="Spend above the included amount">Overage</th>
+              <th className="text-right px-2 py-2" title="Overage × overage rate">Charge</th>
+              <th className="text-right px-2 py-2">Cap</th>
+              <th className="text-right px-2 py-2">Utilization</th>
+              <th className="text-center px-2 py-2">Status</th>
+              <th className="text-right px-2 py-2">Cap hits</th>
+              <th className="text-right px-2 py-2"></th>
             </tr>
           </thead>
           <tbody>
@@ -229,17 +229,17 @@ function ProjectRow({
 }) {
   return (
     <tr data-billing-project={row.project_id} className="border-t border-[var(--color-border)]">
-      <td className="px-3 py-2 text-[var(--color-text)]">{row.project_name}</td>
-      <td data-billing-spend="" className="px-3 py-2 text-right font-mono text-[var(--color-text)]">
+      <td className="px-2 py-2 text-[var(--color-text)]">{row.project_name}</td>
+      <td data-billing-spend="" className="px-2 py-2 text-right font-mono text-[var(--color-text)]">
         {formatSpend(row.current_cost_usd)}
       </td>
-      <td data-billing-covered="" className="px-3 py-2 text-right font-mono text-[var(--color-text-secondary)]">
+      <td data-billing-covered="" className="px-2 py-2 text-right font-mono text-[var(--color-text-secondary)]">
         {formatUsd(row.covered_usd)}
       </td>
-      <td data-billing-overage="" className="px-3 py-2 text-right font-mono text-[var(--color-text-secondary)]">
+      <td data-billing-overage="" className="px-2 py-2 text-right font-mono text-[var(--color-text-secondary)]">
         {formatUsd(row.overage_usd)}
       </td>
-      <td data-billing-charge="" className="px-3 py-2 text-right font-mono text-[var(--color-text)]">
+      <td data-billing-charge="" className="px-2 py-2 text-right font-mono text-[var(--color-text)]">
         <div>{formatUsd(row.overage_charge_usd)}</div>
         {row.projected_overage_charge_usd != null && (
           <div
@@ -253,20 +253,20 @@ function ProjectRow({
           </div>
         )}
       </td>
-      <td className="px-3 py-2 text-right text-[var(--color-text-muted)]">
+      <td className="px-2 py-2 text-right text-[var(--color-text-muted)]">
         {row.hard_cap_usd != null ? `$${row.hard_cap_usd.toFixed(2)}` : '—'}
       </td>
-      <td className="px-3 py-2 text-right text-[var(--color-text-muted)]">
+      <td className="px-2 py-2 text-right text-[var(--color-text-muted)]">
         {row.utilization_pct != null ? `${row.utilization_pct.toFixed(0)}%` : '—'}
       </td>
-      <td className="px-3 py-2 text-center">
+      <td className="px-2 py-2 text-center">
         <StatusPill status={row.status} />
       </td>
-      <td data-billing-cap-hits="" className="px-3 py-2 text-right text-xs text-[var(--color-text-muted)]">
+      <td data-billing-cap-hits="" className="px-2 py-2 text-right text-xs text-[var(--color-text-muted)]">
         {/* No quota, no cap to hit; with one, 0 hits is a measured count, not a blank. */}
         {row.status === 'UNLIMITED' ? '—' : row.cap_hits}
       </td>
-      <td className="px-3 py-2 text-right">
+      <td className="px-2 py-2 text-right">
         <button
           type="button"
           onClick={onEdit}
