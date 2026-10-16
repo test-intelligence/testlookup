@@ -55,14 +55,16 @@ import toast from 'react-hot-toast'
 import { SlidersHorizontal } from 'lucide-react'
 import ChartCustomisePanel from '@/components/charts/ChartCustomisePanel'
 import {
+  applySeriesField,
   SERIES_DIMENSIONS,
   SERIES_METRICS,
+  seriesCustomiseSpec,
   seriesParams,
   titleOf,
   type SeriesChartConfig,
 } from '@/components/charts/chartCustomiseModel'
 import { useSeriesChartConfig } from '@/components/charts/useSeriesChartConfig'
-import { useCatalogChartData, type CatalogParams } from '@/components/charts/chartCatalogSources'
+import { useCatalogChartData } from '@/components/charts/chartCatalogSources'
 import { hasChartData, type ChartResponse, type ChartState } from '@/components/charts/chartState'
 import DurationChartFrame from '@/components/charts/DurationChartFrame'
 import { durationBandPoints } from '@/components/charts/durationBuckets'
@@ -78,26 +80,30 @@ import { clampCatalogueDays, ROW_GRAIN_MAX_WINDOW_DAYS, useCatalogueParams } fro
 import { HeatmapSection } from './HeatmapSection'
 import type { HeatmapKind } from './sectionContracts'
 import { useEverHadRun } from './useEverHadRun'
+import { DURATION_P50_PARAMS, DURATION_P95_PARAMS, ONE_DAY_SUITES_REASON, SUITE_SERIES_CHART_KEY } from './trendsCatalogueParams'
 
 // ── Requests ─────────────────────────────────────────────────────────────────
 
-/** Section 1's request: pass rate, day x suite, the top 7 + Other. */
-export const SUITE_SERIES_PARAMS: CatalogParams = { metric: 'pass_rate', group_by: ['day', 'suite'], top_n: 7 }
-export const DURATION_P50_PARAMS: CatalogParams = { metric: 'duration_p50', group_by: 'day' }
-export const DURATION_P95_PARAMS: CatalogParams = { metric: 'duration_p95', group_by: 'day' }
+// TRND-06: the requests (and the words the page shares) live in
+// `trendsCatalogueParams.ts`, so `TrendsPage` reads them without making this
+// lazy chunk eager. Re-exported: every importer of this module is unchanged.
+export {
+  DURATION_P50_PARAMS,
+  DURATION_P95_PARAMS,
+  ONE_DAY_SUITES_REASON,
+  SUITE_SERIES_PARAMS,
+  SUITE_SERIES_TITLE,
+} from './trendsCatalogueParams'
 
 const ROW_GRAIN = { maxDays: ROW_GRAIN_MAX_WINDOW_DAYS } as const
 
 // ── Words ────────────────────────────────────────────────────────────────────
 
-export const SUITE_SERIES_TITLE = 'Pass rate by suite'
 export const DURATION_TITLE = 'Test duration (p50 / p95)'
 export const HEATMAP_TITLE = 'Suite pass rate by day'
 /** The one heatmap kind Trends offers: its columns are the page's days. */
 const TRENDS_HEATMAP_KINDS: readonly HeatmapKind[] = ['suite_day']
 
-export const ONE_DAY_SUITES_REASON =
-  'a one-day window has one point per suite, which is not a trend; pick 7 days or more to compare suites over time'
 export const ONE_DAY_DURATION_REASON =
   'a one-day window has one p50 and one p95, which is not a trend; pick 7 days or more to see durations over time'
 
@@ -352,8 +358,10 @@ export default function TrendsCatalogue({ days, suiteFilter, sections = DEFAULT_
 
   const everHadData = useEverHadRun(anyNear && !singleDay)
   // VIZ-604: the suite series is customisable; the default config asks exactly SUITE_SERIES_PARAMS.
-  const custom = useSeriesChartConfig('trends.suite-series')
-  const [customising, setCustomising] = useState(false)
+  const custom = useSeriesChartConfig(SUITE_SERIES_CHART_KEY)
+  // TRND-10: Compare is customisable too; ONE panel is open at a time.
+  const [customising, setCustomising] = useState<'series' | 'compare' | null>(null)
+  const toggle = (which: 'series' | 'compare') => setCustomising((open) => (open === which ? null : which))
   useEffect(() => {
     if (custom.notice) toast(custom.notice)
   }, [custom.notice])
@@ -380,8 +388,8 @@ export default function TrendsCatalogue({ days, suiteFilter, sections = DEFAULT_
             windowDays={windowDays}
             onNear={onSuitesNear}
             config={custom.applied}
-            customising={customising}
-            onCustomise={() => setCustomising((open) => !open)}
+            customising={customising === 'series'}
+            onCustomise={() => toggle('series')}
           />
         </LazySection>
       )}
@@ -393,6 +401,9 @@ export default function TrendsCatalogue({ days, suiteFilter, sections = DEFAULT_
             everHadData={everHadData}
             busiestSuites={busiestSuites}
             onNear={onDurationNear}
+            customising={customising === 'compare'}
+            onCustomise={() => toggle('compare')}
+            onCloseCustomise={() => setCustomising(null)}
           />
         </LazySection>
       )}
@@ -416,13 +427,13 @@ export default function TrendsCatalogue({ days, suiteFilter, sections = DEFAULT_
         </LazySection>
       )}
       {/* The suite series' customise panel: it opens only from that section's toolbar. */}
-      {customising && shows('trends-multi-series') ? (
+      {customising === 'series' && shows('trends-multi-series') ? (
         <ChartCustomisePanel
           chartTitle={titleOf(custom.config)}
-          config={custom.config}
-          onChange={custom.setConfig}
+          spec={seriesCustomiseSpec(custom.config)}
+          onField={(id, value) => custom.setConfig(applySeriesField(custom.config, id, value))}
           onReset={custom.reset}
-          onClose={() => setCustomising(false)}
+          onClose={() => setCustomising(null)}
         />
       ) : null}
       {/* Its own lazy placeholder and request: nothing is asked until it is near the reader. */}

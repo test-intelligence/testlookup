@@ -363,6 +363,169 @@ export function releaseMarkerRows(markers: readonly ReleaseMarker[]): { day: str
   return markers.map((marker) => ({ day: marker.x, names: marker.names.join(', ') }))
 }
 
+// ── Timeline notes (TRND-04) ─────────────────────────────────────────────────
+
+/**
+ * A note as the chart takes it: an inclusive UTC day range and its text. The
+ * host maps its `TimelineNote`s to these (the model knows nothing of the API).
+ */
+export interface NoteInput {
+  id: string
+  /** `YYYY-MM-DD`, the first UTC day the note covers. */
+  from: string
+  /** `YYYY-MM-DD`, the last UTC day it covers (inclusive); equals `from` for one day. */
+  to: string
+  /** The note's text — user input: React text or `canvasSafeText`, never markup. */
+  label: string
+  author: string | null
+}
+
+/**
+ * A note placed on the drawn axis. `from` / `to` are CLIPPED to the axis: a
+ * note that starts before the window is cut at its first bucket. `kind` is
+ * `line` for a one-day note (a dashed vertical line) and `band` for a range.
+ * `fromDay` / `toDay` keep the note's own dates for the tooltip and the list.
+ */
+export interface NoteMarker {
+  id: string
+  from: string
+  to: string
+  label: string
+  author: string | null
+  kind: 'line' | 'band'
+  fromDay: string
+  toDay: string
+}
+
+/** A note's label on the plot is cut to this many characters (the full text is in the tooltip). */
+export const NOTE_LABEL_MAX = 24
+
+/** The short label drawn on the plot: the first `NOTE_LABEL_MAX` characters, an ellipsis when cut. */
+export function noteShortLabel(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  const chars = Array.from(flat)
+  return chars.length > NOTE_LABEL_MAX ? `${chars.slice(0, NOTE_LABEL_MAX - 1).join('')}…` : flat
+}
+
+export interface NoteMarkerResult {
+  notes: NoteMarker[]
+  /** Notes wholly outside the drawn axis (or with dates nothing can parse): counted, not drawn. */
+  outsideWindow: number
+}
+
+/**
+ * Notes → markers on a day axis. A note partly outside the window is cut at
+ * the edge; one wholly outside is counted in `outsideWindow`. A note whose
+ * clipped range is a single bucket is a `line` only when the note ITSELF is
+ * one day — a range clipped down to one visible day is still a band, so the
+ * reader is not told a week-long freeze was a one-day event.
+ */
+export function placeNotes(notes: readonly NoteInput[], buckets: readonly string[]): NoteMarkerResult {
+  const days = buckets.filter((b) => DAY_PATTERN.test(b))
+  if (days.length === 0 || notes.length === 0) {
+    return { notes: [], outsideWindow: days.length === 0 ? notes.length : 0 }
+  }
+  const first = days[0]
+  const last = days[days.length - 1]
+  const placed: NoteMarker[] = []
+  let outsideWindow = 0
+  for (const note of notes) {
+    const from = typeof note.from === 'string' ? note.from.slice(0, 10) : ''
+    const rawTo = typeof note.to === 'string' && note.to ? note.to.slice(0, 10) : from
+    if (!DAY_PATTERN.test(from) || !DAY_PATTERN.test(rawTo)) {
+      outsideWindow += 1
+      continue
+    }
+    const to = rawTo < from ? from : rawTo
+    if (to < first || from > last) {
+      outsideWindow += 1
+      continue
+    }
+    const clippedFrom = from < first ? first : from
+    const clippedTo = to > last ? last : to
+    // Snap to buckets that exist (an axis with holes): the first bucket >= from, the last <= to.
+    const startBucket = days.find((d) => d >= clippedFrom)
+    let endBucket: string | undefined
+    for (let i = days.length - 1; i >= 0; i--) {
+      if (days[i] <= clippedTo) {
+        endBucket = days[i]
+        break
+      }
+    }
+    if (startBucket === undefined || endBucket === undefined || endBucket < startBucket) {
+      outsideWindow += 1
+      continue
+    }
+    placed.push({
+      id: note.id,
+      from: startBucket,
+      to: endBucket,
+      label: note.label,
+      author: note.author ?? null,
+      kind: from === to ? 'line' : 'band',
+      fromDay: from,
+      toDay: to,
+    })
+  }
+  return { notes: placed, outsideWindow }
+}
+
+/**
+ * Placed notes cut to the buckets a renderer DRAWS — a zoomed slice keeps the
+ * full model's notes (`sliceTimeSeriesModel` spreads the model), so each
+ * renderer clips them to its own axis. A note wholly off the drawn axis is
+ * dropped here (the model's `notesOutsideWindow` still counts only the
+ * window's). Unchanged notes are returned as the same objects.
+ */
+export function clipNoteMarkers(notes: readonly NoteMarker[] | null | undefined, buckets: readonly string[]): NoteMarker[] {
+  if (!Array.isArray(notes) || notes.length === 0 || buckets.length === 0) return []
+  const first = buckets[0]
+  const last = buckets[buckets.length - 1]
+  const out: NoteMarker[] = []
+  for (const note of notes) {
+    if (note.to < first || note.from > last) continue
+    const from = note.from < first ? first : note.from
+    const to = note.to > last ? last : note.to
+    if (from === note.from && to === note.to) {
+      out.push(note)
+      continue
+    }
+    const start = buckets.find((b) => b >= from)
+    let end: string | undefined
+    for (let i = buckets.length - 1; i >= 0; i--) {
+      if (buckets[i] <= to) {
+        end = buckets[i]
+        break
+      }
+    }
+    if (start === undefined || end === undefined || end < start) continue
+    out.push({ ...note, from: start, to: end })
+  }
+  return out
+}
+
+/** The notes covering one bucket (the tooltip's list), by the note's OWN dates. */
+export function notesCovering(notes: readonly NoteMarker[] | null | undefined, x: string): NoteMarker[] {
+  if (!Array.isArray(notes)) return []
+  return notes.filter((note) => note.fromDay <= x && x <= note.toDay)
+}
+
+/** `Sep 5` / `Sep 5 – Sep 8` for a note's own (unclipped) dates, UTC. */
+export function noteDateRange(note: Pick<NoteMarker, 'fromDay' | 'toDay'>): string {
+  const fmt = (day: string) => {
+    const at = dayStart(day)
+    if (Number.isNaN(at)) return day
+    return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(at))
+  }
+  return note.fromDay === note.toDay ? fmt(note.fromDay) : `${fmt(note.fromDay)} – ${fmt(note.toDay)}`
+}
+
+/** One tooltip line per note: `{text} — {author}, {dates}`. */
+export function noteTooltipLine(note: NoteMarker): string {
+  const who = note.author ? ` — ${note.author}` : ''
+  return `${note.label}${who}, ${noteDateRange(note)}`
+}
+
 // ── UTC buckets vs the viewer's clock ────────────────────────────────────────
 
 export interface LocalDayRange {
@@ -474,6 +637,10 @@ export interface TimeSeriesModel {
   executionsAxis: ExecutionsAxis
   markers: ReleaseMarker[]
   markersOutsideWindow: number
+  /** Timeline notes (TRND-04) placed on the axis; `[]` when the host passed none. */
+  notes: NoteMarker[]
+  /** Notes the host passed that lie wholly outside the drawn axis. */
+  notesOutsideWindow: number
   partialDay: string | null
   inProgressCount: number
   /** x values whose rate is measured but has no measured neighbour: draw a dot or it is invisible. */
@@ -500,6 +667,8 @@ export interface BuildTimeSeriesInput {
   releases?: readonly ReleaseInput[]
   /** Zoom the rate axis to the data. Off by default: a 0–100 axis needs no caveat. */
   zoomRateAxis?: boolean
+  /** Timeline notes to draw (TRND-04). Absent = none: the model's `notes` is `[]`. */
+  notes?: readonly NoteInput[]
 }
 
 export function buildTimeSeriesModel({
@@ -507,11 +676,13 @@ export function buildTimeSeriesModel({
   meta,
   releases = [],
   zoomRateAxis = false,
+  notes = [],
 }: BuildTimeSeriesInput): TimeSeriesModel {
   const partialDay = meta?.partial_day ?? null
   const marked = points.map((point) => ({ ...point, partial: point.x === partialDay }))
   const buckets = marked.map((point) => point.x)
   const placed = releaseMarkers(releases, buckets)
+  const placedNotes = placeNotes(notes, buckets)
 
   const isolated: string[] = []
   let gaps = 0
@@ -534,6 +705,8 @@ export function buildTimeSeriesModel({
     executionsAxis: executionsAxisDomain(marked, rateAxis),
     markers: placed.markers,
     markersOutsideWindow: placed.outsideWindow,
+    notes: placedNotes.notes,
+    notesOutsideWindow: placedNotes.outsideWindow,
     partialDay,
     inProgressCount: meta?.includes_in_progress ?? 0,
     isolated,

@@ -19,19 +19,35 @@
  *   reader    an sr-only table, one row per cell (the table alternative VIZ-105
  *             asks every chart for).
  *
+ * TRND-04: `onSelectRange` (optional) lets a page take a mouse range off the
+ * strip — press on a cell, drag, release; a click is one cell — reported as
+ * the first and last cell keys, the dragged cells outlined in the accent
+ * meanwhile. Without the prop nothing is attached and the markup is unchanged.
+ *
  * No engine and no SVG: a strip of a few dozen boxes needs neither, and the
  * ECharts heatmap would pull its ~170 kB chunk onto three pages for nothing.
  * The only text is the legend row, which is HTML that wraps — nothing is sized
  * to one font, so it holds on the Linux runner's wider DejaVu Sans.
  */
-import { useMemo, type CSSProperties } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
+} from 'react'
 import { useChartCursor, type ChartCursorPoint } from './ChartCursor'
 import {
   FAILURE_CUE_FILL,
   MIXED_BAND_HEIGHT,
   buildDayStripModel,
   defaultStartLabel,
+  inSelection,
+  selectionKeys,
   type CellFace,
+  type DaySelection,
   type DayStripCell,
   type DayStripMode,
   type DayStripText,
@@ -62,11 +78,21 @@ export interface DayStripProps {
   /** Replace any of the words for states, markers and the legend. */
   text?: Partial<DayStripText>
   className?: string
+  /**
+   * TRND-04: select a range with the mouse — press on a cell, drag, release
+   * (a click is one cell) — and receive the first and last cell KEYS (ISO
+   * days on a cadence strip), oldest first. The cells are outlined while
+   * dragging. Absent: no listener is attached and the output is exactly what
+   * it was.
+   */
+  onSelectRange?: (fromKey: string, toKey: string) => void
 }
 
 const TODAY_RING = `0 0 0 1px ${CHART_VARS.accent}`
 const GAP_EDGE_OUTLINE = `1px dashed ${CHART_VARS.status.broken}`
 const CURSOR_OUTLINE = `2px solid ${CHART_VARS.text}`
+/** The cells of a range being dragged: the accent, solid, so it is not the gap edge's dash. */
+const SELECTION_OUTLINE = `2px solid ${CHART_VARS.accent}`
 
 /** The failure cue drawn over a face: the whole cell, or its bottom (failed) fifth. */
 function FailureCue({ cue }: { cue: CellFace['cue'] }) {
@@ -116,6 +142,7 @@ export default function DayStrip({
   endLabel,
   text,
   className,
+  onSelectRange,
 }: DayStripProps) {
   const model = useMemo(() => buildDayStripModel(cells, mode, text), [cells, mode, text])
   const points = useMemo<ChartCursorPoint[]>(
@@ -123,6 +150,36 @@ export default function DayStrip({
     [model],
   )
   const cursor = useChartCursor({ title: title ?? label, chartType: 'day strip', points, noun: unit })
+
+  // TRND-04: the mouse range selection, only when the page asked for it.
+  const selectable = typeof onSelectRange === 'function'
+  const [drag, setDrag] = useState<DaySelection | null>(null)
+  const dragRef = useRef<DaySelection | null>(null)
+  const onSelectRef = useRef(onSelectRange)
+  const keysRef = useRef(model.cells)
+  useEffect(() => {
+    onSelectRef.current = onSelectRange
+    keysRef.current = model.cells
+  })
+  const finish = useCallback(() => {
+    const current = dragRef.current
+    dragRef.current = null
+    setDrag(null)
+    const keys = selectionKeys(keysRef.current, current)
+    if (keys) onSelectRef.current?.(keys.from, keys.to)
+  }, [])
+  const dragging = drag !== null
+  useEffect(() => {
+    // A release outside the strip still ends the drag (on the last cell the pointer crossed).
+    if (!dragging) return
+    window.addEventListener('mouseup', finish)
+    return () => window.removeEventListener('mouseup', finish)
+  }, [dragging, finish])
+  const update = (next: DaySelection) => {
+    dragRef.current = next
+    setDrag(next)
+  }
+
   if (model.cells.length === 0) return null
 
   const count = model.cells.length
@@ -142,6 +199,27 @@ export default function DayStrip({
         >
           {model.cells.map((cell, index) => {
             const active = index === cursor.index
+            const selected = selectable && inSelection(drag, index)
+            const selection = selectable
+              ? {
+                  onMouseDown: (event: ReactMouseEvent) => {
+                    if (event.button !== 0) return
+                    // No text selection while dragging across the cells.
+                    event.preventDefault()
+                    update({ anchor: index, current: index })
+                  },
+                  onMouseEnter: () => {
+                    const current = dragRef.current
+                    if (current) update({ anchor: current.anchor, current: index })
+                  },
+                  // Released on a cell: that cell ends the range (the window listener covers a release elsewhere).
+                  onMouseUp: () => {
+                    const current = dragRef.current
+                    if (current) dragRef.current = { anchor: current.anchor, current: index }
+                    finish()
+                  },
+                }
+              : {}
             return (
               <div
                 key={`${index}:${cell.key}`}
@@ -151,7 +229,9 @@ export default function DayStrip({
                 data-level={mode === 'intensity' ? cell.level : undefined}
                 data-marker={cell.marker ?? undefined}
                 data-cursor-active={active ? '' : undefined}
+                data-day-selected={selected ? '' : undefined}
                 className="relative overflow-hidden rounded-sm"
+                {...selection}
                 style={{
                   ...(cellHeight === 'square' ? { aspectRatio: '1' } : { height: cellHeight }),
                   background: cell.background,
@@ -159,8 +239,15 @@ export default function DayStrip({
                   boxShadow: cell.marker === 'today' ? TODAY_RING : 'none',
                   // The gap edge is dashed and today is solid, so the two
                   // markers differ in shape, not only in hue.
-                  outline: active ? CURSOR_OUTLINE : cell.marker === 'gap-edge' ? GAP_EDGE_OUTLINE : undefined,
+                  outline: active
+                    ? CURSOR_OUTLINE
+                    : selected
+                      ? SELECTION_OUTLINE
+                      : cell.marker === 'gap-edge'
+                        ? GAP_EDGE_OUTLINE
+                        : undefined,
                   outlineOffset: 1,
+                  ...(selectable ? { cursor: 'crosshair' } : {}),
                 }}
               >
                 <FailureCue cue={cell.cue} />

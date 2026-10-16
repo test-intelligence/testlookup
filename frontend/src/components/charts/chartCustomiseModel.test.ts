@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { buildMultiSeriesModel, WEEKLY_CAPTION, WEEKLY_X_TITLE } from './multiSeriesModel'
 import {
+  applySeriesField,
   DEFAULT_SERIES_CONFIG,
   impliedTitle,
   isDefault,
   readSeriesConfig,
+  SERIES_CONFIG_MODEL,
+  seriesCustomiseSpec,
   seriesParams,
   titleOf,
   unavailableOptions,
@@ -81,5 +84,46 @@ describe('multiSeriesModel with a weekly bucket', () => {
   it('by day (the default) it is every day, as before', () => {
     const model = buildMultiSeriesModel({ series, metric: { kind: 'rate', title: 'Pass rate %' } })
     expect(model.xs).toHaveLength(15)
+  })
+})
+
+// TRND-10: the generic panel spec for the suite series reproduces its five controls.
+describe('seriesCustomiseSpec / applySeriesField (TRND-10)', () => {
+  it('the five VIZ-604 controls, then chart type and scale, with the guard rails', () => {
+    const spec = seriesCustomiseSpec(DEFAULT_SERIES_CONFIG)
+    expect(spec.fields.map((f) => [f.id, f.kind, f.value])).toEqual([
+      ['title', 'text', ''],
+      ['metric', 'select', 'pass_rate'],
+      ['series', 'select', 'suite'],
+      ['bucket', 'select', 'day'],
+      ['topN', 'select', '7'],
+      ['chartType', 'select', 'line'],
+      ['scale', 'select', 'linear'],
+    ])
+    expect(spec.isDefault).toBe(true)
+    expect(spec.unavailable).toEqual(unavailableOptions(DEFAULT_SERIES_CONFIG))
+    const topN = spec.fields.find((f) => f.id === 'topN')
+    expect(topN?.options?.filter((o) => o.disabled).map((o) => o.label)).toEqual(['More than 7'])
+    expect(spec.fields.find((f) => f.id === 'chartType')?.options?.filter((o) => o.disabled).map((o) => o.label)).toEqual(['Pie', 'Stacked area'])
+  })
+
+  it('applySeriesField sets what the chart offers and ignores the rest', () => {
+    let c = applySeriesField(DEFAULT_SERIES_CONFIG, 'metric', 'failures')
+    c = applySeriesField(c, 'topN', '5')
+    c = applySeriesField(c, 'series', 'branch')
+    c = applySeriesField(c, 'bucket', 'week')
+    c = applySeriesField(c, 'title', 'Mine')
+    c = applySeriesField(c, 'topN', 'unavailable:More than 7')
+    c = applySeriesField(c, 'metric', 'nope')
+    c = applySeriesField(c, 'chartType', 'pie')
+    expect(c).toEqual(config({ metric: 'failures', topN: 5, seriesBy: 'branch', bucket: 'week', title: 'Mine' }))
+    expect(applySeriesField(c, 'title', '').title).toBeUndefined()
+    expect(seriesCustomiseSpec(c).isDefault).toBe(false)
+  })
+
+  it('SERIES_CONFIG_MODEL is the series model useChartConfig reads with', () => {
+    expect(SERIES_CONFIG_MODEL.defaults).toBe(DEFAULT_SERIES_CONFIG)
+    expect(SERIES_CONFIG_MODEL.read({ version: 2 }).notice).toMatch(/no longer applies/)
+    expect(SERIES_CONFIG_MODEL.isDefault(config({ topN: 3 }))).toBe(false)
   })
 })

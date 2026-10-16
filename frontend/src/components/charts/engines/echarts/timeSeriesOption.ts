@@ -33,7 +33,11 @@ import { formatNumber } from '@/utils/formatters'
 import {
   EXECUTIONS_AXIS_TITLE,
   RATE_AXIS_TITLE,
+  clipNoteMarkers,
   localDayRange,
+  noteShortLabel,
+  noteTooltipLine,
+  notesCovering,
   type TimeSeriesModel,
   type TimeSeriesPoint,
 } from '../../timeSeriesModel'
@@ -145,8 +149,19 @@ export function timeSeriesTooltipContent({
           ? `${formatNumber(model.inProgressCount)} run(s) in progress`
           : 'this UTC day has not closed yet',
     },
+    // TRND-04: the timeline notes covering this day, "{text} — {author}, {dates}".
+    // User text: a row VALUE, rendered as text by both tooltips (never markup).
+    ...notesCovering(model.notes, point.x).map((note) => ({
+      kind: 'note' as const,
+      key: `timeline-note-${note.id}`,
+      label: 'Note',
+      value: noteTooltipLine(note),
+    })),
   ])
 }
+
+/** The plot label of a note: its text cut short, canvas-safe (user text on a canvas, `canvasText.ts`). */
+const noteCanvasLabel = (text: string) => canvasSafeText(noteShortLabel(text))
 
 export interface TimeSeriesOptionInput {
   model: TimeSeriesModel
@@ -199,6 +214,10 @@ export function buildTimeSeriesOption({
   const axisLabel = { color: tokens.axis }
   const axisLine = { lineStyle: { color: tokens.grid } }
   const splitLine = { lineStyle: { color: tokens.grid } }
+  // TRND-04: the notes on the DRAWN axis (a zoomed slice carries the full window's).
+  const notes = clipNoteMarkers(model.notes, model.points.map((point) => point.x))
+  const lineNotes = notes.filter((note) => note.kind === 'line')
+  const bandNotes = notes.filter((note) => note.kind === 'band')
 
   return {
     animation: animate,
@@ -317,7 +336,7 @@ export function buildTimeSeriesOption({
         data: model.points.map((point) => point.rate),
         lineStyle: { color: tokens.series[0], width: 2 },
         itemStyle: { color: tokens.series[0] },
-        markLine: model.markers.length
+        markLine: model.markers.length || lineNotes.length
           ? {
               symbol: 'none',
               silent: true,
@@ -328,13 +347,38 @@ export function buildTimeSeriesOption({
               label: { color: tokens.axis, position: 'insideEndTop' },
               // Canvas-safe: a release named (or starting with) `__proto__` must not reach zrender's text cache
               // as a member name, nor may any prefix of it (`canvasText.ts`).
-              data: model.markers.map((marker) => ({
-                xAxis: canvasSafeText(marker.x),
-                name: canvasSafeText(marker.names.join(', ')),
-              })),
+              data: [
+                ...model.markers.map((marker) => ({
+                  xAxis: canvasSafeText(marker.x),
+                  name: canvasSafeText(marker.names.join(', ')),
+                })),
+                // TRND-04: a one-day note is a dashed line in the axis colour, labelled with its short text.
+                ...lineNotes.map((note) => ({
+                  xAxis: canvasSafeText(note.from),
+                  name: noteCanvasLabel(note.label),
+                  lineStyle: { color: tokens.axis, type: 'dashed' as const },
+                  label: { color: tokens.axis, position: 'insideEndBottom' as const },
+                })),
+              ],
+            }
+          : undefined,
+        // TRND-04: a note over a range of days is a shaded band (the axis colour at 12 %, the SVG
+        // path's `color-mix`), labelled with its short text. No formatter (canvas-safe names only).
+        markArea: bandNotes.length
+          ? {
+              silent: true,
+              itemStyle: { color: tokens.axis, opacity: NOTE_BAND_OPACITY },
+              label: { color: tokens.axis, position: 'insideTopLeft' },
+              data: bandNotes.map((note) => [
+                { xAxis: canvasSafeText(note.from), name: noteCanvasLabel(note.label) },
+                { xAxis: canvasSafeText(note.to) },
+              ]),
             }
           : undefined,
       },
     ],
   } as TimeSeriesOption
 }
+
+/** A note band's fill strength on canvas: the SVG band's `color-mix(… 12%, transparent)`. */
+export const NOTE_BAND_OPACITY = 0.12

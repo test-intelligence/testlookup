@@ -212,6 +212,48 @@ export function defaultStartLabel(count: number, unit: string, today: string): s
   return `${back} ${back === 1 ? unit : `${unit}s`} ago`
 }
 
+// ── Range selection (TRND-04) ───────────────────────────────────────────────
+
+/**
+ * A mouse selection over the strip, as cell INDEXES: where the press started
+ * (`anchor`) and the cell under the pointer now (`current`). A press and a
+ * release on one cell is a one-cell selection.
+ */
+export interface DaySelection {
+  anchor: number
+  current: number
+}
+
+/** The selection's inclusive index range, low to high; `null` for none. */
+export function selectionBounds(selection: DaySelection | null | undefined): { start: number; end: number } | null {
+  if (!selection) return null
+  const { anchor, current } = selection
+  if (!Number.isInteger(anchor) || !Number.isInteger(current)) return null
+  return { start: Math.min(anchor, current), end: Math.max(anchor, current) }
+}
+
+/** Whether cell `index` is inside the selection. */
+export function inSelection(selection: DaySelection | null | undefined, index: number): boolean {
+  const bounds = selectionBounds(selection)
+  return bounds !== null && index >= bounds.start && index <= bounds.end
+}
+
+/**
+ * The first and last cell KEYS a selection covers (the ISO days a cadence
+ * strip keys its cells by), oldest first; `null` when it covers no cell.
+ */
+export function selectionKeys(
+  cells: readonly Pick<DayStripCell, 'key'>[],
+  selection: DaySelection | null | undefined,
+): { from: string; to: string } | null {
+  const bounds = selectionBounds(selection)
+  if (!bounds || cells.length === 0) return null
+  const start = Math.max(0, bounds.start)
+  const end = Math.min(cells.length - 1, bounds.end)
+  if (end < start) return null
+  return { from: cells[start].key, to: cells[end].key }
+}
+
 // ── The model ───────────────────────────────────────────────────────────────
 
 export interface DayStripCellView extends CellFace {

@@ -19,6 +19,12 @@ import {
   timeSeriesFromTrends,
   timeSeriesToChartSeries,
   utcTodayNote,
+  clipNoteMarkers,
+  noteShortLabel,
+  noteTooltipLine,
+  notesCovering,
+  placeNotes,
+  type NoteInput,
 } from './timeSeriesModel'
 
 const meta = (over: Partial<EnvelopeMeta> = {}): EnvelopeMeta =>
@@ -470,5 +476,82 @@ describe('fix round B · 7 a release with an unreadable date is counted, not dro
     )
     expect(placed.markers.map((m) => m.x)).toEqual(['2026-03-01'])
     expect(placed.outsideWindow).toBe(2)
+  })
+})
+
+// TRND-04: timeline notes travel in the model; both renderers draw `model.notes`.
+describe('timeline notes in the model', () => {
+  const DAYS5 = ['2026-03-01', '2026-03-02', '2026-03-03', '2026-03-04', '2026-03-05']
+  const points = timeSeriesFromTrends(
+    DAYS5.map((date) => ({ date, passed: 9, failed: 1, skipped: 0, broken: 0, total: 10, pass_rate: 90 })),
+  )
+  const note = (over: Partial<NoteInput>): NoteInput => ({ id: 'n', from: '2026-03-02', to: '2026-03-02', label: 'freeze', author: 'Ada', ...over })
+
+  it('no notes given: the model carries none (a chart without notes is unchanged)', () => {
+    const model = buildTimeSeriesModel({ points })
+    expect(model.notes).toEqual([])
+    expect(model.notesOutsideWindow).toBe(0)
+  })
+
+  it('a one-day note is a line; a range is a band', () => {
+    const model = buildTimeSeriesModel({
+      points,
+      notes: [note({ id: 'one' }), note({ id: 'range', from: '2026-03-03', to: '2026-03-05' })],
+    })
+    expect(model.notes.map((n) => [n.id, n.kind, n.from, n.to])).toEqual([
+      ['one', 'line', '2026-03-02', '2026-03-02'],
+      ['range', 'band', '2026-03-03', '2026-03-05'],
+    ])
+  })
+
+  it('a note wholly outside the window is counted, not drawn; one partly outside is cut at the edge and stays a band', () => {
+    const model = buildTimeSeriesModel({
+      points,
+      notes: [
+        note({ id: 'before', from: '2026-02-01', to: '2026-02-03' }),
+        note({ id: 'after', from: '2026-03-09', to: '2026-03-09' }),
+        note({ id: 'edge', from: '2026-02-27', to: '2026-03-01' }),
+        note({ id: 'garbage', from: 'not-a-day', to: '2026-03-01' }),
+      ],
+    })
+    expect(model.notes.map((n) => n.id)).toEqual(['edge'])
+    // Cut to the first bucket, but a range clipped to one visible day is still a range.
+    expect(model.notes[0]).toMatchObject({ from: '2026-03-01', to: '2026-03-01', kind: 'band', fromDay: '2026-02-27', toDay: '2026-03-01' })
+    expect(model.notesOutsideWindow).toBe(3)
+  })
+
+  it('a note on the same bucket as a release marker keeps both', () => {
+    const model = buildTimeSeriesModel({
+      points,
+      releases: [{ id: 'r1', name: 'R1', date: '2026-03-02T10:00:00Z' }],
+      notes: [note({ id: 'freeze' })],
+    })
+    expect(model.markers.map((m) => m.x)).toEqual(['2026-03-02'])
+    expect(model.notes.map((n) => [n.id, n.from])).toEqual([['freeze', '2026-03-02']])
+    expect(notesCovering(model.notes, '2026-03-02').map((n) => n.id)).toEqual(['freeze'])
+    expect(notesCovering(model.notes, '2026-03-03')).toEqual([])
+  })
+
+  it('placeNotes ignores a reversed range (read as its first day) and an empty axis', () => {
+    expect(placeNotes([note({ from: '2026-03-04', to: '2026-03-02' })], DAYS5).notes[0]).toMatchObject({ kind: 'line', from: '2026-03-04', to: '2026-03-04' })
+    expect(placeNotes([note({})], [])).toEqual({ notes: [], outsideWindow: 1 })
+  })
+
+  it('clipNoteMarkers cuts the full window’s notes to a zoomed axis', () => {
+    const model = buildTimeSeriesModel({ points, notes: [note({ id: 'wide', from: '2026-03-01', to: '2026-03-05' }), note({ id: 'early', from: '2026-03-01', to: '2026-03-01' })] })
+    const zoomed = clipNoteMarkers(model.notes, DAYS5.slice(2, 4))
+    expect(zoomed.map((n) => [n.id, n.from, n.to])).toEqual([['wide', '2026-03-03', '2026-03-04']])
+    expect(clipNoteMarkers(undefined, DAYS5)).toEqual([])
+  })
+
+  it('the short label is cut to 24 characters; the tooltip line names the text, the author and the dates', () => {
+    expect(noteShortLabel('short')).toBe('short')
+    const long = noteShortLabel('a release freeze across the payments squad')
+    expect(Array.from(long)).toHaveLength(24)
+    expect(long.endsWith('…')).toBe(true)
+    const [placed] = placeNotes([note({ from: '2026-03-02', to: '2026-03-04', label: 'freeze', author: 'Ada' })], DAYS5).notes
+    expect(noteTooltipLine(placed)).toBe('freeze — Ada, Mar 2 – Mar 4')
+    const [anon] = placeNotes([note({ author: null })], DAYS5).notes
+    expect(noteTooltipLine(anon)).toBe('freeze, Mar 2')
   })
 })
