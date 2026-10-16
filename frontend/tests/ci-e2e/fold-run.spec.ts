@@ -25,6 +25,7 @@ import { MAIN, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
 import { type ApiHandlers } from '../lib/production-pages'
 import { releaseGateOn, RUN_ID, USER } from '../visual/production/fixtures'
 import { AI_REPORT_SUMMARY, RUN_PAGE, RUN_RELEASE_DECISION } from '../visual/production/fixtures-run'
+import { ROLE_ACTIONS, withRoleActions } from '../visual/production/fixtures-runs-failures'
 
 /** The fold budget of the page template (§2): primary content top, px below the scroller's top. */
 const FOLD_BUDGET_PX = 300
@@ -150,6 +151,28 @@ test('the old URLs of the merged pages land on their tab', async ({ page }) => {
     await expect(page.getByRole('tablist', { name: 'Run sections' }).getByRole('tab', { selected: true })).toHaveAttribute('data-tab', tab)
     await expect(sentinel).toBeVisible()
   }
+  expect(api.unhandled).toEqual([])
+  expect(errors).toEqual([])
+})
+
+/**
+ * W07 FAIL-07 (contract §2.10): Recommended actions put the reader's own role first. The fixture user `USER`
+ * is a QA lead, so the QA row leads, marked " · your role" (one mark, no control added).
+ */
+test('Recommended actions put the reader\'s role first: QA for a QA lead', async ({ page }) => {
+  const { api, errors } = await openRollout(page, `/runs/${RUN_ID}?tab=analysis`, {
+    handlers: withRoleActions(RUN_PAGE),
+    ready: (p) => p.locator('[data-status-banner]'),
+  })
+  const evidence = page.locator('[data-disclosure]').filter({ hasText: 'Evidence behind the verdict' })
+  await evidence.getByRole('button', { name: /Evidence behind the verdict/ }).click()
+  const first = page.locator('[data-persona-first]')
+  await expect(first).toHaveCount(1)
+  await expect(first).toContainText('QA · your role')
+  await expect(first).toContainText(ROLE_ACTIONS.QA)
+  expect(await first.evaluate((row) => row.parentElement?.firstElementChild === row), 'the first role row').toBe(true)
+  await expect(page.getByText('· your role')).toHaveCount(1)
+  await networkQuiet(page, api)
   expect(api.unhandled).toEqual([])
   expect(errors).toEqual([])
 })

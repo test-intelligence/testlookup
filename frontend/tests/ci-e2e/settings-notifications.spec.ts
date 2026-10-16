@@ -105,6 +105,8 @@ function handlers(): ApiHandlers {
     ['/api/v1/notifications/preferences', () => [SLACK_PREF]],
     [`/api/v1/projects/${P}/ownership/rules`, () => RULES],
     [`/api/v1/projects/${P}/ownership/codeowners/coverage`, () => COVERAGE],
+    // W07 FAIL-08: the page's "Java source roots" section.
+    [`/api/v1/projects/${P}/ownership/source-roots`, () => ({ roots: [], max_roots: 20 })],
     [`/api/v1/projects/${P}/ownership/team-channels`, () => [...channels.values()]],
     [
       new RegExp(`^/api/v1/projects/${P}/ownership/team-channels/[^/]+$`),
@@ -155,6 +157,7 @@ const HISTORY_LINE = 'GET /api/v1/notifications/history?unread_only=false&limit=
 const RULES_LINE = `GET /api/v1/projects/${P}/ownership/rules`
 const CHANNELS_LINE = `GET /api/v1/projects/${P}/ownership/team-channels`
 const COVERAGE_LINE = `GET /api/v1/projects/${P}/ownership/codeowners/coverage?days=30`
+const SOURCE_ROOTS_LINE = `GET /api/v1/projects/${P}/ownership/source-roots`
 
 test('/settings/notifications is Email (SMTP) & channels: the server, two columns, and the shared channels', async ({ page }) => {
   const { api, errors } = await openRollout(page, '/settings/notifications', { handlers: handlers(), ready })
@@ -272,7 +275,7 @@ test('/ownership no longer asks for team channels, and its one line opens Team c
   await networkQuiet(page, api)
   await logHeight(page, '/ownership')
   await expect(page.getByRole('heading', { name: /Team Notification Channels/i })).toHaveCount(0)
-  expectInventory(api, errors, [...SHELL_BASE, RULES_LINE, COVERAGE_LINE], '/ownership')
+  expectInventory(api, errors, [...SHELL_BASE, RULES_LINE, COVERAGE_LINE, SOURCE_ROOTS_LINE], '/ownership')
 
   await page.locator('[data-team-channels-link]').getByRole('link', { name: 'Team channels' }).click()
   await expect(page).toHaveURL(/\/settings\/team-channels$/)

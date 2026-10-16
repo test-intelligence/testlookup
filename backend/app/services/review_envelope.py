@@ -29,6 +29,7 @@ Two cases that could lie, and how they are resolved
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -49,7 +50,9 @@ __all__ = [
     "ReviewEnvelope",
     "envelope_from_review",
     "not_ai_generated",
+    "report_review_states",
     "review_envelope_for_run",
+    "run_report_review_filters",
     "review_envelope_for_pipeline",
     "review_envelope_for_pipeline_subject",
 ]
@@ -163,33 +166,84 @@ async def review_envelope_for_run(
         return _unreviewed()
     stmt = select(ReviewRequest).where(
         ReviewRequest.test_run_id == run_uuid,
-        ReviewRequest.kind == "report",
-        ReviewRequest.state != "superseded",
         # A review whose pipeline run was deleted can never be settled, so
         # letting it report ``pending_review`` here would withhold the export
         # and the release narrative for this run PERMANENTLY — and the accept
         # that used to be the escape hatch now refuses. Same rule as the queue,
         # one definition.
         subject_still_exists(),
+        *run_report_review_filters(workflow_type=workflow_type),
     )
-    if workflow_type:
-        stmt = stmt.where(ReviewRequest.workflow_type == workflow_type)
-    else:
-        # Investigator narratives have exact pipeline-scoped reviews. They
-        # share their parent test_run_id, so they must never authorize a parent
-        # summary/export that asks for the run's ordinary report envelope.
-        stmt = stmt.where(
-            or_(
-                ReviewRequest.workflow_type.is_(None),
-                ReviewRequest.workflow_type != "investigation",
-            )
-        )
     row: Optional[ReviewRequest] = (
         await db.execute(stmt.order_by(ReviewRequest.created_at.desc()).limit(1))
     ).scalars().first()
     if row is None:
         return _unreviewed()
     return envelope_from_review(row)
+
+
+def run_report_review_filters(*, workflow_type: Optional[str] = None) -> list:
+    """The WHERE that picks a run's live report review, beside ``test_run_id``.
+
+    One definition for the per-run envelope (``review_envelope_for_run``) and the
+    Runs list's batch read (``report_review_states``), so the list's review
+    state is the one the run's Analysis tab shows. Each caller ALSO applies
+    ``subject_still_exists()`` itself, as every reader of reviews does: that rule
+    has its own one definition (``review_request_service``), and
+    ``tests/regression/test_orphan_review_cannot_be_settled.py`` checks each
+    reader for the call.
+    """
+    filters: list = [
+        ReviewRequest.kind == "report",
+        ReviewRequest.state != "superseded",
+    ]
+    if workflow_type:
+        filters.append(ReviewRequest.workflow_type == workflow_type)
+    else:
+        # Investigator narratives have exact pipeline-scoped reviews. They
+        # share their parent test_run_id, so they must never authorize a parent
+        # summary/export that asks for the run's ordinary report envelope.
+        filters.append(
+            or_(
+                ReviewRequest.workflow_type.is_(None),
+                ReviewRequest.workflow_type != "investigation",
+            )
+        )
+    return filters
+
+
+async def report_review_states(
+    db: Any,
+    run_ids: Sequence[uuid.UUID],
+    *,
+    project_ids: Optional[Sequence[uuid.UUID]] = None,
+) -> dict[uuid.UUID, str]:
+    """The newest live report review state of each run, in ONE statement (W07 FAIL-04).
+
+    The batch twin of ``review_envelope_for_run``: the same predicate
+    (``run_report_review_filters``), newest ``created_at`` per run. A run with
+    no row is ABSENT from the result; the caller reads it as ``pending_review``
+    (the per-run fail-closed rule: absence of a review is not a review).
+
+    ``project_ids`` (the runs' own projects) narrows the read onto
+    ``ix_review_requests_project_state``; ``review_requests`` has no index on
+    ``test_run_id`` alone.
+    """
+    ids = list(dict.fromkeys(run_ids))
+    if not ids or db is None:
+        return {}
+    stmt = select(ReviewRequest.test_run_id, ReviewRequest.state).where(
+        ReviewRequest.test_run_id.in_(ids),
+        subject_still_exists(),
+        *run_report_review_filters(),
+    )
+    if project_ids:
+        stmt = stmt.where(ReviewRequest.project_id.in_(list(dict.fromkeys(project_ids))))
+    stmt = stmt.distinct(ReviewRequest.test_run_id).order_by(
+        ReviewRequest.test_run_id, ReviewRequest.created_at.desc()
+    )
+    rows = (await db.execute(stmt)).all()
+    return {row[0]: str(row[1]) for row in rows}
 
 
 async def review_envelope_for_pipeline(

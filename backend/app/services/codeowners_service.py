@@ -61,6 +61,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.http_client import http_verify
 from app.models.postgres import (
+    Project,
     ProjectMember,
     ServiceOwnershipRule,
     TestCase,
@@ -525,16 +526,149 @@ def assignment_reason(rule: ServiceOwnershipRule) -> str:
     return f"via {source}: {rule.match_pattern}"
 
 
+# ── Java source roots (FAIL-08) ─────────────────────────────────────────────
+#
+# A JVM frame names a class and a file (``at com.acme.pay.CheckoutTest.pays(
+# CheckoutTest.java:42)``), never a repo path. ``projects.source_roots`` (a
+# JSON list of ``{"prefix": <dotted package prefix, "" = any>, "root":
+# <repo-relative dir>}`` in priority order; NULL / [] = none) is what every
+# locator in this module, the ingest-time assignment and the check-run
+# annotations use to place it. No default root exists: with none, Java stays
+# unlocated exactly as before.
+
+MAX_SOURCE_ROOTS = 20
+SOURCE_ROOTS_TOO_MANY = f"At most {MAX_SOURCE_ROOTS} source roots."
+_SOURCE_ROOT_INVALID = (
+    'Source root "{root}" must be a relative path inside the repository '
+    "(letters, digits, . _ - /; no ..)."
+)
+_PREFIX_INVALID = 'Package prefix "{prefix}" must be a dotted Java package, e.g. com.acme.pay.'
+_PREFIX_DUPLICATE = 'Package prefix "{prefix}" is listed twice.'
+_ROOT_CHARS_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
+_JAVA_PACKAGE_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)(\.[A-Za-z_][A-Za-z0-9_]*)*$")
+# The preview / coverage sample (the same rows compute_coverage reads).
+_SAMPLE_TRACE_CHARS = 4000
+_PREVIEW_EXAMPLES = 5
+
+
+class SourceRootsError(ValueError):
+    """A source-roots list the service refuses; ``str(exc)`` is the 422 text."""
+
+
+def _entry_field(entry: Any, name: str) -> Any:
+    if isinstance(entry, dict):
+        return entry.get(name)
+    return getattr(entry, name, None)
+
+
+def _clean_source_root(entry: Any) -> dict[str, str]:
+    """One entry, stripped and shape-checked; raises ``SourceRootsError``."""
+    prefix_raw = _entry_field(entry, "prefix")
+    root_raw = _entry_field(entry, "root")
+    prefix = prefix_raw.strip() if isinstance(prefix_raw, str) else ""
+    root = root_raw.strip() if isinstance(root_raw, str) else ""
+    if prefix_raw is not None and not isinstance(prefix_raw, str):
+        raise SourceRootsError(_PREFIX_INVALID.format(prefix=prefix_raw))
+    shown = root_raw if isinstance(root_raw, str) else ""
+    if (
+        not root
+        or root.startswith("/")
+        or re.match(r"^[A-Za-z]:", root)
+        or "\\" in root
+        or "://" in root
+        or not _ROOT_CHARS_RE.match(root)
+    ):
+        raise SourceRootsError(_SOURCE_ROOT_INVALID.format(root=shown.strip()))
+    root = root.rstrip("/")
+    if not root or any(part == ".." for part in root.split("/")):
+        raise SourceRootsError(_SOURCE_ROOT_INVALID.format(root=shown.strip()))
+    if prefix and not _JAVA_PACKAGE_RE.match(prefix):
+        raise SourceRootsError(_PREFIX_INVALID.format(prefix=prefix))
+    return {"prefix": prefix, "root": root}
+
+
+def validate_source_roots(raw: Any) -> list[dict[str, str]]:
+    """The stored form of a source-roots list, or ``SourceRootsError`` with
+    the one 422 text the API shows (more than 20; a root that is not a
+    relative in-repo path; a prefix that is not a dotted package; a prefix
+    listed twice). Order is kept: it is the priority order."""
+    entries = list(raw or [])
+    if len(entries) > MAX_SOURCE_ROOTS:
+        raise SourceRootsError(SOURCE_ROOTS_TOO_MANY)
+    cleaned: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for entry in entries:
+        item = _clean_source_root(entry)
+        if item["prefix"] in seen:
+            raise SourceRootsError(_PREFIX_DUPLICATE.format(prefix=item["prefix"]))
+        seen.add(item["prefix"])
+        cleaned.append(item)
+    return cleaned
+
+
+def sanitize_stored_source_roots(raw: Any) -> list[dict[str, str]]:
+    """The READ-side twin of ``validate_source_roots``: a bad entry (a
+    hand-edited row) is DROPPED, never raised — every locator runs on a read
+    or ingest path that must not fail because of one bad root."""
+    if not isinstance(raw, list):
+        return []
+    cleaned: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for entry in raw:
+        if len(cleaned) >= MAX_SOURCE_ROOTS:
+            break
+        if not isinstance(entry, dict):
+            continue
+        try:
+            item = _clean_source_root(entry)
+        except SourceRootsError:
+            continue
+        if item["prefix"] in seen:
+            continue
+        seen.add(item["prefix"])
+        cleaned.append(item)
+    return cleaned
+
+
+async def load_source_roots(
+    db: AsyncSession, project_id: Optional[uuid.UUID],
+) -> list[dict[str, str]]:
+    """``Project.source_roots`` for ``project_id``: ``[]`` when NULL, unknown
+    or unreadable; an entry failing validation is dropped. One statement;
+    never raises (a locator caller is an inbox read, an ingest step or a
+    check-run post — none may fail over this)."""
+    if project_id is None:
+        return []
+    try:
+        raw = await db.scalar(
+            select(Project.source_roots).where(Project.id == project_id)
+        )
+    except Exception as exc:  # noqa: BLE001 — a read path must not fail on this
+        logger.warning(
+            "source_roots_load_failed",
+            project_id=str(project_id),
+            error=type(exc).__name__,
+        )
+        return []
+    return sanitize_stored_source_roots(raw)
+
+
 def locate_failure_path(
-    stack_trace: Optional[str], error_message: Optional[str],
+    stack_trace: Optional[str],
+    error_message: Optional[str],
+    *,
+    java_roots: Optional[list[dict[str, str]]] = None,
 ) -> Optional[str]:
     """Repo-relative failure path from a stack trace / error message, or
-    ``None``. Reuses ``github_checks_service.locate_in_trace`` (Python + JS/TS;
-    Java deliberately unlocated) — a non-locatable failure has no path and must
-    fall through to the QA-lead pool."""
+    ``None``. Reuses ``github_checks_service.locate_in_trace`` (Python + JS/TS,
+    and Java only through the project's ``java_roots``) — a non-locatable
+    failure has no path and must fall through to the QA-lead pool."""
     from app.services.github_checks_service import locate_in_trace
 
-    loc = locate_in_trace(stack_trace) or locate_in_trace(error_message)
+    loc = (
+        locate_in_trace(stack_trace, java_roots=java_roots)
+        or locate_in_trace(error_message, java_roots=java_roots)
+    )
     return loc[0] if loc else None
 
 
@@ -569,10 +703,13 @@ async def codeowners_reasons_for_rows(
                 if h
             }
             handle_map = await resolve_handles_to_users(db, handles, project_id=pid)
+            # FAIL-08: once per project, with its path rules (never per row).
+            java_roots = await load_source_roots(db, pid)
             for row in prows:
                 path = locate_failure_path(
                     getattr(row, "stack_trace", None),
                     getattr(row, "error_message", None),
+                    java_roots=java_roots,
                 )
                 if not path:
                     continue
@@ -618,12 +755,17 @@ async def compute_coverage(
     A ratio with an empty denominator is undefined, and the two readings lead
     somewhere different: 0.0 says "your rules cover none of your failures,
     write more rules", while ``None`` says "this metric cannot be computed for
-    this project's failures". ``locate_failure_path`` leaves Java deliberately
-    unlocated, and TestLookup ingests TestNG and JUnit, so an all-Java project
-    is a normal case rather than an edge one — it would have shown a permanent,
-    unfixable 0% no matter how many rules were added. Confirmed live before the
-    change: 3 sampled, 0 located, ``coverage_pct`` 0.0, with the UI badge
-    rendering "Coverage 0%" beside a tooltip that read "0/0 paths matched"."""
+    this project's failures". ``locate_failure_path`` leaves Java unlocated
+    unless the project lists its Java source roots (FAIL-08), and TestLookup
+    ingests TestNG and JUnit, so an all-Java project is a normal case rather
+    than an edge one — it would have shown a permanent, unfixable 0% no matter
+    how many rules were added. Confirmed live before the change: 3 sampled, 0
+    located, ``coverage_pct`` 0.0, with the UI badge rendering "Coverage 0%"
+    beside a tooltip that read "0/0 paths matched". With roots set, the same
+    project's Java rows are located and the ratio becomes a number.
+
+    ``source_roots`` (FAIL-08) is the count of the project's configured roots
+    (present when path rules exist; the response model defaults it to 0)."""
     path_rules = await load_path_rules(db, project_id)
     codeowners_rules = sum(
         1 for r in path_rules if r.service_name == CODEOWNERS_SERVICE
@@ -640,32 +782,24 @@ async def compute_coverage(
         "lookback_days": lookback_days,
     }
     if not path_rules:
+        # No rule can match anything, so nothing is sampled (and the roots are
+        # not read: ``source_roots`` takes the response model's default 0 —
+        # the badge that reads it renders only when ``path_rules > 0``).
         return summary
 
-    period_start = datetime.now(timezone.utc) - timedelta(days=lookback_days)
-    # Only the trace locator consumes these — pull a bounded 4000-char prefix
-    # instead of whole multi-MB blobs (sample_cap=500 rows of full traces).
-    rows = (
-        await db.execute(
-            select(
-                func.substr(TestCase.stack_trace, 1, 4000).label("stack_trace"),
-                func.substr(TestCase.error_message, 1, 4000).label("error_message"),
-            )
-            .join(TestRun, TestRun.id == TestCase.test_run_id)
-            .where(
-                TestRun.project_id == project_id,
-                TestCase.status.in_(("FAILED", "BROKEN")),
-                TestCase.created_at >= period_start,
-            )
-            .order_by(TestCase.created_at.desc())
-            .limit(sample_cap)
-        )
-    ).all()
+    rows = await _recent_failure_sample(
+        db, project_id, lookback_days=lookback_days, sample_cap=sample_cap,
+    )
+    # FAIL-08: Java rows count as located when the project's source roots
+    # place them. Read once per call, after the sample.
+    java_roots = await load_source_roots(db, project_id)
 
     located = 0
     matched = 0
     for r in rows:
-        path = locate_failure_path(r.stack_trace, r.error_message)
+        path = locate_failure_path(
+            r.stack_trace, r.error_message, java_roots=java_roots,
+        )
         if not path:
             continue
         located += 1
@@ -678,4 +812,87 @@ async def compute_coverage(
     summary["coverage_pct"] = (
         round((matched / located) * 100, 1) if located else None
     )
+    summary["source_roots"] = len(java_roots)
     return summary
+
+
+async def _recent_failure_sample(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    *,
+    lookback_days: int,
+    sample_cap: int,
+) -> list[Any]:
+    """The project's newest ``sample_cap`` FAILED/BROKEN rows of the last
+    ``lookback_days`` (coverage and the source-roots preview read the SAME
+    sample). Only the trace locator consumes the text — a bounded 4000-char
+    prefix instead of whole multi-MB blobs."""
+    period_start = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+    return list(
+        (
+            await db.execute(
+                select(
+                    TestCase.test_name,
+                    func.substr(TestCase.stack_trace, 1, _SAMPLE_TRACE_CHARS).label("stack_trace"),
+                    func.substr(TestCase.error_message, 1, _SAMPLE_TRACE_CHARS).label("error_message"),
+                )
+                .join(TestRun, TestRun.id == TestCase.test_run_id)
+                .where(
+                    TestRun.project_id == project_id,
+                    TestCase.status.in_(("FAILED", "BROKEN")),
+                    TestCase.created_at >= period_start,
+                )
+                .order_by(TestCase.created_at.desc())
+                .limit(sample_cap)
+            )
+        ).all()
+    )
+
+
+async def preview_source_roots(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    roots: list[dict[str, str]],
+    *,
+    lookback_days: int = 30,
+    sample_cap: int = 500,
+) -> dict[str, Any]:
+    """What ``roots`` WOULD locate, over the coverage sample — writes nothing.
+
+    ``java_frames`` = sampled rows whose trace (or message) holds a JVM frame;
+    ``located`` = those the given roots place in the repo; ``matched`` = the
+    located paths an active path rule matches; ``examples`` = up to five
+    located rows (text). ``roots`` must already be validated
+    (``validate_source_roots``); the router does that and answers 422."""
+    from app.services.github_checks_service import has_java_frame, locate_java_frame
+
+    path_rules = await load_path_rules(db, project_id)
+    rows = await _recent_failure_sample(
+        db, project_id, lookback_days=lookback_days, sample_cap=sample_cap,
+    )
+    java_frames = located = matched = 0
+    examples: list[dict[str, str]] = []
+    for r in rows:
+        stack, message = r.stack_trace, r.error_message
+        if not (has_java_frame(stack) or has_java_frame(message)):
+            continue
+        java_frames += 1
+        loc = locate_java_frame(stack, roots) or locate_java_frame(message, roots)
+        if loc is None:
+            continue
+        located += 1
+        if path_rules and match_path_rule(loc[0], path_rules) is not None:
+            matched += 1
+        if len(examples) < _PREVIEW_EXAMPLES:
+            examples.append({
+                "test_name": str(getattr(r, "test_name", None) or "")[:255],
+                "path": loc[0],
+            })
+    return {
+        "sampled": len(rows),
+        "java_frames": java_frames,
+        "located": located,
+        "matched": matched,
+        "lookback_days": lookback_days,
+        "examples": examples,
+    }

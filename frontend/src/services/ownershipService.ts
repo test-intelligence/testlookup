@@ -119,6 +119,8 @@ export interface CodeownersCoverage {
   /** null = not measurable (nothing in the sample could be located to a path). */
   coverage_pct: number | null;
   lookback_days: number;
+  /** FAIL-08: how many Java source roots the project lists (0 = Java frames are not located). */
+  source_roots?: number;
 }
 
 export interface CodeownersImportResult {

@@ -17,6 +17,10 @@
  * arrived), new: its baseline comes from CI. The banner's title carries the
  * failing count since the P3 baseline review ("6 of 13 builds failed"; the
  * "Failing builds" fact that repeated it is gone).
+ * W07: the verdicts come from ONE `GET /runs/ai-verdicts` (FAIL-04, same pills); the Signature chips name the
+ * failed builds' dominant errors (FAIL-03: `abc-cluster` labels from the fixture's signatures, "—" for passed
+ * builds; shot once all six chips are drawn), so `runs-table` and `runs-health` (Signature diversity measured:
+ * 3 groups over 6 builds) change, and `runs-banner` may (its "same error" rule).
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { expect, test } from '@playwright/test'
@@ -49,15 +53,18 @@ for (const theme of THEMES) {
     await expect(banner).toContainText('6 of 13 builds failed')
     await expect(banner).not.toContainText('Failing builds')
 
-    // The table, once every run's AI verdict has arrived (no skeleton left).
+    // The table, once every run's AI verdict has arrived (no skeleton left) and every failed build's
+    // signature chip is drawn (W07 FAIL-03: never a loading "—" in the baseline).
     const table = page.locator('[data-primary]')
     await expect(table.locator('[data-ai-verdict="loading"]')).toHaveCount(0)
     await expect(table.locator('[data-ai-verdict="NO_GO"]')).toHaveText(/No-Go\s*draft/)
+    await expect(table.locator('[data-signature-chip]')).toHaveCount(6)
     await visualRegion(page, 'runs-table', theme, table)
 
     // The two Disclosures below the table, opened for their regions.
     await page.getByRole('button', { name: /^How this verdict is computed/ }).click()
     const health = page.locator('[data-disclosure]').filter({ has: page.getByRole('meter', { name: 'Pipeline health' }) })
+    await expect(health.locator('[data-dimension="signature_diversity"]')).toHaveAttribute('data-dimension-measured', 'true')
     await page.getByRole('button', { name: /^Build history/ }).click()
     const velocity = cardByHeading(page, /^Build velocity/)
     const strip = velocity.getByRole('img', { name: /^Build velocity over the last 14 builds/ })

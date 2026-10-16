@@ -124,6 +124,22 @@ def _suite_history_path(fixtures: dict) -> str:
     return f"/api/v1/analytics/execution/suite-history?{query}"
 
 
+def _project_analytics_path(route: str, days: int) -> Callable[[dict], str]:
+    """W07: an analytics read of the project of a listed run (it has runs and failures to read)."""
+    def path(fixtures: dict) -> str:
+        project_id, _suite = _suite_scope(fixtures)
+        return f"{route}?{urllib.parse.urlencode({'project_id': project_id, 'days': days})}"
+    return path
+
+
+def _run_batch_path(route: str, max_ids: int) -> Callable[[dict], str]:
+    """W07 batch reads of the Runs table: up to ``max_ids`` of the fixture's run ids, as repeated ``run_id``."""
+    def path(fixtures: dict) -> str:
+        ids = list(dict.fromkeys(fixtures["run_ids"]))[:max_ids]
+        return f"{route}?{urllib.parse.urlencode([('run_id', rid) for rid in ids])}"
+    return path
+
+
 # The harness pulls budgets from the single source of truth in
 # ``app.services.performance_budgets`` so harness, pytest smoke test, and
 # Prometheus alerts always agree on what "fast enough" means.
@@ -282,6 +298,36 @@ SCENARIOS: list[Scenario] = [
         "Defect trend, 90 d: one generate_series statement + one totals statement over one project's defects",
         budget_p95_ms=_budget("defect_trend"),
     ),
+    # W07: the Failures page's time-to-fix tile and per-failure detail, and the
+    # Runs table's two batch reads (budgets in performance_budgets.py).
+    Scenario(
+        "time_to_fix",
+        "GET",
+        _project_analytics_path("/api/v1/analytics/time-to-fix", 90),
+        "Median time to fix, 90 d: one window-function statement over one project's history",
+        budget_p95_ms=_budget("time_to_fix"),
+    ),
+    Scenario(
+        "top_failing_detail",
+        "GET",
+        _project_analytics_path("/api/v1/analytics/top-failing", 30),
+        "Top failing, 30 d, one project: the top-N plus the latest-failure detail statement",
+        budget_p95_ms=_budget("top_failing_detail"),
+    ),
+    Scenario(
+        "run_ai_verdicts",
+        "GET",
+        _run_batch_path("/api/v1/runs/ai-verdicts", 25),
+        "AI verdicts of up to 25 runs: stored snapshots only, one batched review read",
+        budget_p95_ms=_budget("run_ai_verdicts"),
+    ),
+    Scenario(
+        "run_failure_signatures",
+        "GET",
+        _run_batch_path("/api/v1/runs/failure-signatures", 50),
+        "Failure signatures of up to 50 runs: <= 500 failing rows per run grouped by signature",
+        budget_p95_ms=_budget("run_failure_signatures"),
+    ),
     Scenario(
         "health_details",
         "GET",
@@ -320,7 +366,9 @@ async def fetch_fixtures(base_url: str, token: str) -> dict:
         projects = projects_resp.json()
         project_ids = [p["id"] for p in projects]
 
-        runs_resp = await client.get("/api/v1/runs?size=5")
+        # 50: the W07 batch scenarios send up to 50 run ids; every other
+        # scenario reads the first.
+        runs_resp = await client.get("/api/v1/runs?size=50")
         runs_resp.raise_for_status()
         runs = runs_resp.json().get("items", [])
         run_ids = [r["id"] for r in runs]

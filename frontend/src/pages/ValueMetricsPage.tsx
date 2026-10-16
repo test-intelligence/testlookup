@@ -338,11 +338,12 @@ function MonthlyHoursChart({ monthly, methodologyVersion }: { monthly: ValueMetr
 // ── Page ────────────────────────────────────────────────────────────────────
 
 /**
- * Value Metrics' windows: no 24h, and a year (the shared `WindowPicker`'s
- * `options`). The global window is snapped to the nearest of these, and
- * picking one here propagates to pages that may snap to a different nearest.
+ * Value Metrics' windows: no 24h, 14d like every windowed page (WIN-01), and
+ * a year (the shared `WindowPicker`'s `options`). The global window is
+ * snapped to the nearest of these, and picking one here propagates to pages
+ * that may snap to a different nearest (365d has no twin elsewhere).
  */
-const VALUE_OPTIONS = [7, 30, 90, 365] as const
+const VALUE_OPTIONS = [7, 14, 30, 90, 365] as const
 
 /** The help drawer's topic for this page (the **?** beside the title). */
 const HELP_TOPIC = helpTopicParam('/value-metrics')

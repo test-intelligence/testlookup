@@ -36,6 +36,15 @@ vi.mock('@/hooks/useFeatureFlags', async (importOriginal) => ({
 vi.mock('@/hooks/useSuiteOptions', () => ({
   useSuiteOptions: () => ({ options: [], isLoading: false }),
 }))
+// The Runs page's batch reads (W07: AI verdicts, failure signatures, the
+// branch select's options), so no request leaves the test.
+vi.mock('@/hooks/useRunListInsights', () => ({
+  MAX_VERDICT_RUN_IDS: 25,
+  verdictRunIds: () => [],
+  useRunAiVerdicts: () => ({ verdictOf: () => undefined, isLoading: false }),
+  useRunSignatures: () => ({ data: undefined, error: undefined, isLoading: false }),
+  useRunBranches: () => ({ data: undefined, error: undefined, isLoading: false }),
+}))
 vi.mock('@/services/summaryReportService', () => ({
   summaryReportService: { get: vi.fn(), downloadPdf: vi.fn() },
 }))

@@ -48,8 +48,8 @@ Open a failed test from a run (see [Runs and run detail](/docs/runs#one-test-res
 **Failures** (`/failures`, titled **Failure Analysis**) is the project-wide view of what is failing in the window (24h to 90d), optionally limited to one suite.
 
 - **The verdict banner** sums up the window: **Repeat failure**, **Flaky**, **First-time failure**, **Recovering**, **Stable** or **Pending**, with stability, pass rate and the latest failing suite. **Compare to previous window** shows the change against the window before.
-- **KPIs**: **Repeat failures**, **Flaky tests**, **Uncategorized** and **Total executions**.
-- **Top failing tests**: each test's kind, failure count, signal and when it last failed, with three actions:
+- **KPIs**: **Repeat failures**, **Flaky tests**, **Uncategorized**, **Total executions** and **Median time to fix**: the median time from a test's first failure to its next pass, over the window, with how many tests were fixed (`1.8 d`, `23 fixed`; hover for the rule). Tests flagged flaky (an open quarantine, or a human **Flaky test** triage) and tests that failed and recovered three or more times in the window are left out; a failure already open when the window starts counts from its first failure inside it. With fewer than 5 fixes in the window the tile reads **Not measured** with the reason. In **How this score is computed**, **Time to fix** scores that median (0 hours → 100, a week or more → 0), or reads **—** when it is not measured and the score uses the other three parts.
+- **Top failing tests**: each test's kind, failure count, signal and when it last failed. With one project selected, the arrow before a test's name opens its **latest failure**: when and in which build it happened, the first line of its error (or **No message recorded**), the first 20 lines of its stack trace (secrets are redacted), its **Owner** (`Priya Nair · assignee`, a team `· ownership rule`, `· component map` or `· owner label`, or **Unassigned**) and **Open in run**, which opens that test in that run. In **All Projects** the row reads **Select a project to see failure detail**. Each row has three actions:
   - **Mute** — proposes the test for quarantine, with a required reason. A QA lead decides the proposal under **Flaky tests → Proposed**. Needs quarantine to be on for the project; see [Flaky tests](/docs/flaky#quarantine-on-the-flaky-tests-page).
   - **Jira** — opens **Create Jira issue** (see [Promoting to a defect](#promoting-to-a-defect)).
   - **Suspects** — opens **Who / what changed**: the commits that landed since the last green run, ranked by how much their changed files overlap with the failing test. They are suspects to check, never a verdict. Needs the run to carry a commit range.
@@ -73,6 +73,17 @@ Corrections are stored alongside the original rather than overwriting it, so the
 
 Required role: `QA_ENGINEER` or higher.
 
+## Classification hints
+
+A correction fixes one test. A **classification hint** classifies every new failure that matches it: on **Failures → Categories**, a QA lead opens **Classification hints** and writes rules of the form "**Error message** / **Test name** / **Suite** / **Class** contains `text` → category" (case-insensitive; plain text, not a pattern language; 3 to 200 characters, up to 50 hints per project).
+
+- While you type, the preview says how many recent failures the hint would match (`7 of the last 200 failures match`) and shows a few of them.
+- From the next analysis on, a failure a hint matches is classified by that hint before the rules, the ML classifier or a language model runs. Its result says **project hint**, and the run's decision trail reads `Matched project hint (set by Priya Nair): error message contains "ECONNREFUSED" → Infrastructure`. A human correction of the same test still wins over a hint.
+- When several hints match, the oldest one is used. A hint can be disabled without deleting it.
+- Existing analyses are not changed; re-run the analysis of a run to apply new hints to it.
+
+Adding, changing and deleting hints is recorded in the activity feed. Required role to edit: `QA_LEAD` or higher; other roles do not see the button.
+
 ## Promoting to a defect
 
 A failure becomes a tracked **defect** in one of three ways (all need `QA_ENGINEER` or higher):
@@ -94,7 +105,7 @@ Jira ticket creation needs Jira to be configured and offline mode to be off. A d
 **Failures → Defects** (`/defects`) is the project's defect queue.
 
 - **The verdict banner**: **Release blocked** (any P0 open), **Queue healthy**, **At risk** or **Pending**, with how many defects have no Jira ticket, the oldest open P0 (or, with none open, **Net this week**: the last seven days' opened minus closed) and the queue health.
-- **KPIs**: **Open defects**, **P0 / P1 open** and **Time to resolve**, each with a sparkline over the window (**7d**, **30d** or **90d** in the header; hover a point for that day's opened and closed defects), **Escape rate** and **Oldest open P0**. The values count every defect in scope, not only the rows the table loads.
+- **KPIs**: **Open defects**, **P0 / P1 open** and **Time to resolve**, each with a sparkline over the window (**7d**, **14d**, **30d** or **90d** in the header; hover a point for that day's opened and closed defects), **Escape rate** and **Oldest open P0**. The values count every defect in scope, not only the rows the table loads.
 - **Escape rate** is the share of the defects reported in the window that were filed after a release they affect had shipped. With fewer than 5 such defects it reads **Not measured** and says why, never 0 %. Its hover adds the incidents and rollbacks marked on releases in the window.
 - **All defects**: filter by status (**All**, **Open**, **In progress**, **Resolved**, **Closed**; **Closed** holds the **Invalid** ones) or search titles, Jira keys and owners. Severity shows as **P0**–**P3** (critical to low). **Owner** is the assigned person (with their team), else the defect's team, else the team the project's ownership rules give it (marked *from ownership rules*, *from the component map* or *from the test's owner label*), else **Unassigned**. **Open** goes to the Jira issue. A defect approved while Jira was off reads **not filed (offline)** in the Jira column.
 - **Only this release** (in the header, with one release picked in the top bar) narrows the table, the tiles and the sparklines to the defects that affect that release, by the release gate's own rule: the releases a defect says it affects, else the one it was found in. The banner then reads **Affecting {release}**. The suite select narrows to defects whose failing test ran in that suite. Both are kept in the URL and in saved views.

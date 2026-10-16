@@ -155,6 +155,50 @@ export interface TopFailingItem {
    * views where the snapshot anchor can't be resolved).
    */
   failure_step?: string | null
+  /**
+   * FAIL-01 per-failure detail. True only when exactly one project is in
+   * scope; when false every key below is null and the expanded row asks the
+   * user to select a project.
+   */
+  detail_available?: boolean
+  /** The run of the test's newest FAILED/BROKEN row inside the request's scope. */
+  latest_run_id?: string | null
+  /** That row's id: the "Open in run" target (`/runs/{run}/tests/{case}`). */
+  latest_test_case_id?: string | null
+  /** That row's `created_at`, ISO UTC. */
+  latest_failed_at?: string | null
+  /**
+   * First line of its error message (server-truncated to 300 chars,
+   * secrets redacted); null for a blank message. Render as TEXT only.
+   */
+  latest_error?: string | null
+  /** First 20 lines of its stack trace (each <= 300 chars, redacted); null when none. TEXT only. */
+  latest_stack_head?: string | null
+  /** The eligible assignee's name, else the ownership-rule team, else null. */
+  owner?: string | null
+  /** `assignee` | `rule` | `component_map` | `test_label` | null (plain str, never an enum). */
+  owner_source?: string | null
+  /** The team the project's ownership rules give the test (also beside an assignee). */
+  owner_team?: string | null
+}
+
+/**
+ * FAIL-02 `GET /api/v1/analytics/time-to-fix`: the median time from a test's
+ * first failure to its next pass over the window. `measured: false` (fewer
+ * than `min_fixes` fixes) leaves both hour figures null — never 0.
+ */
+export interface TimeToFixResponse {
+  measured: boolean
+  reason: string | null
+  median_hours: number | null
+  mean_hours: number | null
+  fixed: number
+  open: number
+  excluded_flaky_tests: number
+  excluded_oscillating_tests: number
+  min_fixes: number
+  window_days: number
+  meta?: EnvelopeMeta
 }
 
 export interface CoverageSummary {

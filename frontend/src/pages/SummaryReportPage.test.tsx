@@ -235,20 +235,47 @@ describe('SummaryReportPage', () => {
   })
 
   it('snaps a non-supported global window to the nearest allowed option', async () => {
-    // 14d isn't in Summary Report's option set [1,7,30,90]; the nearest
-    // supported value is 7. The page should not refuse to render — it
-    // should silently fall back to the closest.
-    useTimeWindowStore.setState({ days: 14 })
+    // 365d (Value metrics) isn't in Summary Report's option set
+    // [1,7,14,30,90]; the nearest supported value is 90. The page should not
+    // refuse to render — it should fall back to the closest.
+    useTimeWindowStore.setState({ days: 365 })
     mockGet.mockResolvedValue(makeReport())
 
     renderPage()
 
     await waitFor(() => {
-      // Page's allowed set = [1,7,30,90]; nearest to 14 is 7.
       expect(mockGet).toHaveBeenCalledWith(
-        expect.objectContaining({ days: 7 }),
+        expect.objectContaining({ days: 90 }),
       )
     })
+  })
+
+  it('WIN-01: a stored 14d opens as 14d, asks for 14 days and is never snapped to 7', async () => {
+    useTimeWindowStore.setState({ days: 14 })
+    mockGet.mockResolvedValue(makeReport({ window_days: 14 }))
+
+    renderPage()
+
+    await waitFor(() => {
+      expect(mockGet).toHaveBeenCalledWith(expect.objectContaining({ days: 14 }))
+    })
+    await screen.findByText('Total tests')
+    expect(mockGet).not.toHaveBeenCalledWith(expect.objectContaining({ days: 7 }))
+    expect(screen.getByRole('radio', { name: '14d' })).toHaveAttribute('aria-checked', 'true')
+    expect(useTimeWindowStore.getState().days).toBe(14)
+  })
+
+  it('WIN-01: clicking 14d asks the report for 14 days', async () => {
+    mockGet.mockResolvedValue(makeReport())
+    renderPage()
+    await screen.findByText('Total tests')
+
+    fireEvent.click(screen.getByRole('radio', { name: '14d' }))
+
+    await waitFor(() => {
+      expect(mockGet).toHaveBeenCalledWith(expect.objectContaining({ days: 14 }))
+    })
+    expect(useTimeWindowStore.getState().days).toBe(14)
   })
 
   it('shows the all-projects empty state when no specific project is active', () => {
@@ -396,7 +423,7 @@ describe('SummaryReportPage', () => {
     // a no-op, so it would assert nothing. Derived from the constant rather
     // than hard-coded: this previously clicked '30d' as "a different window",
     // and became vacuous the day 30d BECAME the default.
-    const windowOptions = [1, 7, 30, 90]
+    const windowOptions = [1, 7, 14, 30, 90]
     const nonDefault = windowOptions.find(d => d !== DEFAULT_TIME_WINDOW_DAYS) as number
     // The page labels 1 as "24h", not "1d" — mirror its own rule.
     fireEvent.click(screen.getByText(nonDefault === 1 ? '24h' : `${nonDefault}d`))
@@ -853,7 +880,7 @@ describe('SummaryReportPage — the page template (P3)', () => {
     await screen.findByText('Total tests')
     const toolbar = document.querySelector('[data-summary-toolbar]') as HTMLElement
     const picker = within(toolbar).getByRole('radiogroup', { name: 'Time window' })
-    expect(within(picker).getAllByRole('radio').map((r) => r.textContent)).toEqual(['24h', '7d', '30d', '90d'])
+    expect(within(picker).getAllByRole('radio').map((r) => r.textContent)).toEqual(['24h', '7d', '14d', '30d', '90d'])
     expect(within(toolbar).getByRole('radiogroup', { name: 'Aggregation mode' })).toBeInTheDocument()
     // What each aggregation counts is its tooltip (§2: explanatory text is never a paragraph).
     expect(within(toolbar).getByRole('radio', { name: 'Latest run per suite' })).toHaveAttribute('title', expect.stringMatching(/most recent run counts/))

@@ -9,6 +9,7 @@ import type {
   FlakyTestItem,
   KindEvidenceResponse,
   SuiteDetailResponse,
+  TimeToFixResponse,
   TopFailingItem,
 } from '@/types/analytics'
 import { getData, postData } from './http'
@@ -78,6 +79,24 @@ export const analyticsService = {
         days,
         ...scopeParam('suite_name', suiteName),
         ...releaseParam(releaseId),
+      },
+    }),
+
+  /**
+   * FAIL-02: the median time from a test's first failure to its next pass over
+   * the window (`days` 1-90 on the server). `measured: false` below the floor
+   * of fixes; the hours are then null, never 0.
+   */
+  getTimeToFix: (
+    projectId: string | null,
+    { days, releaseIds, suiteName }: { days: number; releaseIds?: ScopeValue; suiteName?: ScopeValue },
+  ) =>
+    getData<TimeToFixResponse>('/api/v1/analytics/time-to-fix', {
+      params: {
+        ...projectParam(projectId),
+        days,
+        ...scopeParam('suite_name', suiteName),
+        ...releaseParam(releaseIds),
       },
     }),
 

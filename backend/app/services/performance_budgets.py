@@ -164,6 +164,33 @@ LATENCY_BUDGETS: list[LatencyBudget] = [
         "(ix_test_cases_run_duration), lanes, a timeline of at most 2,000 "
         "tests and the run's duration findings.",
     ),
+    # W07 (FAIL-02 / FAIL-01 / FAIL-04 / FAIL-03): harness-only like the W06
+    # defect trend (no ``http_handler``, so no Prometheus SLO alert or
+    # dashboard panel is required). Scenario names equal these names.
+    LatencyBudget(
+        "time_to_fix", 120, 600, 1200,
+        "GET /analytics/time-to-fix, 90 d, one project: one window-function "
+        "statement over the project's history, 90 d, cache miss.",
+    ),
+    LatencyBudget(
+        "top_failing_detail", 80, 400, 800,
+        "GET /analytics/top-failing, 30 d, one project: the top-N plus the "
+        "per-failure detail (one DISTINCT ON statement for the latest failing "
+        "rows; the ownership rules and component map only when a row has no "
+        "eligible assignee).",
+    ),
+    LatencyBudget(
+        "run_ai_verdicts", 30, 150, 300,
+        "GET /runs/ai-verdicts, 25 run ids: the stored snapshots' verdict "
+        "fields (payload parsed once per row) and one batched review read; "
+        "nothing computed.",
+    ),
+    LatencyBudget(
+        "run_failure_signatures", 120, 600, 1200,
+        "GET /runs/failure-signatures, 50 run ids: one statement grouping at "
+        "most 500 failing rows per run by FAILURE_SIGNATURE_SQL "
+        "(ix_test_cases_run_status).",
+    ),
 
     # ── Other HTTP and pipeline operations not in the live harness ────────
     LatencyBudget(

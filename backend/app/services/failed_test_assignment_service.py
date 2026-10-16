@@ -127,6 +127,9 @@ class ProjectAssignmentContext:
     admin_pool: list[uuid.UUID]
     path_rules: Optional[list[ServiceOwnershipRule]] = None
     handle_map: dict[str, uuid.UUID] = field(default_factory=dict)
+    # FAIL-08: the project's Java source roots, loaded with the path rules
+    # (once per project) so a JVM frame can be located; [] = Java unlocated.
+    java_roots: list[dict[str, str]] = field(default_factory=list)
 
 
 async def _load_project_context(
@@ -179,6 +182,9 @@ async def _ensure_path_rules_loaded(
             ctx.handle_map = await codeowners_service.resolve_handles_to_users(
                 db, handles, project_id=project_id,
             )
+        # FAIL-08: only worth reading when a path rule could match the path a
+        # Java frame yields. One statement per project; never raises.
+        ctx.java_roots = await codeowners_service.load_source_roots(db, project_id)
 
 
 async def assign_failed_tests_to_suite_owners(
@@ -197,7 +203,9 @@ async def assign_failed_tests_to_suite_owners(
          ``path`` ownership rules, and resolve the matched owner ``@handle``
          to a User by username/email. Assigns by *path ownership*, never by
          last committer (monorepo guardrail: owner ≠ author is the point).
-         Non-locatable failures (e.g. Java traces) and unresolvable handles
+         Java frames are located through the project's source roots
+         (FAIL-08). Non-locatable failures (e.g. Java traces in a project
+         with no source roots) and unresolvable handles
          (``@org/team`` or unknown ``@handle``) skip this step.
       2. Otherwise distribute across the **project's QA Lead pool** via
          a deterministic hash of ``test_fingerprint`` — repeat failures
@@ -325,7 +333,8 @@ async def assign_failed_tests_to_suite_owners(
     # beats round-robin distribution. Monorepo guardrail: we assign by PATH
     # ownership, never by who committed — a last-committer surface
     # deliberately does not exist here. Non-locatable failures (no derivable
-    # path, e.g. Java traces) fall through to the QA-lead pool. An owner
+    # path, e.g. Java traces when the project lists no source roots) fall
+    # through to the QA-lead pool. An owner
     # handle that resolves to no *project-member* User (``@org/team``, an
     # unknown ``@handle``, or a non-member) is skipped — we never assign to
     # a stranger. Rules + the member-scoped handle map are loaded LAZILY on
@@ -353,7 +362,7 @@ async def assign_failed_tests_to_suite_owners(
             await _ensure_path_rules_loaded(db, project_id, context)
             if context.path_rules:
                 path = codeowners_service.locate_failure_path(
-                    f.stack_trace, f.error_message,
+                    f.stack_trace, f.error_message, java_roots=context.java_roots,
                 )
                 if path:
                     rule = codeowners_service.match_path_rule(path, context.path_rules)
@@ -382,7 +391,7 @@ async def assign_failed_tests_to_suite_owners(
     # the count reports the UPDATE's rowcount (effect), not len(ids)
     # (intent). Falls back to len(ids) only when the driver doesn't report
     # a rowcount.
-    # analytics-epoch: none — sets assigned_to_user_id only; no cached analytics read reads it
+    # analytics-epoch: none — sets assigned_to_user_id only; /analytics/top-failing shows it as the row owner and lives with its 300 s TTL
     for owner_id, ids in by_owner.items():
         result = await db.execute(
             update(TestCase)

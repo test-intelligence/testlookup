@@ -35,6 +35,7 @@ import { useTimeWindowStore } from '@/store/timeWindowStore'
 import RunsPage, {
   buildBisectHref, buildPipelineModel, BuildPassRate, BuildVelocityCard, HealthMeter, SignatureClusters,
 } from './RunsPage'
+import { buildSignatureModel } from './runsList/runSignatures'
 
 // Only the full-page describes at the bottom use these; the pure helpers
 // and components above never touch them.
@@ -79,17 +80,61 @@ vi.mock('@/services/agentService', () => ({
     bulkTriggerPipelines: vi.fn(async (ids: string[]) => ({ queued: ids.length })),
   },
 }))
-// The AI-verdict column (P4) asks each run on screen for its Run Intelligence
-// report. Per run: a payload, or a failed request; a run not listed was never
-// analysed.
-const intel = vi.hoisted(() => ({ byRun: {} as Record<string, unknown>, failing: new Set<string>() }))
+// The page's batch reads (FAIL-04 / FAIL-03 / FAIL-05), answered from `api`
+// per test: ONE `GET /runs/ai-verdicts` for the runs on screen (a run not
+// listed has no snapshot and was never analysed), ONE `GET
+// /runs/failure-signatures` for the failed builds (a run not listed fails
+// with `DEFAULT_SIGNATURE`), and the project's branches. Anything else fails.
+const api = vi.hoisted(() => ({
+  verdicts: {} as Record<string, Record<string, unknown>>,
+  unavailable: new Set<string>(),
+  verdictsFail: false,
+  signatures: {} as Record<string, Array<Record<string, unknown>>>,
+  signaturesFail: false,
+  signaturesPending: false,
+  branches: [] as string[],
+}))
+const DEFAULT_SIGNATURE = {
+  signature: 'assertionerror: expected # but was #', label: 'AssertionError: expected 3 but was 4',
+  count: 2, test_count: 1, tests: ['test_checkout'],
+}
 vi.mock('@/services/http', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/services/http')>()),
-  getData: vi.fn(async (url: string) => {
-    const id = /^\/api\/v1\/runs\/([^/]+)\/intelligence$/.exec(url)?.[1]
-    if (!id) throw new Error(`unexpected request ${url}`)
-    if (intel.failing.has(id)) throw new Error('503')
-    return intel.byRun[id] ?? { intelligence_available: false, release_decision: null }
+  getData: vi.fn(async (url: string, config?: { params?: Record<string, unknown> }) => {
+    const ids = ([] as string[]).concat((config?.params?.run_id as string[] | undefined) ?? [])
+    if (url === '/api/v1/runs/ai-verdicts') {
+      if (api.verdictsFail) throw new Error('503')
+      return {
+        items: ids.filter((id) => !api.unavailable.has(id)).map((id) => ({
+          run_id: id, snapshot: false, stale: null, generated_at: null, analysed: false,
+          verdict_inputs: null, review: null, ...(api.verdicts[id] ?? {}),
+        })),
+        unavailable: ids.filter((id) => api.unavailable.has(id)),
+        max_ids: 25,
+      }
+    }
+    if (url === '/api/v1/runs/failure-signatures') {
+      if (api.signaturesFail) throw new Error('503')
+      if (api.signaturesPending) return new Promise(() => undefined)
+      return {
+        items: ids.map((id) => {
+          const signatures = api.signatures[id] ?? [DEFAULT_SIGNATURE]
+          const failing = signatures.reduce((s, e) => s + Number(e.count), 0)
+          return {
+            run_id: id, failing_tests: failing, read: failing, capped: false,
+            dominant: (signatures[0]?.signature as string | undefined) ?? null, signatures,
+          }
+        }),
+        unavailable: [], max_ids: 50, rows_per_run_cap: 500,
+      }
+    }
+    if (url === '/api/v1/runs/branches') {
+      return {
+        items: api.branches.map((branch) => ({ branch, runs: 1, last_run_at: null })),
+        total: api.branches.length, truncated: false, window_days: 30,
+      }
+    }
+    throw new Error(`unexpected request ${url}`)
   }),
 }))
 
@@ -302,55 +347,123 @@ describe('BuildPassRate — the per-build pass rate, a line only where the runs 
   })
 })
 
-describe('SignatureClusters — the side panel splits the failed builds by signature', () => {
-  function renderClusters(runs: TestRun[]) {
-    const model = buildPipelineModel(runs)
+/** A failure signature as `GET /runs/failure-signatures` lists it. */
+const sigEntry = (signature: string, label: string, tests: string[], count = 2) =>
+  ({ signature, label, count, test_count: tests.length, tests })
+const ASSERT_SIG = sigEntry('assertionerror: expected # but was #', 'AssertionError: expected 3 but was 4', ['test_cart', 'test_pay'])
+const NPE_SIG = sigEntry('nullpointerexception at foo', 'NullPointerException at Foo', ['test_refund'])
+
+/** The signature model of `runs`, every failed build answered with `byRun[id]` (else ASSERT_SIG). */
+function signaturesOf(runs: TestRun[], byRun: Record<string, ReturnType<typeof sigEntry>[]> = {}, capped: Record<string, [number, number]> = {}) {
+  const failed = runs.filter((r) => /fail|broken|error/i.test(r.status))
+  return buildSignatureModel(runs, {
+    items: failed.map((r) => {
+      const signatures = byRun[r.id] ?? [ASSERT_SIG]
+      const [read, failing] = capped[r.id] ?? [signatures.reduce((s, e) => s + e.count, 0), signatures.reduce((s, e) => s + e.count, 0)]
+      return { run_id: r.id, failing_tests: failing, read, capped: read < failing, dominant: signatures[0]?.signature ?? null, signatures }
+    }),
+    unavailable: [], max_ids: 50, rows_per_run_cap: 500,
+  })
+}
+
+describe('SignatureClusters — the side panel groups the failed builds by their error (FAIL-03)', () => {
+  function renderClusters(model: ReturnType<typeof signaturesOf>, failed = false) {
     return render(
       <MemoryRouter>
-        <SignatureClusters
-          primaryCluster={model.primaryCluster}
-          outlierClusters={model.outlierClusters}
-          totalRuns={model.totalRuns}
-          onJumpToRow={() => undefined}
-        />
+        <SignatureClusters model={model} failed={failed} onJumpToRow={() => undefined} />
       </MemoryRouter>,
     )
   }
+  const window4 = () => newestFirst([
+    run(1, { status: 'FAILED' }),
+    run(2, { status: 'FAILED' }),
+    run(3, { status: 'FAILED' }),
+    run(4),
+  ])
 
-  it('splits the failed builds into the primary signature vs the rest', () => {
-    renderClusters(
-      newestFirst([
-        run(1, { status: 'FAILED', passed_tests: 8, failed_tests: 2 }),
-        run(2, { status: 'FAILED', passed_tests: 8, failed_tests: 2 }),
-        run(3, { status: 'FAILED', passed_tests: 6, failed_tests: 4 }),
-        run(4),
-      ]),
-    )
+  it('splits the failed builds into the primary error vs the rest, each group titled by its error\'s first line', () => {
+    const runs = window4()
+    renderClusters(signaturesOf(runs, { 'run-3': [NPE_SIG] }))
     const meter = screen.getByRole('meter', { name: 'Failed builds by signature' })
     expect(meter).toHaveAttribute('aria-valuetext', '3 of 3; Primary signature 2, Other signatures 1')
-    expect(screen.getByText(/2 signatures across 3 failed builds/)).toBeInTheDocument()
-    expect(screen.getByText(/8 pass \/ 2 fail \/ 10 total/)).toBeInTheDocument()
+    expect(screen.getByText('2 signatures across 3 failed builds')).toBeInTheDocument()
+    const groups = document.querySelectorAll('[data-signature-group]')
+    expect(Array.from(groups, (g) => g.querySelector('code')?.textContent)).toEqual([
+      'AssertionError: expected 3 but was 4', 'NullPointerException at Foo',
+    ])
+    expect(groups[0].querySelector('code')).toHaveAttribute('title', 'assertionerror: expected # but was #')
+    expect(screen.getAllByText('primary')).toHaveLength(2)
+    expect(screen.getAllByText('other')).toHaveLength(1)
   })
 
-  it('describes the outliers from the data, never with an invented cause', () => {
+  it('says "the same test fails" only when every member names it', () => {
+    const runs = window4()
+    const { unmount } = renderClusters(signaturesOf(runs, {
+      'run-1': [sigEntry(ASSERT_SIG.signature, ASSERT_SIG.label, ['test_cart', 'test_pay'])],
+      'run-2': [sigEntry(ASSERT_SIG.signature, ASSERT_SIG.label, ['test_pay'])],
+      'run-3': [sigEntry(ASSERT_SIG.signature, ASSERT_SIG.label, ['test_pay', 'test_zip'])],
+    }))
+    expect(screen.getByText('test_pay fails with this error in all 3 builds.')).toBeInTheDocument()
+    unmount()
+    renderClusters(signaturesOf(runs, {
+      'run-1': [sigEntry(ASSERT_SIG.signature, ASSERT_SIG.label, ['test_cart'])],
+      'run-2': [sigEntry(ASSERT_SIG.signature, ASSERT_SIG.label, ['test_pay'])],
+      'run-3': [sigEntry(ASSERT_SIG.signature, ASSERT_SIG.label, ['test_zip'])],
+    }))
+    expect(screen.queryByText(/fails with this error in all/)).toBeNull()
+    expect(screen.getByText('3 builds fail with this error.')).toBeInTheDocument()
+  })
+
+  it('describes the other errors from the data, never with an invented cause', () => {
     // The panel used to print a fixed sentence blaming "an older Jenkinsfile"
     // for every outlier, whatever the data said (OSS-release audit E2).
-    const { container } = renderClusters(
-      newestFirst([
-        run(1, { status: 'FAILED', passed_tests: 8, failed_tests: 2 }),
-        run(2, { status: 'FAILED', passed_tests: 8, failed_tests: 2 }),
-        run(3, { status: 'FAILED', passed_tests: 6, failed_tests: 4 }),
-        run(4),
-      ]),
-    )
-    expect(screen.getByText(/1 failed build carries a different signature/)).toBeInTheDocument()
+    const runs = window4()
+    const { container } = renderClusters(signaturesOf(runs, { 'run-3': [NPE_SIG] }))
+    expect(screen.getByText('1 failed build carries a different error. Open it before counting it as a separate incident.')).toBeInTheDocument()
     expect(container.textContent ?? '').not.toMatch(/Jenkinsfile/)
   })
 
-  it('draws no split when nothing failed', () => {
-    renderClusters([run(1), run(2)])
+  it('the old tuple copy is gone', () => {
+    const runs = window4()
+    const { container } = renderClusters(signaturesOf(runs, { 'run-3': [NPE_SIG] }))
+    const text = container.textContent ?? ''
+    for (const old of [/same test failing across all of them/, /outlier · old config/, /pass \/ \d+ fail \/ \d+ total/, /\bmatch\b/]) {
+      expect(text).not.toMatch(old)
+    }
+  })
+
+  it('says when it grouped fewer builds than the window failed, and when a build was capped', () => {
+    const runs = window4()
+    const model = buildSignatureModel(runs, {
+      items: [
+        { run_id: 'run-1', failing_tests: 600, read: 500, capped: true, dominant: ASSERT_SIG.signature, signatures: [ASSERT_SIG] },
+        { run_id: 'run-2', failing_tests: 2, read: 2, capped: false, dominant: ASSERT_SIG.signature, signatures: [ASSERT_SIG] },
+      ],
+      unavailable: [], max_ids: 50, rows_per_run_cap: 500,
+    })
+    renderClusters(model)
+    expect(screen.getByText('1 signature across 2 failed builds · grouped over the newest 2 of 3 failed builds')).toBeInTheDocument()
+    expect(screen.getByText('(grouped over 500 of 600 failing tests)')).toBeInTheDocument()
+  })
+
+  it('a hostile error line renders as text, never markup', () => {
+    const runs = window4()
+    const hostile = sigEntry('<img src=x onerror=alert(1)>', '<img src=x onerror=alert(1)>', ['<b>t</b>'])
+    const { container } = renderClusters(signaturesOf(runs, { 'run-1': [hostile], 'run-2': [hostile], 'run-3': [hostile] }))
+    expect(container.querySelector('img')).toBeNull()
+    expect(container.querySelector('b')).toBeNull()
+    expect(screen.getByText('<img src=x onerror=alert(1)>')).toBeInTheDocument()
+    expect(screen.getByText('<b>t</b> fails with this error in all 3 builds.')).toBeInTheDocument()
+  })
+
+  it('draws no split when nothing failed; says so when the request failed', () => {
+    const { unmount } = renderClusters(signaturesOf([run(1), run(2)]))
     expect(screen.queryByRole('meter')).toBeNull()
-    expect(screen.getByText(/nothing to cluster/i)).toBeInTheDocument()
+    expect(screen.getByText('No failures in this window — nothing to group.')).toBeInTheDocument()
+    unmount()
+    renderClusters(buildSignatureModel(window4(), undefined), true)
+    expect(screen.getByText('Signatures unavailable: the request failed.')).toBeInTheDocument()
+    expect(document.querySelector('[data-signature-group]')).toBeNull()
   })
 })
 
@@ -457,8 +570,13 @@ beforeEach(() => {
   perms.isQaEngineer = false
   useTimeWindowStore.setState({ days: 30 })
   vi.mocked(agentService.bulkTriggerPipelines).mockClear()
-  intel.byRun = {}
-  intel.failing.clear()
+  api.verdicts = {}
+  api.unavailable.clear()
+  api.verdictsFail = false
+  api.signatures = {}
+  api.signaturesFail = false
+  api.signaturesPending = false
+  api.branches = []
   vi.mocked(getData).mockClear()
 })
 
@@ -534,11 +652,12 @@ describe('RunsPage — the page template (P3)', () => {
     expect(screen.queryByText(/Stop re-running/)).toBeNull()
   })
 
-  it('states the verdict in one banner: the failing count in the title once, last green, red streak, average pass rate, Bisect', () => {
+  it('states the verdict in one banner: the failing count in the title once, last green, red streak, average pass rate, Bisect', async () => {
     renderRunsPage(brokenWindow())
     expect(banner()).toHaveAttribute('data-status-banner', 'fail')
     expect(banner()).toHaveTextContent('FAILING')
-    expect(banner()).toHaveTextContent('Pipeline broken · 3 of 4 builds failed with the same signature')
+    // FAIL-03: "the same error" once the signatures show the three share one.
+    await waitFor(() => expect(banner()).toHaveTextContent('Pipeline broken · 3 of 4 builds failed with the same error'))
     const facts = Array.from(banner().querySelectorAll('[data-banner-fact]'), (f) => f.textContent)
     expect(facts).toEqual([
       'Last green #101 · 1d ago',
@@ -652,8 +771,9 @@ describe('RunsPage — Upload report stays the primary action (MRU-4, MRU-17)', 
 })
 
 describe('RunsPage — below the table, collapsed (P3 Disclosures)', () => {
-  it('"How this verdict is computed": the health gauge, its four weighted dimensions, the metadata gap', () => {
+  it('"How this verdict is computed": the health gauge, its four weighted dimensions, the metadata gap', async () => {
     renderRunsPage(brokenWindow())
+    await waitFor(() => expect(primary().querySelectorAll('[data-signature-chip]')).toHaveLength(3))
     expect(screen.queryByRole('meter', { name: 'Pipeline health' })).toBeNull()
     const toggle = disclosureButton('How this verdict is computed')
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
@@ -679,16 +799,20 @@ describe('RunsPage — below the table, collapsed (P3 Disclosures)', () => {
   })
 })
 
-describe('RunsPage — the failure signatures open in a side panel (P3 drill-down)', () => {
+describe('RunsPage — the failure signatures open in a side panel (P3 drill-down, FAIL-03)', () => {
   const panel = () => screen.queryByRole('complementary', { name: 'Failure signatures' })
+  const sigUrls = () => vi.mocked(getData).mock.calls.filter(([url]) => url === '/api/v1/runs/failure-signatures')
 
-  it('the header button opens it; Close closes it', () => {
+  it('the header button opens it; Close closes it', async () => {
     renderRunsPage(brokenWindow())
     expect(panel()).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: /^Failure signatures/ }))
+    const button = await screen.findByRole('button', { name: /^Failure signatures/ })
+    expect(button).toHaveTextContent(/Failure signatures\s*1$/)
+    expect(button).toHaveAttribute('title', 'Failed builds grouped by the error most of their failing tests share')
+    fireEvent.click(button)
     const opened = panel() as HTMLElement
     expect(opened).not.toBeNull()
-    expect(within(opened).getByText(/3 of 4 builds match/)).toBeInTheDocument()
+    expect(within(opened).getByText('1 signature across 3 failed builds')).toBeInTheDocument()
     expect(within(opened).getByRole('meter', { name: 'Failed builds by signature' })).toHaveAttribute(
       'aria-valuetext',
       '3 of 3; Primary signature 3, Other signatures 0',
@@ -697,34 +821,112 @@ describe('RunsPage — the failure signatures open in a side panel (P3 drill-dow
     expect(panel()).toBeNull()
   })
 
-  it('a row\'s signature chip opens it too, and the cluster no longer sits under the table', () => {
+  it('asks ONCE for every failed build of the window, and a failed row\'s chip opens the panel; passed rows read a plain "—"', async () => {
     renderRunsPage(brokenWindow())
     expect(document.querySelector('[data-signature-clusters]')).toBeNull()
-    const chips = within(primary()).getAllByRole('button', { name: /^Signature .*: show the failure signatures$/ })
-    expect(chips).toHaveLength(4)
-    fireEvent.click(chips[0])
+    await waitFor(() => expect(within(primary()).getAllByRole('button', { name: /^Signature .*: show the failure signatures$/ })).toHaveLength(3))
+    expect(sigUrls()).toHaveLength(1)
+    expect(sigUrls()[0][1]).toMatchObject({ params: { run_id: ['run-2', 'run-3', 'run-4'] } })
+    const chip = within(primary().querySelector('#run-row-run-4') as HTMLElement).getByRole('button', { name: /^Signature/ })
+    expect(chip).toHaveAttribute('title', 'AssertionError: expected 3 but was 4')
+    expect(chip).toHaveTextContent(/^[0-9a-f]{3}-cluster$/)
+    const passed = primary().querySelector('#run-row-run-1 [data-run-signature]') as HTMLElement
+    expect(passed).toHaveTextContent(/^—$/)
+    expect(within(passed).queryByRole('button')).toBeNull()
+    fireEvent.click(chip)
     expect(panel()).not.toBeNull()
+  })
+
+  it('two builds with the same pass / fail / total but different errors are two groups; the other one is tinted', async () => {
+    api.signatures['run-3'] = [{ signature: 'nullpointerexception at foo', label: 'NullPointerException at Foo', count: 2, test_count: 1, tests: ['test_refund'] }]
+    renderRunsPage(brokenWindow())
+    const button = await screen.findByRole('button', { name: /^Failure signatures/ })
+    await waitFor(() => expect(button).toHaveTextContent(/Failure signatures\s*2$/))
+    const chipOf = (id: string) => within(primary().querySelector(`#run-row-${id}`) as HTMLElement).getByRole('button', { name: /^Signature/ })
+    expect(chipOf('run-3').textContent).not.toBe(chipOf('run-4').textContent)
+    expect(chipOf('run-3')).toHaveClass('italic')
+    expect(chipOf('run-4')).not.toHaveClass('italic')
+    // 2 of 3 is not "the same error"; two errors score a higher diversity.
+    expect(banner()).toHaveTextContent('Mixed · 3 of 4 builds failed')
+    expect(banner()).not.toHaveTextContent('same error')
+  })
+
+  it('asks for at most 50 failed builds, the visible page first: a later page is asked when it is shown', async () => {
+    const many = newestFirst(Array.from({ length: 60 }, (_, i) =>
+      run(i + 1, { status: 'FAILED', created_at: hoursAgo(120 - i) })))
+    renderRunsPage(many)
+    await waitFor(() => expect(sigUrls()).toHaveLength(1))
+    const first = (sigUrls()[0][1] as { params: { run_id: string[] } }).params.run_id
+    expect(first).toHaveLength(50)
+    // run-1 is the oldest: off the first page and beyond the newest 50.
+    expect(first).not.toContain('run-1')
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
+    // Page 3 holds run-1 … run-10: they are asked first, so their chips come back.
+    await waitFor(() => expect(sigUrls()).toHaveLength(2))
+    const third = (sigUrls()[1][1] as { params: { run_id: string[] } }).params.run_id
+    expect(third).toHaveLength(50)
+    expect(third).toContain('run-1')
+    await waitFor(() => expect(primary().querySelector('#run-row-run-1 [data-signature-chip]')).not.toBeNull())
+  })
+
+  it('a hostile error line renders as text in the chip title and the panel', async () => {
+    const hostile = '<img src=x onerror=alert(1)>'
+    for (const id of ['run-2', 'run-3', 'run-4']) api.signatures[id] = [{ signature: 'h', label: hostile, count: 1, test_count: 1, tests: ['t'] }]
+    renderRunsPage(brokenWindow())
+    fireEvent.click(await screen.findByRole('button', { name: /^Failure signatures/ }))
+    expect(document.querySelector('img')).toBeNull()
+    expect(within(panel() as HTMLElement).getByText(hostile)).toBeInTheDocument()
+  })
+
+  it('the old tuple copy appears nowhere on the page', async () => {
+    renderRunsPage(brokenWindow())
+    fireEvent.click(await screen.findByRole('button', { name: /^Failure signatures/ }))
+    for (const old of [/same test failing across all of them/, /outlier · old config/, /pass \/ fail \/ total/]) {
+      expect(screen.queryByText(old)).toBeNull()
+    }
+  })
+
+  it('Signature diversity is "—" while the signatures load, and the composite re-weights the other three', () => {
+    api.signaturesPending = true
+    renderRunsPage(brokenWindow())
+    fireEvent.click(disclosureButton('How this verdict is computed'))
+    const tile = document.querySelector('[data-dimension="signature_diversity"]') as HTMLElement
+    expect(tile).toHaveAttribute('data-dimension-measured', 'false')
+    expect(tile.querySelector('[data-dimension-value]')).toHaveTextContent(/^—$/)
+    // Build success 25 × 0.40 + fix velocity (30 h since green) 58.3 × 0.25 + metadata 0 × 0.20, over 0.85.
+    expect(screen.getByRole('meter', { name: 'Pipeline health' })).toHaveAttribute('aria-valuetext', '29 of 100, Blocked')
+  })
+
+  it('a failed signatures request: the panel says so, the rows read "—"', async () => {
+    api.signaturesFail = true
+    renderRunsPage(brokenWindow())
+    await waitFor(() => expect(primary().querySelector('#run-row-run-4 [data-signature-none]')).toHaveAttribute('title', 'Signature unavailable: the request failed'))
+    expect(screen.queryByRole('button', { name: /^Failure signatures/ })).toBeNull()
   })
 })
 
 // UX redesign P4, owner decision D2: the `/intelligence` list retired into an
-// AI-verdict column of the runs table. The verdict is the run's Run
-// Intelligence release recommendation, asked once per run on screen (there is
-// no batch endpoint); "—" when a run has none; the separate "Intel" link went.
-describe('RunsPage — the AI-verdict column (P4, D2)', () => {
+// AI-verdict column of the runs table. FAIL-04: the verdicts of the runs on
+// screen come from ONE batch read of their stored snapshots; "—" when a run
+// has none, with the reason; the separate "Intel" link went.
+describe('RunsPage — the AI-verdict column (P4, D2, FAIL-04)', () => {
   const decided = (recommendation: string, state = 'accepted') => ({
-    intelligence_available: true,
-    release_decision: { recommendation },
-    review: { state, message: '' },
+    snapshot: true, stale: false, analysed: true,
+    verdict_inputs: {
+      structured_summary: null, release_decision: { recommendation }, intelligence_available: true, top_analyses: null,
+    },
+    review: { state },
   })
   const row = (id: string) => primary().querySelector(`#run-row-${id}`) as HTMLElement
   const cell = (id: string) => row(id).querySelector('[data-ai-verdict-cell]') as HTMLElement
-  const intelligenceUrls = () => vi.mocked(getData).mock.calls.map(([url]) => url)
+  const verdictCalls = () => vi.mocked(getData).mock.calls.filter(([url]) => url === '/api/v1/runs/ai-verdicts')
+  const urls = () => vi.mocked(getData).mock.calls.map(([url]) => url)
 
   it('sits after Status, and each run reads its own verdict; the verdict opens the run\'s Analysis tab', async () => {
-    intel.byRun['run-4'] = decided('NO_GO', 'pending_review')
-    intel.byRun['run-3'] = decided('CONDITIONAL_GO', 'rejected')
-    intel.byRun['run-2'] = decided('GO')
+    api.verdicts['run-4'] = decided('NO_GO', 'pending_review')
+    api.verdicts['run-3'] = decided('CONDITIONAL_GO', 'rejected')
+    api.verdicts['run-2'] = decided('GO')
     renderRunsPage(brokenWindow())
     const headers = within(primary()).getAllByRole('columnheader').map((h) => h.textContent?.trim())
     expect(headers.indexOf('AI verdict')).toBe(headers.indexOf('Status') + 1)
@@ -753,12 +955,28 @@ describe('RunsPage — the AI-verdict column (P4, D2)', () => {
     expect(build.querySelector('[data-run-suite]')).not.toBeNull()
   })
 
-  it('asks once per run on screen, for that run\'s report', async () => {
+  it('asks ONCE for the runs on screen (ids sorted), never per run, never the per-run report', async () => {
     renderRunsPage(brokenWindow())
     await waitFor(() => expect(primary().querySelectorAll('[data-ai-verdict="none"]')).toHaveLength(4))
-    expect([...intelligenceUrls()].sort()).toEqual(
-      ['run-1', 'run-2', 'run-3', 'run-4'].map((id) => `/api/v1/runs/${id}/intelligence`),
+    expect(verdictCalls()).toHaveLength(1)
+    expect(verdictCalls()[0][1]).toMatchObject({ params: { run_id: ['run-1', 'run-2', 'run-3', 'run-4'] }, suppressToast: true })
+    expect(urls().filter((u) => /\/intelligence$/.test(String(u)))).toEqual([])
+  })
+
+  it('analysed but not summarised: "—" that says how to build it', async () => {
+    api.verdicts['run-4'] = { snapshot: false, analysed: true }
+    renderRunsPage(brokenWindow())
+    await waitFor(() => expect(cell('run-4').querySelector('[data-ai-verdict]')).toHaveAttribute('data-ai-verdict-reason', 'not-summarised'))
+    expect(cell('run-4').querySelector('[data-ai-verdict]')).toHaveAttribute(
+      'title', "No AI verdict on this list yet: the run was analysed but its summary is not built. Open the run's analysis to build it.",
     )
+  })
+
+  it('a run the batch lists as unavailable says so, in its own words', async () => {
+    api.unavailable.add('run-4')
+    renderRunsPage(brokenWindow())
+    await waitFor(() => expect(cell('run-4').querySelector('[data-ai-verdict]')).toHaveAttribute('title', 'AI verdict unavailable: the run is not available to you'))
+    expect(cell('run-4').querySelector('[data-ai-verdict]')).toHaveAttribute('data-ai-verdict-reason', 'unavailable')
   })
 
   it('makes no verdict up: a run still in flight is not asked, and reads "—"', async () => {
@@ -769,16 +987,18 @@ describe('RunsPage — the AI-verdict column (P4, D2)', () => {
     const running = cell('run-2').querySelector('[data-ai-verdict]') as HTMLElement
     expect(running).toHaveTextContent('—')
     expect(running).toHaveAttribute('title', 'No AI verdict: the run is still in progress')
-    await waitFor(() => expect(intelligenceUrls()).toEqual(['/api/v1/runs/run-1/intelligence']))
+    await waitFor(() => expect(verdictCalls()).toHaveLength(1))
+    expect(verdictCalls()[0][1]).toMatchObject({ params: { run_id: ['run-1'] } })
   })
 
   it('a failed request reads "—" (unavailable), not a verdict, and raises no toast', async () => {
-    intel.failing.add('run-4')
+    api.verdictsFail = true
     renderRunsPage(brokenWindow())
     await waitFor(() =>
       expect(cell('run-4').querySelector('[data-ai-verdict]')).toHaveAttribute('data-ai-verdict-reason', 'unavailable'),
     )
     expect(cell('run-4')).toHaveTextContent(/^—$/)
+    expect(cell('run-4').querySelector('[data-ai-verdict]')).toHaveAttribute('title', 'AI verdict unavailable: the request failed')
     expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
   })
 

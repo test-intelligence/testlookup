@@ -21,8 +21,10 @@ import EmptyState from '@/components/ui/EmptyState'
 import StatusFlowSection from '@/components/runs/StatusFlowSection'
 import AIAnalysisCompareSection from '@/components/ai/AIAnalysisCompareSection'
 import SuiteBadge from '@/components/ui/SuiteBadge'
+import RunPicker from '@/components/runs/RunPicker'
 import { extractCompareErrorMessage, useLatestSuiteCompare, useRunCompare } from '@/hooks/useRunCompare'
 import { useRuns } from '@/hooks/useRuns'
+import { useRunSearch } from '@/hooks/useRunSearch'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import type {
   RunCompareAIReport,
@@ -30,15 +32,24 @@ import type {
   RunCompareTestDelta,
 } from '@/services/runCompareService'
 import type { TestRun } from '@/types/runs'
+import { runIdent } from '@/utils/runOption'
 
 /**
  * Two-run compare page — Tier 2 item 8.
  *
  * Accepts ``left`` and ``right`` run UUIDs via query string (the Run
  * Intelligence and Runs list pages both link here with pre-filled
- * IDs), or lets the user paste them manually. The response is driven
- * entirely by the backend ``/runs/compare`` endpoint so all diff
- * classification happens server-side.
+ * IDs), or lets the user pick them. The response is driven entirely by
+ * the backend ``/runs/compare`` endpoint so all diff classification
+ * happens server-side.
+ *
+ * FAIL-06: the Left and Right controls are pickers (`RunPicker`) that ask
+ * the SERVER — a search over every run the reader can see, all time and
+ * every release, 20 a page with "Load older", narrowed to the chosen suite,
+ * plus a "Paste run ID" the server checks — instead of a `<select>` of the
+ * newest 100 runs, where an older baseline could not be picked. The
+ * latest-suite section states "N runs in suite · latest Run #… · branch" as
+ * text (it was a disabled `<select>`), with "Pick a different baseline".
  */
 export default function RunComparePage() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -49,6 +60,8 @@ export default function RunComparePage() {
   const [manualSuiteInput, setManualSuiteInput] = useState(searchParams.get('suite') ?? '')
   const [suiteInput, setSuiteInput] = useState(searchParams.get('suite') ?? '')
   const [filter, setFilter] = useState<RunCompareClassification | 'all'>('all')
+  // The Left picker opens from "Pick a different baseline" too.
+  const [leftPickerOpen, setLeftPickerOpen] = useState(false)
 
   const mode = searchParams.get('mode') ?? 'manual'
   const leftId = searchParams.get('left')
@@ -56,18 +69,11 @@ export default function RunComparePage() {
   const suiteName = searchParams.get('suite')
   const latestSuiteName = mode === 'latest' ? suiteName : null
   const selectedProjectId = activeProjectId && activeProjectId !== ALL_PROJECTS_ID ? activeProjectId : null
+  // The suite options only: the run pickers ask the server (FAIL-06).
   const runsQuery = useMemo(() => ({ page: 1, size: 100, days: 0 }), [])
   const { data: runsData, isLoading: runsLoading } = useRuns(runsQuery)
   const runs = useMemo<TestRun[]>(() => runsData?.items ?? [], [runsData?.items])
   const suiteOptions = useMemo(() => collectSuiteOptions(runs), [runs])
-  const manualRunOptions = useMemo(
-    () => filterRunsBySuite(runs, manualSuiteInput || suiteInput),
-    [manualSuiteInput, runs, suiteInput],
-  )
-  const latestRunOptions = useMemo(
-    () => filterRunsBySuite(runs, suiteInput),
-    [runs, suiteInput],
-  )
   const manual = useRunCompare(leftId, rightId, mode === 'manual' ? suiteName : null)
   const latest = useLatestSuiteCompare(latestSuiteName, selectedProjectId)
   const compare = mode === 'latest' ? latest.compare : manual.compare
@@ -89,6 +95,19 @@ export default function RunComparePage() {
     next.set('mode', 'latest')
     if (suiteInput.trim()) next.set('suite', suiteInput.trim())
     setSearchParams(next)
+  }
+
+  /** "Pick a different baseline": manual mode with this suite, the Left picker open. */
+  function pickDifferentBaseline() {
+    const suite = suiteInput.trim()
+    setManualSuiteInput(suite)
+    setLeftInput('')
+    setRightInput('')
+    const next = new URLSearchParams()
+    next.set('mode', 'manual')
+    if (suite) next.set('suite', suite)
+    setSearchParams(next)
+    setLeftPickerOpen(true)
   }
 
   function swap() {
@@ -139,12 +158,7 @@ export default function RunComparePage() {
               ))}
             </select>
           </label>
-          <RunSelectPreview
-            label="Runs in suite"
-            runs={latestRunOptions}
-            isLoading={runsLoading}
-            emptyLabel={suiteInput ? 'No runs found for this suite' : 'Select a suite to view runs'}
-          />
+          <RunsInSuiteSummary suiteName={suiteInput} onPickBaseline={pickDifferentBaseline} />
           <button type="button" onClick={applyLatestSuite} disabled={!suiteInput.trim() || !selectedProjectId} className="btn-primary text-xs disabled:opacity-50">
             <GitCompare className="h-3 w-3 inline mr-1" /> Compare latest
           </button>
@@ -181,19 +195,17 @@ export default function RunComparePage() {
               ))}
             </select>
           </label>
-          <label className="text-xs block flex-1">
-            <span className="text-[var(--color-text-muted)]">Left run (baseline)</span>
-            <select
+          <div className="flex-1 min-w-0">
+            <RunPicker
+              label="Left run (baseline)"
               value={leftInput}
-              onChange={(e) => setLeftInput(e.target.value)}
-              className="mt-1 w-full px-2 py-1.5 text-sm bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded font-mono"
-            >
-              <option value="">Select baseline run</option>
-              {manualRunOptions.map((run) => (
-                <option key={run.id} value={run.id}>{formatRunOption(run)}</option>
-              ))}
-            </select>
-          </label>
+              onChange={setLeftInput}
+              suiteName={manualSuiteInput || null}
+              open={leftPickerOpen}
+              onOpenChange={setLeftPickerOpen}
+              testId="compare-left-picker"
+            />
+          </div>
           <button
             type="button"
             onClick={swap}
@@ -202,25 +214,22 @@ export default function RunComparePage() {
           >
             <ArrowLeftRight className="h-3 w-3" />
           </button>
-          <label className="text-xs block flex-1">
-            <span className="text-[var(--color-text-muted)]">Right run (target)</span>
-            <select
+          <div className="flex-1 min-w-0">
+            <RunPicker
+              label="Right run (target)"
               value={rightInput}
-              onChange={(e) => setRightInput(e.target.value)}
-              className="mt-1 w-full px-2 py-1.5 text-sm bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded font-mono"
-            >
-              <option value="">Select target run</option>
-              {manualRunOptions.map((run) => (
-                <option key={run.id} value={run.id}>{formatRunOption(run)}</option>
-              ))}
-            </select>
-          </label>
+              onChange={setRightInput}
+              suiteName={manualSuiteInput || null}
+              testId="compare-right-picker"
+              align="right"
+            />
+          </div>
           <button type="button" onClick={apply} className="btn-primary text-xs">
             <GitCompare className="h-3 w-3 inline mr-1" /> Compare
           </button>
         </div>
         {runsLoading && (
-          <p className="text-[11px] text-[var(--color-text-muted)] m-0">Loading available suites and runs…</p>
+          <p className="text-[11px] text-[var(--color-text-muted)] m-0">Loading available suites…</p>
         )}
       </section>
 
@@ -229,7 +238,7 @@ export default function RunComparePage() {
       ) : mode !== 'latest' && (!leftId || !rightId) ? (
         <EmptyState
           title="Pick two runs to compare"
-          description="Use the suite-first default above, or paste the UUID of a baseline run and target run for an explicit historical comparison."
+          description="Use the suite-first default above, or pick (or paste) a baseline run and a target run for an explicit historical comparison."
         />
       ) : mode !== 'latest' && leftId === rightId ? (
         <EmptyState title="Pick two different runs" />
@@ -307,64 +316,40 @@ function collectSuiteOptions(runs: TestRun[]): string[] {
   return [...suites.values()].sort((a, b) => a.localeCompare(b))
 }
 
-function runHasSuite(run: TestRun, suiteName: string): boolean {
-  const target = suiteName.trim().toLowerCase()
-  if (!target) return true
-  const names = [
-    run.primary_suite_name,
-    ...(run.suite_names ?? []),
-  ]
-  return names.some((name) => name?.trim().toLowerCase() === target)
-}
-
-function filterRunsBySuite(runs: TestRun[], suiteName: string): TestRun[] {
-  return runs
-    .filter((run) => runHasSuite(run, suiteName))
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-}
-
-function formatRunOption(run: TestRun): string {
-  // User feedback 2026-05-19: the "Runs in suite" preview should
-  // identify the run by its stable Run #N (or short UUID) rather than
-  // the SDK-supplied build_number, which is often a noisy timestamp
-  // slug (e.g. ``testng-1779170467999``). Falls back to the short id
-  // when the run hasn't been numbered yet.
-  const seq = (run as TestRun & { run_seq?: number | null }).run_seq
-  const ident = seq != null ? `Run #${seq}` : `Run ${run.id.slice(0, 8)}`
-  const branch = run.branch ? ` · ${run.branch}` : ''
-  const release = run.release_name ? ` · ${run.release_name}` : ''
-  const created = new Date(run.created_at).toLocaleString()
-  return `${ident} · ${run.status}${branch}${release} · ${created}`
-}
-
-function RunSelectPreview({
-  label,
-  runs,
-  isLoading,
-  emptyLabel,
-}: {
-  label: string
-  runs: TestRun[]
-  isLoading: boolean
-  emptyLabel: string
-}) {
+/**
+ * "Runs in suite" for the latest-suite comparison (FAIL-06): what the server
+ * holds for the suite, as text — `12 runs in suite · latest Run #431 · main`
+ * — and a way to pick an older baseline. It was a disabled `<select>` over
+ * the page's newest 100 runs.
+ */
+function RunsInSuiteSummary({ suiteName, onPickBaseline }: { suiteName: string; onPickBaseline: () => void }) {
+  const suite = suiteName.trim()
+  const { data, isLoading } = useRunSearch({ q: '', suiteName: suite, page: 1, enabled: Boolean(suite) })
+  const latest = data?.items[0]
+  const total = data?.total ?? 0
+  const text = !suite
+    ? 'Select a suite to view runs'
+    : isLoading && !data
+      ? 'Loading runs…'
+      : !latest
+        ? 'No runs found for this suite'
+        : `${total} run${total === 1 ? '' : 's'} in suite · latest ${runIdent(latest)}${latest.branch ? ` · ${latest.branch}` : ''}`
   return (
-    <label className="text-xs block">
-      <span className="text-[var(--color-text-muted)]">{label}</span>
-      <select
-        value=""
-        disabled
-        className="mt-1 w-full px-2 py-1.5 text-sm bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded font-mono disabled:opacity-100"
-      >
-        <option>
-          {isLoading
-            ? 'Loading runs…'
-            : runs.length === 0
-              ? emptyLabel
-              : `${runs.length} available · latest ${formatRunOption(runs[0])}`}
-        </option>
-      </select>
-    </label>
+    <div className="text-xs" data-runs-in-suite="">
+      <span className="text-[var(--color-text-muted)]">Runs in suite</span>
+      <div className="mt-1 flex items-center justify-between gap-2 px-2 py-1.5 text-sm rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
+        <span className="min-w-0 truncate font-mono" data-runs-in-suite-text="">{text}</span>
+        {suite && (
+          <button
+            type="button"
+            onClick={onPickBaseline}
+            className="shrink-0 text-[12px] text-[var(--color-accent)] hover:underline"
+          >
+            Pick a different baseline
+          </button>
+        )}
+      </div>
+    </div>
   )
 }
 

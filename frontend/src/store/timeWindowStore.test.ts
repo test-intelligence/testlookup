@@ -37,11 +37,32 @@ describe('default time window', () => {
     // rest of the app.
     const COVERAGE = [1, 7, 14, 30, 90] as const
     const LIVE = [1, 7, 14, 30] as const
-    const MY_FAILURES = [1, 7, 30] as const
-    for (const allowed of [COVERAGE, LIVE, MY_FAILURES]) {
+    const MY_FAILURES = [1, 7, 14, 30] as const
+    const SUMMARY = [1, 7, 14, 30, 90] as const
+    const VALUE = [7, 14, 30, 90, 365] as const
+    for (const allowed of [COVERAGE, LIVE, MY_FAILURES, SUMMARY, VALUE]) {
       expect(snapToAllowed(DEFAULT_TIME_WINDOW_DAYS, allowed)).toBe(
         DEFAULT_TIME_WINDOW_DAYS,
       )
+    }
+  })
+
+  it('WIN-01: a 14-day window lands exactly on 14 for every page set', () => {
+    // A fortnight picked on one page used to open Summary, Defects, My
+    // failures, Value metrics, Activity and the Audit dashboard at 7 days.
+    // Local copies of each page's set (the pages' own tests pin the arrays).
+    const SETS = {
+      COVERAGE: [1, 7, 14, 30, 90],
+      LIVE: [1, 7, 14, 30],
+      MY_FAILURES: [1, 7, 14, 30],
+      SUMMARY: [1, 7, 14, 30, 90],
+      DEFECTS: [7, 14, 30, 90],
+      VALUE: [7, 14, 30, 90, 365],
+      ACTIVITY: [1, 7, 14, 30, 90],
+      AUDIT: [7, 14, 30, 90],
+    } as const
+    for (const [page, allowed] of Object.entries(SETS)) {
+      expect({ page, days: snapToAllowed(14, allowed) }).toEqual({ page, days: 14 })
     }
   })
 })

@@ -222,6 +222,17 @@ REVIEWED_OPT_INS: dict[tuple[str, str], tuple[str, str]] = {
         "require_project_access", "path {project_id}"),
     ("app/routers/agent_actions.py", "transition_agent_action"): (
         "require_project_access", "path {project_id}; the action is filtered by it"),
+    # W07 FAIL-10: classification hints (a key bound to project Q: 403 on P, 201 on Q --
+    # tests/integration/test_classification_hints_postgres.py).
+    ("app/routers/classification_hints.py", "create_classification_hint"): (
+        "require_project_access", "path {project_id}; the hint is written for that project only"),
+    ("app/routers/classification_hints.py", "update_classification_hint"): (
+        "require_project_access", "path {project_id}; the hint is loaded WHERE id AND project_id"),
+    ("app/routers/classification_hints.py", "delete_classification_hint"): (
+        "require_project_access", "path {project_id}; the hint is loaded WHERE id AND project_id"),
+    # W07 FAIL-08: the project's source roots.
+    ("app/routers/ownership.py", "put_source_roots"): (
+        "require_project_access", "path {project_id}; the roots are written for that project only"),
 }
 
 #: (file, function) -> why its hand-written ADMIN check is not a bypass.

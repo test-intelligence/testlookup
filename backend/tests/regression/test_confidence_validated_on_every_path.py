@@ -177,10 +177,13 @@ async def test_post_analyze_persists_the_validated_number(monkeypatch):
     created: list = []
 
     db = AsyncMock()
-    # 1st execute: the existing-AIAnalysis lookup (none) — 2nd: the TestCase update.
+    # 1st execute: the project's classification hints (W07 FAIL-10; none) —
+    # 2nd: the existing-AIAnalysis lookup (none) — 3rd: the TestCase update.
     none_result = MagicMock()
     none_result.scalar_one_or_none = MagicMock(return_value=None)
-    db.execute = AsyncMock(side_effect=[none_result, MagicMock()])
+    no_hints = MagicMock()
+    no_hints.all = MagicMock(return_value=[])
+    db.execute = AsyncMock(side_effect=[no_hints, none_result, MagicMock()])
     db.add = MagicMock(side_effect=created.append)
     db.commit = AsyncMock()
 
@@ -238,8 +241,10 @@ async def test_post_analyze_does_not_downgrade_a_well_evidenced_score(monkeypatc
     created: list = []
     none_result = MagicMock()
     none_result.scalar_one_or_none = MagicMock(return_value=None)
+    no_hints = MagicMock()  # the project's classification hints (W07 FAIL-10): none
+    no_hints.all = MagicMock(return_value=[])
     db = AsyncMock()
-    db.execute = AsyncMock(side_effect=[none_result, MagicMock()])
+    db.execute = AsyncMock(side_effect=[no_hints, none_result, MagicMock()])
     db.add = MagicMock(side_effect=created.append)
     db.commit = AsyncMock()
 

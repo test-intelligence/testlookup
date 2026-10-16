@@ -6,7 +6,12 @@
  *             `manual_upload` flag; `/runs?upload=1` still opens it), ONE
  *             secondary (Failure signatures → the side panel), and ⋯ (Trigger
  *             all failed, Deep all failed).
- *   Toolbar → the global WindowPicker, the status filter, the suite filter.
+ *   Toolbar → the global WindowPicker, the status filter, the suite filter,
+ *             and (FAIL-05) a search box (build, branch, CI job; a commit
+ *             prefix), a branch select (one project only) and an AI-verdict
+ *             select. `?q=&branch=&verdict=` carry them, so a reload or a
+ *             shared link restores the view (and `/intelligence?branch=main`
+ *             lands filtered: the redirect forwards its query string).
  *   Banner  → the pipeline verdict in one line (`StatusBanner`): failing
  *             builds, last green, red streak, average pass rate, and Bisect
  *             from last green.
@@ -14,24 +19,29 @@
  *             selectable, each run's AI verdict (P4, D2: the retired
  *             `/intelligence` list's job; the verdict opens the run's
  *             Analysis tab), per-row Trigger / Deep / Compare, bulk actions;
- *             a row's signature opens the side panel.
+ *             a failed row's signature opens the side panel.
  *   Below   → two collapsed Disclosures: "How this verdict is computed" (the
  *             composite pipeline-health gauge and its four weighted dimensions:
  *             Build success 40 % / Signature diversity 15 % / Fix velocity
- *             25 % / Metadata coverage 20 %) and "Build history" (the 14-build
- *             velocity strip, the per-build pass rate, the last green build).
- *   Panel   → the failure signatures (`SidePanel`): failed runs grouped by
- *             their `(passed, failed, total)` tuple (README §12 q1 fallback),
- *             the dominant cluster and its outliers, paginated.
+ *             25 % / Metadata coverage 20 %; a dimension that is not measured
+ *             reads "—" and the composite re-weights the others) and "Build
+ *             history" (the 14-build velocity strip, the per-build pass rate,
+ *             the last green build).
+ *   Panel   → the failure signatures (`SidePanel`, FAIL-03): the window's
+ *             failed builds grouped by the error most of their failing tests
+ *             share (`runsList/runSignatures.ts`), each group titled by that
+ *             error's first line, paginated.
  *
- * Data: every section derives from one useRuns(...) window. The AI-verdict
- * column asks each run ON SCREEN for its Run Intelligence report (no batch
- * endpoint exists; `runsList/aiVerdict.ts`). Bisect navigates to
- * /runs/compare; per-row Trigger / Deep + bulk-trigger use the existing
- * agentService calls. UX redesign P2: a control renders only when it does
- * something real.
+ * Data: every section derives from one useRuns(...) window, plus two batch
+ * reads (`hooks/useRunListInsights`): ONE `GET /runs/ai-verdicts` for the
+ * runs on screen (the stored verdicts, never computed by the list;
+ * `runsList/aiVerdict.ts`), and ONE `GET /runs/failure-signatures` for up to
+ * 50 failed builds (the visible ones first, then the newest). Bisect
+ * navigates to /runs/compare; per-row Trigger / Deep + bulk-trigger use the
+ * existing agentService calls. UX redesign P2: a control renders only when it
+ * does something real.
  */
-import { useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   GitBranch, GitCompare, Layers, Search, Stethoscope, Upload, Zap,
@@ -55,6 +65,11 @@ import { TimingCell } from '@/components/ui/TimingCell'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import UploadReportModal from '@/components/runs/UploadReportModal'
 import AiVerdictCell from './runsList/AiVerdictCell'
+import type { AiVerdict } from './runsList/aiVerdict'
+import {
+  buildSignatureModel, isFailedRun, signatureCellOf, signatureRunIds,
+  type SignatureGroup, type SignatureModel, type SignatureRequestState,
+} from './runsList/runSignatures'
 import DayStrip from '@/components/charts/DayStrip'
 import GaugeBar from '@/components/charts/GaugeBar'
 import Sparkline from '@/components/charts/Sparkline'
@@ -63,6 +78,7 @@ import { countTones, type DayStripCell } from '@/components/charts/dayStrip.mode
 import type { GaugeTick, GaugeTone } from '@/components/charts/gaugeBar.model'
 import { useDataFreshness } from '@/hooks/useDataFreshness'
 import { useRuns } from '@/hooks/useRuns'
+import { useRunAiVerdicts, useRunBranches, useRunSignatures } from '@/hooks/useRunListInsights'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { usePageSuiteFilter } from '@/hooks/usePageSuiteFilter'
@@ -70,7 +86,7 @@ import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useFeatureEnabled } from '@/hooks/useFeatureFlags'
 import agentService from '@/services/agentService'
-import type { TestRun } from '@/types/runs'
+import type { RunListFilters, TestRun, TestRunListResponse } from '@/types/runs'
 import { shortAgo } from '@/utils/formatters'
 import { buildCompareWithPreviousHref } from '@/utils/runComparisons'
 import { aiHistoryService } from '@/services/aiHistoryService'
@@ -91,6 +107,36 @@ const STATUS_LABELS: Record<StatusFilter, string> = {
   FAILED:        'Failed',
   PASSED:        'Passed',
   IN_PROGRESS:   'In progress',
+}
+
+// FAIL-05: the AI-verdict filter (`GET /runs?recommendation=`). `none` = the
+// runs whose row reads "—" (no current snapshot, or no recommendation).
+const VERDICT_FILTERS = ['', 'GO', 'CONDITIONAL_GO', 'NO_GO', 'none'] as const
+type VerdictFilter = (typeof VERDICT_FILTERS)[number]
+const VERDICT_FILTER_LABELS: Record<VerdictFilter, string> = {
+  '':             'Any verdict',
+  GO:             'Go',
+  CONDITIONAL_GO: 'Conditional',
+  NO_GO:          'No-Go',
+  none:           'No verdict',
+}
+const isVerdictFilter = (value: string): value is VerdictFilter =>
+  (VERDICT_FILTERS as readonly string[]).includes(value)
+
+/** The search box waits this long after the last key before it asks. */
+export const SEARCH_DEBOUNCE_MS = 300
+
+/**
+ * The toolbar's URL-synced filters (`?q=&branch=&verdict=`). An unknown
+ * `verdict` reads as no filter (and is dropped from the URL by the page).
+ */
+function readRunListFilters(params: URLSearchParams): Required<RunListFilters> {
+  const verdict = params.get('verdict') ?? ''
+  return {
+    q: (params.get('q') ?? '').trim(),
+    branch: (params.get('branch') ?? '').trim(),
+    verdict: isVerdictFilter(verdict) ? verdict : '',
+  }
 }
 
 // ── Verdict ────────────────────────────────────────────────────────────────
@@ -153,17 +199,11 @@ const WEIGHTS: Record<DimensionId, number> = {
 interface DimensionScore {
   id: DimensionId
   label: string
-  score: number
+  /** `null` = not measured: the tile reads "—" and the composite leaves it out. */
+  score: number | null
+  measured: boolean
   weight: number
   tone: 'good' | 'warn' | 'bad'
-}
-
-interface SignatureCluster {
-  signature: string                  // "passed|failed|total"
-  passed: number
-  failed: number
-  total: number
-  members: TestRun[]                 // runs in this cluster
 }
 
 interface PipelineModel {
@@ -183,29 +223,22 @@ interface PipelineModel {
    *  bisect modal (``/runs/compare?left=<green>&right=<failed>``). */
   latestFailedRun: TestRun | null
   hoursSinceLastGreen: number | null
-  primaryCluster: SignatureCluster | null
-  outlierClusters: SignatureCluster[]
+  /** The failed builds grouped by their dominant error (FAIL-03). */
+  signatures: SignatureModel
   hasMissingMetadata: boolean
   metadataCoveragePct: number
   velocityCells: DayStripCell[]      // 14 cells for the velocity strip, oldest first
   /** Per-build pass rate, OLDEST first; `null` for a build with no result yet. */
   passRateSeries: (number | null)[]
-  uniqueClustersCount: number
 }
 
-function isFailed(s: string): boolean {
-  return /fail|broken|error/i.test(s)
-}
+const isFailed = isFailedRun
 function isPassed(s: string): boolean {
   return /^pass(ed)?$/i.test(s) || /success/i.test(s)
 }
 // One rule for "in flight" and "has a pass rate yet", shared with the
 // Intelligence Hub (OD-18, `utils/runPassRate`).
 const isInProgress = isRunInProgress
-
-function clusterSignature(r: TestRun): string {
-  return `${r.passed_tests}|${r.failed_tests}|${r.total_tests}`
-}
 
 function buildVelocityCells(runs: TestRun[]): DayStripCell[] {
   // Take the most-recent 14 runs, oldest first. The newest build carries the
@@ -324,34 +357,15 @@ function hoursSince(iso: string | null | undefined): number | null {
   return Math.round(ms / 3600000)
 }
 
-function clusterRuns(runs: TestRun[]): { primary: SignatureCluster | null; outliers: SignatureCluster[] } {
-  // Group failed runs by signature. The largest cluster is "primary" — the
-  // rest become "outliers".
-  const failed = runs.filter(r => isFailed(r.status))
-  const groups = new Map<string, SignatureCluster>()
-  for (const r of failed) {
-    const sig = clusterSignature(r)
-    const g = groups.get(sig)
-    if (g) {
-      g.members.push(r)
-    } else {
-      groups.set(sig, { signature: sig, passed: r.passed_tests, failed: r.failed_tests, total: r.total_tests, members: [r] })
-    }
-  }
-  const sorted = [...groups.values()].sort((a, b) => b.members.length - a.members.length)
-  if (sorted.length === 0) return { primary: null, outliers: [] }
-  return { primary: sorted[0], outliers: sorted.slice(1) }
-}
-
-function shortSignatureLabel(c: SignatureCluster): string {
-  // Use a stable hash of the signature for visual consistency.
-  let hash = 0
-  for (let i = 0; i < c.signature.length; i++) hash = ((hash << 5) - hash) + c.signature.charCodeAt(i)
-  const hex = (Math.abs(hash) >>> 0).toString(16).padStart(6, '0').slice(0, 3)
-  return `${hex}-cluster`
-}
-
-export function buildPipelineModel(runs: TestRun[]): PipelineModel {
+/**
+ * The window's pipeline model. `signatures` is the failure-signature grouping
+ * (`buildSignatureModel` over the batch read); without it — not loaded yet —
+ * Signature diversity is not measured.
+ */
+export function buildPipelineModel(
+  runs: TestRun[],
+  signatures: SignatureModel = buildSignatureModel(runs, undefined),
+): PipelineModel {
   const totalRuns      = runs.length
   const failedRuns     = runs.filter(r => isFailed(r.status)).length
   const passedRuns     = runs.filter(r => isPassed(r.status)).length
@@ -375,18 +389,13 @@ export function buildPipelineModel(runs: TestRun[]): PipelineModel {
   const metadataCoveragePct = totalRuns > 0 ? (withMeta / totalRuns) * 100 : 0
   const hasMissingMetadata = totalRuns > 0 && metadataCoveragePct < 80
 
-  // Cluster failures by their (passed, failed, total) signature.
-  const { primary, outliers } = clusterRuns(runs)
-  const totalUniqueClusters = (primary ? 1 : 0) + outliers.length
-
   // Build success — straight % passed.
   const buildSuccessScore = totalRuns > 0 ? (passedRuns / totalRuns) * 100 : 0
-  // Signature diversity — when failures cluster heavily into one signature,
-  // the score is LOW (one root cause masquerading as many incidents).
-  // diversity = uniqueClusters / failedRuns (clipped to 100). 0 failures = 100.
-  const signatureDiversityScore = failedRuns > 0
-    ? Math.min(100, (totalUniqueClusters / failedRuns) * 100)
-    : 100
+  // Signature diversity — when failures group heavily into one error, the
+  // score is LOW (one root cause masquerading as many incidents):
+  // groups / grouped failed builds (clipped to 100); 0 failures = 100. Not
+  // measured (`null`) while the signatures load or when none could be read.
+  const signatureDiversityScore = signatures.diversityScore
   // Fix velocity — proxy: hours since last green, mapped 0h→100, 72h→0.
   const hoursSinceLastGreen = lastGreen ? hoursSince(lastGreen.created_at) : null
   const fixVelocityScore = hoursSinceLastGreen == null
@@ -394,13 +403,25 @@ export function buildPipelineModel(runs: TestRun[]): PipelineModel {
     : Math.max(0, 100 - (hoursSinceLastGreen / 72) * 100)
   const metadataCoverageScore = metadataCoveragePct
 
+  const dimension = (id: DimensionId, label: string, score: number | null): DimensionScore => ({
+    id, label, score, measured: score !== null, weight: WEIGHTS[id], tone: toneFor(score ?? 0),
+  })
   const dimensions: DimensionScore[] = [
-    { id: 'build_success',       label: 'Build success',       score: buildSuccessScore,       weight: WEIGHTS.build_success,       tone: toneFor(buildSuccessScore) },
-    { id: 'signature_diversity', label: 'Signature diversity', score: signatureDiversityScore, weight: WEIGHTS.signature_diversity, tone: toneFor(signatureDiversityScore) },
-    { id: 'fix_velocity',        label: 'Fix velocity',        score: fixVelocityScore,        weight: WEIGHTS.fix_velocity,        tone: toneFor(fixVelocityScore) },
-    { id: 'metadata_coverage',   label: 'Metadata coverage',   score: metadataCoverageScore,   weight: WEIGHTS.metadata_coverage,   tone: toneFor(metadataCoverageScore) },
+    dimension('build_success',       'Build success',       buildSuccessScore),
+    dimension('signature_diversity', 'Signature diversity', signatureDiversityScore),
+    dimension('fix_velocity',        'Fix velocity',        fixVelocityScore),
+    dimension('metadata_coverage',   'Metadata coverage',   metadataCoverageScore),
   ]
-  const composite = Math.round(dimensions.reduce((sum, d) => sum + d.score * d.weight, 0))
+  // Σ score·w / Σ w over the MEASURED dimensions: an unmeasured one is left
+  // out and the others re-weighted, never scored as 0.
+  // With every dimension measured the weights sum to 1 and this is exactly
+  // the weighted sum it always was.
+  const measured = dimensions.filter((d): d is DimensionScore & { score: number } => d.score !== null)
+  const weighted = measured.reduce((sum, d) => sum + d.score * d.weight, 0)
+  const weightSum = measured.reduce((sum, d) => sum + d.weight, 0)
+  const composite = measured.length === dimensions.length
+    ? Math.round(weighted)
+    : weightSum > 0 ? Math.round(weighted / weightSum) : 0
 
   return {
     composite, dimensions,
@@ -408,12 +429,11 @@ export function buildPipelineModel(runs: TestRun[]): PipelineModel {
     avgPassRate,
     redStreak, lastGreen, latestFailedRun,
     hoursSinceLastGreen,
-    primaryCluster: primary, outlierClusters: outliers,
+    signatures,
     hasMissingMetadata, metadataCoveragePct,
     velocityCells: buildVelocityCells(runs),
     passRateSeries,
     measuredRuns,
-    uniqueClustersCount: totalUniqueClusters,
   }
 }
 
@@ -480,22 +500,25 @@ function PrimaryBtn({
 }
 
 function GhostSelect<T extends string | number>({
-  value, onChange, options, ariaLabel,
+  value, onChange, options, ariaLabel, className, title,
 }: {
   value: T
   onChange: (v: T) => void
   options: { value: T; label: string }[]
   ariaLabel?: string
+  className?: string
+  title?: string
 }) {
   return (
     <select
       aria-label={ariaLabel}
+      title={title}
       value={String(value)}
       onChange={(e) => {
         const next = options.find(o => String(o.value) === e.target.value)?.value
         if (next != null) onChange(next as T)
       }}
-      className="text-[13px] px-2.5 py-1.5 rounded-md cursor-pointer"
+      className={clsx('text-[13px] px-2.5 py-1.5 rounded-md cursor-pointer', className)}
       style={{
         background: 'var(--color-bg-secondary)',
         border: '1px solid var(--color-border)',
@@ -513,10 +536,14 @@ function verdictSummary(model: PipelineModel, verdict: Verdict): string {
   if (verdict === 'PENDING') return 'no builds in window'
   if (verdict === 'HEALTHY') return `${model.totalRuns} builds passing`
   const failed = `${model.failedRuns} of ${model.totalRuns} builds failed`
-  const sharesSig = verdict === 'BROKEN'
-    && model.primaryCluster !== null
-    && model.primaryCluster.members.length / model.failedRuns >= 0.8
-  return sharesSig ? `${failed} with the same signature` : failed
+  // "The same error" only when the data shows it: the primary group holds at
+  // least 80 % of the failed builds the signatures grouped (two or more).
+  const { groups, groupedRuns } = model.signatures
+  const sharesError = verdict === 'BROKEN'
+    && groups.length > 0
+    && groupedRuns >= 2
+    && groups[0].members.length / groupedRuns >= 0.8
+  return sharesError ? `${failed} with the same error` : failed
 }
 
 /**
@@ -627,12 +654,17 @@ function DimensionGrid({ dimensions }: { dimensions: DimensionScore[] }) {
 }
 
 function DimensionTile({ dim }: { dim: DimensionScore }) {
-  const valueColor = dim.tone === 'bad' ? 'var(--status-failed)' : dim.tone === 'warn' ? 'var(--status-broken)' : 'var(--status-passed)'
-  const barColor   = dim.tone === 'bad' ? 'var(--status-failed)' : dim.tone === 'warn' ? 'var(--status-broken)' : 'var(--status-passed)'
+  const toneColor = dim.tone === 'bad' ? 'var(--status-failed)' : dim.tone === 'warn' ? 'var(--status-broken)' : 'var(--status-passed)'
+  // Not measured: "—" and an empty bar, never a 0 (the composite leaves it out).
+  const valueColor = dim.score === null ? 'var(--color-text-muted)' : toneColor
+  const barColor   = toneColor
   return (
     <div
       className="rounded-sm px-2.5 py-2 border"
       style={{ background: 'rgba(255,255,255,0.025)', borderColor: 'var(--color-border)' }}
+      data-dimension={dim.id}
+      data-dimension-measured={dim.measured ? 'true' : 'false'}
+      title={dim.score === null ? `${dim.label}: not measured, left out of the score` : undefined}
     >
       <div
         className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] flex justify-between"
@@ -642,11 +674,11 @@ function DimensionTile({ dim }: { dim: DimensionScore }) {
         <span className="text-[var(--color-text-faint)] font-medium">{Math.round(dim.weight * 100)}%</span>
       </div>
       <div className="flex items-center gap-2 mt-1.5">
-        <span className="text-[14px] font-semibold tabular-nums min-w-[40px]" style={{ color: valueColor }}>
-          {Math.round(dim.score)}
+        <span className="text-[14px] font-semibold tabular-nums min-w-[40px]" style={{ color: valueColor }} data-dimension-value="">
+          {dim.score === null ? '—' : Math.round(dim.score)}
         </span>
         <div className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: 'var(--color-bg-secondary)' }}>
-          <i className="block h-full rounded-full" style={{ width: `${dim.score}%`, background: barColor }} />
+          {dim.score !== null && <i className="block h-full rounded-full" style={{ width: `${dim.score}%`, background: barColor }} />}
         </div>
       </div>
     </div>
@@ -716,118 +748,155 @@ export function BuildPassRate({ model }: { model: PipelineModel }) {
 }
 
 // ── Failure signatures (the side panel) ───────────────────────────────────
-// Rows shown per page in the failure-signature list: a cluster is EXPECTED to
-// be large (its premise is "many builds share one signature"), so it pages.
+// Rows shown per page in the failure-signature list: a group is EXPECTED to
+// be large (its premise is "many builds share one error"), so it pages.
 export const SIGNATURE_ROWS_PER_PAGE = 8
 
 /**
  * The failure signatures, in the side panel (UX redesign P3: a drill-down
- * opens beside the page instead of a card under the table). The primary
- * cluster, the split of the failed builds between it and the other
- * signatures, and every member, paginated; a row jumps to its run in the
- * table.
+ * opens beside the page instead of a card under the table; FAIL-03: the
+ * failed builds grouped by the error most of their failing tests share). Each
+ * group is titled by that error's first line and lists its builds; "the same
+ * test fails in all of them" is said only when every member names the test.
+ * Every row, paginated; a row jumps to its run in the table. Error lines and
+ * test names come from CI files: they render as text, never markup.
  */
 export function SignatureClusters({
-  primaryCluster, outlierClusters, totalRuns, onJumpToRow,
+  model, failed = false, onJumpToRow,
 }: {
-  primaryCluster: SignatureCluster | null
-  outlierClusters: SignatureCluster[]
-  totalRuns: number
+  model: SignatureModel
+  /** The signatures request failed. */
+  failed?: boolean
   onJumpToRow: (run: TestRun) => void
 }) {
   const [sigPage, setSigPage] = useState(1)
 
-  // Cluster membership changes when the project or time window changes; without
+  // Group membership changes when the project or time window changes; without
   // a reset a viewer parked on page 3 would land on an empty list.
   //
   // Adjusted during render rather than in an effect: an effect would paint the
   // stale page first and then re-render, and this repo forbids synchronous
   // setState inside useEffect (react-hooks set-state-in-effect, an error here)
   // precisely because of those cascading renders.
-  const clusterKey = primaryCluster
-    ? `${primaryCluster.signature}:${primaryCluster.members.length}:${outlierClusters.length}`
-    : ''
+  const clusterKey = model.groups.map((g) => `${g.key}:${g.members.length}`).join('|')
   const [prevClusterKey, setPrevClusterKey] = useState(clusterKey)
   if (prevClusterKey !== clusterKey) {
     setPrevClusterKey(clusterKey)
     setSigPage(1)
   }
 
-  if (!primaryCluster) {
+  if (model.failedRuns === 0) {
     return (
       <p className="m-0 py-6 text-center text-[13px] text-[var(--color-text-secondary)]">
-        No failures in this window — nothing to cluster.
+        No failures in this window — nothing to group.
       </p>
     )
   }
-  const sigLabel = shortSignatureLabel(primaryCluster)
-  const matchCount = primaryCluster.members.length
-  const outlierCount = outlierClusters.reduce((s, c) => s + c.members.length, 0)
-  // Clusters are built from the failed runs only: together they ARE the failed builds.
-  const failedCount = matchCount + outlierCount
-  const signatureCount = 1 + outlierClusters.length
-  const allRows = [
-    ...primaryCluster.members.map(m => ({ run: m, isOutlier: false })),
-    ...outlierClusters.flatMap(c => c.members.map(m => ({ run: m, isOutlier: true }))),
-  ]
+  if (failed) {
+    return (
+      <p className="m-0 py-6 text-center text-[13px] text-[var(--color-text-secondary)]" data-signatures-unavailable="">
+        Signatures unavailable: the request failed.
+      </p>
+    )
+  }
+  const primary = model.groups[0]
+  if (!primary) {
+    return (
+      <p className="m-0 py-6 text-center text-[13px] text-[var(--color-text-muted)]" aria-busy="true">
+        Grouping the failed builds by their error…
+      </p>
+    )
+  }
+  const { groups, groupedRuns, failedRuns } = model
+  const primaryCount = primary.members.length
+  const otherCount = groupedRuns - primaryCount
+  const allRows = groups.flatMap((group, gi) => group.members.map((run) => ({ group, run, isPrimary: gi === 0 })))
   const sigPages = Math.max(1, Math.ceil(allRows.length / SIGNATURE_ROWS_PER_PAGE))
-  // Clamp rather than trust state: a shrinking cluster can leave sigPage past
+  // Clamp rather than trust state: a shrinking group can leave sigPage past
   // the end for the render that happens before the reset above.
   const safePage = Math.min(sigPage, sigPages)
   const pageRows = allRows.slice(
     (safePage - 1) * SIGNATURE_ROWS_PER_PAGE,
     safePage * SIGNATURE_ROWS_PER_PAGE,
   )
+  const s = (n: number) => (n === 1 ? '' : 's')
 
   return (
     <div className="flex flex-col gap-3" data-signature-clusters="">
-      <div>
-        <div className="text-[13px] font-semibold text-[var(--color-text)]">
-          Primary signature{' '}
-          <code className="font-mono text-[12px]" style={{ color: 'var(--status-failed)' }}>{sigLabel}</code>
-        </div>
-        <p className="m-0 mt-0.5 text-[12px] text-[var(--color-text-muted)]">
-          {primaryCluster.passed} pass / {primaryCluster.failed} fail / {primaryCluster.total} total
-          {' · '}{signatureCount} signature{signatureCount === 1 ? '' : 's'} across {failedCount} failed build{failedCount === 1 ? '' : 's'}
-        </p>
-      </div>
+      <p className="m-0 text-[12.5px] text-[var(--color-text-secondary)]" data-signature-lead="">
+        {groups.length} signature{s(groups.length)} across {groupedRuns} failed build{s(groupedRuns)}
+        {groupedRuns < failedRuns && ` · grouped over the newest ${groupedRuns} of ${failedRuns} failed builds`}
+      </p>
       <GaugeBar
-        value={failedCount}
-        domain={[0, failedCount]}
+        value={groupedRuns}
+        domain={[0, groupedRuns]}
         size="sm"
         label="Failed builds by signature"
         segments={[
-          { value: matchCount, label: 'Primary signature', tone: 'bad' },
-          { value: outlierCount, label: 'Other signatures', tone: 'neutral' },
+          { value: primaryCount, label: 'Primary signature', tone: 'bad' },
+          { value: otherCount, label: 'Other signatures', tone: 'neutral' },
         ]}
       />
-      <p className="m-0 text-[12.5px]" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
-        {matchCount} of {totalRuns} build{totalRuns === 1 ? '' : 's'} match · same test failing across all of them.
-        {' '}Treat them as one regression, not {matchCount + outlierCount} incidents.
-      </p>
       <div className="flex flex-col gap-1.5">
-        {pageRows.map(({ run, isOutlier }) => (
-          <ClusterRow
-            key={run.id}
-            run={run}
-            isOutlier={isOutlier}
-            primarySignature={primaryCluster.signature}
-            onClick={() => onJumpToRow(run)}
-          />
-        ))}
+        {pageRows.map(({ group, run, isPrimary }, i) => {
+          const startsGroup = i === 0 || pageRows[i - 1].group.key !== group.key
+          const item = model.itemOf.get(run.id)
+          return (
+            <Fragment key={run.id}>
+              {startsGroup && <SignatureGroupHeader group={group} isPrimary={isPrimary} />}
+              <ClusterRow run={run} isPrimary={isPrimary} onClick={() => onJumpToRow(run)} />
+              {item?.capped && (
+                <p className="m-0 -mt-1 pl-2.5 text-[11px] text-[var(--color-text-muted)]" data-signature-capped="">
+                  (grouped over {item.read} of {item.failing_tests} failing tests)
+                </p>
+              )}
+            </Fragment>
+          )
+        })}
       </div>
-      {outlierCount > 0 && (
+      {groups.length > 1 && (
         <p className="text-[11.5px] m-0 italic" style={{ color: 'var(--color-text-muted)', lineHeight: 1.5 }}>
-          {outlierCount} failed build{outlierCount === 1 ? '' : 's'} carr{outlierCount === 1 ? 'ies' : 'y'} a different signature. Open {outlierCount === 1 ? 'it' : 'them'} to check whether the same test fails underneath before counting {outlierCount === 1 ? 'it' : 'them'} as a separate incident.
+          {otherCount} failed build{s(otherCount)} carr{otherCount === 1 ? 'ies' : 'y'} a different error. Open {otherCount === 1 ? 'it' : 'them'} before counting {otherCount === 1 ? 'it' : 'them'} as a separate incident.
         </p>
       )}
-      {/* Renders nothing at one page, so small clusters look exactly as before. */}
+      {/* Renders nothing at one page, so small groups look exactly as before. */}
       <Pagination
         page={safePage}
         pages={sigPages}
         total={allRows.length}
         onChange={setSigPage}
       />
+    </div>
+  )
+}
+
+/** A group's header in the panel: its error's first line, its size, and what its builds share. */
+function SignatureGroupHeader({ group, isPrimary }: { group: SignatureGroup; isPrimary: boolean }) {
+  const n = group.members.length
+  const shared = group.sharedTests[0]
+  return (
+    <div className="mt-1.5 first:mt-0" data-signature-group={isPrimary ? 'primary' : 'other'}>
+      <div className="flex items-baseline justify-between gap-2">
+        <code
+          className="min-w-0 font-mono text-[12px] [overflow-wrap:anywhere]"
+          title={group.key}
+          style={{ color: isPrimary ? 'var(--status-failed)' : 'var(--status-broken)' }}
+        >
+          {group.title}
+        </code>
+        <span className="shrink-0 text-[11.5px] tabular-nums text-[var(--color-text-muted)]">
+          {n} build{n === 1 ? '' : 's'}
+        </span>
+      </div>
+      {shared ? (
+        <p className="m-0 mt-0.5 text-[12px] text-[var(--color-text-secondary)]" data-signature-shared="">
+          {shared} fails with this error in all {n} builds.
+        </p>
+      ) : n >= 2 ? (
+        <p className="m-0 mt-0.5 text-[12px] text-[var(--color-text-secondary)]">
+          {n} builds fail with this error.
+        </p>
+      ) : null}
     </div>
   )
 }
@@ -851,18 +920,15 @@ function RunPassRateValue({ run }: { run: TestRun }) {
 }
 
 function ClusterRow({
-  run, isOutlier, primarySignature, onClick,
+  run, isPrimary, onClick,
 }: {
   run: TestRun
-  isOutlier: boolean
-  primarySignature: string
+  isPrimary: boolean
   onClick: () => void
 }) {
   const pct = measuredRunPassRate(run)
   const passFlex = run.passed_tests
   const failFlex = run.failed_tests
-  const sig = clusterSignature(run)
-  const sigDiffers = sig !== primarySignature
   return (
     <button
       type="button"
@@ -874,7 +940,7 @@ function ClusterRow({
       )}
       style={{
         gridTemplateColumns: '170px 1fr 60px 70px',
-        background: isOutlier ? 'color-mix(in srgb, var(--status-broken) 5%, transparent)' : 'transparent',
+        background: isPrimary ? 'transparent' : 'color-mix(in srgb, var(--status-broken) 5%, transparent)',
       }}
     >
       <span className="text-[12px] tabular-nums truncate text-[var(--color-text-secondary)]">
@@ -887,19 +953,19 @@ function ClusterRow({
       </div>
       <span
         className="text-[12.5px] font-semibold tabular-nums text-right"
-        style={{ color: pct === null ? 'var(--color-text-muted)' : isOutlier ? 'var(--status-broken)' : passRateColor(pct) }}
+        style={{ color: pct === null ? 'var(--color-text-muted)' : isPrimary ? passRateColor(pct) : 'var(--status-broken)' }}
       >
         {pct === null ? '—' : `${pct.toFixed(1)}%`}
       </span>
       <span
         className="text-[10.5px] uppercase font-semibold text-center px-1.5 py-0.5 rounded-full justify-self-end"
         style={{
-          background: sigDiffers ? 'color-mix(in srgb, var(--status-broken) 16%, transparent)' : 'color-mix(in srgb, var(--status-failed) 15%, transparent)',
-          color:      sigDiffers ? 'var(--status-broken)' : 'var(--status-failed)',
+          background: isPrimary ? 'color-mix(in srgb, var(--status-failed) 15%, transparent)' : 'color-mix(in srgb, var(--status-broken) 16%, transparent)',
+          color:      isPrimary ? 'var(--status-failed)' : 'var(--status-broken)',
           letterSpacing: 'var(--tracking-wide)',
         }}
       >
-        {sigDiffers ? 'outlier' : 'match'}
+        {isPrimary ? 'primary' : 'other'}
       </span>
     </button>
   )
@@ -907,45 +973,39 @@ function ClusterRow({
 
 // ── Runs table ────────────────────────────────────────────────────────────
 /**
- * A row's signature. With a cluster in the window it is a button, the way into
- * the failure-signature side panel (P3: the cluster card became a drill-down);
- * without one it is the plain "—".
+ * A failed, grouped row's signature (FAIL-03): a button, the way into the
+ * failure-signature side panel (P3: the cluster card became a drill-down),
+ * titled by its group's error. The label keeps the old chip's width
+ * (`chipLabelOf`: at most 11 characters), which the table's 1280 px fit
+ * depends on.
  */
 function SignatureChip({
-  label, isOutlier, failed, onOpen,
-}: { label: string; isOutlier: boolean; failed: boolean; onOpen?: () => void }) {
-  const hue = isOutlier ? 'var(--status-broken)' : failed ? 'var(--status-failed)' : 'var(--status-passed)'
-  const className = clsx(
-    'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10.5px] whitespace-nowrap',
-    isOutlier && 'italic',
-    onOpen && 'hover:underline',
-  )
-  const style = {
-    background: `color-mix(in srgb, ${hue} 10%, transparent)`,
-    border: `1px solid color-mix(in srgb, ${hue} 25%, transparent)`,
-    color: hue,
-  }
-  const content = (
-    <>
-      <i aria-hidden style={{ width: 6, height: 6, borderRadius: 999, background: 'currentColor' }} />
-      {label}
-    </>
-  )
-  if (!onOpen) return <span className={className} style={style}>{content}</span>
+  label, title, isOutlier, onOpen,
+}: { label: string; title: string; isOutlier: boolean; onOpen: () => void }) {
+  const hue = isOutlier ? 'var(--status-broken)' : 'var(--status-failed)'
   return (
     <button
       type="button"
       onClick={onOpen}
-      title="Show the failure signatures"
+      title={title}
       aria-label={`Signature ${label}: show the failure signatures`}
       data-signature-chip=""
-      className={className}
-      style={style}
+      className={clsx(
+        'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10.5px] whitespace-nowrap hover:underline',
+        isOutlier && 'italic',
+      )}
+      style={{
+        background: `color-mix(in srgb, ${hue} 10%, transparent)`,
+        border: `1px solid color-mix(in srgb, ${hue} 25%, transparent)`,
+        color: hue,
+      }}
     >
-      {content}
+      <i aria-hidden style={{ width: 6, height: 6, borderRadius: 999, background: 'currentColor' }} />
+      {label}
     </button>
   )
 }
+
 
 /**
  * A runs-table cell's padding. 10 px a side, not 12 (P4): the AI-verdict
@@ -956,14 +1016,26 @@ function SignatureChip({
 const CELL_PAD = '8px 10px'
 
 function RunsTable({
-  runs, primarySignature, selectedIds, setSelectedIds, onTrigger, onDeep,
+  runs, signatures, signatureRequest, verdictOf, verdictsLoading,
+  selectedIds, setSelectedIds, onTrigger, onDeep,
   onCompareWithPrevious, onOpenSignatures,
   isQaEngineer,
   page, pages, total, onPageChange,
   datetimeSortDir, onToggleDatetimeSort,
+  filtered, loading, onClearFilters,
 }: {
   runs: TestRun[]
-  primarySignature: string | null
+  /** The failed builds grouped by error (FAIL-03). */
+  signatures: SignatureModel
+  signatureRequest: SignatureRequestState
+  /** Each run's AI verdict from the one batch read (FAIL-04). */
+  verdictOf: (run: TestRun) => AiVerdict | undefined
+  verdictsLoading: boolean
+  /** A search / branch / verdict filter is set (FAIL-05). */
+  filtered: boolean
+  /** The rows are being fetched for a changed filter. */
+  loading: boolean
+  onClearFilters: () => void
   selectedIds: Set<string>
   setSelectedIds: (s: Set<string>) => void
   onTrigger: (id: string) => void
@@ -1064,17 +1136,29 @@ function RunsTable({
           <tbody>
             {runs.length === 0 && (
               <tr>
-                <td colSpan={9} className="text-center py-10 text-[var(--color-text-muted)]">
-                  No runs in the window. Try a longer window or check your reporter.
+                <td colSpan={9} className="text-center py-10 text-[var(--color-text-muted)]" data-runs-empty="">
+                  {loading ? (
+                    'Loading runs…'
+                  ) : filtered ? (
+                    <>
+                      No runs match these filters.{' '}
+                      <button
+                        type="button"
+                        onClick={onClearFilters}
+                        className="ml-1 text-[var(--color-accent)] hover:underline"
+                      >
+                        Clear filters
+                      </button>
+                    </>
+                  ) : (
+                    'No runs in the window. Try a longer window or check your reporter.'
+                  )}
                 </td>
               </tr>
             )}
             {runs.map((r, i) => {
-              const sig = clusterSignature(r)
-              const isOutlier = primarySignature !== null && sig !== primarySignature && r.failed_tests > 0
-              const sigLabel = primarySignature
-                ? (sig === primarySignature ? shortSignatureLabel({ signature: primarySignature, passed: 0, failed: 0, total: 0, members: [] }) : 'outlier · old config')
-                : '—'
+              const sigCell = signatureCellOf(r, signatures, signatureRequest)
+              const isOutlier = sigCell.kind === 'chip' && sigCell.isOutlier
               const failed = isFailed(r.status)
               return (
                 <tr
@@ -1133,13 +1217,17 @@ function RunsTable({
                       />
                     </div>
                   </td>
-                  <td style={{ padding: CELL_PAD }}>
-                    <SignatureChip
-                      label={sigLabel}
-                      isOutlier={isOutlier}
-                      failed={failed}
-                      onOpen={primarySignature ? onOpenSignatures : undefined}
-                    />
+                  <td style={{ padding: CELL_PAD }} data-run-signature="">
+                    {sigCell.kind === 'chip' ? (
+                      <SignatureChip
+                        label={sigCell.group.chipLabel}
+                        title={sigCell.group.title}
+                        isOutlier={sigCell.isOutlier}
+                        onOpen={onOpenSignatures}
+                      />
+                    ) : (
+                      <span className="text-[var(--color-text-muted)]" title={sigCell.title} data-signature-none="">—</span>
+                    )}
                   </td>
                   <td style={{ padding: CELL_PAD }}>
                     <span
@@ -1153,7 +1241,7 @@ function RunsTable({
                     </span>
                   </td>
                   <td style={{ padding: CELL_PAD }} data-ai-verdict-cell="">
-                    <AiVerdictCell run={r} />
+                    <AiVerdictCell run={r} verdict={verdictOf(r)} isLoading={verdictsLoading && !isRunInProgress(r.status)} />
                   </td>
                   <td style={{ padding: CELL_PAD }}>
                     <div className="flex items-center gap-2">
@@ -1433,6 +1521,72 @@ export default function RunsPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('')
   // The page-local suite filter (usePageSuiteFilter).
   const { selectedSuite, setSelectedSuite, suiteFilter: pageSuiteFilter, suiteLabel } = usePageSuiteFilter()
+
+  // FAIL-05: search, branch and AI verdict live in the URL (`?q=&branch=&verdict=`),
+  // so a reload or a shared link restores the view. The branch select lists
+  // one project's branches: in All Projects it is hidden and a `branch` in
+  // the URL is not applied (a filter nobody can see or change).
+  const urlFilters = readRunListFilters(searchParams)
+  const urlQ = urlFilters.q
+  const branchFilter = isAllProjects ? '' : urlFilters.branch
+  const verdictFilter = urlFilters.verdict as VerdictFilter
+  const filtersActive = Boolean(urlQ || branchFilter || verdictFilter)
+  const writeFilters = (values: Partial<Record<'q' | 'branch' | 'verdict', string>>) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      for (const [name, value] of Object.entries(values)) {
+        if (value) next.set(name, value)
+        else next.delete(name)
+      }
+      return next
+    }, { replace: true })
+  }
+  // An unknown `verdict` is ignored, and dropped from the URL.
+  const rawVerdict = searchParams.get('verdict') ?? ''
+  const verdictIsUnknown = rawVerdict !== '' && !isVerdictFilter(rawVerdict)
+  useEffect(() => {
+    if (!verdictIsUnknown) return
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.delete('verdict')
+      return next
+    }, { replace: true })
+  }, [verdictIsUnknown, setSearchParams])
+
+  // The search box: what is typed shows at once; the URL (and so the runs
+  // request) follows SEARCH_DEBOUNCE_MS after the last key — one request per
+  // pause, not one per key. A URL changed from elsewhere (Clear filters, back)
+  // replaces the text.
+  const [searchText, setSearchText] = useState(urlQ)
+  const [pendingQ, setPendingQ] = useState<string | null>(null)
+  const [syncedQ, setSyncedQ] = useState(urlQ)
+  if (syncedQ !== urlQ) {
+    setSyncedQ(urlQ)
+    if (searchText.trim() !== urlQ) setSearchText(urlQ)
+  }
+  useEffect(() => {
+    if (pendingQ === null) return
+    const timer = window.setTimeout(() => {
+      setPendingQ(null)
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev)
+        if (pendingQ) next.set('q', pendingQ)
+        else next.delete('q')
+        return next
+      }, { replace: true })
+    }, SEARCH_DEBOUNCE_MS)
+    return () => window.clearTimeout(timer)
+  }, [pendingQ, setSearchParams])
+  const clearSearch = () => {
+    setSearchText('')
+    setPendingQ(null)
+    writeFilters({ q: '' })
+  }
+  const clearFilters = () => {
+    setSearchText('')
+    setPendingQ(null)
+    writeFilters({ q: '', branch: '', verdict: '' })
+  }
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   // The failure-signature side panel (P3: the cluster card became a drill-down).
   const [signaturesOpen, setSignaturesOpen] = useState(false)
@@ -1451,7 +1605,7 @@ export default function RunsPage() {
   // on an empty page after narrowing the window. Done during render via
   // previous-value tracking (the React-recommended way to reset state on a
   // dependency change) rather than a cascading setState-in-effect.
-  const runsFilterKey = `${days}|${statusFilter}|${suiteLabel}`
+  const runsFilterKey = `${days}|${statusFilter}|${suiteLabel}|${urlQ}|${branchFilter}|${verdictFilter}`
   const [prevRunsFilterKey, setPrevRunsFilterKey] = useState(runsFilterKey)
   if (prevRunsFilterKey !== runsFilterKey) {
     setPrevRunsFilterKey(runsFilterKey)
@@ -1461,20 +1615,36 @@ export default function RunsPage() {
 
   const { options: suiteOptions } = useSuiteOptions(days)
 
+  // Absent filters are not sent: an unfiltered page asks exactly what it did.
   const { data, isLoading, error: runsError, mutate: retryRuns } = useRuns({
     page: 1,
     size: ANALYTICS_FETCH_SIZE,
     days,
     ...(statusFilter && { status: statusFilter }),
     ...(pageSuiteFilter && { suite_name: pageSuiteFilter }),
+    ...(urlQ && { q: urlQ }),
+    ...(branchFilter && { branch: branchFilter }),
+    ...(verdictFilter && { recommendation: verdictFilter }),
   })
+  // While a search / branch / verdict change loads, the page keeps the rows it
+  // had (same project, window, status and suite) instead of swapping itself
+  // for the full-page spinner: the spinner unmounted the search box under the
+  // reader's cursor. Held by a cheap content key, never by identity alone.
+  const heldBase = `${activeProjectId}|${days}|${statusFilter}|${suiteLabel}`
+  const liveKey = data ? `${heldBase}|${data.total}|${data.items?.length ?? 0}|${data.items?.[0]?.id ?? ''}` : null
+  const [held, setHeld] = useState<{ key: string; base: string; data: TestRunListResponse } | null>(null)
+  if (data && liveKey !== null && held?.key !== liveKey) setHeld({ key: liveKey, base: heldBase, data })
+  const shownData = data ?? (held && held.base === heldBase ? held.data : undefined)
+  // The branch select's options, once there is a list to filter (the
+  // toolbar is not drawn while the list loads or after it failed).
+  const { data: branchList } = useRunBranches(days, Boolean(shownData))
   // The header's "refreshed" note must report when this client actually
   // received the payload. It previously rendered a hardcoded "refreshed just
   // now", so a tab left open overnight still claimed the numbers above it were
   // seconds old -- the #893 defect.
   const fetchedAt = useDataFreshness(data)
   const refreshedAt = fetchedAt ? shortAgo(fetchedAt) : 'just now'
-  const runs = useMemo<TestRun[]>(() => (data?.items ?? []) as TestRun[], [data?.items])
+  const runs = useMemo<TestRun[]>(() => (shownData?.items ?? []) as TestRun[], [shownData?.items])
   // Client-side sort by run datetime (created_at). The backend already returns
   // desc order, so 'desc' here is a no-op until the user clicks. Sorting is
   // applied to the full fetched page set *before* table-pagination, so
@@ -1491,8 +1661,28 @@ export default function RunsPage() {
     const start = (tablePage - 1) * TABLE_PAGE_SIZE
     return sortedRuns.slice(start, start + TABLE_PAGE_SIZE)
   }, [sortedRuns, tablePage])
-  const model = useMemo(() => buildPipelineModel(runs), [runs])
+  // FAIL-03: the failure signatures of up to 50 failed builds (the visible
+  // ones first, then the newest), ONE request; re-asked only when that id set
+  // changes. FAIL-04: the AI verdicts of the runs on screen, ONE request.
+  const signatureIds = useMemo(() => signatureRunIds(tableRuns, runs), [tableRuns, runs])
+  const signatureBatch = useRunSignatures(signatureIds)
+  const signatureModel = useMemo(() => buildSignatureModel(runs, signatureBatch.data), [runs, signatureBatch.data])
+  const signatureRequest = useMemo<SignatureRequestState>(() => ({
+    requested: new Set(signatureIds),
+    loading: signatureBatch.isLoading,
+    failed: Boolean(signatureBatch.error) && !signatureBatch.data,
+  }), [signatureIds, signatureBatch.isLoading, signatureBatch.error, signatureBatch.data])
+  const verdicts = useRunAiVerdicts(tableRuns)
+  const model = useMemo(() => buildPipelineModel(runs, signatureModel), [runs, signatureModel])
   const verdict = pickVerdict(model)
+
+  // The branch select's options: the project's branches in the window, plus
+  // the URL's branch when the window does not hold it (it stays selectable).
+  const branchOptions = useMemo(() => {
+    const names = (branchList?.items ?? []).map((b) => b.branch)
+    if (branchFilter && !names.includes(branchFilter)) names.unshift(branchFilter)
+    return [{ value: '', label: 'All branches' }, ...names.map((name) => ({ value: name, label: name }))]
+  }, [branchList?.items, branchFilter])
 
   // Bisect navigation — the banner's "Bisect from last green" and Build
   // history's "Start bisect". When either side is missing (no green run in
@@ -1558,7 +1748,7 @@ export default function RunsPage() {
     return <DataUnavailable error={runsError} onRetry={() => void retryRuns()} testId="runs-data-unavailable" />
   }
 
-  if (isLoading && runs.length === 0) {
+  if (isLoading && !shownData) {
     return <div className="flex items-center justify-center h-64"><LoadingSpinner size="lg" /></div>
   }
 
@@ -1644,11 +1834,12 @@ export default function RunsPage() {
 
   const theme = VERDICT_THEME[verdict]
   const canBisect = buildBisectHref(model) !== null
-  const signatureCount = model.uniqueClustersCount
+  const signatureCount = model.signatures.groups.length
   const subtitle = [
     `Jenkins builds for ${projectLabel}`,
     suiteLabel ? `Suite ${suiteLabel}` : null,
     `${model.totalRuns} build${model.totalRuns === 1 ? '' : 's'} in window`,
+    filtersActive ? 'filtered' : null,
     `refreshed ${refreshedAt}`,
   ].filter(Boolean).join(' · ')
   // Header ⋯ (P3): the window-wide actions beyond the one primary + one secondary.
@@ -1693,10 +1884,10 @@ export default function RunsPage() {
                 Upload report
               </PrimaryBtn>
             )}
-            {model.primaryCluster && (
+            {signatureCount > 0 && (
               <GhostBtn
                 onClick={() => setSignaturesOpen(true)}
-                title="Failed builds grouped by their pass / fail / total signature"
+                title="Failed builds grouped by the error most of their failing tests share"
               >
                 <Layers className="h-3.5 w-3.5" />
                 Failure signatures
@@ -1729,7 +1920,10 @@ export default function RunsPage() {
         </div>
       )}
 
-      {/* One toolbar row: the global window, the status, the suite. */}
+      {/* One toolbar row: the global window, the status, the suite, then
+          (FAIL-05) the search, the branch and the AI verdict. ~1,050 px of
+          controls against the ~1,168 px column at 1440 on CI's wider fonts;
+          below that the row wraps (`flex-wrap`) rather than overflowing. */}
       <div className="flex flex-wrap items-center gap-3" data-runs-toolbar="">
         <WindowPicker />
         <GhostSelect
@@ -1744,6 +1938,45 @@ export default function RunsPage() {
           options={suiteOptions}
           allLabel="All suites"
         />
+        <input
+          type="search"
+          aria-label="Search runs"
+          placeholder="Build, branch, job or commit…"
+          value={searchText}
+          maxLength={100}
+          onChange={(e) => {
+            setSearchText(e.target.value)
+            setPendingQ(e.target.value.trim())
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              e.preventDefault()
+              clearSearch()
+            }
+          }}
+          className="w-[180px] text-[13px] px-2.5 py-1.5 rounded-md"
+          style={{
+            background: 'var(--color-bg-secondary)',
+            border: '1px solid var(--color-border)',
+            color: 'var(--color-text)',
+          }}
+        />
+        {!isAllProjects && (
+          <GhostSelect
+            value={branchFilter}
+            onChange={(v) => writeFilters({ branch: v })}
+            options={branchOptions}
+            ariaLabel="Branch"
+            title={branchFilter || 'All branches'}
+            className="max-w-[150px] truncate"
+          />
+        )}
+        <GhostSelect
+          value={verdictFilter}
+          onChange={(v) => writeFilters({ verdict: v })}
+          options={VERDICT_FILTERS.map(v => ({ value: v, label: VERDICT_FILTER_LABELS[v] }))}
+          ariaLabel="AI verdict"
+        />
       </div>
 
       <StatusBanner
@@ -1757,7 +1990,13 @@ export default function RunsPage() {
       <div data-primary="">
         <RunsTable
           runs={tableRuns}
-          primarySignature={model.primaryCluster?.signature ?? null}
+          signatures={model.signatures}
+          signatureRequest={signatureRequest}
+          verdictOf={verdicts.verdictOf}
+          verdictsLoading={verdicts.isLoading}
+          filtered={filtersActive}
+          loading={isLoading && !data}
+          onClearFilters={clearFilters}
           selectedIds={selectedIds}
           setSelectedIds={setSelectedIds}
           onTrigger={handleTrigger}
@@ -1801,9 +2040,8 @@ export default function RunsPage() {
         width={480}
       >
         <SignatureClusters
-          primaryCluster={model.primaryCluster}
-          outlierClusters={model.outlierClusters}
-          totalRuns={model.totalRuns}
+          model={model.signatures}
+          failed={signatureRequest.failed}
           onJumpToRow={onJumpToRow}
         />
       </SidePanel>

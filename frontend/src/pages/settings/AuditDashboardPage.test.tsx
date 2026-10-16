@@ -33,6 +33,7 @@ const mockUseProjectObservability = vi.fn()
 
 let activeProjectId: string | null = ALL_PROJECTS_ID
 let storedDays = 7
+const mockSetDays = vi.fn()
 
 vi.mock('react-hot-toast', () => ({ default: { success: vi.fn(), error: vi.fn() } }))
 
@@ -54,7 +55,7 @@ vi.mock('../../store/timeWindowStore', async () => {
   return {
     ...actual,
     useTimeWindowStore: (sel: (s: { days: number; setDays: () => void }) => unknown) =>
-      sel({ days: storedDays, setDays: vi.fn() }),
+      sel({ days: storedDays, setDays: mockSetDays }),
   }
 })
 
@@ -132,6 +133,34 @@ describe('a time window set on another page cannot empty this one', () => {
 
     const args = mockUseAuditEvents.mock.calls[0]?.[0] as { days?: number }
     expect(args.days).toBe(7)
+  })
+})
+
+// WIN-01: the dropdown offers 14 days like every windowed page, so a
+// fortnight picked elsewhere is shown and queried as a fortnight.
+describe('the 14-day window (WIN-01)', () => {
+  const windowSelect = () => screen.getByDisplayValue(/^Last \d+ days$/) as HTMLSelectElement
+
+  it('offers Last 7 / 14 / 30 / 90 days, in that order', () => {
+    renderPage()
+    expect(Array.from(windowSelect().options).map(o => o.textContent)).toEqual([
+      'Last 7 days', 'Last 14 days', 'Last 30 days', 'Last 90 days',
+    ])
+  })
+
+  it('choosing Last 14 days writes 14 to the shared window', () => {
+    renderPage()
+    fireEvent.change(windowSelect(), { target: { value: '14' } })
+    expect(mockSetDays).toHaveBeenCalledWith(14)
+  })
+
+  it('a stored 14 shows Last 14 days and asks the events for 14 days (no snap to 7)', () => {
+    storedDays = 14
+    renderPage()
+    expect(windowSelect()).toHaveValue('14')
+    const args = mockUseAuditEvents.mock.calls[0]?.[0] as { days?: number }
+    expect(args.days).toBe(14)
+    expect(mockSetDays).not.toHaveBeenCalled()
   })
 })
 

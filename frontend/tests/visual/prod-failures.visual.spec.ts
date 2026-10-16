@@ -19,6 +19,10 @@
  * Disclosure, opened first. NEW region `failures-score`: the stability meter
  * (G5) and its four dimensions left the verdict for the "How this score is
  * computed" Disclosure, captured open.
+ * W07: `failures-whats-failing` gains each row's expand toggle (FAIL-01), `failures-score` reads the measured
+ * Time to fix (FAIL-02, the fixture's 43.2 h median), `failures-categories` the `Classification hints` button
+ * (FAIL-10: `USER` is a QA lead); NEW region `failures-detail-row`: the first Top failing row expanded (its
+ * latest error, the stack head, the owner chip). The KPI strip (the new fifth tile) is in no region.
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { expect, test } from '@playwright/test'
@@ -51,7 +55,20 @@ for (const theme of THEMES) {
     await expect(whatsFailing.getByRole('img', { name: /^Run strip:/ })).toBeVisible()
 
     await visualRegion(page, 'failures-verdict', theme, landmark(page, 'Failure verdict'))
+    await expect(whatsFailing.locator('[data-failure-detail-toggle]').first()).toBeVisible()
     await visualRegion(page, 'failures-whats-failing', theme, whatsFailing)
+
+    // W07 FAIL-01: the first row expanded (its latest error, stack head, owner and "Open in run"), then
+    // collapsed again so the regions below keep their inputs.
+    const firstToggle = whatsFailing.locator('[data-failure-detail-toggle]').first()
+    await firstToggle.click()
+    const detailRow = whatsFailing.locator('[data-failure-detail]')
+    await expect(detailRow.locator('pre[data-failure-error]')).toBeVisible()
+    await expect(detailRow.locator('pre[data-failure-stack]')).toBeVisible()
+    await expect(detailRow.locator('[data-failure-owner]')).toContainText('assignee')
+    await visualRegion(page, 'failures-detail-row', theme, detailRow)
+    await firstToggle.click()
+    await expect(detailRow).toHaveCount(0)
 
     // The categories are a tab (P3): open it, then the two Disclosures below the tabs.
     await page.getByRole('tablist', { name: 'Failure analysis sections' }).getByRole('tab', { name: 'Categories' }).click()

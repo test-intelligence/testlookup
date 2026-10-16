@@ -47,7 +47,7 @@ Reports reflect the run they were generated from. Re-running analysis produces a
 
 ## The summary report
 
-**Reports → Summary** (`/reports/summary`, titled **Summary Report**) rolls up one project over a window (1, 7, 30 or 90 days); it asks you to pick a single project. It shows **Total tests**, **Pass %**, **Fail %**, **Broken %** and **Flaky**, a per-suite breakdown, the trend and the top failing tests.
+**Reports → Summary** (`/reports/summary`, titled **Summary Report**) rolls up one project over a window (1, 7, 14, 30 or 90 days); it asks you to pick a single project. It shows **Total tests**, **Pass %**, **Fail %**, **Broken %** and **Flaky**, a per-suite breakdown, the trend and the top failing tests.
 
 Its **aggregation** setting decides what is counted:
 
@@ -72,7 +72,7 @@ To export one chart instead, use its **Export** menu: see [Charts and visual ana
 
 ## Value metrics
 
-**Reports → Value** (`/value-metrics`, titled **Value Metrics**) answers "what is this saving us": an estimate of **engineer-hours saved in the last 30 days**, its full-time equivalent, a monthly trend, and the counters behind it (**Defects grouped**, **Duplicates avoided**, **Flaky tests found**, **Releases blocked**, **AI reports**). The headline is always the last 30 days; the window picker changes the counters, not the headline. **How is this calculated?** opens the full method.
+**Reports → Value** (`/value-metrics`, titled **Value Metrics**) answers "what is this saving us": an estimate of **engineer-hours saved** over the window you pick (7, 14, 30 or 90 days, or a year), its full-time equivalent, a monthly trend, and the counters behind it (**Defects grouped**, **Duplicates avoided**, **Flaky tests found**, **Releases blocked**, **AI reports**). The headline follows the window picker like the counters do, and says which window it covers (`Eng-hours saved · last 14 days`). **How is this calculated?** opens the full method.
 
 ### How the hours are estimated
 

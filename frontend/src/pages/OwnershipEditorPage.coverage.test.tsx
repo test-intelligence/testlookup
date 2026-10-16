@@ -28,6 +28,14 @@ vi.mock('@/hooks/useOwnershipRules', () => ({
   }),
   useCodeownersCoverage: () => coverageMock(),
 }))
+// FAIL-08: the page also renders the Java source roots section (its own SWR
+// read); these tests are about the badge, so the section reads an empty list.
+vi.mock('@/hooks/useSourceRoots', () => ({
+  useSourceRoots: () => ({
+    roots: [], maxRoots: 20, isLoading: false, isError: false,
+    refresh: vi.fn(), save: vi.fn(), preview: vi.fn(),
+  }),
+}))
 vi.mock('@/store/projectStore', () => ({
   ALL_PROJECTS_ID: '__ALL__',
   useProjectStore: vi.fn((selector: (s: { activeProjectId: string }) => unknown) =>

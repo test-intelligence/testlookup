@@ -5359,6 +5359,50 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Fallback Reason"
     },
+    "hint_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Hint Id"
+    },
+    "hint_match_field": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Hint Match Field"
+    },
+    "hint_pattern": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Hint Pattern"
+    },
+    "hint_set_by": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Hint Set By"
+    },
     "llm_model": {
       "anyOf": [
         {
@@ -7644,6 +7688,283 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## ClassificationHintCreate
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "category": {
+      "maxLength": 30,
+      "title": "Category",
+      "type": "string"
+    },
+    "enabled": {
+      "default": true,
+      "title": "Enabled",
+      "type": "boolean"
+    },
+    "match_field": {
+      "maxLength": 20,
+      "title": "Match Field",
+      "type": "string"
+    },
+    "note": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Note"
+    },
+    "pattern": {
+      "maxLength": 200,
+      "title": "Pattern",
+      "type": "string"
+    }
+  },
+  "required": [
+    "match_field",
+    "pattern",
+    "category"
+  ],
+  "title": "ClassificationHintCreate",
+  "type": "object"
+}
+```
+
+## ClassificationHintList
+
+```json
+{
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/ClassificationHintResponse"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "max_hints": {
+      "title": "Max Hints",
+      "type": "integer"
+    },
+    "total": {
+      "title": "Total",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "items",
+    "total",
+    "max_hints"
+  ],
+  "title": "ClassificationHintList",
+  "type": "object"
+}
+```
+
+## ClassificationHintPreview
+
+```json
+{
+  "properties": {
+    "examples": {
+      "default": [],
+      "items": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "type": "object"
+      },
+      "title": "Examples",
+      "type": "array"
+    },
+    "lookback_days": {
+      "title": "Lookback Days",
+      "type": "integer"
+    },
+    "matched": {
+      "title": "Matched",
+      "type": "integer"
+    },
+    "sampled": {
+      "title": "Sampled",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "matched",
+    "sampled",
+    "lookback_days"
+  ],
+  "title": "ClassificationHintPreview",
+  "type": "object"
+}
+```
+
+## ClassificationHintResponse
+
+```json
+{
+  "properties": {
+    "category": {
+      "title": "Category",
+      "type": "string"
+    },
+    "created_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Created At"
+    },
+    "created_by_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Created By Name"
+    },
+    "enabled": {
+      "title": "Enabled",
+      "type": "boolean"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "match_field": {
+      "title": "Match Field",
+      "type": "string"
+    },
+    "note": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Note"
+    },
+    "pattern": {
+      "title": "Pattern",
+      "type": "string"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "updated_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Updated At"
+    }
+  },
+  "required": [
+    "id",
+    "project_id",
+    "match_field",
+    "pattern",
+    "category",
+    "enabled"
+  ],
+  "title": "ClassificationHintResponse",
+  "type": "object"
+}
+```
+
+## ClassificationHintUpdate
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "category": {
+      "anyOf": [
+        {
+          "maxLength": 30,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Category"
+    },
+    "enabled": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Enabled"
+    },
+    "match_field": {
+      "anyOf": [
+        {
+          "maxLength": 20,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Match Field"
+    },
+    "note": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Note"
+    },
+    "pattern": {
+      "anyOf": [
+        {
+          "maxLength": 200,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Pattern"
+    }
+  },
+  "title": "ClassificationHintUpdate",
+  "type": "object"
+}
+```
+
 ## ClassifyUncategorizedRequest
 
 ```json
@@ -7918,6 +8239,11 @@ These are the full generated JSON Schema definitions, including required fields,
     "sampled": {
       "default": 0,
       "title": "Sampled",
+      "type": "integer"
+    },
+    "source_roots": {
+      "default": 0,
+      "title": "Source Roots",
       "type": "integer"
     }
   },
@@ -28047,6 +28373,82 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## RunBranchItem
+
+```json
+{
+  "properties": {
+    "branch": {
+      "title": "Branch",
+      "type": "string"
+    },
+    "last_run_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Last Run At"
+    },
+    "runs": {
+      "title": "Runs",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "branch",
+    "runs"
+  ],
+  "title": "RunBranchItem",
+  "type": "object"
+}
+```
+
+## RunBranchListResponse
+
+```json
+{
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/RunBranchItem"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "total": {
+      "title": "Total",
+      "type": "integer"
+    },
+    "truncated": {
+      "title": "Truncated",
+      "type": "boolean"
+    },
+    "window_days": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Window Days"
+    }
+  },
+  "required": [
+    "items",
+    "total",
+    "truncated"
+  ],
+  "title": "RunBranchListResponse",
+  "type": "object"
+}
+```
+
 ## RunBrief
 
 ```json
@@ -28867,6 +29269,138 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## RunSignatureBatchResponse
+
+```json
+{
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/RunSignatureItem"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "max_ids": {
+      "title": "Max Ids",
+      "type": "integer"
+    },
+    "rows_per_run_cap": {
+      "title": "Rows Per Run Cap",
+      "type": "integer"
+    },
+    "unavailable": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Unavailable",
+      "type": "array"
+    }
+  },
+  "required": [
+    "items",
+    "unavailable",
+    "max_ids",
+    "rows_per_run_cap"
+  ],
+  "title": "RunSignatureBatchResponse",
+  "type": "object"
+}
+```
+
+## RunSignatureEntry
+
+```json
+{
+  "properties": {
+    "count": {
+      "title": "Count",
+      "type": "integer"
+    },
+    "label": {
+      "title": "Label",
+      "type": "string"
+    },
+    "signature": {
+      "title": "Signature",
+      "type": "string"
+    },
+    "test_count": {
+      "title": "Test Count",
+      "type": "integer"
+    },
+    "tests": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Tests",
+      "type": "array"
+    }
+  },
+  "required": [
+    "signature",
+    "label",
+    "count",
+    "test_count",
+    "tests"
+  ],
+  "title": "RunSignatureEntry",
+  "type": "object"
+}
+```
+
+## RunSignatureItem
+
+```json
+{
+  "properties": {
+    "capped": {
+      "title": "Capped",
+      "type": "boolean"
+    },
+    "dominant": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Dominant"
+    },
+    "failing_tests": {
+      "title": "Failing Tests",
+      "type": "integer"
+    },
+    "read": {
+      "title": "Read",
+      "type": "integer"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "signatures": {
+      "items": {
+        "$ref": "#/components/schemas/RunSignatureEntry"
+      },
+      "title": "Signatures",
+      "type": "array"
+    }
+  },
+  "required": [
+    "run_id",
+    "failing_tests",
+    "read",
+    "capped",
+    "signatures"
+  ],
+  "title": "RunSignatureItem",
+  "type": "object"
+}
+```
+
 ## RunTimeline
 
 ```json
@@ -29671,6 +30205,115 @@ These are the full generated JSON Schema definitions, including required fields,
     }
   },
   "title": "RunTimingWorkers",
+  "type": "object"
+}
+```
+
+## RunVerdictBatchResponse
+
+```json
+{
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/RunVerdictItem"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "max_ids": {
+      "title": "Max Ids",
+      "type": "integer"
+    },
+    "unavailable": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Unavailable",
+      "type": "array"
+    }
+  },
+  "required": [
+    "items",
+    "unavailable",
+    "max_ids"
+  ],
+  "title": "RunVerdictBatchResponse",
+  "type": "object"
+}
+```
+
+## RunVerdictItem
+
+```json
+{
+  "description": "One run of ``GET /runs/ai-verdicts``: what its AI-verdict pill is computed from.",
+  "properties": {
+    "analysed": {
+      "title": "Analysed",
+      "type": "boolean"
+    },
+    "generated_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Generated At"
+    },
+    "review": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Review"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "snapshot": {
+      "title": "Snapshot",
+      "type": "boolean"
+    },
+    "stale": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Stale"
+    },
+    "verdict_inputs": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Verdict Inputs"
+    }
+  },
+  "required": [
+    "run_id",
+    "snapshot",
+    "analysed"
+  ],
+  "title": "RunVerdictItem",
   "type": "object"
 }
 ```
@@ -31651,6 +32294,126 @@ These are the full generated JSON Schema definitions, including required fields,
     "message"
   ],
   "title": "SmtpTestResult",
+  "type": "object"
+}
+```
+
+## SourceRoot
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "prefix": {
+      "default": "",
+      "maxLength": 255,
+      "title": "Prefix",
+      "type": "string"
+    },
+    "root": {
+      "maxLength": 500,
+      "title": "Root",
+      "type": "string"
+    }
+  },
+  "required": [
+    "root"
+  ],
+  "title": "SourceRoot",
+  "type": "object"
+}
+```
+
+## SourceRootsPreview
+
+```json
+{
+  "properties": {
+    "examples": {
+      "default": [],
+      "items": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "type": "object"
+      },
+      "title": "Examples",
+      "type": "array"
+    },
+    "java_frames": {
+      "title": "Java Frames",
+      "type": "integer"
+    },
+    "located": {
+      "title": "Located",
+      "type": "integer"
+    },
+    "lookback_days": {
+      "title": "Lookback Days",
+      "type": "integer"
+    },
+    "matched": {
+      "title": "Matched",
+      "type": "integer"
+    },
+    "sampled": {
+      "title": "Sampled",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "sampled",
+    "java_frames",
+    "located",
+    "matched",
+    "lookback_days"
+  ],
+  "title": "SourceRootsPreview",
+  "type": "object"
+}
+```
+
+## SourceRootsResponse
+
+```json
+{
+  "properties": {
+    "max_roots": {
+      "default": 20,
+      "title": "Max Roots",
+      "type": "integer"
+    },
+    "roots": {
+      "items": {
+        "$ref": "#/components/schemas/SourceRoot"
+      },
+      "title": "Roots",
+      "type": "array"
+    }
+  },
+  "required": [
+    "roots"
+  ],
+  "title": "SourceRootsResponse",
+  "type": "object"
+}
+```
+
+## SourceRootsUpdate
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "roots": {
+      "items": {
+        "$ref": "#/components/schemas/SourceRoot"
+      },
+      "title": "Roots",
+      "type": "array"
+    }
+  },
+  "title": "SourceRootsUpdate",
   "type": "object"
 }
 ```

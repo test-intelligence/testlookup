@@ -4,7 +4,7 @@
  *
  *   Header  → `PageHeader` (compact, **?** = the failure-analysis topic's
  *             "promoting to a defect"), actions in this order: Views
- *             (secondary) · the window (7 / 30 / 90 d: the KPI sparklines,
+ *             (secondary) · the window (7 / 14 / 30 / 90 d: the KPI sparklines,
  *             Time to resolve and Escape rate) · "Only this release" (only
  *             with ONE release picked in the top bar; `?scope=release`) · the
  *             suite · "New defect" (primary). Still no toolbar row (the fold
@@ -632,7 +632,7 @@ const OLDEST_P0_DOMAIN = [0, 7] as const
 const OLDEST_P0_BANDS: GaugeBands = { direction: 'lower-is-better', thresholds: [2, 5] }
 
 /** The window options: the KPI sparklines, Time to resolve and Escape rate. The table lists every defect. */
-const DEFECT_WINDOWS = [7, 30, 90] as const
+const DEFECT_WINDOWS = [7, 14, 30, 90] as const
 const WINDOW_TITLE = 'Window for the KPI sparklines, Time to resolve and Escape rate. The table lists every defect.'
 /** U+2212, the closed count's sign in a point's hover text. */
 const MINUS = '−'
@@ -1376,7 +1376,7 @@ export default function DefectsPage() {
   }, [setSearchParams])
 
   // DEF-04: the window (the KPI sparklines, Time to resolve and Escape rate;
-  // the table lists every defect). The global window, snapped to 7 / 30 / 90.
+  // the table lists every defect). The global window, snapped to 7 / 14 / 30 / 90.
   const storedDays = useTimeWindowStore(s => s.days)
   const days = snapToAllowed(storedDays, DEFECT_WINDOWS)
 

@@ -7,7 +7,7 @@
 When a run finishes, every failed or broken test that nobody owns yet is assigned automatically, to the first of:
 
 1. the **suite owner** set for its suite;
-2. the owner from a **path rule or CODEOWNERS** match;
+2. the owner from a **path rule or CODEOWNERS** match (a Java, Kotlin or Groovy trace counts once the project lists its Java source roots on [Ownership](/docs/administration#ownership));
 3. one of the project's **QA leads**, spread evenly (this includes the project's default QA-lead account);
 4. the **project manager**;
 5. one of the **administrators**, spread evenly.
@@ -16,7 +16,7 @@ If none exists, the failure stays unassigned. A failure you reassigned by hand i
 
 ## Assigned to me
 
-The list shows the failed and broken tests assigned to you that are still **Pending review**, within the window you pick (24h, 7d or 30d). It refreshes every 30 seconds.
+The list shows the failed and broken tests assigned to you that are still **Pending review**, within the window you pick (24h, 7d, 14d or 30d). It refreshes every 30 seconds.
 
 Each row shows the test (with its error, the step it failed at, and why it was assigned to you when a CODEOWNERS or path rule did it), the suite, the run, how many times it failed, and how long it has waited. Click a row to open the test result. Empty, the tab says **You're caught up**.
 

@@ -16,6 +16,8 @@ import {
 } from '../services/ownershipService';
 import { useProjectStore, ALL_PROJECTS_ID } from '../store/projectStore';
 import { useCodeownersCoverage, useOwnershipRules } from '../hooks/useOwnershipRules';
+import { usePermissions } from '../hooks/usePermissions';
+import SourceRootsSection from '../components/ownership/SourceRootsSection';
 
 const HELP_TOPIC = helpTopicParam('/ownership');
 
@@ -27,13 +29,23 @@ const TITLE = 'Ownership';
  * UX redesign P5: a team's notification channel (US-7.3) was the last section
  * here; it is a notification setting, so it is its own page now
  * (`/settings/team-channels`, `TeamChannelsPage`), linked below the rules.
+ *
+ * W07 FAIL-08: under the rules, "Java source roots" (`SourceRootsSection`)
+ * tells every locator where the project's JVM test sources live, so Java
+ * failures are routed by path too; the coverage badge's tooltip says how many
+ * roots it located Java traces through.
  */
 export default function OwnershipEditorPage() {
   const activeProjectId = useProjectStore(s => s.activeProjectId);
   const projectId = activeProjectId === ALL_PROJECTS_ID ? null : activeProjectId;
+  const { isQaLead } = usePermissions();
 
   const { rules, isLoading: loading, isError, refresh } = useOwnershipRules(projectId);
   const { coverage, refresh: refreshCoverage } = useCodeownersCoverage(projectId);
+  const sourceRoots = coverage?.source_roots ?? 0;
+  const javaSentence = sourceRoots > 0
+    ? `Java traces are located through ${sourceRoots} source root(s).`
+    : 'Java stack traces are not located.';
 
   // CODEOWNERS import dialog (US-8.3)
   const [showImport, setShowImport] = useState(false);
@@ -125,8 +137,8 @@ export default function OwnershipEditorPage() {
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)]"
               title={
                 coverage.coverage_pct === null
-                  ? `Not measurable: none of the ${coverage.sampled} recently-failing test(s) could be traced to a file path (last ${coverage.lookback_days}d), so there is nothing for a path rule to cover. Java stack traces are not located. ${coverage.codeowners_rules} CODEOWNERS rule(s).`
-                  : `${coverage.matched}/${coverage.located} recently-failing test paths matched a path rule (last ${coverage.lookback_days}d). ${coverage.codeowners_rules} CODEOWNERS rule(s).`
+                  ? `Not measurable: none of the ${coverage.sampled} recently-failing test(s) could be traced to a file path (last ${coverage.lookback_days}d), so there is nothing for a path rule to cover. ${javaSentence} ${coverage.codeowners_rules} CODEOWNERS rule(s).`
+                  : `${coverage.matched}/${coverage.located} recently-failing test paths matched a path rule (last ${coverage.lookback_days}d). ${sourceRoots > 0 ? `${javaSentence} ` : ''}${coverage.codeowners_rules} CODEOWNERS rule(s).`
               }
             >
               Coverage
@@ -262,6 +274,8 @@ export default function OwnershipEditorPage() {
         </div>
       )}
       </div>
+
+      <SourceRootsSection projectId={projectId} canEdit={isQaLead} onSaved={() => { refreshCoverage(); }} />
 
       <p data-team-channels-link="" className="text-sm text-[var(--color-text-muted)]">
         To send a team&apos;s alerts to its own Slack, Teams or email channel, use{' '}

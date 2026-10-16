@@ -8,6 +8,17 @@ Provides:
   - save_snapshot: persists a computed intelligence payload
   - mark_stale: flags a snapshot as stale (triggers re-compute on next read)
   - invalidate: deletes a snapshot (used after re-analysis)
+  - rebuild_snapshot: recompute + save after a pipeline's invalidate (worker only)
+  - has_servable_snapshot: the rebuild task's idempotency check
+
+``test_runs.ai_recommendation`` (W07 FAIL-05, migration 0214) is the PROJECTION
+of the run's servable snapshot: ``run_verdict.ai_recommendation_of`` of the
+payload ``save_snapshot`` stores, written in the snapshot's own transaction,
+cleared by both deletes (``invalidate`` / ``stage_invalidate``), untouched by
+``mark_stale`` (a stale snapshot is still served). These are its only writers
+(``tests/regression/test_ai_recommendation_follows_the_snapshot.py``); each one
+leaves ``test_runs.updated_at`` where it was, because live-run recovery picks
+its candidates by ``updated_at``.
 
 Schema:
   Snapshots are stored in run_intelligence_snapshots with:
@@ -31,11 +42,12 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.postgres import AgentMemoryEntry, RunIntelligenceSnapshot
+from app.models.postgres import AgentMemoryEntry, RunIntelligenceSnapshot, TestRun
 from app.services.agent_memory_service import _active_memory_filters, build_memory_reference
+from app.services.run_verdict import ai_recommendation_of
 
 logger = logging.getLogger("services.intelligence_snapshot")
 
@@ -307,6 +319,12 @@ async def save_snapshot(
         run_id=run_id,
         payload=payload,
     )
+    # The list's AI-verdict column, from the payload exactly as stored, in the
+    # snapshot's own transaction (W07 FAIL-05). Written BEFORE the snapshot row
+    # is: every writer locks the run's row first, then the snapshot's -- the
+    # order a run deletion takes them in (ON DELETE CASCADE), so the two never
+    # wait on each other in opposite orders.
+    await _set_ai_recommendation(db, run_id, ai_recommendation_of(payload))
 
     if existing:
         existing.payload = payload
@@ -326,6 +344,112 @@ async def save_snapshot(
 
     await db.commit()
     logger.debug("Snapshot saved for run %s", run_id)
+
+
+async def _set_ai_recommendation(db: AsyncSession, run_id: uuid.UUID, value: Optional[str]) -> None:
+    """Stage ``test_runs.ai_recommendation = value`` for one run, leaving ``updated_at`` as it is.
+
+    ``TestRun.updated_at`` carries ``onupdate=func.now()``; setting it to itself
+    keeps a projection write from making the run a live-recovery candidate again
+    (``live_run_recovery_service`` selects by ``updated_at``).
+    """
+    # analytics-epoch: none — sets ai_recommendation only; the /runs list is not an analytics read
+    await db.execute(
+        update(TestRun)
+        .where(TestRun.id == run_id)
+        .values(ai_recommendation=value, updated_at=TestRun.updated_at)
+        .execution_options(synchronize_session=False)
+    )
+
+
+async def has_servable_snapshot(db: AsyncSession, run_id: uuid.UUID) -> bool:
+    """A snapshot the reads would serve exists (fresh or stale, ``schema_version`` current).
+
+    The worker's rebuild task asks this first, so a duplicate enqueue, or a run
+    whose Analysis tab was opened in the meantime, costs one indexed read
+    (``ix_ris_run_id``) and nothing else.
+    """
+    result = await db.execute(
+        select(RunIntelligenceSnapshot.id)
+        .where(
+            RunIntelligenceSnapshot.run_id == run_id,
+            RunIntelligenceSnapshot.schema_version >= CURRENT_SCHEMA_VERSION,
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none() is not None
+
+
+async def rebuild_snapshot(
+    db: AsyncSession,
+    run_id: uuid.UUID,
+    mongo,
+    *,
+    build_wait_seconds: float = 0.0,
+) -> bool:
+    """Recompute the run's intelligence and save it as its snapshot. Never raises.
+
+    Called by the worker task ``rebuild_run_snapshot``, which the pipeline task
+    queues right after its ``invalidate`` (the CALLER invalidates first: a
+    completed pipeline replaces the analysis wholesale), on that task's own
+    session -- never on an API request path.
+    Without it nothing rebuilt the snapshot until someone opened the run's
+    Analysis tab, and the Runs list (which reads stored snapshots only) showed
+    "no verdict" for exactly the runs people look at first.
+
+    A payload with ``defect_candidates_pending`` is never cached (``save_snapshot``
+    skips it). A run's FIRST intelligence read is pending whenever it has failure
+    clusters and no persisted candidates -- the read schedules their build in the
+    background -- which is most freshly analysed failed runs. So, given a
+    ``build_wait_seconds`` budget, the rebuild waits (bounded) for that build,
+    with the session's connection handed back meanwhile, and reads once more.
+    Inside a worker task the build would otherwise be cancelled with the task's
+    other stragglers when it ends (``worker/loop_runner._cancel_stragglers``).
+
+    Returns True when a snapshot was saved; False when the payload stayed
+    pending or anything failed. A failure is logged with the exception CLASS only
+    and leaves the run as it is (no snapshot).
+    """
+    try:
+        from app.services.run_intelligence_service import get_run_intelligence
+
+        payload = await get_run_intelligence(run_id, db, mongo)
+        if isinstance(payload, dict) and payload.get("defect_candidates_pending") and build_wait_seconds > 0:
+            if await _wait_for_defect_candidate_builds(db, build_wait_seconds):
+                payload = await get_run_intelligence(run_id, db, mongo)
+        if not isinstance(payload, dict) or payload.get("defect_candidates_pending"):
+            # save_snapshot would skip it too; say so without a write.
+            return False
+        provenance = payload.get("provenance")
+        fallback = provenance.get("fallback_used", False) if isinstance(provenance, dict) else False
+        await save_snapshot(db, run_id, payload, fallback_used=fallback)
+        return True
+    except Exception as exc:  # noqa: BLE001 — a warm-up is best effort
+        logger.warning(
+            "snapshot_rebuild_failed",
+            extra={"run_id": str(run_id), "error_type": type(exc).__name__},
+        )
+        return False
+
+
+async def _wait_for_defect_candidate_builds(db: AsyncSession, timeout: float) -> bool:
+    """Wait up to ``timeout`` s for the in-flight background defect-candidate builds.
+
+    True when every one finished in time (or none was in flight). The session's
+    connection is handed back first: the build takes its own, and an idle hold
+    for the whole wait would cost the worker's small pool a connection for nothing.
+    """
+    import asyncio
+
+    from app.db.postgres import release_read_connection
+    from app.services import run_intelligence_service
+
+    tasks = [t for t in getattr(run_intelligence_service, "_DEFECT_BUILD_TASKS", ()) if not t.done()]
+    if not tasks:
+        return True
+    await release_read_connection(db)
+    _, still_running = await asyncio.wait(tasks, timeout=timeout)
+    return not still_running
 
 
 async def mark_stale(
@@ -374,6 +498,9 @@ async def stage_invalidate(
     to one CI poller, is the whole defect — reducing the window from "forever"
     to "one request" would not be a fix for a release gate.
     """
+    # No snapshot, no list verdict: staged with the delete (W07 FAIL-05); the
+    # run's row first, then the snapshot's (``save_snapshot``'s lock order).
+    await _set_ai_recommendation(db, run_id, None)
     result = await db.execute(
         delete(RunIntelligenceSnapshot).where(
             RunIntelligenceSnapshot.run_id == run_id,
@@ -392,6 +519,9 @@ async def invalidate(
     run_id: uuid.UUID,
 ) -> bool:
     """Delete a snapshot entirely (used after re-analysis). Returns True if deleted."""
+    # No snapshot, no list verdict: in the delete's transaction (W07 FAIL-05);
+    # the run's row first, then the snapshot's (``save_snapshot``'s lock order).
+    await _set_ai_recommendation(db, run_id, None)
     result = await db.execute(
         delete(RunIntelligenceSnapshot).where(
             RunIntelligenceSnapshot.run_id == run_id,

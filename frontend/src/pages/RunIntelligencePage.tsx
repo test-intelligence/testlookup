@@ -85,6 +85,7 @@ import { copyTextToClipboard } from '@/utils/clipboard'
 import { computeRunOutcome } from '@/utils/runOutcome'
 import GaugeBar from '@/components/charts/GaugeBar'
 import { readReportVersion } from './run/runActions'
+import { orderActionRows } from '@/utils/persona'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 type Gate = 'GO' | 'CONDITIONAL_GO' | 'NO_GO' | 'PENDING'
@@ -901,6 +902,12 @@ function CriticalityPill({ criticality }: { criticality: FailureClusterIntel['cr
 // Per updated README §5.8:
 //   - Default order: Developer → QA → Release Manager → SRE. (The persona
 //     tabs that re-ordered it were removed in P4.)
+//   - FAIL-07 (owner decision D03): the reader's own role's row comes first
+//     — a tester, QA engineer or QA lead sees QA first, an admin Release
+//     Manager — marked with a muted "· your role". Zero chrome: no tabs, no
+//     segmented control, nothing stored; a viewer (or an unknown role) keeps
+//     the default order; the other rows keep their relative order
+//     (`utils/persona.ts`).
 //   - Rows that have no copy in `roleActions` are rendered dimmed (60 %
 //     opacity) and locked, not hidden — the spec wants the read of "this
 //     role has nothing to do this run" to be explicit, not invisible.
@@ -911,13 +918,15 @@ function RecommendedActionsCard({
   roleActions: Record<string, string>
   ownerHints?: Record<string, string>
 }) {
+  const { role } = usePermissions()
   type Row = { id: string; label: string; tone: 'dev' | 'qa' | 'rm' | 'sre'; Icon: typeof Wrench }
-  const orderedRows: Row[] = [
+  const defaultRows: Row[] = [
     { id: 'DEVELOPER',       label: 'Developer',       tone: 'dev', Icon: Wrench      },
     { id: 'QA',              label: 'QA',              tone: 'qa',  Icon: UserRound   },
     { id: 'RELEASE_MANAGER', label: 'Release Manager', tone: 'rm',  Icon: ShieldCheck },
     { id: 'SRE',             label: 'SRE',             tone: 'sre', Icon: Stethoscope },
   ]
+  const { rows: orderedRows, movedId } = orderActionRows(defaultRows, role)
 
   // We render every canonical role even when the action prose is empty —
   // dimmed rows are intentional per §5.8 ("de-prioritized roles").
@@ -957,6 +966,7 @@ function RecommendedActionsCard({
               owner={owner}
               text={txt ?? 'No action required for this role this run.'}
               dim={dim}
+              yourRole={r.id === movedId}
               onCopy={() => txt && copyText(txt)}
             />
           )
@@ -967,7 +977,7 @@ function RecommendedActionsCard({
 }
 
 function RoleRow({
-  tone, Icon, label, owner, text, dim, onCopy,
+  tone, Icon, label, owner, text, dim, yourRole = false, onCopy,
 }: {
   tone: 'dev' | 'qa' | 'rm' | 'sre'
   Icon: typeof Wrench
@@ -975,6 +985,8 @@ function RoleRow({
   owner?: string
   text: string
   dim: boolean
+  /** The reader's own role's row, moved first (FAIL-07): a muted "· your role". */
+  yourRole?: boolean
   onCopy: () => void
 }) {
   const pal = {
@@ -987,6 +999,8 @@ function RoleRow({
     <div
       className={clsx('grid gap-2.5 px-3 py-2.5 rounded-md border items-start', dim && 'opacity-65')}
       style={{ gridTemplateColumns: '22px 1fr auto', background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
+      data-action-row={label}
+      {...(yourRole ? { 'data-persona-first': '' } : {})}
     >
       <span className="inline-flex items-center justify-center rounded-full" style={{ width: 22, height: 22, background: pal.bg, color: pal.fg }}>
         <Icon className="h-3 w-3" />
@@ -996,7 +1010,14 @@ function RoleRow({
           className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] flex items-center gap-1.5"
           style={{ letterSpacing: 'var(--tracking-wider)' }}
         >
-          {label}
+          <span>
+            {label}
+            {yourRole && (
+              <span data-your-role="" className="font-normal text-[var(--color-text-faint)]" style={{ textTransform: 'none', letterSpacing: 0 }}>
+                {' · your role'}
+              </span>
+            )}
+          </span>
           {owner && (
             <span
               className="font-mono text-[11px] text-[var(--color-text-secondary)] px-1.5 py-px rounded-sm"

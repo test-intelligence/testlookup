@@ -425,3 +425,51 @@ async def test_summary_llm_mode_returns_empty_dict_signal():
     """LLM mode means caller should defer to SummaryAgent — sentinel is {}."""
     out = await generate_summary({}, {}, mode=AnalysisMode.LLM)
     assert out == {}
+
+
+# ── W07 FAIL-10: project classification hints win over every engine ─────────
+
+
+def _hints(**overrides):
+    hint = {
+        "id": "hint-1", "match_field": "error_message", "pattern": "ECONNREFUSED",
+        "category": "INFRASTRUCTURE", "note": None, "enabled": True,
+        "created_by_name": "Priya Nair", "created_at": "2026-10-01T00:00:00+00:00",
+    }
+    hint.update(overrides)
+    return [hint]
+
+
+_HINTED_TC = {"test_case_id": "tc-h", "test_name": "test_pays", "error_message": "connect ECONNREFUSED sandbox"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", [AnalysisMode.RULES, AnalysisMode.ML, AnalysisMode.LLM, None])
+async def test_a_matching_hint_answers_before_any_engine(mode, monkeypatch):
+    def _engine(*_a, **_k):
+        raise AssertionError("an engine ran although a project hint matched")
+
+    monkeypatch.setattr(analysis_router, "_classify_rules", _engine)
+    monkeypatch.setattr(analysis_router, "_classify_ml", _engine)
+    monkeypatch.setattr(analysis_router, "_classify_llm", _engine)
+
+    result = await classify_test(_HINTED_TC, run_context={"classification_hints": _hints()}, mode=mode)
+
+    assert result["failure_category"] == "INFRASTRUCTURE"
+    assert result["_routing"]["mode_used"] == "hint"
+    assert result["_routing"]["source"] == "project_hint"
+    assert result["_routing"]["hint_id"] == "hint-1"
+    assert result["_routing"]["prompt_versions"] == {}
+    assert result["confidence_basis"] == "project_hint"
+
+
+@pytest.mark.asyncio
+async def test_no_match_or_a_disabled_hint_dispatches_as_before():
+    plain = {"test_case_id": "tc-p", "test_name": "test_pays", "error_message": "AssertionError: 3 != 4"}
+    result = await classify_test(plain, run_context={"classification_hints": _hints()}, mode=AnalysisMode.RULES)
+    assert result["_routing"]["mode_used"] == "rules"
+    disabled = await classify_test(
+        _HINTED_TC, run_context={"classification_hints": _hints(enabled=False)}, mode=AnalysisMode.RULES,
+    )
+    assert disabled["_routing"]["mode_used"] == "rules"
+    assert "hint_id" not in disabled["_routing"]

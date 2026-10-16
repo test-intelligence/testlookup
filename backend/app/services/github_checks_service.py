@@ -46,7 +46,7 @@ import uuid
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Mapping, Optional, Sequence
 from urllib.parse import urlparse
 
 import httpx
@@ -413,7 +413,97 @@ def _normalize_repo_path(raw: str) -> Optional[str]:
     return path
 
 
-def locate_in_trace(text: Optional[str]) -> Optional[tuple[str, int]]:
+# JVM frame (JUnit / TestNG / Kotlin / Groovy / Scala):
+#   "at com.acme.pay.CheckoutTest.pays(CheckoutTest.java:42)"
+# group 1 = the qualified class (``Outer$Inner`` kept), 2 = the method
+# (``lambda$pays$0``, ``<init>``), 3 = the FILE name, 4 = the line. The frame
+# names a class and a file, never a path: only a project's configured source
+# roots (FAIL-08, ``projects.source_roots``) turn it into a repo path.
+_JAVA_FRAME_RE = re.compile(
+    r"\bat\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.([\w$<>]+)"
+    r"\(([\w$-]+\.(?:java|kt|groovy|scala)):(\d+)\)"
+)
+
+# Packages that are never the repo's own code: the JDK, the language
+# runtimes, the test frameworks and the build tools. Compared against
+# ``qualified + "."`` so ``java.`` never matches ``javafoo.``.
+_JAVA_VENDOR_PREFIXES = (
+    "java.", "javax.", "jdk.", "sun.", "com.sun.", "kotlin.", "kotlinx.", "scala.", "groovy.",
+    "org.junit.", "junit.", "org.testng.", "org.springframework.", "org.apache.maven.", "org.gradle.",
+    "org.hamcrest.", "org.assertj.", "org.mockito.", "net.bytebuddy.", "org.codehaus.groovy.",
+    "jdk.internal.", "worker.org.gradle.",
+)
+
+
+def has_java_frame(text: Optional[str]) -> bool:
+    """True when ``text`` holds at least one JVM ``at pkg.Cls.m(File.java:N)``
+    frame (vendor or not) — the source-roots preview's ``java_frames``."""
+    return bool(text) and _JAVA_FRAME_RE.search(text or "") is not None
+
+
+def _root_for_package(
+    package: str, roots: Sequence[Mapping[str, str]],
+) -> Optional[str]:
+    """The root whose non-empty ``prefix`` is the LONGEST equal to
+    ``package`` or a dotted ancestor of it; else the first ``""`` root;
+    else ``None`` (the frame is skipped, never guessed)."""
+    best: Optional[str] = None
+    best_len = -1
+    fallback: Optional[str] = None
+    for entry in roots:
+        prefix = str(entry.get("prefix") or "")
+        root = str(entry.get("root") or "")
+        if not root:
+            continue
+        if not prefix:
+            if fallback is None:
+                fallback = root
+            continue
+        if (package == prefix or package.startswith(prefix + ".")) and len(prefix) > best_len:
+            best, best_len = root, len(prefix)
+    return best if best is not None else fallback
+
+
+def locate_java_frame(
+    text: Optional[str], roots: Sequence[Mapping[str, str]],
+) -> Optional[tuple[str, int]]:
+    """``(repo_relative_path, line)`` of the innermost NON-vendor JVM frame the
+    project's ``roots`` can place, or ``None``.
+
+    A JVM trace lists the innermost frame first and its ``Caused by:``
+    sections follow; every frame is tried in order. The FILE name comes from
+    the frame (right for ``Outer$Inner``, ``lambda$pays$0`` and Kotlin's
+    ``FooTest.kt`` whose class is ``FooTestKt``); the directory is the root
+    plus the package as a path. With no roots nothing is located."""
+    if not text or not roots:
+        return None
+    for m in _JAVA_FRAME_RE.finditer(text):
+        qualified = m.group(1)
+        if any((qualified + ".").startswith(p) for p in _JAVA_VENDOR_PREFIXES):
+            continue
+        line = int(m.group(4))
+        if line <= 0:
+            continue
+        package = qualified.rsplit(".", 1)[0] if "." in qualified else ""
+        root = _root_for_package(package, roots)
+        if root is None:
+            continue
+        file_name = m.group(3)
+        raw = (
+            f"{root}/{package.replace('.', '/')}/{file_name}"
+            if package else f"{root}/{file_name}"
+        )
+        path = _normalize_repo_path(raw)
+        if path:
+            return path, line
+    return None
+
+
+def locate_in_trace(
+    text: Optional[str],
+    *,
+    java_roots: Optional[Sequence[Mapping[str, str]]] = None,
+) -> Optional[tuple[str, int]]:
     """Extract a ``(repo_relative_path, line)`` failure location from a
     stack trace, or ``None`` when no honest location is derivable.
 
@@ -426,8 +516,10 @@ def locate_in_trace(text: Optional[str]) -> Optional[tuple[str, int]]:
       repo-relative ``at ... (path.ts:12:34)`` frame wins;
       ``node_modules`` and ``node:internal`` frames are skipped.
     * **Java** surefire frames (``at pkg.Cls.m(Cls.java:42)``) carry a
-      bare file name, NOT a repo-relative path (the ``src/test/java``
-      prefix is unknowable) — deliberately unlocated rather than guessed.
+      bare file name, NOT a repo-relative path. They are located ONLY
+      through the project's configured ``java_roots`` (FAIL-08,
+      ``locate_java_frame``); with none, Java stays unlocated rather than
+      guessed — exactly the pre-FAIL-08 answer.
     """
     if not text:
         return None
@@ -441,15 +533,20 @@ def locate_in_trace(text: Optional[str]) -> Optional[tuple[str, int]]:
         line = int(m.group(2))
         if path and line > 0:
             return path, line
+    if java_roots:
+        return locate_java_frame(text, java_roots)
     return None
 
 
-def _locate_failure(tc: Any) -> Optional[tuple[str, int]]:
+def _locate_failure(
+    tc: Any, java_roots: Optional[Sequence[Mapping[str, str]]] = None,
+) -> Optional[tuple[str, int]]:
     """Locate a failing test: full stack trace first, then the (often
-    trace-bearing) error message."""
+    trace-bearing) error message. ``java_roots`` are the run's project's
+    source roots (loaded once per run by ``_gather_enrichment``)."""
     return (
-        locate_in_trace(getattr(tc, "stack_trace", None))
-        or locate_in_trace(getattr(tc, "error_message", None))
+        locate_in_trace(getattr(tc, "stack_trace", None), java_roots=java_roots)
+        or locate_in_trace(getattr(tc, "error_message", None), java_roots=java_roots)
     )
 
 
@@ -497,6 +594,9 @@ class _CheckEnrichment:
     # AI-4: {str(test_case_id): display label} for failures whose kind
     # confidence met the display floor — empty entries mean no label.
     kind_labels: dict[str, str] = field(default_factory=dict)
+    # FAIL-08: the run's project's Java source roots, loaded ONCE per run;
+    # empty = Java frames stay unlocated (the pre-FAIL-08 behaviour).
+    java_roots: list[dict[str, str]] = field(default_factory=list)
 
     @property
     def all_failures_flaky(self) -> bool:
@@ -588,7 +688,7 @@ def _build_annotations(
         # display floor (kind_labels_for_test_cases applied it) — otherwise
         # the annotation renders exactly as before.
         kind_label = enrich.kind_labels.get(str(getattr(tc, "id", "") or ""))
-        loc = _locate_failure(tc)
+        loc = _locate_failure(tc, enrich.java_roots)
         if loc is None:
             non_locatable.append({
                 "name": str(getattr(tc, "test_name", None) or fp),
@@ -657,6 +757,10 @@ async def _gather_enrichment(
         if getattr(tc, "id", None) is not None
     ]
     enrich.kind_labels = await kind_labels_for_test_cases(db, failing_ids)
+    # FAIL-08: Java frames are located through the project's source roots —
+    # one read per run, never per frame; ``load_source_roots`` never raises.
+    from app.services.codeowners_service import load_source_roots
+    enrich.java_roots = await load_source_roots(db, run.project_id)
     return enrich
 
 

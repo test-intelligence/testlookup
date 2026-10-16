@@ -116,6 +116,13 @@ describe('basisLabel', () => {
     expect(basisLabel('heuristic_estimate').label).toBe('estimated')
   })
 
+  it("FAIL-10: names a project hint as a QA lead's rule, not a model", () => {
+    expect(basisLabel('project_hint')).toEqual({
+      label: 'project hint',
+      title: "Classification set by a project hint (a QA lead's rule), not by a model",
+    })
+  })
+
   it('defaults unknown / absent values to estimated, not calibrated', () => {
     expect(basisLabel(null).label).toBe('estimated')
     expect(basisLabel(undefined).label).toBe('estimated')
@@ -161,5 +168,10 @@ describe('engineLabel', () => {
     expect(engineLabel('llm')).toBe('LLM')
     expect(engineLabel('some_new_engine')).toBe('some new engine')
     expect(engineLabel(null)).toBe('unknown engine')
+  })
+
+  it('FAIL-10: the hint engine (`mode_used: hint`) reads "project hint"', () => {
+    expect(engineLabel('hint')).toBe('project hint')
+    expect(engineLabel('HINT')).toBe('project hint')
   })
 })

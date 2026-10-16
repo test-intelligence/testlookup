@@ -4,7 +4,7 @@
  *
  *   Assigned to me (default) → the auto-assigned failures (migration 0080),
  *       from /api/v1/me/assigned-failures, polled every 30 s. Toolbar: the
- *       global `WindowPicker` (24h · 7d · 30d) and, for QA leads, the
+ *       global `WindowPicker` (24h · 7d · 14d · 30d) and, for QA leads, the
  *       Mine/Team scope (`?scope=team` on the same endpoint). One table, the
  *       page's primary content (`data-primary`), two lines a row: test name
  *       over its error · failing step · assignment reason; suite; run number
@@ -46,8 +46,9 @@ import type { MyFailureItem, TriageStatus } from '@/types/myFailures'
 import ApprovalsTab, { ApprovalsCountBadge } from './inbox/ApprovalsTab'
 import ChipFilter from './inbox/ChipFilter'
 
-// Time-window chips. The backend allows 1-365; surface the most useful three.
-const DAYS_OPTIONS = [1, 7, 30] as const
+// Time-window chips. The backend allows 1-365; surface the most useful four
+// (14d since WIN-01, so a fortnight picked on another page stays a fortnight).
+const DAYS_OPTIONS = [1, 7, 14, 30] as const
 
 const INBOX_TABS = ['assigned', 'approvals'] as const
 

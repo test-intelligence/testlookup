@@ -12,7 +12,7 @@ Trigger the LangChain ReAct agent to investigate a failed test case.
 Returns a structured root-cause analysis with confidence scoring, role-aware
 recommended actions, and a 'confidence_why' breakdown showing the evidence basis.
 
-Source: [backend/app/routers/analyze.py:248](../../../backend/app/routers/analyze.py#L248).
+Source: [backend/app/routers/analyze.py:258](../../../backend/app/routers/analyze.py#L258).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -94,7 +94,7 @@ Fetch existing AI analysis for a test case (no re-run)
 Return the previously stored AI analysis for a test case without triggering
 a new LLM run.  Returns 404 if no analysis has been run yet.
 
-Source: [backend/app/routers/analyze.py:150](../../../backend/app/routers/analyze.py#L150).
+Source: [backend/app/routers/analyze.py:160](../../../backend/app/routers/analyze.py#L160).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 

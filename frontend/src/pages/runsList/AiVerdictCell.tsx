@@ -2,15 +2,18 @@
  * One run's AI verdict in the Runs table (UX redesign P4, D2). The verdict
  * links to the run's Analysis tab, which replaced the row's separate "Intel"
  * link. A run with no verdict reads "—", with the reason as its title.
- * The data and its rules: `aiVerdict.ts`.
+ *
+ * Presentational (FAIL-04): the page asks ONE batch request for the runs on
+ * screen (`useRunAiVerdicts`) and hands each cell its verdict. The data and
+ * its rules: `aiVerdict.ts`.
  */
 import { Link } from 'react-router-dom'
 import Skeleton from '@/components/ui/Skeleton'
 import {
   NO_VERDICT_TITLE,
   RECOMMENDATION_LABEL,
-  useRunAiVerdict,
   type AiRecommendation,
+  type AiVerdict,
 } from './aiVerdict'
 
 const HUE: Record<AiRecommendation, string> = {
@@ -24,8 +27,15 @@ const REVIEW_TITLE = {
   rejected: 'The AI report was rejected by a reviewer',
 } as const
 
-export default function AiVerdictCell({ run }: { run: { id: string; status?: string | null } }) {
-  const { verdict, isLoading } = useRunAiVerdict(run)
+export default function AiVerdictCell({
+  run,
+  verdict,
+  isLoading,
+}: {
+  run: { id: string }
+  verdict: AiVerdict | undefined
+  isLoading: boolean
+}) {
   if (isLoading || !verdict) {
     return (
       <span data-ai-verdict="loading" aria-busy="true" className="inline-block align-middle">
@@ -34,7 +44,7 @@ export default function AiVerdictCell({ run }: { run: { id: string; status?: str
     )
   }
   if (verdict.recommendation === null) {
-    const title = NO_VERDICT_TITLE[verdict.reason]
+    const title = verdict.title ?? NO_VERDICT_TITLE[verdict.reason]
     return (
       <span data-ai-verdict="none" data-ai-verdict-reason={verdict.reason} title={title} className="text-[var(--color-text-muted)]">
         —

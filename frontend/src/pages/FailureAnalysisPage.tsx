@@ -13,26 +13,36 @@
  *             data's age; its one action toggles the previous-window
  *             comparison.
  *   KPIs    → `KpiStrip`: Repeat failures · Flaky tests · Uncategorized ·
- *             Total executions ("Failure metrics").
+ *             Total executions · Median time to fix ("Failure metrics").
  *   PRIMARY → the Top failing table (`data-primary`): the top failing tests
  *             merged with the flaky list — the old "What's failing" card,
  *             the repeat-failure signal and the Flakiness card in one table
- *             (14-day run strip in its header). Row actions: Mute (quarantine
- *             proposal), Jira (dedup-first defect), Suspects (a `SidePanel`
- *             with the ranked suspect commits, Epic 8 US-8.2 — the bisect).
+ *             (14-day run strip in its header). Each row expands (W07
+ *             FAIL-01) to its latest failure: the first error line, the stack
+ *             head, the owner and "Open in run". Row actions: Mute
+ *             (quarantine proposal), Jira (dedup-first defect), Suspects (a
+ *             `SidePanel` with the ranked suspect commits, Epic 8 US-8.2 —
+ *             the bisect).
  *   Tabs    → `?tab=`: Groups (failure groups + systemic clusters) · By suite
  *             (the drill ladder) · Scatter (the project test scatter) ·
- *             Categories (failure-kind chips + category distribution). The
- *             three catalogue sections are lazy chunks, each mounted only in
- *             its own tab (the groups also only once near, as before).
+ *             Categories (failure-kind chips + category distribution; a QA
+ *             lead opens the project's Classification hints there, W07
+ *             FAIL-10). The three catalogue sections are lazy chunks, each
+ *             mounted only in its own tab (the groups also only once near, as
+ *             before).
  *   Below   → Disclosures: "How this score is computed" (stability meter,
  *             the four weighted dimensions, suites with failures) and the
  *             failure timeline.
  *
- * Data: derives the verdict from existing useFlakyTests / useTopFailing /
- * useFailureCategories / useTrendData. There is no per-failure endpoint
- * (stack traces, owners, mean time to fix), so the page shows none of those: the
- * run strip is filled from the trend tail.
+ * Data: derives the verdict from useFlakyTests / useTopFailing /
+ * useFailureCategories / useTrendData, plus useTimeToFix (W07 FAIL-02,
+ * `GET /analytics/time-to-fix`). Per-failure detail rides on the top-failing
+ * rows (W07 FAIL-01: `latest_error`, `latest_stack_head`, `owner`, the run and
+ * test-case ids), server-truncated and redacted, and rendered as text only.
+ * Time to fix is MEASURED: the median time from a test's first failure to its
+ * next pass (flagged flaky and oscillating tests left out); below the server's
+ * floor of fixes it is "Not measured" and the stability score leaves it out
+ * (the other three weights re-normalised), never a synthetic number.
  *
  * Wired actions (US-2.4):
  *   - "Mute" → manual quarantine proposal (POST /api/v1/quarantine,
@@ -92,13 +102,18 @@ import { postData } from '@/services/http'
 import {
   useFailureCategories, useFlakyTests, useTopFailing, useTrendData,
 } from '@/hooks/useMetrics'
+import { useTimeToFix } from '@/hooks/useFailureInsights'
+import ClassificationHintsModal from '@/components/failures/ClassificationHintsModal'
+import {
+  formatFixTime, measuredTimeToFix, ownerChipText, timeToFixHint, timeToFixScore,
+} from './failures/failureInsights'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { usePageSuiteFilter } from '@/hooks/usePageSuiteFilter'
 import { PageSuiteTargetContext, usePageSuiteTarget } from '@/hooks/pageSuiteTarget'
 import { bulkWriteSuite } from '@/lib/scopeParams'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import type {
-  FailureCategoryItem, FailureKindCount, FlakyTestItem, TopFailingItem,
+  FailureCategoryItem, FailureKindCount, FlakyTestItem, TimeToFixResponse, TopFailingItem,
 } from '@/types/analytics'
 import type { TrendPoint } from '@/types/metrics'
 import {
@@ -337,7 +352,9 @@ const VERDICT_THEME: Record<Verdict, VerdictTheme> = {
 
 // ── Stability model ───────────────────────────────────────────────────────
 // Weights from README §5.4: Pass 35 / Categorization 20 / Flake-free 20 /
-// Time to fix 25.
+// Time to fix 25. A dimension that is not measured (Time to fix below the
+// server's floor of fixes, or while it loads) is left out and the composite is
+// re-normalised over the others: Σ score·w / Σ w (W07 D-15).
 type DimensionId = 'pass_rate' | 'categorization' | 'flake_free' | 'time_to_fix'
 const WEIGHTS: Record<DimensionId, number> = {
   pass_rate:      0.35,
@@ -349,9 +366,48 @@ const WEIGHTS: Record<DimensionId, number> = {
 interface DimensionScore {
   id: DimensionId
   label: string
+  /** 0-100; meaningless (and never drawn) when `measured` is false. */
   score: number
   weight: number
   tone: 'good' | 'warn' | 'bad'
+  /** False: no measurement — the tile reads "—" and the composite leaves it out. Absent = measured. */
+  measured?: boolean
+}
+
+/**
+ * W07 FAIL-02: the strip's fifth tile. Measured: the median (`1.8 d`) with
+ * `{fixed} fixed` beside it. Not measured: "—" with a "Not measured" line and
+ * the server's reason on hover — never `0 h`. ("Not measured" as the 24 px
+ * value is ~190 px on CI's DejaVu Sans, wider than a fifth of the strip at
+ * 1280 px: the Defects escape-rate tile's pattern, W06.)
+ */
+function TimeToFixTile({ data, isLoading, failed }: { data: TimeToFixResponse | undefined; isLoading: boolean; failed: boolean }) {
+  const measured = measuredTimeToFix(data)
+  const hint = data
+    ? (measured ? timeToFixHint(data) : (data.reason ?? 'Not measured'))
+    : failed ? 'The time to fix could not be loaded.' : "Median time from a test's first failure to its next pass."
+  const metric = measured
+    ? { value: formatFixTime(data.median_hours) }
+    : data
+      ? { value: '—', trend_text: 'Not measured', trend_direction: 'none' as const }
+      : { value: '—' }
+  return (
+    <div data-time-to-fix={data ? (measured ? 'measured' : 'not-measured') : failed ? 'failed' : 'loading'} className="min-w-0 h-full">
+      <MetricCard
+        compact
+        icon={null}
+        title="Median time to fix"
+        hint={hint}
+        loading={!data && !failed && isLoading}
+        metric={metric}
+        sparkline={measured ? (
+          <span data-time-to-fix-fixed="" className="block text-right text-[11px] leading-tight text-[var(--color-text-muted)]">
+            {data.fixed} fixed
+          </span>
+        ) : undefined}
+      />
+    </div>
+  )
 }
 
 interface StabilityModel {
@@ -373,7 +429,7 @@ interface StabilityModel {
 }
 
 function computeStabilityModel({
-  flaky, categories, topFailing, trend, flakyTotal, repeatTotal,
+  flaky, categories, topFailing, trend, flakyTotal, repeatTotal, timeToFix,
 }: {
   flaky: FlakyTestItem[]
   categories: FailureCategoryItem[]
@@ -383,6 +439,8 @@ function computeStabilityModel({
   flakyTotal?: number
   /** Every test failing twice or more; `topFailing` is only the top of the list. */
   repeatTotal?: number
+  /** `GET /analytics/time-to-fix` (W07 FAIL-02); undefined while it loads or when it failed. */
+  timeToFix?: TimeToFixResponse
 }): StabilityModel {
   const passedRuns  = trend.reduce((s, p) => s + p.passed,  0)
   const failedRuns  = trend.reduce((s, p) => s + p.failed,  0)
@@ -416,21 +474,9 @@ function computeStabilityModel({
   const repeatFailures = topFailing.filter(t => t.fail_count >= 2)
   const repeatCount = repeatTotal ?? repeatFailures.length
 
-  // Time-to-fix: synthesise from consecutive-failure tail length.
-  let timeToFixScore = 100
-  if (failedRuns > 0) {
-    let consecutiveFailingDays = 0
-    for (let i = trend.length - 1; i >= 0; i--) {
-      const p = trend[i]
-      if (p.failed > 0) consecutiveFailingDays++
-      else if (p.passed > 0) break
-    }
-    if (consecutiveFailingDays > 0) {
-      timeToFixScore = Math.max(0, 100 - consecutiveFailingDays * 14)
-    } else {
-      timeToFixScore = 70
-    }
-  }
+  // Time to fix is the server's measured median (W07 FAIL-02), or not measured.
+  const fixMeasured = measuredTimeToFix(timeToFix)
+  const fixScore = fixMeasured ? timeToFixScore(timeToFix.median_hours) : 0
 
   const categorizationScore = totalCategorised > 0
     ? Math.max(0, 100 - uncategorizedPct)
@@ -440,15 +486,28 @@ function computeStabilityModel({
     { id: 'pass_rate',      label: 'Pass rate',      score: passRatePct,         weight: WEIGHTS.pass_rate,      tone: toneFor(passRatePct) },
     { id: 'categorization', label: 'Categorization', score: categorizationScore, weight: WEIGHTS.categorization, tone: toneFor(categorizationScore) },
     { id: 'flake_free',     label: 'Flake-free',     score: flakeFreeScore,      weight: WEIGHTS.flake_free,     tone: toneFor(flakeFreeScore) },
-    { id: 'time_to_fix',    label: 'Time to fix',    score: timeToFixScore,      weight: WEIGHTS.time_to_fix,    tone: toneFor(timeToFixScore) },
+    { id: 'time_to_fix',    label: 'Time to fix',    score: fixScore,            weight: WEIGHTS.time_to_fix,    tone: toneFor(fixScore), measured: fixMeasured },
   ]
-  const composite = Math.round(dimensions.reduce((sum, d) => sum + d.score * d.weight, 0))
+  const composite = compositeScore(dimensions)
 
   return {
     composite, dimensions, totalRuns, passedRuns, failedRuns, skippedRuns,
     repeatFailures, repeatCount, flakyCount, uncategorizedPct, unknownCount, totalCategorised,
     topFailingTest: topFailing[0] ?? null, trend,
   }
+}
+
+/**
+ * Σ score·w over the measured dimensions, divided by their Σ w when one is
+ * left out (with every dimension measured the weights already sum to 1, and
+ * the plain sum is the old number exactly).
+ */
+function compositeScore(dimensions: readonly DimensionScore[]): number {
+  const measured = dimensions.filter(d => d.measured !== false)
+  const weighted = measured.reduce((sum, d) => sum + d.score * d.weight, 0)
+  if (measured.length === dimensions.length) return Math.round(weighted)
+  const weights = measured.reduce((sum, d) => sum + d.weight, 0)
+  return weights > 0 ? Math.round(weighted / weights) : 0
 }
 
 function toneFor(score: number): 'good' | 'warn' | 'bad' {
@@ -536,12 +595,16 @@ function DimensionGrid({ dimensions }: { dimensions: DimensionScore[] }) {
 }
 
 function DimensionTile({ dim }: { dim: DimensionScore }) {
-  const valueColor = dim.tone === 'bad' ? 'var(--status-failed)' : dim.tone === 'warn' ? 'var(--status-broken)' : 'var(--status-passed)'
+  const measured = dim.measured !== false
+  const valueColor = !measured ? 'var(--color-text-muted)' : dim.tone === 'bad' ? 'var(--status-failed)' : dim.tone === 'warn' ? 'var(--status-broken)' : 'var(--status-passed)'
   const barColor   = dim.tone === 'bad' ? 'var(--status-failed)' : dim.tone === 'warn' ? 'var(--status-broken)' : 'var(--status-passed)'
   return (
     <div
+      data-dimension={dim.id}
+      data-measured={measured ? 'true' : 'false'}
       className="rounded-sm px-2.5 py-2 border"
       style={{ background: 'rgba(255,255,255,0.025)', borderColor: 'var(--color-border)' }}
+      title={measured ? undefined : 'Not measured: left out of the stability score, which is re-weighted over the other dimensions.'}
     >
       <div
         className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] flex justify-between"
@@ -551,11 +614,11 @@ function DimensionTile({ dim }: { dim: DimensionScore }) {
         <span className="text-[var(--color-text-faint)] font-medium">{Math.round(dim.weight * 100)}%</span>
       </div>
       <div className="flex items-center gap-2 mt-1.5">
-        <span className="text-[14px] font-semibold tabular-nums min-w-[40px]" style={{ color: valueColor }}>
-          {Math.round(dim.score)}
+        <span data-dimension-value="" className="text-[14px] font-semibold tabular-nums min-w-[40px]" style={{ color: valueColor }}>
+          {measured ? Math.round(dim.score) : '—'}
         </span>
         <div className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: 'var(--color-bg-secondary)' }}>
-          <i className="block h-full rounded-full" style={{ width: `${dim.score}%`, background: barColor }} />
+          {measured && <i className="block h-full rounded-full" style={{ width: `${dim.score}%`, background: barColor }} />}
         </div>
       </div>
     </div>
@@ -775,6 +838,18 @@ function TopFailingTable({
   actions: RowActionHandlers
 }) {
   const [showAll, setShowAll] = useState(false)
+  // W07 FAIL-01: the rows whose failure detail is open, by row key. Local and
+  // not persisted: every visit starts collapsed (the fold budget is the
+  // collapsed table's).
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set())
+  const toggleRow = useCallback((key: string) => {
+    setExpanded(current => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }, [])
   // Aggregate failed-run count from trend (which reads test_runs.failed_tests
   // directly). A suite can have failed run aggregates (pass rate < 100%)
   // while test_cases rows haven't landed — the live-stream Redis-buffer gap
@@ -868,7 +943,14 @@ function TopFailingTable({
           </thead>
           <tbody>
             {shown.map(row => (
-              <FailingRowEl key={row.key} row={row} failedExecutions={failedExecutions} actions={actions} />
+              <FailingRowEl
+                key={row.key}
+                row={row}
+                failedExecutions={failedExecutions}
+                actions={actions}
+                open={expanded.has(row.key)}
+                onToggle={toggleRow}
+              />
             ))}
           </tbody>
         </table>
@@ -904,7 +986,16 @@ function Th({ label, align }: { label: string; align?: 'right' }) {
   )
 }
 
-function FailingRowEl({ row, failedExecutions, actions }: { row: FailingRow; failedExecutions: number; actions: RowActionHandlers }) {
+function FailingRowEl({
+  row, failedExecutions, actions, open, onToggle,
+}: {
+  row: FailingRow
+  failedExecutions: number
+  actions: RowActionHandlers
+  /** W07 FAIL-01: the detail row under this one is shown. */
+  open: boolean
+  onToggle: (key: string) => void
+}) {
   const { test, flaky } = row
   // AI-classified failure kind (US-9.2): the server-derived value, else the
   // category mirror for older payloads. A flaky-only row has no category.
@@ -921,23 +1012,38 @@ function FailingRowEl({ row, failedExecutions, actions }: { row: FailingRow; fai
   const suspectsReason = actions.suspectsDisabledReason(row)
   const suite = [test.suite_name, test.class_name].filter(Boolean).join(' · ')
   return (
+    <>
     <tr data-failing-row="" style={{ borderBottom: '1px solid var(--color-border)' }} className="hover:bg-[var(--color-bg-hover)]">
-      <td style={{ padding: '8px 12px', minWidth: 220 }}>
-        <div className="flex flex-col gap-0.5 min-w-0">
-          <Link
-            to={testSearchHref(test.test_name)}
-            title="Find this test's runs"
-            className="font-mono text-[12.5px] font-medium truncate hover:underline"
-            style={{ color: 'var(--status-failed)' }}
+      {/* 204 + the 16 px toggle = the 220 px the cell had before W07 FAIL-01 (fold-failures holds the table's width at 1280). */}
+      <td style={{ padding: '8px 12px', minWidth: 204 }}>
+        <div className="flex items-start min-w-0">
+          <button
+            type="button"
+            data-failure-detail-toggle=""
+            aria-expanded={open}
+            aria-label={`Show failure detail for ${test.test_name}`}
+            title={open ? 'Hide the latest failure' : 'Show the latest failure: error, stack head, owner'}
+            onClick={() => onToggle(row.key)}
+            className="mt-px inline-flex h-4 w-4 flex-none items-center justify-center rounded text-[var(--color-text-muted)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]"
           >
-            {test.test_name}
-          </Link>
-          {suite && <span className="text-[10.5px] text-[var(--color-text-muted)] truncate">{suite}</span>}
-          {test.failure_step && (
-            <span className="text-[10.5px] text-[var(--color-text-muted)] truncate" title={`Failed at step: ${test.failure_step}`}>
-              failed at: <span className="font-mono" style={{ color: 'var(--status-failed)' }}>{test.failure_step}</span>
-            </span>
-          )}
+            <ChevronRight aria-hidden="true" className={clsx('h-3 w-3 transition-transform', open && 'rotate-90')} />
+          </button>
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <Link
+              to={testSearchHref(test.test_name)}
+              title="Find this test's runs"
+              className="font-mono text-[12.5px] font-medium truncate hover:underline"
+              style={{ color: 'var(--status-failed)' }}
+            >
+              {test.test_name}
+            </Link>
+            {suite && <span className="text-[10.5px] text-[var(--color-text-muted)] truncate">{suite}</span>}
+            {test.failure_step && (
+              <span className="text-[10.5px] text-[var(--color-text-muted)] truncate" title={`Failed at step: ${test.failure_step}`}>
+                failed at: <span className="font-mono" style={{ color: 'var(--status-failed)' }}>{test.failure_step}</span>
+              </span>
+            )}
+          </div>
         </div>
       </td>
       <td style={{ padding: '8px 12px' }}>
@@ -993,6 +1099,87 @@ function FailingRowEl({ row, failedExecutions, actions }: { row: FailingRow; fai
         </div>
       </td>
     </tr>
+    {open && (
+      <tr data-failure-detail="" style={{ borderBottom: '1px solid var(--color-border)' }}>
+        <td colSpan={6} style={{ padding: 12, background: 'var(--color-bg)' }}>
+          <FailureDetail test={test} />
+        </td>
+      </tr>
+    )}
+    </>
+  )
+}
+
+/**
+ * W07 FAIL-01: a Top failing row's latest failure, expanded under it. The
+ * error line and the stack head come from CI files (server-truncated and
+ * redacted): they render as `<pre>` TEXT only, never markup, and no `href` is
+ * built from them — "Open in run" is built from the row's two ids.
+ */
+function FailureDetail({ test }: { test: TopFailingItem }) {
+  if (test.detail_available === false) {
+    return <p className="m-0 text-[12px] text-[var(--color-text-muted)]">Select a project to see failure detail.</p>
+  }
+  if (test.detail_available !== true) {
+    // A flaky-list-only row (or an older payload) carries no failing row of its own.
+    return <p className="m-0 text-[12px] text-[var(--color-text-muted)]">No failure detail recorded for this test in this window.</p>
+  }
+  const at = test.latest_failed_at ?? test.last_failed ?? null
+  const runHref = test.latest_run_id && test.latest_test_case_id
+    ? `/runs/${encodeURIComponent(test.latest_run_id)}/tests/${encodeURIComponent(test.latest_test_case_id)}`
+    : null
+  const owner = ownerChipText(test)
+  return (
+    <div className="min-w-0">
+      <div className="flex items-baseline justify-between gap-3 text-[11.5px] text-[var(--color-text-muted)]">
+        <span title={at ?? undefined}>
+          Latest failure{at ? ` ${shortAgo(at)}` : ''}{test.last_failed_build ? ` · build ${test.last_failed_build}` : ''}
+        </span>
+        {runHref && (
+          <Link to={runHref} data-failure-open-run="" className="whitespace-nowrap font-medium text-[var(--color-accent)] hover:underline">
+            Open in run
+          </Link>
+        )}
+      </div>
+      {test.latest_error ? (
+        <pre
+          data-failure-error=""
+          className="m-0 mt-1.5 whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-[11.5px]"
+          style={{ color: 'var(--status-failed)' }}
+        >
+          {test.latest_error}
+        </pre>
+      ) : (
+        <p data-failure-error-none="" className="m-0 mt-1.5 text-[11.5px] text-[var(--color-text-muted)]">No message recorded</p>
+      )}
+      {test.latest_stack_head && (
+        <div className="mt-2">
+          <pre
+            data-failure-stack=""
+            className="m-0 max-h-[200px] overflow-y-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-[11px] text-[var(--color-text-secondary)]"
+          >
+            {test.latest_stack_head}
+          </pre>
+          <span className="text-[10.5px] text-[var(--color-text-faint)]">first 20 lines</span>
+        </div>
+      )}
+      <div className="mt-2 flex items-center gap-2 text-[11.5px]">
+        <span className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
+          Owner
+        </span>
+        {owner ? (
+          <span
+            data-failure-owner=""
+            className="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)]"
+            style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-secondary)' }}
+          >
+            {owner}
+          </span>
+        ) : (
+          <span data-failure-owner="" className="text-[var(--color-text-muted)]">Unassigned</span>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -1294,7 +1481,7 @@ const CATEGORY_FIXED_WIDTH = 48 + 56 + 56 + 3 * 12
 /** A card too narrow for even that: one column, each row stacked (name line, then bar and figures). */
 const CATEGORY_STACKED_GRID = { gridTemplateColumns: 'minmax(0, 1fr)' } as const
 
-function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCorrect, onClassify, kindFilter = 'all' }: {
+function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCorrect, onClassify, onOpenHints, kindFilter = 'all' }: {
   categories: FailureCategoryItem[]
   totalFailures: number
   uncategorizedPct: number
@@ -1303,6 +1490,8 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCo
   onCorrect?: () => void
   /** Opens the bulk "classify uncategorised failures" dialog. */
   onClassify?: () => void
+  /** W07 FAIL-10: opens the project's Classification hints. Absent below QA lead (the writes are QA lead). */
+  onOpenHints?: () => void
   /** Active failure-kind filter — 'all' shows everything (US-9.2). */
   kindFilter?: FailureKind | 'all'
 }) {
@@ -1343,6 +1532,17 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCo
       title="Failure category distribution"
       rightSlot={
         <div className="flex items-center gap-2">
+          {onOpenHints && (
+            <button
+              type="button"
+              data-testid="open-classification-hints"
+              onClick={onOpenHints}
+              title="Rules that classify new failures before the AI does"
+              className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-0.5 text-[11.5px] text-[var(--color-text-secondary)] hover:border-[var(--color-border-light)] hover:text-[var(--color-text)] whitespace-nowrap"
+            >
+              <Tags className="h-3 w-3" aria-hidden="true" /> Classification hints
+            </button>
+          )}
           {kindFilter !== 'all' && <FailureKindBadge kind={kindFilter} compact />}
           <span>{total} failure{total === 1 ? '' : 's'}</span>
         </div>
@@ -1915,6 +2115,8 @@ export default function FailureAnalysisPage() {
   const { data: categoryData, isLoading: categoryLoading } = useFailureCategories(days, suiteFilter)
   const { data: topData,      isLoading: topLoading      } = useTopFailing(days, suiteFilter)
   const { data: trendsData,   isLoading: trendsLoading   } = useTrendData(days, suiteFilter)
+  // W07 FAIL-02: the measured time to fix (its own tile; the page never waits for it).
+  const timeToFix = useTimeToFix(days, suiteFilter)
   // Double-window trend used for prior-vs-current delta computation.
   // When the user hasn't enabled comparison, this keys on ``days`` (the
   // same key as the primary fetch above), so SWR dedupes and no second
@@ -1996,8 +2198,9 @@ export default function FailureAnalysisPage() {
       flaky, categories, topFailing, trend,
       flakyTotal: totalOf(flakyData, 'total'),
       repeatTotal: totalOf(topData, 'repeat_total'),
+      timeToFix: timeToFix.data,
     }),
-    [flaky, categories, topFailing, trend, flakyData, topData],
+    [flaky, categories, topFailing, trend, flakyData, topData, timeToFix.data],
   )
   const verdict = pickVerdict(model)
 
@@ -2007,6 +2210,8 @@ export default function FailureAnalysisPage() {
   const [jiraFor, setJiraFor] = useState<FailingRow | null>(null)
   const [suspectsFor, setSuspectsFor] = useState<FailingRow | null>(null)
   const [correctionOpen, setCorrectionOpen] = useState(false)
+  // W07 FAIL-10: the project's classification hints (a QA lead, one project).
+  const [hintsOpen, setHintsOpen] = useState(false)
   const { metadata: jiraMeta } = useJiraDefectMetadata(project?.id ?? null)
   // Every quarantine endpoint answers 503 while this flag is off ("Flaky
   // auto-quarantine is disabled"): Mute says so instead of opening a dialog
@@ -2309,6 +2514,7 @@ export default function FailureAnalysisPage() {
               metric={{ value: model.totalCategorised === 0 ? '—' : `${Math.round(model.uncategorizedPct)}%` }}
             />,
             <MetricCard key="executions" compact icon={null} title="Total executions" metric={{ value: model.totalRuns }} />,
+            <TimeToFixTile key="time-to-fix" data={timeToFix.data} isLoading={timeToFix.isLoading} failed={Boolean(timeToFix.error)} />,
           ]}
         </KpiStrip>
       </section>
@@ -2379,6 +2585,7 @@ export default function FailureAnalysisPage() {
                   uncategorizedPct={model.uncategorizedPct}
                   onCorrect={isQaEngineer ? openCorrection : undefined}
                   onClassify={isQaEngineer ? () => setClassifyOpen(true) : undefined}
+                  onOpenHints={isQaLead && project?.id ? () => setHintsOpen(true) : undefined}
                   kindFilter={kindFilter}
                 />
               </>
@@ -2446,6 +2653,10 @@ export default function FailureAnalysisPage() {
           testName={actionTarget.test_name}
           onClose={() => setCorrectionOpen(false)}
         />
+      )}
+
+      {hintsOpen && project?.id && (
+        <ClassificationHintsModal projectId={project.id} onClose={() => setHintsOpen(false)} />
       )}
 
       {jiraFor?.test.test_fingerprint && project?.id && (

@@ -56,9 +56,98 @@ export interface TestRun {
    *  Computed server-side via ROW_NUMBER() so it's stable across pages.
    *  Optional for backward-compat with older API responses. */
   run_seq?: number | null
+  /**
+   * FAIL-05 (migration 0214): the AI verdict column's recommendation, the
+   * projection of the run's servable intelligence snapshot (`GO` /
+   * `CONDITIONAL_GO` / `NO_GO`), `null` when it has none. Written and cleared
+   * by the snapshot's own writers; `GET /runs?recommendation=` filters on it.
+   * Optional for older API responses.
+   */
+  ai_recommendation?: string | null
 }
 
 export type TestRunListResponse = PaginatedResponse<TestRun>
+
+/**
+ * FAIL-04: one run of `GET /api/v1/runs/ai-verdicts`. The batch reads STORED
+ * state only: `snapshot` false = no servable snapshot (then `stale`,
+ * `generated_at`, `verdict_inputs` and `review` are null); `analysed` says
+ * whether a finished pipeline exists (the "not summarised" reason).
+ */
+export interface RunVerdictItem {
+  run_id: string
+  snapshot: boolean
+  stale: boolean | null
+  generated_at: string | null
+  analysed: boolean
+  /** The slim run-intelligence payload `aiVerdictOf` reads (contract §1.2);
+   *  cast to `Partial<RunIntelligence>` only inside `aiVerdict.ts`. */
+  verdict_inputs: Record<string, unknown> | null
+  review: { state: string } | null
+}
+
+/** `unavailable` = unknown OR not accessible ids: one list, no distinction. */
+export interface RunVerdictBatch {
+  items: RunVerdictItem[]
+  unavailable: string[]
+  max_ids: number
+}
+
+/** FAIL-03: one failure signature of a run (text from CI files: render as text). */
+export interface RunSignatureEntry {
+  /** The normalised signature; `__NO_MESSAGE__` for a blank message. */
+  signature: string
+  /** The group's most common raw first line, <= 160 chars; "" for no message. */
+  label: string
+  count: number
+  test_count: number
+  /** <= 3 test names, sorted. */
+  tests: string[]
+}
+
+export interface RunSignatureItem {
+  run_id: string
+  /** Every FAILED / BROKEN row of the run. */
+  failing_tests: number
+  /** Rows grouped (<= the per-run cap). */
+  read: number
+  capped: boolean
+  /** `signatures[0].signature`; null when the run has no failing row. */
+  dominant: string | null
+  /** <= 3, count desc. */
+  signatures: RunSignatureEntry[]
+}
+
+export interface RunSignatureBatch {
+  items: RunSignatureItem[]
+  unavailable: string[]
+  max_ids: number
+  rows_per_run_cap: number
+}
+
+/** FAIL-05: one branch of `GET /api/v1/runs/branches`. */
+export interface RunBranchItem {
+  branch: string
+  runs: number
+  last_run_at: string | null
+}
+
+export interface RunBranchList {
+  /** Newest `last_run_at` first, <= 100. */
+  items: RunBranchItem[]
+  /** Distinct branches in the window (a COUNT, not `items.length`). */
+  total: number
+  truncated: boolean
+  /** null = all time. */
+  window_days: number | null
+}
+
+/** FAIL-05: the URL-synced Runs toolbar (`?q=&branch=&verdict=`). */
+export interface RunListFilters {
+  q?: string
+  branch?: string
+  verdict?: string
+}
 
 export interface RunTestCase {
   id: string

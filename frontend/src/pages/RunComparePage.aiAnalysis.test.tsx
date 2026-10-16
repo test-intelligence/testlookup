@@ -18,6 +18,12 @@ vi.mock('@/hooks/useRunCompare', () => ({
   extractCompareErrorMessage: () => 'Failed to load compare',
 }))
 vi.mock('@/hooks/useRuns', () => ({ useRuns: () => ({ data: { items: [] }, isLoading: false }) }))
+// FAIL-06: the run pickers' reads (the deep link's two labels, the suite summary).
+vi.mock('@/hooks/useRunSearch', () => ({
+  RUN_SEARCH_PAGE_SIZE: 20,
+  useRunSearch: () => ({ data: undefined, isLoading: false }),
+  useRunSummary: () => ({ data: undefined }),
+}))
 vi.mock('@/store/projectStore', () => ({
   ALL_PROJECTS_ID: '__ALL__',
   useProjectStore: (selector: (s: unknown) => unknown) => selector({ activeProjectId: 'p1', activeProject: { id: 'p1', name: 'Checkout' } }),

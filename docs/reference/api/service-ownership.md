@@ -13,7 +13,7 @@ Percentage of recent failing-test paths matched by a ``path`` rule.
 Bounded lookback (``days``, clamped 1-365) over a capped sample of recent
 FAILED/BROKEN test cases. ``coverage_pct`` is over the *locatable* failures.
 
-Source: [backend/app/routers/ownership.py:252](../../../backend/app/routers/ownership.py#L252).
+Source: [backend/app/routers/ownership.py:258](../../../backend/app/routers/ownership.py#L258).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -114,7 +114,7 @@ Two acquisition paths:
 Idempotent: replaces the project's prior CODEOWNERS-sourced rules only,
 leaving hand-authored rules untouched. This router owns the commit.
 
-Source: [backend/app/routers/ownership.py:186](../../../backend/app/routers/ownership.py#L186).
+Source: [backend/app/routers/ownership.py:192](../../../backend/app/routers/ownership.py#L192).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -213,7 +213,7 @@ Resolve Cluster Ownership Endpoint
 
 Resolve the probable owner for a specific failure cluster.
 
-Source: [backend/app/routers/ownership.py:358](../../../backend/app/routers/ownership.py#L358).
+Source: [backend/app/routers/ownership.py:474](../../../backend/app/routers/ownership.py#L474).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -309,7 +309,7 @@ List Ownership Rules
 
 List all ownership rules for a project.
 
-Source: [backend/app/routers/ownership.py:35](../../../backend/app/routers/ownership.py#L35).
+Source: [backend/app/routers/ownership.py:41](../../../backend/app/routers/ownership.py#L41).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -394,7 +394,7 @@ Create Ownership Rule
 
 Create a new ownership rule (QA_LEAD+).
 
-Source: [backend/app/routers/ownership.py:50](../../../backend/app/routers/ownership.py#L50).
+Source: [backend/app/routers/ownership.py:56](../../../backend/app/routers/ownership.py#L56).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -485,7 +485,7 @@ Bulk Import Rules
 
 Bulk import ownership rules (ADMIN only). Optionally replaces existing.
 
-Source: [backend/app/routers/ownership.py:128](../../../backend/app/routers/ownership.py#L128).
+Source: [backend/app/routers/ownership.py:134](../../../backend/app/routers/ownership.py#L134).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -580,7 +580,7 @@ Export Ownership Rules
 
 Export all ownership rules for a project (same as list, for import/export workflows).
 
-Source: [backend/app/routers/ownership.py:168](../../../backend/app/routers/ownership.py#L168).
+Source: [backend/app/routers/ownership.py:174](../../../backend/app/routers/ownership.py#L174).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -665,7 +665,7 @@ Delete Ownership Rule
 
 Delete an ownership rule (QA_LEAD+).
 
-Source: [backend/app/routers/ownership.py:104](../../../backend/app/routers/ownership.py#L104).
+Source: [backend/app/routers/ownership.py:110](../../../backend/app/routers/ownership.py#L110).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -755,7 +755,7 @@ Update Ownership Rule
 
 Update an ownership rule (QA_LEAD+).
 
-Source: [backend/app/routers/ownership.py:76](../../../backend/app/routers/ownership.py#L76).
+Source: [backend/app/routers/ownership.py:82](../../../backend/app/routers/ownership.py#L82).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -856,6 +856,282 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 }
 ```
 
+## GET `/api/v1/projects/{project_id}/ownership/source-roots`
+
+Get Source Roots
+
+The project's Java source roots, in priority order (any member).
+
+Source: [backend/app/routers/ownership.py:294](../../../backend/app/routers/ownership.py#L294).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+project_id: uuid.UUID, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_project_access())
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "get_source_roots_api_v1_projects__project_id__ownership_source_roots_get",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Project Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/SourceRootsResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+## PUT `/api/v1/projects/{project_id}/ownership/source-roots`
+
+Put Source Roots
+
+Replace the project's Java source roots (QA_LEAD+).
+
+The whole list is sent and stored (stripped, a trailing ``/`` removed);
+an empty list removes every root and restores the pre-FAIL-08 behaviour.
+A ``project.updated`` ledger row is staged only when the stored list
+actually changes, and this router owns the single commit.
+
+Source: [backend/app/routers/ownership.py:309](../../../backend/app/routers/ownership.py#L309).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+project_id: uuid.UUID, payload: SourceRootsUpdate, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)), _: User=Depends(require_project_access())
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Project not found')
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "put_source_roots_api_v1_projects__project_id__ownership_source_roots_put",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Project Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "requestBody": {
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "#/components/schemas/SourceRootsUpdate"
+        }
+      }
+    },
+    "required": true
+  },
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/SourceRootsResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+## POST `/api/v1/projects/{project_id}/ownership/source-roots/preview`
+
+Preview Source Roots
+
+What an EDITED list would locate over the project's recent failures
+(the coverage sample: newest 500 FAILED/BROKEN rows of 30 days). Writes
+nothing; the same 422 texts as the PUT.
+
+Source: [backend/app/routers/ownership.py:367](../../../backend/app/routers/ownership.py#L367).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+project_id: uuid.UUID, payload: SourceRootsUpdate, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_project_access())
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "preview_source_roots_api_v1_projects__project_id__ownership_source_roots_preview_post",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Project Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "requestBody": {
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "#/components/schemas/SourceRootsUpdate"
+        }
+      }
+    },
+    "required": true
+  },
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/SourceRootsPreview"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## GET `/api/v1/projects/{project_id}/ownership/team-channels`
 
 List Team Channels
@@ -866,7 +1142,7 @@ Teams are the free-text ``team_name`` values used by the ownership
 rules; a mapping here makes transition notifications for tests owned
 by that team route directly to the team's channel.
 
-Source: [backend/app/routers/ownership.py:276](../../../backend/app/routers/ownership.py#L276).
+Source: [backend/app/routers/ownership.py:392](../../../backend/app/routers/ownership.py#L392).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -952,7 +1228,7 @@ Delete Team Channel
 Remove a team's notification channel (QA_LEAD+). Transition events
 for that team's tests fall back to the project default channels.
 
-Source: [backend/app/routers/ownership.py:334](../../../backend/app/routers/ownership.py#L334).
+Source: [backend/app/routers/ownership.py:450](../../../backend/app/routers/ownership.py#L450).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -1041,7 +1317,7 @@ Upsert Team Channel
 
 Create or replace the notification channel for one team (QA_LEAD+).
 
-Source: [backend/app/routers/ownership.py:296](../../../backend/app/routers/ownership.py#L296).
+Source: [backend/app/routers/ownership.py:412](../../../backend/app/routers/ownership.py#L412).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 

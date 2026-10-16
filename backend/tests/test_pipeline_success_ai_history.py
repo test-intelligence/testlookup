@@ -145,6 +145,9 @@ def pipeline(monkeypatch):
 
     journal: list = []
     state: dict = {}
+    # W07 FAIL-04: the pipeline queues a snapshot rebuild; no broker here
+    # (covered by tests/test_snapshot_rebuild_after_pipeline.py).
+    monkeypatch.setattr(tasks, "_enqueue_snapshot_rebuild", lambda *a, **k: True)
 
     def fake_run_async(coro):
         name = getattr(coro, "__qualname__", "")

@@ -103,7 +103,7 @@ With one release picked in the top bar, **Only this release** narrows the table,
 
 ## Trend and escape rate
 
-The window picker (7, 30 or 90 days) drives the KPI tiles' sparklines, **Time to resolve** and **Escape rate**; the table always lists every defect.
+The window picker (7, 14, 30 or 90 days) drives the KPI tiles' sparklines, **Time to resolve** and **Escape rate**; the table always lists every defect.
 
 - **Open defects**, **P0 / P1 open** and **Time to resolve** draw one point per UTC day; hovering a point names the day's opened and closed defects and what was open at its end (Time to resolve: the 7-day mean). Their values count every defect in scope, not only the newest rows the table loads. The banner's **Net this week** is the last seven days' opened minus closed. Defects closed before close times were recorded (Invalid rows from the Jira resolution webhook of earlier releases) appear in no point; the endpoint counts them as `closed_without_time`.
 - **Escape rate** is the share of the defects reported in the window that were filed **after a release they affect had shipped**, among the defects in the window that affect a shipped release ("affect": as in *Only this release*; "shipped": the release has a release date). A defect affecting several shipped releases counts once. Below 5 such defects the tile reads **Not measured** with the reason, never 0 %. Its hover adds the production outcomes marked on releases in the window (incidents, rollbacks). To file a defect against a shipped release, pick it in **New defect → Affects release**; the release must belong to the project. A selected suite does not narrow it (an escape is counted per release).

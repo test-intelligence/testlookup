@@ -39,7 +39,8 @@ import { clsx } from 'clsx'
 
 /**
  * Every basis value any backend surface emits today —
- * 'empirical' | 'heuristic_estimate' | 'human_corrected' | 'llm_weighted'.
+ * 'empirical' | 'heuristic_estimate' | 'human_corrected' | 'llm_weighted' |
+ * 'project_hint' (FAIL-10: a QA lead's classification hint answered).
  * Deliberately widened to `string`: new backend values must degrade to the
  * honest "estimated" default instead of failing the type-check and tempting
  * someone to cast them to 'empirical'.
@@ -73,6 +74,12 @@ export function basisLabel(basis: ConfidenceBasisValue | null | undefined): Basi
     return {
       label: 'llm-weighted',
       title: 'LLM-weighted confidence — model self-assessment, not empirically calibrated',
+    }
+  }
+  if (basis === 'project_hint') {
+    return {
+      label: 'project hint',
+      title: "Classification set by a project hint (a QA lead's rule), not by a model",
     }
   }
   return {
@@ -122,6 +129,7 @@ const ENGINE_LABELS: Record<string, string> = {
   llm: 'LLM',
   local_llm: 'local LLM',
   hybrid: 'hybrid pipeline',
+  hint: 'project hint',
 }
 
 /** Human label for an engine id; unknown ids render as-is (underscores out). */

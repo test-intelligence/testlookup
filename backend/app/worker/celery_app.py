@@ -94,6 +94,8 @@ celery_app.conf.update(
         "app.worker.training_tasks.run_finetune_pipeline":  {"queue": "default"},
         "app.worker.tasks.reindex_search":                    {"queue": "default"},
         "app.worker.tasks.run_retention_purges":            {"queue": "default"},
+        # W07 FAIL-04: may wait minutes for a defect-candidate build; kept off ai_analysis.
+        "app.worker.tasks.rebuild_run_snapshot":            {"queue": "default"},
         "app.worker.tasks.*":                               {"queue": "default"},
     },
     # Redis keeps late-acked deliveries in ``unacked`` until this timeout.

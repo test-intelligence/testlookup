@@ -39,7 +39,7 @@ Two items carry a live badge: **Inbox** shows how many failures are assigned to 
 
 ### The time window
 
-There is no time-window control in the top bar: each page that needs one has its own window picker (24h, 7d, 14d, 30d, 90d). They all share one setting, so the window you choose on one page is the window the next page opens with. It starts at **30 days** and is remembered in your browser. A page that does not offer your current window (Live stops at 30 days) uses the nearest one it has.
+There is no time-window control in the top bar: each page that needs one has its own window picker (24h, 7d, 14d, 30d, 90d), and every windowed page offers 14d. They all share one setting, so the window you choose on one page is the window the next page opens with: pick 14d on Trends and Summary, Defects, My failures, Value metrics, Activity and the Audit dashboard open on 14 days too. It starts at **30 days** and is remembered in your browser. Live stops at 30 days and Value metrics adds a year; a page that does not offer your current window uses the nearest one it has, without changing your setting.
 
 ## The Help menu
 

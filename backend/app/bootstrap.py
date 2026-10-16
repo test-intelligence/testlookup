@@ -34,6 +34,7 @@ from app.routers import (
     audit_dashboard,
     auth,
     chat,
+    classification_hints,
     commit_attribution,
     compliance_packs,
     deep_investigation,
@@ -253,6 +254,10 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     agent_actions.router,               # Generic typed action proposal review ledger
     reviews.router,                    # E8.2: human review gate for AI reports
     fixer.router,                      # AI-2: the Fixer — config + run + fix-attempts
+    # W07 FAIL-10: /projects/{project_id}/classification-hints[/preview|/{hint_id}].
+    # GET /preview and PATCH/DELETE /{hint_id} use different methods, so the
+    # literal cannot be shadowed.
+    classification_hints.router,
 )
 
 

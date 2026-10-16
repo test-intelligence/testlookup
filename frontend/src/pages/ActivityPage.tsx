@@ -8,13 +8,15 @@ import ActivityRow from '@/components/activity/ActivityRow'
 import EmptyState from '@/components/ui/EmptyState'
 import PageHeader from '@/components/ui/PageHeader'
 import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState'
+import { windowLabel } from '@/components/ui/WindowPicker'
 import { useActivityEventTypes, useActivityFeed } from '@/hooks/useActivityFeed'
 import { exportActivity } from '@/services/activityService'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import { formatCompactDateTime } from '@/utils/formatters'
 
-const WINDOW_OPTIONS = [1, 7, 30, 90] as const
+/** The feed's windows: the shared set, 14d included (WIN-01), so a fortnight picked elsewhere is not shown as a week. */
+const WINDOW_OPTIONS = [1, 7, 14, 30, 90] as const
 
 /**
  * The project activity feed.
@@ -205,6 +207,7 @@ export default function ActivityPage() {
             <button
               key={d}
               type="button"
+              aria-pressed={days === d}
               onClick={() => setStoredDays(d)}
               className={
                 days === d
@@ -212,7 +215,8 @@ export default function ActivityPage() {
                   : 'rounded px-2.5 py-1 text-[12px] font-medium tabular-nums text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]'
               }
             >
-              {d}d
+              {/* The shared label: "24h" for one day, as on every other windowed page. */}
+              {windowLabel(d)}
             </button>
           ))}
         </div>

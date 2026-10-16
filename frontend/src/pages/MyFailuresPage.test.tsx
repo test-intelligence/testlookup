@@ -11,7 +11,7 @@
  * so we mock the store to a stable "All projects" value. Network calls
  * go through ``myFailuresService`` which we mock directly.
  */
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { SWRConfig } from 'swr'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -124,7 +124,41 @@ describe('MyFailuresPage', () => {
     expect(await screen.findByText(/You.?re caught up/i)).toBeInTheDocument()
     // Window chips are still rendered so the user can change the filter.
     expect(screen.getByText('24h')).toBeInTheDocument()
+    expect(screen.getByText('14d')).toBeInTheDocument()
     expect(screen.getByText('30d')).toBeInTheDocument()
+  })
+
+  it('WIN-01: offers 24h · 7d · 14d · 30d, in that order', async () => {
+    mockList.mockResolvedValue(makeResponse([]))
+    renderPage()
+    await screen.findByText(/You.?re caught up/i)
+    const picker = screen.getByRole('radiogroup', { name: 'Time window' })
+    expect(within(picker).getAllByRole('radio').map(r => r.textContent)).toEqual(['24h', '7d', '14d', '30d'])
+  })
+
+  it('WIN-01: clicking 14d asks the list for 14 days and says "14 days"', async () => {
+    mockList.mockResolvedValue(makeResponse([]))
+    renderPage()
+    await screen.findByText(/You.?re caught up/i)
+
+    fireEvent.click(screen.getByRole('radio', { name: '14d' }))
+
+    await waitFor(() => {
+      expect(mockList).toHaveBeenCalledWith(expect.objectContaining({ days: 14, page: 1, size: 25 }))
+    })
+    expect(await screen.findByText(/assigned to you in the last 14 days\./)).toBeInTheDocument()
+    expect(useTimeWindowStore.getState().days).toBe(14)
+  })
+
+  it('WIN-01: a stored 14d opens as 14d and stays 14 (no snap to 7)', async () => {
+    useTimeWindowStore.setState({ days: 14 })
+    mockList.mockResolvedValue(makeResponse([]))
+    renderPage()
+    await screen.findByText(/You.?re caught up/i)
+    expect(mockList).toHaveBeenCalledWith(expect.objectContaining({ days: 14 }))
+    expect(mockList).not.toHaveBeenCalledWith(expect.objectContaining({ days: 7 }))
+    expect(screen.getByRole('radio', { name: '14d' })).toHaveAttribute('aria-checked', 'true')
+    expect(useTimeWindowStore.getState().days).toBe(14)
   })
 
   it('renders rows when the backend returns items', async () => {
@@ -209,7 +243,7 @@ describe('MyFailuresPage', () => {
     // a no-op, so it would assert nothing. Derived from the constant rather
     // than hard-coded: this test previously clicked '30d' as "not the
     // default", and silently became vacuous the day 30d BECAME the default.
-    const options = [1, 7, 30]
+    const options = [1, 7, 14, 30]
     const nonDefault = options.find(d => d !== DEFAULT_TIME_WINDOW_DAYS)
     expect(nonDefault).toBeDefined()
     // The page labels 1 as "24h", not "1d" — mirror its own rule.
