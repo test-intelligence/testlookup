@@ -1289,3 +1289,70 @@ describe('RunIntelligenceBody — Hold / Approve with conditions / Override (GAT
     expect(line).toHaveTextContent(/^Overridden to Conditional Go by priya · perf soak pending · Oct 2, \d\d:15$/)
   })
 })
+
+// ── FAIL-07 (owner decision D03): "my role first" in Recommended actions ──
+describe('RunIntelligenceBody — Recommended actions puts my role first (FAIL-07)', () => {
+  const ACTIONS = {
+    DEVELOPER: 'Review the pool config.',
+    QA: 'Re-run the failed suites.',
+    RELEASE_MANAGER: 'Hold the release.',
+    SRE: 'Check the DB metrics.',
+  }
+  function renderCard(role: string | null) {
+    useAuthStore.setState({ user: role ? ({ id: 'u', role } as never) : null } as never)
+    mockHooks({ intelligence: { ...MOCK_INTELLIGENCE, role_actions: ACTIONS } })
+    const utils = render(
+      <MemoryRouter initialEntries={['/runs/run-abc?tab=analysis']}>
+        <Routes><Route path="/runs/:runId" element={<RunIntelligenceBody runId="run-abc" />} /></Routes>
+      </MemoryRouter>,
+    )
+    openEvidence()
+    const card = screen.getByRole('heading', { name: 'Recommended actions' }).closest('div.overflow-hidden') as HTMLElement
+    return { ...utils, card }
+  }
+  const rowsOf = (card: HTMLElement) => Array.from(card.querySelectorAll('[data-action-row]'), (r) => r.getAttribute('data-action-row'))
+  const controlsOf = (card: HTMLElement) => ({
+    buttons: within(card).queryAllByRole('button').length,
+    radios: within(card).queryAllByRole('radio').length,
+    tabs: within(card).queryAllByRole('tab').length,
+  })
+
+  afterEach(() => {
+    useAuthStore.setState({ user: null } as never)
+  })
+
+  it.each([['QA_ENGINEER'], ['QA_LEAD'], ['TESTER']])('as %s the QA row comes first, marked "· your role"', (role) => {
+    const { card } = renderCard(role)
+    expect(rowsOf(card)).toEqual(['QA', 'Developer', 'Release Manager', 'SRE'])
+    const first = card.querySelector('[data-action-row]') as HTMLElement
+    expect(first).toHaveAttribute('data-persona-first', '')
+    expect(card.querySelectorAll('[data-your-role]')).toHaveLength(1)
+    expect(first.querySelector('[data-your-role]')).toHaveTextContent('· your role')
+    expect(within(first).getByText('Re-run the failed suites.')).toBeInTheDocument()
+  })
+
+  it('as ADMIN the Release Manager row comes first', () => {
+    const { card } = renderCard('ADMIN')
+    expect(rowsOf(card)).toEqual(['Release Manager', 'Developer', 'QA', 'SRE'])
+    expect(card.querySelector('[data-persona-first]')).toHaveAttribute('data-action-row', 'Release Manager')
+  })
+
+  it.each([['VIEWER'], [null]])('as %s today\'s order stands and nothing is marked', (role) => {
+    const { card } = renderCard(role)
+    expect(rowsOf(card)).toEqual(['Developer', 'QA', 'Release Manager', 'SRE'])
+    expect(card.querySelector('[data-your-role]')).toBeNull()
+    expect(card.querySelector('[data-persona-first]')).toBeNull()
+  })
+
+  it('zero chrome: no button, radio or tab is added, and nothing is stored', () => {
+    const writes = vi.spyOn(Storage.prototype, 'setItem')
+    const viewer = renderCard('VIEWER')
+    const before = controlsOf(viewer.card)
+    viewer.unmount()
+    const lead = renderCard('QA_LEAD')
+    expect(controlsOf(lead.card)).toEqual(before)
+    expect(before.radios + before.tabs).toBe(0)
+    expect(writes.mock.calls.filter(([key]) => /persona|role/i.test(String(key)))).toEqual([])
+    writes.mockRestore()
+  })
+})

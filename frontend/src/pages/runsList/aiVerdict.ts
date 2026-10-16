@@ -2,30 +2,30 @@
  * The Runs table's AI-verdict column (UX redesign P4, owner decision D2: the
  * `/intelligence` list retired into a column of the runs list).
  *
- * WHERE THE VERDICT COMES FROM. The retired list (`IntelligenceHubPage`) never
- * showed a per-run AI verdict: its rows were `GET /runs` (the same rows as
- * /runs), its one "AI" column was the run's pass rate (US-15.1 removed the
- * "AI confidence" label it wore), and a row opened the run's Run Intelligence
- * report. That report is where a run's AI verdict lives:
- * `GET /api/v1/runs/{id}/intelligence` — the release recommendation (GO /
- * CONDITIONAL_GO / NO_GO) and the human-review envelope (E8.3). There is no
- * batch form of it (nor of `/release-readiness/{id}`, nor any list endpoint
- * that carries a recommendation), so the column asks once per run ON SCREEN
- * (a table page is at most 25), never for a run still in flight, at most
- * `MAX_IN_FLIGHT` at a time, each answer cached by SWR.
+ * WHERE THE VERDICT COMES FROM (FAIL-04). One request for the runs on screen:
+ * `GET /api/v1/runs/ai-verdicts?run_id=…` (≤ 25 ids, `hooks/useRunListInsights`)
+ * reads each run's STORED intelligence snapshot and returns, per run, the slim
+ * `verdict_inputs` — the same keys as a run-intelligence payload, only the
+ * ones `aiVerdictOf` reads, each object's JS truthiness kept (a truthy
+ * non-object stands in as `[]`) — plus the review state. The list never
+ * computes a verdict: a run with no snapshot reads "—", with the reason
+ * (`not-analysed`, or `not-summarised` when a finished analysis exists but its
+ * summary is not built yet; the worker rebuilds it after every pipeline).
  *
  * WHAT IT SAYS. The recommendation the run's Analysis tab shows, chosen the
  * same way (`RunIntelligencePage`): a verified decision report's
  * recommendation wins; when a report envelope exists but none of it is
  * displayable, there is no verdict; otherwise the persisted release decision.
+ * ONE reducer (`aiVerdictOf`) runs over the full payload (the Analysis tab)
+ * and over the slim one (this column), so the two agree by construction; the
+ * server's `run_verdict.ai_recommendation_of` (the `?recommendation=` filter)
+ * is the same rule, pinned by the shared case table (`aiVerdict.test.ts`).
  * No recommendation is "—", with the reason in the cell's title — never a
  * verdict made up from the pass rate.
  */
-import useSWR from 'swr'
 import { deriveDecisionTrustState } from '@/components/ai/decisionTrustState'
-import { getData } from '@/services/http'
 import type { RunIntelligence } from '@/services/runIntelligenceService'
-import { isRunInProgress } from '@/utils/runPassRate'
+import type { RunVerdictItem } from '@/types/runs'
 
 export type AiRecommendation = 'GO' | 'CONDITIONAL_GO' | 'NO_GO'
 
@@ -35,11 +35,13 @@ export type NoVerdictReason =
   | 'in-progress'
   /** No AI analysis exists for the run. */
   | 'not-analysed'
+  /** Analysed (a finished pipeline exists), but its summary is not built: the list reads stored state only. */
+  | 'not-summarised'
   /** Analysed, but the analysis made no release recommendation. */
   | 'no-recommendation'
   /** The decision report exists but did not pass verification. */
   | 'not-verified'
-  /** The request failed: unknown, not "none". */
+  /** The request failed, or the run is not available to the reader: unknown, not "none". */
   | 'unavailable'
 
 export type AiVerdict =
@@ -48,7 +50,12 @@ export type AiVerdict =
       /** The E8.3 review state of the AI report, when a person has not accepted it. */
       review: 'draft' | 'rejected' | null
     }
-  | { recommendation: null; reason: NoVerdictReason }
+  | {
+      recommendation: null
+      reason: NoVerdictReason
+      /** A title more precise than the reason's default (an id the batch answered as unavailable). */
+      title?: string
+    }
 
 const RECOMMENDATIONS: readonly string[] = ['GO', 'CONDITIONAL_GO', 'NO_GO']
 
@@ -58,7 +65,8 @@ const asRecommendation = (value: unknown): AiRecommendation | null =>
 /**
  * A run's AI verdict from its Run Intelligence payload, chosen as the run's
  * Analysis tab chooses it. Tolerant of a partial payload (an older API, a
- * cached snapshot): anything it cannot read is "no verdict", never a guess.
+ * cached snapshot, the batch's slim `verdict_inputs`): anything it cannot read
+ * is "no verdict", never a guess.
  */
 export function aiVerdictOf(intel: Partial<RunIntelligence> | null | undefined): AiVerdict {
   if (!intel || typeof intel !== 'object') return { recommendation: null, reason: 'not-analysed' }
@@ -93,65 +101,27 @@ export const RECOMMENDATION_LABEL: Record<AiRecommendation, string> = {
 export const NO_VERDICT_TITLE: Record<NoVerdictReason, string> = {
   'in-progress': 'No AI verdict: the run is still in progress',
   'not-analysed': 'No AI verdict: this run has not been analysed',
+  'not-summarised':
+    "No AI verdict on this list yet: the run was analysed but its summary is not built. Open the run's analysis to build it.",
   'no-recommendation': 'No AI verdict: the analysis made no release recommendation',
   'not-verified': 'No AI verdict: the decision report did not pass verification',
   unavailable: 'AI verdict unavailable: the request failed',
 }
 
-// ── Fetching ───────────────────────────────────────────────────────────────
+/** The title of a run the batch answered as unavailable (unknown or not accessible: one answer). */
+export const UNAVAILABLE_RUN_TITLE = 'AI verdict unavailable: the run is not available to you'
 
 /**
- * Verdict requests in flight at once. The endpoint computes a snapshot on a
- * cache miss (a Postgres + Mongo aggregation on a small per-worker pool), so a
- * page of 25 runs is asked a few at a time, not all at once.
+ * One run's verdict from its `GET /runs/ai-verdicts` item. `unavailable`: the
+ * id came back in the batch's `unavailable` list. No item (and not listed
+ * unavailable) is a failed answer, never "not analysed".
  */
-export const MAX_IN_FLIGHT = 3
-
-let inFlight = 0
-const waiting: Array<() => void> = []
-
-/** Run `task` when fewer than `MAX_IN_FLIGHT` verdict requests are in flight. */
-function limited<T>(task: () => Promise<T>): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const start = () => {
-      inFlight += 1
-      task()
-        .then(resolve, reject)
-        .finally(() => {
-          inFlight -= 1
-          waiting.shift()?.()
-        })
-    }
-    if (inFlight < MAX_IN_FLIGHT) start()
-    else waiting.push(start)
-  })
-}
-
-/** One run's verdict: its Run Intelligence report, reduced to the column's value. */
-export function fetchAiVerdict(runId: string): Promise<AiVerdict> {
-  return limited(() =>
-    getData<Partial<RunIntelligence>>(`/api/v1/runs/${encodeURIComponent(runId)}/intelligence`, {
-      // A row's cell renders its own "unavailable": 25 toasts would bury the page.
-      suppressToast: true,
-    }),
-  ).then(aiVerdictOf)
-}
-
-/**
- * The AI verdict of one run on screen. A run still in flight is not asked
- * (it has nothing analysed yet); its verdict is "—".
- */
-export function useRunAiVerdict(run: { id: string; status?: string | null }): {
-  verdict: AiVerdict | undefined
-  isLoading: boolean
-} {
-  const inProgress = isRunInProgress(run.status)
-  const { data, error, isLoading } = useSWR<AiVerdict>(
-    inProgress ? null : ['run-ai-verdict', run.id],
-    () => fetchAiVerdict(run.id),
-    { revalidateOnFocus: false, shouldRetryOnError: false },
-  )
-  if (inProgress) return { verdict: { recommendation: null, reason: 'in-progress' }, isLoading: false }
-  if (error && !data) return { verdict: { recommendation: null, reason: 'unavailable' }, isLoading: false }
-  return { verdict: data, isLoading }
+export function aiVerdictFromBatch(item: RunVerdictItem | undefined, unavailable: boolean): AiVerdict {
+  if (unavailable) return { recommendation: null, reason: 'unavailable', title: UNAVAILABLE_RUN_TITLE }
+  if (!item) return { recommendation: null, reason: 'unavailable' }
+  if (!item.snapshot) return { recommendation: null, reason: item.analysed ? 'not-summarised' : 'not-analysed' }
+  // The slim payload has a run-intelligence payload's keys (contract §1.2);
+  // the review state is attached to it the way the per-run read attaches it.
+  const inputs = (item.verdict_inputs ?? {}) as Partial<RunIntelligence>
+  return aiVerdictOf({ ...inputs, review: item.review as RunIntelligence['review'] })
 }
