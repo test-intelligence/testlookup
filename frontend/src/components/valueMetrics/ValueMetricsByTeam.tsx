@@ -14,7 +14,9 @@
  * `encodeURIComponent`ed `?team=` value. The link is drawn only for QA lead
  * and above (`/ownership` is theirs); Unassigned never links.
  */
-import { Link } from 'react-router-dom'
+// ScopedLink, not Link: /ownership cannot render in All Projects, and the
+// route-scope ratchet holds every link to a project-gated page to it.
+import ScopedLink from '@/components/ui/ScopedLink'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useTeamValueMetrics } from '@/hooks/useTeamValueMetrics'
 import { formatNumber } from '@/utils/formatters'
@@ -78,9 +80,9 @@ export default function ValueMetricsByTeam({ projectId, days, canEditOwnership }
       <section aria-label="Value by team" data-value-by-team="no-rules" className={MESSAGE} style={{ borderColor: 'var(--color-border)' }}>
         <p className="m-0 font-semibold text-[var(--color-text)]">{NO_RULES_TITLE}</p>
         {canEditOwnership ? (
-          <Link to="/ownership" className="mt-2 inline-block hover:underline" style={{ color: 'var(--color-accent)' }}>
+          <ScopedLink to="/ownership" containerClassName="mt-2 inline-block" className="text-[var(--color-accent)] hover:underline">
             Set up ownership
-          </Link>
+          </ScopedLink>
         ) : (
           <p className="m-0 mt-1">{NO_RULES_ASK}</p>
         )}
@@ -127,9 +129,9 @@ export default function ValueMetricsByTeam({ projectId, days, canEditOwnership }
                 <tr key={row.team} data-team-row={row.team} style={{ borderBottom: '1px dashed var(--color-border)' }}>
                   <td className="truncate px-2 py-1.5" title={row.team}>
                     {canEditOwnership && !unassigned ? (
-                      <Link to={ownershipTeamHref(row.team)} className="hover:underline" style={{ color: 'var(--color-accent)' }}>
+                      <ScopedLink to={ownershipTeamHref(row.team)} className="text-[var(--color-accent)] hover:underline" hintInTitleOnly>
                         {row.team}
-                      </Link>
+                      </ScopedLink>
                     ) : (
                       <span className={unassigned ? 'italic text-[var(--color-text-muted)]' : undefined}>{row.team}</span>
                     )}
