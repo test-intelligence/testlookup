@@ -168,14 +168,18 @@ so the table view and CSV export need no transformation. Each point carries
 ``y`` and ``n`` (the sample behind it); a rate with nothing evaluated is
 ``y: null`` with ``measured: false`` and a reason, never 0.
 
-Source: [backend/app/routers/analytics.py:1027](../../../backend/app/routers/analytics.py#L1027).
+``facet_dimension`` + ``facet_value`` (W08 TRND-13) make the chart one
+panel of the Explorer's small multiples; ``meta.definitions.facet`` states
+it.
+
+Source: [backend/app/routers/analytics.py:1036](../../../backend/app/routers/analytics.py#L1036).
 
 Dependency chain: `OAuth2PasswordBearer`, `_gate_dependency.<locals>.analytics_gate`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-metric: str=Query('executions', description='What to measure. One of: ' + ', '.join(sorted(chart_data_service.METRICS))), group_by: Optional[list[str]]=Query(None, description='The axis, and optionally a second dimension to key the series by (at most two, the time dimension first). One of: ' + ', '.join(sorted(chart_data_service.DIMENSIONS))), top_n: Optional[int]=Query(None, description="Keep the largest N keys and merge the rest into an 'other' bucket. Required for group_by=test outside a single suite."), scope: AnalyticsScope=Depends(analytics_scope(_CHART_DATA)), db: AsyncSession=Depends(get_db)
+metric: str=Query('executions', description='What to measure. One of: ' + ', '.join(sorted(chart_data_service.METRICS))), group_by: Optional[list[str]]=Query(None, description='The axis, and optionally a second dimension to key the series by (at most two, the time dimension first). One of: ' + ', '.join(sorted(chart_data_service.DIMENSIONS))), top_n: Optional[int]=Query(None, description="Keep the largest N keys and merge the rest into an 'other' bucket. Required for group_by=test outside a single suite."), facet_dimension: Optional[str]=Query(None, description='With facet_value: draw one panel of a small multiple, counting only the executions whose value of this dimension is facet_value. One of: ' + ', '.join(chart_data_service.FACET_DIMENSIONS) + '. run_count with status or failure_category is refused (facet_metric_grain).'), facet_value: Optional[str]=Query(None, description="The panel's KEY as the chart buckets it (a branch, an environment lower-cased, a status of passed/failed/broken/skipped/unknown, a failure category lower-cased, an ingestion source). Sent with facet_dimension."), scope: AnalyticsScope=Depends(analytics_scope(_CHART_DATA)), db: AsyncSession=Depends(get_db)
 ```
 
 ### Declared wire contract
@@ -235,6 +239,42 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
         ],
         "description": "Keep the largest N keys and merge the rest into an 'other' bucket. Required for group_by=test outside a single suite.",
         "title": "Top N"
+      }
+    },
+    {
+      "description": "With facet_value: draw one panel of a small multiple, counting only the executions whose value of this dimension is facet_value. One of: branch, environment, status, failure_category, ingestion_source. run_count with status or failure_category is refused (facet_metric_grain).",
+      "in": "query",
+      "name": "facet_dimension",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "With facet_value: draw one panel of a small multiple, counting only the executions whose value of this dimension is facet_value. One of: branch, environment, status, failure_category, ingestion_source. run_count with status or failure_category is refused (facet_metric_grain).",
+        "title": "Facet Dimension"
+      }
+    },
+    {
+      "description": "The panel's KEY as the chart buckets it (a branch, an environment lower-cased, a status of passed/failed/broken/skipped/unknown, a failure category lower-cased, an ingestion source). Sent with facet_dimension.",
+      "in": "query",
+      "name": "facet_value",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "The panel's KEY as the chart buckets it (a branch, an environment lower-cased, a status of passed/failed/broken/skipped/unknown, a failure category lower-cased, an ingestion source). Sent with facet_dimension.",
+        "title": "Facet Value"
       }
     },
     {
@@ -1055,17 +1095,19 @@ Contract limit: at least one response has an unstructured schema. Read the linke
 Coverage Map
 
 One level of the coverage map as contract C3 ``tree``: the parent as the
-single root, its children (at most 499, the rest in one "Other (n)" node),
-each with the ``stats`` block. Test-execution coverage, not code coverage.
+single root, its children (at most 499, the rest in one "Other (n)" node,
+which ``other_page`` opens), each with the ``stats`` block (W08:
+``needs_review_count`` in one project). Test-execution coverage, not code
+coverage.
 
-Source: [backend/app/routers/analytics_coverage_map.py:37](../../../backend/app/routers/analytics_coverage_map.py#L37).
+Source: [backend/app/routers/analytics_coverage_map.py:58](../../../backend/app/routers/analytics_coverage_map.py#L58).
 
 Dependency chain: `OAuth2PasswordBearer`, `_gate_dependency.<locals>.analytics_gate`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-depth: int=Query(1, description='1: the suites. 2: the classes (or files) of one suite. 3: the tests of one class.'), suite: Optional[str]=Query(None, description="depth 2 and 3: the suite KEY, as the level-1 node id carries it after its 's:' prefix. Echoed, never parsed."), class_key: Optional[str]=Query(None, description=f"depth 3: the class KEY, as the level-2 node id carries it after 'c:<suite key>{coverage_map_service.KEY_SEPARATOR}' ('{coverage_map_service.NO_CLASS_KEY}' for tests with no class)."), scope: AnalyticsScope=Depends(analytics_scope(COVERAGE_MAP_POLICY)), db: AsyncSession=Depends(get_db)
+depth: int=Query(1, description='1: the suites. 2: the classes (or files) of one suite. 3: the tests of one class.'), suite: Optional[str]=Query(None, description="depth 2 and 3: the suite KEY, as the level-1 node id carries it after its 's:' prefix. Echoed, never parsed."), class_key: Optional[str]=Query(None, description=f"depth 3: the class KEY, as the level-2 node id carries it after 'c:<suite key>{coverage_map_service.KEY_SEPARATOR}' ('{coverage_map_service.NO_CLASS_KEY}' for tests with no class)."), other_page: Optional[int]=Query(None, ge=2, le=coverage_map_service.OTHER_PAGE_MAX, description=f"Open the level's 'Other (n)' node: page 2 is the next {coverage_map_service.KEPT_WHEN_FOLDED} children of the same parent, page 3 the ones after, ... Absent is the first page."), scope: AnalyticsScope=Depends(analytics_scope(COVERAGE_MAP_POLICY)), db: AsyncSession=Depends(get_db)
 ```
 
 ### Declared wire contract
@@ -1122,6 +1164,26 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
         ],
         "description": "depth 3: the class KEY, as the level-2 node id carries it after 'c:<suite key>␟' ('__none__' for tests with no class).",
         "title": "Class Key"
+      }
+    },
+    {
+      "description": "Open the level's 'Other (n)' node: page 2 is the next 498 children of the same parent, page 3 the ones after, ... Absent is the first page.",
+      "in": "query",
+      "name": "other_page",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "maximum": 50,
+            "minimum": 2,
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Open the level's 'Other (n)' node: page 2 is the next 498 children of the same parent, page 3 the ones after, ... Absent is the first page.",
+        "title": "Other Page"
       }
     },
     {
@@ -1238,6 +1300,325 @@ Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
 with_meta(payload, meta)
+```
+
+Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
+
+## GET `/api/v1/analytics/coverage/history`
+
+Coverage History
+
+W08 TRND-07 -- the project's daily coverage snapshots over the window:
+tests in the catalogue, tests exercised in the 30 days ending each day
+(and their share), suites exercised. One point per stored day, ascending;
+a day with no snapshot is absent (a gap). ``measured: false`` before the
+project's first snapshot. Release and suite are declared ignored: a
+snapshot is project-wide.
+
+Source: [backend/app/routers/analytics_coverage_map.py:117](../../../backend/app/routers/analytics_coverage_map.py#L117).
+
+Dependency chain: `OAuth2PasswordBearer`, `_gate_dependency.<locals>.analytics_gate`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+scope: AnalyticsScope=Depends(analytics_scope(COVERAGE_HISTORY_POLICY)), db: AsyncSession=Depends(get_db)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "coverage_history_api_v1_analytics_coverage_history_get",
+  "parameters": [
+    {
+      "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
+      "in": "query",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+        "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
+        "title": "Project Id",
+        "type": "string"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+      "in": "query",
+      "name": "release_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+        "title": "Release Id"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+      "in": "query",
+      "name": "suite_name",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+        "title": "Suite Name"
+      }
+    },
+    {
+      "description": "Window in days, 1-365.",
+      "in": "query",
+      "name": "days",
+      "required": false,
+      "schema": {
+        "default": 90,
+        "description": "Window in days, 1-365.",
+        "title": "Days",
+        "type": "integer"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {}
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+Handler return expressions (source excerpts, not an inferred wire schema):
+
+```python
+with_meta(body, meta)
+```
+
+Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
+
+## GET `/api/v1/analytics/coverage/untagged-tests`
+
+Coverage Untagged Tests
+
+W08 TRND-07 -- the tests behind the Coverage page's Untagged executions
+callout: the distinct tests whose executions in the window carry no suite
+label, busiest first, each with its current catalogue suite (the Fix
+tagging panel). ``total`` is the count beyond this page.
+
+Source: [backend/app/routers/analytics_coverage_map.py:151](../../../backend/app/routers/analytics_coverage_map.py#L151).
+
+Dependency chain: `OAuth2PasswordBearer`, `_gate_dependency.<locals>.analytics_gate`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+page: int=Query(1, ge=1, description='The page, from 1.'), size: int=Query(50, ge=1, le=coverage_snapshot_service.UNTAGGED_PAGE_MAX, description='Tests per page (1-200).'), scope: AnalyticsScope=Depends(analytics_scope(UNTAGGED_TESTS_POLICY)), db: AsyncSession=Depends(get_db)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "coverage_untagged_tests_api_v1_analytics_coverage_untagged_tests_get",
+  "parameters": [
+    {
+      "description": "The page, from 1.",
+      "in": "query",
+      "name": "page",
+      "required": false,
+      "schema": {
+        "default": 1,
+        "description": "The page, from 1.",
+        "minimum": 1,
+        "title": "Page",
+        "type": "integer"
+      }
+    },
+    {
+      "description": "Tests per page (1-200).",
+      "in": "query",
+      "name": "size",
+      "required": false,
+      "schema": {
+        "default": 50,
+        "description": "Tests per page (1-200).",
+        "maximum": 200,
+        "minimum": 1,
+        "title": "Size",
+        "type": "integer"
+      }
+    },
+    {
+      "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
+      "in": "query",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+        "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
+        "title": "Project Id",
+        "type": "string"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+      "in": "query",
+      "name": "release_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+        "title": "Release Id"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+      "in": "query",
+      "name": "suite_name",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+        "title": "Suite Name"
+      }
+    },
+    {
+      "description": "Window in days, 1-90.",
+      "in": "query",
+      "name": "days",
+      "required": false,
+      "schema": {
+        "default": 30,
+        "description": "Window in days, 1-90.",
+        "title": "Days",
+        "type": "integer"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {}
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+Handler return expressions (source excerpts, not an inferred wire schema):
+
+```python
+with_meta(body, meta)
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -4042,6 +4423,158 @@ Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
 with_meta(payload, await build_meta(db, scope))
+```
+
+Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
+
+## GET `/api/v1/analytics/trend-summary`
+
+Get Trend Summary
+
+The trend verdict (``HEALTHY`` / ``MIXED`` / ``INSUFFICIENT`` /
+``DECLINING`` / ``PENDING``), the 0-100 confidence score and its four
+weighted dimensions, the variance of the daily pass rate, and the longest
+run of days without executions in the window. ``null`` = not measured.
+
+Source: [backend/app/routers/analytics_trend_summary.py:37](../../../backend/app/routers/analytics_trend_summary.py#L37).
+
+Dependency chain: `OAuth2PasswordBearer`, `_gate_dependency.<locals>.analytics_gate`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+scope: AnalyticsScope=Depends(analytics_scope(TREND_SUMMARY_POLICY)), db: AsyncSession=Depends(get_db)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "get_trend_summary_api_v1_analytics_trend_summary_get",
+  "parameters": [
+    {
+      "description": "One project (single-valued). Omit for every project you can read.",
+      "in": "query",
+      "name": "project_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "One project (single-valued). Omit for every project you can read.",
+        "title": "Project Id"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+      "in": "query",
+      "name": "release_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+        "title": "Release Id"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+      "in": "query",
+      "name": "suite_name",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+        "title": "Suite Name"
+      }
+    },
+    {
+      "description": "Window in days, 1-90.",
+      "in": "query",
+      "name": "days",
+      "required": false,
+      "schema": {
+        "default": 14,
+        "description": "Window in days, 1-90.",
+        "title": "Days",
+        "type": "integer"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {}
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+Handler return expressions (source excerpts, not an inferred wire schema):
+
+```python
+with_meta(body, meta)
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.

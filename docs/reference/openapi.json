@@ -11019,6 +11019,41 @@
         "title": "DurationSpikeResponse",
         "type": "object"
       },
+      "EmailAvailability": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "available"
+        ],
+        "title": "EmailAvailability",
+        "type": "object"
+      },
       "EmailTrendsRequest": {
         "properties": {
           "chart_ids": {
@@ -11039,9 +11074,34 @@
             "type": "string"
           },
           "recipient_email": {
-            "format": "email",
-            "title": "Recipient Email",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "email",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recipient Email"
+          },
+          "recipient_emails": {
+            "items": {
+              "format": "email",
+              "type": "string"
+            },
+            "maxItems": 5,
+            "title": "Recipient Emails",
+            "type": "array"
+          },
+          "recipient_user_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Recipient User Ids",
+            "type": "array"
           },
           "release_id": {
             "anyOf": [
@@ -11076,10 +11136,43 @@
           }
         },
         "required": [
-          "project_id",
-          "recipient_email"
+          "project_id"
         ],
         "title": "EmailTrendsRequest",
+        "type": "object"
+      },
+      "EmailTrendsResponse": {
+        "properties": {
+          "recipient": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recipient"
+          },
+          "sent_to": {
+            "title": "Sent To",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "window_days": {
+            "title": "Window Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status",
+          "sent_to",
+          "window_days"
+        ],
+        "title": "EmailTrendsResponse",
         "type": "object"
       },
       "EnrichedTestCaseDetailResponse": {
@@ -36372,6 +36465,225 @@
         "title": "TierOutputPairRequest",
         "type": "object"
       },
+      "TimelineNoteCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "ends_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ends On"
+          },
+          "starts_on": {
+            "format": "date",
+            "title": "Starts On",
+            "type": "string"
+          },
+          "suite_name": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suite Name"
+          },
+          "text": {
+            "maxLength": 280,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "starts_on",
+          "text"
+        ],
+        "title": "TimelineNoteCreate",
+        "type": "object"
+      },
+      "TimelineNoteList": {
+        "properties": {
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TimelineNoteResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "truncated",
+          "start",
+          "end"
+        ],
+        "title": "TimelineNoteList",
+        "type": "object"
+      },
+      "TimelineNoteResponse": {
+        "properties": {
+          "can_edit": {
+            "title": "Can Edit",
+            "type": "boolean"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "created_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By Name"
+          },
+          "ends_on": {
+            "title": "Ends On",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "starts_on": {
+            "title": "Starts On",
+            "type": "string"
+          },
+          "suite_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suite Name"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "starts_on",
+          "ends_on",
+          "text",
+          "can_edit"
+        ],
+        "title": "TimelineNoteResponse",
+        "type": "object"
+      },
+      "TimelineNoteUpdate": {
+        "additionalProperties": false,
+        "description": "Only the fields SENT are applied (``model_fields_set``).",
+        "properties": {
+          "ends_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ends On"
+          },
+          "starts_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Starts On"
+          },
+          "suite_name": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suite Name"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "maxLength": 280,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          }
+        },
+        "title": "TimelineNoteUpdate",
+        "type": "object"
+      },
       "TokenResponse": {
         "properties": {
           "access_token": {
@@ -42101,7 +42413,7 @@
     },
     "/api/v1/analytics/chart-data": {
       "get": {
-        "description": "A metric over up to two dimensions, as contract C3 ``chart_series``.\n\nSeries are keyed by the second ``group_by`` and zero-filled over the first,\nso the table view and CSV export need no transformation. Each point carries\n``y`` and ``n`` (the sample behind it); a rate with nothing evaluated is\n``y: null`` with ``measured: false`` and a reason, never 0.",
+        "description": "A metric over up to two dimensions, as contract C3 ``chart_series``.\n\nSeries are keyed by the second ``group_by`` and zero-filled over the first,\nso the table view and CSV export need no transformation. Each point carries\n``y`` and ``n`` (the sample behind it); a rate with nothing evaluated is\n``y: null`` with ``measured: false`` and a reason, never 0.\n\n``facet_dimension`` + ``facet_value`` (W08 TRND-13) make the chart one\npanel of the Explorer's small multiples; ``meta.definitions.facet`` states\nit.",
         "operationId": "chart_data_api_v1_analytics_chart_data_get",
         "parameters": [
           {
@@ -42153,6 +42465,42 @@
               ],
               "description": "Keep the largest N keys and merge the rest into an 'other' bucket. Required for group_by=test outside a single suite.",
               "title": "Top N"
+            }
+          },
+          {
+            "description": "With facet_value: draw one panel of a small multiple, counting only the executions whose value of this dimension is facet_value. One of: branch, environment, status, failure_category, ingestion_source. run_count with status or failure_category is refused (facet_metric_grain).",
+            "in": "query",
+            "name": "facet_dimension",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "With facet_value: draw one panel of a small multiple, counting only the executions whose value of this dimension is facet_value. One of: branch, environment, status, failure_category, ingestion_source. run_count with status or failure_category is refused (facet_metric_grain).",
+              "title": "Facet Dimension"
+            }
+          },
+          {
+            "description": "The panel's KEY as the chart buckets it (a branch, an environment lower-cased, a status of passed/failed/broken/skipped/unknown, a failure category lower-cased, an ingestion source). Sent with facet_dimension.",
+            "in": "query",
+            "name": "facet_value",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The panel's KEY as the chart buckets it (a branch, an environment lower-cased, a status of passed/failed/broken/skipped/unknown, a failure category lower-cased, an ingestion source). Sent with facet_dimension.",
+              "title": "Facet Value"
             }
           },
           {
@@ -42883,7 +43231,7 @@
     },
     "/api/v1/analytics/coverage-map": {
       "get": {
-        "description": "One level of the coverage map as contract C3 ``tree``: the parent as the\nsingle root, its children (at most 499, the rest in one \"Other (n)\" node),\neach with the ``stats`` block. Test-execution coverage, not code coverage.",
+        "description": "One level of the coverage map as contract C3 ``tree``: the parent as the\nsingle root, its children (at most 499, the rest in one \"Other (n)\" node,\nwhich ``other_page`` opens), each with the ``stats`` block (W08:\n``needs_review_count`` in one project). Test-execution coverage, not code\ncoverage.",
         "operationId": "coverage_map_api_v1_analytics_coverage_map_get",
         "parameters": [
           {
@@ -42932,6 +43280,26 @@
               ],
               "description": "depth 3: the class KEY, as the level-2 node id carries it after 'c:<suite key>␟' ('__none__' for tests with no class).",
               "title": "Class Key"
+            }
+          },
+          {
+            "description": "Open the level's 'Other (n)' node: page 2 is the next 498 children of the same parent, page 3 the ones after, ... Absent is the first page.",
+            "in": "query",
+            "name": "other_page",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 50,
+                  "minimum": 2,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Open the level's 'Other (n)' node: page 2 is the next 498 children of the same parent, page 3 the ones after, ... Absent is the first page.",
+              "title": "Other Page"
             }
           },
           {
@@ -43042,6 +43410,269 @@
           }
         ],
         "summary": "Coverage Map",
+        "tags": [
+          "Analytics"
+        ]
+      }
+    },
+    "/api/v1/analytics/coverage/history": {
+      "get": {
+        "description": "W08 TRND-07 -- the project's daily coverage snapshots over the window:\ntests in the catalogue, tests exercised in the 30 days ending each day\n(and their share), suites exercised. One point per stored day, ascending;\na day with no snapshot is absent (a gap). ``measured: false`` before the\nproject's first snapshot. Release and suite are declared ignored: a\nsnapshot is project-wide.",
+        "operationId": "coverage_history_api_v1_analytics_coverage_history_get",
+        "parameters": [
+          {
+            "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
+            "in": "query",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+            "in": "query",
+            "name": "release_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+              "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
+            }
+          },
+          {
+            "description": "Window in days, 1-365.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 90,
+              "description": "Window in days, 1-365.",
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Coverage History",
+        "tags": [
+          "Analytics"
+        ]
+      }
+    },
+    "/api/v1/analytics/coverage/untagged-tests": {
+      "get": {
+        "description": "W08 TRND-07 -- the tests behind the Coverage page's Untagged executions\ncallout: the distinct tests whose executions in the window carry no suite\nlabel, busiest first, each with its current catalogue suite (the Fix\ntagging panel). ``total`` is the count beyond this page.",
+        "operationId": "coverage_untagged_tests_api_v1_analytics_coverage_untagged_tests_get",
+        "parameters": [
+          {
+            "description": "The page, from 1.",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "description": "The page, from 1.",
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Tests per page (1-200).",
+            "in": "query",
+            "name": "size",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "description": "Tests per page (1-200).",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Size",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
+            "in": "query",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+            "in": "query",
+            "name": "release_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+              "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
+            }
+          },
+          {
+            "description": "Window in days, 1-90.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "description": "Window in days, 1-90.",
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Coverage Untagged Tests",
         "tags": [
           "Analytics"
         ]
@@ -45585,6 +46216,131 @@
           }
         ],
         "summary": "Top Failing Tests",
+        "tags": [
+          "Analytics"
+        ]
+      }
+    },
+    "/api/v1/analytics/trend-summary": {
+      "get": {
+        "description": "The trend verdict (``HEALTHY`` / ``MIXED`` / ``INSUFFICIENT`` /\n``DECLINING`` / ``PENDING``), the 0-100 confidence score and its four\nweighted dimensions, the variance of the daily pass rate, and the longest\nrun of days without executions in the window. ``null`` = not measured.",
+        "operationId": "get_trend_summary_api_v1_analytics_trend_summary_get",
+        "parameters": [
+          {
+            "description": "One project (single-valued). Omit for every project you can read.",
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "One project (single-valued). Omit for every project you can read.",
+              "title": "Project Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+            "in": "query",
+            "name": "release_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+              "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
+            }
+          },
+          {
+            "description": "Window in days, 1-90.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 14,
+              "description": "Window in days, 1-90.",
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get Trend Summary",
         "tags": [
           "Analytics"
         ]
@@ -62369,6 +63125,338 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/timeline-notes": {
+      "get": {
+        "description": "The notes overlapping ``from`` .. ``to`` (inclusive), at most 200.",
+        "operationId": "list_timeline_notes_api_v1_projects__project_id__timeline_notes_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The window's first UTC day (YYYY-MM-DD).",
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "description": "The window's first UTC day (YYYY-MM-DD).",
+              "format": "date",
+              "title": "From",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The window's last UTC day; at most 366 days after `from`.",
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "description": "The window's last UTC day; at most 366 days after `from`.",
+              "format": "date",
+              "title": "To",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Keep the project-wide notes and this suite's (any case). Omit for every note.",
+            "in": "query",
+            "name": "suite",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 500,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Keep the project-wide notes and this suite's (any case). Omit for every note.",
+              "title": "Suite"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimelineNoteList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "List Timeline Notes",
+        "tags": [
+          "Timeline notes"
+        ]
+      },
+      "post": {
+        "description": "Pin a note on one UTC day or a day range (QA engineer or above).",
+        "operationId": "create_timeline_note_api_v1_projects__project_id__timeline_notes_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TimelineNoteCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimelineNoteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Create Timeline Note",
+        "tags": [
+          "Timeline notes"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/timeline-notes/{note_id}": {
+      "delete": {
+        "description": "Remove a note (the author or a QA lead).",
+        "operationId": "delete_timeline_note_api_v1_projects__project_id__timeline_notes__note_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "note_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Note Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Delete Timeline Note",
+        "tags": [
+          "Timeline notes"
+        ]
+      },
+      "patch": {
+        "description": "Change the fields sent (the author or a QA lead); a ledger row only when one changed.",
+        "operationId": "update_timeline_note_api_v1_projects__project_id__timeline_notes__note_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "note_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Note Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TimelineNoteUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimelineNoteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Update Timeline Note",
+        "tags": [
+          "Timeline notes"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/value-metrics/assumptions": {
       "get": {
         "description": "Effective hours-saved assumptions for a project (defaults when no\nrow exists — the UI always renders the form).",
@@ -66027,7 +67115,7 @@
     },
     "/api/v1/reports/email-trends": {
       "post": {
-        "description": "Generate and email a trends report for the specified project and period.",
+        "description": "Email the Trends report of one project (the page's window, releases and\nsuites) to project members and up to 5 typed addresses, through the relay\nsaved in Settings › Notifications. One message for every recipient.",
         "operationId": "email_trends_report_api_v1_reports_email_trends_post",
         "parameters": [
           {
@@ -66061,7 +67149,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/EmailTrendsResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -66083,6 +67173,61 @@
           }
         ],
         "summary": "Email Trends Report",
+        "tags": [
+          "Reports"
+        ]
+      }
+    },
+    "/api/v1/reports/email-trends/availability": {
+      "get": {
+        "description": "Can the Trends report be emailed right now? The relay saved in Settings ›\nNotifications must be enabled, have a host, and pass the offline egress\ngate (the recipients are judged when sending). Reads nothing of a project.",
+        "operationId": "email_trends_availability_api_v1_reports_email_trends_availability_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailAvailability"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Email Trends Availability",
         "tags": [
           "Reports"
         ]
@@ -67309,6 +68454,124 @@
         "summary": "Export Summary Report Xlsx",
         "tags": [
           "Summary Report"
+        ]
+      }
+    },
+    "/api/v1/reports/trends/pdf": {
+      "get": {
+        "description": "The Trends report as a PDF (any member): the page's KPIs, verdict, daily\nseries and suite table for its window, releases and suites. Audited.",
+        "operationId": "export_trends_report_pdf_api_v1_reports_trends_pdf_get",
+        "parameters": [
+          {
+            "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
+            "in": "query",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+            "in": "query",
+            "name": "release_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+              "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
+            }
+          },
+          {
+            "description": "Window in days, 1-90.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 14,
+              "description": "Window in days, 1-90.",
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Export Trends Report Pdf",
+        "tags": [
+          "Reports"
         ]
       }
     },
@@ -82074,26 +83337,70 @@
     },
     "/api/v1/value-metrics/by-team": {
       "get": {
-        "description": "Tier 2 item 11 — partition value metrics by owning team.\n\nUses ``ServiceOwnershipRule`` rows to bucket tests + defects by\nteam. Requires a ``project_id`` because ownership rules are\nproject-scoped. Returns a per-team rollup with test count, pass\nrate, defect count, MTTR hours, and estimated minutes saved so\nthe dashboard can render per-team tiles without any further\ntransformation.",
+        "description": "W08 TRND-08 -- value metrics by owning team, for one project.\n\nOne row per team (``Unassigned`` last): tests, executions, the evaluated\npass rate, flaky tests, defects and MTTR, and the hours saved attributed\nfrom the headline's own legs, plus ``not_attributable_hours`` (runs\nunblocked by quarantine) and ``headline_hours``. ``rules_configured:\nfalse`` / ``measured: false`` when the project has no ownership rules and\nno component map. ``release_id`` / ``suite_name`` are accepted, authorised\nand declared in ``meta.ignored_filters``: these are project-level counts\nover time, as on the Overview.",
         "operationId": "get_metrics_by_team_api_v1_value_metrics_by_team_get",
         "parameters": [
           {
+            "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
             "in": "query",
             "name": "project_id",
             "required": true,
             "schema": {
+              "description": "Project to read. Single-valued. Required: without it the request is refused with 422 'missing_parameter' (All Projects is not supported here).",
               "title": "Project Id",
               "type": "string"
             }
           },
           {
+            "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+            "in": "query",
+            "name": "release_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+              "title": "Release Id"
+            }
+          },
+          {
+            "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+            "in": "query",
+            "name": "suite_name",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+              "title": "Suite Name"
+            }
+          },
+          {
+            "description": "Window in days, 1-365.",
             "in": "query",
             "name": "days",
             "required": false,
             "schema": {
               "default": 30,
-              "maximum": 365,
-              "minimum": 1,
+              "description": "Window in days, 1-365.",
               "title": "Days",
               "type": "integer"
             }
