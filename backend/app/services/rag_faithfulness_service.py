@@ -23,7 +23,9 @@ Two backends ship out of the box:
   ``faithfulness`` metric which calls a hosted LLM. Only used when the
   effective offline mode is off — the service degrades to ``ollama`` when
   ``AI_OFFLINE_MODE`` or the stored override turns it on, regardless of
-  the setting.
+  the setting, and when the ``ragas`` package is not installed (it is not
+  in requirements.txt). ``effective_evaluator`` decides; the AI settings
+  page reports its answer.
 
 Both backends return a ``(score, reason)`` tuple so the caller can
 surface a human-readable explanation when the gate fires.
@@ -87,6 +89,46 @@ async def _feature_enabled(
 
 # ── Evaluator dispatch ────────────────────────────────────────────────────
 
+EVALUATOR_STRATEGIES = ("ollama", "ragas")
+
+# Why the strategy that runs is what it is (``effective_evaluator``).
+EVALUATOR_REASON_CONFIGURED = "configured"
+EVALUATOR_REASON_OFFLINE = "offline_mode"
+EVALUATOR_REASON_RAGAS_MISSING = "ragas_not_installed"
+
+
+def normalize_evaluator(value: Any) -> str:
+    """A stored strategy, or ``"ollama"`` for a missing or unknown one."""
+    choice = str(value or "").strip().lower()
+    return choice if choice in EVALUATOR_STRATEGIES else "ollama"
+
+
+def ragas_installed() -> bool:
+    """Ragas and its ``datasets`` dependency are importable.
+
+    Neither is in requirements.txt, so the shipped image cannot run the Ragas
+    strategy. Checked without importing either package.
+    """
+    from importlib.util import find_spec
+
+    return find_spec("ragas") is not None and find_spec("datasets") is not None
+
+
+def effective_evaluator(configured: Any, *, offline: bool) -> tuple[str, str]:
+    """The strategy the gate runs for a stored choice, and why.
+
+    The gate and the AI settings page both call this, so the page cannot
+    report Ragas while the gate runs the single-prompt judge.
+    """
+    if normalize_evaluator(configured) != "ragas":
+        return ("ollama", EVALUATOR_REASON_CONFIGURED)
+    if offline:
+        # Ragas calls a hosted LLM; offline mode forbids that egress.
+        return ("ollama", EVALUATOR_REASON_OFFLINE)
+    if not ragas_installed():
+        return ("ollama", EVALUATOR_REASON_RAGAS_MISSING)
+    return ("ragas", EVALUATOR_REASON_CONFIGURED)
+
 
 async def _resolve_backend() -> str:
     """Return the name of the evaluator backend to use for this request.
@@ -106,11 +148,11 @@ async def _resolve_backend() -> str:
         cfg = await get_effective_ai_config()
         # The effective flag, not just the env var: a stored override can make
         # the deployment offline too, and Ragas calls a hosted LLM.
-        if cfg.get("offline_mode"):
-            return "ollama"
-        backend = str(cfg.get("rag_faithfulness_evaluator") or "ollama").lower()
-        if backend in ("ollama", "ragas"):
-            return backend
+        backend, _reason = effective_evaluator(
+            cfg.get("rag_faithfulness_evaluator"),
+            offline=bool(cfg.get("offline_mode")),
+        )
+        return backend
     except Exception as exc:
         logger.debug("evaluator backend resolve failed", error=str(exc))
     return "ollama"

@@ -279,8 +279,9 @@ def smtp_failure_hint(exc: BaseException, *, port: int, implicit_tls: bool) -> s
 _AI_CONFIG_KEY = "ai_config"
 
 # Derived, not stored: provenance for the offline-mode ceiling and the
-# US-15.2 confidence gate. Computed on every read, stripped before persisting
-# — writing a source back would make it look like a stored override.
+# US-15.2 confidence gate, and the faithfulness strategy that actually runs.
+# Computed on every read, stripped before persisting — writing a source back
+# would make it look like a stored override.
 _DERIVED_AI_KEYS = (
     "ai_offline_mode_source",
     "ai_offline_mode_env_pinned",
@@ -290,6 +291,8 @@ _DERIVED_AI_KEYS = (
     "ai_timeout_seconds_source",
     "deep_investigation_enabled_source",
     "finetune_enabled_source",
+    "rag_faithfulness_evaluator_effective",
+    "rag_faithfulness_evaluator_reason",
 )
 
 
@@ -304,6 +307,10 @@ async def _load_ai_config(db: AsyncSession) -> dict:
         resolve_stored_toggles,
     )
     from app.services.confidence_gate import normalize_threshold
+    from app.services.rag_faithfulness_service import (
+        effective_evaluator,
+        normalize_evaluator,
+    )
 
     result = await db.execute(select(AppSetting).where(AppSetting.key == _AI_CONFIG_KEY))
     row = result.scalar_one_or_none()
@@ -320,6 +327,12 @@ async def _load_ai_config(db: AsyncSession) -> dict:
     # get_llm() can never disagree about what is actually in force.
     effective_offline, offline_source = resolve_offline_mode(
         overrides.get("ai_offline_mode", settings.AI_OFFLINE_MODE)
+    )
+    # The stored choice, not the effective one: PUT writes this dict back, and
+    # an offline deployment would otherwise overwrite "ragas" with "ollama".
+    evaluator = normalize_evaluator(overrides.get("rag_faithfulness_evaluator"))
+    evaluator_effective, evaluator_reason = effective_evaluator(
+        evaluator, offline=effective_offline
     )
     return {
         "ai_offline_mode": effective_offline,
@@ -357,6 +370,9 @@ async def _load_ai_config(db: AsyncSession) -> dict:
         "openrouter_api_key": overrides.get("openrouter_api_key") or getattr(settings, "OPENROUTER_API_KEY", None),
         "analysis_mode": toggles["analysis_mode"],
         "analysis_mode_source": toggles["analysis_mode_source"],
+        "rag_faithfulness_evaluator": evaluator,
+        "rag_faithfulness_evaluator_effective": evaluator_effective,
+        "rag_faithfulness_evaluator_reason": evaluator_reason,
         # knowledge_rag_enabled is deliberately absent: it lives in the
         # feature_flags row, not here. Keeping a copy in ai_config is what let
         # this page advertise "Active" for a feature the gate had switched off.
@@ -420,6 +436,7 @@ async def get_ai_config(
     # off, and saving the form then wrote it off for the allow-listed projects.
     from app.services.feature_flags import is_enabled
     cfg["knowledge_rag_enabled"] = await is_enabled("knowledge_rag", db=db, any_scope=True)
+    gate_enabled = await is_enabled("rag_faithfulness_gate", db=db, any_scope=True)
 
     return AIConfigRead(
         llm_provider=cfg["llm_provider"],
@@ -446,6 +463,10 @@ async def get_ai_config(
         analysis_mode=cfg.get("analysis_mode", "auto"),
         analysis_mode_source=cfg.get("analysis_mode_source", "env_default"),
         knowledge_rag_enabled=cfg.get("knowledge_rag_enabled", False),
+        rag_faithfulness_evaluator=cfg["rag_faithfulness_evaluator"],
+        rag_faithfulness_evaluator_effective=cfg["rag_faithfulness_evaluator_effective"],
+        rag_faithfulness_evaluator_reason=cfg["rag_faithfulness_evaluator_reason"],
+        rag_faithfulness_gate_enabled=gate_enabled,
         ml_min_training_samples=settings.ML_MIN_TRAINING_SAMPLES,
         **ml,
     )
@@ -579,6 +600,7 @@ async def update_ai_config(
         valid_analysis_mode,
     )
     from app.services.confidence_gate import normalize_threshold
+    from app.services.rag_faithfulness_service import effective_evaluator
 
     await lock_global_agent_authority(db)
     existing = await _load_ai_config(db)
@@ -697,10 +719,14 @@ async def update_ai_config(
     # Re-resolve rather than echo: report the flag as it now stands -- the
     # switch, deployment-wide, as GET /settings/ai reports it.
     rag_enabled_after = await is_enabled("knowledge_rag", db=db, any_scope=True)
+    gate_enabled = await is_enabled("rag_faithfulness_gate", db=db, any_scope=True)
 
     # Re-resolve rather than echo the request: the response must report what
     # is actually in force after the ceiling, not what was asked for.
     effective_offline, offline_source = resolve_offline_mode(merged["ai_offline_mode"])
+    evaluator_effective, evaluator_reason = effective_evaluator(
+        merged["rag_faithfulness_evaluator"], offline=effective_offline
+    )
     # Provenance of the row just written, through the same helpers a GET uses.
     # After a save every key is stored (the form posts every field and the
     # merge keeps the rest), so these read "ai_config"; the confidence source
@@ -737,6 +763,10 @@ async def update_ai_config(
         analysis_mode=merged.get("analysis_mode", "auto"),
         analysis_mode_source=saved_toggles["analysis_mode_source"],
         knowledge_rag_enabled=rag_enabled_after,
+        rag_faithfulness_evaluator=merged["rag_faithfulness_evaluator"],
+        rag_faithfulness_evaluator_effective=evaluator_effective,
+        rag_faithfulness_evaluator_reason=evaluator_reason,
+        rag_faithfulness_gate_enabled=gate_enabled,
         ml_min_training_samples=settings.ML_MIN_TRAINING_SAMPLES,
         **ml,
     )

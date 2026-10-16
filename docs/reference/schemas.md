@@ -558,6 +558,26 @@ These are the full generated JSON Schema definitions, including required fields,
       "default": false,
       "title": "Openrouter Key Set",
       "type": "boolean"
+    },
+    "rag_faithfulness_evaluator": {
+      "default": "ollama",
+      "title": "Rag Faithfulness Evaluator",
+      "type": "string"
+    },
+    "rag_faithfulness_evaluator_effective": {
+      "default": "ollama",
+      "title": "Rag Faithfulness Evaluator Effective",
+      "type": "string"
+    },
+    "rag_faithfulness_evaluator_reason": {
+      "default": "configured",
+      "title": "Rag Faithfulness Evaluator Reason",
+      "type": "string"
+    },
+    "rag_faithfulness_gate_enabled": {
+      "default": false,
+      "title": "Rag Faithfulness Gate Enabled",
+      "type": "boolean"
     }
   },
   "required": [
@@ -799,6 +819,18 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Openrouter Api Key"
+    },
+    "rag_faithfulness_evaluator": {
+      "anyOf": [
+        {
+          "pattern": "^(ollama|ragas)$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Rag Faithfulness Evaluator"
     }
   },
   "title": "AIConfigUpdate",

@@ -76,6 +76,18 @@ locally by default.
   always failed; the Jira resolution webhook failed once two defects shared a
   key, and now closes and refreshes every one of them.
 
+- **Choose the RAG faithfulness evaluator in AI settings.** While the
+  `rag_faithfulness_gate` flag is on, **Settings › AI Configuration ›
+  Knowledge-Grounded Generation** offers the single-prompt judge or Ragas,
+  and `PUT /settings/ai` takes `rag_faithfulness_evaluator` (`ollama` |
+  `ragas`; anything else is a 422). It could only be set by editing the
+  `ai_config` row before, and saving any AI setting deleted it. The page and
+  `GET /settings/ai` report the strategy that runs
+  (`rag_faithfulness_evaluator_effective`) and why it differs from the choice
+  (`_reason`): offline mode, from the environment or the stored setting, or
+  a backend without the `ragas` package, which is not in `requirements.txt`.
+  The gate now falls back to the single-prompt judge in that last case too,
+  so a judged case is no longer labelled `ragas` when Ragas never ran.
 - **Releases show the real gate, a real owner, and the active release**
   (deferred-features wave W05, GATE-03, REL-01, REL-02, REL-04, REL-08, REL-10).
   A release card no longer computes its own verdict from thresholds it made up:
