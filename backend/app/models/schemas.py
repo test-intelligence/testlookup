@@ -3968,6 +3968,17 @@ class AIConfigRead(BaseModel):
     ml_maturity: str = "not_trained"                  # not_trained | bootstrap_llm_imitating | human_calibrated
     # Knowledge RAG feature toggle
     knowledge_rag_enabled: bool = False               # True if grounded test generation is active
+    # RAG faithfulness gate. ``rag_faithfulness_evaluator`` is the stored
+    # choice ("ollama" | "ragas") and round-trips through PUT; ``_effective``
+    # is the strategy the gate runs, and ``_reason`` says why they differ:
+    # "configured" | "offline_mode" (Ragas calls a hosted LLM) |
+    # "ragas_not_installed". Plain str for the same reason as above.
+    rag_faithfulness_evaluator: str = "ollama"
+    rag_faithfulness_evaluator_effective: str = "ollama"
+    rag_faithfulness_evaluator_reason: str = "configured"
+    # The rag_faithfulness_gate flag, on in any scope. Off ⇒ no case is scored
+    # and the evaluator choice has no effect.
+    rag_faithfulness_gate_enabled: bool = False
 
 
 class AIConfigUpdate(BaseModel):
@@ -3998,6 +4009,7 @@ class AIConfigUpdate(BaseModel):
     base_url: Optional[str] = Field(None, max_length=500)           # LP-3: endpoint override
     analysis_mode: Optional[str] = Field(None, pattern=r"^(llm|ml|rules|auto)$")
     knowledge_rag_enabled: Optional[bool] = None
+    rag_faithfulness_evaluator: Optional[str] = Field(None, pattern=r"^(ollama|ragas)$")
 
 
 # ── Integrations Schemas ─────────────────────────────────────

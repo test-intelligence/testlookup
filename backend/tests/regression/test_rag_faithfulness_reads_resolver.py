@@ -67,7 +67,9 @@ def stored_ai_config(monkeypatch, fake_redis):
 
 
 @pytest.mark.asyncio
-async def test_configured_evaluator_and_provider_are_honoured(stored_ai_config):
+async def test_configured_evaluator_and_provider_are_honoured(stored_ai_config, monkeypatch):
+    # ragas is not in requirements.txt; the strategy runs only where it is installed.
+    monkeypatch.setattr(svc, "ragas_installed", lambda: True)
     stored_ai_config({"llm_provider": "openrouter", "rag_faithfulness_evaluator": "ragas"})
 
     assert await svc._resolve_backend() == "ragas"

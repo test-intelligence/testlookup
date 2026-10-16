@@ -18,7 +18,7 @@ Two rules hold everywhere:
 | **LLM Provider** | **Provider** (`ollama`, `lmstudio`, `localai`, `vllm`, `openai`, `gemini`, `anthropic`, `openrouter`), **Model**, **Temperature** and **Max Tokens** |
 | **Embedding** | The embedding provider and model used for semantic search and knowledge-grounded generation |
 | **Pipeline Settings** | **Confidence Threshold (0-100)**, **Timeout (seconds)** (5 to 1800), **Offline Mode** (shows **Pinned by environment** when the server pins it), **Deep Investigation**, **Fine-Tuning Pipeline** |
-| **Knowledge-Grounded Generation** | **Enable Knowledge RAG** for [test generation from your documents](knowledge-base.md) |
+| **Knowledge-Grounded Generation** | **Enable Knowledge RAG** for [test generation from your documents](knowledge-base.md); while the `rag_faithfulness_gate` flag is on, **Faithfulness evaluator** picks the single-prompt judge or Ragas and shows which one is in use |
 | **Cloud API Keys** | OpenAI, Google, Anthropic and OpenRouter keys, stored encrypted. Only used when offline mode is off |
 
 Defaults on a new install: provider `ollama`, model `qwen2.5:7b-instruct`, embedding model `nomic-embed-text:v1.5`, confidence threshold 80, offline mode on, analysis mode **Auto**. The server-side settings behind these (`LLM_PROVIDER`, `LLM_MODEL`, `EMBEDDING_MODEL`, the provider base URLs and allow-lists, `LLM_PRICE_OVERRIDES`) are listed in the [configuration reference](../docs/operations/configuration.md). Getting the models onto an air-gapped host is the [Offline model pack](offline-model-pack.md).

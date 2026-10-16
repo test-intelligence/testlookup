@@ -449,6 +449,9 @@ async def test_the_ai_settings_page_shows_the_rag_switch_that_is_stored(flag_row
         "ai_confidence_threshold": 70, "ai_confidence_threshold_source": "default",
         "ai_timeout_seconds": 30, "deep_investigation_enabled": False,
         "finetune_enabled": False, "analysis_mode": "auto",
+        "rag_faithfulness_evaluator": "ollama",
+        "rag_faithfulness_evaluator_effective": "ollama",
+        "rag_faithfulness_evaluator_reason": "configured",
     }))
     monkeypatch.setattr(settings_router, "_ml_status", AsyncMock(return_value={}))
     result = await settings_router.get_ai_config(_=MagicMock(), db=MagicMock())
