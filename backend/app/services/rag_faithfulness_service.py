@@ -20,12 +20,13 @@ Two backends ship out of the box:
   answer is parsed into a 0.0-1.0 score. Works in air-gapped mode.
 
 * ``"ragas"`` (cloud) — Delegates to the Ragas library's
-  ``faithfulness`` metric which calls a hosted LLM. Only used when the
+  ``faithfulness`` metric, judged by the same configured LLM (``get_llm``),
+  inside the same provider policy and cost cap. Only used when the
   effective offline mode is off — the service degrades to ``ollama`` when
   ``AI_OFFLINE_MODE`` or the stored override turns it on, regardless of
-  the setting, and when the ``ragas`` package is not installed (it is not
-  in requirements.txt). ``effective_evaluator`` decides; the AI settings
-  page reports its answer.
+  the setting, and when the ``ragas`` package is not installed (it is in
+  requirements-ragas.txt, which the default image does not install).
+  ``effective_evaluator`` decides; the AI settings page reports its answer.
 
 Both backends return a ``(score, reason)`` tuple so the caller can
 surface a human-readable explanation when the gate fires.
@@ -38,6 +39,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import uuid
 from datetime import datetime, timezone
@@ -106,8 +108,9 @@ def normalize_evaluator(value: Any) -> str:
 def ragas_installed() -> bool:
     """Ragas and its ``datasets`` dependency are importable.
 
-    Neither is in requirements.txt, so the shipped image cannot run the Ragas
-    strategy. Checked without importing either package.
+    Neither is in requirements.txt: an image runs the Ragas strategy only when
+    built with ``INSTALL_RAGAS=1`` (requirements-ragas.txt). Checked without
+    importing either package.
     """
     from importlib.util import find_spec
 
@@ -123,7 +126,9 @@ def effective_evaluator(configured: Any, *, offline: bool) -> tuple[str, str]:
     if normalize_evaluator(configured) != "ragas":
         return ("ollama", EVALUATOR_REASON_CONFIGURED)
     if offline:
-        # Ragas calls a hosted LLM; offline mode forbids that egress.
+        # The judge is the configured LLM, but Ragas can open connections of
+        # its own (usage telemetry, URLs in multi-modal contexts). Offline mode
+        # keeps third-party egress paths off.
         return ("ollama", EVALUATOR_REASON_OFFLINE)
     if not ragas_installed():
         return ("ollama", EVALUATOR_REASON_RAGAS_MISSING)
@@ -147,7 +152,7 @@ async def _resolve_backend() -> str:
         from app.services.ai_config_resolver import get_effective_ai_config
         cfg = await get_effective_ai_config()
         # The effective flag, not just the env var: a stored override can make
-        # the deployment offline too, and Ragas calls a hosted LLM.
+        # the deployment offline too, and offline mode keeps Ragas off.
         backend, _reason = effective_evaluator(
             cfg.get("rag_faithfulness_evaluator"),
             offline=bool(cfg.get("offline_mode")),
@@ -259,32 +264,61 @@ def _parse_score(raw: str) -> tuple[float, str]:
     return (0.0, "could not parse evaluator output")
 
 
+class RagasUnavailable(RuntimeError):
+    """The ``ragas`` package could not be imported.
+
+    ``ragas_installed`` only finds the package; an install with a missing or
+    incompatible dependency fails here, at import.
+    """
+
+
 async def _evaluate_via_ragas(
     generated_content: str,
     citations: list[str],
 ) -> tuple[float, str]:
-    """Ragas hosted evaluator. Imported lazily so the ragas dependency
-    remains optional for air-gapped customers."""
+    """Score with Ragas's faithfulness metric, judged by the configured LLM.
+
+    Ragas is handed ``get_llm()``'s model, so its calls take the path every
+    other AI call takes: the offline ceiling and the provider allowlist while
+    the model is built, then per call the reservation against the project's
+    cost cap (``cost_budget_scope`` in ``evaluate``), the circuit breaker and a
+    cluster slot. Given no model, Ragas judged with its own default (OpenAI,
+    from ``OPENAI_API_KEY``), outside all of them.
+
+    The metric is scored with its async per-sample API, in this task. The
+    synchronous ``ragas.evaluate`` blocked the event loop and, from inside a
+    running one, patched it with nest_asyncio.
+
+    Requires ragas 0.2 or later (``requirements-ragas.txt``). Raises
+    :class:`RagasUnavailable` when it cannot be imported.
+    """
     if not citations:
         return (0.0, "no citations attached to the generated case")
+    # Ragas posts usage events to its vendor unless this is set. Read once,
+    # on its first event, so it is set before the import.
+    os.environ["RAGAS_DO_NOT_TRACK"] = "true"
     try:
-        from ragas.metrics import faithfulness
-        from ragas import evaluate as ragas_evaluate
-        from datasets import Dataset
+        from ragas.dataset_schema import SingleTurnSample
+        from ragas.llms import LangchainLLMWrapper
+        from ragas.metrics import Faithfulness
+        from ragas.run_config import RunConfig
+    except ImportError as exc:
+        raise RagasUnavailable(str(exc)) from exc
 
-        ds = Dataset.from_dict({
-            "question": ["Is the generated test case grounded in the citations?"],
-            "answer": [generated_content],
-            "contexts": [citations],
-        })
-        # ragas 0.1 returns a dict holding the mean score. 0.2+ returns an
-        # EvaluationResult, which has no ``.get`` and maps the metric to one
-        # score per sample. ``Any`` because the declared type is version-bound.
-        result: Any = ragas_evaluate(ds, metrics=[faithfulness])
-        value = result["faithfulness"]
-        if isinstance(value, list):
-            value = value[0] if value else float("nan")
-        score = float(value)
+    try:
+        from app.services.llm_factory import get_llm
+
+        llm: Any = await get_llm()
+        # One attempt per call: BudgetedLLM and the provider SDK already retry
+        # what is safe to retry, and Ragas's default (10 attempts, any
+        # exception) would retry a cost-cap refusal too.
+        judge = LangchainLLMWrapper(llm.as_chat_model(), run_config=RunConfig(max_retries=1))
+        sample = SingleTurnSample(
+            user_input="Is the generated test case grounded in the citations?",
+            response=generated_content,
+            retrieved_contexts=list(citations),
+        )
+        score = float(await Faithfulness(llm=judge).single_turn_ascore(sample))
         if math.isnan(score):
             # ragas records a failed judgement as NaN, which the clamp below
             # would turn into 1.0 — a pass.
@@ -293,9 +327,6 @@ async def _evaluate_via_ragas(
             max(0.0, min(1.0, score)),
             f"ragas faithfulness metric (sample size {len(citations)} citations)",
         )
-    except ImportError:
-        logger.debug("ragas not installed — falling back to ollama")
-        return await _evaluate_via_ollama(generated_content, citations)
     except Exception as exc:
         logger.warning("ragas evaluator failed", error=str(exc))
         return (0.0, f"ragas error: {exc}")
@@ -314,10 +345,9 @@ async def evaluate(
 ) -> Optional[dict[str, Any]]:
     """Score a single generated case for faithfulness.
 
-    ``project_id``: the single-prompt judge (``get_llm``) reserves against
-    that project's monthly LLM cap (re-audit R-B45-1). The Ragas backend
-    calls the LLM Ragas itself is configured with, outside ``get_llm``: the
-    cap cannot see those calls.
+    ``project_id``: every judge call reserves against that project's monthly
+    LLM cap (re-audit R-B45-1). Both strategies judge with ``get_llm()``'s
+    model; Ragas makes several calls per case.
 
     Returns ``None`` when the feature flag is off (no-op). Otherwise
     returns a dict with ``score``, ``evaluator``, ``reason`` so the
@@ -356,7 +386,14 @@ async def evaluate(
 
         with cost_budget_scope(project_id):
             if backend == "ragas":
-                score, reason = await _evaluate_via_ragas(safe_content, safe_citations)
+                try:
+                    score, reason = await _evaluate_via_ragas(safe_content, safe_citations)
+                except RagasUnavailable as exc:
+                    # Found but not importable. The single-prompt judge runs,
+                    # and the label names the provider that judged.
+                    logger.warning("ragas import failed; single-prompt judge used", error=str(exc))
+                    evaluator = await _active_llm_provider()
+                    score, reason = await _evaluate_via_ollama(safe_content, safe_citations)
             else:
                 score, reason = await _evaluate_via_ollama(safe_content, safe_citations)
     except Exception as exc:

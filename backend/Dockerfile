@@ -45,6 +45,16 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
+# Optional: the Ragas RAG-faithfulness evaluator (Settings > AI Configuration).
+# Off by default: it adds 26 packages (pandas, pyarrow, datasets; ~360 MB) and
+# moves fsspec, jiter and rich to lower versions (requirements-ragas.txt says
+# why). --build-arg INSTALL_RAGAS=1 adds it. Without it, choosing Ragas runs
+# the single-prompt judge and the settings page says why. Copied after the
+# main install so editing it keeps that layer.
+ARG INSTALL_RAGAS=0
+COPY requirements-ragas.txt .
+RUN if [ "$INSTALL_RAGAS" = "1" ]; then pip install --no-cache-dir -r requirements-ragas.txt; fi
+
 # ── Development stage ────────────────────────────────────────
 FROM base AS development
 

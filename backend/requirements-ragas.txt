@@ -1,0 +1,46 @@
+# Optional: the Ragas RAG-faithfulness evaluator (Settings > AI Configuration).
+#
+# NOT installed by default. Build the backend image with
+#   --build-arg INSTALL_RAGAS=1
+# or, outside Docker, `pip install -r requirements-ragas.txt` (it includes
+# requirements.txt). Without it, a stored "ragas" runs the single-prompt judge
+# and the settings page reports `ragas_not_installed`.
+#
+# Ragas judges with the LLM configured in Settings > AI, through get_llm(): the
+# provider allowlist and the per-project cost cap apply. Its usage telemetry is
+# switched off at run time (RAGAS_DO_NOT_TRACK). It never runs in offline mode,
+# so the air-gapped bundle does not need it.
+#
+# Includes requirements.txt with `-r`, so every package it pins keeps that
+# version (langchain-core stays on 0.3.x). Not `-c`: pip refuses a constraints
+# file that has extras, such as celery[redis]. The app uses the per-sample
+# metric API from ragas 0.2; `ragas.metrics.Faithfulness` is deprecated in 0.4
+# and goes in 1.0, hence the pin.
+#
+# Open advisories with no fixed release (Trivy runs --ignore-unfixed):
+#   ragas      CVE-2026-6587   SSRF in the multi-modal faithfulness collections
+#                              module; the app uses the text Faithfulness metric.
+#   diskcache  CVE-2025-69872  pickle load from a writable cache directory;
+#                              only ragas's DiskCacheBackend imports it, and
+#                              the app gives ragas no cache.
+#
+# Three packages requirements.txt does not pin resolve LOWER here than in the
+# default image. Ragas 0.4.3's own requirements force it (uv and the image's
+# pip agree), and holding them back is worse:
+#   fsspec 2026.9.0 -> 2026.7.0  ragas needs datasets>=4.0; every release caps
+#                                fsspec, 5.1.0 at <=2026.7.0.
+#   jiter  0.17.0   -> 0.10.0    instructor 1.12 caps it (<0.11); holding 0.17
+#   rich   15.0.0   -> 14.3.4    or rich 15 drags instructor back to 0.4.x,
+#                                older than the API ragas 0.4 calls.
+# Held at the base versions, the resolver instead falls back to ragas 0.3.2
+# with datasets 2.14 and moves huggingface-hub (2.2 -> 0.36) and typer
+# (0.27 -> 0.9). Pinned here so the variant is reproducible; the backend suite
+# was run against it when this file was written.
+-r requirements.txt
+ragas==0.4.3
+datasets==5.1.0
+langchain-community==0.3.27
+instructor==1.12.0
+fsspec==2026.7.0
+jiter==0.10.0
+rich==14.3.4
