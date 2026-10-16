@@ -64,12 +64,14 @@ Every chart has an **Export** menu:
 | Format | Contains |
 |---|---|
 | **PNG image** | The chart as drawn |
-| **SVG image** | A scalable drawing, for documents and slides. **Light background** draws it on white whatever your theme (charts drawn as SVG only) |
+| **SVG image** | A scalable drawing, for documents and slides: its text stays text (selectable, searchable), never a picture of the chart |
 | **CSV data** | The values behind the chart. Unmeasured points are empty cells, not zeros |
+
+**Light background** (in the same menu) makes the PNG and the SVG come out on the light theme's card colour and text colours, whatever theme you are using — for slides and print. It works for every 2D chart, the heatmaps, the coverage map, the scatter and the status flows included; the menu stays open while you switch it.
 
 Each file records where it came from: the project, release, suite, window (in UTC), totals, when it was generated and the app version, plus the zoom when one is applied. File names follow `testlookup_<chart>_<project>_<date-time>Z`.
 
-A 3D view exports its 2D chart: the image and the data are the same points.
+A 3D view exports its 2D chart: the image and the data are the same points. **Light background** is not offered there (`Light background (not for this chart)`).
 
 For a whole report as a PDF or Excel file, see [Reports and exports](/docs/reports).
 
@@ -78,8 +80,8 @@ For a whole report as a PDF or Excel file, see [Reports and exports](/docs/repor
 | Page | Charts |
 |---|---|
 | **Overview** | Pass rate trend, status breakdown, top failing tests, failure categories |
-| **Trends** | Pass rate by suite, Compare, execution time (wall clock vs test time, by suite, regressions, the 20 slowest tests, the duration distribution), test duration (p50 / p95), and the suite-by-day heatmap |
-| **Coverage** | The test coverage map, and heatmaps of suite pass rate by environment or by release |
+| **Trends** | Pass rate by suite (with a small line per suite in Suite pass rates), Compare, execution time (wall clock vs test time, by suite, regressions, the 20 slowest tests, the duration distribution), test duration (p50 / p95), and the suite-by-day heatmap; notes on the pass rate trend |
+| **Coverage** | The test coverage map, heatmaps of suite pass rate by environment or by release, and the coverage history (**History** tab) |
 | **Failures** | Failures grouped by error message, systemic flake clusters, the drill-down, and the duration-versus-failure-rate scatter |
 | **Suite detail** | Test results by run (heatmap), the test scatter, and the suite's execution time per run |
 | **Summary report** | Status breakdown, results by suite, failures by test, pass rate trend |
@@ -88,12 +90,25 @@ For a whole report as a PDF or Excel file, see [Reports and exports](/docs/repor
 
 ### Trends
 
-- **Pass rate by suite** draws the 7 busiest suites and folds the rest into **Other**. **Customise** changes the metric, the line dimension (suite, environment, branch or release), day or week buckets, the number of lines, the chart type and the scale. Options that do not fit the data are shown with the reason. Customisations are kept in this browser; **Reset to default** restores the chart.
+- **Pass rate by suite** draws the 7 busiest suites and folds the rest into **Other**. **Customise** changes the metric, the line dimension (suite, environment, branch or release), day or week buckets, the number of lines, the chart type and the scale. Options that do not fit the data are shown with the reason. **Reset to default** restores the chart.
+- **Suite pass rates** (beside it) draws each suite's daily pass rate as a small line under its name — the same line "Pass rate by suite" draws, so a day without runs is a break. A suite that is not among the 7 busiest shows `—`, and its tooltip says why. The compare icon after a suite's name opens [Run compare](/docs/runs#comparing-two-runs) for its latest two runs.
 - **Overlays.** **7-day moving average** and **Trend line** draw over the pass rate. Days that are unusual for the series are marked "Flagged as unusual". The trend line needs at least 7 days with runs.
 - **Execution time** (the tab's first section) is described in [Execution time](#execution-time) below.
 - **Test duration (p50 / p95)** shows the typical and the slow end of test durations. A day without timings is a gap.
-- **Compare** draws suites or releases you choose on one chart. It starts with the 3 busiest suites; pick others with **Suites** and **Releases** in the card (releases need one project selected). **Compare by** draws one line per suite, per release, or per suite and release (colour is the suite, the dash is the release), up to 8 lines; **Metric** switches between pass rate, failures and executions. Your choice is in the page link, so sharing the link shares the comparison.
+- **Compare** draws suites or releases you choose on one chart. It starts with the 3 busiest suites; pick others with **Suites** and **Releases** in the card (releases need one project selected). **Customise** on Compare holds its **Metric** (pass rate, failures or executions) and **Compare by** (one line per suite, per release, or per suite and release — colour is the suite, the dash is the release —, up to 8 lines), with the options it does not offer and why. Your suites and releases are in the page link, so sharing the link shares the comparison.
 - **Suite pass rate by day** is a heatmap of the 40 suites with the most failures.
+
+### Notes on the timeline
+
+A **note** marks a UTC day or a range of days on a project's time charts — a release freeze, an outage, a runner change — so a dip is read with its reason beside it. "Pass rate trend" on **Trends** and **Coverage › History** draw every note of the window: a one-day note as a dashed line, a range as a shaded band, each labelled with the start of its text; **Notes (n)** in the chart's toolbar lists them with their dates and author.
+
+- **Pin a note** (QA engineers and above) is in the **Run cadence** card: press on a day of the cadence strip and drag to choose a range (a click is one day), or use the button, or **Pin a note for these days** on a run-gap callout. A note is 1 to 280 characters, and may be for the selected suite only.
+- A note for one suite shows only while the page is filtered to that suite; a project-wide note always shows.
+- The author and QA leads can edit or delete a note. Everyone in the project can see every note.
+
+### Where the trend score comes from
+
+The trend verdict, its confidence score, the variance and the run gap are computed by the server from the same data as the page's charts, so the score in the disclosure, the run-gap callout and an emailed or exported report always agree.
 
 ### Execution time
 
@@ -127,11 +142,12 @@ A suite's own page shows **Suite execution time** under **Charts**: its wall clo
 
 ## Explorer and saved views
 
-**Trends → Explorer** (`/explore`) draws one metric as small multiples: one panel per suite or per release, up to 12. See [Dashboards and metrics](/docs/dashboards) for its options.
+**Trends → Explorer** (`/explore`) draws one metric as small multiples: one panel per suite, release, branch, environment, status, failure category or ingestion source, up to 12. **Customise** gives the grid a title and sets the lines per panel (3, 5 or 7, the rest as **Other**). See [Dashboards and metrics](/docs/dashboards#explorer) for its options.
 
 **Views** saves the current filters on Overview, Trends, Coverage, Failures, Defects, the Summary report and the Explorer:
 
 - A view keeps the top-bar release, the window, the page's suite filter, and page settings such as the Summary mode.
+- A view also keeps every chart you customised on its page — on Trends, "Pass rate by suite" and Compare (its metric, its **Compare by**, and the suites and releases you chose); on the Explorer, its title and lines per panel. Only charts that differ from their default are saved, so a teammate who opens the view sees the same charts; a chart that is still at its default is not stored at all. A saved chart setting this version no longer offers falls back to the default, and the page says so once. An unsaved customisation stays in this browser only.
 - Views belong to a project. The **Views** button appears once one project is selected.
 - **Share with the project** makes a view visible to every member; shared views are marked "(shared)". Opening someone else's view never shows you data you could not already see.
 - **My default for this page** opens that view when you first come to the page, unless the link you followed already names a release.

@@ -13,9 +13,18 @@
  *   - CSV: the `#` provenance lines, the plotted values, and every name that
  *     begins with `=`, `+`, `-` or `@` neutralised with a leading `'` — while a
  *     negative VALUE stays a number.
+ *   - W08 TRND-11, on a real page (`/trends?tab=heatmap`, the ECharts heatmap,
+ *     hermetic): **SVG image** is a vector file (`<svg`, its text as `<text>`,
+ *     no embedded `<image>`); **Light background** is offered and checked, and
+ *     the PNG then downloads; the production CSP sees no violation across both
+ *     exports. The 3D scatter keeps `Light background (not for this chart)`.
  */
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import { GALLERY_CHANGE_BARS, GALLERY_FORMULA_BARS, GALLERY_TOP_FAILING } from '../../src/pages/dev/chartGalleryFixtures'
+import { landmark } from '../lib/production-pages'
+import { cspViolations, watchCsp } from '../lib/csp'
+import { assertHermetic, expectDrawn, networkQuiet, openRollout, sectionFrame } from '../lib/rollout'
+import { TRENDS_ON } from '../visual/production/fixtures'
 import {
   EXPORT,
   exportFile,
@@ -27,6 +36,7 @@ import {
   watchErrors,
 } from '../lib/chart-gallery-page'
 import { decodePng, inkInRow, pixelAt } from '../lib/png'
+import { readFileSync } from 'node:fs'
 
 /**
  * A browser zone far from UTC, on every machine: the file name's stamp must be
@@ -280,3 +290,69 @@ test.describe('VIZ-606 export', () => {
     expect(file.name).toMatch(exportFileName('csv'))
   })
 })
+
+/** The export menu's Light background switch (a `menuitemcheckbox` that leaves the menu open). */
+const LIGHT = 'Light background'
+
+test.describe('W08 TRND-11: an ECharts chart exports a true SVG and a light image', () => {
+  test.use({ viewport: { width: 1280, height: 4000 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
+
+  const HEATMAP = { id: 'trends-heatmap', title: 'Suite pass rate by day' } as const
+
+  async function openHeatmap(page: Page) {
+    await watchCsp(page)
+    const opened = await openRollout(page, '/trends?tab=heatmap', { handlers: TRENDS_ON, ready: (p) => landmark(p, 'Trend metrics') })
+    const frame = sectionFrame(page, HEATMAP.id, HEATMAP.title)
+    await expectDrawn(frame, HEATMAP.id)
+    await expect(frame.locator('canvas').first()).toBeVisible()
+    return { ...opened, frame }
+  }
+
+  test('SVG image: a vector file — <svg>, its text as <text>, no embedded <image> — under the production CSP', async ({ page }) => {
+    const { api, errors, frame } = await openHeatmap(page)
+    const svg = await exportFile(page, frame, EXPORT.svg)
+    expect(svg.name).toMatch(exportFileName('svg'))
+    const source = svg.bytes.toString('utf-8').trimStart()
+    expect(source.startsWith('<svg') || source.startsWith('<?xml'), 'an SVG document').toBe(true)
+    expect(source).toContain('<svg')
+    expect(source, 'the labels are text').toContain('<text')
+    expect(source, 'nothing is an embedded picture of the chart').not.toContain('<image')
+    expect(source.includes('var('), 'an unresolved var( is left in the SVG').toBe(false)
+    const parsed = await parseSvg(page, source)
+    expect(parsed.ok, 'the SVG parses').toBe(true)
+    expect(await cspViolations(page)).toEqual([])
+    await networkQuiet(page, api)
+    assertHermetic(api, errors)
+  })
+
+  test('Light background: offered for the heatmap, checked without closing the menu, then the PNG downloads; no CSP violation', async ({ page }) => {
+    const { api, errors, frame } = await openHeatmap(page)
+    await frame.getByRole('button', { name: EXPORT.trigger, exact: true }).click()
+    const light = frame.getByRole('menuitemcheckbox', { name: LIGHT, exact: true })
+    await expect(light).toBeVisible()
+    await expect(light).toBeEnabled()
+    await expect(light).toHaveAttribute('aria-checked', 'false')
+    await light.click()
+    await expect(light, 'the menu stays open on toggle').toBeVisible()
+    await expect(light).toHaveAttribute('aria-checked', 'true')
+    const choice = frame.getByRole('menuitem', { name: EXPORT.png, exact: true })
+    const download = page.waitForEvent('download')
+    await choice.click()
+    const png = await download
+    expect(png.suggestedFilename()).toMatch(exportFileName('png'))
+    const image = decodePng(new Uint8Array(readFileSync(await png.path())))
+    // The light theme's card: a light pixel in the corner, whatever the (dark) page theme.
+    const [r, g, b] = pixelAt(image, 2, 2)
+    expect(r + g + b, `the corner pixel ${[r, g, b]} is light`).toBeGreaterThan(3 * 200)
+    // And the SVG on light too.
+    await exportFile(page, frame, EXPORT.svg)
+    expect(await cspViolations(page)).toEqual([])
+    await networkQuiet(page, api)
+    assertHermetic(api, errors)
+  })
+})
+
+// The 3D scatter's `Light background (not for this chart)` is asserted in
+// `rollout-scatter-3d.spec.ts` (d2): its 3D view needs the file-wide SwiftShader
+// launch flags, which this file must not take (they change every PNG test's GPU
+// path), and a describe group cannot set a worker option.

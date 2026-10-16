@@ -39,12 +39,13 @@ The AI verdict for each run is a column of the **Runs** table, and the full anal
 - **Metric** — any of the sixteen the chart API serves: counts, rates and durations.
 - **X axis** — day or week. Every panel shares the same time axis.
 - **Lines** — one line, or one per environment, branch, status, test and so on. With one panel per suite, a test split shows that suite's tests; otherwise the 7 tests with the most executions are drawn and the rest fold into "Other".
-- **Panels** — one panel, one per suite, or one per release. Release panels need one project selected: a release belongs to one project. The pickers only offer combinations the API accepts; a refused option says why.
-- **At most 12 panels**, the suites or releases with the most executions in the window. When there are more, the page says how many; runs with no suite are not shown as a panel.
+- **Panels** — one panel, or one per suite, release, branch, environment, status, failure category or ingestion source. Release panels need one project selected: a release belongs to one project. The pickers only offer combinations the API accepts; a refused option says why — for example **Runs** cannot be split by status or failure category, because one run holds tests of several statuses and would be counted in more than one panel.
+- **At most 12 panels**, the values with the most executions in the window. When there are more, the page says how many. Runs with no value for the panels' dimension (no branch, no environment, …) are not shown as a panel, and the page says so ("Runs with no branch are not shown."). Status panels read **Passed**, **Failed**, **Broken**, **Skipped**; a status or failure-category panel counts test executions, so its pass rate is that panel's own share.
 - **Y-scale** — *Shared* puts every panel on one scale, so heights compare across panels; *Own* fits each panel to its own values, which shows shape but not size. Rates always share 0–100%. Each panel states which scale it is on.
 - A shared **count** scale is the largest value of the panels loaded so far. Panels load as you scroll to them, so the scale can widen when a lower panel is larger, and the panel says so ("from 5 of 12 panels").
+- **Customise** (beside **Views**) gives the grid a **Title** (a heading over the panels, up to 80 characters) and sets **Lines per panel** — 3, 5 or 7, the busiest first and the rest as **Other** (pick **Lines** first). The options no series chart offers (pie, stacked rates, a log scale, more than 7 lines) are listed with the reason.
 
-The configuration is in the URL, so a link opens the same view. Inside one project, **Views** saves it, with the window and the top-bar release, as a named view.
+The configuration — the title and lines per panel included — is in the URL, so a link opens the same view. Inside one project, **Views** saves it, with the window and the top-bar release, as a named view.
 
 ## Reading a metric honestly
 
@@ -67,6 +68,19 @@ For any number on any dashboard, ask:
 ## Coverage means executed, not code
 
 Coverage here is about which tests ran and what they exercised **according to the reports you sent**. It is not line or branch coverage, and it cannot be — TestLookup never sees your source.
+
+- **The coverage map** draws at most 500 tiles a level. A level with more items keeps the 498 largest and combines the rest into **Other (n)**; open it for the next items of the same level (the breadcrumb reads `Other · page 2`, and the level's own crumb takes you back). A suite whose tests the last suite sync marked for review shows `n need review`; see [Test management](/docs/test-management#suites).
+- **Last run.** Each row of **Suite coverage breakdown** shows how long ago the suite last ran (`2h`, `2d`, `14d`), linking to that run. It turns amber when the suite has gone longer without a run than the project usually waits between runs, and its tooltip says how often that is.
+- **History** (the third tab, `/coverage?tab=history`) draws **Coverage history**: the tests in the catalogue and the share of them exercised in the 30 days ending each day. A snapshot is taken every night at 00:05 UTC (the first night also fills in the 30 days before it), so the line starts with your first snapshot — before it the tab says `No coverage snapshot yet: the first is taken at 00:05 UTC.` — and a night without a snapshot is a gap. A snapshot covers the whole project: the page's release and suite filters do not apply to it. Notes pinned on the timeline are drawn here too (see [Notes on the timeline](/docs/charts#notes-on-the-timeline)).
+- **Fix tagging** (QA engineers and above, one project) on the **Untagged executions** callout lists the tests whose executions carried no suite label, with their executions, last execution and current catalogue suite, 50 at a time. Tick tests, pick a suite and **Move** them: they are filed under that suite in the catalogue (Test Management, Suites, the coverage map). A QA lead can also make that suite the default for new unlabelled tests. A test that is not in the catalogue yet cannot be moved until its run is finalised.
+
+> **Important.** Moving a test changes the **catalogue**, not its executions. Past and future executions keep the suite label your test reporter sends, so the untagged count only drops once the reporter sends one. To label future runs, set the suite in the reporter; see [Getting results in](/docs/ingestion#key-behaviours).
+
+## Value by team
+
+**Reports → Value**, **By team** (`/value-metrics?view=team`, one project) splits the window's estimated hours saved by the team that owns each test — the same owner the failure pages name, from the project's ownership rules and component map. One row per team, then **Unassigned** for tests no rule matches: tests, pass rate (skipped tests are not evaluated), flaky tests, defects, the mean time to resolve them (**—** when none was resolved) and hours saved. The triage and dedup hours follow the tests in each failure cluster (a cluster spanning two teams is shared between them); the hours for runs that a quarantine unblocked belong to a run, not a test, so the footer lists them as **Not attributable to a team**, and the teams plus that line add up to the headline.
+
+A QA lead's team names link to that team's rules on **Ownership** (`/ownership?team=…`). A project without ownership rules shows `No ownership rules yet` instead, with **Set up ownership** for QA leads.
 
 ## Empty states
 

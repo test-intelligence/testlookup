@@ -88,6 +88,10 @@ const LOAD = [
   // provenance footer's count, and the footer was removed.
   `GET /api/v1/runs?project_id=${P}&page=1&size=1&days=14`,
   `GET /api/v1/runs?project_id=${P}&page=1&size=100&days=14`,
+  // W08 TRND-06: the verdict, the confidence score, the variance and the run gap come from the server.
+  `GET /api/v1/analytics/trend-summary?project_id=${P}&days=14`,
+  // W08 TRND-04: the window's notes (its first and last UTC day at the fixture clock; no suite selected).
+  `GET /api/v1/projects/${P}/timeline-notes?from=2026-09-05&to=2026-09-18`,
 ]
 
 /** What each catalogue tab adds to a load, every section of the tab near. */

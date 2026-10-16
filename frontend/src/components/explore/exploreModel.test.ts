@@ -1,12 +1,16 @@
 /**
  * VIZ-505 — the Explorer's rules. `apiRefusal` is held to the server through
  * the shared fixture `contracts/viz/chart_data_combinations.json` (generated
- * and checked by `backend/tests/test_chart_data_combinations.py`); the
- * Explorer's own rules are pinned by the golden counts: 28 configurations
- * per metric and x inside one project, 19 in All Projects.
+ * and checked by `backend/tests/test_chart_data_combinations.py`), and the
+ * TRND-13 facet rules through `contracts/viz/chart_data_facets.json`
+ * (`backend/tests/test_chart_data_facets.py`); the Explorer's own rules are
+ * pinned by the golden counts: with seven facets, 73 configurations per metric
+ * and x inside one project and 64 in All Projects, 55 and 46 for Runs (which
+ * no status or failure-category panel may split).
  */
 import { describe, expect, it } from 'vitest'
 import combinations from '../../../../contracts/viz/chart_data_combinations.json'
+import facets from '../../../../contracts/viz/chart_data_facets.json'
 import type { EnvelopeMeta, SeriesChart } from '@/lib/viz/contracts'
 import {
   allowedOptions,
@@ -15,23 +19,34 @@ import {
   API_METRICS,
   apiRefusal,
   coerceConfig,
+  discoveryAnswers,
   discoveryParams,
+  EXPLORE_FACETS,
   EXPLORE_METRICS,
   explorePlan,
+  facetLabel,
   facetPanels,
+  facetRefusalLines,
+  FACET_FILTER_REASON,
   FACET_IS_SERIES_REASON,
+  FACET_RUN_COUNT_REASON,
   FIELD_CANDIDATES,
   MAX_PANELS,
   ownMaxOf,
   panelParams,
   panelStyles,
   panelYAxis,
+  isParamFacet,
+  PARAM_FACETS,
   PLAN_FIELDS,
+  refusalReason,
   RELEASE_NEEDS_PROJECT_REASON,
+  ROW_LEVEL_FACETS,
   seriesStyles,
   yScaleText,
   type ExploreAxes,
   type ExploreContext,
+  type ExploreFacet,
 } from './exploreModel'
 
 const PINNED: ExploreContext = { pinnedProject: true }
@@ -87,18 +102,22 @@ describe('explorePlan: the golden matrix', () => {
   const okCount = (ctx: ExploreContext, metric: string, x: string) =>
     FIELD_CANDIDATES.series.flatMap((series) => FIELD_CANDIDATES.facet.map((facet) => ({ metric, x, series, facet }))).filter((c) => explorePlan(c, ctx).ok).length
 
-  it.each(API_METRICS)('%s: 28 configurations per x inside a project, 19 in All Projects; none off a time axis', (metric) => {
+  // Ten series values (none + the nine non-time dimensions) x the facets: "one
+  // panel" always, each of the seven facets unless it is the series, release
+  // only inside one project, and Runs never split by a row-level facet.
+  it.each(API_METRICS)('%s: 73 configurations per x inside a project, 64 in All Projects (Runs 55 / 46); none off a time axis', (metric) => {
+    const runs = metric === 'run_count'
     for (const x of ['day', 'week']) {
-      expect(okCount(PINNED, metric, x)).toBe(28)
-      expect(okCount(ALL, metric, x)).toBe(19)
+      expect(okCount(PINNED, metric, x)).toBe(runs ? 55 : 73)
+      expect(okCount(ALL, metric, x)).toBe(runs ? 46 : 64)
     }
     for (const x of API_DIMENSION_KEYS.filter((d) => !API_DIMENSIONS[d].time)) expect(okCount(PINNED, metric, x)).toBe(0)
   })
 
-  it('896 inside a project and 608 in All Projects over every metric and both x', () => {
+  it('2,300 inside a project and 2,012 in All Projects over every metric and both x', () => {
     const all = everyConfig()
-    expect(all.filter((c) => explorePlan(c, PINNED).ok)).toHaveLength(896)
-    expect(all.filter((c) => explorePlan(c, ALL).ok)).toHaveLength(608)
+    expect(all.filter((c) => explorePlan(c, PINNED).ok)).toHaveLength((15 * 73 + 55) * 2)
+    expect(all.filter((c) => explorePlan(c, ALL).ok)).toHaveLength((15 * 64 + 46) * 2)
   })
 
   it('every request an ok plan makes is one the API accepts', () => {
@@ -166,7 +185,9 @@ describe('explorePlan: the golden matrix', () => {
   })
 
   it('names the rule a refused configuration breaks', () => {
-    expect(explorePlan(axes({ facet: 'environment' }), PINNED)).toMatchObject({ ok: false, field: 'facet' })
+    expect(explorePlan(axes({ facet: 'environment' }), PINNED)).toEqual({ ok: false, field: 'facet', reason: FACET_IS_SERIES_REASON })
+    expect(explorePlan(axes({ facet: 'project' }), PINNED)).toEqual({ ok: false, field: 'facet', reason: FACET_FILTER_REASON })
+    expect(explorePlan(axes({ facet: 'test' }), PINNED)).toEqual({ ok: false, field: 'facet', reason: FACET_FILTER_REASON })
     expect(explorePlan(axes({ series: 'suite' }), PINNED)).toEqual({ ok: false, field: 'facet', reason: FACET_IS_SERIES_REASON })
     expect(explorePlan(axes({ facet: 'release' }), ALL)).toEqual({ ok: false, field: 'facet', reason: RELEASE_NEEDS_PROJECT_REASON })
     expect(explorePlan(axes({ x: 'suite' }), PINNED)).toMatchObject({ ok: false, field: 'x' })
@@ -191,8 +212,24 @@ describe('options and coercion', () => {
     }
     expect(allowedOptions('metric', axes(), PINNED)).toEqual([...API_METRICS])
     expect(allowedOptions('x', axes(), PINNED)).toEqual(['day', 'week'])
-    expect(allowedOptions('facet', axes({ series: 'suite' }), PINNED)).toEqual([null, 'release'])
-    expect(allowedOptions('facet', axes({ series: 'suite' }), ALL)).toEqual([null])
+    expect(allowedOptions('facet', axes({ series: 'suite' }), PINNED)).toEqual([
+      null,
+      'release',
+      'status',
+      'failure_category',
+      'branch',
+      'environment',
+      'ingestion_source',
+    ])
+    expect(allowedOptions('facet', axes({ series: 'suite' }), ALL)).toEqual([null, 'status', 'failure_category', 'branch', 'environment', 'ingestion_source'])
+    expect(allowedOptions('facet', axes({ metric: 'run_count', series: null }), PINNED)).toEqual([
+      null,
+      'release',
+      'suite',
+      'branch',
+      'environment',
+      'ingestion_source',
+    ])
     expect(allowedOptions('series', axes(), ALL)).toEqual([null, ...API_DIMENSION_KEYS.filter((d) => !API_DIMENSIONS[d].time)])
   })
 
@@ -263,6 +300,218 @@ describe('facetPanels', () => {
       { key: 'unattributed', label: 'Unattributed runs' },
     ])
     expect(facetPanels(null, null, 'release')).toEqual({ panels: [], total: 0, notices: [] })
+  })
+})
+
+describe('TRND-13: explorePlan mirrors the server\'s facet rules (shared fixture)', () => {
+  it('has the server\'s facet vocabularies', () => {
+    expect([...PARAM_FACETS]).toEqual(facets.facet_dimensions)
+    expect([...ROW_LEVEL_FACETS]).toEqual(facets.row_level_facets)
+    expect([...API_METRICS]).toEqual(facets.metrics)
+    expect(Object.keys(facets.codes).sort()).toEqual(['facet_dimension_enum', 'facet_metric_grain', 'facet_pair', 'facet_value'])
+  })
+
+  it('refuses on the facet field exactly the (facet, metric) pairs the server refuses, and plans the rest', () => {
+    // A fixture case is `group_by` [day] or [day, <series>] with `facet_dimension` set. The
+    // Explorer sends the pair only for the five facet dimensions (suite and release go through
+    // the scope's own parameters, and every other dimension is no facet), so the server's
+    // `facet_dimension_enum` cases are the Explorer's FACET_FILTER_REASON for the rest — except
+    // suite and release, which are facets of the Explorer and never reach the pair.
+    const cases = facets.cases as { facet_dimension: string; group_by: string[]; metric: string; outcome: string }[]
+    expect(cases).toHaveLength(480)
+    const wrong: string[] = []
+    for (const c of cases) {
+      const series = c.group_by[1] ?? null
+      const config = { metric: c.metric, x: c.group_by[0], series, facet: c.facet_dimension }
+      const plan = explorePlan(config, PINNED)
+      const label = `${c.metric} x ${c.group_by.join(',')} / ${c.facet_dimension}: server ${c.outcome}`
+      if (c.facet_dimension === series) {
+        // One line per panel: the Explorer's own rule, which the server does not have.
+        if (plan.ok || plan.reason !== FACET_IS_SERIES_REASON) wrong.push(`${label}, explorer ${JSON.stringify(plan)}`)
+        continue
+      }
+      if (c.outcome === 'ok') {
+        if (!plan.ok) wrong.push(`${label}, explorer refused (${plan.reason})`)
+        else if (!isParamFacet(c.facet_dimension)) wrong.push(`${label}, but it is not a param facet`)
+      } else if (c.outcome === 'facet_metric_grain') {
+        if (plan.ok || plan.field !== 'facet' || plan.reason !== FACET_RUN_COUNT_REASON) wrong.push(`${label}, explorer ${JSON.stringify(plan)}`)
+      } else if (c.outcome === 'facet_dimension_enum') {
+        if (isParamFacet(c.facet_dimension)) wrong.push(`${label}, but the explorer sends it as the pair`)
+        else if (c.facet_dimension !== 'suite' && c.facet_dimension !== 'release' && (plan.ok || plan.reason !== FACET_FILTER_REASON)) {
+          wrong.push(`${label}, explorer ${JSON.stringify(plan)}`)
+        }
+      } else {
+        wrong.push(`${label}: an outcome this mirror does not know`)
+      }
+    }
+    expect(wrong).toEqual([])
+    // And the requests an ok plan makes carry the pair for exactly the five.
+    for (const facet of PARAM_FACETS) {
+      const plan = explorePlan({ metric: 'executions', x: 'day', series: null, facet }, PINNED)
+      if (!plan.ok) throw new Error(facet)
+      expect(panelParams({}, 'executions', plan.panel, facet, facet === 'status' ? 'failed' : 'main')).toMatchObject({
+        facet_dimension: facet,
+        group_by: ['day'],
+      })
+    }
+  })
+})
+
+describe('TRND-13: the five chart-data facets', () => {
+  it('the picker order and which facets travel as the facet pair', () => {
+    expect([...EXPLORE_FACETS]).toEqual(['suite', 'release', 'branch', 'environment', 'status', 'failure_category', 'ingestion_source'])
+    expect([...PARAM_FACETS]).toEqual(['branch', 'environment', 'status', 'failure_category', 'ingestion_source'])
+  })
+
+  it('a branch panel asks for its key through facet_dimension + facet_value; suite and release keep the scope params', () => {
+    const plan = explorePlan(axes({ facet: 'branch' }), PINNED)
+    expect(plan).toEqual({
+      ok: true,
+      panel: { groupBy: ['week', 'environment'], suiteCount: 0, topN: null },
+      discovery: { groupBy: ['branch', 'environment'], topN: null, sharedLegend: true },
+    })
+    if (!plan.ok || !plan.discovery) throw new Error('plan')
+    const base = { project_id: 'p1', days: 30 }
+    expect(discoveryParams(base, plan.discovery)).toEqual({ project_id: 'p1', days: 30, metric: 'executions', group_by: ['branch', 'environment'] })
+    expect(panelParams(base, 'failure_rate', plan.panel, 'branch', 'main')).toEqual({
+      project_id: 'p1',
+      days: 30,
+      metric: 'failure_rate',
+      group_by: ['week', 'environment'],
+      facet_dimension: 'branch',
+      facet_value: 'main',
+    })
+    for (const facet of PARAM_FACETS) {
+      expect(panelParams(base, 'executions', plan.panel, facet, 'k')).toMatchObject({ facet_dimension: facet, facet_value: 'k' })
+    }
+    // Suite and release never send the pair: the scope's own parameters filter them.
+    for (const [facet, key] of [['suite', 'checkout'], ['release', 'r1']] as const) {
+      const params = panelParams(base, 'executions', plan.panel, facet, key)
+      expect(params).not.toHaveProperty('facet_dimension')
+      expect(params).not.toHaveProperty('facet_value')
+    }
+    // No key (one panel): no filter at all.
+    expect(panelParams(base, 'executions', plan.panel, 'branch', null)).not.toHaveProperty('facet_dimension')
+  })
+
+  it('a status panel: row grain is the server\'s business; the request carries the lower-case key', () => {
+    const plan = explorePlan(axes({ metric: 'pass_rate', series: 'environment', facet: 'status' }), PINNED)
+    if (!plan.ok) throw new Error('plan')
+    expect(panelParams({}, 'pass_rate', plan.panel, 'status', 'failed')).toEqual({
+      metric: 'pass_rate',
+      group_by: ['week', 'environment'],
+      facet_dimension: 'status',
+      facet_value: 'failed',
+    })
+  })
+
+  it('Runs split by status or failure category is refused on the facet field, with the reason; other facets are not', () => {
+    for (const facet of ['status', 'failure_category']) {
+      expect(explorePlan(axes({ metric: 'run_count', series: null, facet }), PINNED)).toEqual({
+        ok: false,
+        field: 'facet',
+        reason: FACET_RUN_COUNT_REASON,
+      })
+    }
+    for (const facet of ['branch', 'environment', 'ingestion_source', 'suite', 'release']) {
+      expect(explorePlan(axes({ metric: 'run_count', series: null, facet }), PINNED).ok, facet).toBe(true)
+    }
+    // Every other metric may split by a row-level facet.
+    for (const metric of API_METRICS.filter((m) => m !== 'run_count')) {
+      expect(explorePlan(axes({ metric, series: null, facet: 'status' }), PINNED).ok, metric).toBe(true)
+    }
+    const coerced = coerceConfig(axes({ metric: 'run_count', series: null, facet: 'status' }), PINNED, FALLBACK)
+    expect(coerced.axes.facet).toBeNull()
+    expect(coerced.notices).toEqual([`Panels "Status" is not available (${FACET_RUN_COUNT_REASON}); showing None instead.`])
+  })
+
+  it('a facet equal to the series is refused for every facet; a release facet needs a project', () => {
+    for (const facet of EXPLORE_FACETS) {
+      expect(explorePlan(axes({ metric: 'executions', series: facet, facet }), PINNED)).toEqual({
+        ok: false,
+        field: 'facet',
+        reason: FACET_IS_SERIES_REASON,
+      })
+    }
+    for (const facet of EXPLORE_FACETS.filter((f) => f !== 'release')) {
+      expect(explorePlan(axes({ series: null, facet }), ALL).ok, facet).toBe(true)
+    }
+  })
+
+  it('lines per panel: top_n when the panel draws a series, never above the cap, nothing without one', () => {
+    const lines = explorePlan(axes({ facet: 'branch' }), PINNED)
+    const single = explorePlan(axes({ series: null, facet: 'branch' }), PINNED)
+    const tests = explorePlan(axes({ series: 'test', facet: 'branch' }), PINNED)
+    if (!lines.ok || !single.ok || !tests.ok) throw new Error('plan')
+    expect(panelParams({}, 'executions', lines.panel, 'branch', 'main', 3)).toMatchObject({ top_n: 3 })
+    expect(panelParams({}, 'executions', lines.panel, 'branch', 'main', null)).not.toHaveProperty('top_n')
+    expect(panelParams({}, 'executions', single.panel, 'branch', 'main', 5)).not.toHaveProperty('top_n')
+    // A test series already asks for 7; the reader's 3 narrows it, a 7 keeps it.
+    expect(panelParams({}, 'executions', tests.panel, 'branch', 'main', null)).toMatchObject({ top_n: 7 })
+    expect(panelParams({}, 'executions', tests.panel, 'branch', 'main', 3)).toMatchObject({ top_n: 3 })
+    expect(panelParams({}, 'executions', tests.panel, 'branch', 'main', 7)).toMatchObject({ top_n: 7 })
+    for (const n of [3, 5, 7] as const) {
+      const params = panelParams({}, 'executions', lines.panel, 'branch', 'main', n)
+      expect(apiRefusal(params.group_by as string[], 0, params.top_n as number)).toBeNull()
+    }
+  })
+
+  it('the refusals said beside the picker: one line per reason, never the series one', () => {
+    const refusedOf = (config: ExploreAxes, ctx: ExploreContext) =>
+      EXPLORE_FACETS.map((facet) => ({ facet, reason: allowedOptions('facet', config, ctx).includes(facet) ? null : refusalReason('facet', facet, config, ctx) }))
+    // The default (series = environment): only the series refusal, which is not said.
+    expect(facetRefusalLines(refusedOf(axes(), PINNED))).toEqual([])
+    expect(facetRefusalLines(refusedOf(axes({ metric: 'run_count', series: null }), ALL))).toEqual([
+      `Panels by release are not offered: ${RELEASE_NEEDS_PROJECT_REASON}.`,
+      `Panels by status or failure category are not offered: ${FACET_RUN_COUNT_REASON}.`,
+    ])
+  })
+
+  it('a held-over discovery response is not this facet\'s (its dimensions are the request\'s group_by)', () => {
+    const branch = { groupBy: ['branch', 'environment'] as const, topN: null, sharedLegend: true }
+    expect(discoveryAnswers({ dimensions: ['branch', 'environment'] }, { ...branch, groupBy: ['branch', 'environment'] })).toBe(true)
+    expect(discoveryAnswers({ dimensions: ['suite', 'environment'] }, { ...branch, groupBy: ['branch', 'environment'] })).toBe(false)
+    expect(discoveryAnswers({ dimensions: ['branch'] }, { ...branch, groupBy: ['branch', 'environment'] })).toBe(false)
+    expect(discoveryAnswers(null, { ...branch, groupBy: ['branch'] })).toBe(false)
+  })
+
+  it('panel titles: the server label first, then each facet\'s own reading of the key', () => {
+    expect(facetLabel('status', 'passed')).toBe('Passed')
+    expect(facetLabel('status', 'unknown')).toBe('Unknown')
+    expect(facetLabel('status', 'odd')).toBe('odd')
+    expect(facetLabel('failure_category', 'product_bug')).toBe('Product bug')
+    expect(facetLabel('failure_category', 'unknown')).toBe('Unknown')
+    expect(facetLabel('environment', 'staging', { staging: 'Staging' })).toBe('Staging')
+    expect(facetLabel('branch', 'release/2.4')).toBe('release/2.4')
+    expect(facetLabel('release', 'unattributed')).toBe('Unattributed runs')
+    // An Object member's name is a key, never a lookup through the prototype.
+    expect(facetLabel('branch', '__proto__', {})).toBe('__proto__')
+    expect(facetLabel('branch', 'constructor', {})).toBe('constructor')
+    expect(facetLabel('status', 'constructor')).toBe('constructor')
+  })
+
+  it.each([
+    ['branch', 'Runs with no branch are not shown.'],
+    ['environment', 'Runs with no environment are not shown.'],
+    ['failure_category', 'Runs with no failure category are not shown.'],
+    ['ingestion_source', 'Runs with no ingestion source are not shown.'],
+    ['suite', 'Runs with no suite are not shown.'],
+  ] as [ExploreFacet, string][])('(none) is never a %s panel, and the notice says so', (facet, notice) => {
+    const { chart, meta } = discovery(['main', '(none)', 'release/2.4'])
+    const result = facetPanels(chart, meta, facet)
+    expect(result.panels.map((p) => p.key)).toEqual(['main', 'release/2.4'])
+    expect(result.total).toBe(2)
+    expect(result.notices).toEqual([notice])
+  })
+
+  it('status panels read as statuses, in the server\'s order', () => {
+    const { chart, meta } = discovery(['passed', 'failed', 'skipped', 'broken'])
+    expect(facetPanels({ ...chart, x_labels: undefined }, meta, 'status').panels).toEqual([
+      { key: 'passed', label: 'Passed' },
+      { key: 'failed', label: 'Failed' },
+      { key: 'skipped', label: 'Skipped' },
+      { key: 'broken', label: 'Broken' },
+    ])
   })
 })
 

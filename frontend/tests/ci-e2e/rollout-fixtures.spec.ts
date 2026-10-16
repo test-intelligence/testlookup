@@ -21,22 +21,35 @@ import { expect, test } from '@playwright/test'
 import { validateAnyChartSeries, validateEnvelopeMeta } from '../../src/lib/viz/contracts'
 import { validateRowsResponse } from '../../src/components/reports/catalogue/RowsPanel.model'
 import { validateClustersResponse } from '../../src/components/charts/failureGroups/systemicClusters.model'
+import { parseTrendSummary } from '../../src/types/trends'
+import { parseTimelineNotes } from '../../src/types/timelineNotes'
+import { parseCoverageHistory, parseUntaggedTests } from '../../src/types/analytics'
+import { parseTeamValueMetrics } from '../../src/types/valueMetrics'
+import type { ApiRequest } from '../lib/production-pages'
 import {
   COVERAGE_KEY_SEPARATOR,
+  coverageHistoryBody,
   coverageMapLevel,
   daysAgo,
   failureGroupsBody,
   FAILURE_GROUPS_TOTAL,
   HOSTILE_NAMES,
   NO_MESSAGE_ID,
+  PROJECT_ID,
   rowsTotal,
   SCATTER_SUITE_TESTS,
   SINGLETONS_ID,
   suiteDayMatrix,
+  teamValueMetricsBody,
   testRunMatrix,
   testScatterBody,
+  timelineNotesList,
+  trendSummaryBody,
+  UNTAGGED_TESTS,
+  untaggedTestsBody,
   wave3Bodies,
 } from '../visual/production/fixtures'
+import { NEEDS_REVIEW, VISUAL_NOTES, WIDE_SUITES } from '../visual/production/fixtures-trends-coverage'
 
 /** The client's reshape (`chartResponseFromEnvelope`): the wire body's keys minus `meta` ARE the series. */
 function reshape(body: Record<string, unknown>): { meta: unknown; series: Record<string, unknown> } {
@@ -158,5 +171,86 @@ test.describe('Wave 3 fixtures say what the server says', () => {
     expect(rowsTotal('executions', { suite: 'payments', day: daysAgo(1) }, 14)).toBe(cell?.n)
     const point = SCATTER_SUITE_TESTS[3]
     expect(rowsTotal('failure_rate', { test: point.id }, 30)).toBe(point.n)
+  })
+})
+
+/**
+ * W08: the wave's new fixture bodies, held to the CLIENT's own guards (the
+ * `parse*` guards return `null` for an answer they refuse, and the page then
+ * says "Not available": a fixture the guard refused would turn every spec
+ * of that section into a test of the fallback).
+ */
+test.describe('W08 hermetic fixtures: the client accepts every new body', () => {
+  const request = (query: string): ApiRequest => {
+    const url = new URL(`http://127.0.0.1/fixture?${query}&project_id=${PROJECT_ID}`)
+    return { url, path: url.pathname, method: 'GET', route: undefined as never }
+  }
+
+  test('trend summary (14, 30, 90 days): parseTrendSummary accepts it; the 14-day one has the fixture\'s 7-day gap', () => {
+    for (const days of [14, 30, 90]) {
+      const body = trendSummaryBody(days)
+      expect(parseTrendSummary(body), `${days} days`).not.toBeNull()
+      const meta = validateEnvelopeMeta(body.meta)
+      expect(meta.ok ? [] : meta.errors).toEqual([])
+    }
+    const fourteen = trendSummaryBody(14)
+    expect(fourteen).toMatchObject({ days_with_runs: 7, empty_days: 7, gap: { silent_days: 7, start: daysAgo(11), end: daysAgo(5), ongoing: false } })
+    expect(fourteen.confidence.dimensions.map((d) => d.id)).toEqual(['data_coverage', 'sample_size', 'variance_stability', 'tag_quality'])
+    expect(fourteen.untagged_share).toBe(0)
+  })
+
+  test('timeline notes (empty, and the visual variant): parseTimelineNotes keeps every note', () => {
+    expect(parseTimelineNotes(timelineNotesList(request('from=2026-09-05&to=2026-09-18')))).toMatchObject({ items: [], total: 0, truncated: false })
+    expect(parseTimelineNotes(timelineNotesList(request('from=2026-09-05&to=2026-09-18'), VISUAL_NOTES))?.items).toHaveLength(VISUAL_NOTES.length)
+  })
+
+  test('coverage history and untagged tests: their guards accept them', () => {
+    const history = coverageHistoryBody(90)
+    expect(parseCoverageHistory(history)?.points).toHaveLength(history.points.length)
+    expect(history.points.length).toBeGreaterThan(80)
+    const meta = validateEnvelopeMeta(history.meta)
+    expect(meta.ok ? [] : meta.errors).toEqual([])
+    const untagged = untaggedTestsBody(request('days=30&page=1&size=50'))
+    expect(parseUntaggedTests(untagged)?.items).toHaveLength(UNTAGGED_TESTS.length)
+  })
+
+  test('value by team: the guard accepts it, and the teams plus the run-level hours add up to the headline', () => {
+    const body = teamValueMetricsBody(30)
+    expect(parseTeamValueMetrics(body)?.teams).toHaveLength(body.teams.length)
+    const sum = body.teams.reduce((s, t) => s + t.hours_saved, 0) + body.not_attributable_hours
+    expect(Math.abs(sum - body.headline_hours)).toBeLessThan(0.01)
+    expect(body.teams[body.teams.length - 1].team).toBe('Unassigned')
+  })
+
+  test('the coverage map variants: needs_review_count on every node, and an Other that pages', () => {
+    for (const depth of [1, 2]) {
+      const body = coverageMapLevel(30, depth, depth === 1 ? null : 'payments', null, 1, { needsReview: NEEDS_REVIEW })
+      const { meta, series } = reshape(body)
+      const chart = validateAnyChartSeries(series)
+      expect(chart.ok ? [] : chart.errors, `needs review, depth ${depth}`).toEqual([])
+      expect(validateEnvelopeMeta(meta).ok).toBe(true)
+      const nodes = (body as { nodes: { label: string; stats: { needs_review_count?: number } }[] }).nodes
+      expect(nodes.every((n) => typeof n.stats.needs_review_count === 'number')).toBe(true)
+    }
+    const level1 = coverageMapLevel(30, 1, null, null, 1, { needsReview: NEEDS_REVIEW }) as { nodes: { label: string; stats: { needs_review_count?: number } }[] }
+    expect(level1.nodes.find((n) => n.label === 'Payments')?.stats.needs_review_count).toBe(3)
+    expect(level1.nodes[0].stats.needs_review_count).toBe(NEEDS_REVIEW.size)
+    // The default map carries no such key (its regions must not move).
+    const plain = coverageMapLevel(30, 1, null, null) as { nodes: { stats: Record<string, unknown> }[] }
+    expect(plain.nodes.some((n) => 'needs_review_count' in n.stats)).toBe(false)
+
+    const wide = (page: number) => coverageMapLevel(30, 1, null, null, page, { suites: WIDE_SUITES }) as { nodes: { id: string; label: string; value: number }[] }
+    const [one, two, three] = [wide(1), wide(2), wide(3)]
+    for (const body of [one, two, three]) {
+      const chart = validateAnyChartSeries(reshape(body as unknown as Record<string, unknown>).series)
+      expect(chart.ok ? [] : chart.errors).toEqual([])
+    }
+    expect(one.nodes).toHaveLength(1 + 498 + 1)
+    expect(one.nodes[one.nodes.length - 1]).toMatchObject({ id: 'other:all', label: 'Other (5)' })
+    expect(two.nodes.map((n) => n.label).slice(1)).toEqual(WIDE_SUITES.slice(498).map((s) => s.label))
+    expect(three.nodes).toHaveLength(1)
+    // The root (the parent's totals) is the same on every page.
+    expect(two.nodes[0].value).toBe(one.nodes[0].value)
+    expect(three.nodes[0].value).toBe(one.nodes[0].value)
   })
 })

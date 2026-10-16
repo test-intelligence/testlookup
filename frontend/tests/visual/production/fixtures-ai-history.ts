@@ -398,6 +398,15 @@ export const RUN_COMPARE_PAGE: ApiHandlers = [
   ...LAYOUT,
   ...RUNS,
   ['/api/v1/runs/compare', () => RUN_COMPARE],
+  // W08 TRND-02: the latest-suite form (`?mode=latest&suite=Auth`, from the Trends ⋯ menu): the latest
+  // completed Auth run against the previous one on its branch — the same two runs as the manual pair.
+  [
+    '/api/v1/runs/compare/latest',
+    ({ url }) =>
+      (url.searchParams.get('suite_name') ?? '').trim().toLowerCase() === 'auth'
+        ? { ...RUN_COMPARE, selection: { ...RUN_COMPARE.selection, mode: 'latest', selection_reason: 'The latest completed Auth run and the one before it on main.' } }
+        : respond(404, { detail: 'No two completed runs of this suite on one branch.' }),
+  ],
   [AI_COMPARE_PATH, ({ url }) => compareAnswer(url.searchParams.get('baseline_run_id'))],
   [RUN_DETAIL_PATH, runDetail],
 ]

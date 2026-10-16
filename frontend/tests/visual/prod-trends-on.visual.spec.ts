@@ -21,12 +21,18 @@
  * Execution time tab, PNGs from CI: `trends-on-execution-per-day` (wall clock
  * vs summed test time), `trends-on-slowest` (20 slowest by p95) and
  * `trends-on-histogram` (the duration distribution, TRND-09).
+ * W08 (PNGs from CI): `trends-on-compare` changes (its toolbar: Customise
+ * holds Metric and Compare by), and NEW `trends-on-pass-rate-notes` — the
+ * hero with two timeline notes (TRND-04): a band over the fixture's 7-day gap
+ * and a line on day 3, from a notes variant (the default fixture answers no
+ * note, so `trends-on-pass-rate` does not move).
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { expect, test, type Page } from '@playwright/test'
 import { assertHermetic, landmark, PINNED_TALL, settle, THEMES, visualRegion, waitForCharts } from '../lib/production-pages'
 import { expectDrawn, expectNoErrorFrame, openRollout, sectionFrame } from '../lib/rollout'
 import { TRENDS_ON } from './production/fixtures'
+import { notesWorld, VISUAL_NOTES } from './production/fixtures-trends-coverage'
 
 // The page was taller than 4000 px with the whole catalogue in one stack; a
 // tab is shorter, and the same tall viewport keeps every region unscrolled.
@@ -103,6 +109,21 @@ for (const theme of THEMES) {
     await page.mouse.move(0, 0)
     await settle(page)
     await visualRegion(page, 'trends-on-trend-analysis', theme, passRate)
+    assertHermetic(api, errors)
+  })
+
+  test(`trends notes region — ${theme}`, async ({ page }) => {
+    const { api, errors } = await openRollout(page, '/trends', {
+      theme,
+      handlers: [...notesWorld(VISUAL_NOTES).handlers, ...TRENDS_ON],
+      ready: (p) => landmark(p, 'Trend metrics'),
+    })
+    const passRate = sectionFrame(page, 'trends-pass-rate', 'Pass rate trend')
+    await expectDrawn(passRate, 'pass rate')
+    await waitForCharts(passRate)
+    await expect(passRate.locator('[data-chart-note]')).toHaveCount(VISUAL_NOTES.length)
+    await expectNoErrorFrame(page)
+    await visualRegion(page, 'trends-on-pass-rate-notes', theme, passRate)
     assertHermetic(api, errors)
   })
 }
