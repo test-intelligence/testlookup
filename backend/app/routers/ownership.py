@@ -363,6 +363,7 @@ async def put_source_roots(
     )
 
 
+# activity: none -- a read-only dry run: resolves the proposed roots against recent failures and writes nothing.
 @router.post("/source-roots/preview", response_model=SourceRootsPreview)
 async def preview_source_roots(
     project_id: uuid.UUID,
