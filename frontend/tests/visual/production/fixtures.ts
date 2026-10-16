@@ -591,7 +591,58 @@ export const SUITE_DETAIL: ApiHandlers = [
 
 // ── Value metrics (/value-metrics) ─────────────────────────────────────────
 
-export const VALUE_METRICS: ApiHandlers = [...LAYOUT, ['/api/v1/value-metrics', valueMetrics]]
+/**
+ * `GET /api/v1/value-metrics/by-team?project_id=&days=` (TRND-08, §1.3): one
+ * row per owning team, Unassigned last, ordered by hours saved. The hours are
+ * the headline's own legs: Σ teams' `hours_saved` (27.5) + the runs-unblocked
+ * leg no team owns (4.0) = the window headline (31.5, `valueMetrics()`'s
+ * `hours_saved_30d`). One team name is hostile: it renders as text.
+ */
+export function teamValueMetricsBody(days = 30) {
+  const team = (name: string, tests: number, executions: number, evaluated: number, passed: number, flaky: number, defects: number, mttr: number | null, triage: number, dedup: number) => ({
+    team: name,
+    tests,
+    executions,
+    evaluated,
+    passed,
+    pass_rate: evaluated > 0 ? Math.round((passed / evaluated) * 1000) / 10 : null,
+    flaky_tests: flaky,
+    defects,
+    mttr_hours: mttr,
+    hours_saved: Math.round((triage + dedup) * 100) / 100,
+    hours: { triage, dedup },
+  })
+  return {
+    window_days: days,
+    measured: true,
+    reason: null,
+    rules_configured: true,
+    teams: [
+      team('Payments', 33, 1_240, 1_190, 960, 3, 4, 18.5, 10, 2.5),
+      team('Checkout', 57, 2_310, 2_250, 2_190, 1, 2, 6.25, 6.75, 1.5),
+      team('Identity', 42, 1_520, 1_480, 1_410, 2, 1, null, 3.5, 0.5),
+      team(HOSTILE_NAME, 4, 60, 60, 58, 0, 0, null, 0, 0),
+      team('Unassigned', 37, 980, 940, 850, 1, 1, 30, 2.25, 0.5),
+    ],
+    not_attributable_hours: 4,
+    headline_hours: 31.5,
+    meta: {
+      ...chartMeta(days),
+      ignored_filters: [
+        { dimension: 'release', reason: 'Value metrics are not release-scoped.' },
+        { dimension: 'suite', reason: 'Value metrics are not suite-scoped.' },
+      ],
+    },
+  }
+}
+
+export const VALUE_BY_TEAM_PATH = '/api/v1/value-metrics/by-team'
+
+export const VALUE_METRICS: ApiHandlers = [
+  ...LAYOUT,
+  ['/api/v1/value-metrics', valueMetrics],
+  [VALUE_BY_TEAM_PATH, (request) => teamValueMetricsBody(intParam(request, 'days', 30))],
+]
 
 // ── Runs (/runs) ───────────────────────────────────────────────────────────
 
@@ -752,13 +803,34 @@ export const RUNS_PAGE: ApiHandlers = [
 
 // ── Coverage and flaky tests (shared by Trends, Coverage, Failures) ────────
 
+/**
+ * W08 TRND-07: each suite row's newest run (`last_run_at` ISO UTC, as
+ * `_row_dict` writes it, and `last_run_id`). Auth, Checkout and Payments are
+ * the fixture builds of their suite (`RUN_SPECS`: 2 h, 1 d and 3 d ago);
+ * Search and Notifications ran outside the run list (13 d and 2 d ago). The
+ * project's median gap between active days is 1 day, so the chip is amber for
+ * Payments, Search and Notifications.
+ */
+const COVERAGE_LAST_RUN: Record<string, { at: string; id: string }> = {
+  Auth: { at: isoAgo(0, 2), id: RUN_ID },
+  Checkout: { at: isoAgo(1, 3), id: '44444444-4444-4444-8444-100000000001' },
+  Payments: { at: isoAgo(3, 4), id: '44444444-4444-4444-8444-100000000003' },
+  Search: { at: isoAgo(13, 6), id: '44444444-4444-4444-8444-100000000090' },
+  Notifications: { at: isoAgo(2, 5), id: '44444444-4444-4444-8444-100000000091' },
+}
+
 const COVERAGE_SUITES = [
   { suite_name: 'Auth', unique_tests: 42, passed: 610, failed: 38, skipped: 12 },
   { suite_name: 'Checkout', unique_tests: 57, passed: 820, failed: 21, skipped: 9 },
   { suite_name: 'Payments', unique_tests: 33, passed: 240, failed: 190, skipped: 14 },
   { suite_name: 'Search', unique_tests: 25, passed: 300, failed: 96, skipped: 4 },
   { suite_name: 'Notifications', unique_tests: 12, passed: 150, failed: 0, skipped: 2 },
-].map((s) => ({ ...s, pass_rate: Math.round((s.passed / (s.passed + s.failed)) * 10_000) / 100 }))
+].map((s) => ({
+  ...s,
+  pass_rate: Math.round((s.passed / (s.passed + s.failed)) * 10_000) / 100,
+  last_run_at: COVERAGE_LAST_RUN[s.suite_name].at,
+  last_run_id: COVERAGE_LAST_RUN[s.suite_name].id,
+}))
 
 function coverage(request: ApiRequest) {
   const days = intParam(request, 'days', 30)
@@ -804,11 +876,227 @@ const FLAKY_TESTS = {
   ],
 }
 
+// ── W08: the trend summary, timeline notes, coverage history, untagged tests ─
+
+/** `trend_summary_service.UNTAGGED_SUITE_NAMES`, compared after strip().lower(). */
+const UNTAGGED_SUITE_NAMES = ['', 'unknown suite', 'unknown', 'untagged']
+/** `half_up`: JS `Math.round` for x >= 0 (Python's `round` is banker's). */
+const halfUp = (x: number) => Math.floor(x + 0.5)
+const roundTo = (x: number, dp: number) => Math.round(x * 10 ** dp) / 10 ** dp
+const meanOf = (xs: number[]) => xs.reduce((s, x) => s + x, 0) / xs.length
+
+/**
+ * `GET /api/v1/analytics/trend-summary?days=N` (TRND-06, contract §1.3):
+ * `summarize()` over the SAME two reads the page makes — `trendPoints(days)`
+ * (`/metrics/trends`) and `COVERAGE_SUITES` (`/analytics/coverage`) — by the
+ * contract's algorithm, which is the page's former `computeConfidenceModel` +
+ * `pickVerdict`. So the Trends regions draw the numbers they drew before the
+ * page stopped deriving them (a moved region is a finding).
+ */
+export function trendSummaryBody(days: number, suites: readonly { suite_name: string; passed: number; failed: number; skipped: number }[] = COVERAGE_SUITES) {
+  const rows = trendPoints(days)
+  const today = daysAgo(0)
+  const byDate = new Map(rows.map((row) => [row.date.slice(0, 10), row]))
+  const cells = Array.from({ length: days }, (_, i) => {
+    const iso = daysAgo(days - 1 - i)
+    const row = byDate.get(iso)
+    return {
+      iso,
+      ex: row ? row.passed + row.failed + row.skipped + row.broken : 0,
+      passed: row?.passed ?? 0,
+      failed: row?.failed ?? 0,
+      broken: row?.broken ?? 0,
+    }
+  })
+  const active = cells.filter((c) => c.ex > 0)
+  const daysWithRuns = active.length
+  const passed = sumOf(rows, 'passed')
+  const failed = sumOf(rows, 'failed')
+  const skipped = sumOf(rows, 'skipped')
+  const broken = sumOf(rows, 'broken')
+  const total = passed + failed + skipped + broken
+  const evaluated = passed + failed + broken
+  const perDay = active.map((c) => (c.passed + c.failed + c.broken > 0 ? (c.passed / (c.passed + c.failed + c.broken)) * 100 : 0))
+  let stability = 0
+  let sd: number | null = null
+  if (perDay.length === 1) stability = 45
+  else if (perDay.length > 1) {
+    const m = meanOf(perDay)
+    sd = Math.sqrt(meanOf(perDay.map((x) => (x - m) ** 2)))
+    stability = Math.max(0, Math.min(100, 100 - (sd / 30) * 100))
+  }
+  const untaggedSum = suites
+    .filter((s) => UNTAGGED_SUITE_NAMES.includes(s.suite_name.trim().toLowerCase()))
+    .reduce((acc, s) => acc + s.passed + s.failed + s.skipped, 0)
+  const allSum = suites.reduce((acc, s) => acc + s.passed + s.failed + s.skipped, 0)
+  const untaggedShare = allSum > 0 ? untaggedSum / allSum : 0
+  const dimensions = [
+    { id: 'data_coverage', label: 'Data coverage', score: days > 0 ? Math.min(100, (daysWithRuns / days) * 100) : 0, weight: 0.4 },
+    { id: 'sample_size', label: 'Sample size', score: Math.min(100, (total / 100) * 100), weight: 0.25 },
+    { id: 'variance_stability', label: 'Variance stability', score: stability, weight: 0.2 },
+    { id: 'tag_quality', label: 'Tag quality', score: Math.max(0, 100 - untaggedShare * 100), weight: 0.15 },
+  ]
+  const score = halfUp(dimensions.reduce((s, d) => s + d.score * d.weight, 0))
+  const isos = active.map((c) => c.iso).sort()
+  let gap: { silent_days: number; start: string; end: string; ongoing: boolean; expected_runs_missed: number } | null = null
+  if (daysWithRuns > 0 && daysWithRuns < days) {
+    let best = { len: 0, start: -1, end: -1 }
+    let runStart = -1
+    for (let i = 0; i <= cells.length; i++) {
+      const empty = i < cells.length && cells[i].ex === 0
+      if (empty && runStart === -1) runStart = i
+      if (!empty && runStart !== -1) {
+        if (i - runStart > best.len) best = { len: i - runStart, start: runStart, end: i - 1 }
+        runStart = -1
+      }
+    }
+    gap = {
+      silent_days: best.len,
+      start: cells[best.start].iso,
+      end: cells[best.end].iso,
+      ongoing: cells[best.end].iso === today,
+      expected_runs_missed: best.len,
+    }
+  }
+  let verdict: string
+  if (total === 0) verdict = 'PENDING'
+  else if (score < 33 || daysWithRuns < 3) verdict = 'INSUFFICIENT'
+  else {
+    const half = Math.max(1, Math.floor(perDay.length / 2))
+    const recent = meanOf(perDay.slice(-half))
+    const prior = meanOf(perDay.slice(0, half))
+    verdict = recent < prior - 10 ? 'DECLINING' : score >= 66 ? 'HEALTHY' : 'MIXED'
+  }
+  return {
+    window_days: days,
+    today,
+    measured: total > 0,
+    reason: total > 0 ? null : 'No executions in this window.',
+    days_with_runs: daysWithRuns,
+    empty_days: days - daysWithRuns,
+    active_day_share: days > 0 ? roundTo(daysWithRuns / days, 4) : 0,
+    executions: { total, passed, failed, broken, skipped, evaluated },
+    pass_rate: evaluated > 0 ? roundTo((passed / evaluated) * 100, 1) : null,
+    variance: { stddev_pp: sd === null ? null : roundTo(sd, 2), stability: roundTo(stability, 2) },
+    gap,
+    last_run_day: isos.length > 0 ? isos[isos.length - 1] : null,
+    previous_run_day: isos.length > 1 ? isos[isos.length - 2] : null,
+    untagged_share: roundTo(untaggedShare, 4),
+    confidence: {
+      score,
+      dimensions: dimensions.map((d) => ({ ...d, score: roundTo(d.score, 2) })),
+      verdict,
+      band: score >= 66 ? 'High' : score >= 33 ? 'Moderate' : 'Low',
+    },
+    meta: chartMeta(days, { definitions: { grain: 'run_aggregate' } }),
+  }
+}
+
+export const TREND_SUMMARY_PATH = '/api/v1/analytics/trend-summary'
+const trendSummary = (request: ApiRequest) => trendSummaryBody(intParam(request, 'days', 14))
+
+/** `GET /api/v1/projects/{p}/timeline-notes` (TRND-04): the path of every project's notes. */
+export const TIMELINE_NOTES_PATH = /^\/api\/v1\/projects\/[^/]+\/timeline-notes$/
+
+/** The window a notes list was asked for (`start` / `end` echo `from` / `to`). */
+export function timelineNotesList(request: ApiRequest, items: readonly unknown[] = []) {
+  const q = request.url.searchParams
+  return { items: [...items], total: items.length, truncated: false, start: q.get('from') ?? daysAgo(13), end: q.get('to') ?? daysAgo(0) }
+}
+
+/** Days (counted back from today) with no coverage snapshot: the beat missed them (gaps in the history line). */
+const SNAPSHOT_GAPS = new Set([20, 21, 47])
+/** The first snapshot, 89 days ago: a 90-day window starts on it. */
+const FIRST_SNAPSHOT_DAYS_AGO = 89
+
+/**
+ * `GET /api/v1/analytics/coverage/history?days=N` (TRND-07, §1.3): one point
+ * per stored snapshot day, ascending; a day the beat missed is ABSENT (a gap).
+ * The catalogue grows from 150 to 169 tests; about 85 % of it is exercised in
+ * the 30 days ending each day.
+ */
+export function coverageHistoryBody(days: number) {
+  const points: { day: string; catalogue_tests: number; exercised_tests: number; exercised_pct: number | null; suites: number }[] = []
+  for (let n = Math.min(days - 1, FIRST_SNAPSHOT_DAYS_AGO); n >= 1; n--) {
+    if (SNAPSHOT_GAPS.has(n)) continue
+    const catalogue = 150 + Math.floor((FIRST_SNAPSHOT_DAYS_AGO - n) / 5)
+    const exercised = Math.round(catalogue * (0.8 + ((n * 7) % 11) / 100))
+    points.push({ day: daysAgo(n), catalogue_tests: catalogue, exercised_tests: exercised, exercised_pct: roundTo((exercised / catalogue) * 100, 1), suites: 5 })
+  }
+  return {
+    window_days: days,
+    measured: true,
+    reason: null,
+    first_snapshot_day: daysAgo(FIRST_SNAPSHOT_DAYS_AGO),
+    points,
+    meta: chartMeta(days, {
+      ignored_filters: [
+        { dimension: 'release', reason: 'A coverage snapshot is project-wide.' },
+        { dimension: 'suite', reason: 'A coverage snapshot is project-wide.' },
+      ],
+    }),
+  }
+}
+
+export const COVERAGE_HISTORY_PATH = '/api/v1/analytics/coverage/history'
+export const UNTAGGED_TESTS_PATH = '/api/v1/analytics/coverage/untagged-tests'
+
+/** The catalogue suite most untagged tests sit in (`set-default`'s suite of new unlabelled fingerprints). */
+const DEFAULT_SUITE = { id: '88888888-8888-4888-8888-000000000001', name: 'Default Suite (checkout)' }
+
+/**
+ * `GET /api/v1/analytics/coverage/untagged-tests` (TRND-07, §1.3): the five
+ * tests behind the Coverage page's untagged callout, most executions first;
+ * the last has no catalogue row yet (`canonical_id: null`).
+ */
+export const UNTAGGED_TESTS = [
+  ['cart total rounds half up', 'CartSpec', 14],
+  ['coupon expires at midnight', 'CouponSpec', 11],
+  ['guest checkout keeps basket', 'CheckoutSpec', 9],
+  ['address form validates postcode', null, 6],
+  ['express pay button shows', 'ExpressSpec', 3],
+].map(([name, cls, executions], i) => ({
+  canonical_id: i === 4 ? null : `cccc0000-0000-4000-8000-00000000000${i + 1}`,
+  test_fingerprint: `fp-untagged-${i + 1}`,
+  test_name: name as string,
+  class_name: cls as string | null,
+  catalogue_suite_id: i === 4 ? null : DEFAULT_SUITE.id,
+  catalogue_suite: i === 4 ? null : DEFAULT_SUITE.name,
+  executions: executions as number,
+  last_executed_at: isoAgo(i, 3),
+}))
+
+export function untaggedTestsBody(request: ApiRequest) {
+  const days = intParam(request, 'days', 30)
+  const pageNo = Math.max(1, intParam(request, 'page', 1))
+  const size = intParam(request, 'size', 50)
+  if (size < 1 || size > 200) return respond(422, refusal('size_range', 'size'))
+  return {
+    items: UNTAGGED_TESTS.slice((pageNo - 1) * size, pageNo * size),
+    total: UNTAGGED_TESTS.length,
+    page: pageNo,
+    size,
+    window_days: days,
+    meta: chartMeta(days),
+  }
+}
+
+/**
+ * Every `/trends` and `/coverage` spec gets these (inside `TRENDS`,
+ * `COVERAGE`, `TRENDS_ON`, `COVERAGE_ON`). W08 adds the two reads `/trends`
+ * makes on load (the trend summary; the window's notes, EMPTY by default, so
+ * no region moves) and the two Coverage reads that only a tab or a panel asks
+ * (the history, the untagged tests).
+ */
 const ANALYTICS: ApiHandlers = [
   ['/api/v1/analytics/coverage', coverage],
   ['/api/v1/analytics/flaky-tests', () => FLAKY_TESTS],
   ['/api/v1/metrics/trends', trends],
   ['/api/v1/metrics/summary', summary],
+  [TREND_SUMMARY_PATH, trendSummary],
+  [TIMELINE_NOTES_PATH, (request) => timelineNotesList(request)],
+  [COVERAGE_HISTORY_PATH, (request) => coverageHistoryBody(intParam(request, 'days', 90))],
+  [UNTAGGED_TESTS_PATH, untaggedTestsBody],
 ]
 
 // ── Trends (/trends, which resets the window to 14 days) ───────────────────
@@ -1886,7 +2174,7 @@ export const RELEASES = RELEASE_SPECS.map((r, i) => ({
 const RELEASES_LIST: ApiHandlers = [['/api/v1/releases', () => page(RELEASES)]]
 
 /** `meta` of a `chart-data` answer over the `days` ending today. */
-function chartMeta(days: number, over: Record<string, unknown> = {}) {
+export function chartMeta(days: number, over: Record<string, unknown> = {}) {
   return {
     schema_version: 1,
     scope: {
@@ -2546,7 +2834,7 @@ export const COVERAGE_KEY_SEPARATOR = '␟'
 /** The class key of tests with no class (`NO_CLASS_KEY`), labelled `(ungrouped)`. */
 export const NO_CLASS_KEY = '__none__'
 
-interface MapTest {
+export interface MapTest {
   fingerprint: string
   name: string
   /** Executions in the window; `null`: none (idle). */
@@ -2558,18 +2846,18 @@ interface MapTest {
   flaky?: boolean
 }
 
-interface MapClass {
+export interface MapClass {
   key: string
   tests: MapTest[]
 }
 
-interface MapSuite {
+export interface MapSuite {
   label: string
   classes: MapClass[]
 }
 
 /** Tests named `names`, each run 12-20 times at about `rate` %, last run `lastDays` (or one more) ago. */
-function mapTests(prefix: string, names: string[], rate: number, lastDays: number, flaky: number[] = []): MapTest[] {
+export function mapTests(prefix: string, names: string[], rate: number, lastDays: number, flaky: number[] = []): MapTest[] {
   return names.map((name, i) => ({
     fingerprint: `fp-${prefix}-${i}`,
     name,
@@ -2658,8 +2946,26 @@ export const COVERAGE_MAP_SUITES: MapSuite[] = [
   { label: '(none)', classes: [{ key: NO_CLASS_KEY, tests: mapTests('nosuite', numbered('orphan test', 2), 85, 4) }] },
 ]
 
+/**
+ * W08 (TRND-12) variants of the map: another suite list (a level wider than
+ * the 500-node contract, so it folds into "Other (n)") and the fingerprints
+ * the last suite sync marked for review (`needs_review_count`, emitted on
+ * every node only when given: the default map has no such key, so its
+ * regions do not move).
+ */
+export interface CoverageMapOptions {
+  suites?: readonly MapSuite[]
+  needsReview?: ReadonlySet<string>
+}
+
+/** `MAX_CHILDREN` / `KEPT_WHEN_FOLDED` (`coverage_map_service.py`): past 499 children, 498 are kept and the rest are "Other (n)". */
+export const MAP_MAX_CHILDREN = 499
+export const MAP_KEPT_WHEN_FOLDED = 498
+/** `OTHER_PAGE_MAX`: the router's `other_page` is 2-50. */
+export const MAP_OTHER_PAGE_MAX = 50
+
 /** `node_stats` over a set of tests: every key present; null, never 0, with nothing to measure; `seen` iff a date. */
-function nodeStats(tests: MapTest[]) {
+function nodeStats(tests: MapTest[], needsReview?: ReadonlySet<string>) {
   const sum = tests.reduce<StatusCounts>(
     (acc, t) =>
       t.counts
@@ -2686,6 +2992,7 @@ function nodeStats(tests: MapTest[]) {
     last_executed_at: last === null ? null : pyInstant(isoAgo(last, 2)),
     staleness_days: last,
     recency: last !== null ? 'seen' : tests.some((t) => t.lost) ? 'unknown' : 'never',
+    ...(needsReview ? { needs_review_count: tests.filter((t) => needsReview.has(t.fingerprint)).length } : {}),
   }
 }
 
@@ -2693,9 +3000,28 @@ const classLabel = (key: string) => (key === NO_CLASS_KEY ? '(ungrouped)' : key)
 const suiteTests = (suite: MapSuite) => suite.classes.flatMap((c) => c.tests)
 
 /** One node (`value` = test_count, `measure` = the pass rate, every `stats` key). */
-function treeNode(id: string, parentId: string | null, label: string, tests: MapTest[]) {
-  const stats = nodeStats(tests)
+function treeNode(id: string, parentId: string | null, label: string, tests: MapTest[], needsReview?: ReadonlySet<string>) {
+  const stats = nodeStats(tests, needsReview)
   return { id, parent_id: parentId, label, value: stats.test_count, measure: stats.pass_rate, stats }
+}
+
+/**
+ * One page of a level's children (`build_statement`'s `cm_offset`): page 1 is
+ * today's level; page `p` starts after `(p - 1) * 498` children; a page with
+ * more than 499 children left keeps 498 and folds the rest into ONE "Other
+ * (n)" node (`other:<root id>`, no pass rate). An offset past the children is
+ * the root alone.
+ */
+function pagedChildren<T extends { tests: MapTest[] }>(children: T[], otherPage: number): { shown: T[]; other: T[] } {
+  const rest = children.slice((otherPage - 1) * MAP_KEPT_WHEN_FOLDED)
+  return rest.length > MAP_MAX_CHILDREN
+    ? { shown: rest.slice(0, MAP_KEPT_WHEN_FOLDED), other: rest.slice(MAP_KEPT_WHEN_FOLDED) }
+    : { shown: rest, other: [] }
+}
+
+function otherNode(rootId: string, other: { tests: MapTest[] }[], needsReview?: ReadonlySet<string>) {
+  const node = treeNode(`other:${rootId}`, rootId, `Other (${other.length})`, other.flatMap((c) => c.tests), needsReview)
+  return { ...node, measure: null, stats: { ...node.stats, pass_rate: null } }
 }
 
 /** Children ranked as the SQL does: most tests first, then the key by code point. */
@@ -2708,7 +3034,14 @@ function rankChildren<T extends { key: string; tests: MapTest[] }>(children: T[]
  * children. No children -> `nodes: []` (the contract's "no data"), never a
  * root of zero tests. Depth 3 lists a class's tests by fingerprint.
  */
-export function coverageMapLevel(days: number, depth: number, suite: string | null, classKey: string | null) {
+export function coverageMapLevel(
+  days: number,
+  depth: number,
+  suite: string | null,
+  classKey: string | null,
+  otherPage = 1,
+  { suites: mapSuites = COVERAGE_MAP_SUITES, needsReview }: CoverageMapOptions = {},
+) {
   const meta = chartMeta(days, {
     definitions: {
       coverage: 'test_execution',
@@ -2718,60 +3051,73 @@ export function coverageMapLevel(days: number, depth: number, suite: string | nu
       depth,
       level: ({ 1: 'suite', 2: 'class', 3: 'test' } as Record<number, string>)[depth],
       timezone: 'UTC',
+      // TRND-12: which page of the level's children this is (only when one past the first is asked).
+      ...(otherPage > 1 ? { page: otherPage, children_offset: (otherPage - 1) * MAP_KEPT_WHEN_FOLDED } : {}),
     },
   })
   const empty = { kind: 'tree', nodes: [], meta }
-  if (depth === 1) {
-    const children = rankChildren(COVERAGE_MAP_SUITES.map((s) => ({ key: suiteKey(s.label), label: s.label, tests: suiteTests(s) })))
+  /** The level's root and one page of its ranked children (the root's totals are every child's, on every page). */
+  const level = (rootId: string, rootLabel: string, children: { id: string; label: string; tests: MapTest[] }[]) => {
+    const { shown, other } = pagedChildren(children, otherPage)
+    const folded = other.length > 0
     return {
       kind: 'tree',
       nodes: [
-        treeNode('all', null, 'All suites', children.flatMap((c) => c.tests)),
-        ...children.map((c) => treeNode(`s:${c.key}`, 'all', c.label, c.tests)),
+        treeNode(rootId, null, rootLabel, children.flatMap((c) => c.tests), needsReview),
+        ...shown.map((c) => treeNode(c.id, rootId, c.label, c.tests, needsReview)),
+        ...(folded ? [otherNode(rootId, other, needsReview)] : []),
       ],
-      meta,
+      meta: folded ? { ...meta, truncated: true, truncated_total: children.length } : meta,
     }
   }
-  const found = COVERAGE_MAP_SUITES.find((s) => suiteKey(s.label) === suite)
+  if (depth === 1) {
+    const children = rankChildren(mapSuites.map((s) => ({ key: suiteKey(s.label), label: s.label, tests: suiteTests(s) })))
+    return level('all', 'All suites', children.map((c) => ({ id: `s:${c.key}`, label: c.label, tests: c.tests })))
+  }
+  const found = mapSuites.find((s) => suiteKey(s.label) === suite)
   if (!found || suite === null) return empty
   const rootId = `s:${suite}`
   if (depth === 2) {
-    return {
-      kind: 'tree',
-      nodes: [
-        treeNode(rootId, null, found.label, suiteTests(found)),
-        ...rankChildren(found.classes).map((c) =>
-          treeNode(`c:${suite}${COVERAGE_KEY_SEPARATOR}${c.key}`, rootId, classLabel(c.key), c.tests),
-        ),
-      ],
-      meta,
-    }
+    return level(
+      rootId,
+      found.label,
+      rankChildren(found.classes).map((c) => ({ id: `c:${suite}${COVERAGE_KEY_SEPARATOR}${c.key}`, label: classLabel(c.key), tests: c.tests })),
+    )
   }
   const cls = found.classes.find((c) => c.key === classKey)
   if (!cls || classKey === null) return empty
   const classId = `c:${suite}${COVERAGE_KEY_SEPARATOR}${classKey}`
   const tests = [...cls.tests].sort((a, b) => byCode(a.fingerprint, b.fingerprint))
-  return {
-    kind: 'tree',
-    nodes: [treeNode(classId, null, classLabel(classKey), cls.tests), ...tests.map((t) => treeNode(`t:${t.fingerprint}`, classId, t.name, [t]))],
-    meta,
+  return level(classId, classLabel(classKey), tests.map((t) => ({ id: `t:${t.fingerprint}`, label: t.name, tests: [t] })))
+}
+
+/**
+ * `GET /analytics/coverage-map?depth=1|2|3[&suite][&class_key][&other_page]`
+ * over `options` (refusals as `parse_level`'s and the router's: `other_page`
+ * is 2-50 when sent).
+ */
+export function coverageMapOf(options: CoverageMapOptions = {}) {
+  return (request: ApiRequest) => {
+    const q = request.url.searchParams
+    if (!q.get('project_id')) return respond(422, refusal('missing_parameter', 'project_id'))
+    const depth = intParam(request, 'depth', 1)
+    const suite = q.get('suite')
+    const classKey = q.get('class_key')
+    const rawPage = q.get('other_page')
+    const otherPage = rawPage === null ? 1 : Number(rawPage)
+    if (![1, 2, 3].includes(depth)) return respond(422, refusal('depth_enum', 'depth'))
+    if (depth === 1 && (suite !== null || classKey !== null)) return respond(422, refusal('parent_unexpected', 'suite'))
+    if (depth >= 2 && suite === null) return respond(422, refusal('parent_required', 'suite'))
+    if (depth === 2 && classKey !== null) return respond(422, refusal('parent_unexpected', 'class_key'))
+    if (depth === 3 && classKey === null) return respond(422, refusal('parent_required', 'class_key'))
+    if (rawPage !== null && !(Number.isInteger(otherPage) && otherPage >= 2 && otherPage <= MAP_OTHER_PAGE_MAX)) {
+      return respond(422, { detail: [{ loc: ['query', 'other_page'], msg: 'Input should be between 2 and 50', type: 'greater_than_equal' }] })
+    }
+    return scopedTo(request, coverageMapLevel(intParam(request, 'days', 30), depth, suite, classKey, otherPage, options))
   }
 }
 
-/** `GET /analytics/coverage-map?depth=1|2|3[&suite][&class_key]` (refusals as `parse_level`'s). */
-function coverageMap(request: ApiRequest) {
-  const q = request.url.searchParams
-  if (!q.get('project_id')) return respond(422, refusal('missing_parameter', 'project_id'))
-  const depth = intParam(request, 'depth', 1)
-  const suite = q.get('suite')
-  const classKey = q.get('class_key')
-  if (![1, 2, 3].includes(depth)) return respond(422, refusal('depth_enum', 'depth'))
-  if (depth === 1 && (suite !== null || classKey !== null)) return respond(422, refusal('parent_unexpected', 'suite'))
-  if (depth >= 2 && suite === null) return respond(422, refusal('parent_required', 'suite'))
-  if (depth === 2 && classKey !== null) return respond(422, refusal('parent_unexpected', 'class_key'))
-  if (depth === 3 && classKey === null) return respond(422, refusal('parent_required', 'class_key'))
-  return scopedTo(request, coverageMapLevel(intParam(request, 'days', 30), depth, suite, classKey))
-}
+const coverageMap = coverageMapOf()
 
 // ── /analytics/failure-groups (BE3, `failure_groups_service.assemble`) ─────
 

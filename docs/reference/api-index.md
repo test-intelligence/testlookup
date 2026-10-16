@@ -71,6 +71,8 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/analytics/classify-uncategorized` | Classify Uncategorized Failures | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/coverage` | Coverage Stats | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/coverage-map` | Coverage Map | [Analytics](api/analytics.md) |
+| GET | `/api/v1/analytics/coverage/history` | Coverage History | [Analytics](api/analytics.md) |
+| GET | `/api/v1/analytics/coverage/untagged-tests` | Coverage Untagged Tests | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/defects` | List Defects | [Analytics](api/analytics.md) |
 | POST | `/api/v1/analytics/defects` | Create Defect | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/defects/escape-rate` | Defect Escape Rate | [Analytics](api/analytics.md) |
@@ -91,6 +93,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/analytics/test-scatter` | Get Test Scatter | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/time-to-fix` | Time To Fix | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/top-failing` | Top Failing Tests | [Analytics](api/analytics.md) |
+| GET | `/api/v1/analytics/trend-summary` | Get Trend Summary | [Analytics](api/analytics.md) |
 | POST | `/api/v1/analyze` | Analyze Test Case | [AI Analysis](api/ai-analysis.md) |
 | GET | `/api/v1/analyze/{test_case_id}` | Fetch existing AI analysis for a test case (no re-run) | [AI Analysis](api/ai-analysis.md) |
 | GET | `/api/v1/audit-dashboard/categories` | List Categories | [Audit Dashboard](api/audit-dashboard.md) |
@@ -320,6 +323,10 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/projects/{project_id}/retention-policy/purge` | Enqueue Retention Purge | [Retention](api/retention.md) |
 | GET | `/api/v1/projects/{project_id}/reviews` | List Reviews | [Reviews](api/reviews.md) |
 | GET | `/api/v1/projects/{project_id}/storage` | Get Project Storage | [Retention](api/retention.md) |
+| GET | `/api/v1/projects/{project_id}/timeline-notes` | List Timeline Notes | [Timeline notes](api/timeline-notes.md) |
+| POST | `/api/v1/projects/{project_id}/timeline-notes` | Create Timeline Note | [Timeline notes](api/timeline-notes.md) |
+| DELETE | `/api/v1/projects/{project_id}/timeline-notes/{note_id}` | Delete Timeline Note | [Timeline notes](api/timeline-notes.md) |
+| PATCH | `/api/v1/projects/{project_id}/timeline-notes/{note_id}` | Update Timeline Note | [Timeline notes](api/timeline-notes.md) |
 | GET | `/api/v1/projects/{project_id}/value-metrics/assumptions` | Get Value Metric Assumptions | [Value Metrics](api/value-metrics.md) |
 | PUT | `/api/v1/projects/{project_id}/value-metrics/assumptions` | Put Value Metric Assumptions | [Value Metrics](api/value-metrics.md) |
 | GET | `/api/v1/projects/{project_id}/workflows` | List Workflows | [Workflows](api/workflows.md) |
@@ -371,6 +378,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/releases/{release_id}/test-runs` | Link Test Run | [Releases](api/releases.md) |
 | DELETE | `/api/v1/releases/{release_id}/test-runs/{run_id}` | Unlink Test Run | [Releases](api/releases.md) |
 | POST | `/api/v1/reports/email-trends` | Email Trends Report | [Reports](api/reports.md) |
+| GET | `/api/v1/reports/email-trends/availability` | Email Trends Availability | [Reports](api/reports.md) |
 | GET | `/api/v1/reports/runs/{run_id}/evidence-bundle` | Export Evidence Bundle | [Reports](api/reports.md) |
 | GET | `/api/v1/reports/runs/{run_id}/pdf` | Export Run Report Pdf | [Reports](api/reports.md) |
 | POST | `/api/v1/reports/runs/{run_id}/share` | Create Share Link Endpoint | [Reports](api/reports.md) |
@@ -384,6 +392,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/reports/summary/exports/{export_id}/retry` | Retry Summary Report Export | [Summary Report](api/summary-report.md) |
 | GET | `/api/v1/reports/summary/pdf` | Export Summary Report Pdf | [Summary Report](api/summary-report.md) |
 | GET | `/api/v1/reports/summary/xlsx` | Export Summary Report Xlsx | [Summary Report](api/summary-report.md) |
+| GET | `/api/v1/reports/trends/pdf` | Export Trends Report Pdf | [Reports](api/reports.md) |
 | GET | `/api/v1/reviews/{review_id}` | Get Review | [Reviews](api/reviews.md) |
 | POST | `/api/v1/reviews/{review_id}/accept` | Accept Review | [Reviews](api/reviews.md) |
 | POST | `/api/v1/reviews/{review_id}/reject` | Reject Review | [Reviews](api/reviews.md) |
@@ -606,4 +615,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **597 HTTP operations**, **503 paths**, **85 domain pages**.
+Total: **606 HTTP operations**, **510 paths**, **86 domain pages**.

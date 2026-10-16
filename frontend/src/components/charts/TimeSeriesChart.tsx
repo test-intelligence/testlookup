@@ -61,8 +61,21 @@
  * 92-100 axis has no room for a 90 % target, and stretching the axis to fit it
  * would undo the zoom the reader is looking at. The canvas renderer draws no
  * target, as it draws no overlays: past 366 days the sentence says so.
+ *
+ * TIMELINE NOTES (TRND-04) travel in the model (`model.notes`, from the
+ * host's `buildTimeSeriesModel({ notes })`); with none, nothing is added. A
+ * range is a band shaded in the axis token at 12 % (`color-mix`, no new theme
+ * token), one day a dashed line, each labelled with its text cut to 24
+ * characters; the day's tooltip lists every note covering it. Both renderers
+ * draw them from the same model: here as `ReferenceArea` / `ReferenceLine`
+ * with React-text labels, on canvas as `markArea` / `markLine` with
+ * `canvasSafeText` names and no formatter (`timeSeriesOption.ts`).
+ *
+ * TRND-11: the canvas renderer registers its export option (the same
+ * `buildTimeSeriesOption` call on the tokens Export asks for) through
+ * `useEChart`, so Export can redraw it as a true SVG or on the light theme.
  */
-import { useEffect, useId, useMemo, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useId, useMemo, useState, type ReactElement } from 'react'
 import { cursorPoint, useChartCursor, type ChartCursorPoint } from './ChartCursor'
 import {
   Bar,
@@ -71,6 +84,7 @@ import {
   ComposedChart,
   Legend,
   Line,
+  ReferenceArea,
   ReferenceDot,
   ReferenceLine,
   Tooltip,
@@ -107,7 +121,7 @@ import {
   trendOverlayHaloWidth,
 } from './TimeSeriesChartOverlayStyle'
 import { formatNumber } from '@/utils/formatters'
-import { CHART_VARS, RECHARTS_AXIS_TICK, useChartTokens } from './tokens'
+import { CHART_VARS, RECHARTS_AXIS_TICK, useChartTokens, type ChartTokens } from './tokens'
 import { NO_VALUE, utcDayLabel } from './chartText'
 import { useChartAnimation } from './motion'
 import { ChartLegend, type LegendEntry } from './patterns'
@@ -123,7 +137,11 @@ import {
 import {
   EXECUTIONS_AXIS_TITLE,
   RATE_AXIS_TITLE,
+  clipNoteMarkers,
+  noteShortLabel,
+  noteTooltipLine,
   utcTodayNote,
+  type NoteMarker,
   type TimeSeriesModel,
 } from './timeSeriesModel'
 
@@ -367,6 +385,62 @@ function MarkerLabelLayout({
   return null
 }
 
+// ── Timeline notes (TRND-04) ─────────────────────────────────────────────────
+
+/** A note band's fill: the axis token at 12 % (`color-mix`, no new theme token). */
+export const NOTE_BAND_FILL = `color-mix(in srgb, ${CHART_VARS.axis} 12%, transparent)`
+/** A one-day note's dash: shorter than a release marker's `5 3`, so the two differ in shape. */
+export const NOTE_LINE_DASH = '2 3'
+const NOTE_LABEL_FONT_SIZE = 10
+/** The note label's inset from the band / line, px. */
+const NOTE_LABEL_INSET = 3
+
+interface NoteShapeProps {
+  note: NoteMarker
+  x?: number
+  y?: number
+  width?: number
+  height?: number
+  x1?: number
+  y1?: number
+  x2?: number
+  y2?: number
+}
+
+/**
+ * A note's text is USER INPUT: it is React text inside a `<text>` / `<title>`,
+ * never markup, never an attribute built into an href. `data-chart-note` names
+ * the note for the specs.
+ */
+function NoteBand({ note, x, y, width, height }: NoteShapeProps) {
+  if (![x, y, width, height].every((v) => typeof v === 'number' && Number.isFinite(v))) return <g />
+  const left = x as number
+  const top = y as number
+  return (
+    <g data-chart-note={note.id} data-chart-note-kind="band">
+      <title>{noteTooltipLine(note)}</title>
+      <rect x={left} y={top} width={Math.max(0, width as number)} height={Math.max(0, height as number)} fill={NOTE_BAND_FILL} />
+      <text x={left + NOTE_LABEL_INSET} y={top + NOTE_LABEL_FONT_SIZE + NOTE_LABEL_INSET} fill={CHART_VARS.axis} fontSize={NOTE_LABEL_FONT_SIZE}>
+        {noteShortLabel(note.label)}
+      </text>
+    </g>
+  )
+}
+
+function NoteLine({ note, x1, y1, x2, y2 }: NoteShapeProps) {
+  if (![x1, y1, x2, y2].every((v) => typeof v === 'number' && Number.isFinite(v))) return <g />
+  const top = Math.min(y1 as number, y2 as number)
+  return (
+    <g data-chart-note={note.id} data-chart-note-kind="line">
+      <title>{noteTooltipLine(note)}</title>
+      <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={CHART_VARS.axis} strokeDasharray={NOTE_LINE_DASH} strokeWidth={1.5} />
+      <text x={(x1 as number) + NOTE_LABEL_INSET} y={top + NOTE_LABEL_FONT_SIZE + NOTE_LABEL_INSET} fill={CHART_VARS.axis} fontSize={NOTE_LABEL_FONT_SIZE}>
+        {noteShortLabel(note.label)}
+      </text>
+    </g>
+  )
+}
+
 /** The label prop for one marker: as it always was on the first row, raised one row, or none. */
 function markerLabel(marker: TimeSeriesModel['markers'][number], row: MarkerLabelRow) {
   if (row === null) return undefined
@@ -410,6 +484,8 @@ function SvgTimeSeries({
   // Isolated points (a single-point series included) MUST be dots: a line
   // renderer draws nothing for a point with no measured neighbour.
   const showDots = model.singlePoint || model.isolated.length > 0
+  // TRND-04: the notes on the DRAWN axis (a zoomed slice carries the full window's).
+  const notes = useMemo(() => clipNoteMarkers(model.notes, model.points.map((point) => point.x)), [model])
   const legend: LegendEntry[] = [
     // A line with a dot when some days are drawn as lone dots: the legend
     // shows the marks the plot has, and a plain line matches none of them (R2 F7).
@@ -659,6 +735,30 @@ function SvgTimeSeries({
             strokeWidth={1.5}
           />
         )}
+        {/*
+          TRND-04 timeline notes, under the release markers: a range is a
+          shaded band, one day a dashed line, each with its short text. Only
+          when the host passed notes: without them nothing is added.
+        */}
+        {notes.map((note) =>
+          note.kind === 'band' ? (
+            <ReferenceArea
+              key={`note-${note.id}`}
+              yAxisId="rate"
+              x1={note.from}
+              x2={note.to}
+              ifOverflow="hidden"
+              shape={(props: Omit<NoteShapeProps, 'note'>) => <NoteBand {...props} note={note} />}
+            />
+          ) : (
+            <ReferenceLine
+              key={`note-${note.id}`}
+              yAxisId="rate"
+              x={note.from}
+              shape={(props: Omit<NoteShapeProps, 'note'>) => <NoteLine {...props} note={note} />}
+            />
+          ),
+        )}
         {model.markers.map((marker, index) => (
           <ReferenceLine
             key={marker.x}
@@ -717,7 +817,13 @@ function CanvasTimeSeries({
     () => buildTimeSeriesOption({ model, tokens, description, animate: animate === true, locale, timeZone, inProgressRuns }),
     [model, tokens, description, animate, locale, timeZone, inProgressRuns],
   )
-  const { containerRef, status, retry } = useEChart('timeSeries', option)
+  // TRND-11: the SAME builder with the SAME inputs, on the tokens Export asks for (a true SVG, the light theme).
+  const exportOption = useCallback(
+    (exportTokens: ChartTokens) =>
+      buildTimeSeriesOption({ model, tokens: exportTokens, description, animate: false, locale, timeZone, inProgressRuns }),
+    [model, description, locale, timeZone, inProgressRuns],
+  )
+  const { containerRef, status, retry } = useEChart('timeSeries', option, undefined, exportOption)
 
   if (status === 'stale-build' || status === 'error') {
     return (

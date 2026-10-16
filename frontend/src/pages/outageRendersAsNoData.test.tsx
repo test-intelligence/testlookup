@@ -69,6 +69,15 @@ vi.mock('@/hooks/useDefectInsights', () => ({
 vi.mock('@/hooks/useSuiteOptions', () => ({
   useSuiteOptions: () => ({ options: [], isLoading: false }),
 }))
+// W08 (Trends): the server's trend summary and the window's timeline notes,
+// each a secondary read that answered nothing here (the trend read is the outage).
+vi.mock('@/hooks/useTrendSummary', () => ({
+  useTrendSummary: vi.fn(() => ({ summary: null, isLoading: false, error: undefined })),
+}))
+vi.mock('@/hooks/useTimelineNotes', () => ({
+  useTimelineNotes: vi.fn(() => ({ notes: [], total: 0, truncated: false, isLoading: false, unavailable: false, mutate: vi.fn() })),
+  useTimelineNoteActions: () => ({ projectId: 'proj-1', create: vi.fn(), update: vi.fn(), remove: vi.fn() }),
+}))
 vi.mock('@/hooks/useValueMetrics', () => ({
 }))
 vi.mock('@/hooks/useRuns', () => ({

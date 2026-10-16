@@ -15,9 +15,20 @@
  * Fewer than two lines, or more than `COMPARE_MAX_SERIES`, is said in the
  * frame (pick more; narrow) rather than drawn as a one-line chart or an
  * "Other" that hides pairs the reader chose.
+ *
+ * TRND-10: the title, the metric and "Compare by" are Compare's
+ * customisation (`compareChartConfig`, `useChartConfig('trends.compare')`),
+ * changed in the Customise side panel — the toolbar's two selects moved there;
+ * it keeps Suites, Releases and gains Customise. The suites and releases stay
+ * in the URL and are mirrored into the saved-view store, so a view reproduces
+ * the chart; the catalogue decides which panel is open (`customising`).
  */
-import { useContext, useId, useMemo, useState, type ReactElement } from 'react'
+import { useCallback, useContext, useEffect, useMemo, type ReactElement } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import toast from 'react-hot-toast'
+import { SlidersHorizontal } from 'lucide-react'
+import ChartCustomisePanel from '@/components/charts/ChartCustomisePanel'
+import { useChartConfig } from '@/components/charts/useChartConfig'
 import MultiSeriesChartFrame from '@/components/charts/MultiSeriesChartFrame'
 import { buildMultiSeriesModel } from '@/components/charts/multiSeriesModel'
 import type { ChartState } from '@/components/charts/chartState'
@@ -31,10 +42,8 @@ import { UNATTRIBUTED_RELEASE } from '@/lib/viz/contracts'
 import { clampCatalogueDays, ROW_GRAIN_MAX_WINDOW_DAYS, useCatalogueParams } from './catalogueScope'
 import { useCompareData, type CompareData } from './compareData'
 import {
-  COMPARE_BY_LABELS,
   COMPARE_MAX_SERIES,
   COMPARE_METRICS,
-  COMPARE_TITLE,
   COMPARE_URL_KEYS,
   compareComparability,
   compareOptions,
@@ -47,12 +56,20 @@ import {
   stylesForLines,
   tooManyReason,
   writeCompareChoice,
-  type CompareBy,
-  type CompareMetric,
 } from './compareModel'
+import {
+  applyCompareField,
+  COMPARE_CHART_KEY,
+  COMPARE_SETTINGS_MODEL,
+  compareCustomiseSpec,
+  compareTitleOf,
+  resetCompareSettings,
+  withCompareChoice,
+  type CompareChartConfig,
+} from './compareChartConfig'
 
-const SELECT =
-  'rounded border border-[var(--color-border-light)] bg-[var(--color-bg-card)] px-2 py-1 text-xs text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]'
+const CUSTOMISE_BUTTON =
+  'inline-flex items-center gap-1 rounded border border-[var(--color-border-light)] bg-[var(--color-bg-card)] px-2 py-1 text-xs text-[var(--color-text)] hover:bg-[var(--color-bg-hover)]'
 
 export const COMPARE_HEIGHT = 280
 
@@ -85,11 +102,23 @@ export interface CompareSectionProps {
   everHadData: boolean | null
   /** The busiest suites of "Pass rate by suite", the starting selection (`defaultCompareSuites`). */
   busiestSuites?: readonly string[]
+  /** TRND-10: Compare's Customise panel is open (the catalogue keeps one panel open at a time). */
+  customising?: boolean
+  /** Toggles the panel (the toolbar's Customise button). Absent: no Customise button. */
+  onCustomise?: () => void
+  /** Closes the panel. */
+  onCloseCustomise?: () => void
 }
 
-export default function CompareSection({ days, suiteFilter, everHadData, busiestSuites = NO_SUITES }: CompareSectionProps): ReactElement {
-  const byId = useId()
-  const metricId = useId()
+export default function CompareSection({
+  days,
+  suiteFilter,
+  everHadData,
+  busiestSuites = NO_SUITES,
+  customising = false,
+  onCustomise,
+  onCloseCustomise,
+}: CompareSectionProps): ReactElement {
   const windowDays = clampCatalogueDays(days, ROW_GRAIN_MAX_WINDOW_DAYS)
   const pageSuites = useMemo(() => normalizeScope(suiteFilter), [suiteFilter])
   const releaseScope = useReleaseScope()
@@ -125,10 +154,20 @@ export default function CompareSection({ days, suiteFilter, everHadData, busiest
   const releaseItems = releaseData?.items ?? []
   const releaseOptions: MultiSelectOption[] = releaseItems.map((r) => ({ value: r.id, label: r.name }))
 
-  const [choice, setChoice] = useState<CompareBy | null>(null)
-  const [metric, setMetric] = useState<CompareMetric>('pass_rate')
+  // TRND-10: the title, metric and compare-by are this chart's customisation; the
+  // store (a saved view) also gets the reader's selection from the URL.
+  const mirror = useCallback(
+    (config: CompareChartConfig) => withCompareChoice(config, chosenSuites, chosenReleases),
+    [chosenSuites, chosenReleases],
+  )
+  const custom = useChartConfig(COMPARE_CHART_KEY, COMPARE_SETTINGS_MODEL, { mirror })
+  useEffect(() => {
+    if (custom.notice) toast(custom.notice)
+  }, [custom.notice])
+  const metric = custom.applied.metric
   const options = compareOptions(suites, releases)
-  const by = effectiveCompareBy(choice, options)
+  const by = effectiveCompareBy(custom.applied.by, options)
+  const title = compareTitleOf(custom.config)
   const count = by ? seriesCount(by, suites, releases) : 0
   const tooMany = count > COMPARE_MAX_SERIES
   const singleDay = windowDays < 2
@@ -183,44 +222,21 @@ export default function CompareSection({ days, suiteFilter, everHadData, busiest
         disabledReason={NO_RELEASES_REASON}
         triggerData={{ 'data-compare-picker': 'release' }}
       />
-      {options.length > 1 && by ? (
-        <label htmlFor={byId} className="inline-flex items-center gap-1 text-xs text-[var(--color-text-secondary)]">
-          Compare by
-          <select
-            id={byId}
-            data-compare-by=""
-            value={by}
-            onChange={(event) => setChoice(event.target.value as CompareBy)}
-            className={SELECT}
-          >
-            {options.map((option) => (
-              <option key={option} value={option}>
-                {COMPARE_BY_LABELS[option]}
-              </option>
-            ))}
-          </select>
-        </label>
-      ) : null}
-      {by ? (
-        <label htmlFor={metricId} className="inline-flex items-center gap-1 text-xs text-[var(--color-text-secondary)]">
-          Metric
-          <select
-            id={metricId}
-            data-compare-metric=""
-            value={metric}
-            onChange={(event) => setMetric(event.target.value as CompareMetric)}
-            className={SELECT}
-          >
-            {(Object.keys(COMPARE_METRICS) as CompareMetric[]).map((key) => (
-              <option key={key} value={key}>
-                {COMPARE_METRICS[key].label}
-              </option>
-            ))}
-          </select>
-        </label>
+      {onCustomise ? (
+        <button
+          type="button"
+          data-chart-customise="compare"
+          aria-pressed={customising}
+          onClick={onCustomise}
+          className={CUSTOMISE_BUTTON}
+        >
+          <SlidersHorizontal aria-hidden="true" className="h-3.5 w-3.5" />
+          Customise
+        </button>
       ) : null}
     </>
   )
+  const spec = compareCustomiseSpec(custom.config, { byOptions: options, effectiveBy: effectiveCompareBy(custom.config.by, options) })
 
   const startedFromBusiest = chosenSuites === null && pageSuites.length === 0 && suites.length > 0
   const takeaway =
@@ -233,9 +249,14 @@ export default function CompareSection({ days, suiteFilter, everHadData, busiest
           : undefined
 
   return (
-    <div data-catalogue-section="trends-compare" data-compare-by-active={by ?? ''} className="min-w-0">
+    <div
+      data-catalogue-section="trends-compare"
+      data-compare-by-active={by ?? ''}
+      data-compare-metric-active={metric}
+      className="min-w-0"
+    >
       <MultiSeriesChartFrame
-        title={COMPARE_TITLE}
+        title={title}
         takeaway={takeaway}
         headingLevel={3}
         height={COMPARE_HEIGHT}
@@ -244,6 +265,15 @@ export default function CompareSection({ days, suiteFilter, everHadData, busiest
         toolbar={toolbar}
         scopeLabel={`last ${windowDays} days`}
       />
+      {customising ? (
+        <ChartCustomisePanel
+          chartTitle={title}
+          spec={spec}
+          onField={(id, value) => custom.setConfig(applyCompareField(custom.config, id, value))}
+          onReset={() => custom.setConfig(resetCompareSettings(custom.config))}
+          onClose={() => onCloseCustomise?.()}
+        />
+      ) : null}
     </div>
   )
 }

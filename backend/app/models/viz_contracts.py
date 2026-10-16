@@ -878,8 +878,13 @@ class MatrixChart(VizContract):
 
 
 class TreeNodeStats(VizContract):
-    """A coverage-map node's figures (Wave 3, VIZ-206). Every key is required;
-    ``null`` is "not measured" or "not known", and which one is ``recency``'s job."""
+    """A coverage-map node's figures (Wave 3, VIZ-206). Every key but
+    ``needs_review_count`` is required; ``null`` is "not measured" or "not
+    known", and which one is ``recency``'s job.
+
+    ``needs_review_count`` (W08 TRND-12, optional and additive): the node's
+    tests the last suite sync marked for review, a count, or ``null`` outside
+    one project (not measured). Absent in every payload written before it."""
 
     test_count: Count
     executions: Count
@@ -889,6 +894,7 @@ class TreeNodeStats(VizContract):
     last_executed_at: str | None
     staleness_days: Count | None
     recency: Recency
+    needs_review_count: Count | None = None
 
     @field_validator("last_executed_at")
     @classmethod

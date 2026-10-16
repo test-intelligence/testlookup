@@ -66,23 +66,29 @@ const ENVIRONMENTS = ['prod', 'staging']
 const suites = (count: number) => Array.from({ length: count }, (_, i) => `suite-${String(i + 1).padStart(2, '0')}`)
 let suiteNames = suites(5)
 
-/** `executions` by suite x environment: the suites in rank order on x. */
-function discoveryChart(): SeriesChart {
+/** TRND-13: the branches a branch discovery names, `(none)` (runs with no branch) among them. */
+const BRANCHES = ['main', '(none)', 'release/2.4', 'feature/login']
+
+/** `executions` by the facet x environment: the facet's keys in rank order on x (suites unless a branch facet). */
+function discoveryChart(params: CatalogParams): SeriesChart {
+  const facet = String((params.group_by as string[])[0])
+  const keys = facet === 'branch' ? BRANCHES : suiteNames
   return {
     kind: 'series',
-    dimensions: ['suite', 'environment'],
+    // The server's dimensions are the request's group_by, in order.
+    dimensions: [...(params.group_by as string[])],
     x_type: 'category',
     series: ENVIRONMENTS.map((key) => ({
       key,
       label: key,
-      points: suiteNames.map((x, i) => ({ x, y: 1000 - i, n: 1000 - i })),
+      points: keys.map((x, i) => ({ x, y: 1000 - i, n: 1000 - i })),
     })),
   }
 }
 
 /** One panel: the metric by week, one line per environment; the value grows with the suite's place. */
 function panelChart(params: CatalogParams): SeriesChart {
-  const place = suiteNames.indexOf(String(params.suite_name ?? suiteNames[0]))
+  const place = Math.max(0, suiteNames.indexOf(String(params.suite_name ?? suiteNames[0])))
   const rate = params.metric === 'failure_rate' || params.metric === 'pass_rate'
   return {
     kind: 'series',
@@ -98,7 +104,8 @@ function panelChart(params: CatalogParams): SeriesChart {
 
 const calls = (): CatalogParams[] =>
   get.mock.calls.filter(([url]) => url === CHART_DATA_URL).map(([, config]) => (config as { params: CatalogParams }).params)
-const isDiscovery = (params: CatalogParams) => Array.isArray(params.group_by) && ['suite', 'release'].includes(String(params.group_by[0]))
+const FACETS = ['suite', 'release', 'branch', 'environment', 'status', 'failure_category', 'ingestion_source']
+const isDiscovery = (params: CatalogParams) => Array.isArray(params.group_by) && FACETS.includes(String(params.group_by[0]))
 const discoveryCalls = () => calls().filter(isDiscovery)
 const panelCalls = () => calls().filter((params) => !isDiscovery(params))
 
@@ -167,7 +174,7 @@ beforeEach(() => {
   window.sessionStorage.clear()
   get.mockReset()
   get.mockImplementation((_url: string, config: { params: CatalogParams }) => {
-    const series = isDiscovery(config.params) ? discoveryChart() : panelChart(config.params)
+    const series = isDiscovery(config.params) ? discoveryChart(config.params) : panelChart(config.params)
     return Promise.resolve({ data: { meta: META, series }, headers: { 'x-request-id': 'req-1' } })
   })
 })
@@ -260,7 +267,10 @@ describe('ExplorePage (VIZ-505)', () => {
     await waitFor(() => expect(panels()).toHaveLength(5))
     const release = within(screen.getByLabelText('Panels')).getByRole('option', { name: /One per release/ }) as HTMLOptionElement
     expect(release.disabled).toBe(true)
-    expect(release.textContent).toContain('pick a project to facet by release')
+    expect(release.textContent).toBe('One per release')
+    expect(release.title).toContain('pick a project to facet by release')
+    // Said in words beside the picker (the option stays as narrow as its name).
+    expect(screen.getByText(/^Panels by release are not offered: releases belong to one project/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Views/ })).toBeNull()
     expect(discoveryCalls()[0]).toEqual({ days: 30, metric: 'executions', group_by: ['suite', 'environment'] })
   })
@@ -328,6 +338,88 @@ describe('ExplorePage (VIZ-505)', () => {
     await waitFor(() =>
       expect(panelCalls().slice(-1)[0]).toEqual({ project_id: 'p1', days: 7, metric: 'flaky_tests', group_by: ['day', 'branch'] }),
     )
+  })
+
+  it('TRND-13: Panels Branch — one discovery by branch, then one request per branch carrying the facet pair; (none) is not a panel', async () => {
+    renderPage()
+    await waitFor(() => expect(panels()).toHaveLength(5))
+    fireEvent.change(screen.getByLabelText('Panels'), { target: { value: 'branch' } })
+    await waitFor(() => expect(panels().map((p) => p.dataset.explorePanel)).toEqual(['main', 'release/2.4', 'feature/login']))
+    expect(seen.search).toContain('facet=branch')
+    const branchDiscovery = discoveryCalls().filter((p) => (p.group_by as string[])[0] === 'branch')
+    expect(branchDiscovery).toEqual([{ project_id: 'p1', days: 30, metric: 'executions', group_by: ['branch', 'environment'] }])
+    await waitFor(() => expect(panelCalls().filter((p) => p.facet_dimension === 'branch')).toHaveLength(3))
+    // The suite discovery held over while the branch one loaded never named a panel
+    // (a suite name sent as a branch): exactly the three branches, once each.
+    await settle()
+    expect(panelCalls().filter((p) => p.facet_dimension === 'branch')).toEqual(
+      ['main', 'release/2.4', 'feature/login'].map((key) => ({
+        project_id: 'p1',
+        days: 30,
+        metric: 'failure_rate',
+        group_by: ['week', 'environment'],
+        facet_dimension: 'branch',
+        facet_value: key,
+      })),
+    )
+    // No branch request names the suite or the "(none)" bucket.
+    expect(panelCalls().filter((p) => p.facet_value === '(none)')).toEqual([])
+    expect(panelCalls().filter((p) => p.facet_dimension === 'branch' && 'suite_name' in p)).toEqual([])
+    expect(screen.getByText('Runs with no branch are not shown.')).toBeInTheDocument()
+    expect(document.querySelector('[data-explore-summary]')).toHaveTextContent('one panel per branch')
+  })
+
+  it('TRND-13: Runs cannot be split by status — the option says why, and a link asking for it is reset with the reason', async () => {
+    renderPage('/explore?metric=run_count&series=none&facet=status')
+    await waitFor(() => expect(panelCalls()).toHaveLength(1))
+    expect(screen.getByText(/Panels "Status" is not available \(one run holds tests of several statuses/)).toBeInTheDocument()
+    const status = within(screen.getByLabelText('Panels')).getByRole('option', { name: /One per status/ }) as HTMLOptionElement
+    expect(status.disabled).toBe(true)
+    expect(status.title).toContain('so it would be counted in more than one panel')
+    expect(
+      screen.getByText('Panels by status or failure category are not offered: one run holds tests of several statuses (or failure categories), so it would be counted in more than one panel.'),
+    ).toBeInTheDocument()
+    const category = within(screen.getByLabelText('Panels')).getByRole('option', { name: /One per failure category/ }) as HTMLOptionElement
+    expect(category.disabled).toBe(true)
+    expect((within(screen.getByLabelText('Panels')).getByRole('option', { name: /One per branch/ }) as HTMLOptionElement).disabled).toBe(false)
+    await settle()
+    expect(calls().filter((p) => p.facet_dimension !== undefined)).toEqual([])
+    expect(discoveryCalls()).toEqual([])
+  })
+
+  it('TRND-10: Customise → Lines per panel 3: every panel asks top_n=3 and the URL carries top=3; the discovery does not change', async () => {
+    renderPage()
+    await waitFor(() => expect(panelCalls()).toHaveLength(5))
+    fireEvent.click(screen.getByRole('button', { name: 'Customise' }))
+    const panel = await screen.findByRole('complementary', { name: /Customise/ })
+    fireEvent.change(panel.querySelector('[data-customise="topN"]') as HTMLSelectElement, { target: { value: '3' } })
+    await waitFor(() => expect(panelCalls().filter((p) => p.top_n === 3)).toHaveLength(5))
+    expect(seen.search).toContain('top=3')
+    expect(discoveryCalls()).toHaveLength(1)
+    // The guard rails are listed with their reasons.
+    expect(panel.textContent).toContain('Rates cannot be stacked')
+  })
+
+  it('TRND-10: a title is a heading over the grid, and a saved view stores the title and the lines per panel', async () => {
+    renderPage('/explore?metric=pass_rate&series=branch&facet=release&top=5')
+    fireEvent.click(screen.getByRole('button', { name: 'Customise' }))
+    const panel = await screen.findByRole('complementary', { name: /Customise/ })
+    fireEvent.change(panel.querySelector('[data-customise="title"]') as HTMLInputElement, { target: { value: 'Branch health' } })
+    expect(await screen.findByRole('heading', { level: 2, name: 'Branch health' })).toBeInTheDocument()
+    expect(seen.search).toContain('title=Branch+health')
+    fireEvent.click(screen.getByRole('button', { name: /Views/ }))
+    await screen.findByText(/No saved views for this page yet/)
+    fireEvent.change(screen.getByPlaceholderText(/Payments release watch/), { target: { value: 'Branch health view' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save view' }))
+    await waitFor(() => expect(service.createSavedView).toHaveBeenCalledTimes(1))
+    expect(service.createSavedView.mock.calls[0][0].filters.explore).toMatchObject({ top: 5, title: 'Branch health' })
+  })
+
+  it('TRND-10: a link with an invalid lines-per-panel value falls back, with a notice, and sends no top_n', async () => {
+    renderPage('/explore?top=9')
+    await waitFor(() => expect(panelCalls()).toHaveLength(5))
+    expect(screen.getByText(/Lines per panel "9" is not 3, 5, 7/)).toBeInTheDocument()
+    expect(panelCalls().every((p) => !('top_n' in p))).toBe(true)
   })
 
   it('a discovery failure says the data could not be loaded, with Retry', async () => {

@@ -216,11 +216,165 @@ export interface CoverageSuite {
   failed: number
   skipped: number
   pass_rate: number
+  /**
+   * W08 TRND-07: the suite's newest run in the window (ISO UTC) and that run's
+   * id, for the "last run" chip. Optional: a payload from before W08 has neither.
+   */
+  last_run_at?: string | null
+  last_run_id?: string | null
 }
 
 export interface CoverageResponse {
   summary: CoverageSummary
   suites: CoverageSuite[]
+}
+
+/**
+ * W08 TRND-07 `GET /api/v1/analytics/coverage/history`: one point per stored
+ * daily snapshot, ascending; a day without a snapshot is ABSENT (a gap).
+ */
+export interface CoverageHistoryPoint {
+  /** YYYY-MM-DD, the UTC day the snapshot describes. */
+  day: string
+  catalogue_tests: number
+  /** Distinct tests executed in the 30 days ending `day`. */
+  exercised_tests: number
+  /** 1 dp; `null` when the catalogue was empty (not measured, never 0). */
+  exercised_pct: number | null
+  suites: number
+}
+
+export interface CoverageHistory {
+  window_days: number
+  /** `false` before the project's first snapshot; `reason` says so. */
+  measured: boolean
+  reason: string | null
+  first_snapshot_day: string | null
+  points: CoverageHistoryPoint[]
+  meta?: EnvelopeMeta
+}
+
+/** W08 TRND-07 `GET /api/v1/analytics/coverage/untagged-tests`: one test behind the untagged callout. */
+export interface UntaggedTest {
+  /** `null` when the fingerprint has no catalogue row yet (listed, not movable). */
+  canonical_id: string | null
+  test_fingerprint: string
+  test_name: string
+  class_name: string | null
+  catalogue_suite_id: string | null
+  catalogue_suite: string | null
+  executions: number
+  last_executed_at: string | null
+}
+
+export interface UntaggedTestList {
+  items: UntaggedTest[]
+  /** Distinct untagged tests in the window, beyond this page. */
+  total: number
+  page: number
+  size: number
+  window_days: number
+  meta?: EnvelopeMeta
+}
+
+// ── W08 defensive guards: a missing or malformed answer is `null`, a single
+// malformed item is dropped. No component reads `.points` / `.items` off a raw
+// response (W07's "batch.items is not iterable" crash).
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+function finite(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v)
+}
+
+/** A string, or `null` for null / absent; `undefined` for any other type (malformed). */
+function strOrNull(v: unknown): string | null | undefined {
+  if (v === null || v === undefined) return null
+  return typeof v === 'string' ? v : undefined
+}
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/
+
+function parseHistoryPoint(raw: unknown): CoverageHistoryPoint | null {
+  if (!isRecord(raw)) return null
+  const { day, catalogue_tests, exercised_tests, exercised_pct, suites } = raw
+  if (typeof day !== 'string' || !ISO_DAY.test(day.slice(0, 10))) return null
+  if (!finite(catalogue_tests) || !finite(exercised_tests) || !finite(suites)) return null
+  if (exercised_pct !== null && exercised_pct !== undefined && !finite(exercised_pct)) return null
+  return {
+    day: day.slice(0, 10),
+    catalogue_tests,
+    exercised_tests,
+    exercised_pct: finite(exercised_pct) ? exercised_pct : null,
+    suites,
+  }
+}
+
+export function parseCoverageHistory(raw: unknown): CoverageHistory | null {
+  if (!isRecord(raw)) return null
+  if (!Array.isArray(raw.points)) return null
+  if (typeof raw.measured !== 'boolean') return null
+  const reason = strOrNull(raw.reason)
+  const first = strOrNull(raw.first_snapshot_day)
+  if (reason === undefined || first === undefined) return null
+  const points: CoverageHistoryPoint[] = []
+  for (const item of raw.points) {
+    const point = parseHistoryPoint(item)
+    if (point) points.push(point)
+  }
+  points.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0))
+  return {
+    window_days: finite(raw.window_days) ? raw.window_days : 0,
+    measured: raw.measured,
+    reason,
+    first_snapshot_day: first,
+    points,
+    meta: isRecord(raw.meta) ? (raw.meta as unknown as EnvelopeMeta) : undefined,
+  }
+}
+
+function parseUntaggedTest(raw: unknown): UntaggedTest | null {
+  if (!isRecord(raw)) return null
+  const { test_fingerprint, test_name, executions } = raw
+  if (typeof test_fingerprint !== 'string' || test_fingerprint === '') return null
+  if (typeof test_name !== 'string') return null
+  if (!finite(executions)) return null
+  const canonical = strOrNull(raw.canonical_id)
+  const cls = strOrNull(raw.class_name)
+  const suiteId = strOrNull(raw.catalogue_suite_id)
+  const suite = strOrNull(raw.catalogue_suite)
+  const last = strOrNull(raw.last_executed_at)
+  if ([canonical, cls, suiteId, suite, last].some((v) => v === undefined)) return null
+  return {
+    canonical_id: canonical === '' ? null : (canonical ?? null),
+    test_fingerprint,
+    test_name,
+    class_name: cls ?? null,
+    catalogue_suite_id: suiteId ?? null,
+    catalogue_suite: suite ?? null,
+    executions,
+    last_executed_at: last ?? null,
+  }
+}
+
+export function parseUntaggedTests(raw: unknown): UntaggedTestList | null {
+  if (!isRecord(raw)) return null
+  if (!Array.isArray(raw.items)) return null
+  const items: UntaggedTest[] = []
+  for (const item of raw.items) {
+    const test = parseUntaggedTest(item)
+    if (test) items.push(test)
+  }
+  return {
+    items,
+    total: finite(raw.total) ? raw.total : items.length,
+    page: finite(raw.page) ? raw.page : 1,
+    size: finite(raw.size) ? raw.size : items.length,
+    window_days: finite(raw.window_days) ? raw.window_days : 0,
+    meta: isRecord(raw.meta) ? (raw.meta as unknown as EnvelopeMeta) : undefined,
+  }
 }
 
 export interface DefectItem {

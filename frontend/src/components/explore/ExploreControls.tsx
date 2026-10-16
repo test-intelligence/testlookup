@@ -3,10 +3,15 @@
  * dimension), panels (the facet), the y-scale and the window.
  *
  * A picker offers only what `allowedOptions` allows given the pickers before
- * it, so every combination on screen is one the API accepts. The two facets
- * that exist but are refused here (the series already uses it; a release
- * facet in All Projects) stay in the list, disabled, with the reason, so the
- * reader is told why rather than left wondering where "Release" went.
+ * it, so every combination on screen is one the API accepts. The panels
+ * picker lists all seven facets (TRND-13: suite, release, branch,
+ * environment, status, failure category, ingestion source); one that is
+ * refused here (the series already uses it; a release facet in All Projects;
+ * Runs split by status or failure category) stays in the list, disabled
+ * (the reason as its title), and the reason is said in words
+ * beside the picker (`facetRefusalLines`: not the series one, which the Lines
+ * picker says itself), so the reader is told why rather than left wondering
+ * where it went — and the select stays as narrow as its options.
  */
 import { useId, type ReactElement } from 'react'
 import { clsx } from 'clsx'
@@ -15,7 +20,9 @@ import {
   API_METRICS,
   DIMENSION_LABELS,
   EXPLORE_DAYS,
+  EXPLORE_FACETS,
   EXPLORE_METRICS,
+  facetRefusalLines,
   refusalReason,
   type ApiDimension,
   type ApiMetric,
@@ -36,8 +43,6 @@ const TOGGLE =
   'px-2.5 py-1 text-sm font-medium text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50 disabled:hover:bg-transparent'
 const TOGGLE_ON = 'bg-[var(--color-accent-bg-soft)] text-[var(--color-accent-ink)]'
 
-const FACETS: readonly ExploreFacet[] = ['suite', 'release']
-
 export interface ExploreControlsProps {
   config: ExploreConfig
   ctx: ExploreContext
@@ -55,6 +60,11 @@ export default function ExploreControls({ config, ctx, onChange }: ExploreContro
   const xs = allowedOptions('x', config, ctx) as ExploreX[]
   const series = allowedOptions('series', config, ctx) as (ApiDimension | null)[]
   const facets = allowedOptions('facet', config, ctx)
+  const refused = EXPLORE_FACETS.map((facet) => ({
+    facet,
+    reason: facets.includes(facet) ? null : refusalReason('facet', facet, config, ctx),
+  }))
+  const said = facetRefusalLines(refused)
 
   const set = <K extends keyof ExploreConfig>(key: K, value: ExploreConfig[K]) => onChange({ ...config, [key]: value })
 
@@ -112,15 +122,14 @@ export default function ExploreControls({ config, ctx, onChange }: ExploreContro
           className={SELECT}
         >
           <option value={NONE}>One panel</option>
-          {FACETS.map((facet) => {
-            const reason = facets.includes(facet) ? null : refusalReason('facet', facet, config, ctx)
-            return (
-              <option key={facet} value={facet} disabled={reason !== null} title={reason ?? undefined}>
-                {`One per ${DIMENSION_LABELS[facet].label.toLowerCase()}`}
-                {reason ? ` (${reason})` : ''}
-              </option>
-            )
-          })}
+          {refused.map(({ facet, reason }) => (
+            // Disabled, the reason as its title and, unless it is the obvious one, said beside the picker:
+            // a native select is as wide as its longest option, so a sentence (or even a suffix) here
+            // widened the whole row of pickers.
+            <option key={facet} value={facet} disabled={reason !== null} title={reason ?? undefined} data-refused={reason ? '' : undefined}>
+              {`One per ${DIMENSION_LABELS[facet].label.toLowerCase()}`}
+            </option>
+          ))}
         </select>
       </label>
       <div role="group" aria-label="Y-scale" className={LABEL}>
@@ -158,6 +167,16 @@ export default function ExploreControls({ config, ctx, onChange }: ExploreContro
           ))}
         </select>
       </label>
+      {/* The panels picker's refusals in words, on a line of their own under the pickers. */}
+      {said.length > 0 ? (
+        <ul data-explore-refusals="" className="m-0 basis-full list-none space-y-0.5 p-0 text-xs text-[var(--color-text-secondary)]">
+          {said.map((line) => (
+            <li key={line} data-explore-refusal="">
+              {line}
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   )
 }

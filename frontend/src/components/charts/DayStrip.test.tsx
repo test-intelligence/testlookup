@@ -242,3 +242,69 @@ describe('DayStrip', () => {
     expect(container).toBeEmptyDOMElement()
   })
 })
+
+// TRND-04: an optional mouse range selection over the strip (the Trends cadence card pins a note on it).
+describe('DayStrip onSelectRange', () => {
+  it('a drag from cell 3 to cell 5 reports those two days, oldest first, and outlines the cells while dragging', () => {
+    const cells = presenceCells()
+    const onSelectRange = vi.fn()
+    const { container } = render(<DayStrip mode="presence" cells={cells} label="Run cadence" onSelectRange={onSelectRange} />)
+    const drawn = cellsOf(container)
+    fireEvent.mouseDown(drawn[3], { button: 0 })
+    fireEvent.mouseEnter(drawn[4])
+    fireEvent.mouseEnter(drawn[5])
+    expect(drawn.filter((cell) => cell.hasAttribute('data-day-selected')).map((cell) => drawn.indexOf(cell))).toEqual([3, 4, 5])
+    fireEvent.mouseUp(drawn[5])
+    expect(onSelectRange).toHaveBeenCalledTimes(1)
+    expect(onSelectRange).toHaveBeenCalledWith(cells[3].key, cells[5].key)
+    expect(container.querySelector('[data-day-selected]')).toBeNull()
+  })
+
+  it('a drag right to left still reports oldest first; a click is one day', () => {
+    const cells = presenceCells()
+    const onSelectRange = vi.fn()
+    const { container } = render(<DayStrip mode="presence" cells={cells} label="Run cadence" onSelectRange={onSelectRange} />)
+    const drawn = cellsOf(container)
+    fireEvent.mouseDown(drawn[9], { button: 0 })
+    fireEvent.mouseEnter(drawn[7])
+    fireEvent.mouseUp(drawn[7])
+    expect(onSelectRange).toHaveBeenLastCalledWith(cells[7].key, cells[9].key)
+    fireEvent.mouseDown(drawn[2], { button: 0 })
+    fireEvent.mouseUp(drawn[2])
+    expect(onSelectRange).toHaveBeenLastCalledWith(cells[2].key, cells[2].key)
+    expect(onSelectRange).toHaveBeenCalledTimes(2)
+  })
+
+  it('a release outside the strip ends the drag on the last cell crossed', () => {
+    const cells = presenceCells()
+    const onSelectRange = vi.fn()
+    const { container } = render(<DayStrip mode="presence" cells={cells} label="Run cadence" onSelectRange={onSelectRange} />)
+    const drawn = cellsOf(container)
+    fireEvent.mouseDown(drawn[1], { button: 0 })
+    fireEvent.mouseEnter(drawn[2])
+    fireEvent.mouseUp(window)
+    expect(onSelectRange).toHaveBeenCalledWith(cells[1].key, cells[2].key)
+  })
+
+  it('without the prop: no handler, no window listener, and the same cells as before', () => {
+    const cells = presenceCells()
+    const add = vi.spyOn(window, 'addEventListener')
+    try {
+      const plain = render(<DayStrip mode="presence" cells={cells} label="Run cadence" />)
+      const drawn = cellsOf(plain.container)
+      fireEvent.mouseDown(drawn[3], { button: 0 })
+      fireEvent.mouseEnter(drawn[4])
+      fireEvent.mouseUp(drawn[4])
+      expect(plain.container.querySelector('[data-day-selected]')).toBeNull()
+      expect(add.mock.calls.filter(([type]) => type === 'mouseup')).toHaveLength(0)
+      for (const cell of drawn) expect(cell.style.cursor).toBe('')
+      // The markup is the markup a strip without selection always drew.
+      const html = plain.container.innerHTML
+      plain.unmount()
+      const again = render(<DayStrip mode="presence" cells={cells} label="Run cadence" />)
+      expect(again.container.innerHTML).toBe(html)
+    } finally {
+      add.mockRestore()
+    }
+  })
+})

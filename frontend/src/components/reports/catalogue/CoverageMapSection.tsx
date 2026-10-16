@@ -28,9 +28,18 @@
  * (Shift-click, Shift+Enter, the readout's button) when the page provides its
  * suite select (`useCrossFilter`): it sets the page's "Test suite" select, it
  * does not drill. A class or a test is never a page filter.
+ *
+ * W08 TRND-12, OTHER OPENS. Past 499 children, the "Other (n)" tile opens the
+ * level's next page (`other_page=2`, 3, …: the next <= 498 children under the
+ * same parent and the same 500-node cap). The page is this section's state,
+ * not the URL, and resets when the level changes; the breadcrumb gains
+ * `Other · page N`, and the level's own crumb returns to the first page. A
+ * node whose tests the last suite sync marked for review says `{n} need
+ * review` (tile, tooltip, the table view's extra table) and its action row
+ * opens Test Management › Suites for that suite.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
-import { useLocation, useSearchParams } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import Breadcrumbs, { type BreadcrumbItem } from '@/components/ui/Breadcrumbs'
 import ChartFrame from '@/components/charts/ChartFrame'
 import CoverageTreemap from '@/components/charts/CoverageTreemap'
@@ -55,10 +64,15 @@ import {
   levelPath,
   levelRequest,
   levelView,
+  needsReviewOf,
+  needsReviewText,
   otherNote,
   ROOT_CRUMB,
   TEST_ROWS_CHART,
+  withOtherPageCrumb,
   type CoverageColorBy,
+  type CoverageLevel,
+  type CoverageLevelView,
 } from '@/components/charts/coverageMap.model'
 import { encodeDrillLevel, ownedRows, readDrillLevels, useDrillPath, writeDrillParams } from '@/hooks/useDrillPath'
 import { useCrossFilter } from '@/hooks/useCrossFilter'
@@ -114,6 +128,35 @@ function ColorBySelect({ value, onChange }: { value: CoverageColorBy; onChange: 
 /** This section's rows owner (`rows=by~coverage-map`). */
 const COVERAGE_ROWS_OWNER = 'coverage-map'
 
+/** The page a response says it answers (`meta.definitions.page`), or `null` when it does not say. */
+function pageOfMeta(meta: EnvelopeMeta | null): number | null {
+  const definitions = (meta as { definitions?: unknown } | null)?.definitions
+  const page = typeof definitions === 'object' && definitions !== null ? (definitions as { page?: unknown }).page : undefined
+  return typeof page === 'number' && Number.isInteger(page) && page >= 1 ? page : null
+}
+
+/**
+ * W08 TRND-12: the table view's companion for the review counts (the tree
+ * table has no such column): every node of the level with tests to review.
+ */
+function NeedsReviewTable({ view }: { view: CoverageLevelView }) {
+  const rows = view.children.filter((child) => needsReviewOf(child) !== null)
+  if (rows.length === 0) return null
+  return (
+    <table data-coverage-needs-review-table="" className="mt-2 w-full text-left text-xs">
+      <caption className="text-left font-semibold">Tests that need review (marked by the last suite sync)</caption>
+      <tbody>
+        {rows.map((child) => (
+          <tr key={child.node.id}>
+            <td className="pr-2">{child.node.label}</td>
+            <td>{needsReviewText(needsReviewOf(child) as number)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
 function CoverageMapBody({ days, suiteFilter }: CoverageMapSectionProps) {
   const location = useLocation()
   const [, setSearchParams] = useSearchParams()
@@ -123,10 +166,18 @@ function CoverageMapBody({ days, suiteFilter }: CoverageMapSectionProps) {
   // Cut at the first level the map cannot open, a suite outside the page's suite filter included (R1B-6).
   const suiteKey = JSON.stringify(suiteFilter ?? null)
   const read = useMemo(() => levelFromPath(path, JSON.parse(suiteKey) as string | string[] | null), [path, suiteKey])
-  const { level, used } = read
-  const levelKey = useMemo(() => JSON.stringify(levelPath(level)), [level])
+  const { level: pathLevel, used } = read
+  const levelKey = useMemo(() => JSON.stringify(levelPath(pathLevel)), [pathLevel])
   const allProjects = useProjectStore((s) => s.activeProjectId) === ALL_PROJECTS_ID
   const windowDays = clampCatalogueDays(days)
+
+  // TRND-12: the Other page, kept WITH the level it was opened on, so a new level is page 1 again.
+  const [paging, setPaging] = useState<{ levelKey: string; page: number }>({ levelKey, page: 1 })
+  const otherPage = paging.levelKey === levelKey ? paging.page : 1
+  const level: CoverageLevel = useMemo(() => ({ ...pathLevel, otherPage }), [pathLevel, otherPage])
+  const openOther = useCallback((page: number) => setPaging({ levelKey, page }), [levelKey, setPaging])
+  const navigate = useNavigate()
+  const openReview = useCallback((href: string) => navigate(href), [navigate])
 
   const extra = useMemo(() => levelRequest(level), [level])
   const params = useCatalogueParams(days, suiteFilter, extra)
@@ -136,7 +187,9 @@ function CoverageMapBody({ days, suiteFilter }: CoverageMapSectionProps) {
   const drawn = hasChartData(state) ? state : null
   // While the next level loads, the previous response stays on screen: it is
   // NOT this level's, and read as this level it would open the wrong keys.
-  const current = drawn && answersLevel(drawn.data.series, level) ? drawn : null
+  // A response that names its page must be THIS page's (the previous page stays drawn while the next loads).
+  const metaPage = drawn ? pageOfMeta(drawn.meta) : null
+  const current = drawn && answersLevel(drawn.data.series, level) && (metaPage === null || metaPage === otherPage) ? drawn : null
   const tree: TreeChart | null = current ? current.data.series : null
   const meta = current ? current.meta : null
   const view = useMemo(() => levelView(tree, level), [tree, level])
@@ -210,8 +263,11 @@ function CoverageMapBody({ days, suiteFilter }: CoverageMapSectionProps) {
     // The last item is where the reader is: not a link.
     const last = items[items.length - 1]
     items[items.length - 1] = { label: last.label }
-    return items
-  }, [usedPath, labels, location.search])
+    // TRND-12: past page 1 the level's own crumb links back to the first page, and "Other · page N" is here.
+    return withOtherPageCrumb(items, otherPage, drillSearch(location.search, usedPath))
+  }, [usedPath, labels, location.search, otherPage])
+  // The drilled suite's name, for the review link of a class or a test (a suite tile names itself).
+  const suiteLabel = usedPath[0] ? crumbLabel(labels, usedPath[0]) : null
 
   // This section's rows panel: a test's executions, opened by this map (the URL's owner entry; the heatmaps on the page read the same key).
   // Exactly the shape this map writes, one `test` selector and nothing else (R1B-5): any other
@@ -235,7 +291,7 @@ function CoverageMapBody({ days, suiteFilter }: CoverageMapSectionProps) {
     return state
   }, [allProjects, drawn, current, state])
 
-  const note = otherNote(view, meta?.truncated_total ?? null, level.depth)
+  const note = otherNote(view, meta?.truncated_total ?? null, level.depth, otherPage)
   const grain = grainText(meta)
 
   return (
@@ -249,13 +305,18 @@ function CoverageMapBody({ days, suiteFilter }: CoverageMapSectionProps) {
         emptyMessage={coverageEmptyText(level)}
         series={tree}
         chartType="Treemap"
+        tableExtras={<NeedsReviewTable view={view} />}
         scopeLabel={`last ${windowDays} days`}
         scope={
           <div
             data-coverage-breadcrumb=""
             // A breadcrumb link is a level change the reader asked for: focus follows to the map.
+            // TRND-12: any crumb also leaves a later Other page (the level's own crumb IS "page 1").
             onClickCapture={(event) => {
-              if ((event.target as Element).closest('a')) pendingFocus.current = true
+              if ((event.target as Element).closest('a')) {
+                pendingFocus.current = true
+                if (otherPage > 1) setPaging({ levelKey, page: 1 })
+              }
             }}
           >
             <Breadcrumbs items={crumbs} />
@@ -278,7 +339,7 @@ function CoverageMapBody({ days, suiteFilter }: CoverageMapSectionProps) {
       >
         {view.children.length > 0 ? (
           <CoverageTreemap
-            key={levelKey}
+            key={`${levelKey}#${otherPage}`}
             ref={chartRef}
             items={view.children}
             level={level}
@@ -288,6 +349,9 @@ function CoverageMapBody({ days, suiteFilter }: CoverageMapSectionProps) {
             onLevelUp={used > 0 ? onLevelUp : undefined}
             onMarkActivate={onMarkActivate}
             markIntents={markIntents}
+            onOpenOther={openOther}
+            onOpenReview={openReview}
+            suiteLabel={suiteLabel}
           />
         ) : null}
       </ChartFrame>

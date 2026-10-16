@@ -2,10 +2,12 @@
  * The chart image for export (VIZ-606), from the ECharts engine itself.
  *
  * ECharts draws on a canvas (`core.ts` registers only the canvas renderer), so
- * there is no `<svg>` to serialise and `renderToSVGString` is not available;
- * the engine's own `getDataURL` at the export pixel ratio is the faithful
- * image. The SVG export embeds that raster — an honest limitation of a canvas
- * engine, stated in `ChartExportMenu`.
+ * there is no `<svg>` on screen to serialise; the engine's own `getDataURL` at
+ * the export pixel ratio is the faithful image of the screen. Since W08
+ * TRND-11 a chart that registered its export option is REDRAWN instead
+ * (`exportSvg.ts`: a vector SVG, a light background); this raster is the
+ * fallback for the 3D view and for a chart without one, whose SVG export
+ * embeds it — stated in `ChartExportMenu`.
  *
  * Imported only with a dynamic `import()`, and only when the chart body holds
  * an ECharts instance — by which point the engine chunk is already loaded, so
@@ -26,6 +28,18 @@ export interface EngineImage {
 /** The first ECharts container inside `body`, or `null`. */
 export function findEChartsContainer(body: ParentNode): HTMLElement | null {
   return body.querySelector<HTMLElement>(`[${ECHARTS_INSTANCE_ATTRIBUTE}]`)
+}
+
+/**
+ * TRND-11: the ECharts container inside `body` and the size its live instance
+ * is drawn at (CSS px), or `null` when there is no live instance — what a
+ * redrawn export needs to match the screen.
+ */
+export function liveEChartsChart(body: ParentNode): { container: HTMLElement; width: number; height: number } | null {
+  const container = findEChartsContainer(body)
+  const instance = container ? echarts.getInstanceByDom(container) : undefined
+  if (!container || !instance || instance.isDisposed()) return null
+  return { container, width: instance.getWidth(), height: instance.getHeight() }
 }
 
 /**

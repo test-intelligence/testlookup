@@ -11,9 +11,15 @@
  * A stored config is versioned and validated on read: one that no longer
  * fits (a value this build does not offer) falls back to the default and the
  * reader is told once.
+ *
+ * TRND-10: the Customise panel is generic. A chart describes its controls as
+ * a `CustomiseSpec` (fields, guard rails, whether it is at its default) and
+ * applies a field change itself; `seriesCustomiseSpec` / `applySeriesField`
+ * are this chart's, `compareChartConfig.ts` has Compare's.
  */
 import type { CatalogParams } from '@/components/charts/chartCatalogSources'
 import type { MultiSeriesMetricKind } from '@/components/charts/multiSeriesModel'
+import type { ChartConfigModel } from './useChartConfig'
 
 export const CHART_CONFIG_VERSION = 1
 
@@ -88,9 +94,124 @@ export function isDefault(config: SeriesChartConfig): boolean {
 
 /** An option the panel lists but does not offer, and why. */
 export interface UnavailableOption {
-  control: 'chartType' | 'scale' | 'topN'
+  /** The field it belongs to (`chartType`, `scale`, `topN`, or a chart's own, e.g. Compare's `lines`). */
+  control: 'chartType' | 'scale' | 'topN' | (string & {})
   label: string
   reason: string
+}
+
+// ── The generic panel spec (TRND-10) ─────────────────────────────────────────
+
+/** One option of a select field. A `disabled` option is listed "(unavailable)", with its `reason`. */
+export interface CustomiseOption {
+  value: string
+  label: string
+  disabled?: boolean
+  reason?: string
+}
+
+/**
+ * One control of the Customise panel. `id` is its `data-customise` hook
+ * (`title`, `metric`, `series`, `bucket`, `topN`, `chartType`, `scale`, and a
+ * chart's own), so tests and specs read the same DOM whichever chart hosts it.
+ */
+export interface CustomiseField {
+  id: string
+  label: string
+  kind: 'text' | 'select'
+  value: string
+  options?: CustomiseOption[]
+  placeholder?: string
+  maxLength?: number
+}
+
+/** What the panel draws for one chart: its fields, the guard rails, and whether Reset has anything to do. */
+export interface CustomiseSpec {
+  fields: CustomiseField[]
+  unavailable: UnavailableOption[]
+  isDefault: boolean
+}
+
+/** A fixed control (chart type, scale): the one offered value, then each unavailable one, disabled. */
+export function fixedField(id: string, label: string, offered: CustomiseOption, unavailable: readonly UnavailableOption[]): CustomiseField {
+  return {
+    id,
+    label,
+    kind: 'select',
+    value: offered.value,
+    options: [
+      offered,
+      ...unavailable
+        .filter((option) => option.control === id)
+        .map((option) => ({ value: `unavailable:${option.label}`, label: option.label, disabled: true, reason: option.reason })),
+    ],
+  }
+}
+
+/** The five VIZ-604 controls (title, metric, series, bucket, lines) plus chart type and scale, as a spec. */
+export function seriesCustomiseSpec(config: SeriesChartConfig): CustomiseSpec {
+  const unavailable = unavailableOptions(config)
+  const lines = unavailable.filter((option) => option.control === 'topN')
+  return {
+    fields: [
+      { id: 'title', label: 'Title', kind: 'text', value: config.title ?? '', placeholder: impliedTitle(config), maxLength: TITLE_MAX },
+      {
+        id: 'metric',
+        label: 'Metric',
+        kind: 'select',
+        value: config.metric,
+        options: (Object.keys(SERIES_METRICS) as SeriesMetric[]).map((key) => ({ value: key, label: SERIES_METRICS[key].label })),
+      },
+      {
+        id: 'series',
+        label: 'One line per',
+        kind: 'select',
+        value: config.seriesBy,
+        options: (Object.keys(SERIES_DIMENSIONS) as SeriesDimension[]).map((key) => ({ value: key, label: SERIES_DIMENSIONS[key].label })),
+      },
+      {
+        id: 'bucket',
+        label: 'Time bucket',
+        kind: 'select',
+        value: config.bucket,
+        options: (Object.keys(TIME_BUCKETS) as TimeBucket[]).map((key) => ({ value: key, label: TIME_BUCKETS[key] })),
+      },
+      {
+        id: 'topN',
+        label: 'Lines (busiest first, the rest as “Other”)',
+        kind: 'select',
+        value: String(config.topN),
+        options: [
+          ...TOP_N_OPTIONS.map((n) => ({ value: String(n), label: String(n) })),
+          ...lines.map((option) => ({ value: `unavailable:${option.label}`, label: option.label, disabled: true, reason: option.reason })),
+        ],
+      },
+      fixedField('chartType', 'Chart type', { value: 'line', label: 'Line' }, unavailable),
+      fixedField('scale', 'Scale', { value: 'linear', label: 'Linear' }, unavailable),
+    ],
+    unavailable,
+    isDefault: isDefault(config),
+  }
+}
+
+/** `config` with the panel's field `id` set to `value`; a value this chart does not offer changes nothing. */
+export function applySeriesField(config: SeriesChartConfig, id: string, value: string): SeriesChartConfig {
+  switch (id) {
+    case 'title':
+      return { ...config, title: value || undefined }
+    case 'metric':
+      return oneOf(value, Object.keys(SERIES_METRICS) as SeriesMetric[]) ? { ...config, metric: value } : config
+    case 'series':
+      return oneOf(value, Object.keys(SERIES_DIMENSIONS) as SeriesDimension[]) ? { ...config, seriesBy: value } : config
+    case 'bucket':
+      return oneOf(value, Object.keys(TIME_BUCKETS) as TimeBucket[]) ? { ...config, bucket: value } : config
+    case 'topN': {
+      const n = Number(value)
+      return oneOf(n, TOP_N_OPTIONS) ? { ...config, topN: n } : config
+    }
+    default:
+      return config
+  }
 }
 
 /** The guard rails for this chart and these settings. */
@@ -145,4 +266,11 @@ export function readSeriesConfig(raw: unknown): { config: SeriesChartConfig; not
     },
     notice: null,
   }
+}
+
+/** The series chart's model for `useChartConfig` (TRND-10). */
+export const SERIES_CONFIG_MODEL: ChartConfigModel<SeriesChartConfig> = {
+  read: readSeriesConfig,
+  defaults: DEFAULT_SERIES_CONFIG,
+  isDefault,
 }

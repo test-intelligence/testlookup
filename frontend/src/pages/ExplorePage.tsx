@@ -1,7 +1,17 @@
 /**
  * VIZ-505 — the Explorer (`/explore`): one metric over time, split into lines
- * by a series dimension and into small multiples (up to 12 panels) by suite
- * or release, all from `chart-data`.
+ * by a series dimension and into small multiples (up to 12 panels) by suite,
+ * release, branch, environment, status, failure category or ingestion source
+ * (TRND-13), all from `chart-data`. A suite or release panel filters through
+ * the scope's own parameter; the five others through `chart-data`'s facet
+ * pair (`facet_dimension` + `facet_value`). Runs with no value of the facet
+ * (`(none)`) are never a panel, and the notices say so.
+ *
+ * TRND-10: `Customise` (beside Saved views) opens the kit's side panel with a
+ * title (a heading over the grid) and lines per panel (`top_n` 3 / 5 / 7 when
+ * a series is drawn), plus the guard rails the kit lists for every series
+ * chart; both are part of the configuration, so the URL and a saved view
+ * carry them (`top`, `title`).
  *
  * The configuration lives in the URL (`exploreUrl`), so a view is a link; the
  * pickers only offer what the API accepts (`exploreModel`). With a facet, one
@@ -18,6 +28,8 @@
  */
 import { useCallback, useMemo, useState, type ComponentProps, type ReactElement } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { SlidersHorizontal } from 'lucide-react'
+import ChartCustomisePanel from '@/components/charts/ChartCustomisePanel'
 import PageShell from '@/components/layout/PageShell'
 import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
@@ -30,10 +42,12 @@ import { useEverHadRun } from '@/components/reports/catalogue/useEverHadRun'
 import SavedViewsMenu from '@/components/reports/SavedViewsMenu'
 import type { ReportViewScope } from '@/components/reports/savedViewsModel'
 import ExploreControls from '@/components/explore/ExploreControls'
+import { applyExploreField, exploreCustomiseSpec, resetExploreCustomise } from '@/components/explore/exploreCustomise'
 import ExplorePanel, { PANEL_CHROME, PANEL_HEIGHT } from '@/components/explore/ExplorePanel'
 import {
   coerceConfig,
   DIMENSION_LABELS,
+  discoveryAnswers,
   discoveryParams,
   EXPLORE_DAYS,
   EXPLORE_METRICS,
@@ -58,9 +72,14 @@ import { useReleaseStore } from '@/store/releaseStore'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 
 export const EXPLORER_TITLE = 'Explorer'
-export const EXPLORER_SUBTITLE = 'One metric over time, split into lines and into small multiples by suite or release.'
+export const EXPLORER_SUBTITLE =
+  'One metric over time, split into lines and into small multiples by suite, release, branch, environment, status, failure category or source.'
+export const CUSTOMISE_TEXT = 'Customise'
 
 const NO_STYLES = {}
+
+const CUSTOMISE_BUTTON =
+  'inline-flex items-center gap-1 rounded border border-[var(--color-border-light)] bg-[var(--color-bg-card)] px-2 py-1 text-sm text-[var(--color-text)] hover:bg-[var(--color-bg-hover)]'
 
 /** Identity-stable params: the same request keeps one object, so nothing refetches on a re-render. */
 function useStableParams(params: CatalogParams | null): CatalogParams | null {
@@ -89,6 +108,7 @@ function Explorer(): ReactElement {
   const read = useMemo(() => readExploreConfig(searchParams, ctx, { defaultDays }), [searchParams, ctx, defaultDays])
   const config = read.config
   const [changeNotices, setChangeNotices] = useState<string[]>([])
+  const [customising, setCustomising] = useState(false)
 
   const setConfig = useCallback(
     (next: ExploreConfig, notices: readonly string[] = []) => {
@@ -108,18 +128,24 @@ function Explorer(): ReactElement {
   const discoveryRequest = useStableParams(plan.ok && plan.discovery && base ? discoveryParams(base, plan.discovery) : null)
   const discovery = useCatalogChartData('chart-data', { params: discoveryRequest, everHadData })
   const sharedLegend = plan.ok && plan.discovery?.sharedLegend === true
-  // Both read the one discovery state, so each keeps its identity until it changes.
+  // Both read the one discovery state, so each keeps its identity until it
+  // changes. A response held over from the previous facet is not this one's
+  // (`discoveryAnswers`): until the new one lands the grid is loading, never
+  // panels named by the old facet's keys.
+  const currentDiscovery = plan.ok ? plan.discovery : null
   const { facets, styles } = useMemo(() => {
-    const chart = hasChartData(discovery) && discovery.data.series.kind === 'series' ? discovery.data.series : null
+    const drawn = hasChartData(discovery) && discovery.data.series.kind === 'series' ? discovery.data.series : null
+    const chart = drawn && currentDiscovery && discoveryAnswers(drawn, currentDiscovery) ? drawn : null
+    const stale = drawn !== null && chart === null
     return {
-      facets: config.facet ? facetPanels(chart, hasChartData(discovery) ? discovery.meta : null, config.facet) : null,
+      facets: config.facet && !stale ? facetPanels(chart, hasChartData(discovery) ? discovery.meta : null, config.facet) : null,
       styles: sharedLegend ? seriesStyles(chart) : NO_STYLES,
     }
-  }, [discovery, config.facet, sharedLegend])
+  }, [discovery, config.facet, sharedLegend, currentDiscovery])
 
   // What every panel reported, for a shared count scale. Any change to what
   // the panels ask for starts over: a value from the last metric is no scale.
-  const generation = JSON.stringify([base, config.metric, config.x, config.series, config.facet])
+  const generation = JSON.stringify([base, config.metric, config.x, config.series, config.facet, config.topN])
   const [measured, setMeasured] = useState<{ generation: string; values: Record<string, number> }>({ generation: '', values: {} })
   const values = measured.generation === generation ? measured.values : {}
   const onMeasured = useCallback(
@@ -167,7 +193,7 @@ function Explorer(): ReactElement {
     // Unreachable through the pickers and the URL (both are coerced); said, not hidden.
     body = <EmptyState title="This combination cannot be drawn" description={plan.reason} />
   } else if (config.facet === null) {
-    const params = base ? panelParams(base, config.metric, plan.panel, null, null) : null
+    const params = base ? panelParams(base, config.metric, plan.panel, null, null, config.topN) : null
     const title = `${info.label}${config.series ? ` by ${DIMENSION_LABELS[config.series].label.toLowerCase()}` : ''}`
     body = <ExplorePanelStable title={title} facetKey={null} params={params} panels={1} {...panelProps} />
   } else if (discovery.status === 'error' || discovery.status === 'forbidden') {
@@ -203,7 +229,7 @@ function Explorer(): ReactElement {
             <ExplorePanelStable
               title={panel.label}
               facetKey={panel.key}
-              params={base ? panelParams(base, config.metric, plan.panel, facet, panel.key) : null}
+              params={base ? panelParams(base, config.metric, plan.panel, facet, panel.key, config.topN) : null}
               panels={facets.panels.length}
               {...panelProps}
             />
@@ -219,16 +245,29 @@ function Explorer(): ReactElement {
         title={EXPLORER_TITLE}
         subtitle={EXPLORER_SUBTITLE}
         actions={
-          pinned && activeProjectId ? (
-            <SavedViewsMenu
-              page="explore"
-              projectId={activeProjectId}
-              current={current}
-              extraFilters={{ explore: exploreViewFilters(config) }}
-              linked={searchParams.has(EXPLORE_URL_KEYS.metric)}
-              onApply={onApplyView}
-            />
-          ) : undefined
+          <>
+            {/* TRND-10: the kit's side panel (a title, lines per panel, the guard rails); no project needed. */}
+            <button
+              type="button"
+              data-chart-customise=""
+              aria-pressed={customising}
+              onClick={() => setCustomising((open) => !open)}
+              className={CUSTOMISE_BUTTON}
+            >
+              <SlidersHorizontal aria-hidden="true" className="h-3.5 w-3.5" />
+              {CUSTOMISE_TEXT}
+            </button>
+            {pinned && activeProjectId ? (
+              <SavedViewsMenu
+                page="explore"
+                projectId={activeProjectId}
+                current={current}
+                extraFilters={{ explore: exploreViewFilters(config) }}
+                linked={searchParams.has(EXPLORE_URL_KEYS.metric)}
+                onApply={onApplyView}
+              />
+            ) : null}
+          </>
         }
       />
       <ExploreControls config={config} ctx={ctx} onChange={setConfig} />
@@ -244,7 +283,22 @@ function Explorer(): ReactElement {
           ))}
         </ul>
       ) : null}
+      {/* The reader's heading over the grid (React text, never markup). */}
+      {config.title?.trim() ? (
+        <h2 data-explore-title="" className="m-0 text-base font-semibold text-[var(--color-text)]">
+          {config.title}
+        </h2>
+      ) : null}
       {body}
+      {customising ? (
+        <ChartCustomisePanel
+          chartTitle={config.title?.trim() || EXPLORER_TITLE}
+          spec={exploreCustomiseSpec(config)}
+          onField={(id, value) => setConfig(applyExploreField(config, id, value))}
+          onReset={() => setConfig(resetExploreCustomise(config))}
+          onClose={() => setCustomising(false)}
+        />
+      ) : null}
     </PageShell>
   )
 }

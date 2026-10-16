@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import ScopedLink from '@/components/ui/ScopedLink';
 import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState';
 import toast from 'react-hot-toast';
@@ -34,13 +35,36 @@ const TITLE = 'Ownership';
  * tells every locator where the project's JVM test sources live, so Java
  * failures are routed by path too; the coverage badge's tooltip says how many
  * roots it located Java traces through.
+ *
+ * W08 TRND-08: `?team=<name>` (the link from Value metrics › By team) narrows
+ * the rules list to that team's rules (equal ignoring case and surrounding
+ * space), with a chip `Team: {team} · Show all` that clears it. Nothing else
+ * changes, and the filter asks nothing new.
  */
+/** `team` and a rule's team name are the same team: equal ignoring case and surrounding space. */
+export function sameTeam(a: string | null | undefined, b: string | null | undefined): boolean {
+  return (a ?? '').trim().toLowerCase() === (b ?? '').trim().toLowerCase();
+}
+
 export default function OwnershipEditorPage() {
   const activeProjectId = useProjectStore(s => s.activeProjectId);
   const projectId = activeProjectId === ALL_PROJECTS_ID ? null : activeProjectId;
   const { isQaLead } = usePermissions();
 
-  const { rules, isLoading: loading, isError, refresh } = useOwnershipRules(projectId);
+  const { rules: allRules, isLoading: loading, isError, refresh } = useOwnershipRules(projectId);
+  // W08 TRND-08: the `?team=` filter (absent or blank = every rule).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const teamFilter = (searchParams.get('team') ?? '').trim();
+  const rules = useMemo(
+    () => (teamFilter ? (Array.isArray(allRules) ? allRules : []).filter(rule => sameTeam(rule.team_name, teamFilter)) : allRules),
+    [allRules, teamFilter],
+  );
+  const clearTeamFilter = () =>
+    setSearchParams(current => {
+      const next = new URLSearchParams(current);
+      next.delete('team');
+      return next;
+    }, { replace: true });
   const { coverage, refresh: refreshCoverage } = useCodeownersCoverage(projectId);
   const sourceRoots = coverage?.source_roots ?? 0;
   const javaSentence = sourceRoots > 0
@@ -225,8 +249,23 @@ export default function OwnershipEditorPage() {
 
       {/* Rules list: the page's primary content */}
       <div data-primary="">
+      {teamFilter && (
+        <div data-ownership-team-filter="" className="mb-2 flex items-center gap-2 text-xs">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2.5 py-1 text-[var(--color-text)]">
+            Team: {teamFilter}{' '}
+            <span aria-hidden="true" className="text-[var(--color-text-muted)]">·</span>{' '}
+            <button type="button" onClick={clearTeamFilter} className="text-[var(--color-accent)] hover:underline">
+              Show all
+            </button>
+          </span>
+        </div>
+      )}
       {loading ? (
         <div className="text-[var(--color-text-muted)] text-center py-8">Loading...</div>
+      ) : teamFilter && rules.length === 0 && allRules.length > 0 ? (
+        <div className="text-center py-12 text-[var(--color-text-muted)]">
+          No ownership rule names this team.
+        </div>
       ) : rules.length === 0 ? (
         <div className="text-center py-12 text-[var(--color-text-muted)]">
           No ownership rules configured for this project. Add rules to route failures to the right teams.

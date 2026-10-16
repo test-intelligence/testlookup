@@ -20,10 +20,15 @@
  * page's announcer), never thrown into React: an export that fails must not
  * take the chart with it.
  *
- * ECharts draws on a canvas, so its image comes from the engine and is drawn
- * in the page's current colours; "Light background" is offered only for the
- * SVG-drawn (Recharts) charts, and says so rather than exporting light text
- * on a light page.
+ * W08 TRND-11: an ECharts chart is REDRAWN for its export from the option it
+ * registered through `useEChart` (`engines/echarts/exportSvg.ts`, a lazy
+ * chunk): "SVG image" is a true vector file (text is `<text>`, nothing is an
+ * embedded image), and "Light background" draws both the PNG and the SVG on
+ * the light theme's tokens, whatever the page's theme. Two cases keep the old
+ * path, a raster of the screen's canvas in the page's colours, with Light
+ * background disabled and saying so: the 3D view (a three.js canvas over the
+ * 2D chart, `[data-chart-engine="three"]`), and an ECharts chart that
+ * registered no export option (none should remain; the fallback is for safety).
  */
 import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { ChevronDown, Loader2 } from 'lucide-react'
@@ -35,6 +40,8 @@ import { downloadBlob } from '@/utils/download'
 import { useChartAnnouncer } from './ChartAnnouncer'
 import { useChartFullscreen } from './chartFrameContext'
 import type { ChartAxes, SeriesFormat } from './chartText'
+// Types and a WeakMap only: no engine code (the registry imports nothing from echarts).
+import { exportOptionOf } from './engines/echarts/exportRegistry'
 
 export interface ChartExportMenuProps {
   title: string
@@ -67,6 +74,25 @@ export type ExportFormat = 'png' | 'svg' | 'csv'
  * pins the two together).
  */
 export const CANVAS_ENGINE_SELECTOR = '[_echarts_instance_]'
+
+/** The 3D view's canvas (three.js over the 2D scatter): its export stays the 2D raster, Light background off. */
+export const THREE_ENGINE_SELECTOR = '[data-chart-engine="three"]'
+
+/**
+ * How a body can be exported (TRND-11): `redraw` — an ECharts chart that
+ * registered its export option (vector SVG, light background); `raster` — an
+ * ECharts chart without one, or the 3D view (the screen's canvas, page colours,
+ * no light background); `svg` — a Recharts chart.
+ */
+export type ExportPath = 'svg' | 'redraw' | 'raster'
+
+export function exportPathOf(body: ParentNode | null): ExportPath {
+  if (!body) return 'svg'
+  const container = body.querySelector<HTMLElement>(CANVAS_ENGINE_SELECTOR)
+  if (!container) return 'svg'
+  if (body.querySelector(THREE_ENGINE_SELECTOR)) return 'raster'
+  return exportOptionOf(container) ? 'redraw' : 'raster'
+}
 
 export const EXPORT_LABELS = {
   trigger: 'Export',
@@ -104,13 +130,28 @@ async function exportChart(
   if (!body) throw new Error('The chart is not on screen.')
   const image = await import('@/lib/viz/chartImage')
   let source: import('@/lib/viz/chartImage').ChartSource
-  if (body.querySelector(CANVAS_ENGINE_SELECTOR)) {
-    const { echartsImage } = await import('./engines/echarts/exportImage')
-    // Transparent: the export's own background is painted under it.
-    const drawn = echartsImage(body, EXPORT_PIXEL_RATIO, 'transparent')
-    if (!drawn) throw new Error('The chart has not finished drawing.')
-    source = { kind: 'raster', ...drawn }
-    light = false
+  const path = exportPathOf(body)
+  if (path !== 'svg') {
+    // TRND-11: redrawn from the chart's own registered option (a vector SVG, or a light PNG).
+    const redrawn =
+      path === 'redraw'
+        ? await import('./engines/echarts/exportSvg').then(({ echartsExportImage }) =>
+            echartsExportImage(body, { format, light, pixelRatio: EXPORT_PIXEL_RATIO }),
+          )
+        : null
+    if (redrawn?.kind === 'svg') {
+      source = { kind: 'svg', svg: redrawn.svg }
+    } else if (redrawn) {
+      source = { kind: 'raster', dataUrl: redrawn.dataUrl, width: redrawn.width, height: redrawn.height }
+    } else {
+      const { echartsImage } = await import('./engines/echarts/exportImage')
+      // Transparent: the export's own background is painted under it.
+      const drawn = echartsImage(body, EXPORT_PIXEL_RATIO, 'transparent')
+      if (!drawn) throw new Error('The chart has not finished drawing.')
+      source = { kind: 'raster', ...drawn }
+      // The screen's canvas is in the page's colours: a light frame around it would mislead.
+      light = false
+    }
   } else {
     const svg = image.findChartSvg(body)
     if (!svg) throw new Error('The chart has not finished drawing.')
@@ -128,6 +169,7 @@ export default function ChartExportMenu(props: ChartExportMenuProps) {
 
   const [open, setOpen] = useState(false)
   const [light, setLight] = useState(false)
+  // TRND-11: Light background is unavailable only where the export is the screen's canvas (3D, or no option registered).
   const [canvasEngine, setCanvasEngine] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -169,7 +211,7 @@ export default function ChartExportMenu(props: ChartExportMenuProps) {
 
   const openMenu = (focus: 'first' | 'last') => {
     if (busy) return
-    setCanvasEngine(Boolean(getBody()?.querySelector(CANVAS_ENGINE_SELECTOR)))
+    setCanvasEngine(exportPathOf(getBody()) === 'raster')
     setError(null)
     setFocusOnOpen(focus)
     setOpen(true)

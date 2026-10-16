@@ -30,7 +30,7 @@
  */
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { PointsChart } from '@/lib/viz/contracts'
-import { useChartTokens } from './tokens'
+import { useChartTokens, type ChartTokens } from './tokens'
 import { tooltipText } from './tooltip'
 import { useFramePlotHeight, usePresentationScale } from './framePlotHeight'
 import { usePrefersReducedMotion } from './motion'
@@ -245,7 +245,14 @@ export default function TestScatter({
     }),
     [select, data, markProps],
   )
-  const { containerRef, status, retry, getInstance } = useEChart('scatter', option, events)
+  // TRND-11: Export redraws the same scatter on the tokens it is given (the
+  // light theme's for "Light background"), never animated and without the
+  // brush (a reader's drag mode is not part of the picture).
+  const exportOption = useCallback(
+    (exportTokens: ChartTokens) => buildScatterOption({ data, tokens: exportTokens, animate: false, textScale, brushing: false }),
+    [data, textScale],
+  )
+  const { containerRef, status, retry, getInstance } = useEChart('scatter', option, events, exportOption)
   const dispatch = useCallback(
     (payload: { type: string; [key: string]: unknown }) => getInstance()?.dispatchAction?.(payload),
     [getInstance],

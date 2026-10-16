@@ -58,7 +58,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable, NamedTuple, Optional, Sequence
+from typing import Any, Final, Iterable, NamedTuple, Optional, Sequence
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -370,6 +370,84 @@ ROW_LEVEL_DIMENSIONS = tuple(name for name, d in DIMENSIONS.items() if d.row_lev
 # ── The parsed request ─────────────────────────────────────────────────────
 
 
+#: W08 TRND-13: the dimensions a chart may be FACETED by -- one panel of the
+#: Explorer's small multiples per value. Project, release and suite are not
+#: here: they are the scope's (``analytics_scope``), and a facet value is a
+#: chart KEY, never an id that would need its own authorisation.
+FACET_DIMENSIONS: Final = ("branch", "environment", "status", "failure_category", "ingestion_source")
+#: The facets that read ``test_cases``: they force the row grain.
+ROW_LEVEL_FACETS: Final = ("status", "failure_category")
+
+_FACET_PAIR_REASON = "facet_dimension and facet_value are sent together"
+_FACET_METRIC_GRAIN_REASON = (
+    "one run holds tests of several statuses (or failure categories), so it "
+    "would be counted in more than one panel"
+)
+
+
+@dataclass(frozen=True)
+class ChartFacet:
+    """One validated facet: the panel's dimension and its KEY.
+
+    ``value`` is the key as the chart buckets it (the same string a drill's
+    ``bucket_<dimension>`` carries); it passed ``chart_rows_service
+    .parse_selector``'s rules, which is also what builds its predicate."""
+
+    dimension: str
+    value: str
+
+
+def parse_facet(dimension: Any, value: Any) -> Optional[ChartFacet]:
+    """``facet_dimension`` + ``facet_value``, validated before any database access.
+
+    Both absent is no facet. One without the other is ``facet_pair``; a
+    dimension outside :data:`FACET_DIMENSIONS` is ``facet_dimension_enum``
+    (the value sent is never echoed); the value goes through the drill
+    selector's own rules (a string, no NUL, 1-2,000 characters, not the
+    ``__other__`` roll-up, the status vocabulary), refused as ``facet_value``.
+    """
+    if dimension is None and value is None:
+        return None
+    if dimension is None or value is None:
+        raise AnalyticsQueryError(
+            "facet_pair", _FACET_PAIR_REASON, param="facet_dimension",
+            allowed={"together": ["facet_dimension", "facet_value"]},
+        )
+    if not isinstance(dimension, str) or dimension not in FACET_DIMENSIONS:
+        raise AnalyticsQueryError(
+            "facet_dimension_enum",
+            "facet_dimension is not one of the values this endpoint supports",
+            param="facet_dimension",
+            allowed=list(FACET_DIMENSIONS),
+        )
+    # Inside the function: ``chart_rows_service`` imports this module.
+    from app.services.chart_rows_service import parse_selector, selector_param
+
+    try:
+        parse_selector(dimension, value)
+    except AnalyticsQueryError as exc:
+        # The selector's reason, addressed to the parameter that was sent.
+        raise AnalyticsQueryError(
+            "facet_value",
+            exc.message.replace(selector_param(dimension), "facet_value", 1),
+            param="facet_value",
+            allowed=exc.allowed,
+        ) from None
+    return ChartFacet(dimension=dimension, value=value)
+
+
+def facet_sql(facet: Optional[ChartFacet], params: dict) -> str:
+    """``AND`` the facet's predicate, bound under its ``bucket_<dimension>``
+    name (no scope fragment and no chart-data bind uses that prefix); ``""``
+    without a facet. The predicate is the drill selector's, so a panel holds
+    exactly the rows a drill into that bucket of an unfaceted chart lists."""
+    if facet is None:
+        return ""
+    from app.services.chart_rows_service import parse_selector, selector_predicate
+
+    return selector_predicate(parse_selector(facet.dimension, facet.value), params)
+
+
 @dataclass(frozen=True)
 class ChartSpec:
     """A validated request: nothing here came from the caller as text."""
@@ -377,6 +455,8 @@ class ChartSpec:
     metric: str
     group_by: tuple[str, ...]
     top_n: Optional[int]
+    #: W08 TRND-13: the panel this chart is, or ``None`` for a whole chart.
+    facet: Optional[ChartFacet] = None
 
     @property
     def bucket_dimension(self) -> str:
@@ -401,13 +481,24 @@ def _allowed(param: str, code: str, table: dict) -> AnalyticsQueryError:
 
 
 def parse_chart_spec(
-    metric: Any, group_by: Any, top_n: Any, *, scope: AnalyticsScope
+    metric: Any,
+    group_by: Any,
+    top_n: Any,
+    *,
+    scope: AnalyticsScope,
+    facet: Optional[ChartFacet] = None,
 ) -> ChartSpec:
     """Validate the chart half of the request, before any database access.
 
     Every refusal is a C1/VIZ-210 body with the allow-list in ``allowed``. The
     value that was sent is NEVER echoed: it is untrusted text that would be
     rendered straight into a toast.
+
+    ``facet`` (W08 TRND-13, from :func:`parse_facet`) is checked after every
+    other rule, so a request without one is refused exactly as before:
+    ``run_count`` under a row-level facet is ``facet_metric_grain`` (one run
+    lands in several status panels), and a run-only metric under one is the
+    existing ``run_only_metric``.
     """
     if not isinstance(metric, str) or metric not in METRICS:
         raise _allowed("metric", "metric_enum", METRICS)
@@ -475,21 +566,41 @@ def parse_chart_spec(
             param="group_by",
             allowed={"requires": ["exactly one suite_name", "top_n"]},
         )
-    refuse_row_grain_for_run_only(metric, dims, scope)
-    return ChartSpec(metric=metric, group_by=tuple(dims), top_n=parsed_top_n)
+    if facet is not None and facet.dimension in ROW_LEVEL_FACETS and metric == "run_count":
+        raise AnalyticsQueryError(
+            "facet_metric_grain",
+            _FACET_METRIC_GRAIN_REASON,
+            param="facet_dimension",
+            allowed={"metric_not": ["run_count"], "row_level_facets": list(ROW_LEVEL_FACETS)},
+        )
+    refuse_row_grain_for_run_only(metric, dims, scope, facet=facet)
+    return ChartSpec(metric=metric, group_by=tuple(dims), top_n=parsed_top_n, facet=facet)
+
+
+def _row_level_facet(facet: Optional[ChartFacet]) -> bool:
+    return facet is not None and facet.dimension in ROW_LEVEL_FACETS
 
 
 def refuse_row_grain_for_run_only(
-    metric: str, group_by: Sequence[str], scope: AnalyticsScope
+    metric: str,
+    group_by: Sequence[str],
+    scope: AnalyticsScope,
+    *,
+    facet: Optional[ChartFacet] = None,
 ) -> None:
     """422 ``run_only_metric`` for a run-only metric (EXEC-03's wall clock) on
-    a request that would force the row grain: a row-level dimension or a
-    suite filter. Checked LAST in :func:`parse_chart_spec`, so every other
-    refusal keeps its precedence, and again by :func:`build_statement` for a
-    spec that did not come through the parser."""
+    a request that would force the row grain: a row-level dimension, a
+    row-level facet (W08) or a suite filter. Checked LAST in
+    :func:`parse_chart_spec`, so every other refusal keeps its precedence, and
+    again by :func:`build_statement` for a spec that did not come through the
+    parser."""
     if not METRICS[metric].run_only:
         return
-    if any(DIMENSIONS[dim].row_level for dim in group_by) or suite_keys(scope.suite_names):
+    if (
+        any(DIMENSIONS[dim].row_level for dim in group_by)
+        or suite_keys(scope.suite_names)
+        or _row_level_facet(facet)
+    ):
         raise AnalyticsQueryError(
             "run_only_metric",
             "this metric exists per run (a run's wall clock), so it cannot be "
@@ -552,6 +663,10 @@ def grain_for(spec: ChartSpec, scope: AnalyticsScope) -> str:
         return GRAIN_ROW
     if any(DIMENSIONS[dim].row_level for dim in spec.group_by):
         return GRAIN_ROW
+    if _row_level_facet(spec.facet):
+        # W08: a status / failure-category panel is a set of ROWS; a run's
+        # aggregates cannot be split by one of its tests' verdicts.
+        return GRAIN_ROW
     if suite_keys(scope.suite_names):
         # A run-level suite filter keeps the run whole, so its other suites'
         # tests would be counted into a chart that says it is filtered.
@@ -573,6 +688,10 @@ def grain_forced_by(spec: ChartSpec, scope: AnalyticsScope) -> Optional[str]:
     if spec.metric in _ROW_ONLY:
         return None
     if any(DIMENSIONS[dim].row_level for dim in spec.group_by):
+        return None
+    if _row_level_facet(spec.facet):
+        # The panel's own facet already reads rows; ``definitions.facet``
+        # states it, and the suite filter changed nothing more.
         return None
     if suite_keys(scope.suite_names):
         return "suite_name"
@@ -714,7 +833,7 @@ def build_statement(
     of 8 series, and a real suite would return ~1.4M ``Cell`` tuples per
     request. ``LIMIT :chart_row_cap`` is the hard ceiling under all of it.
     """
-    refuse_row_grain_for_run_only(spec.metric, spec.group_by, scope)
+    refuse_row_grain_for_run_only(spec.metric, spec.group_by, scope, facet=spec.facet)
     grain = grain_for(spec, scope)
     metric = METRICS[spec.metric]
     params: dict[str, Any] = {"period_start": window_start(scope.window_days, now=now)}
@@ -780,6 +899,7 @@ def build_statement(
           )}
           {release_filter_sql(params, scope.release_arg)}
           {suite_fragment}
+          {facet_sql(spec.facet, params)}
         GROUP BY {', '.join(group_parts)}"""
 
     ctes = [f"grouped AS ({grouped}\n        )"]
@@ -1402,8 +1522,8 @@ def build_comparability_statement(
     over all of them, how many suites ran anywhere and how many everywhere.
 
     It reads the SAME population as the chart: the window, the tenant filter,
-    the release and suite fragments are the ones :func:`build_statement` uses,
-    and the suite key is the chart's own ``suite`` dimension -- the effective
+    the release and suite fragments and a panel's facet (W08) are the ones
+    :func:`build_statement` uses, and the suite key is the chart's own ``suite`` dimension -- the effective
     suite, trimmed and lower-cased, so ``Checkout`` and ``checkout`` are one
     suite here exactly as they are one series there. The compared keys came
     out of the chart's aggregate and travel as an expanding bind; nothing from
@@ -1446,6 +1566,7 @@ def build_comparability_statement(
               )}
               {release_filter_sql(params, scope.release_arg)}
               {suite_filter_sql(params, scope.suite_arg)}
+              {facet_sql(spec.facet, params)}
               {key_filter}
         ), per_series AS (
             SELECT series_key, COUNT(*) AS suites
@@ -1715,6 +1836,18 @@ def definitions(
             "The TestStatus vocabulary, lower-cased for the chart contract: "
             "passed, failed, broken, skipped, unknown."
         )
+    if spec.facet is not None:
+        # W08 TRND-13: this chart is one panel of a small multiple.
+        out["facet"] = {"dimension": spec.facet.dimension, "value": spec.facet.value}
+        out["facet_note"] = (
+            f"Only executions whose {spec.facet.dimension} is this panel's key are "
+            "counted, matched with the chart's own bucket expression (the rows a "
+            "drill into that bucket lists)."
+            + (
+                " A per-test facet answers on execution rows."
+                if spec.facet.dimension in ROW_LEVEL_FACETS else ""
+            )
+        )
     return out
 
 
@@ -1748,6 +1881,11 @@ def cache_identity_parts(scope: AnalyticsScope, spec: ChartSpec) -> tuple[str, .
     )
     if compares_series(spec):
         parts += (f"comparability={COMPARABILITY_SHAPE_VERSION}",)
+    if spec.facet is not None:
+        # W08 TRND-13: one panel per facet value, so the value is the
+        # identity. Only when a facet is sent: every other chart keeps the
+        # identity it had (the comparability precedent above).
+        parts += (f"facet={spec.facet.dimension}={spec.facet.value}",)
     return parts
 
 
@@ -1841,8 +1979,13 @@ __all__ = [
     "COMPARABILITY_DIMENSIONS",
     "COMPARABILITY_SHAPE_VERSION",
     "Cell",
+    "ChartFacet",
     "ChartSpec",
     "DIMENSIONS",
+    "FACET_DIMENSIONS",
+    "ROW_LEVEL_FACETS",
+    "facet_sql",
+    "parse_facet",
     "REASON_DIFFERENT_SUITES",
     "REASON_PARTIAL_COVERAGE",
     "SuiteCoverage",

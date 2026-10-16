@@ -70,6 +70,9 @@ UNGUARDED_SCOPED_PARAMS: frozenset[str] = frozenset({
     # W07 FAIL-10: a classification hint, nested under project_id; loaded
     # WHERE id AND project_id (another project's hint is the unknown-id 404).
     "hint_id",
+    # W08 TRND-04: a timeline note, nested under project_id; loaded WHERE id
+    # AND project_id (another project's note is the unknown-id 404).
+    "note_id",
     # VIZ-607: a background report export, reached by id alone.
     "export_id",
     # W03 AIH-02: a stored AI history version. Only ever nested under

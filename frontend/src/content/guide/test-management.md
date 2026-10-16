@@ -19,6 +19,8 @@ TestLookup keeps two related catalogues:
 
 A suite's name comes from your reports where present and is inferred otherwise; see [Getting results in](/docs/ingestion#suite-name-resolution).
 
+When a suite's latest run no longer reports some of its tests, the suite sync moves them aside as **Deleted from Suite (N tests need review)** on the **Suites** tab of **Test cases**. The **Coverage map** shows the same count on the suite (`3 need review`, in its tooltip and its table), and its **Open the tests that need review** action opens that list (`/test-management?tab=suites&suite=<suite>`).
+
 ### A suite's page
 
 Click a suite to open it (`/suites/<id>`). The KPIs for the window are **Tests run**, **Executions**, **Pass rate**, **Failed** and **Avg duration**. Three tabs:

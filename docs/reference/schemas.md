@@ -11784,6 +11784,46 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## EmailAvailability
+
+```json
+{
+  "properties": {
+    "available": {
+      "title": "Available",
+      "type": "boolean"
+    },
+    "code": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Code"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    }
+  },
+  "required": [
+    "available"
+  ],
+  "title": "EmailAvailability",
+  "type": "object"
+}
+```
+
 ## EmailTrendsRequest
 
 ```json
@@ -11807,9 +11847,34 @@ These are the full generated JSON Schema definitions, including required fields,
       "type": "string"
     },
     "recipient_email": {
-      "format": "email",
-      "title": "Recipient Email",
-      "type": "string"
+      "anyOf": [
+        {
+          "format": "email",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Recipient Email"
+    },
+    "recipient_emails": {
+      "items": {
+        "format": "email",
+        "type": "string"
+      },
+      "maxItems": 5,
+      "title": "Recipient Emails",
+      "type": "array"
+    },
+    "recipient_user_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "maxItems": 10,
+      "title": "Recipient User Ids",
+      "type": "array"
     },
     "release_id": {
       "anyOf": [
@@ -11844,10 +11909,48 @@ These are the full generated JSON Schema definitions, including required fields,
     }
   },
   "required": [
-    "project_id",
-    "recipient_email"
+    "project_id"
   ],
   "title": "EmailTrendsRequest",
+  "type": "object"
+}
+```
+
+## EmailTrendsResponse
+
+```json
+{
+  "properties": {
+    "recipient": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Recipient"
+    },
+    "sent_to": {
+      "title": "Sent To",
+      "type": "integer"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    },
+    "window_days": {
+      "title": "Window Days",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "status",
+    "sent_to",
+    "window_days"
+  ],
+  "title": "EmailTrendsResponse",
   "type": "object"
 }
 ```
@@ -38948,6 +39051,245 @@ These are the full generated JSON Schema definitions, including required fields,
     "candidate_output"
   ],
   "title": "TierOutputPairRequest",
+  "type": "object"
+}
+```
+
+## TimelineNoteCreate
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "ends_on": {
+      "anyOf": [
+        {
+          "format": "date",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Ends On"
+    },
+    "starts_on": {
+      "format": "date",
+      "title": "Starts On",
+      "type": "string"
+    },
+    "suite_name": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Suite Name"
+    },
+    "text": {
+      "maxLength": 280,
+      "title": "Text",
+      "type": "string"
+    }
+  },
+  "required": [
+    "starts_on",
+    "text"
+  ],
+  "title": "TimelineNoteCreate",
+  "type": "object"
+}
+```
+
+## TimelineNoteList
+
+```json
+{
+  "properties": {
+    "end": {
+      "title": "End",
+      "type": "string"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/TimelineNoteResponse"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "start": {
+      "title": "Start",
+      "type": "string"
+    },
+    "total": {
+      "title": "Total",
+      "type": "integer"
+    },
+    "truncated": {
+      "title": "Truncated",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "items",
+    "total",
+    "truncated",
+    "start",
+    "end"
+  ],
+  "title": "TimelineNoteList",
+  "type": "object"
+}
+```
+
+## TimelineNoteResponse
+
+```json
+{
+  "properties": {
+    "can_edit": {
+      "title": "Can Edit",
+      "type": "boolean"
+    },
+    "created_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Created At"
+    },
+    "created_by_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Created By Name"
+    },
+    "ends_on": {
+      "title": "Ends On",
+      "type": "string"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "starts_on": {
+      "title": "Starts On",
+      "type": "string"
+    },
+    "suite_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Suite Name"
+    },
+    "text": {
+      "title": "Text",
+      "type": "string"
+    },
+    "updated_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Updated At"
+    }
+  },
+  "required": [
+    "id",
+    "project_id",
+    "starts_on",
+    "ends_on",
+    "text",
+    "can_edit"
+  ],
+  "title": "TimelineNoteResponse",
+  "type": "object"
+}
+```
+
+## TimelineNoteUpdate
+
+```json
+{
+  "additionalProperties": false,
+  "description": "Only the fields SENT are applied (``model_fields_set``).",
+  "properties": {
+    "ends_on": {
+      "anyOf": [
+        {
+          "format": "date",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Ends On"
+    },
+    "starts_on": {
+      "anyOf": [
+        {
+          "format": "date",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Starts On"
+    },
+    "suite_name": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Suite Name"
+    },
+    "text": {
+      "anyOf": [
+        {
+          "maxLength": 280,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Text"
+    }
+  },
+  "title": "TimelineNoteUpdate",
   "type": "object"
 }
 ```

@@ -119,10 +119,15 @@ describe('RunsPage — the toolbar filters (FAIL-05)', () => {
     renderPage()
     for (const text of ['1', '12', '123', '1234']) fireEvent.change(searchBox(), { target: { value: text } })
     expect(searchBox().value).toBe('1234')
-    await waitFor(() => expect(lastParams()).toMatchObject({ q: '1234' }), { timeout: SEARCH_DEBOUNCE_MS * 5 })
+    // useRuns records its params while React renders; the probe shows the URL
+    // only once that render commits. Wait for both, or a slow runner reads the
+    // URL in between.
+    await waitFor(() => {
+      expect(lastParams()).toMatchObject({ q: '1234' })
+      expect(url().get('q')).toBe('1234')
+    }, { timeout: SEARCH_DEBOUNCE_MS * 5 })
     const asked = runsParams().map((p) => p.q).filter((q) => q !== undefined)
     expect(new Set(asked)).toEqual(new Set(['1234']))
-    expect(url().get('q')).toBe('1234')
   })
 
   it('Escape clears the search at once', async () => {
@@ -149,9 +154,11 @@ describe('RunsPage — the toolbar filters (FAIL-05)', () => {
     expect(branchRequests()[0][1]).toMatchObject({ params: { project_id: 'proj-1', days: 30 } })
     fireEvent.change(branchSelect() as HTMLSelectElement, { target: { value: 'main' } })
     fireEvent.change(verdictSelect(), { target: { value: 'NO_GO' } })
-    await waitFor(() => expect(lastParams()).toMatchObject({ branch: 'main', recommendation: 'NO_GO' }))
-    expect(url().get('branch')).toBe('main')
-    expect(url().get('verdict')).toBe('NO_GO')
+    await waitFor(() => {
+      expect(lastParams()).toMatchObject({ branch: 'main', recommendation: 'NO_GO' })
+      expect(url().get('branch')).toBe('main')
+      expect(url().get('verdict')).toBe('NO_GO')
+    })
     fireEvent.change(verdictSelect(), { target: { value: 'none' } })
     await waitFor(() => expect(lastParams()).toMatchObject({ recommendation: 'none' }))
   })

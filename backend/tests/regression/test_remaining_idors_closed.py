@@ -250,8 +250,10 @@ class TestEmailTrendsIsScoped:
             "email_trends_report mails a project's data to a caller-supplied "
             "address with no membership check"
         )
+        # W08 TRND-01: the router builds the report itself
+        # (``trends_report_service.build_trends_report``) and then sends it.
         assert src.index("resolve_project_scope") < src.index(
-            "report_service.email_trends_report"
+            "build_trends_report"
         ), "the report is generated and sent before access is verified"
 
     def test_the_scope_uses_the_requested_project(self):

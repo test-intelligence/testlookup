@@ -24,6 +24,14 @@
  *
  * Colour is never alone: a gap (not run in the window, last run unknown,
  * never run) is a pattern, named in the legend, the tooltip and the table.
+ *
+ * W08 TRND-12: the "Other (n)" tile opens the next page of the level
+ * (`onOpenOther`: a click, Enter, or the action row's button); a node whose
+ * tests the last suite sync marked for review offers "Open the tests that
+ * need review" in the action row (`onOpenReview`, the section navigates).
+ * W08 TRND-11: the chart registers its export option (the same
+ * `buildTreemapOption` on the tokens Export gives it), for a true SVG and a
+ * light-background image.
  */
 import { forwardRef, useCallback, useId, useMemo, useRef, useState, type KeyboardEvent, type Ref } from 'react'
 import { STALE_BUILD_ACTION, STALE_BUILD_MESSAGE } from './engines/lazyChartEngine'
@@ -53,7 +61,11 @@ import {
   GAP_DECAL,
   GAP_WORDS,
   moveInOrder,
+  NEEDS_REVIEW_ACTION,
+  needsReviewHref,
   nodeTooltip,
+  otherCount,
+  otherPageTarget,
   tileValueNote,
   treemapClick,
   treemapKeyboardHint,
@@ -62,6 +74,7 @@ import {
   type CoverageGap,
   type CoverageLevel,
 } from './coverageMap.model'
+import type { ChartTokens } from './tokens'
 
 export interface CoverageTreemapProps extends MarkActivationProps {
   /** The level's children, in the server's order. */
@@ -75,6 +88,12 @@ export interface CoverageTreemapProps extends MarkActivationProps {
   animate?: boolean
   /** Backspace: up one level. Absent at the top. */
   onLevelUp?: () => void
+  /** W08 TRND-12: open page `page` of this level (the Other tile). Absent = Other does not open. */
+  onOpenOther?: (page: number) => void
+  /** W08 TRND-12: go to the page listing a node's tests that need review (an in-app URL). */
+  onOpenReview?: (href: string) => void
+  /** The drilled suite's NAME (depth 2 and 3), for the review link of a class or a test. */
+  suiteLabel?: string | null
 }
 
 const BUTTON =
@@ -176,7 +195,20 @@ export function CoverageLegend({ items, colorBy }: { items: readonly CoverageChi
 }
 
 const CoverageTreemap = forwardRef<HTMLDivElement, CoverageTreemapProps>(function CoverageTreemap(
-  { items, level, colorBy, description, height: requestedHeight = 360, animate = false, onLevelUp, onMarkActivate, markIntents },
+  {
+    items,
+    level,
+    colorBy,
+    description,
+    height: requestedHeight = 360,
+    animate = false,
+    onLevelUp,
+    onMarkActivate,
+    markIntents,
+    onOpenOther,
+    onOpenReview,
+    suiteLabel = null,
+  },
   ref,
 ) {
   const height = useFramePlotHeight(requestedHeight, TREEMAP_NOTES_RESERVE)
@@ -187,6 +219,19 @@ const CoverageTreemap = forwardRef<HTMLDivElement, CoverageTreemapProps>(functio
   const option = useMemo(
     () => buildTreemapOption({ children: items, colorBy, tokens, animate: animate && !reducedMotion, textScale }),
     [items, colorBy, tokens, animate, reducedMotion, textScale],
+  )
+  // TRND-11: the SAME builder and inputs, on the tokens Export gives it, never animated.
+  const exportOption = useCallback(
+    (exportTokens: ChartTokens) => buildTreemapOption({ children: items, colorBy, tokens: exportTokens, animate: false, textScale }),
+    [items, colorBy, textScale],
+  )
+  /** The page the Other tile at `index` opens, when this chart may open it. */
+  const otherTarget = useCallback(
+    (index: number): number | null => {
+      const item = items[index]
+      return item && onOpenOther ? otherPageTarget(item, level) : null
+    },
+    [items, level, onOpenOther],
   )
 
   const marks = useMemo(() => items.map((item) => childMark(item, level)), [items, level])
@@ -226,15 +271,22 @@ const CoverageTreemap = forwardRef<HTMLDivElement, CoverageTreemapProps>(functio
       click: (params: unknown) => {
         const hit = treemapClick(params)
         if (!hit || hit.index >= items.length) return
+        // TRND-12: the Other tile opens the level's next page (a touch tap too: it has one action).
+        const page = otherTarget(hit.index)
+        if (page !== null) {
+          onOpenOther?.(page)
+          return
+        }
         const intents = intentsOf(hit.index)
         const intent = pointerIntent(intents, hit.modifiers)
         if (intent) activate(hit.index, intent)
         else if (intents.length > 0) setTapped({ items, index: hit.index })
       },
     }),
-    [items, intentsOf, activate],
+    [items, intentsOf, activate, otherTarget, onOpenOther],
   )
-  const { containerRef, instanceRef, status, retry } = useEChart('treemap', option, onMarkActivate ? events : undefined)
+  const listens = Boolean(onMarkActivate || onOpenOther)
+  const { containerRef, instanceRef, status, retry } = useEChart('treemap', option, listens ? events : undefined, exportOption)
 
   const dispatch = useCallback(
     (payload: { type: string; [key: string]: unknown }) => instanceRef.current?.dispatchAction?.(payload),
@@ -270,8 +322,15 @@ const CoverageTreemap = forwardRef<HTMLDivElement, CoverageTreemapProps>(functio
     [items.length],
   )
   const onEnter = useCallback(
-    (index: number, { shiftKey }: { shiftKey: boolean }) => activate(index, keyboardIntent(intentsOf(index), { shiftKey })),
-    [activate, intentsOf],
+    (index: number, { shiftKey }: { shiftKey: boolean }) => {
+      const page = otherTarget(index)
+      if (page !== null) {
+        onOpenOther?.(page)
+        return
+      }
+      activate(index, keyboardIntent(intentsOf(index), { shiftKey }))
+    },
+    [activate, intentsOf, otherTarget, onOpenOther],
   )
   // Destructured: react-hooks/refs treats a whole object that holds a ref as a ref.
   // No live region of its own (one page announcer): `onActivate` speaks.
@@ -285,7 +344,7 @@ const CoverageTreemap = forwardRef<HTMLDivElement, CoverageTreemapProps>(functio
     onActivate,
     onClear,
     describe,
-    onEnter: onMarkActivate ? onEnter : undefined,
+    onEnter: listens ? onEnter : undefined,
   })
   const tappedIndex = tapped && tapped.items === items ? tapped.index : null
   const focused = activeIndex ?? tappedIndex
@@ -340,6 +399,9 @@ const CoverageTreemap = forwardRef<HTMLDivElement, CoverageTreemapProps>(functio
 
   const focusedItem = focused === null ? undefined : items[focused]
   const focusedIntents = focused === null ? [] : intentsOf(focused)
+  const focusedPage = focused === null ? null : otherTarget(focused)
+  const focusedOtherCount = focusedItem && focusedPage !== null ? otherCount(focusedItem) : null
+  const reviewHref = focusedItem && onOpenReview ? needsReviewHref(focusedItem, suiteLabel) : null
   const hint = treemapKeyboardHint(level)
 
   return (
@@ -381,6 +443,31 @@ const CoverageTreemap = forwardRef<HTMLDivElement, CoverageTreemapProps>(functio
                   <span className="truncate">{intentLabel(intent, marks[focused])}</span>
                 </button>
               ))}
+              {focusedPage !== null && (
+                <button
+                  type="button"
+                  data-coverage-open-other=""
+                  className={`${BUTTON} max-w-full`}
+                  onClick={() => {
+                    keyboardNode.current?.focus()
+                    onOpenOther?.(focusedPage)
+                  }}
+                >
+                  <span className="truncate">
+                    {focusedOtherCount !== null ? `Show the next ${focusedOtherCount}` : 'Show the next page'}
+                  </span>
+                </button>
+              )}
+              {reviewHref && (
+                <button
+                  type="button"
+                  data-coverage-needs-review=""
+                  className={`${BUTTON} max-w-full`}
+                  onClick={() => onOpenReview?.(reviewHref)}
+                >
+                  <span className="truncate">{NEEDS_REVIEW_ACTION}</span>
+                </button>
+              )}
               <span id={hintId} className="sr-only">
                 {hint}
               </span>

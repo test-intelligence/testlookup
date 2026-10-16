@@ -114,6 +114,8 @@ Each test gets a **fingerprint** — a stable identity derived from its name and
 
 Suite comes from the report where present. When it is absent, TestLookup infers it, and for some frameworks the suite is only declared at session level. This is the most common source of "the suite name looks wrong" — see [Troubleshooting](/docs/troubleshooting).
 
+An execution's suite is what the reporter sent, and nothing changes it afterwards: moving a test to another suite in the catalogue (**Fix tagging** on Coverage, **Move** on a suite's page) files the test under that suite for Test Management, Suites and the coverage map, but its executions — past and future — keep the label they arrived with. To label future runs, set the suite in your reporter (the suite name in the report itself, or the SDK reporters' `TESTLOOKUP_SUITE` / `testlookup.suite` default for records that name none).
+
 ### Status normalisation
 
 Framework-specific outcomes are mapped onto a common vocabulary — passed, failed, broken, skipped, unknown. **Broken** (an error rather than an assertion failure) is kept distinct from **failed**, because they mean different things when you are triaging.

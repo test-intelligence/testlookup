@@ -191,6 +191,39 @@ LATENCY_BUDGETS: list[LatencyBudget] = [
         "most 500 failing rows per run by FAILURE_SIGNATURE_SQL "
         "(ix_test_cases_run_status).",
     ),
+    # W08 (TRND-06 / TRND-07 / TRND-08 / TRND-13): harness-only like W06/W07
+    # (no ``http_handler``, so no Prometheus SLO alert or dashboard panel is
+    # required). Scenario names equal these names.
+    LatencyBudget(
+        "trend_summary", 150, 600, 1200,
+        "GET /analytics/trend-summary, 90 d, one project: the page's two reads "
+        "(get_trend_data's run aggregates and coverage_stats' two statements) "
+        "summarised in Python; cache miss.",
+    ),
+    LatencyBudget(
+        "coverage_history", 50, 200, 400,
+        "GET /analytics/coverage/history, 365 d, one project: an index range on "
+        "coverage_snapshots (project_id, snapshot_day) of at most 365 rows plus "
+        "the project's first day.",
+    ),
+    LatencyBudget(
+        "coverage_untagged_tests", 120, 600, 1200,
+        "GET /analytics/coverage/untagged-tests, 90 d, one project: the "
+        "unlabelled executions grouped by test, counted and paged in one "
+        "statement, with each page row's catalogue suite.",
+    ),
+    LatencyBudget(
+        "value_by_team", 300, 1500, 3000,
+        "GET /value-metrics/by-team, 365 d, one project: one grouped statement "
+        "per (effective suite, test) with no row limit, the defects, the "
+        "headline's two leg queries and the cluster members, resolved in Python.",
+    ),
+    LatencyBudget(
+        "chart_data_facet", 300, 1500, 3000,
+        "GET /analytics/chart-data, 90 d, one Explorer panel: executions by day "
+        "and suite (execution-row grain) faceted to one branch; the same ceiling "
+        "as chart_data.",
+    ),
 
     # ── Other HTTP and pipeline operations not in the live harness ────────
     LatencyBudget(

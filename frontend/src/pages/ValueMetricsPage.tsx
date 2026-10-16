@@ -1,4 +1,15 @@
+/**
+ * Value Metrics — the hours-saved model (US-12.1) and the value counters.
+ *
+ * W08 TRND-08: a view switch in the header's actions, **Overview · By team**
+ * (`?view=team`; any other value is Overview). Overview is the page as it was;
+ * By team replaces the body below the header with `ValueMetricsByTeam`, whose
+ * read is asked only on that view and only for one project. The switch sits
+ * in the existing action row (this page has 6 px of fold headroom: no row is
+ * added to the default view).
+ */
 import { useMemo, useState, type ReactNode } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Download, HelpCircle, Save, Timer } from 'lucide-react'
 import { isAxiosError } from 'axios'
 import toast from 'react-hot-toast'
@@ -14,6 +25,7 @@ import StackedColumnChartFrame from '@/components/charts/StackedColumnChartFrame
 import { readyState } from '@/components/charts/chartState'
 import { buildStackedColumnModel, type StackedColumnSeriesInput } from '@/components/charts/stackedColumnModel'
 import { formatNumber } from '@/utils/formatters'
+import ValueMetricsByTeam from '@/components/valueMetrics/ValueMetricsByTeam'
 import { valueMetricsService } from '@/services/valueMetricsService'
 import { refreshValueMetrics, useValueMethodology, useValueMetrics } from '@/hooks/useValueMetrics'
 import { usePermissions } from '@/hooks/usePermissions'
@@ -366,6 +378,48 @@ function CounterNote({ children }: { children: ReactNode }) {
   )
 }
 
+// ── View switch (W08 TRND-08) ───────────────────────────────────────────────
+
+type ValueView = 'overview' | 'team'
+const VIEWS: { id: ValueView; label: string }[] = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'team', label: 'By team' },
+]
+
+/** `?view=team` is By team; anything else (absent, or a stale value) is Overview. */
+export function valueViewOf(param: string | null): ValueView {
+  return param === 'team' ? 'team' : 'overview'
+}
+
+/** Two options in the header's action row, styled as the window picker (a radio group). */
+function ValueViewSwitch({ view, onChange }: { view: ValueView; onChange: (view: ValueView) => void }) {
+  return (
+    <div role="radiogroup" aria-label="View" data-value-view-switch="" className="inline-flex items-center gap-1.5">
+      {VIEWS.map((option) => {
+        const active = option.id === view
+        return (
+          <button
+            key={option.id}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            data-value-view={option.id}
+            onClick={() => onChange(option.id)}
+            className="inline-flex items-center whitespace-nowrap rounded-full border px-2.5 py-1 text-[12.5px] transition-colors"
+            style={{
+              background: active ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',
+              borderColor: active ? 'color-mix(in srgb, var(--color-accent) 30%, transparent)' : 'var(--color-border)',
+              color: active ? 'var(--color-accent)' : 'var(--color-text-muted)',
+            }}
+          >
+            {option.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 export default function ValueMetricsPage() {
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const projectId = activeProjectId === ALL_PROJECTS_ID ? undefined : (activeProjectId ?? undefined)
@@ -378,6 +432,19 @@ export default function ValueMetricsPage() {
   const { metrics, error, isLoading, refresh } = useValueMetrics(projectId, days)
   const [showMethodology, setShowMethodology] = useState(false)
   const [exporting, setExporting] = useState(false)
+  // W08 TRND-08: the view lives in the URL (`?view=team`), replaced, not pushed.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const view = valueViewOf(searchParams.get('view'))
+  const setView = (next: ValueView) =>
+    setSearchParams(
+      (current) => {
+        const params = new URLSearchParams(current)
+        if (next === 'team') params.set('view', 'team')
+        else params.delete('view')
+        return params
+      },
+      { replace: true },
+    )
 
   // HON-04: through the shared API client, whose token goes with the request,
   // not a bare `<a href download>` that saved the API's 401 body as the report.
@@ -399,6 +466,7 @@ export default function ValueMetricsPage() {
       helpTopic={HELP_TOPIC}
       actions={
         <>
+          <ValueViewSwitch view={view} onChange={setView} />
           <WindowPicker options={VALUE_OPTIONS} />
           <button
             type="button"
@@ -414,6 +482,16 @@ export default function ValueMetricsPage() {
       }
     />
   )
+
+  // By team replaces the body below the header (the Overview's reads stay as they were).
+  if (view === 'team') {
+    return (
+      <div className="space-y-4">
+        {header}
+        <ValueMetricsByTeam projectId={projectId} days={days} canEditOwnership={canAccessManagement} />
+      </div>
+    )
+  }
 
   if (isLoading) {
     return (

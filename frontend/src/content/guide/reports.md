@@ -19,6 +19,7 @@ Everything TestLookup can produce, what generates it, and where it lands: the ru
 | **Release gate PDF / shared link** | Release gate **⋯** menu | On request | Mixed | Download / read-only link |
 | **Chart exports** | Each chart's **Export** menu | On request | No | Download: PNG, SVG or CSV |
 | **Summary report files** | Summary report | On request, or in the background | No | Download: PDF or Excel |
+| **Trends report** | Trends **⋯ → Export PDF** / **Email report…** | On request | No | Download: PDF, or one email to the people you choose |
 | **Analysis report** | Summary report, or an email digest | On request / schedule | No | Download or email attachment: one HTML file |
 | **Notifications** | Notification service | Event-driven | Depends on content | Configured channel |
 | **API / CLI / SDK / MCP responses** | Respective interface | On request | Passes through what is stored | Your tooling |
@@ -70,6 +71,16 @@ The **analysis report** is one self-contained HTML file (`testlookup-report-<pro
 
 To export one chart instead, use its **Export** menu: see [Charts and visual analysis](/docs/charts).
 
+## The Trends report
+
+The **Trends** page's **⋯** menu, beside its filters, offers the page as a report, for the window, suite and release you are looking at:
+
+- **Export PDF** (every role) downloads `trends-<project>-<days>d.pdf`: a block naming the scope (project, window in UTC, every release and suite), the KPIs the page shows — **Pass rate** per test execution with its change against the previous window, **Days with runs**, the executions by status, the suites and the last run —, the trend confidence score and verdict, the run gap when there is one, the pass rate and the executions per day (a day without runs is a gap in the drawing and `—` in the table, never 0 %), and the suite table. In **All Projects** the item reads **Export PDF (pick a project)**: a report covers one project.
+- **Email report…** (QA leads and administrators) opens a dialog that states what will be sent (for example `Trends · last 14 days · suite payments · release 2.4`). Tick project members — service accounts, synthetic accounts and deactivated users are not listed — and add up to 5 other addresses, at most 10 recipients in all. **Send** sends **one** message to all of them and confirms "Sent to 2 recipients". The numbers in the email are the page's numbers, from the same data.
+- **Compare runs** opens [Run compare](/docs/runs#comparing-two-runs) for the latest two runs of the suite you selected (or the empty comparison when no suite is selected). It needs one project selected.
+
+The email goes through the mail server saved in **Settings › Notifications** ([Email (SMTP) and channels](/docs/administration#email-smtp-and-channels)). The dialog checks it before you send: when no relay is configured it says `Email is not configured — Settings › Notifications.` and **Send** stays disabled. With **offline mode** on (the default), a relay outside your network is refused, and so is any recipient outside the domains your administrator allows; the dialog shows the refusal's own text. A relay that does not answer within 20 seconds is reported as such — the report may still arrive, so check before sending again. Each email sent is recorded in the project's activity log with the number of recipients (never their addresses); each PDF export is recorded in the audit log.
+
 ## Value metrics
 
 **Reports → Value** (`/value-metrics`, titled **Value Metrics**) answers "what is this saving us": an estimate of **engineer-hours saved** over the window you pick (7, 14, 30 or 90 days, or a year), its full-time equivalent, a monthly trend, and the counters behind it (**Defects grouped**, **Duplicates avoided**, **Flaky tests found**, **Releases blocked**, **AI reports**). The headline follows the window picker like the counters do, and says which window it covers (`Eng-hours saved · last 14 days`). **How is this calculated?** opens the full method.
@@ -93,6 +104,8 @@ Read it honestly:
 - The defaults come from published research (a full failure investigation costs hours; a context switch costs 15–25 minutes) and sit at the cautious end.
 
 **Model assumptions** (QA leads and administrators, one project selected) lets you change the three minute values for your team (each above 0 and at most 480) and **Save assumptions**. Everyone in the project sees the values in use, marked **Customized** or **Defaults**.
+
+**By team** (the switch beside the window picker, `?view=team`) splits the same hours by owning team; see [Value by team](/docs/dashboards#value-by-team).
 
 ### When the headline is hidden
 

@@ -170,7 +170,7 @@ navigation all read. Discriminated by `kind` (`kind_enum`): `series`, `matrix`, 
 | `matrix` keys (Wave 3) | `x_keys?: string[]`, `y_keys?: string[]` | `key_count` (each list is exactly as long as its label list), `unique_key` (no key repeats inside one list) |
 | `matrix` cell counts (Wave 3) | `cells[].counts?: {passed, failed, broken, skipped, unknown}`, every key required, each a count | `counts_sum` (the five add up to the cell's sample size `n`), `required_field` (a status missing from `counts`) |
 | `matrix` unit (Wave 3) | `unit?: "percent"\|"ratio"` | `rate_unit_range` (when `value_type` is `rate`: 0–100 for `percent` and when `unit` is absent, 0–1 for `ratio`), `empty_sample` (a `rate` cell over nothing is null: `n` is 0, or `counts` show nothing evaluated) |
-| `tree` node stats (Wave 3) | `nodes[].stats?: {test_count: int, executions: int, pass_rate: number 0–100\|null, flaky_count: int, flaky_share: number 0–1\|null, last_executed_at: instant\|null, staleness_days: int\|null, recency: "seen"\|"unknown"\|"never"}`, every key required | `rate_range` (`pass_rate` is 0–100), `share_range` (`flaky_share` is 0–1), `utc_instant` (`last_executed_at`, the C2 profile), `recency_null_pair` (`seen` carries a date and a staleness; `unknown` and `never` carry neither), `empty_sample` (no executions means a null pass rate; no tests means a null flaky share) |
+| `tree` node stats (Wave 3) | `nodes[].stats?: {test_count: int, executions: int, pass_rate: number 0–100\|null, flaky_count: int, flaky_share: number 0–1\|null, last_executed_at: instant\|null, staleness_days: int\|null, recency: "seen"\|"unknown"\|"never", needs_review_count?: int\|null}`, every key but `needs_review_count` required | `rate_range` (`pass_rate` is 0–100), `share_range` (`flaky_share` is 0–1), `utc_instant` (`last_executed_at`, the C2 profile), `recency_null_pair` (`seen` carries a date and a staleness; `unknown` and `never` carry neither), `empty_sample` (no executions means a null pass rate; no tests means a null flaky share) |
 | `graph` node group (Wave 3) | `nodes[].group?: string` | — |
 | `points` (Wave 3) | `{kind, x: axis, y: axis, size: {key, label}, points: [{id, label, x: number, y: number, size: int, n: int}], medians?: {x: number, y: number}, excluded?: {below_min_executions: int, no_duration: int, no_evaluated: int}}`; an axis is `{key, label, unit: "ms"\|"percent"\|"ratio"\|"count", scale: "linear"\|"log"}`, every axis key required | `point_cap` (≤ 5 000 points), `unique_point_id`, `log_axis_positive` (every value on a log axis is above 0, medians included), `rate_unit_range` (a `percent` axis holds 0–100, a `ratio` axis 0–1), `non_negative` (an `ms` or `count` axis holds no value below 0), `empty_sample` (a point stands on at least one evaluated sample), `required_field` (an axis without its unit) |
 
@@ -214,7 +214,7 @@ rate's denominator). A cell with `n > 0` and only skipped results is that second
 
 **Tree node `stats`.** Per-node figures for the coverage map. `value` stays the rectangle
 size (`test_count`) and `measure` stays the pass rate; `stats` carries the rest, every key
-present (a list rather than a table: tables in this section are rule tables):
+but `needs_review_count` present (a list rather than a table: tables in this section are rule tables):
 
 - `test_count` — tests (a count). Never `null`.
 - `executions` — executions in the window (a count). Never `null`; `0` is a real "nothing ran".
@@ -228,6 +228,9 @@ present (a list rather than a table: tables in this section are rule tables):
 - `staleness_days` — whole days since `last_executed_at` (a count). `null` exactly when
   `last_executed_at` is.
 - `recency` — `seen`, `unknown` or `never`. Never `null`.
+- `needs_review_count` (W08, optional) — tests under the node whose fingerprint the last suite sync marked for
+  review in this project (`suite_memberships.status = 'needs_review'`: absent from the suite's latest run), a
+  count. `null` outside one project (not measured, never `0`); absent in payloads written before it.
 
 `recency` says why a date is or is not there (`recency_null_pair`): `seen` carries both
 `last_executed_at` and `staleness_days`; `unknown` (the record of the last run was lost — a
@@ -348,6 +351,34 @@ What `GET /analytics/chart-data` accepts for every `group_by` of one or two dime
   has one is `y: null, measured: false`, never 0. A suite's wall clock is `GET /analytics/execution-metrics`.
 - The file is byte-identical to a regeneration (`python -m tests.test_chart_data_combinations` from `backend/`),
   one case per line, LF.
+
+## Chart-data facets — `chart_data_facets.json`
+
+`GET /analytics/chart-data` takes an optional pair, **`facet_dimension`** + **`facet_value`** (W08 TRND-13): the
+chart becomes one panel of the Explorer's small multiples and counts only the executions whose value of that
+dimension is the panel's key. The facet dimensions are `branch`, `environment`, `status`, `failure_category` and
+`ingestion_source` (project, release and suite stay the scope's); `facet_value` is the chart KEY as the dimension
+buckets it (an environment and a failure category lower-cased, a status from `passed, failed, broken, skipped,
+unknown`), never an id. The predicate is the drill selector's (`bucket_<dimension>`, C5), so a panel holds the
+rows a drill into that bucket of an unfaceted chart lists. `status` and `failure_category` read per-test rows and
+force the `execution_row` grain. The response states the panel in **`meta.definitions.facet`**
+(`{dimension, value}`, present only with a facet) and a facet-less request's cache identity is unchanged.
+
+Refusals (422, the value sent is never echoed):
+
+- `facet_pair` — one of the two parameters without the other (`param: "facet_dimension"`).
+- `facet_dimension_enum` — a dimension outside the five (`allowed` lists them).
+- `facet_value` — the value breaks the drill selector's rules: not a string, a NUL, outside 1–2 000 characters,
+  the `__other__` roll-up, a status outside the vocabulary (`param: "facet_value"`).
+- `facet_metric_grain` — `run_count` with `status` or `failure_category`: one run holds tests of several statuses
+  (or failure categories), so it would be counted in more than one panel. A run-only metric (the wall clock) with
+  either is the existing `run_only_metric`.
+
+`chart_data_facets.json` lists the outcome of every facet dimension (and `suite`, `release`, `project`, `day`,
+`nope`) × every general metric × `group_by` `[day]`, `[day, branch]`, `[day, status]`, with value `main`
+(`failed` for status). It is generated by `backend/tests/test_chart_data_facets.py`
+(`python -m tests.test_chart_data_facets` from `backend/`, byte-identical, one case per line, LF) and mirrored by
+the Explorer's `explorePlan` (`exploreModel.test.ts`).
 
 ## Feature flags — `flags.json`
 

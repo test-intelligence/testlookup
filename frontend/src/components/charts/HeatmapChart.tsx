@@ -28,7 +28,7 @@
  */
 import { useCallback, useId, useMemo, useState } from 'react'
 import { VIZ_STATUSES, type VizStatus } from '@/lib/viz/contracts'
-import { CHART_VARS, STATUS_ENCODING, useChartTokens } from './tokens'
+import { CHART_VARS, STATUS_ENCODING, useChartTokens, type ChartTokens } from './tokens'
 import { tooltipText } from './tooltip'
 import { useFramePlotHeight, usePresentationScale } from './framePlotHeight'
 import { usePrefersReducedMotion } from './motion'
@@ -228,7 +228,28 @@ export default function HeatmapChart({
         : undefined,
     [activatable, actionsAt, data, onMarkActivate],
   )
-  const { containerRef, instanceRef, status, retry } = useEChart('heatmap', option, events)
+  // TRND-11: Export redraws THIS chart (the same builder, the same inputs) on the
+  // tokens it is given — the light theme's for "Light background" — never animated.
+  const exportOption = useCallback(
+    (exportTokens: ChartTokens) =>
+      buildHeatmapOption({
+        data,
+        tokens: exportTokens,
+        description,
+        animate: false,
+        salient,
+        chartWidth,
+        textScale,
+        rowsTopDown,
+        columnLabels,
+        rowLabels,
+        domain,
+        columnAxisName,
+        columnLabelCut,
+      }),
+    [data, description, salient, chartWidth, textScale, rowsTopDown, columnLabels, rowLabels, domain, columnAxisName, columnLabelCut],
+  )
+  const { containerRef, instanceRef, status, retry } = useEChart('heatmap', option, events, exportOption)
 
   const dispatch = useCallback(
     (payload: { type: string; [key: string]: unknown }) => instanceRef.current?.dispatchAction?.(payload),

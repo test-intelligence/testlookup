@@ -581,3 +581,75 @@ describe('CoverageMapSection: colour, truncation, failure', () => {
     expect(document.querySelector('img')).toBeNull()
   })
 })
+
+// ── W08 TRND-12 ──────────────────────────────────────────────────────────────
+describe('CoverageMapSection: Other opens the next page; needs review (W08 TRND-12)', () => {
+  const metaPage = (page: number, over: Partial<EnvelopeMeta> = {}) =>
+    META({ ...({ definitions: { grain: 'execution_row', coverage: 'test_execution', page, children_offset: (page - 1) * 2 } } as object), ...over })
+  const PAGE1 = wire(
+    [
+      node('all', null, 'All suites', seen(20)),
+      node('s:a', 'all', 'a', seen(8)),
+      node('s:b', 'all', 'b', seen(7)),
+      node('other:all', 'all', 'Other (3)', { ...seen(5), pass_rate: null, executions: 20 }),
+    ],
+    metaPage(1, { truncated: true, truncated_total: 5 }),
+  )
+  const PAGE2 = wire(
+    [node('all', null, 'All suites', seen(20)), node('s:c', 'all', 'c', seen(2)), node('s:d', 'all', 'd', seen(2)), node('s:e', 'all', 'e', seen(1))],
+    metaPage(2),
+  )
+
+  beforeEach(() => {
+    get.mockImplementation((url: string, config: { params: CatalogParams }) => {
+      if (url !== URL_MAP) return Promise.reject(Object.assign(new Error('no fixture'), { response: { status: 500, data: {} } }))
+      const payload = config.params.other_page === 2 ? PAGE2 : responses[String(config.params.depth)]
+      return Promise.resolve({ data: payload, headers: {} })
+    })
+    responses['1'] = PAGE1
+  })
+
+  const names = () => lastOption().series[0].data.map((d) => d.name.split('\n')[0])
+
+  it('a click on Other asks for other_page=2 in place (no drill), shows the next children and the crumb; the level crumb returns', async () => {
+    renderSection()
+    await drawn()
+    expect(names()).toEqual(['a', 'b', 'Other (3)'])
+    act(() => engine.listeners.get('click')?.({ dataIndex: 3, event: { event: {} } }))
+    await waitFor(() => expect(mapCalls()).toContainEqual({ depth: 1, other_page: 2, project_id: 'p1', days: 30 }))
+    await waitFor(() => expect(names()).toEqual(['c', 'd', 'e']))
+    expect(crumbs()).toEqual(['All suites', 'Other · page 2'])
+    expect(drillParams()).toEqual([])
+    expect(within(frame()).getByText('Page 2: the next 3 suites by size.')).toBeInTheDocument()
+    // The level's own crumb is page 1 again: no other_page asked.
+    fireEvent.click(screen.getByRole('link', { name: 'All suites' }))
+    await waitFor(() => expect(crumbs()).toEqual(['All suites']))
+    await waitFor(() => expect(names()).toEqual(['a', 'b', 'Other (3)']))
+    expect(mapCalls().filter((p) => p.other_page !== undefined)).toHaveLength(1)
+  })
+
+  it('Enter on the focused Other opens it too, and its action row offers "Show the next 3"', async () => {
+    renderSection()
+    const group = await drawn()
+    group.focus()
+    fireEvent.keyDown(group, { key: 'End' })
+    expect(within(group).getByRole('button', { name: 'Show the next 3' })).toBeInTheDocument()
+    fireEvent.keyDown(group, { key: 'Enter' })
+    await waitFor(() => expect(names()).toEqual(['c', 'd', 'e']))
+  })
+
+  it('a node with tests to review: `3 need review` on the tile, the table, and a link to Test Management › Suites', async () => {
+    responses['1'] = wire([
+      node('all', null, 'All suites', { ...seen(9), needs_review_count: 3 }),
+      node('s:payments', 'all', 'Pay & Co', { ...seen(9), needs_review_count: 3 }),
+      node('s:auth', 'all', 'auth', { ...seen(3), needs_review_count: null }),
+    ])
+    renderSection()
+    const group = await drawn()
+    expect(lastOption().series[0].data.map((d) => d.name)).toEqual(['Pay & Co\n90.0%\n3 need review', 'auth\n90.0%'])
+    group.focus()
+    fireEvent.keyDown(group, { key: 'ArrowRight' })
+    fireEvent.click(within(group).getByRole('button', { name: 'Open the tests that need review' }))
+    await waitFor(() => expect(where.search).toBe('?tab=suites&suite=Pay+%26+Co'))
+  })
+})

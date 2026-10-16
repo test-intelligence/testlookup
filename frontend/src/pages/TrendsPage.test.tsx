@@ -1,11 +1,14 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
+import { SWRConfig } from 'swr'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type StackedColumnChartFrame from '@/components/charts/StackedColumnChartFrame'
 import type TimeSeriesChartFrame from '@/components/charts/TimeSeriesChartFrame'
 import { utcDayLabel } from '@/components/charts/stackedColumnModel'
+import { chartConfigStore, useChartConfigStore } from '@/store/chartConfigStore'
+import { NOT_AMONG_BUSIEST } from '@/components/reports/catalogue/trendsCatalogueParams'
 import TrendsPage from './TrendsPage'
 
 // The two kit frames render for real; these spies only record what the page
@@ -14,6 +17,15 @@ import TrendsPage from './TrendsPage'
 const frames = vi.hoisted(() => ({
   stacked: [] as unknown[],
   timeSeries: [] as unknown[],
+}))
+
+// The section-error test (R1-1) makes a boundary report an error; the real
+// reporter batches it for 5 s and then POSTs it, which under load lands inside
+// a LATER test and trips the network guard there (W08 gate, coverage run).
+// Same guard as ReleaseGatePage.test.tsx: keep the module, stub the report.
+vi.mock('@/utils/errorReporting', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/utils/errorReporting')>(),
+  reportBoundaryError: vi.fn(),
 }))
 
 // P1: the header's Views menu reads this page's saved views (none here).
@@ -103,6 +115,112 @@ vi.mock('@/store/projectStore', () => ({
   useProjectStore: vi.fn((selector: (state: { activeProjectId: string; activeProject: { name: string } | null }) => unknown) =>
     selector({ activeProjectId: 'proj-1', activeProject: { name: 'Project One' } })),
 }))
+
+// ── W08 ────────────────────────────────────────────────────────────────────
+// TRND-06: the verdict, the score and the gap are the SERVER's trend summary.
+// The mock computes it (contract §1.3) from whatever trend and suites the test
+// handed the page's two reads, so every older test still sees the verdict its
+// trend implies; `override` hands the page a summary (or garbage) of its own.
+const trendSummary = vi.hoisted(() => ({ override: undefined as unknown, error: null as unknown, calls: [] as unknown[][] }))
+vi.mock('@/hooks/useTrendSummary', async () => {
+  const metrics = await import('@/hooks/useMetrics')
+  const { summaryFromTrend } = await import('@/test/trendSummaryFixture')
+  const { parseTrendSummary } = await import('@/types/trends')
+  const lastValue = (hook: unknown) => {
+    const results = (hook as ReturnType<typeof vi.fn>).mock.results
+    return results.length ? (results[results.length - 1].value as { data?: { data?: unknown[]; suites?: unknown[] } } | undefined) : undefined
+  }
+  return {
+    useTrendSummary: (days: number, suiteFilter: unknown) => {
+      trendSummary.calls.push([days, suiteFilter])
+      if (trendSummary.override !== undefined) {
+        return { summary: parseTrendSummary(trendSummary.override), isLoading: false, error: trendSummary.error }
+      }
+      const trend = (lastValue(metrics.useTrendData)?.data?.data ?? []) as Parameters<typeof summaryFromTrend>[0]
+      const suites = (lastValue(metrics.useCoverage)?.data?.suites ?? []) as Parameters<typeof summaryFromTrend>[2]
+      return { summary: summaryFromTrend(trend, days, suites), isLoading: false, error: null }
+    },
+  }
+})
+
+// TRND-06: the Suite pass rates sparklines (the hook's own request is its test's).
+const sparklines = vi.hoisted(() => ({
+  lines: {} as Record<string, (number | null)[]>,
+  state: 'ready' as 'idle' | 'loading' | 'ready' | 'unavailable',
+  calls: [] as unknown[][],
+}))
+vi.mock('@/hooks/useSuiteSparklines', () => ({
+  useSuiteSparklines: (days: number, suiteFilter: unknown, near: boolean) => {
+    sparklines.calls.push([days, suiteFilter, near])
+    return { lineOf: (name: string) => sparklines.lines[name.trim().toLowerCase()], state: sparklines.state }
+  },
+}))
+
+// TRND-04: the window's timeline notes and their writes.
+const timeline = vi.hoisted(() => ({ notes: [] as unknown, truncated: false, calls: [] as unknown[][] }))
+vi.mock('@/hooks/useTimelineNotes', () => ({
+  useTimelineNotes: (range: unknown, suite: unknown) => {
+    timeline.calls.push([range, suite])
+    return { notes: timeline.notes, total: 0, truncated: timeline.truncated, isLoading: false, unavailable: false, mutate: async () => undefined }
+  },
+  useTimelineNoteActions: () => ({ projectId: 'proj-1', create: vi.fn(), update: vi.fn(), remove: vi.fn() }),
+}))
+
+// Who is reading: a viewer unless a test says otherwise.
+const role = vi.hoisted(() => ({ isQaLead: false, isQaEngineer: false, isAdmin: false }))
+vi.mock('@/hooks/usePermissions', () => ({
+  usePermissions: () => ({ role: 'VIEWER', ...role, hasRole: () => false }),
+}))
+
+// TRND-01: the PDF download (the service and the browser download, mocked).
+const reportService = vi.hoisted(() => ({ downloadTrendsPdf: vi.fn() }))
+vi.mock('@/services/trendsReportService', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/trendsReportService')>()),
+  downloadTrendsPdf: reportService.downloadTrendsPdf,
+}))
+const download = vi.hoisted(() => ({ downloadBlob: vi.fn() }))
+vi.mock('@/utils/download', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/utils/download')>()),
+  downloadBlob: download.downloadBlob,
+}))
+
+// The two dialogs are their own tests'; here they record what the page opened them with.
+const dialogs = vi.hoisted(() => ({ pin: [] as Record<string, unknown>[], email: [] as Record<string, unknown>[] }))
+vi.mock('@/components/trends/PinNoteDialog', () => ({
+  default: (props: Record<string, unknown>) => {
+    dialogs.pin.push(props)
+    return <div data-testid="pin-note-dialog" />
+  },
+}))
+vi.mock('@/components/trends/EmailReportDialog', () => ({
+  default: (props: Record<string, unknown>) => {
+    dialogs.email.push(props)
+    return <div data-testid="email-report-dialog" />
+  },
+}))
+
+// Every W08 control starts from a viewer, no notes, the computed summary and a clean chart store.
+beforeEach(() => {
+  trendSummary.override = undefined
+  trendSummary.error = null
+  trendSummary.calls = []
+  sparklines.lines = {}
+  sparklines.state = 'ready'
+  sparklines.calls = []
+  timeline.notes = []
+  timeline.truncated = false
+  timeline.calls = []
+  role.isQaLead = false
+  role.isQaEngineer = false
+  role.isAdmin = false
+  reportService.downloadTrendsPdf.mockReset()
+  download.downloadBlob.mockReset()
+  dialogs.pin.length = 0
+  dialogs.email.length = 0
+  useChartConfigStore.setState({ applied: {}, viewToken: 0 })
+  window.localStorage.removeItem('testlookup.chartConfig.trends.compare')
+  window.localStorage.removeItem('testlookup.chartConfig.trends.suite-series')
+})
 
 type StackedProps = ComponentProps<typeof StackedColumnChartFrame>
 type TimeSeriesProps = ComponentProps<typeof TimeSeriesChartFrame>
@@ -569,12 +687,14 @@ describe('TrendsPage on the chart kit', () => {
     expect(lastTimeSeries().takeaway).toBe('90.0% over the last 14 days, at the 90% target · 1 day with data, too few for a trend')
   })
 
-  it('has no per-suite micro-bar: a suite row is the name and its rate', async () => {
+  // TRND-06: the fake 6-tick micro-bar never came back; the row now draws the
+  // suite's REAL daily pass rate (the sparkline, its own test below).
+  it('has no per-suite micro-bar: a suite row is the name (with its links) over its line, and its rate', async () => {
     const { trend } = await windowFixture()
     await renderWindow(trend)
     openTab('By suite')
     const suites = screen.getByRole('heading', { name: 'Suite pass rates — last 14 days' }).closest('div.rounded-xl') as HTMLElement
-    const row = within(suites).getByText('Payments', { exact: true }).parentElement as HTMLElement
+    const row = within(suites).getByRole('link', { name: 'Payments' }).closest('div.grid') as HTMLElement
     expect(row).toHaveTextContent('50%')
     expect(row.querySelectorAll('i')).toHaveLength(0)
     expect(row.children).toHaveLength(2)
@@ -786,8 +906,12 @@ describe('TrendsPage rollout (Wave 2.6)', () => {
     expect(within(windows).getAllByRole('radio').map((r) => r.textContent)).toEqual(['24h', '7d', '14d', '30d', '90d'])
     // The help ? opens the page's docs topic.
     expect(within(header).getByRole('button', { name: 'Help: Trends' })).toHaveAttribute('data-help-topic', 'dashboards')
-    // No ⋯ menu: the page has no action beyond Views.
-    expect(header.querySelector('[data-overflow-trigger]')).toBeNull()
+    // W08: the ⋯ (Export PDF, Email report, Compare runs) follows Views in the
+    // same action row: one 32 px trigger, no row of its own.
+    const overflow = header.querySelector('[data-overflow-trigger]') as HTMLElement
+    expect(overflow).not.toBeNull()
+    expect(follows(trigger, overflow)).toBe(true)
+    expect(overflow.closest('[data-page-toolbar]')).toBeNull()
     expect(screen.queryByRole('button', { name: /Customize/ })).toBeNull()
     expect(screen.queryByRole('dialog')).toBeNull()
   })
@@ -837,23 +961,35 @@ describe('TrendsPage P2: no stubs, no invented values', () => {
     })))
   }
 
+  // W08 built four of the controls this test once proved absent: Export PDF,
+  // Email report, Compare runs (the header ⋯) and pinning a note (the cadence
+  // card and the gap callout). Each now EXISTS and has its own tests below;
+  // the controls that are still not built stay absent.
   it('has none of the not-built controls: header, verdict, issue rows, schedule callout', async () => {
     // A trailing 10-day silence: the schedule callout and the gap issue row both render.
     await renderWith(await daysWithRuns([10, 11, 12, 13]))
     expect(screen.getByRole('heading', { name: 'Schedule appears paused' })).toBeInTheDocument()
     for (const name of [
-      /Export PDF/, /Email report/, /Email this view/, /Resume schedule/, /Resume nightly/,
-      /View schedule/, /Compare runs/, /Decision trail/, /Customize/,
+      /Email this view/, /Resume schedule/, /Resume nightly/, /View schedule/, /Decision trail/, /Customize/,
+      /Configure schedule/, /Apply suite labels/, /Open runner config/,
     ]) {
       expect(screen.queryByRole('button', { name })).toBeNull()
       expect(screen.queryByRole('link', { name })).toBeNull()
+      expect(screen.queryByRole('menuitem', { name })).toBeNull()
     }
-    // The cadence gap strip offered to "pin a note", a feature that does not exist.
-    expect(screen.queryByText(/pin a note/)).toBeNull()
     // P3: the verdict's one real action (widening the window) was the window
     // picker's 90d again; the picker stays, the duplicate is gone.
     expect(screen.queryByRole('button', { name: /Widen/ })).toBeNull()
     expect(windowOption('90d')).toHaveAttribute('aria-checked', 'false')
+  })
+
+  it('W08: the built ones exist — the ⋯ holds Export PDF and Compare runs; a viewer is offered no Email report and no Pin a note', async () => {
+    await renderWith(await daysWithRuns([10, 11, 12, 13]))
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    expect(screen.getByRole('menuitem', { name: 'Export PDF' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Compare runs' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /Email report/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Pin a note/ })).toBeNull()
   })
 
   it('renders no recommended-actions card and no provenance footer', async () => {
@@ -1133,5 +1269,423 @@ describe('TrendsPage TRND-05: the pass-rate delta is in percentage points', () =
     const tile = passRateTile()
     expect(tile).not.toHaveTextContent(/pp vs/)
     expect(tile).toHaveTextContent('3 active days')
+  })
+})
+
+// ── W08 "trends-coverage" ─────────────────────────────────────────────────
+describe('TrendsPage W08', () => {
+  function Location() {
+    const location = useLocation()
+    return <output data-testid="location">{`${location.pathname}${location.search}`}</output>
+  }
+
+  const SUITES = [
+    { suite_name: 'Checkout', unique_tests: 6, passed: 40, failed: 10, skipped: 5, pass_rate: 80 },
+    { suite_name: 'Payments', unique_tests: 4, passed: 21, failed: 21, skipped: 0, pass_rate: 50 },
+  ]
+
+  beforeEach(async () => {
+    frames.stacked.length = 0
+    frames.timeSeries.length = 0
+    catalogue.props.length = 0
+    catalogue.throws = false
+    releaseList.items = []
+    const { useTimeWindowStore } = await import('@/store/timeWindowStore')
+    useTimeWindowStore.setState({ days: 14 })
+    const { useProjectStore } = await import('@/store/projectStore')
+    ;(useProjectStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (selector: (state: { activeProjectId: string; activeProject: { name: string } | null }) => unknown) =>
+        selector({ activeProjectId: 'proj-1', activeProject: { name: 'Project One' } }),
+    )
+    const views = await import('@/services/savedViewsService')
+    ;(views.listSavedViews as ReturnType<typeof vi.fn>).mockResolvedValue([])
+    ;(views.createSavedView as ReturnType<typeof vi.fn>).mockReset()
+    ;(views.createSavedView as ReturnType<typeof vi.fn>).mockResolvedValue({})
+  })
+
+  async function allProjects() {
+    const { useProjectStore } = await import('@/store/projectStore')
+    ;(useProjectStore as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (selector: (state: { activeProjectId: string; activeProject: null }) => unknown) =>
+        selector({ activeProjectId: '__ALL__', activeProject: null }),
+    )
+  }
+
+  async function dayBack(back: number) {
+    const { shiftDayIso, utcDayIso } = await import('@/utils/calendarDay')
+    return shiftDayIso(utcDayIso(), -back)
+  }
+
+  async function renderPage(path = '/trends', backs: number[] = [1, 2, 3, 4]) {
+    const { useTrendData, useDashboardSummary, useCoverage } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+    const trend = await Promise.all(
+      backs.map(async (back) => ({ date: await dayBack(back), passed: 9, failed: 1, skipped: 0, broken: 0, total: 10, pass_rate: 90 })),
+    )
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: { data: trend }, isLoading: false })
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({ data: {} })
+    ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({ data: { summary: {}, suites: SUITES } })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    render(
+      // A fresh SWR cache per test: the saved-views list is read through SWR.
+      <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
+        <MemoryRouter initialEntries={[path]}>
+          <Routes><Route path="/trends" element={<><TrendsPage /><Location /></>} /></Routes>
+        </MemoryRouter>
+      </SWRConfig>,
+    )
+    await screen.findByRole('heading', { name: 'Trends' })
+  }
+
+  const openMore = () => fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+  const scoreToggle = () => screen.getByRole('button', { name: /How this score is computed/ })
+
+  // ── TRND-06: the server's summary ────────────────────────────────────────
+  describe('TRND-06 the trend summary is the server’s', () => {
+    async function summaryOf(over: Record<string, unknown>) {
+      const { summaryFromTrend } = await import('@/test/trendSummaryFixture')
+      return { ...summaryFromTrend([], 14), ...over }
+    }
+
+    it('the disclosure shows the server’s verdict, score and dimensions', async () => {
+      trendSummary.override = await summaryOf({
+        days_with_runs: 9,
+        confidence: {
+          score: 77,
+          verdict: 'HEALTHY',
+          band: 'High',
+          dimensions: [
+            { id: 'data_coverage', label: 'Data coverage', score: 64.29, weight: 0.4 },
+            { id: 'sample_size', label: 'Sample size', score: 100, weight: 0.25 },
+            { id: 'variance_stability', label: 'Variance stability', score: 80, weight: 0.2 },
+            { id: 'tag_quality', label: 'Tag quality', score: 100, weight: 0.15 },
+          ],
+        },
+      })
+      await renderPage()
+      expect(scoreToggle()).toHaveTextContent('Trend healthy · confidence 77 / 100')
+      openScore()
+      expect(screen.getByRole('meter', { name: 'Trend confidence' })).toHaveAttribute('aria-valuetext', '77 of 100, High')
+      const verdict = screen.getByRole('region', { name: 'Trend verdict' })
+      expect(verdict).toHaveTextContent('9 active days · pass rate steady')
+      expect(within(verdict).getByText('Data coverage').closest('div.rounded-sm')).toHaveTextContent('64')
+      // The page asked for its window and scope.
+      expect(trendSummary.calls[trendSummary.calls.length - 1]).toEqual([14, null])
+    })
+
+    it.each<[string, unknown]>([
+      ['garbage', { confidence: 'x' }],
+      ['null', null],
+      ['an empty object', {}],
+    ])('a %s summary reads "Score not available": no callout, the KPI strip and the charts intact', async (_name, raw) => {
+      trendSummary.override = raw
+      // A trailing 10-day silence in the trend: without the server's gap there is no callout.
+      await renderPage('/trends', [10, 11, 12, 13])
+      expect(scoreToggle()).toHaveTextContent('Score not available')
+      openScore()
+      expect(screen.queryByRole('meter', { name: 'Trend confidence' })).toBeNull()
+      expect(document.querySelector('[data-score-unavailable]')).toHaveTextContent('Score not available')
+      expect(screen.queryByRole('heading', { name: 'Schedule appears paused' })).toBeNull()
+      expect(document.querySelector('[data-cadence-gap]')).toBeNull()
+      expect(screen.getByRole('region', { name: 'Trend metrics' })).toHaveTextContent('Pass rate')
+      expect(screen.getByRole('heading', { name: 'Pass rate trend' })).toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: 'Daily breakdown' })).toBeInTheDocument()
+    })
+
+    it('a failed summary read is "Score not available" too', async () => {
+      trendSummary.override = null
+      trendSummary.error = new Error('503')
+      await renderPage()
+      expect(scoreToggle()).toHaveTextContent('Score not available')
+    })
+
+    it('the callout, its Silent days and its dates are the server’s gap', async () => {
+      const { utcDayIso, formatDayIso } = await import('@/utils/calendarDay')
+      const start = await dayBack(8)
+      trendSummary.override = await summaryOf({
+        days_with_runs: 5,
+        gap: { silent_days: 9, start, end: utcDayIso(), ongoing: true, expected_runs_missed: 9 },
+        confidence: { score: 40, verdict: 'MIXED', band: 'Moderate', dimensions: [] },
+      })
+      // The trend itself has no gap at all: what is drawn is the server's.
+      await renderPage('/trends', [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13])
+      const callout = screen.getByRole('heading', { name: 'Schedule appears paused' }).closest('section') as HTMLElement
+      expect(within(callout).getByText('Silent days').parentElement).toHaveTextContent('9')
+      expect(within(callout).getByText('Expected runs missed').parentElement).toHaveTextContent('~9')
+      expect(callout).toHaveTextContent(`No executions have landed since ${formatDayIso(start)}.`)
+      expect(document.querySelector('[data-cadence-gap]')).toHaveTextContent('9-day silence')
+    })
+
+    it('a past gap (not ongoing) is "Run gap in this window"', async () => {
+      trendSummary.override = await summaryOf({
+        gap: { silent_days: 7, start: await dayBack(12), end: await dayBack(6), ongoing: false, expected_runs_missed: 7 },
+        confidence: { score: 40, verdict: 'MIXED', band: 'Moderate', dimensions: [] },
+      })
+      await renderPage()
+      expect(screen.getByRole('heading', { name: 'Run gap in this window' })).toBeInTheDocument()
+      expect(screen.queryByRole('heading', { name: 'Schedule appears paused' })).toBeNull()
+    })
+  })
+
+  describe('TRND-06 the Suite pass rates sparklines', () => {
+    it('draws a row’s line from the shared request; a suite outside the 7 busiest reads "—" with the reason', async () => {
+      sparklines.lines = { checkout: [80, null, 90, 85] }
+      await renderPage('/trends?tab=by-suite')
+      const card = screen.getByRole('heading', { name: 'Suite pass rates — last 14 days' }).closest('div.rounded-xl') as HTMLElement
+      const checkout = within(card).getByRole('link', { name: 'Checkout' }).closest('div.grid') as HTMLElement
+      // The sparkline is a lazy module (section-only request code stays out of the page chunk).
+      await waitFor(() => expect(checkout.querySelector('[data-sparkline]')).not.toBeNull())
+      const line = checkout.querySelector('[data-sparkline]') as HTMLElement
+      expect(line.querySelector('path[data-part="line"]')).not.toBeNull()
+      expect(within(line).getByRole('img')).toHaveAccessibleName(/^Checkout pass rate per day: 3 points/)
+      const payments = within(card).getByRole('link', { name: 'Payments' }).closest('div.grid') as HTMLElement
+      expect(payments.querySelector('[data-sparkline]')).toBeNull()
+      expect(payments.querySelector('[data-sparkline-missing]')).toHaveAttribute('title', NOT_AMONG_BUSIEST)
+      expect(NOT_AMONG_BUSIEST).toBe('Not among the 7 busiest suites drawn in "Pass rate by suite"')
+      // The card asks once it is near, in the page's window and suite scope.
+      expect(sparklines.calls[sparklines.calls.length - 1]).toEqual([14, null, true])
+    })
+
+    it('an unavailable series is "—" on every row, and the card still renders', async () => {
+      sparklines.state = 'unavailable'
+      await renderPage('/trends?tab=by-suite')
+      const card = screen.getByRole('heading', { name: 'Suite pass rates — last 14 days' }).closest('div.rounded-xl') as HTMLElement
+      await waitFor(() => expect(card.querySelectorAll('[data-sparkline-missing]')).toHaveLength(2))
+      expect(card.querySelector('[data-sparkline]')).toBeNull()
+      expect(card).toHaveTextContent('80%')
+    })
+
+    it('asks nothing on the Volume tab', async () => {
+      await renderPage('/trends')
+      expect(sparklines.calls).toHaveLength(0)
+    })
+  })
+
+  // ── TRND-02: Compare runs ────────────────────────────────────────────────
+  describe('TRND-02 Compare runs', () => {
+    it('the ⋯ item opens the latest two runs of the selected suite, else the manual form', async () => {
+      await renderPage()
+      openMore()
+      expect(screen.getByRole('menuitem', { name: 'Compare runs' })).toHaveAttribute('href', '/runs/compare')
+      openMore()
+      fireEvent.change(screen.getByDisplayValue('All suites'), { target: { value: 'Checkout' } })
+      openMore()
+      expect(screen.getByRole('menuitem', { name: 'Compare runs' })).toHaveAttribute('href', '/runs/compare?mode=latest&suite=Checkout')
+    })
+
+    it('each Suite pass rates row links to the latest two runs of its suite', async () => {
+      await renderPage('/trends?tab=by-suite')
+      expect(screen.getByRole('link', { name: 'Compare the latest two runs of Checkout' })).toHaveAttribute(
+        'href',
+        '/runs/compare?mode=latest&suite=Checkout',
+      )
+      expect(screen.getByRole('link', { name: 'Compare the latest two runs of Payments' })).toHaveAttribute('title', 'Compare the latest two runs of Payments')
+    })
+
+    it('All Projects: "Compare runs (pick a project)" is disabled and no row carries the icon', async () => {
+      await allProjects()
+      await renderPage('/trends?tab=by-suite')
+      openMore()
+      expect(screen.getByRole('menuitem', { name: 'Compare runs (pick a project)' })).toBeDisabled()
+      expect(screen.queryByRole('link', { name: /Compare the latest two runs/ })).toBeNull()
+    })
+  })
+
+  // ── TRND-01: Export PDF and Email report ────────────────────────────────
+  describe('TRND-01 Export PDF and Email report', () => {
+    it('a QA lead sees Export PDF and Email report…; Email report opens the dialog with the page scope', async () => {
+      role.isQaLead = true
+      role.isQaEngineer = true
+      await renderPage()
+      openMore()
+      expect(screen.getByRole('menuitem', { name: 'Export PDF' })).toBeEnabled()
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Email report…' }))
+      expect(screen.getByTestId('email-report-dialog')).toBeInTheDocument()
+      expect(dialogs.email[dialogs.email.length - 1]).toMatchObject({ projectId: 'proj-1', days: 14, suiteFilter: null, release: null, suiteLabel: null })
+    })
+
+    it('a viewer sees Export PDF only', async () => {
+      await renderPage()
+      openMore()
+      expect(screen.getByRole('menuitem', { name: 'Export PDF' })).toBeInTheDocument()
+      expect(screen.queryByRole('menuitem', { name: /Email report/ })).toBeNull()
+    })
+
+    it('Export PDF downloads the page’s window and suite as trends-{project}-{days}d.pdf', async () => {
+      const blob = new Blob(['%PDF-1.4'], { type: 'application/pdf' })
+      reportService.downloadTrendsPdf.mockResolvedValue(blob)
+      await renderPage()
+      fireEvent.change(screen.getByDisplayValue('All suites'), { target: { value: 'Checkout' } })
+      openMore()
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Export PDF' }))
+      await waitFor(() => expect(download.downloadBlob).toHaveBeenCalledTimes(1))
+      expect(reportService.downloadTrendsPdf).toHaveBeenCalledWith({ projectId: 'proj-1', days: 14, suite: 'Checkout', release: null })
+      expect(download.downloadBlob).toHaveBeenCalledWith(blob, 'trends-project_one-14d.pdf')
+    })
+
+    it('All Projects: "Export PDF (pick a project)" is disabled and asks nothing', async () => {
+      role.isQaLead = true
+      await allProjects()
+      await renderPage()
+      openMore()
+      expect(screen.getByRole('menuitem', { name: 'Export PDF (pick a project)' })).toBeDisabled()
+      expect(screen.getByRole('menuitem', { name: 'Email report… (pick a project)' })).toBeDisabled()
+      expect(reportService.downloadTrendsPdf).not.toHaveBeenCalled()
+    })
+  })
+
+  // ── TRND-04: notes on the timeline ──────────────────────────────────────
+  describe('TRND-04 timeline notes', () => {
+    const note = (over: Record<string, unknown>) => ({
+      id: 'n1',
+      project_id: 'proj-1',
+      starts_on: '2026-09-10',
+      ends_on: '2026-09-12',
+      text: 'release freeze',
+      suite_name: null,
+      created_by_name: 'Ada',
+      can_edit: false,
+      created_at: null,
+      updated_at: null,
+      ...over,
+    })
+
+    it('asks the window’s notes (its first and last UTC day; the suite only when one is selected)', async () => {
+      await renderPage()
+      expect(timeline.calls[timeline.calls.length - 1]).toEqual([{ from: await dayBack(13), to: await dayBack(0) }, null])
+      fireEvent.change(screen.getByDisplayValue('All suites'), { target: { value: 'Checkout' } })
+      expect(timeline.calls[timeline.calls.length - 1]).toEqual([{ from: await dayBack(13), to: await dayBack(0) }, 'Checkout'])
+    })
+
+    it('draws the window’s notes on the hero, with the Notes (n) chip; a suite note only under its suite', async () => {
+      const from = await dayBack(5)
+      const to = await dayBack(3)
+      timeline.notes = [
+        note({ id: 'freeze', starts_on: from, ends_on: to }),
+        note({ id: 'checkout-only', starts_on: to, ends_on: to, text: 'checkout migration', suite_name: 'Checkout' }),
+      ]
+      await renderPage()
+      expect(lastTimeSeries().model.notes.map((n) => [n.id, n.kind, n.from, n.to])).toEqual([['freeze', 'band', from, to]])
+      expect(screen.getByRole('button', { name: 'Notes (1)' })).toBeInTheDocument()
+      fireEvent.change(screen.getByDisplayValue('All suites'), { target: { value: 'Checkout' } })
+      expect(lastTimeSeries().model.notes.map((n) => n.id)).toEqual(['freeze', 'checkout-only'])
+      expect(screen.getByRole('button', { name: 'Notes (2)' })).toBeInTheDocument()
+    })
+
+    it('a malformed notes answer draws no note and no error', async () => {
+      timeline.notes = 'garbage'
+      await renderPage()
+      expect(lastTimeSeries().model.notes).toEqual([])
+      expect(screen.queryByRole('button', { name: /^Notes \(/ })).toBeNull()
+      expect(screen.getByRole('heading', { name: 'Pass rate trend' })).toBeInTheDocument()
+    })
+
+    it('a QA engineer pins a note from the cadence card, a dragged range, or the gap callout', async () => {
+      role.isQaEngineer = true
+      await renderPage('/trends', [10, 11, 12, 13])
+      const { utcDayIso } = await import('@/utils/calendarDay')
+      fireEvent.click(screen.getByRole('button', { name: 'Pin a note' }))
+      expect(dialogs.pin[dialogs.pin.length - 1]).toMatchObject({ range: { from: utcDayIso(), to: utcDayIso() }, note: null, suite: null })
+      // A mouse range on the strip: those days.
+      const cells = [...document.querySelectorAll<HTMLElement>('[data-day-cell]')]
+      fireEvent.mouseDown(cells[3], { button: 0 })
+      fireEvent.mouseEnter(cells[5])
+      fireEvent.mouseUp(cells[5])
+      expect(dialogs.pin[dialogs.pin.length - 1]).toMatchObject({ range: { from: await dayBack(10), to: await dayBack(8) } })
+      // The gap callout: the server's gap dates.
+      fireEvent.click(screen.getByRole('button', { name: 'Pin a note for these days' }))
+      expect(dialogs.pin[dialogs.pin.length - 1]).toMatchObject({ range: { from: await dayBack(9), to: await dayBack(0) } })
+    })
+
+    it('a viewer sees every note and none of the controls', async () => {
+      timeline.notes = [note({ starts_on: await dayBack(4), ends_on: await dayBack(4) })]
+      await renderPage('/trends', [10, 11, 12, 13])
+      expect(screen.queryByRole('button', { name: /Pin a note/ })).toBeNull()
+      expect(lastTimeSeries().model.notes).toHaveLength(1)
+      // Dragging the strip pins nothing.
+      const cells = [...document.querySelectorAll<HTMLElement>('[data-day-cell]')]
+      fireEvent.mouseDown(cells[3], { button: 0 })
+      fireEvent.mouseUp(cells[3])
+      expect(dialogs.pin).toHaveLength(0)
+    })
+
+    it('All Projects: no notes asked, none drawn, no controls', async () => {
+      role.isQaEngineer = true
+      timeline.notes = [note({ starts_on: await dayBack(4), ends_on: await dayBack(4) })]
+      await allProjects()
+      await renderPage()
+      expect(timeline.calls.every(([range]) => range === null)).toBe(true)
+      expect(screen.queryByRole('button', { name: /Pin a note/ })).toBeNull()
+    })
+  })
+
+  // ── TRND-10: customised charts in saved views ───────────────────────────
+  describe('TRND-10 saved views carry the customised charts', () => {
+    async function saveView(name: string) {
+      fireEvent.click(document.querySelector('[data-saved-views-trigger]') as HTMLElement)
+      fireEvent.change(await screen.findByPlaceholderText('e.g. Payments release watch'), { target: { value: name } })
+      fireEvent.click(screen.getByRole('button', { name: 'Save view' }))
+      const views = await import('@/services/savedViewsService')
+      await waitFor(() => expect(views.createSavedView).toHaveBeenCalledTimes(1))
+      return (views.createSavedView as ReturnType<typeof vi.fn>).mock.calls[0][0] as { filters: Record<string, unknown> }
+    }
+
+    it('nothing customised: the saved filters are exactly today’s, with no charts key', async () => {
+      await renderPage()
+      const body = await saveView('Plain')
+      expect(body.filters).not.toHaveProperty('charts')
+      expect(body.filters).toMatchObject({ kind: 'report_view', page: 'trends', window: 14 })
+    })
+
+    it('a customised Compare is saved under filters.charts["trends.compare"]', async () => {
+      await renderPage()
+      act(() => chartConfigStore.set('trends.compare', { version: 1, by: null, metric: 'failures', suites: ['checkout', 'search'] }))
+      const body = await saveView('Failures')
+      expect(body.filters.charts).toEqual({ 'trends.compare': { version: 1, by: null, metric: 'failures', suites: ['checkout', 'search'] } })
+    })
+
+    it('this browser’s stored customisation is saved even before its chart mounts', async () => {
+      window.localStorage.setItem(
+        'testlookup.chartConfig.trends.suite-series',
+        JSON.stringify({ version: 1, metric: 'executions', seriesBy: 'suite', bucket: 'day', topN: 5 }),
+      )
+      await renderPage()
+      const body = await saveView('Mine')
+      expect(body.filters.charts).toEqual({ 'trends.suite-series': { version: 1, metric: 'executions', seriesBy: 'suite', bucket: 'day', topN: 5 } })
+    })
+
+    it('opening a view applies its charts to the store and writes Compare’s chosen suites into the URL', async () => {
+      const views = await import('@/services/savedViewsService')
+      ;(views.listSavedViews as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: 'v1',
+          user_id: 'u2',
+          project_id: 'proj-1',
+          name: 'Teammate compare',
+          description: null,
+          page: 'trends',
+          filters: {
+            kind: 'report_view',
+            page: 'trends',
+            window: 14,
+            charts: { 'trends.compare': { version: 1, by: 'suite', metric: 'failures', suites: ['billing', 'checkout'] } },
+          },
+          is_shared: true,
+          is_default: false,
+          created_at: '2026-10-01T00:00:00Z',
+          updated_at: null,
+        },
+      ])
+      chartConfigStore.set('trends.suite-series', { version: 1, metric: 'failures', seriesBy: 'suite', bucket: 'day', topN: 3 })
+      await renderPage('/trends?tab=by-suite')
+      fireEvent.click(document.querySelector('[data-saved-views-trigger]') as HTMLElement)
+      fireEvent.click(await screen.findByRole('button', { name: /Teammate compare/ }))
+      expect(chartConfigStore.get('trends.compare')).toEqual({ version: 1, by: 'suite', metric: 'failures', suites: ['billing', 'checkout'] })
+      // A view is the whole configuration: the suite series it does not carry goes back to its default.
+      expect(chartConfigStore.get('trends.suite-series')).toBeNull()
+      expect(useChartConfigStore.getState().viewToken).toBe(1)
+      await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('cmp_suite=billing&cmp_suite=checkout'))
+      expect(screen.getByTestId('location')).toHaveTextContent('tab=by-suite')
+    })
   })
 })

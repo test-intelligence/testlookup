@@ -1,6 +1,8 @@
-"""Reports router — PDF export, evidence bundle, share links, email trends."""
+"""Reports router — PDF export, evidence bundle, share links, the Trends email and PDF."""
+import asyncio
 import io
 import logging
+import re
 import uuid
 from typing import Optional
 
@@ -19,17 +21,28 @@ from app.core.deps import (
     require_run_access,
     resolve_project_scope,
 )
-from app.db.postgres import get_db
-from app.models.postgres import AccessAuditLog, ReportShareLink, TestRun, User, UserRole
-from app.services import report_service
-from app.services.analytics_scope import ScopePolicy, resolve_analytics_scope
+from app.db.postgres import get_db, release_read_connection
+from app.models.postgres import AccessAuditLog, ProjectMember, ReportShareLink, TestRun, User, UserRole
+from app.services import report_service, trends_report_pdf, trends_report_service
+from app.services.activity.service import ActorRef, record as record_activity
+from app.services.analytics_scope import AnalyticsScope, ScopePolicy, analytics_scope, resolve_analytics_scope
+from app.services.notification import egress, email_service
 
 logger = logging.getLogger("routers.reports")
 
 router = APIRouter(prefix="/api/v1/reports", tags=["Reports"])
 
 
-# ── Legacy email trends ─────────────────────────────────────────────────────
+# ── The Trends report: email (QA lead) and PDF (any member) — W08 TRND-01 ──
+
+
+#: At most this many distinct addresses per email; at most 5 typed ones.
+MAX_TRENDS_RECIPIENTS = 10
+NOT_A_MEMBER = "Every recipient must be a member of this project."
+NO_RECIPIENT = "Choose at least one recipient."
+TOO_MANY_RECIPIENTS = "Choose at most 10 recipients."
+EMAIL_NOT_CONFIGURED = "Email is not configured — Settings › Notifications."
+RELAY_TIMEOUT = "The mail relay did not answer within 20 s; the report may still arrive."
 
 
 class EmailTrendsRequest(BaseModel):
@@ -41,32 +54,108 @@ class EmailTrendsRequest(BaseModel):
     release_id: str | list[str] | None = None
     #: VIZ-308: and to its suites (OR). Omitted = every suite.
     suite_name: list[str] | None = None
-    recipient_email: EmailStr
+    #: The legacy single typed address (integration callers); optional since W08.
+    recipient_email: Optional[EmailStr] = None
+    #: W08: typed addresses (the route is QA_LEAD+), egress-gated offline.
+    recipient_emails: list[EmailStr] = Field(default_factory=list, max_length=5)
+    #: W08: project members by user id; each must be an active, human member of
+    #: THIS project (an unknown id answers exactly like a non-member's).
+    recipient_user_ids: list[uuid.UUID] = Field(default_factory=list, max_length=10)
     chart_ids: list[str] = []
+
+
+class EmailTrendsResponse(BaseModel):
+    status: str
+    #: Distinct addresses the relay accepted the message for.
+    sent_to: int
+    #: Legacy: the first address (the old response's key).
+    recipient: Optional[str] = None
+    window_days: int
+
+
+class EmailAvailability(BaseModel):
+    available: bool
+    #: ``not_configured`` | ``egress_blocked`` | ``None``.
+    code: Optional[str] = None
+    #: The text the dialog shows.
+    reason: Optional[str] = None
 
 
 #: The emailed report's scope: a project, a window of at most a year, and the
 #: same release and suite filters as the analytics routes (VIZ-308).
 _EMAIL_SCOPE = ScopePolicy(default_days=30, max_days=365, project_required=True)
+#: The Trends PDF: the page's window (``/metrics/trends``: 1-90 days, default 14).
+_TRENDS_PDF_SCOPE = ScopePolicy(default_days=14, max_days=90, project_required=True)
 
 
-@router.post("/email-trends")
+def _unprocessable(detail: str) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail)
+
+
+async def _recipient_addresses(db: AsyncSession, project_id: uuid.UUID, body: EmailTrendsRequest) -> list[str]:
+    """Member emails, then typed addresses, then the legacy one: lower-cased,
+    de-duplicated, in that order. The member ids are resolved in ONE statement
+    on the request session; any id it does not return (unknown, another
+    project's, inactive, a service or synthetic account) is the same 422."""
+    wanted = list(dict.fromkeys(body.recipient_user_ids))
+    member_emails: list[str] = []
+    if wanted:
+        rows = (await db.execute(
+            select(User.id, User.email)
+            .join(ProjectMember, ProjectMember.user_id == User.id)
+            .where(
+                ProjectMember.project_id == project_id,
+                User.id.in_(wanted),
+                User.is_active.is_(True),
+                User.is_service_account.isnot(True),
+                User.is_synthetic.isnot(True),
+            )
+        )).all()
+        found = {row.id: row.email for row in rows}
+        if any(uid not in found for uid in wanted):
+            raise _unprocessable(NOT_A_MEMBER)
+        member_emails = [found[uid] for uid in wanted]
+    typed = list(body.recipient_emails) + ([body.recipient_email] if body.recipient_email else [])
+    addresses = list(dict.fromkeys(str(a).strip().lower() for a in [*member_emails, *typed] if str(a).strip()))
+    if not addresses:
+        raise _unprocessable(NO_RECIPIENT)
+    if len(addresses) > MAX_TRENDS_RECIPIENTS:
+        raise _unprocessable(TOO_MANY_RECIPIENTS)
+    return addresses
+
+
+async def _relay_status() -> tuple[Optional[dict], Optional[str], Optional[str]]:
+    """``(cfg, code, reason)`` of the relay saved in Settings › Notifications
+    (else the environment's): the config and no code when email can go, else
+    the code and the reason. Opens its own session (``get_smtp_config``):
+    callers release theirs first."""
+    cfg = await email_service.get_smtp_config()
+    host = email_service.smtp_host(cfg)
+    if not cfg.get("enabled") or not host:
+        return None, "not_configured", EMAIL_NOT_CONFIGURED
+    try:
+        await egress.assert_delivery_allowed_async("SMTP", host, deployment_wide=True)
+    except egress.OfflineEgressBlocked as exc:
+        return None, "egress_blocked", str(exc)
+    return cfg, None, None
+
+
+@router.post("/email-trends", response_model=EmailTrendsResponse)
 @analytics_error_contract
 async def email_trends_report(
     body: EmailTrendsRequest = Body(...),
     db: AsyncSession = Depends(get_db),
-    # QA_LEAD: the report leaves the system for an address nobody verifies,
-    # so no later access control can contain it. Membership alone let a
-    # VIEWER mail project data anywhere, as often as they liked
-    # (E2E 2026-10-10). No page calls this; it is an integration endpoint.
+    # QA_LEAD: the report leaves the system, so no later access control can
+    # contain it. Membership alone let a VIEWER mail project data anywhere, as
+    # often as they liked (E2E 2026-10-10). No project-bound key opts in.
     current_user: User = Depends(require_role(UserRole.QA_LEAD)),
 ):
-    """Generate and email a trends report for the specified project and period."""
-    # The caller supplies BOTH the project and the destination address, and
-    # nothing checked either -- so any authenticated user could have another
-    # tenant's trend report mailed to an address of their choosing. Unlike the
-    # other holes in this class the data leaves the system entirely, so no
-    # later access control can contain it.
+    """Email the Trends report of one project (the page's window, releases and
+    suites) to project members and up to 5 typed addresses, through the relay
+    saved in Settings › Notifications. One message for every recipient."""
+    # The caller supplies BOTH the project and the destination addresses: the
+    # project is verified before anything is read or built, so another tenant's
+    # trends can never be mailed (TestEmailTrendsIsScoped orders this call).
     pinned, _ = await resolve_project_scope(db, current_user, body.project_id)
     # VIZ-308: the releases and suites are authorised and parsed exactly as the
     # analytics routes do it, and the email carries the context block those
@@ -76,7 +165,102 @@ async def email_trends_report(
         project_id=str(pinned) if pinned is not None else body.project_id,
         release_id=body.release_id, suite_name=body.suite_name, days=body.days,
     )
-    return await report_service.email_trends_report(db, body, scope)
+    if scope.project_id is None:  # pragma: no cover - the policy requires a project
+        raise _unprocessable("Select a single project.")
+    addresses = await _recipient_addresses(db, scope.project_id, body)
+    payload = await trends_report_service.build_trends_report(db, scope)
+    payload["chart_ids"] = list(body.chart_ids)
+    html = report_service.build_trends_email_html(payload)
+    subject = f"Trends report — {payload['project_name']} — last {scope.window_days} days"
+
+    # Nothing below needs the database until the ledger row, and the relay may
+    # take up to 20 s: hand the connection back first (get_smtp_config opens a
+    # session of its own on the same pool).
+    await release_read_connection(db)
+    cfg, _code, reason = await _relay_status()
+    if cfg is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=reason)
+    try:
+        await egress.assert_recipients_allowed_async(email_service.smtp_host(cfg), addresses)
+    except egress.OfflineEgressBlocked as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from None
+    try:
+        await report_service.send_trends_email(cfg, addresses, subject, html)
+    except asyncio.TimeoutError:
+        # A timeout is not a failure: the relay may still deliver. No ledger
+        # row, no retry.
+        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=RELAY_TIMEOUT) from None
+    except egress.OfflineEgressBlocked as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from None
+    except Exception as exc:  # noqa: BLE001 -- the relay's text can carry its banner: name the type only
+        logger.warning("trends report email refused by the relay: %s", type(exc).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"The mail relay refused the report ({type(exc).__name__}).",
+        ) from None
+
+    await record_activity(
+        db,
+        project_id=scope.project_id,
+        event_type="report.emailed",
+        actor=ActorRef.from_user(current_user),
+        entity_id=str(scope.project_id),
+        entity_type="export",
+        entity_label=f"Trends, last {scope.window_days} days",
+        # The count, never an address: addresses are personal data.
+        context={"count": len(addresses), "window_days": scope.window_days},
+    )
+    await db.commit()
+    logger.info("trends report emailed: recipients=%d days=%d", len(addresses), scope.window_days)
+    return EmailTrendsResponse(
+        status="sent", sent_to=len(addresses), recipient=addresses[0], window_days=scope.window_days,
+    )
+
+
+@router.get("/email-trends/availability", response_model=EmailAvailability)
+async def email_trends_availability(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+):
+    """Can the Trends report be emailed right now? The relay saved in Settings ›
+    Notifications must be enabled, have a host, and pass the offline egress
+    gate (the recipients are judged when sending). Reads nothing of a project."""
+    await release_read_connection(db)
+    cfg, code, reason = await _relay_status()
+    return EmailAvailability(available=cfg is not None, code=code, reason=reason)
+
+
+def _slug(name: Optional[str]) -> str:
+    """The Summary export's file-name rule (``report_export_service``)."""
+    slug = re.sub(r"[^a-z0-9_-]+", "_", (name or "project").lower()).strip("_")
+    return slug or "project"
+
+
+@router.get("/trends/pdf")
+@analytics_error_contract
+async def export_trends_report_pdf(
+    scope: AnalyticsScope = Depends(analytics_scope(_TRENDS_PDF_SCOPE)),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """The Trends report as a PDF (any member): the page's KPIs, verdict, daily
+    series and suite table for its window, releases and suites. Audited."""
+    payload = await trends_report_service.build_trends_report(db, scope)
+    # ReportLab is synchronous and CPU-bound: keep the event loop free.
+    content = await run_in_threadpool(trends_report_pdf.render_trends_report_pdf, payload)
+    _stage_audit(db, "report_trends_export_pdf", current_user, scope.project_id, {
+        "days": scope.window_days,
+        "release_ids": list(scope.release_ids),
+        "suite_names": list(scope.suite_names),
+        "size_bytes": len(content),
+    })
+    await db.commit()
+    filename = f"trends-{_slug(payload.get('project_name'))}-{scope.window_days}d.pdf"
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ── ENT-03: PDF Export ──────────────────────────────────────────────────────

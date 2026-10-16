@@ -24,6 +24,7 @@ import {
   heatmapFrameWorstFirst,
 } from '@/components/charts/__fixtures__/heatmapFrame'
 import { __resetChartConcurrency } from '@/services/chartApi'
+import { chartConfigStore, useChartConfigStore } from '@/store/chartConfigStore'
 import { ONE_DAY_HEATMAP_REASON } from './HeatmapSection.model'
 
 const get = vi.hoisted(() => vi.fn())
@@ -157,6 +158,9 @@ const section = (id: string) => document.querySelector(`[data-catalogue-section=
 beforeEach(() => {
   probe.enabled = []
   durationFrames.length = 0
+  // TRND-10: a fresh saved-view store and no stored customisation per test.
+  useChartConfigStore.setState({ applied: {}, viewToken: 0 })
+  window.localStorage.removeItem('testlookup.chartConfig.trends.compare')
   responses = {
     pass_rate: { meta: META, series: suiteSeries(['checkout', 'search', 'billing']) },
     duration_p50: { meta: META, series: durationSeries('p50') },
@@ -208,6 +212,55 @@ describe('TrendsCatalogue (VIZ-408, Trends)', () => {
       expect(within(section('trends-multi-series') as HTMLElement).getByRole('heading', { name: SUITE_SERIES_TITLE })).toBeInTheDocument(),
     )
     expect(window.localStorage.getItem(KEY)).toBeNull()
+  })
+
+  it('TRND-10: Compare has its own Customise (one panel open at a time); its Metric changes the request; the toolbar lost its selects', async () => {
+    window.localStorage.removeItem('testlookup.chartConfig.trends.compare')
+    responses.failures = { meta: META, series: suiteSeries(['checkout', 'search', 'billing']) }
+    renderCatalogue({ days: 14 })
+    await waitFor(() => expect(compareCalls()).toHaveLength(1))
+    const compare = section('trends-compare') as HTMLElement
+    // Compare by and Metric moved into the panel: the toolbar keeps Suites, Releases and Customise.
+    expect(compare.querySelector('[data-compare-by], [data-compare-metric]')).toBeNull()
+    expect(within(compare).queryByLabelText('Metric')).toBeNull()
+    expect(within(compare).queryByLabelText('Compare by')).toBeNull()
+
+    // The suite series' panel first, then Compare's: one panel at a time.
+    fireEvent.click(within(section('trends-multi-series') as HTMLElement).getByRole('button', { name: 'Customise' }))
+    expect(screen.getAllByRole('complementary', { name: /^Customise / })).toHaveLength(1)
+    fireEvent.click(within(compare).getByRole('button', { name: 'Customise' }))
+    const panels = screen.getAllByRole('complementary', { name: /^Customise / })
+    expect(panels).toHaveLength(1)
+    expect(panels[0]).toHaveAccessibleName('Customise Compare')
+    const panel = panels[0]
+    // Compare by offers only what the selection (three suites, no release) supports.
+    const by = within(panel).getByLabelText('Compare by') as HTMLSelectElement
+    expect([...by.options].map((o) => o.value)).toEqual(['suite'])
+    expect(panel.querySelector('[data-customise-reasons]')).toHaveTextContent(/More than 8 lines: More than 8 lines stop being readable/)
+
+    fireEvent.change(within(panel).getByLabelText('Metric'), { target: { value: 'failures' } })
+    await waitFor(() =>
+      expect(compareCalls().slice(-1)[0]).toMatchObject({ metric: 'failures', group_by: ['day', 'suite'], suite_name: ['billing', 'checkout', 'search'] }),
+    )
+    fireEvent.change(within(panel).getByLabelText('Title'), { target: { value: 'Busy suites' } })
+    await waitFor(() => expect(within(compare).getByRole('heading', { name: 'Busy suites' })).toBeInTheDocument())
+    // The saved-view store carries the customised Compare (no selection: it was never chosen).
+    expect(chartConfigStore.nonDefault(['trends.compare'])).toEqual({
+      'trends.compare': { version: 1, by: null, metric: 'failures', title: 'Busy suites' },
+    })
+    // Reset restores the chart as shipped.
+    fireEvent.click(within(panel).getByRole('button', { name: 'Reset to default' }))
+    await waitFor(() => expect(within(compare).getByRole('heading', { name: 'Compare' })).toBeInTheDocument())
+    expect(chartConfigStore.nonDefault(['trends.compare'])).toBeNull()
+  })
+
+  it('TRND-10: a view applied while Compare is drawn re-reads its metric at once', async () => {
+    renderCatalogue({ days: 14 })
+    responses.executions = { meta: META, series: suiteSeries(['checkout', 'search', 'billing']) }
+    await waitFor(() => expect(compareCalls()).toHaveLength(1))
+    act(() => chartConfigStore.applyView({ 'trends.compare': { version: 1, by: null, metric: 'executions' } }, ['trends.suite-series', 'trends.compare']))
+    await waitFor(() => expect(compareCalls().slice(-1)[0]).toMatchObject({ metric: 'executions' }))
+    expect(section('trends-compare')).toHaveAttribute('data-compare-metric-active', 'executions')
   })
 
   it('the heatmap asks /analytics/heatmap for suite x day; the suite series feeds the multi-series alone', async () => {

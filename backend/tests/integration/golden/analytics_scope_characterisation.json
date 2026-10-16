@@ -5,6 +5,8 @@
    "suites": [
     {
      "failed": 19,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_run_id": "<run:viz-3044>",
      "pass_rate": 92.8,
      "passed": 244,
      "project_count": 1,
@@ -15,6 +17,8 @@
     },
     {
      "failed": 24,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "last_run_id": "<run:viz-3043>",
      "pass_rate": 88.6,
      "passed": 186,
      "project_count": 1,
@@ -25,6 +29,8 @@
     },
     {
      "failed": 10,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "last_run_id": "<run:viz-3043>",
      "pass_rate": 93.9,
      "passed": 155,
      "project_count": 1,
@@ -35,6 +41,8 @@
     },
     {
      "failed": 5,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "last_run_id": "<run:viz-3043>",
      "pass_rate": 96.8,
      "passed": 152,
      "project_count": 1,
@@ -45,6 +53,8 @@
     },
     {
      "failed": 4,
+     "last_run_at": "2026-08-05T10:09:44.364948+00:00",
+     "last_run_id": "<run:viz-3016>",
      "pass_rate": 91.1,
      "passed": 41,
      "project_count": 1,
@@ -55,6 +65,8 @@
     },
     {
      "failed": 0,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "last_run_id": "<run:viz-3043>",
      "pass_rate": null,
      "passed": 0,
      "project_count": 1,
@@ -80,6 +92,8 @@
    "suites": [
     {
      "failed": 19,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_run_id": "<run:viz-3044>",
      "pass_rate": 92.8,
      "passed": 244,
      "project_count": 1,
@@ -90,6 +104,8 @@
     },
     {
      "failed": 24,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "last_run_id": "<run:viz-3043>",
      "pass_rate": 88.6,
      "passed": 186,
      "project_count": 1,
@@ -100,6 +116,8 @@
     },
     {
      "failed": 10,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "last_run_id": "<run:viz-3043>",
      "pass_rate": 93.9,
      "passed": 155,
      "project_count": 1,
@@ -110,6 +128,8 @@
     },
     {
      "failed": 5,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "last_run_id": "<run:viz-3043>",
      "pass_rate": 96.8,
      "passed": 152,
      "project_count": 1,
@@ -120,6 +140,8 @@
     },
     {
      "failed": 4,
+     "last_run_at": "2026-08-05T10:09:44.364948+00:00",
+     "last_run_id": "<run:viz-3016>",
      "pass_rate": 91.1,
      "passed": 41,
      "project_count": 1,
@@ -130,6 +152,8 @@
     },
     {
      "failed": 0,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "last_run_id": "<run:viz-3043>",
      "pass_rate": null,
      "passed": 0,
      "project_count": 1,
@@ -155,6 +179,8 @@
    "suites": [
     {
      "failed": 7,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "last_run_id": "<run:viz-3043>",
      "pass_rate": 93.1,
      "passed": 95,
      "project_count": 1,
@@ -165,6 +191,8 @@
     },
     {
      "failed": 14,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "last_run_id": "<run:viz-3043>",
      "pass_rate": 83.5,
      "passed": 71,
      "project_count": 1,
@@ -175,6 +203,8 @@
     },
     {
      "failed": 4,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "last_run_id": "<run:viz-3043>",
      "pass_rate": 93.9,
      "passed": 62,
      "project_count": 1,
@@ -185,6 +215,8 @@
     },
     {
      "failed": 1,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "last_run_id": "<run:viz-3043>",
      "pass_rate": 98.4,
      "passed": 61,
      "project_count": 1,
@@ -195,6 +227,8 @@
     },
     {
      "failed": 0,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "last_run_id": "<run:viz-3043>",
      "pass_rate": null,
      "passed": 0,
      "project_count": 1,
@@ -220,6 +254,8 @@
    "suites": [
     {
      "failed": 7,
+     "last_run_at": "2026-09-19T16:03:03.280888+00:00",
+     "last_run_id": "<run:viz-3043>",
      "pass_rate": 93.1,
      "passed": 95,
      "project_count": 1,
@@ -245,6 +281,8 @@
    "suites": [
     {
      "failed": 19,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_run_id": "<run:viz-3044>",
      "pass_rate": 92.8,
      "passed": 244,
      "project_count": 1,
@@ -270,6 +308,8 @@
    "suites": [
     {
      "failed": 19,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_run_id": "<run:viz-3044>",
      "pass_rate": 92.8,
      "passed": 244,
      "project_count": 1,
@@ -295,6 +335,8 @@
    "suites": [
     {
      "failed": 3,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_run_id": "<run:viz-3044>",
      "pass_rate": 89.7,
      "passed": 26,
      "project_count": 1,
@@ -305,6 +347,8 @@
     },
     {
      "failed": 2,
+     "last_run_at": "2026-09-14T09:37:36.773667+00:00",
+     "last_run_id": "<run:viz-3039>",
      "pass_rate": 86.7,
      "passed": 13,
      "project_count": 1,
@@ -315,6 +359,8 @@
     },
     {
      "failed": 1,
+     "last_run_at": "2026-09-14T09:37:36.773667+00:00",
+     "last_run_id": "<run:viz-3039>",
      "pass_rate": 91.7,
      "passed": 11,
      "project_count": 1,
@@ -325,6 +371,8 @@
     },
     {
      "failed": 1,
+     "last_run_at": "2026-09-14T09:37:36.773667+00:00",
+     "last_run_id": "<run:viz-3039>",
      "pass_rate": 90.9,
      "passed": 10,
      "project_count": 1,
@@ -335,6 +383,8 @@
     },
     {
      "failed": 0,
+     "last_run_at": "2026-07-03T10:10:01.305275+00:00",
+     "last_run_id": "<run:viz-3005>",
      "pass_rate": 100.0,
      "passed": 3,
      "project_count": 1,
@@ -345,6 +395,8 @@
     },
     {
      "failed": 0,
+     "last_run_at": "2026-09-14T09:37:36.773667+00:00",
+     "last_run_id": "<run:viz-3039>",
      "pass_rate": null,
      "passed": 0,
      "project_count": 1,
@@ -370,6 +422,8 @@
    "suites": [
     {
      "failed": 3,
+     "last_run_at": "2026-09-21T11:35:00+00:00",
+     "last_run_id": "<run:viz-3044>",
      "pass_rate": 89.7,
      "passed": 26,
      "project_count": 1,

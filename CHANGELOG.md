@@ -52,6 +52,23 @@ locally by default.
 
 ### Added
 
+- **Trends, Coverage and Value metrics tell their own story** (deferred-features
+  wave W08, TRND-01, -02, -04, -06, -07, -08, -10 to -13). Trends can be sent:
+  **Export PDF** for everyone and **Email report…** for QA leads, through the
+  relay saved in Settings › Notifications. Its verdict, score and callouts now
+  come from the server (`GET /api/v1/analytics/trend-summary`), suite rows gain
+  sparklines and compare links, and anyone from QA engineer up can **pin a
+  timeline note** to a day or a range (migration 0218) that shows on every
+  chart of that window. Coverage shows when each suite last ran, a **History**
+  tab of daily catalogue snapshots (migration 0217; a nightly job fills
+  missing days), and the tests behind the untagged callout with a way to file
+  them. Value metrics can be split **By team**, with the teams adding up to the
+  headline. The coverage map pages through "Other" and counts the tests that
+  need review. Charts can be customised and the choices saved with a view; the
+  Explorer splits panels by branch, environment, status, failure category or
+  ingestion source; and SVG export of the heatmap, coverage map, scatter and
+  Sankey is a true vector with a light-background option.
+
 - **Runs and failures answer more at a glance; a 14-day window everywhere**
   (deferred-features wave W07, WIN-01, FAIL-01 to FAIL-08, FAIL-10). Every page
   with a time window now offers **14d** (Summary, Defects, My failures, Value

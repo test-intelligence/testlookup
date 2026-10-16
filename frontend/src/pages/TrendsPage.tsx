@@ -6,8 +6,14 @@
  *             subtitle (project · suite · window · latest run suite ·
  *             refreshed), the help **?**, and on its right the page's one
  *             filter row: the suite filter, the shared `WindowPicker`
- *             (24h/7d/14d/30d/90d, the global window store) and the saved
- *             Views menu.
+ *             (24h/7d/14d/30d/90d, the global window store), the saved
+ *             Views menu and the **⋯** (W08): Export PDF (every role; the
+ *             page's window, suite and release, `GET /reports/trends/pdf`),
+ *             Email report… (QA lead+, `EmailReportDialog`: members and up to
+ *             5 typed addresses, the relay saved in Settings › Notifications)
+ *             and Compare runs (the latest two runs of the page's suite, else
+ *             the manual form; TRND-01, TRND-02). In All Projects each reads
+ *             "(pick a project)" and is disabled.
  *   KPIs    → `KpiStrip`, 5 compact tiles: Pass rate · Days with runs ·
  *             Executions · Suites · Last run. Pass rate and Executions carry
  *             a kit `Sparkline` of the window's real per-day series (a day
@@ -16,20 +22,32 @@
  *             its `Trend metrics` landmark.
  *   Hero    → the Pass rate trend (`data-primary`): kit
  *             `TimeSeriesChartFrame` with the 90 % target line, the trend
- *             overlays, the range brush and release markers.
+ *             overlays, the range brush, release markers and the window's
+ *             timeline notes (TRND-04: a band per range, a dashed line per
+ *             day, the `Notes (n)` chip in the frame's toolbar when there are
+ *             any; a suite note only under its suite).
  *   Score   → a collapsed `Disclosure` ("How this score is computed"): the
  *             verdict (HEALTHY / MIXED / INSUFFICIENT / DECLINING / PENDING)
  *             and its words, the 0-100 trend-confidence score on the kit's
  *             marker `GaugeBar` and the 2×2 weighted dimension grid (Data
  *             coverage 40 % / Sample size 25 % / Variance stability 20 % /
  *             Tag quality 15 %). Its header states the verdict and the score.
+ *             All of it is the SERVER's trend summary (TRND-06,
+ *             `GET /analytics/trend-summary`, `useTrendSummary`); missing or
+ *             malformed, the disclosure reads "Score not available" and the
+ *             rest of the page is unchanged.
  *   Tabs    → `?tab=` (`useTabParam`):
  *     Volume    (default) Run cadence (a kit `DayStrip`, presence mode,
- *               failing days striped, today and the gap edge marked) → the
- *               schedule-paused callout (only when the gap is real) → Daily
+ *               failing days striped, today and the gap edge marked; a QA
+ *               engineer+ drags a range on it, or uses its `Pin a note`, to
+ *               pin a note) → the schedule-paused callout (only when the
+ *               server's gap is real; `Pin a note for these days`) → Daily
  *               breakdown (kit `StackedColumnChartFrame`).
- *     By suite  Pass rate by suite and Compare (the catalogue) beside the
- *               Suite pass rates card.
+ *     By suite  Pass rate by suite and Compare (the catalogue; each has
+ *               Customise, TRND-10) beside the Suite pass rates card, whose
+ *               rows carry a sparkline of the suite's daily pass rate (the
+ *               SAME request as "Pass rate by suite", `useSuiteSparklines`)
+ *               and a compare-the-latest-two-runs link (TRND-06, TRND-02).
  *     Execution time (`?tab=durations`, the id kept from when it was
  *               "Durations"; EXEC-04b) — the execution-metrics section (wall
  *               clock vs summed test time, the per-suite table, regressions,
@@ -45,25 +63,42 @@
  *
  * P2 (UX redesign, "remove the noise"): the invented 3-stage workflow ribbon,
  * the provenance footer, the recommended-actions card, the widget picker and
- * every control that only raised a not-built toast (Export PDF, Email report,
- * Resume schedule, Compare runs) are gone: the page shows only what it does.
+ * every control that only raised a not-built toast are gone: the page shows
+ * only what it does. Export PDF, Email report, Compare runs and pinning a note
+ * came back in W08 as built features; Resume schedule did not.
  *
  * Catalogue (VIZ-408, Wave 2.6): a lazy chunk with the suite series, Compare,
  * the duration band and the suite x day heatmap (each section asks for its
  * own data once near). Since Phase D (S3/S4) the page asks no chart flag. It
  * is mounted only in a tab that shows it, with that tab's sections
- * (`CATALOGUE_TAB_SECTIONS`, the catalogue's `sections` prop).
+ * (`CATALOGUE_TAB_SECTIONS`, the catalogue's `sections` prop). The page reads
+ * the suite series' parameters from `trendsCatalogueParams.ts`, never from the
+ * catalogue module (a static import would make its chunk eager).
  *
- * Data: derives every section from existing useTrendData + useDashboardSummary
- * + useCoverage. The README proposes dedicated trends / cadence / suites
- * endpoints — none exist yet, so the page reads the existing trend tail and
- * derives the remaining signals (variance, gap detection) deterministically.
+ * Saved views (TRND-10): a view stores the page's customised charts in
+ * `filters.charts` (`trends.suite-series`, `trends.compare`) — ONLY charts not
+ * at their default; with none customised the saved filters are exactly what
+ * they were (no `charts` key). Opening a view applies them
+ * (`chartConfigStore`) and writes Compare's chosen suites / releases back into
+ * the URL.
+ *
+ * Data: the KPI strip, the cadence strip, the hero and the daily breakdown
+ * come from useTrendData + useDashboardSummary + useCoverage (the cadence
+ * cells and totals are `computeCadenceModel`). The verdict, the confidence
+ * score and its dimensions, the variance and the run gap are the server's
+ * trend summary (TRND-06) — computed there over the same two reads, so the
+ * page, the PDF and the email cannot disagree. The timeline notes of the
+ * window are `useTimelineNotes` (one project only). Every secondary read is
+ * parsed by a guard: missing or malformed, its section says so and the page
+ * still renders.
  */
 import { suiteHrefByName } from '@/routing/suiteHref'
-import { Link } from 'react-router-dom'
-import { Suspense, useEffect, useMemo, useState } from 'react'
+import { compareRunsHref, latestTwoHref } from '@/routing/compareHref'
+import { Link, useSearchParams } from 'react-router-dom'
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import toast from 'react-hot-toast'
 import {
-  BarChart3, Calendar, Clock, Layers, Search, TrendingUp,
+  BarChart3, Calendar, Clock, Download, GitCompare, Layers, Mail, Search, StickyNote, TrendingUp,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import EmptyState from '@/components/ui/EmptyState'
@@ -73,6 +108,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { SectionErrorBoundary } from '@/components/ui/SectionErrorBoundary'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
 import PageHeader from '@/components/ui/PageHeader'
+import type { OverflowItem } from '@/components/ui/OverflowMenu'
 import WindowPicker from '@/components/ui/WindowPicker'
 import KpiStrip from '@/components/ui/KpiStrip'
 import MetricCard from '@/components/ui/MetricCard'
@@ -85,6 +121,13 @@ import { useDataFreshness } from '@/hooks/useDataFreshness'
 import { shortAgo } from '@/utils/formatters'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import { useCoverage, useDashboardSummary, useTrendData } from '@/hooks/useMetrics'
+import { usePermissions } from '@/hooks/usePermissions'
+import { useTrendSummary } from '@/hooks/useTrendSummary'
+import { useTimelineNotes } from '@/hooks/useTimelineNotes'
+import { downloadTrendsPdf, refusalText, trendsPdfFilename } from '@/services/trendsReportService'
+import type { TrendSummary, TrendSummaryDimension, TrendSummaryGap } from '@/types/trends'
+import { noteInputsFor, type TimelineNote } from '@/types/timelineNotes'
+import { downloadBlob } from '@/utils/download'
 import {
   daysBetweenDayIso, formatDayIso, relativeDayLabel, shiftDayIso, utcDayIso,
 } from '@/utils/calendarDay'
@@ -101,14 +144,32 @@ import Sparkline from '@/components/charts/Sparkline'
 import StackedColumnChartFrame from '@/components/charts/StackedColumnChartFrame'
 import { buildStackedColumnModel, STATUS_STACK_SERIES, utcDayLabel } from '@/components/charts/stackedColumnModel'
 import TimeSeriesChartFrame from '@/components/charts/TimeSeriesChartFrame'
+import TimelineNotesChip from '@/components/charts/TimelineNotesChip'
 import { buildTimeSeriesModel, timeSeriesFromTrends } from '@/components/charts/timeSeriesModel'
 import { readyState, type ChartState } from '@/components/charts/chartStateCore'
-import type { ReleaseInput, TimeSeriesPoint } from '@/components/charts/timeSeriesModel'
+import type { NoteInput, ReleaseInput, TimeSeriesPoint } from '@/components/charts/timeSeriesModel'
+import { SERIES_CONFIG_MODEL } from '@/components/charts/chartCustomiseModel'
+import { seedChartConfig } from '@/components/charts/useChartConfig'
 import { useReleases } from '@/hooks/useReleases'
 import SavedViewsMenu from '@/components/reports/SavedViewsMenu'
 import { useReportViewsMenu } from '@/components/reports/useReportViewsMenu'
+import type { SavedView } from '@/services/savedViewsService'
 import { lazyWithRetry } from '@/utils/lazyWithRetry'
 import type { TrendsSectionId } from '@/components/reports/catalogue/TrendsCatalogue'
+import LazySection from '@/components/reports/catalogue/LazySection'
+import {
+  COMPARE_CHART_KEY,
+  SUITE_SERIES_CHART_KEY,
+  TRENDS_CHART_KEYS,
+} from '@/components/reports/catalogue/trendsCatalogueParams'
+import {
+  COMPARE_CONFIG_MODEL,
+  readCompareConfig,
+  urlWithCompareConfig,
+} from '@/components/reports/catalogue/compareChartConfig'
+import { chartConfigStore, nonDefaultOf, useChartConfigStore } from '@/store/chartConfigStore'
+import EmailReportDialog from '@/components/trends/EmailReportDialog'
+import PinNoteDialog from '@/components/trends/PinNoteDialog'
 import type { CoverageSuite } from '@/types/analytics'
 import type { TrendPoint } from '@/types/metrics'
 
@@ -155,6 +216,12 @@ const CATALOGUE_TAB_SECTIONS: Record<CatalogueTab, readonly TrendsSectionId[]> =
 
 // ── Verdict ────────────────────────────────────────────────────────────────
 type Verdict = 'HEALTHY' | 'MIXED' | 'INSUFFICIENT' | 'DECLINING' | 'PENDING'
+const VERDICTS: readonly Verdict[] = ['HEALTHY', 'MIXED', 'INSUFFICIENT', 'DECLINING', 'PENDING']
+
+/** The server's verdict as one this page can draw; an unknown word is "not available". */
+function asVerdict(value: string | null | undefined): Verdict | null {
+  return (VERDICTS as readonly string[]).includes(value ?? '') ? (value as Verdict) : null
+}
 
 /** The verdict's words and hues (the score's pill and number; the verdict line in the score disclosure). */
 interface VerdictTheme {
@@ -209,24 +276,15 @@ const VERDICT_THEME: Record<Verdict, VerdictTheme> = {
   },
 }
 
-// ── Confidence model ───────────────────────────────────────────────────────
-// Weights from README §5.4: Data coverage 40 / Sample size 25 / Variance 20 /
-// Tag quality 15.
-type DimensionId = 'data_coverage' | 'sample_size' | 'variance_stability' | 'tag_quality'
-const WEIGHTS: Record<DimensionId, number> = {
-  data_coverage:      0.40,
-  sample_size:        0.25,
-  variance_stability: 0.20,
-  tag_quality:        0.15,
-}
+/** What the score disclosure says while the server's summary is loading, missing or malformed. */
+export const SCORE_NOT_AVAILABLE = 'Score not available'
 
-interface DimensionScore {
-  id: DimensionId
-  label: string
-  score: number
-  weight: number
-  tone: 'good' | 'warn' | 'bad'
-}
+// ── Cadence model ──────────────────────────────────────────────────────────
+// TRND-06: what the page draws that is NOT a verdict — the cadence cells, the
+// window's totals and the KPI values — from the trend tail it already reads.
+// The verdict, the confidence score and its four dimensions, the variance and
+// the run gap are the server's (`TrendSummary`), computed there over the same
+// two reads; this page no longer derives them.
 
 interface CadenceCell {
   iso: string
@@ -239,9 +297,7 @@ interface CadenceCell {
   isLastBeforeGap: boolean
 }
 
-interface ConfidenceModel {
-  composite: number
-  dimensions: DimensionScore[]
+interface CadenceModel {
   daysWithRuns: number
   windowDays: number
   emptyDays: number
@@ -253,15 +309,11 @@ interface ConfidenceModel {
   /** passed + failed + broken — skips are never evaluated, so they are in
    *  neither numerator nor denominator. Matches the backend definition. */
   evaluatedExecutions: number
+  /** The window's pass rate on the evaluated basis; 0 when nothing was evaluated (the KPI prints it). */
   passRate: number
-  passRatePerDay: number[]   // only days with runs
   cadenceCells: CadenceCell[]
   lastRunIso: string | null
   previousRunIso: string | null
-  silentDays: number
-  expectedRunsMissed: number
-  gapStart: string | null
-  gapEnd: string | null
 }
 
 function toneFor(score: number): 'good' | 'warn' | 'bad' {
@@ -307,7 +359,7 @@ function buildCadenceCells(trend: TrendPoint[], days: number): CadenceCell[] {
   return cells
 }
 
-function computeConfidenceModel(trend: TrendPoint[], days: number, untaggedShare: number): ConfidenceModel {
+function computeCadenceModel(trend: TrendPoint[], days: number): CadenceModel {
   const cadenceCells = buildCadenceCells(trend, days)
   const activeCells = cadenceCells.filter(c => c.executions > 0)
   const daysWithRuns = activeCells.length
@@ -326,100 +378,24 @@ function computeConfidenceModel(trend: TrendPoint[], days: number, untaggedShare
   const evaluatedExecutions = passedExecutions + failedExecutions + brokenExecutions
   const passRate = evaluatedExecutions > 0 ? (passedExecutions / evaluatedExecutions) * 100 : 0
 
-  const passRatePerDay = activeCells.map(c => {
-    // Same denominator as the headline — broken counts against the day.
-    const evaluated = c.passed + c.failed + c.broken
-    return evaluated > 0 ? (c.passed / evaluated) * 100 : 0
-  })
-
-  // Variance stability — stddev of per-day pass rate over active days.
-  // 0 active days → 0 (undefined). 1 day → 45 (warn proxy per the demo).
-  // ≥ 2 days → 100 - normalised stddev (cap at 100, floor at 0).
-  let varianceStability: number
-  if (activeCells.length === 0)      varianceStability = 0
-  else if (activeCells.length === 1) varianceStability = 45
-  else {
-    const mean = passRatePerDay.reduce((s, x) => s + x, 0) / passRatePerDay.length
-    const variance = passRatePerDay.reduce((s, x) => s + (x - mean) ** 2, 0) / passRatePerDay.length
-    const sd = Math.sqrt(variance)
-    // Map 0pp std → 100, 30pp std → 0 (linear)
-    varianceStability = Math.max(0, Math.min(100, 100 - (sd / 30) * 100))
-  }
-
-  const dataCoverageScore = days > 0 ? Math.min(100, (daysWithRuns / days) * 100) : 0
-  const sampleSizeScore   = Math.min(100, (totalExecutions / 100) * 100)  // 100 executions ≈ full
-  const tagQualityScore   = Math.max(0, 100 - untaggedShare * 100)
-
-  const dimensions: DimensionScore[] = [
-    { id: 'data_coverage',      label: 'Data coverage',     score: dataCoverageScore,   weight: WEIGHTS.data_coverage,      tone: toneFor(dataCoverageScore) },
-    { id: 'sample_size',        label: 'Sample size',       score: sampleSizeScore,     weight: WEIGHTS.sample_size,        tone: toneFor(sampleSizeScore) },
-    { id: 'variance_stability', label: 'Variance stability', score: varianceStability,  weight: WEIGHTS.variance_stability, tone: toneFor(varianceStability) },
-    { id: 'tag_quality',        label: 'Tag quality',        score: tagQualityScore,    weight: WEIGHTS.tag_quality,        tone: toneFor(tagQualityScore) },
-  ]
-  const composite = Math.round(dimensions.reduce((sum, d) => sum + d.score * d.weight, 0))
-
-  // Last/previous run + gap stats
   const isos = activeCells.map(c => c.iso).sort()
   const lastRunIso     = isos.length > 0 ? isos[isos.length - 1] : null
   const previousRunIso = isos.length > 1 ? isos[isos.length - 2] : null
 
-  let silentDays = 0
-  let expectedRunsMissed = 0
-  let gapStart: string | null = null
-  let gapEnd:   string | null = null
-  if (daysWithRuns < days && daysWithRuns > 0) {
-    // Look for the longest gap in the window.
-    let maxGap = 0
-    let curGapStartIdx = -1
-    let curGapLen = 0
-    for (let i = 0; i < cadenceCells.length; i++) {
-      if (cadenceCells[i].executions === 0) {
-        if (curGapStartIdx === -1) curGapStartIdx = i
-        curGapLen++
-      } else {
-        if (curGapLen > maxGap) {
-          maxGap = curGapLen
-          gapStart = curGapStartIdx >= 0 ? cadenceCells[curGapStartIdx].iso : null
-          gapEnd   = i > 0 ? cadenceCells[i - 1].iso : null
-        }
-        curGapStartIdx = -1
-        curGapLen = 0
-      }
-    }
-    if (curGapLen > maxGap) {
-      maxGap = curGapLen
-      gapStart = curGapStartIdx >= 0 ? cadenceCells[curGapStartIdx].iso : null
-      gapEnd   = cadenceCells[cadenceCells.length - 1].iso
-    }
-    silentDays = maxGap
-    expectedRunsMissed = silentDays  // assume nightly schedule (1/day)
-  }
-
   return {
-    composite, dimensions,
     daysWithRuns, windowDays: days, emptyDays,
     totalExecutions, passedExecutions, failedExecutions, skippedExecutions, brokenExecutions,
     evaluatedExecutions,
-    passRate, passRatePerDay,
+    passRate,
     cadenceCells,
     lastRunIso, previousRunIso,
-    silentDays, expectedRunsMissed,
-    gapStart, gapEnd,
   }
 }
 
-function pickVerdict(model: ConfidenceModel): Verdict {
-  if (model.totalExecutions === 0)        return 'PENDING'
-  if (model.composite < 33)               return 'INSUFFICIENT'
-  // We need ≥ 3 active days to compute trend direction (per README issue 2).
-  if (model.daysWithRuns < 3)             return 'INSUFFICIENT'
-  // Compare first half pass rate to second half — declining if drop > 10 pp.
-  const half = Math.max(1, Math.floor(model.passRatePerDay.length / 2))
-  const recent = model.passRatePerDay.slice(-half).reduce((s, x) => s + x, 0) / half
-  const prior  = model.passRatePerDay.slice(0, half).reduce((s, x) => s + x, 0) / half
-  if (recent < prior - 10) return 'DECLINING'
-  if (model.composite >= 66) return 'HEALTHY'
-  return 'MIXED'
+/** The server's gap when it is long enough to call out (a week or more), else `null`. */
+function calloutGap(summary: TrendSummary | null): TrendSummaryGap | null {
+  const gap = summary?.gap ?? null
+  return gap && gap.silent_days >= 7 && gap.start && gap.end ? gap : null
 }
 
 // ── Score disclosure ──────────────────────────────────────────────────────
@@ -427,17 +403,18 @@ function pickVerdict(model: ConfidenceModel): Verdict {
  * What the verdict card held, in the collapsed "How this score is computed"
  * disclosure below the hero (P3): the verdict and its one-line summary, the
  * words that say how to read it, the 0-100 confidence score on the kit's
- * meter and the four weighted dimensions it is computed from. The card's
- * issue rows are not here: each repeated a fact the page already shows (the
- * gap: the cadence card and the schedule callout; too few days: the pass-rate
- * frame's takeaway; the executions: the KPI strip).
+ * meter and the four weighted dimensions it is computed from — all from the
+ * server's trend summary (TRND-06). The card's issue rows are not here: each
+ * repeated a fact the page already shows (the gap: the cadence card and the
+ * schedule callout; too few days: the pass-rate frame's takeaway; the
+ * executions: the KPI strip).
  */
 function ScoreDetails({
-  model, verdict, summary, lede,
+  summary, verdict, headline, lede,
 }: {
-  model: ConfidenceModel
+  summary: TrendSummary
   verdict: Verdict
-  summary: React.ReactNode
+  headline: React.ReactNode
   lede: React.ReactNode
 }) {
   const t = VERDICT_THEME[verdict]
@@ -451,15 +428,15 @@ function ScoreDetails({
         <h2 className="text-[15px] font-semibold m-0 mb-1.5 text-[var(--color-text)]">
           <span aria-label={`Verdict: ${t.label}`} style={{ color: t.gateText }}>{t.label}</span>
           <span className="text-[var(--color-text-muted)] mx-2">·</span>
-          <span>{summary}</span>
+          <span>{headline}</span>
         </h2>
         <p className="text-[13px] m-0 max-w-[64ch]" style={{ color: 'var(--color-text-secondary)' }}>
           {lede}
         </p>
       </div>
       <div className="flex flex-col gap-3.5 min-w-0">
-        <ConfidenceMeter model={model} verdict={verdict} />
-        <DimensionGrid dimensions={model.dimensions} />
+        <ConfidenceMeter score={summary.confidence.score} verdict={verdict} />
+        <DimensionGrid dimensions={summary.confidence.dimensions} />
       </div>
     </section>
   )
@@ -482,9 +459,8 @@ const CONFIDENCE_TICKS = [
   { value: 100 },
 ] as const
 
-function ConfidenceMeter({ model, verdict }: { model: ConfidenceModel; verdict: Verdict }) {
+function ConfidenceMeter({ score, verdict }: { score: number; verdict: Verdict }) {
   const t = VERDICT_THEME[verdict]
-  const score = model.composite
   const pillLabel = score >= 66 ? 'High' : score >= 33 ? 'Moderate' : 'Low'
   return (
     <div>
@@ -522,7 +498,7 @@ function ConfidenceMeter({ model, verdict }: { model: ConfidenceModel; verdict: 
   )
 }
 
-function DimensionGrid({ dimensions }: { dimensions: DimensionScore[] }) {
+function DimensionGrid({ dimensions }: { dimensions: readonly TrendSummaryDimension[] }) {
   return (
     <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
       {dimensions.map(d => <DimensionTile key={d.id} dim={d} />)}
@@ -530,9 +506,11 @@ function DimensionGrid({ dimensions }: { dimensions: DimensionScore[] }) {
   )
 }
 
-function DimensionTile({ dim }: { dim: DimensionScore }) {
-  const valueColor = dim.tone === 'bad' ? 'var(--status-failed)' : dim.tone === 'warn' ? 'var(--status-broken)' : 'var(--status-passed)'
-  const barColor   = dim.tone === 'bad' ? 'var(--status-failed)' : dim.tone === 'warn' ? 'var(--status-broken)' : 'var(--status-passed)'
+function DimensionTile({ dim }: { dim: TrendSummaryDimension }) {
+  const tone = toneFor(dim.score)
+  const valueColor = tone === 'bad' ? 'var(--status-failed)' : tone === 'warn' ? 'var(--status-broken)' : 'var(--status-passed)'
+  const barColor   = valueColor
+  const width = Math.max(0, Math.min(100, dim.score))
   return (
     <div
       className="rounded-sm px-2.5 py-2 border"
@@ -550,7 +528,7 @@ function DimensionTile({ dim }: { dim: DimensionScore }) {
           {Math.round(dim.score)}
         </span>
         <div className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: 'var(--color-bg-secondary)' }}>
-          <i className="block h-full rounded-full" style={{ width: `${dim.score}%`, background: barColor }} />
+          <i className="block h-full rounded-full" style={{ width: `${width}%`, background: barColor }} />
         </div>
       </div>
     </div>
@@ -624,7 +602,17 @@ function cadenceStripCell(c: CadenceCell): DayStripCell {
 const CADENCE_HINT =
   'Each cell is one day. Green: it had executions; a striped band: some of them failed. An empty cell: no runs landed that day.'
 
-function CadenceHeatmap({ model }: { model: ConfidenceModel }) {
+function CadenceHeatmap({
+  model, gap, onPin, onSelectRange,
+}: {
+  model: CadenceModel
+  /** The server's run gap, when it is a week or more (the gap row). */
+  gap: TrendSummaryGap | null
+  /** TRND-04: opens Pin a note (QA engineer+, one project); absent = no button. */
+  onPin?: () => void
+  /** TRND-04: a mouse range on the strip opens Pin a note on those days. */
+  onSelectRange?: (fromIso: string, toIso: string) => void
+}) {
   const cells = useMemo(() => model.cadenceCells.map(cadenceStripCell), [model.cadenceCells])
   const counts = countTones(cells)
   const activeCount = cells.length - counts.none
@@ -633,12 +621,23 @@ function CadenceHeatmap({ model }: { model: ConfidenceModel }) {
 
   // P3: the explainer paragraph that sat over the strip is the strip's
   // legend and its title's tooltip now (spec §2: explanatory text is never a
-  // paragraph on the page).
+  // paragraph on the page). TRND-04: `Pin a note` sits in the header's right
+  // slot, so the card grows no taller.
   return (
     <CardShell
       title={`Run cadence — last ${model.windowDays} days`}
-      titleHint={CADENCE_HINT}
-      rightSlot={<span>{activeCount} day{activeCount === 1 ? '' : 's'} with runs · {emptyCount} empty</span>}
+      titleHint={onSelectRange ? `${CADENCE_HINT} Drag across days to pin a note on them.` : CADENCE_HINT}
+      rightSlot={
+        <>
+          <span>{activeCount} day{activeCount === 1 ? '' : 's'} with runs · {emptyCount} empty</span>
+          {onPin ? (
+            <button type="button" data-pin-note-open="cadence" onClick={onPin} className={PIN_BUTTON}>
+              <StickyNote aria-hidden="true" className="h-3.5 w-3.5" />
+              Pin a note
+            </button>
+          ) : null}
+        </>
+      }
     >
       <div className="px-4 pt-3 pb-4">
         <DayStrip
@@ -647,10 +646,12 @@ function CadenceHeatmap({ model }: { model: ConfidenceModel }) {
           gap={4}
           title="Run cadence"
           label={`Run cadence: ${emptyCount} empty days, ${activeCount} day${activeCount === 1 ? '' : 's'} with executions, ${failingCount} with failures`}
+          onSelectRange={onSelectRange}
         />
 
-        {model.silentDays >= 7 && model.gapStart && model.gapEnd && (
+        {gap && (
           <div
+            data-cadence-gap=""
             className="mt-3 grid items-center gap-2.5 rounded-md text-[12px]"
             style={{
               gridTemplateColumns: 'auto 1fr',
@@ -667,7 +668,7 @@ function CadenceHeatmap({ model }: { model: ConfidenceModel }) {
               Gap
             </span>
             <span>
-              {model.silentDays}-day silence between <code className="font-mono text-[11px]">{shortDate(model.gapStart)}</code> and <code className="font-mono text-[11px]">{shortDate(model.gapEnd)}</code>.
+              {gap.silent_days}-day silence between <code className="font-mono text-[11px]">{shortDate(gap.start)}</code> and <code className="font-mono text-[11px]">{shortDate(gap.end)}</code>.
             </span>
           </div>
         )}
@@ -675,6 +676,14 @@ function CadenceHeatmap({ model }: { model: ConfidenceModel }) {
     </CardShell>
   )
 }
+
+/**
+ * A small header button (the cadence card's `Pin a note`, the callout's). 18 px
+ * tall, under the header's own 19.5 px text line, so the card grows no taller
+ * (`fold-budget`: /trends has 35 px of headroom).
+ */
+const PIN_BUTTON =
+  'inline-flex h-[18px] items-center gap-1 rounded border border-[var(--color-border-light)] bg-[var(--color-bg-card)] px-1.5 text-[11.5px] font-medium leading-none text-[var(--color-text)] hover:bg-[var(--color-bg-hover)]'
 
 function shortDate(iso: string): string {
   return formatDayIso(iso)
@@ -695,7 +704,7 @@ function trendByDay(trend: readonly TrendPoint[]): Map<string, TrendPoint> {
 
 function DailyBreakdown({
   trend, days, model, filtersApplied,
-}: { trend: TrendPoint[]; days: number; model: ConfidenceModel; filtersApplied: boolean }) {
+}: { trend: TrendPoint[]; days: number; model: CadenceModel; filtersApplied: boolean }) {
   const { chart, state, takeaway } = useMemo(() => {
     const byDate = trendByDay(trend)
     const totals = { passed: 0, failed: 0, skipped: 0, broken: 0 }
@@ -754,19 +763,21 @@ const PASS_RATE_TARGET = { value: 90, label: 'Target 90%' } as const
 /** The hero's plot height, px (spec §2: the primary chart; it was 240 in the two-column body). */
 const HERO_HEIGHT = 280
 const NO_EVALUATED_DAY = 'no day in this window has an evaluated execution'
+const NO_NOTES: readonly NoteInput[] = []
 
 /**
  * The window's pass rate per day, on the kit's time-series chart: the
  * endpoint's own `pass_rate` (gated on evaluated executions, so a day of only
  * skips is a gap), a gap for a day with no runs, the execution count as bars
- * and the 90 % target as a dashed line with a legend entry.
+ * and the 90 % target as a dashed line with a legend entry. TRND-04: the
+ * window's timeline notes travel in the model.
  *
  * The old card's header block — a big number labelled "today", a target pill
  * and a delta — becomes the frame's one-line takeaway: the number was the
  * WINDOW's rate, not today's, and the pill is now the target line's legend.
  */
-function passRateChart(points: TimeSeriesPoint[], releases?: readonly ReleaseInput[]) {
-  const built = buildTimeSeriesModel({ points, releases })
+function passRateChart(points: TimeSeriesPoint[], releases?: readonly ReleaseInput[], notes: readonly NoteInput[] = NO_NOTES) {
+  const built = buildTimeSeriesModel({ points, releases, notes })
   const measured = built.points.some((point) => point.rate !== null)
   const frameState: ChartState<unknown> = measured
     ? readyState(built)
@@ -775,8 +786,16 @@ function passRateChart(points: TimeSeriesPoint[], releases?: readonly ReleaseInp
 }
 
 function PassRateTrend({
-  trend, model, days,
-}: { trend: TrendPoint[]; model: ConfidenceModel; days: number }) {
+  trend, model, days, notes, toolbar,
+}: {
+  trend: TrendPoint[]
+  model: CadenceModel
+  days: number
+  /** TRND-04: the window's notes, already filtered to the page's suite. */
+  notes: readonly NoteInput[]
+  /** The frame's toolbar content (the `Notes (n)` chip). */
+  toolbar?: React.ReactNode
+}) {
   const points = useMemo(() => {
     const cells = model.cadenceCells
     return timeSeriesFromTrends(
@@ -785,7 +804,7 @@ function PassRateTrend({
     )
   }, [trend, model.cadenceCells])
 
-  const activeDays = model.passRatePerDay.length
+  const activeDays = model.daysWithRuns
   let takeaway: string | undefined
   if (model.evaluatedExecutions > 0) {
     const delta = Math.round(model.passRate - PASS_RATE_TARGET.value)
@@ -794,7 +813,7 @@ function PassRateTrend({
     takeaway = `${model.passRate.toFixed(1)}% over the last ${days} days, ${versus}${sparse}`
   }
 
-  return <PassRateTrendAnalysis points={points} takeaway={takeaway} />
+  return <PassRateTrendAnalysis points={points} takeaway={takeaway} notes={notes} toolbar={toolbar} />
 }
 
 type ReleaseRow = { id: string; name: string; released_at: string | null; planned_date: string | null }
@@ -813,14 +832,21 @@ function releaseMarkerInputs(items: readonly ReleaseRow[]): ReleaseInput[] {
  * project. Since Phase D (S3) this is the only variant: the plain card the
  * flag-off page drew is gone.
  */
-function PassRateTrendAnalysis({ points, takeaway }: { points: TimeSeriesPoint[]; takeaway: string | undefined }) {
+function PassRateTrendAnalysis({
+  points, takeaway, notes, toolbar,
+}: {
+  points: TimeSeriesPoint[]
+  takeaway: string | undefined
+  notes: readonly NoteInput[]
+  toolbar?: React.ReactNode
+}) {
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const { data: releaseList } = useReleases(undefined, { cached: true })
   const releases = useMemo(
     () => (activeProjectId === ALL_PROJECTS_ID ? [] : releaseMarkerInputs(releaseList?.items ?? [])),
     [activeProjectId, releaseList],
   )
-  const { chart, state } = useMemo(() => passRateChart(points, releases), [points, releases])
+  const { chart, state } = useMemo(() => passRateChart(points, releases, notes), [points, releases, notes])
   // P3: the page's one primary content (`data-primary`), the hero under the
   // KPI strip, a little taller than its 240 px in the old two-column body.
   return (
@@ -837,19 +863,21 @@ function PassRateTrendAnalysis({ points, takeaway }: { points: TimeSeriesPoint[]
         rateTarget={PASS_RATE_TARGET}
         trendAnalysis
         zoom
+        toolbar={toolbar}
       />
     </div>
   )
 }
 
 // ── Schedule-paused callout ───────────────────────────────────────────────
-// The window's longest silence, stated as the dates it covers. The gap is the
-// LONGEST one, not necessarily the trailing one: only a gap that runs up to
-// today says the schedule "has not fired since"; an older gap that runs have
-// since ended is a past silence, and is called that.
-function SchedulePausedCallout({ model }: { model: ConfidenceModel }) {
-  if (model.silentDays < 7 || !model.gapStart || !model.gapEnd) return null
-  const ongoing = model.gapEnd === utcDayIso()
+// The window's longest silence, stated as the dates it covers — the SERVER's
+// gap (TRND-06). The gap is the LONGEST one, not necessarily the trailing one:
+// only a gap that runs up to today says the schedule "has not fired since";
+// an older gap that runs have since ended is a past silence, and is called
+// that. TRND-04: a QA engineer+ can pin a note on those days.
+function SchedulePausedCallout({ gap, onPin }: { gap: TrendSummaryGap | null; onPin?: (from: string, to: string) => void }) {
+  if (!gap) return null
+  const ongoing = gap.ongoing
   return (
     <section
       aria-labelledby="schedpaused"
@@ -865,23 +893,31 @@ function SchedulePausedCallout({ model }: { model: ConfidenceModel }) {
         <h3 id="schedpaused" className="text-[13px] font-semibold m-0 text-[var(--color-text)]">
           {ongoing ? 'Schedule appears paused' : 'Run gap in this window'}
         </h3>
-        {ongoing && (
-          <span
-            className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold uppercase"
-            style={{ background: 'var(--gate-conditional-bg)', color: 'var(--status-broken)', letterSpacing: 'var(--tracking-wide)' }}
-          >
-            Action needed
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {onPin ? (
+            <button type="button" data-pin-note-open="gap" onClick={() => onPin(gap.start, gap.end)} className={PIN_BUTTON}>
+              <StickyNote aria-hidden="true" className="h-3.5 w-3.5" />
+              Pin a note for these days
+            </button>
+          ) : null}
+          {ongoing && (
+            <span
+              className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold uppercase"
+              style={{ background: 'var(--gate-conditional-bg)', color: 'var(--status-broken)', letterSpacing: 'var(--tracking-wide)' }}
+            >
+              Action needed
+            </span>
+          )}
+        </div>
       </div>
       <p className="text-[12.5px] m-0 mt-1.5" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
         {ongoing
-          ? <>No executions have landed since <code className="font-mono text-[11.5px]">{shortDate(model.gapStart)}</code>.</>
-          : <>No executions landed from <code className="font-mono text-[11.5px]">{shortDate(model.gapStart)}</code> to <code className="font-mono text-[11.5px]">{shortDate(model.gapEnd)}</code>.</>}
+          ? <>No executions have landed since <code className="font-mono text-[11.5px]">{shortDate(gap.start)}</code>.</>
+          : <>No executions landed from <code className="font-mono text-[11.5px]">{shortDate(gap.start)}</code> to <code className="font-mono text-[11.5px]">{shortDate(gap.end)}</code>.</>}
       </p>
       <div className="grid gap-2 mt-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
-        <CalloutStat label="Silent days" value={model.silentDays} />
-        <CalloutStat label="Expected runs missed" value={`~${model.expectedRunsMissed}`} />
+        <CalloutStat label="Silent days" value={gap.silent_days} />
+        <CalloutStat label="Expected runs missed" value={`~${gap.expected_runs_missed}`} />
       </div>
     </section>
   )
@@ -908,36 +944,87 @@ function CalloutStat({ label, value }: { label: string; value: React.ReactNode }
  * executions. The card once said "· today" / "Single day" / "No delta
  * available — single day of data." whatever window was picked: it is the
  * window's rate, and it says so.
+ *
+ * TRND-06: each row draws the suite's daily pass rate as a sparkline — the
+ * SAME line "Pass rate by suite" draws, from the SAME request, asked once the
+ * card is near (`LazySection`). The sparkline is a LAZY module
+ * (`SuiteRateSparkline`): the request pipeline it needs is section-only code
+ * that must stay out of this page's static closure
+ * (`sectionOnlyModules.test.ts`). A suite outside that chart's 7 busiest reads
+ * "—" with the reason. TRND-02: each row links to the latest two runs of its
+ * suite compared (one project only).
  */
 const SUITE_ROWS_SHOWN = 6
-function SuitePassRates({ suites, days }: { suites: CoverageSuite[]; days: number }) {
-  const withRuns = suites.filter(s => (s.passed + s.failed + s.skipped) > 0)
-  const filtered = withRuns.slice(0, SUITE_ROWS_SHOWN)
+/** The card's placeholder before it is near: its header and six rows, px. */
+const SUITE_RATES_MIN_HEIGHT = 360
+/** The row sparkline's box: the full row width, 18 px tall (reserved, so nothing moves when it draws). */
+const ROW_SPARK_HEIGHT = 18
+const SuiteRateSparkline = lazyWithRetry(() => import('@/components/trends/SuiteRateSparkline'))
+
+function SuitePassRates({
+  suites, days, suiteFilter, allProjects,
+}: {
+  suites: CoverageSuite[]
+  days: number
+  suiteFilter: ScopeValue
+  allProjects: boolean
+}) {
   return (
-    <CardShell
-      title={`Suite pass rates — last ${days === 1 ? '24 hours' : `${days} days`}`}
-      titleHint="Passed of evaluated executions per suite across the window; skips are excluded."
-      rightSlot={withRuns.length > filtered.length ? <span>{filtered.length} of {withRuns.length} suites</span> : undefined}
-    >
-      <div className="px-4 pt-2 pb-4">
-        {filtered.length === 0 ? (
-          <p className="text-[12.5px] text-[var(--color-text-muted)] py-2 text-center m-0">No suite data for the selected window.</p>
-        ) : (
-          <div className="flex flex-col">
-            {filtered.map((s, i) => (
-              <SuiteRow key={s.suite_name} suite={s} isLast={i === filtered.length - 1} />
-            ))}
-          </div>
-        )}
-      </div>
-    </CardShell>
+    <LazySection label="trends-suite-rates" minHeight={SUITE_RATES_MIN_HEIGHT}>
+      <SuitePassRatesCard suites={suites} days={days} suiteFilter={suiteFilter} allProjects={allProjects} />
+    </LazySection>
   )
 }
 
-// There is no per-suite history to draw, so the row carries no glyph: the
-// "6-tick micro-bar" it once had was five constant ticks and one coloured by
-// tone, the same for every suite whatever its rate (OD-2).
-function SuiteRow({ suite, isLast }: { suite: CoverageSuite; isLast: boolean }) {
+function SuitePassRatesCard({
+  suites, days, suiteFilter, allProjects,
+}: {
+  suites: CoverageSuite[]
+  days: number
+  suiteFilter: ScopeValue
+  allProjects: boolean
+}) {
+  const withRuns = Array.isArray(suites) ? suites.filter(s => (s.passed + s.failed + s.skipped) > 0) : []
+  const filtered = withRuns.slice(0, SUITE_ROWS_SHOWN)
+  return (
+    <div data-trends-suite-rates="">
+      <CardShell
+        title={`Suite pass rates — last ${days === 1 ? '24 hours' : `${days} days`}`}
+        titleHint="Passed of evaluated executions per suite across the window; skips are excluded. The line is the suite's daily pass rate."
+        rightSlot={withRuns.length > filtered.length ? <span>{filtered.length} of {withRuns.length} suites</span> : undefined}
+      >
+        <div className="px-4 pt-2 pb-4">
+          {filtered.length === 0 ? (
+            <p className="text-[12.5px] text-[var(--color-text-muted)] py-2 text-center m-0">No suite data for the selected window.</p>
+          ) : (
+            <div className="flex flex-col">
+              {filtered.map((s, i) => (
+                <SuiteRow
+                  key={s.suite_name}
+                  suite={s}
+                  isLast={i === filtered.length - 1}
+                  days={days}
+                  suiteFilter={suiteFilter}
+                  compareHref={allProjects ? null : latestTwoHref(s.suite_name)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      </CardShell>
+    </div>
+  )
+}
+
+function SuiteRow({
+  suite, isLast, days, suiteFilter, compareHref,
+}: {
+  suite: CoverageSuite
+  isLast: boolean
+  days: number
+  suiteFilter: ScopeValue
+  compareHref: string | null
+}) {
   // Take the rate the API already computed rather than deriving a second
   // one. `suite.failed` already folds broken in, so passed + failed is the
   // evaluated count — skips are excluded from both halves.
@@ -950,15 +1037,35 @@ function SuiteRow({ suite, isLast }: { suite: CoverageSuite; isLast: boolean }) 
       className={clsx('grid items-center gap-3', !isLast && 'pb-2.5 mb-2.5')}
       style={{ gridTemplateColumns: '1fr auto', borderBottom: !isLast ? '1px dashed var(--color-border)' : '0', paddingTop: 8 }}
     >
-      {/* The suite's own page (UX redesign P4): its tests, runs and charts. */}
-      <Link
-        to={suiteHrefByName(suite.suite_name)}
-        className="font-mono text-[12.5px] truncate hover:underline"
-        title={suite.suite_name}
-        style={{ color: tone === 'bad' ? 'var(--status-failed)' : 'var(--color-text)' }}
-      >
-        {suite.suite_name}
-      </Link>
+      <div className="min-w-0">
+        <div className="flex min-w-0 items-center gap-1.5">
+          {/* The suite's own page (UX redesign P4): its tests, runs and charts. */}
+          <Link
+            to={suiteHrefByName(suite.suite_name)}
+            className="font-mono text-[12.5px] truncate hover:underline"
+            title={suite.suite_name}
+            style={{ color: tone === 'bad' ? 'var(--status-failed)' : 'var(--color-text)' }}
+          >
+            {suite.suite_name}
+          </Link>
+          {compareHref ? (
+            <Link
+              to={compareHref}
+              data-suite-compare=""
+              aria-label={`Compare the latest two runs of ${suite.suite_name}`}
+              title={`Compare the latest two runs of ${suite.suite_name}`}
+              className="inline-flex shrink-0 items-center text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+            >
+              <GitCompare aria-hidden="true" className="h-3.5 w-3.5" />
+            </Link>
+          ) : null}
+        </div>
+        <div className="mt-1" style={{ height: ROW_SPARK_HEIGHT }}>
+          <Suspense fallback={null}>
+            <SuiteRateSparkline days={days} suiteFilter={suiteFilter} suiteName={suite.suite_name} tone={tone} height={ROW_SPARK_HEIGHT} />
+          </Suspense>
+        </div>
+      </div>
       <span className="text-right">
         <span className="text-[12.5px] font-semibold tabular-nums" style={{ color: pctColor }}>{pct}%</span>
         <div className="text-[10.5px] text-[var(--color-text-muted)] tabular-nums">{suite.passed} / {evaluated} evaluated</div>
@@ -1055,13 +1162,42 @@ export default function TrendsPage() {
 
   // The page-local suite filter (usePageSuiteFilter).
   const { selectedSuite, setSelectedSuite, suiteFilter, suiteNames, suiteLabel } = usePageSuiteFilter()
-  // P1: this page's saved views (the top-bar release, the window, the suite).
+  const [, setSearchParams] = useSearchParams()
+
+  // TRND-10: the page's customised charts ride in its saved views
+  // (`filters.charts`), ONLY when one is not at its default. This browser's
+  // own customisations are seeded into the store first, so a view saved from
+  // the Volume tab (neither chart mounted) still carries them.
+  useEffect(() => {
+    seedChartConfig(SUITE_SERIES_CHART_KEY, SERIES_CONFIG_MODEL)
+    seedChartConfig(COMPARE_CHART_KEY, COMPARE_CONFIG_MODEL)
+  }, [])
+  const appliedCharts = useChartConfigStore((s) => s.applied)
+  const chartsKey = JSON.stringify(nonDefaultOf(appliedCharts, TRENDS_CHART_KEYS))
+  const extraFilters = useMemo(() => {
+    const charts = JSON.parse(chartsKey) as Record<string, unknown> | null
+    return charts ? { charts } : undefined
+  }, [chartsKey])
+  const applyExtra = useCallback(
+    (view: SavedView) => {
+      const charts = (view.filters as { charts?: unknown } | null | undefined)?.charts ?? null
+      chartConfigStore.applyView(charts, TRENDS_CHART_KEYS)
+      // Compare's chosen suites / releases live in the URL: the view's go there.
+      const compareRaw = charts && typeof charts === 'object' ? (charts as Record<string, unknown>)[COMPARE_CHART_KEY] : null
+      const compare = readCompareConfig(compareRaw).config
+      setSearchParams((current) => urlWithCompareConfig(current, compare), { replace: true })
+    },
+    [setSearchParams],
+  )
+  // P1: this page's saved views (the top-bar release, the window, the suite; TRND-10 the charts).
   const viewsMenu = useReportViewsMenu({
     route: '/trends',
     windowDays: days,
     windowOptions: WINDOWS,
     suite: { names: suiteNames, set: setSelectedSuite },
     release: true,
+    extraFilters,
+    applyExtra,
   })
   // Whether a filter narrowed the trend (a suite, or a release): an all-zero
   // window then keeps the frame's filter words; without one the frame states
@@ -1071,6 +1207,7 @@ export default function TrendsPage() {
   const { options: suiteOptions } = useSuiteOptions(days)
   // P2: the catalogue's "Filter page by this" writes a suite mark to the select above.
   const suiteTarget = usePageSuiteTarget(selectedSuite, suiteOptions, setSelectedSuite)
+  const { isQaLead, isQaEngineer } = usePermissions()
 
   // `error` is read alongside `data`: a failed fetch leaves `trend` empty,
   // and every band and verdict below is computed from that
@@ -1083,25 +1220,37 @@ export default function TrendsPage() {
   const { data: dashSummary }                              = useDashboardSummary(days, suiteFilter)
   const { data: coverageData }                             = useCoverage(days, suiteFilter)
   const { data: latestRuns }                               = useRuns({ page: 1, size: 1, days, ...(suiteFilter && { suite_name: suiteFilter }) })
+  // TRND-06: the verdict, the confidence score, the variance and the run gap
+  // are the server's, over the same two reads; `null` = not available.
+  const { summary } = useTrendSummary(days, suiteFilter)
 
-  const trend: TrendPoint[] = useMemo(() => trendsData?.data ?? [], [trendsData])
-  const suites: CoverageSuite[] = useMemo(() => coverageData?.suites ?? [], [coverageData])
+  const trend: TrendPoint[] = useMemo(() => (Array.isArray(trendsData?.data) ? trendsData.data : []), [trendsData])
+  const suites: CoverageSuite[] = useMemo(() => (Array.isArray(coverageData?.suites) ? coverageData.suites : []), [coverageData])
 
-  // Untagged share — count of runs where suite name is "Unknown Suite" / empty.
-  const untaggedShare = useMemo(() => {
-    const totalSuiteRuns = suites.reduce((s, x) => s + x.passed + x.failed + x.skipped, 0)
-    if (totalSuiteRuns === 0) return 0
-    const untaggedRuns = suites
-      .filter(s => {
-        const n = (s.suite_name ?? '').trim().toLowerCase()
-        return !n || n === 'unknown suite' || n === 'unknown' || n === 'untagged'
-      })
-      .reduce((s, x) => s + x.passed + x.failed + x.skipped, 0)
-    return untaggedRuns / totalSuiteRuns
-  }, [suites])
+  const model = useMemo(() => computeCadenceModel(trend, days), [trend, days])
+  const verdict = asVerdict(summary?.confidence.verdict)
+  const gap = calloutGap(summary)
 
-  const model = useMemo(() => computeConfidenceModel(trend, days, untaggedShare), [trend, days, untaggedShare])
-  const verdict = pickVerdict(model)
+  // TRND-04: the window's timeline notes (UTC days, one project only), and
+  // only the ones for this page's suite (a project-wide note always shows).
+  const pageSuite = typeof suiteFilter === 'string' && suiteFilter.trim() ? suiteFilter.trim() : null
+  const notesRange = useMemo(() => {
+    const to = utcDayIso()
+    return { from: shiftDayIso(to, -(days - 1)), to }
+  }, [days])
+  const { notes: windowNotes, truncated: notesTruncated } = useTimelineNotes(isAllProjects ? null : notesRange, pageSuite)
+  const shownNotes = useMemo(
+    () => (Array.isArray(windowNotes) ? windowNotes : []).filter((note) => noteInputsFor([note], pageSuite).length > 0),
+    [windowNotes, pageSuite],
+  )
+  const noteInputs = useMemo(() => noteInputsFor(shownNotes, pageSuite), [shownNotes, pageSuite])
+  const canPin = isQaEngineer && !isAllProjects
+  const [pinning, setPinning] = useState<{ range: { from: string; to: string } | null; note: TimelineNote | null } | null>(null)
+  const pinRange = useCallback((from: string, to: string) => setPinning({ range: { from, to }, note: null }), [])
+
+  // TRND-01: the header ⋯ — Export PDF (every role), Email report (QA lead+).
+  const [emailOpen, setEmailOpen] = useState(false)
+  const [pdfBusy, setPdfBusy] = useState(false)
 
   if (!project && !isAllProjects) {
     return (
@@ -1133,26 +1282,33 @@ export default function TrendsPage() {
   // suite the trend bars belong to without having to drill into a run.
   const latestRun = latestRuns?.items?.[0]
 
-  // Summary
-  const summaryNode: React.ReactNode = (() => {
+  // The score disclosure's words, from the server's summary.
+  const summaryDays = summary?.days_with_runs ?? 0
+  const summaryWindow = summary?.window_days ?? days
+  const headline: React.ReactNode = (() => {
     if (verdict === 'PENDING')      return <>awaiting executions</>
-    if (verdict === 'INSUFFICIENT') return <>only {model.daysWithRuns} of {model.windowDays} days {model.daysWithRuns === 1 ? 'has' : 'have'} executions</>
-    if (verdict === 'HEALTHY')      return <>{model.daysWithRuns} active days · pass rate steady</>
+    if (verdict === 'INSUFFICIENT') return <>only {summaryDays} of {summaryWindow} days {summaryDays === 1 ? 'has' : 'have'} executions</>
+    if (verdict === 'HEALTHY')      return <>{summaryDays} active days · pass rate steady</>
     if (verdict === 'DECLINING')    return <>pass rate declined over the window</>
-    return <>{model.daysWithRuns} active days · mixed signal</>
+    return <>{summaryDays} active days · mixed signal</>
   })()
 
   const lede: React.ReactNode = (() => {
     if (verdict === 'PENDING')
       return <>No executions in the last {days} days. Run a workflow or extend the window to populate trend data.</>
     if (verdict === 'INSUFFICIENT')
-      return <>The headline {model.passRate.toFixed(0)}% pass rate comes from {model.daysWithRuns === 1 ? 'a single day' : `${model.daysWithRuns} days`}. With {model.emptyDays} of the last {days} days empty, the page can't show a real trend — it shows {model.daysWithRuns === 1 ? 'one data point' : 'a few points'}. Resume the schedule or widen the window before reading anything into the numbers.</>
+      return <>The headline {(summary?.pass_rate ?? 0).toFixed(0)}% pass rate comes from {summaryDays === 1 ? 'a single day' : `${summaryDays} days`}. With {summary?.empty_days ?? 0} of the last {days} days empty, the page can't show a real trend — it shows {summaryDays === 1 ? 'one data point' : 'a few points'}. Resume the schedule or widen the window before reading anything into the numbers.</>
     if (verdict === 'HEALTHY')
-      return <>Pass rate sits above target with low variance across {model.daysWithRuns} active days. Trend is stable.</>
+      return <>Pass rate sits above target with low variance across {summaryDays} active days. Trend is stable.</>
     if (verdict === 'DECLINING')
       return <>Pass rate has dropped meaningfully from the start of the window to today. Investigate before treating the headline as the new normal.</>
-    return <>Mixed signal across {model.daysWithRuns} active days — pass rate variance is moderate. Verify the recent failures before declaring a regression.</>
+    return <>Mixed signal across {summaryDays} active days — pass rate variance is moderate. Verify the recent failures before declaring a regression.</>
   })()
+  const scoreSummary = !summary || !verdict
+    ? SCORE_NOT_AVAILABLE
+    : verdict === 'PENDING'
+      ? 'Pending · no score yet'
+      : `${VERDICT_THEME[verdict].label} · confidence ${summary.confidence.score} / 100`
 
   // The two KPI sparklines draw the window's real per-day series (OD-1); the
   // other three tiles had only decoration and carry none.
@@ -1196,12 +1352,50 @@ export default function TrendsPage() {
     `refreshed ${refreshedAt}`,
   ].filter(Boolean).join(' · ')
 
+  // TRND-01 / TRND-02: the header's ⋯ (one 32 px trigger in the existing action row).
+  const exportPdf = async () => {
+    if (isAllProjects || !activeProjectId) return
+    setPdfBusy(true)
+    try {
+      const blob = await downloadTrendsPdf({ projectId: activeProjectId, days, suite: suiteFilter, release: releaseScope })
+      downloadBlob(blob, trendsPdfFilename(project?.name, days))
+      toast.success('Trends PDF downloaded')
+    } catch (error) {
+      toast.error(await refusalText(error, 'The Trends PDF could not be generated.'))
+    } finally {
+      setPdfBusy(false)
+    }
+  }
+  const compare = compareRunsHref({ suite: pageSuite, allProjects: isAllProjects })
+  const overflow: OverflowItem[] = [
+    {
+      label: isAllProjects ? 'Export PDF (pick a project)' : pdfBusy ? 'Generating PDF…' : 'Export PDF',
+      icon: <Download className="h-3.5 w-3.5" />,
+      onClick: () => void exportPdf(),
+      disabled: isAllProjects || pdfBusy,
+    },
+    ...(isQaLead
+      ? [{
+          label: isAllProjects ? 'Email report… (pick a project)' : 'Email report…',
+          icon: <Mail className="h-3.5 w-3.5" />,
+          onClick: () => setEmailOpen(true),
+          disabled: isAllProjects,
+        }]
+      : []),
+    {
+      label: compare.href ? 'Compare runs' : `Compare runs (${compare.reason})`,
+      icon: <GitCompare className="h-3.5 w-3.5" />,
+      href: compare.href ?? undefined,
+      disabled: compare.href === null,
+    },
+  ]
+
   return (
     <PageShell className="space-y-4">
       {/* The page's one filter row is the header's right side, where the old
           header had it (and as Home has it): the suite, the window, then the
-          saved Views (the one secondary button). A row of its own put the
-          hero 2 px past the fold budget at 1440 x 900. */}
+          saved Views (the one secondary button), then the ⋯. A row of its own
+          put the hero 2 px past the fold budget at 1440 x 900. */}
       <PageHeader
         compact
         title="Trends"
@@ -1219,6 +1413,7 @@ export default function TrendsPage() {
             {viewsMenu && <SavedViewsMenu {...viewsMenu} variant="ghost" />}
           </div>
         }
+        overflow={overflow}
       />
 
       {/* The strip keeps the `Trend metrics` landmark other specs wait on.
@@ -1303,14 +1498,32 @@ export default function TrendsPage() {
         </KpiStrip>
       </section>
 
-      {/* The page's one primary content: the hero (`data-primary` is on its section). */}
-      <PassRateTrend trend={trend} model={model} days={days} />
+      {/* The page's one primary content: the hero (`data-primary` is on its section).
+          TRND-04: the `Notes (n)` chip sits in the frame's existing toolbar. */}
+      <PassRateTrend
+        trend={trend}
+        model={model}
+        days={days}
+        notes={noteInputs}
+        toolbar={
+          shownNotes.length > 0 ? (
+            <TimelineNotesChip
+              notes={shownNotes}
+              truncated={notesTruncated}
+              onEdit={(note) => setPinning({ range: null, note })}
+            />
+          ) : undefined
+        }
+      />
 
-      <Disclosure
-        title="How this score is computed"
-        summary={verdict === 'PENDING' ? 'Pending · no score yet' : `${VERDICT_THEME[verdict].label} · confidence ${model.composite} / 100`}
-      >
-        <ScoreDetails model={model} verdict={verdict} summary={summaryNode} lede={lede} />
+      <Disclosure title="How this score is computed" summary={scoreSummary}>
+        {summary && verdict ? (
+          <ScoreDetails summary={summary} verdict={verdict} headline={headline} lede={lede} />
+        ) : (
+          <p data-score-unavailable="" className="m-0 text-[13px] text-[var(--color-text-secondary)]">
+            {SCORE_NOT_AVAILABLE}: the trend summary could not be read. The charts and the KPIs above are unaffected.
+          </p>
+        )}
       </Disclosure>
 
       <div className="space-y-3">
@@ -1318,8 +1531,13 @@ export default function TrendsPage() {
         <div data-tab-panel={tab}>
           {tab === 'volume' && (
             <div className="flex flex-col gap-3.5 min-w-0">
-              <CadenceHeatmap model={model} />
-              <SchedulePausedCallout model={model} />
+              <CadenceHeatmap
+                model={model}
+                gap={gap}
+                onPin={canPin ? () => setPinning({ range: { from: utcDayIso(), to: utcDayIso() }, note: null }) : undefined}
+                onSelectRange={canPin ? pinRange : undefined}
+              />
+              <SchedulePausedCallout gap={gap} onPin={canPin ? pinRange : undefined} />
               <DailyBreakdown trend={trend} days={days} model={model} filtersApplied={trendFiltered} />
             </div>
           )}
@@ -1328,7 +1546,7 @@ export default function TrendsPage() {
             // Compare beside the Suite pass rates card.
             <div className="grid gap-3.5 items-start grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,340px)]">
               <CatalogueTab scope="by-suite" days={days} suiteFilter={suiteFilter} suiteTarget={suiteTarget} />
-              <SuitePassRates suites={suites} days={days} />
+              <SuitePassRates suites={suites} days={days} suiteFilter={suiteFilter} allProjects={isAllProjects} />
             </div>
           )}
           {(tab === 'durations' || tab === 'heatmap') && (
@@ -1338,6 +1556,20 @@ export default function TrendsPage() {
           )}
         </div>
       </div>
+
+      {pinning ? (
+        <PinNoteDialog range={pinning.range} note={pinning.note} suite={pageSuite} onClose={() => setPinning(null)} />
+      ) : null}
+      {emailOpen && activeProjectId && !isAllProjects ? (
+        <EmailReportDialog
+          projectId={activeProjectId}
+          days={days}
+          suiteFilter={suiteFilter}
+          release={releaseScope}
+          suiteLabel={suiteLabel || null}
+          onClose={() => setEmailOpen(false)}
+        />
+      ) : null}
     </PageShell>
   )
 }

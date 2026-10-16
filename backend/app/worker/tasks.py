@@ -3895,23 +3895,56 @@ def generate_ai_strategy_task(
 @celery_app.task(
     name="app.worker.tasks.take_coverage_snapshot",
     queue="default",
+    # The first night backfills up to 30 days a project (three bounded
+    # statements a day); later nights write one. Its own task on ``default``.
+    soft_time_limit=1500,
+    time_limit=1800,
 )
-def take_coverage_snapshot():
-    """Scheduled task: capture daily coverage snapshot for all active projects."""
-    from sqlalchemy import select
-    from app.db.postgres import AsyncSessionLocal
-    from app.models.postgres import Project
+def take_coverage_snapshot() -> dict:
+    """Scheduled task (beat 00:05 UTC): one coverage snapshot a project a UTC day (W08 TRND-07).
 
-    async def _run():
+    For every active project: yesterday and every MISSING day of the last 30,
+    computed from live data and UPSERTED (``coverage_snapshot_service``), so a
+    second run rewrites a day and never duplicates it; today's partial day is
+    never stored. The project ids are read in one session, closed; each
+    project then has ITS OWN session and one commit, and a failure is logged
+    and skipped so one project cannot stop the sweep. No analytics epoch bump:
+    the history read is at most its cache TTL stale.
+    """
+
+    async def _run() -> dict:
+        from sqlalchemy import select
+
+        from app.db.postgres import AsyncSessionLocal
+        from app.models.postgres import Project
+        from app.services import coverage_snapshot_service as snapshots
+
         async with AsyncSessionLocal() as db:
-            result = await db.execute(select(Project).where(Project.is_active.is_(True)))
-            projects = result.scalars().all()
-            logger.info("Taking coverage snapshot for %d projects", len(projects))
-            for project in projects:
-                logger.info("  Snapshot: %s", project.name)
+            project_ids = list(
+                (await db.execute(select(Project.id).where(Project.is_active.is_(True)))).scalars().all()
+            )
+        today = snapshots.utc_today()
+        rows = failed = 0
+        for project_id in project_ids:
+            try:
+                async with AsyncSessionLocal() as db:
+                    missing = await snapshots.missing_days(db, project_id, today=today)
+                    days = snapshots.days_to_snapshot(missing, today)
+                    for day in days:
+                        values = await snapshots.snapshot_values(db, project_id, day)
+                        await snapshots.stage_snapshot(db, project_id, day, values)
+                    await db.commit()
+                rows += len(days)
+            except Exception as exc:  # noqa: BLE001 -- one project must not stop the sweep
+                failed += 1
+                _slog.warning(
+                    "coverage_snapshot_failed", project_id=str(project_id), error=type(exc).__name__,
+                )
+        _slog.info("coverage_snapshot_done", projects=len(project_ids), rows=rows, failed=failed)
+        return {"projects": len(project_ids), "rows": rows, "failed": failed}
 
-    logger.info("Running daily coverage snapshot task")
-    _run_async(_run())
+    outcome: dict = _run_async(_run())
+    return outcome
 
 
 @celery_app.task(

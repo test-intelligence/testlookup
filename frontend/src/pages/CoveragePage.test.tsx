@@ -32,6 +32,32 @@ vi.mock('@/hooks/useMetrics', () => {
     useAiSummary:         vi.fn(d),
   }
 })
+// W08 TRND-07: the History tab's read (asked only while that tab is open) and
+// the timeline notes it draws. Controllable per test; the calls are recorded.
+const history = vi.hoisted(() => ({
+  answer: { history: null, malformed: false, isLoading: false, error: undefined } as {
+    history: unknown
+    malformed: boolean
+    isLoading: boolean
+    error: unknown
+  },
+  calls: [] as unknown[][],
+}))
+vi.mock('@/hooks/useCoverageHistory', () => ({
+  COVERAGE_HISTORY_KEY: 'analytics-coverage-history',
+  UNTAGGED_TESTS_KEY: 'analytics-coverage-untagged-tests',
+  useCoverageHistory: (...args: unknown[]) => {
+    history.calls.push(args)
+    return args[1] === true ? { ...history.answer, mutate: vi.fn() } : { history: null, malformed: false, isLoading: false, error: undefined, mutate: vi.fn() }
+  },
+  useUntaggedTests: () => ({ list: { items: [], total: 0, page: 1, size: 50, window_days: 30 }, malformed: false, isLoading: false, error: undefined }),
+}))
+vi.mock('@/hooks/useTimelineNotes', () => ({
+  TIMELINE_NOTES_KEY: 'timeline-notes',
+  useTimelineNotes: () => ({ notes: [], total: 0, truncated: false, isLoading: false, unavailable: false, mutate: vi.fn() }),
+  useTimelineNoteActions: () => ({ create: vi.fn(), update: vi.fn(), remove: vi.fn() }),
+}))
+vi.mock('@/hooks/useSuites', () => ({ useSuites: () => ({ data: { items: [], total: 0 } }) }))
 // Other hooks the page transitively imports — stubbed so SWR doesn't fire.
 vi.mock('@/hooks/useSuiteOptions', () => ({
   useSuiteOptions: () => ({ options: [], isLoading: false }),
@@ -935,6 +961,20 @@ describe('CoveragePage P2: no stubs, no invented values', () => {
     analyticsControls.widgetIds = []
     const { useTimeWindowStore } = await import('@/store/timeWindowStore')
     useTimeWindowStore.setState({ days: 30 })
+    // W08 harness fix: an observer that never reports the Wave 3 sections
+    // near (as P3 below does). Without it, under a loaded machine the lazy
+    // coverage-map chunk finished loading INSIDE these tests and asked
+    // `/analytics/coverage-map` + `/releases` — the network guard failed the
+    // test, and the leftover render failed the next ones ("multiple headings").
+    class FarAway {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('IntersectionObserver', FarAway)
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
   })
 
   type Suite = { suite_name: string; unique_tests: number; passed: number; failed: number; skipped: number; pass_rate: number }
@@ -1006,6 +1046,9 @@ describe('CoveragePage P2: no stubs, no invented values', () => {
     expect(kpis.getByText('Test suites').closest('[data-metric-card]')).toHaveTextContent('+ 1 untagged')
     expect(kpis.getByText('Run cadence').closest('[data-metric-card]')).toHaveTextContent('1 / 30 days')
     expect(kpis.getByText('Run cadence').closest('[data-metric-card]')).toHaveTextContent('Schedule may be paused')
+    // W08 TRND-07: Fix tagging is BUILT now (QA engineer and above, see the
+    // "Fix tagging" tests below); this reader (no role: a viewer) has none.
+    // The other not-built controls stay absent.
     for (const name of [
       /Fix tagging/, /^Schedule/, /Configure schedule/, /Apply suite labels/, /Open runner config/,
       /Decision trail/, /Customize/, /^Open$/,
@@ -1260,5 +1303,172 @@ describe('CoveragePage P3: the page template', () => {
     const card = screen.getByRole('region', { name: 'Run cadence' })
     expect(within(card).getByRole('heading', { name: /^Run cadence/ })).toHaveAttribute('title', expect.stringMatching(/^Each cell is a day/))
     expect(card).not.toHaveTextContent('Empty cells are missed windows')
+  })
+})
+
+// ── W08 TRND-07: the last-run chip, the History tab, Fix tagging ─────────────
+describe('CoveragePage W08: last run, History, Fix tagging', () => {
+  const HOUR = 3_600_000
+  const ago = (ms: number) => new Date(Date.now() - ms).toISOString()
+
+  type Suite = {
+    suite_name: string; unique_tests: number; passed: number; failed: number; skipped: number; pass_rate: number
+    last_run_at?: string | null; last_run_id?: string | null
+  }
+  const UNTAGGED: Suite = { suite_name: 'Unknown Suite', unique_tests: 3, passed: 5, failed: 0, skipped: 0, pass_rate: 100 }
+
+  beforeEach(async () => {
+    const { useTimeWindowStore } = await import('@/store/timeWindowStore')
+    useTimeWindowStore.setState({ days: 14 })
+    class FarAway {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('IntersectionObserver', FarAway)
+    history.calls = []
+    history.answer = { history: null, malformed: false, isLoading: false, error: undefined }
+  })
+  afterEach(async () => {
+    vi.unstubAllGlobals()
+    const { useAuthStore } = await import('@/store/authStore')
+    useAuthStore.setState({ user: null })
+  })
+
+  function Location() {
+    const location = useLocation()
+    return <output data-testid="location">{`${location.pathname}${location.search}`}</output>
+  }
+
+  /** Active days every `every` days over the window, so the project's typical gap is `every`. */
+  function cadence(every: number): TrendPoint[] {
+    const out: TrendPoint[] = []
+    for (let back = 13; back >= 1; back -= every) {
+      out.push({ date: shiftDayIso(utcDayIso(), -back), passed: 5, failed: 0, skipped: 0, broken: 0, total: 5, pass_rate: 100 } as TrendPoint)
+    }
+    return out
+  }
+
+  async function renderAt(path: string, suites: Suite[], trend: TrendPoint[] = cadence(1), role?: string) {
+    if (role) {
+      const { useAuthStore } = await import('@/store/authStore')
+      useAuthStore.setState({ user: { id: 'u-1', role } as never })
+    }
+    const { useCoverage, useTrendData } = await import('@/hooks/useMetrics')
+    const total = suites.reduce((n, x) => n + x.passed + x.failed + x.skipped, 0)
+    ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { summary: { unique_tests: 10, suite_count: suites.length, total_executions: total, avg_pass_rate: 85, days_with_runs: 10 }, suites },
+      isLoading: false,
+    })
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: { data: trend }, isLoading: false })
+    const view = render(
+      <MemoryRouter initialEntries={[path]}>
+        <Routes><Route path="/coverage" element={<><CoveragePage /><Location /></>} /></Routes>
+      </MemoryRouter>,
+    )
+    await screen.findByRole('heading', { name: 'Test Coverage' })
+    return view
+  }
+
+  const row = (name: string) => screen.getByRole('row', { name: new RegExp(`^${name}:`) })
+
+  it('a suite row carries its last run as a chip after its tests chip, linking to the run', async () => {
+    await renderAt('/coverage', [
+      { suite_name: 'Payments', unique_tests: 6, passed: 40, failed: 10, skipped: 0, pass_rate: 80, last_run_at: ago(2 * HOUR), last_run_id: 'run-42' },
+    ])
+    const chip = within(row('Payments')).getByRole('link', { name: '2h ago' })
+    expect(chip).toHaveAttribute('href', '/runs/run-42')
+    expect(chip).toHaveAttribute('data-suite-last-run', 'recent')
+    expect(chip.getAttribute('title')).toMatch(/^Last run 2h ago — /)
+    // After the tests chip, in the same name cell: no column is added.
+    const cell = chip.closest('[role="cell"]') as HTMLElement
+    expect(cell.textContent).toMatch(/6 tests2h ago$/)
+  })
+
+  it('is amber past the project\'s median gap between active days, and its title says how often the project runs', async () => {
+    const suites: Suite[] = [
+      { suite_name: 'Payments', unique_tests: 6, passed: 40, failed: 10, skipped: 0, pass_rate: 80, last_run_at: ago(3 * 24 * HOUR), last_run_id: 'r1' },
+      { suite_name: 'Auth', unique_tests: 4, passed: 32, failed: 3, skipped: 0, pass_rate: 91, last_run_at: ago(3 * 24 * HOUR), last_run_id: 'r2' },
+    ]
+    const { unmount } = await renderAt('/coverage', suites, cadence(1))
+    const stale = within(row('Payments')).getByRole('link', { name: '3d ago' })
+    expect(stale).toHaveAttribute('data-suite-last-run', 'stale')
+    expect(stale.getAttribute('title')).toMatch(/; this project usually runs every 1 day$/)
+    unmount()
+    // A project that runs every 4 days: 3 days is not late.
+    await renderAt('/coverage', suites, cadence(4))
+    expect(within(row('Payments')).getByRole('link', { name: '3d ago' })).toHaveAttribute('data-suite-last-run', 'recent')
+  })
+
+  it('a payload without last_run_at (pre-W08) draws no chip and no made-up age', async () => {
+    await renderAt('/coverage', [{ suite_name: 'Payments', unique_tests: 6, passed: 40, failed: 10, skipped: 0, pass_rate: 80 }])
+    expect(row('Payments').querySelector('[data-suite-last-run]')).toBeNull()
+  })
+
+  it('the History tab is the third tab; it asks for the history only while open, and draws the chart', async () => {
+    history.answer = {
+      history: {
+        window_days: 14, measured: true, reason: null, first_snapshot_day: '2026-09-01',
+        points: [{ day: shiftDayIso(utcDayIso(), -2), catalogue_tests: 100, exercised_tests: 80, exercised_pct: 80, suites: 3 }],
+      },
+      malformed: false, isLoading: false, error: undefined,
+    }
+    await renderAt('/coverage', [{ suite_name: 'Payments', unique_tests: 6, passed: 40, failed: 10, skipped: 0, pass_rate: 80 }])
+    const tabs = within(screen.getByRole('tablist', { name: 'Coverage views' })).getAllByRole('tab').map((t) => t.textContent)
+    expect(tabs).toEqual(['Coverage map', 'Env × release heatmap', 'History'])
+    // Default tab: the history hook is not even mounted.
+    expect(history.calls).toHaveLength(0)
+    fireEvent.click(within(screen.getByRole('tablist', { name: 'Coverage views' })).getByRole('tab', { name: 'History' }))
+    expect(screen.getByTestId('location')).toHaveTextContent('/coverage?tab=history')
+    expect(await screen.findByRole('heading', { name: 'Coverage history' })).toBeInTheDocument()
+    expect(history.calls[history.calls.length - 1]).toEqual([14, true])
+  })
+
+  it('before the first snapshot the History tab says so, not a chart of zeros', async () => {
+    history.answer = {
+      history: { window_days: 14, measured: false, reason: 'No coverage snapshot yet: the first is taken at 00:05 UTC.', first_snapshot_day: null, points: [] },
+      malformed: false, isLoading: false, error: undefined,
+    }
+    await renderAt('/coverage?tab=history', [{ suite_name: 'Payments', unique_tests: 6, passed: 40, failed: 10, skipped: 0, pass_rate: 80 }])
+    expect(await screen.findByText('No coverage snapshot yet: the first is taken at 00:05 UTC.')).toBeInTheDocument()
+  })
+
+  it('a malformed history says "Coverage history is not available"; the rest of the page renders', async () => {
+    history.answer = { history: null, malformed: true, isLoading: false, error: undefined }
+    await renderAt('/coverage?tab=history', [{ suite_name: 'Payments', unique_tests: 6, passed: 40, failed: 10, skipped: 0, pass_rate: 80 }])
+    expect(await screen.findByText('Coverage history is not available')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Suite coverage breakdown' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Coverage metrics' })).toBeInTheDocument()
+  })
+
+  it('a QA engineer gets Fix tagging on the untagged callout, which opens the side panel; a viewer does not', async () => {
+    const suites: Suite[] = [{ suite_name: 'Payments', unique_tests: 6, passed: 40, failed: 10, skipped: 0, pass_rate: 80 }, UNTAGGED]
+    const { unmount } = await renderAt('/coverage', suites)
+    expect(within(screen.getByRole('region', { name: 'Untagged executions' })).queryByRole('button', { name: 'Fix tagging' })).toBeNull()
+    unmount()
+    await renderAt('/coverage', suites, cadence(1), 'QA_ENGINEER')
+    const button = within(screen.getByRole('region', { name: 'Untagged executions' })).getByRole('button', { name: 'Fix tagging' })
+    expect(button).toBeEnabled()
+    expect(screen.queryByRole('complementary', { name: 'Fix tagging' })).toBeNull()
+    fireEvent.click(button)
+    expect(screen.getByRole('complementary', { name: 'Fix tagging' })).toHaveTextContent(
+      'Its executions — past and future — keep the suite label your test reporter sends',
+    )
+  })
+
+  it('in All Projects Fix tagging is disabled and says why', async () => {
+    const { useProjectStore } = await import('@/store/projectStore')
+    const mocked = useProjectStore as unknown as ReturnType<typeof vi.fn>
+    const original = mocked.getMockImplementation()
+    mocked.mockImplementation((selector: (s: { activeProjectId: string; activeProject: null }) => unknown) =>
+      selector({ activeProjectId: '__ALL__', activeProject: null }))
+    try {
+      await renderAt('/coverage', [{ suite_name: 'Payments', unique_tests: 6, passed: 40, failed: 10, skipped: 0, pass_rate: 80 }, UNTAGGED], cadence(1), 'QA_LEAD')
+      const button = within(screen.getByRole('region', { name: 'Untagged executions' })).getByRole('button', { name: 'Fix tagging' })
+      expect(button).toBeDisabled()
+      expect(button).toHaveAttribute('title', 'Pick a project to fix tagging')
+    } finally {
+      if (original) mocked.mockImplementation(original)
+    }
   })
 })

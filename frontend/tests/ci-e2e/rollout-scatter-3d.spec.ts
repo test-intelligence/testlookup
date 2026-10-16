@@ -167,6 +167,24 @@ test('(d) export while the 3D view shows is the 2D chart: a PNG the size of the 
   await expect(view3d(page)).toHaveAttribute('data-chart-status', 'ready')
 })
 
+// W08 TRND-11: an ECharts chart's export is registered (a true SVG, a light image),
+// so the 2D scatter offers Light background; the 3D view's export stays the
+// raster of the 2D chart under it, so there it is offered disabled, with why.
+test('(d2) Light background: offered for the 2D scatter, disabled with the reason in the 3D view', async ({ page }) => {
+  await openFailures(page)
+  const trigger = frame(page).getByRole('button', { name: EXPORT.trigger, exact: true })
+  await trigger.click()
+  await expect(frame(page).getByRole('menuitemcheckbox', { name: 'Light background', exact: true })).toBeEnabled()
+  await page.keyboard.press('Escape')
+  await enter3D(page)
+  await trigger.click()
+  const unavailable = frame(page).getByRole('menuitemcheckbox', { name: 'Light background (not for this chart)', exact: true })
+  await expect(unavailable).toBeVisible()
+  await expect(unavailable).toBeDisabled()
+  await page.keyboard.press('Escape')
+  await expect(view3d(page)).toHaveAttribute('data-chart-status', 'ready')
+})
+
 test('(e) no WebGL: the notice, the 2D chart, and three is never fetched', async ({ page }) => {
   // WebGL contexts refused; 2D canvases (ECharts) still work.
   await page.addInitScript(() => {

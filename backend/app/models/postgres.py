@@ -1,6 +1,6 @@
 """SQLAlchemy ORM models — all PostgreSQL tables."""
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from enum import Enum as PyEnum
 from typing import Optional
 
@@ -8,6 +8,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -1759,19 +1760,81 @@ class QualityGate(Base):
 
 
 class CoverageSnapshot(Base):
-    """Daily test coverage snapshots for trend charts."""
+    """One coverage snapshot a project a UTC day (W08 TRND-07, migration 0217).
+
+    Written by the daily beat (``take_coverage_snapshot`` through
+    ``coverage_snapshot_service.stage_snapshot``: an upsert on
+    ``(project_id, snapshot_day)``) and read by the Coverage History tab. The
+    count columns keep their 0001 names; since W08 they mean:
+
+    * ``total_tests`` -- tests in the catalogue on ``snapshot_day``;
+    * ``automated_count`` -- distinct tests exercised in the 30 UTC days
+      ending ``snapshot_day``;
+    * ``total_suites`` -- distinct suites exercised in those 30 days.
+
+    ``snapshot_date`` is when the row was written, ``snapshot_day`` the day it
+    describes (the API speaks those clear names).
+    """
     __tablename__ = "coverage_snapshots"
+    __table_args__ = (
+        Index("uq_coverage_snapshots_project_day", "project_id", "snapshot_day", unique=True),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
+    #: The UTC day the snapshot describes: one row a project a day.
+    snapshot_day: Mapped[date] = mapped_column(Date, nullable=False)
+    #: When the row was written (the transaction's ``now()``).
     snapshot_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    #: Suites exercised in the 30 days ending ``snapshot_day``.
     total_suites: Mapped[int] = mapped_column(Integer, default=0)
+    #: Tests in the catalogue on ``snapshot_day``.
     total_tests: Mapped[int] = mapped_column(Integer, default=0)
+    #: Distinct tests exercised in the 30 days ending ``snapshot_day``.
     automated_count: Mapped[int] = mapped_column(Integer, default=0)
-    suite_coverage: Mapped[Optional[dict]] = mapped_column(JSON)
+    #: Up to 50 per-suite rows (the ``coverage_stats`` suite rule); JSONB in the table.
+    suite_coverage: Mapped[Optional[dict]] = mapped_column(JSONB)
+
+
+class TimelineNote(Base):
+    """A note pinned on a project's daily charts (W08 TRND-04, migration 0218).
+
+    An inclusive UTC day range (``starts_on`` .. ``ends_on``; a one-day note
+    has both equal), 1-280 characters of text, and optionally ONE suite
+    (``suite_name``; ``None`` = every suite of the project). Created by a QA
+    engineer or above; changed or removed by its author or a QA lead or above
+    (``timeline_note_service.can_edit``).
+    """
+    __tablename__ = "timeline_notes"
     __table_args__ = (
-        UniqueConstraint("project_id", "snapshot_date", name="uq_coverage_project_date"),
+        CheckConstraint("ends_on >= starts_on", name="ck_timeline_notes_range"),
+        CheckConstraint("char_length(text) BETWEEN 1 AND 280", name="ck_timeline_notes_text"),
+        Index("ix_timeline_notes_project_starts", "project_id", "starts_on"),
     )
+
+    #: Not a column: the author's display name, set by the service when it
+    #: loads the note with its author (``timeline_note_service``).
+    created_by_name = None
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    suite_name: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    starts_on: Mapped[date] = mapped_column(Date, nullable=False)
+    ends_on: Mapped[date] = mapped_column(Date, nullable=False)
+    created_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+    # Last: the attribute named ``text`` shadows sqlalchemy's ``text()`` for the
+    # rest of this class body.
+    text: Mapped[str] = mapped_column(String(280), nullable=False)
 
 
 class NotificationPreference(Base):

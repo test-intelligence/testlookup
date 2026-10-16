@@ -41,6 +41,11 @@
  * y axis's name) and under the table view — where the line is, or why it is
  * not drawn. Without the prop, the summary, the table and the DOM are exactly
  * what they were.
+ *
+ * TRND-04: timeline notes ride in the model (`model.notes`); the table view
+ * lists them (dates, text, author) beside the release markers. No notes, no
+ * table: the frame is what it was. The host's `Notes (n)` chip goes in the
+ * frame's existing `toolbar` slot (`TimelineNotesChip`).
  */
 import { forwardRef, useMemo, useState } from 'react'
 import { analyzeTrend, trendFrameTakeaway, type TrendOverlayState } from '@/lib/trendStats'
@@ -54,6 +59,7 @@ import {
   EXECUTIONS_AXIS_TITLE,
   RATE_AXIS_TITLE,
   timeSeriesToChartSeries,
+  type NoteMarker,
   type TimeSeriesModel,
 } from './timeSeriesModel'
 import ChartRangeBrush from './zoom/ChartRangeBrush'
@@ -102,6 +108,41 @@ export const TIME_SERIES_CAPTION_RESERVE = 16 + 4
 
 /** The summary adds its own full stop after the y axis's name. */
 const withoutFullStop = (text: string) => (text.endsWith('.') ? text.slice(0, -1) : text)
+
+/** TRND-04: the window's notes as table rows (dates, text, author) — React text, never markup. */
+function TimelineNoteTable({ notes }: { notes: readonly NoteMarker[] }) {
+  return (
+    <div data-chart-note-table="" className="mt-3 rounded border border-[var(--color-border)]">
+      <table className="w-full border-collapse text-left text-xs text-[var(--color-text)]">
+        <caption className="px-2 py-1 text-left text-sm font-medium text-[var(--color-text)]">Timeline notes</caption>
+        <thead>
+          <tr>
+            <th scope="col" className="border-b border-[var(--color-border)] px-2 py-1 font-semibold">
+              Days (UTC)
+            </th>
+            <th scope="col" className="border-b border-[var(--color-border)] px-2 py-1 font-semibold">
+              Note
+            </th>
+            <th scope="col" className="border-b border-[var(--color-border)] px-2 py-1 font-semibold">
+              By
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {notes.map((note) => (
+            <tr key={note.id} className="border-b border-[var(--color-border)] last:border-b-0">
+              <th scope="row" className="px-2 py-1 font-medium tabular-nums">
+                {note.fromDay === note.toDay ? note.fromDay : `${note.fromDay} – ${note.toDay}`}
+              </th>
+              <td className="px-2 py-1 break-words">{note.label}</td>
+              <td className="px-2 py-1">{note.author ?? '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
 
 const TimeSeriesChartFrame = forwardRef<HTMLDivElement, TimeSeriesChartFrameProps>(function TimeSeriesChartFrame(
   { model, inProgressRuns, timeZone, locale, now, animate, height = 280, trendAnalysis, zoom, rateTarget, ...frameProps },
@@ -169,6 +210,8 @@ const TimeSeriesChartFrame = forwardRef<HTMLDivElement, TimeSeriesChartFrameProp
       {zoomState.note}
     </p>
   ) : null
+  // TRND-04: the timeline notes the plot draws, for the table reader (only when there are any).
+  const notesTable = model && model.notes?.length ? <TimelineNoteTable notes={model.notes} /> : null
 
   return (
     <ChartFrame
@@ -190,6 +233,7 @@ const TimeSeriesChartFrame = forwardRef<HTMLDivElement, TimeSeriesChartFrameProp
           {zoomTableNote}
           {targetTableNote}
           {releaseTable}
+          {notesTable}
           {viewAnalysis && view ? (
             <TimeSeriesChartTrendTable analysis={viewAnalysis} days={viewDays} zoomNote={range ? zoomState.note : undefined} />
           ) : null}
