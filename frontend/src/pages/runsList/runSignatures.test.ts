@@ -62,6 +62,14 @@ describe('signatureRunIds — the visible failed builds first, then the newest, 
 })
 
 describe('buildSignatureModel — groups by the dominant error', () => {
+  it('a batch with no items array reads as not loaded, never a crash', () => {
+    const a = run(1)
+    // An older API or a proxy's empty JSON: the table keeps rendering ("—" for diversity).
+    const model = buildSignatureModel([a], {} as unknown as Parameters<typeof buildSignatureModel>[1])
+    expect(model.groups).toEqual([])
+    expect(model.diversityScore).toBeNull()
+  })
+
   it('two builds with identical pass / fail / total counts but different errors are two groups', () => {
     const a = run(1)
     const b = run(2)  // the same 8 / 2 / 10 as a

@@ -106,7 +106,10 @@ export function buildSignatureModel(windowRuns: readonly TestRun[], batch: RunSi
   const failedRuns = failed.length
   const groupOf = new Map<string, string>()
   const itemOf = new Map<string, RunSignatureItem>()
-  if (!batch) {
+  // A batch with no `items` array (an older API, a proxy's empty JSON) reads as
+  // "not loaded", never a crash: an enrichment of the table must not take the
+  // Runs page down with it ("batch.items is not iterable", W07 CI).
+  if (!batch || !Array.isArray(batch.items)) {
     return { groups: [], failedRuns, groupedRuns: 0, groupOf, itemOf, diversityScore: failedRuns === 0 ? 100 : null }
   }
   for (const item of batch.items) itemOf.set(item.run_id, item)
