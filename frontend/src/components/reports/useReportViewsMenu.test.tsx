@@ -112,7 +112,8 @@ describe('useReportViewsMenu', () => {
     const { result, setSuite } = renderMenuHook({ windowOptions: [1, 7, 30, 90] })
     apply(result.current, view({ release_ids: ['r2'], release_id: 'r2', suites: ['Checkout'], window: 14 }))
     expect(useReleaseStore.getState()).toMatchObject({ activeReleaseId: 'r2', scopedProjectId: 'p1' })
-    // 14 is not a Summary window: the nearest one it offers.
+    // 14 is not among this page's options ([1, 7, 30, 90]): the nearest one it offers.
+    // (Every real windowed page offers 14 since W07 WIN-01; the snap is still the rule.)
     expect(useTimeWindowStore.getState().days).toBe(7)
     expect(setSuite).toHaveBeenCalledWith('Checkout')
     expect(toast).not.toHaveBeenCalled()

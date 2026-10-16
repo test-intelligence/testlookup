@@ -761,6 +761,15 @@ jobs:
           tests/integration/test_defect_triage_postgres.py
           tests/integration/test_defect_review_postgres.py
           tests/integration/test_defect_promoted_webhook_postgres.py
+          tests/integration/test_migration_0214_postgres.py
+          tests/integration/test_migration_0215_0216_postgres.py
+          tests/integration/test_run_ai_verdicts_postgres.py
+          tests/integration/test_run_signatures_postgres.py
+          tests/integration/test_runs_list_filters_postgres.py
+          tests/integration/test_failure_detail_postgres.py
+          tests/integration/test_time_to_fix_postgres.py
+          tests/integration/test_classification_hints_postgres.py
+          tests/integration/test_source_roots_postgres.py
           tests/integration/test_test_case_execution_timing_postgres.py
           tests/integration/test_every_get_route_answers_without_500_postgres.py
           tests/integration/test_key_mint_revoke_race_postgres.py
