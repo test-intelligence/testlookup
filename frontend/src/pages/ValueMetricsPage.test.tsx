@@ -267,6 +267,39 @@ describe('ValueMetricsPage', () => {
     expect(screen.queryByText('42.5h')).toBeNull()
   })
 
+  it('WIN-01: clicking 14d asks for 14 days and the headline says the last 14 days', async () => {
+    mockGet.mockImplementation(async (_projectId: string, days: number) =>
+      baseMetrics({
+        period_days: days,
+        headline: {
+          hours_saved: days === 14 ? 20 : 42.5,
+          fte_equivalent: 0.8,
+          window_days: days,
+          hours_saved_30d: 42.5,
+          fte_equivalent_30d: 0.8,
+        },
+      }),
+    )
+    await renderPage()
+    await screen.findByText('42.5h')
+
+    fireEvent.click(screen.getByRole('radio', { name: '14d' }))
+
+    await waitFor(() => expect(mockGet.mock.calls.some((call) => call[1] === 14)).toBe(true))
+    await waitFor(() => expect(screen.getByTestId('hours-saved-window')).toHaveTextContent('Eng-hours saved · last 14 days'))
+    expect(useTimeWindowStore.getState().days).toBe(14)
+  })
+
+  it('WIN-01: a stored 14d opens as 14d and stays 14 (no snap to 7)', async () => {
+    useTimeWindowStore.setState({ days: 14 })
+    await renderPage()
+    await screen.findByTestId('monthly-chart')
+    expect(mockGet.mock.calls.some((call) => call[1] === 14)).toBe(true)
+    expect(mockGet.mock.calls.some((call) => call[1] === 7)).toBe(false)
+    expect(screen.getByRole('radio', { name: '14d' })).toHaveAttribute('aria-checked', 'true')
+    expect(useTimeWindowStore.getState().days).toBe(14)
+  })
+
   it('labels a payload without window_days as the trailing 30 days, whatever the picker says', async () => {
     // baseMetrics() carries only the 30-day pair (a pre-TRND-05 payload).
     useTimeWindowStore.setState({ days: 90 })
@@ -543,12 +576,12 @@ describe('ValueMetricsPage', () => {
     expect(screen.queryByTestId('assumptions-editor')).toBeNull()
   })
 
-  it('offers 7d / 30d / 90d / 365d in the shared window picker, and a year asks for 365 days', async () => {
+  it('offers 7d / 14d / 30d / 90d / 365d in the shared window picker, and a year asks for 365 days', async () => {
     await renderPage()
 
     await screen.findByTestId('monthly-chart')
     const picker = screen.getByRole('radiogroup', { name: 'Time window' })
-    expect(within(picker).getAllByRole('radio').map((r) => r.textContent)).toEqual(['7d', '30d', '90d', '365d'])
+    expect(within(picker).getAllByRole('radio').map((r) => r.textContent)).toEqual(['7d', '14d', '30d', '90d', '365d'])
     expect(within(picker).getByRole('radio', { name: '30d' })).toHaveAttribute('aria-checked', 'true')
     fireEvent.click(within(picker).getByRole('radio', { name: '365d' }))
     await waitFor(() => expect(mockGet.mock.calls.some((call) => call[1] === 365)).toBe(true))

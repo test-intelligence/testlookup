@@ -657,10 +657,10 @@ describe('DefectsPage — trend history and KPI sparklines (DEF-04)', () => {
     return screen.findByRole('region', { name: 'Defect KPIs' })
   }
 
-  it('asks for the window picked in the header (7 / 30 / 90), under its title', async () => {
+  it('asks for the window picked in the header (7 / 14 / 30 / 90), under its title', async () => {
     await renderTrend(trendOf())
     const picker = screen.getByRole('radiogroup', { name: 'Time window' })
-    expect(within(picker).getAllByRole('radio').map(r => r.textContent)).toEqual(['7d', '30d', '90d'])
+    expect(within(picker).getAllByRole('radio').map(r => r.textContent)).toEqual(['7d', '14d', '30d', '90d'])
     expect(picker.parentElement).toHaveAttribute(
       'title', 'Window for the KPI sparklines, Time to resolve and Escape rate. The table lists every defect.',
     )
@@ -669,6 +669,24 @@ describe('DefectsPage — trend history and KPI sparklines (DEF-04)', () => {
     fireEvent.click(within(picker).getByRole('radio', { name: '90d' }))
     expect(lastCallArg(insights.trend)).toMatchObject({ days: 90 })
     expect(lastCallArg(insights.escape)).toMatchObject({ days: 90 })
+    // WIN-01: 14d between 7d and 30d asks both reads for 14 days.
+    fireEvent.click(within(picker).getByRole('radio', { name: '14d' }))
+    expect(lastCallArg(insights.trend)).toMatchObject({ days: 14 })
+    expect(lastCallArg(insights.escape)).toMatchObject({ days: 14 })
+    expect(useTimeWindowStore.getState().days).toBe(14)
+  })
+
+  it('WIN-01: a stored 14d opens as 14d and stays 14 (no snap to 7)', async () => {
+    useTimeWindowStore.setState({ days: 14 })
+    insights.trend.mockReturnValue({ data: { ...trendOf(), window_days: 14 }, isLoading: false })
+    await mockRows(rows, { total: 1200 })
+    renderDefects()
+    await screen.findByRole('region', { name: 'Defect KPIs' })
+    expect(screen.getByRole('radio', { name: '14d' })).toHaveAttribute('aria-checked', 'true')
+    expect(lastCallArg(insights.trend)).toMatchObject({ days: 14 })
+    expect(lastCallArg(insights.escape)).toMatchObject({ days: 14 })
+    expect(insights.trend.mock.calls.some(call => (call[0] as { days?: number }).days === 7)).toBe(false)
+    expect(useTimeWindowStore.getState().days).toBe(14)
   })
 
   it('reads the tile values from the totals over every defect, not from the 20 loaded rows', async () => {

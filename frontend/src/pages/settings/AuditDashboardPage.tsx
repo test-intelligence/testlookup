@@ -19,6 +19,13 @@ import { usePermissions } from '@/hooks/usePermissions'
 
 const HELP_TOPIC = helpTopicParam('/settings/audit')
 
+/**
+ * The dropdown's windows. Audit starts at a week, offers 14d like every
+ * windowed page (WIN-01), and participates in the shared preference so the
+ * user doesn't keep flipping the window every time they navigate.
+ */
+const AUDIT_OPTIONS = [7, 14, 30, 90] as const;
+
 type Tab = 'events' | 'observability';
 
 const SOURCE_COLORS: Record<string, string> = {
@@ -41,10 +48,7 @@ export default function AuditDashboardPage() {
 
   // Events tab
   const [selectedCategory, setSelectedCategory] = useState('');
-  // Global shared time window — Audit only offers 7/30/90 in its
-  // dropdown but participates in the shared preference so the user
-  // doesn't keep flipping the window every time they navigate.
-  const AUDIT_OPTIONS = [7, 30, 90] as const;
+  // Global shared time window, snapped to AUDIT_OPTIONS.
   const storedDays = useTimeWindowStore(s => s.days);
   const setStoredDays = useTimeWindowStore(s => s.setDays);
   const days = snapToAllowed(storedDays, AUDIT_OPTIONS);
@@ -114,9 +118,7 @@ export default function AuditDashboardPage() {
             </select>
             <select value={days} onChange={e => setDays(parseInt(e.target.value))}
               className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm">
-              <option value={7}>Last 7 days</option>
-              <option value={30}>Last 30 days</option>
-              <option value={90}>Last 90 days</option>
+              {AUDIT_OPTIONS.map(n => <option key={n} value={n}>Last {n} days</option>)}
             </select>
             <span className="text-xs text-[var(--color-text-muted)]">{total} events</span>
           </div>

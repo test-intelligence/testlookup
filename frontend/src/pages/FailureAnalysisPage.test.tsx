@@ -38,6 +38,26 @@ vi.mock('@/hooks/useMetrics', () => ({
   useKindEvidence: vi.fn(() => ({ data: undefined, isLoading: false })),
 }))
 
+// W07 FAIL-02: the measured time to fix (its own hook module, beside useMetrics).
+// Default: the server answered "not measured" (below the floor of fixes).
+const fixTime = vi.hoisted(() => ({
+  notMeasured: {
+    measured: false, reason: 'Fewer than 5 tests were fixed in the last 30 days (2 fixed).',
+    median_hours: null, mean_hours: null, fixed: 2, open: 1, excluded_flaky_tests: 0,
+    excluded_oscillating_tests: 0, min_fixes: 5, window_days: 30,
+  },
+}))
+vi.mock('@/hooks/useFailureInsights', () => ({
+  TIME_TO_FIX_KEY: 'analytics-time-to-fix',
+  useTimeToFix: vi.fn(() => ({ data: fixTime.notMeasured, isLoading: false, error: undefined })),
+}))
+// W07 FAIL-10: the hints dialog's reads (asked only once a QA lead opens it).
+vi.mock('@/hooks/useClassificationHints', () => ({
+  PREVIEW_MIN_CHARS: 3,
+  useClassificationHints: vi.fn(() => ({ data: { items: [], total: 0, max_hints: 50 }, error: undefined, isLoading: false, mutate: vi.fn() })),
+  useClassificationHintPreview: vi.fn(() => ({ data: undefined, error: undefined })),
+}))
+
 const flags = vi.hoisted(() => ({ quarantineOn: true as boolean | undefined }))
 vi.mock('@/hooks/useFeatureFlags', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/hooks/useFeatureFlags')>(),
@@ -1130,10 +1150,10 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
     expect(screen.queryByText(/Mean time to fix/i)).toBeNull()
     expect(screen.queryByText(/^Provenance$/)).toBeNull()
     expect(screen.queryByRole('button', { name: /Decision trail/i })).toBeNull()
-    // The KPI row holds the four measured cells only.
+    // The KPI row holds the four counts and, since W07 FAIL-02, the MEASURED time to fix (here: not measured).
     const kpis = screen.getByRole('region', { name: 'Failure metrics' })
     expect(Array.from(kpis.querySelectorAll('[data-metric-card]')).map(c => c.textContent?.match(/^[A-Za-z ]+?(?=\d|—|$)/)?.[0])).toEqual([
-      'Repeat failures', 'Flaky tests', 'Uncategorized', 'Total executions',
+      'Repeat failures', 'Flaky tests', 'Uncategorized', 'Total executions', 'Median time to fix',
     ])
   })
 
@@ -1864,5 +1884,177 @@ describe('FailureAnalysisPage — a viewer is not offered category writes (E2E 2
     expect(screen.queryByText('Classify uncategorised failures')).toBeNull()
     // Notify mails the suite owner: QA engineer and above too.
     expect(screen.queryByText('Notify suite owner')).toBeNull()
+  })
+})
+
+// ── W07 FAIL-02: the measured time to fix (the fifth tile and the dimension) ──
+describe('FailureAnalysisPage — Median time to fix (W07 FAIL-02)', () => {
+  const measured = (over: Record<string, unknown> = {}) => ({
+    measured: true, reason: null, median_hours: 43.2, mean_hours: 60.5, fixed: 23, open: 4,
+    excluded_flaky_tests: 2, excluded_oscillating_tests: 1, min_fixes: 5, window_days: 30, ...over,
+  })
+
+  async function seed(timeToFix: unknown, trendPoints?: unknown[]) {
+    const { useFlakyTests, useFailureCategories, useTopFailing, useTrendData } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+    const { useTimeToFix } = await import('@/hooks/useFailureInsights')
+    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useFailureCategories as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useTopFailing as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [{ test_name: 'checkout_flow', fail_count: 4, test_fingerprint: 'fp-top' }] },
+      isLoading: false,
+    })
+    // Pass rate 60 %, nothing categorised (0), no flake (100).
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { data: trendPoints ?? [{ date: '2026-07-01', passed: 6, failed: 4, skipped: 0, broken: 0, total: 10, pass_rate: 60 }] },
+      isLoading: false,
+    })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useTimeToFix as ReturnType<typeof vi.fn>).mockReturnValue({ data: timeToFix, isLoading: false, error: undefined })
+  }
+
+  const tile = () => {
+    const el = screen.getByRole('region', { name: 'Failure metrics' }).querySelector('[data-time-to-fix]') as HTMLElement
+    expect(el).not.toBeNull()
+    return el
+  }
+
+  async function dimensions() {
+    await openDisclosure('How this score is computed')
+    const meter = await screen.findByRole('meter', { name: 'Stability score' })
+    const ttf = document.querySelector('[data-dimension="time_to_fix"]') as HTMLElement
+    return { meter, ttf, ttfValue: ttf.querySelector('[data-dimension-value]')?.textContent }
+  }
+
+  beforeEach(() => {
+    try { localStorage.removeItem('testlookup-time-window') } catch { /* ignore */ }
+    useTimeWindowStore.setState({ days: DEFAULT_TIME_WINDOW_DAYS })
+  })
+  afterEach(async () => {
+    const { useTimeToFix } = await import('@/hooks/useFailureInsights')
+    ;(useTimeToFix as ReturnType<typeof vi.fn>).mockReturnValue({ data: fixTime.notMeasured, isLoading: false, error: undefined })
+  })
+
+  it('the strip has five tiles; the fifth is the median in days with the fixed count beside it', async () => {
+    await seed(measured())
+    renderFailures()
+    await screen.findByRole('heading', { name: 'Failure Analysis' })
+    const cards = screen.getByRole('region', { name: 'Failure metrics' }).querySelectorAll('[data-metric-card]')
+    expect(cards).toHaveLength(5)
+    expect(tile()).toHaveAttribute('data-time-to-fix', 'measured')
+    expect(tile()).toHaveTextContent(/^Median time to fix1\.8 d23 fixed$/)
+    expect(within(tile()).getByText('Median time to fix')).toHaveAttribute(
+      'title',
+      'First failure → next pass, per test, over the last 30 days. Tests flagged flaky and tests that recovered 3+ times are left out (3); 4 still failing are not counted. A failure already open when the window starts counts from its first failure inside it.',
+    )
+  })
+
+  it('a median under 48 h reads in hours', async () => {
+    await seed(measured({ median_hours: 30 }))
+    renderFailures()
+    await screen.findByRole('heading', { name: 'Failure Analysis' })
+    expect(tile()).toHaveTextContent(/^Median time to fix30\.0 h23 fixed$/)
+  })
+
+  it('below the floor reads "Not measured" with the server reason, never a 0', async () => {
+    await seed(fixTime.notMeasured)
+    renderFailures()
+    await screen.findByRole('heading', { name: 'Failure Analysis' })
+    expect(tile()).toHaveAttribute('data-time-to-fix', 'not-measured')
+    expect(tile()).toHaveTextContent('Not measured')
+    expect(tile()).toHaveTextContent(/^Median time to fix—/)
+    expect(tile().textContent).not.toMatch(/\d/)
+    expect(tile().querySelector('[data-time-to-fix-fixed]')).toBeNull()
+    expect(within(tile()).getByText('Median time to fix')).toHaveAttribute(
+      'title', 'Fewer than 5 tests were fixed in the last 30 days (2 fixed).',
+    )
+  })
+
+  it('"Time to fix" scores the measured median (43.2 h → 74) and the composite uses all four weights', async () => {
+    await seed(measured())
+    renderFailures()
+    await screen.findByRole('heading', { name: 'Failure Analysis' })
+    const { meter, ttf, ttfValue } = await dimensions()
+    expect(ttf).toHaveAttribute('data-measured', 'true')
+    expect(ttfValue).toBe('74')
+    // 60 × .35 + 0 × .20 + 100 × .20 + 74.29 × .25 = 59.6 → 60.
+    expect(meter.getAttribute('aria-valuetext')).toMatch(/^60 of 100, /)
+  })
+
+  it('not measured: "—" for the dimension, and the composite re-normalises over the other three', async () => {
+    await seed(fixTime.notMeasured)
+    renderFailures()
+    await screen.findByRole('heading', { name: 'Failure Analysis' })
+    const { meter, ttf, ttfValue } = await dimensions()
+    expect(ttf).toHaveAttribute('data-measured', 'false')
+    expect(ttfValue).toBe('—')
+    expect(ttf.querySelector('i')).toBeNull()
+    // (60 × .35 + 0 × .20 + 100 × .20) / .75 = 54.7 → 55.
+    expect(meter.getAttribute('aria-valuetext')).toMatch(/^55 of 100, /)
+  })
+
+  it('the synthetic tail is gone: five failing days in a row no longer move the dimension', async () => {
+    const days = ['2026-07-01', '2026-07-02', '2026-07-03', '2026-07-04', '2026-07-05']
+    const failingTail = days.map(date => ({ date, passed: 0, failed: 2, skipped: 0, broken: 0, total: 2, pass_rate: 0 }))
+    await seed(fixTime.notMeasured, failingTail)
+    renderFailures()
+    await screen.findByRole('heading', { name: 'Failure Analysis' })
+    // The old block scored this 100 − 5 × 14 = 30; there is no measurement, so: "—".
+    expect((await dimensions()).ttfValue).toBe('—')
+  })
+
+  it('the same measured median scores the same whatever the trend tail', async () => {
+    const days = ['2026-07-01', '2026-07-02', '2026-07-03', '2026-07-04', '2026-07-05']
+    const failingTail = days.map(date => ({ date, passed: 0, failed: 2, skipped: 0, broken: 0, total: 2, pass_rate: 0 }))
+    await seed(measured(), failingTail)
+    renderFailures()
+    await screen.findByRole('heading', { name: 'Failure Analysis' })
+    expect((await dimensions()).ttfValue).toBe('74')
+  })
+})
+
+// ── W07 FAIL-10: the Classification hints button (Failures › Categories) ──
+describe('FailureAnalysisPage — Classification hints (W07 FAIL-10)', () => {
+  async function seed() {
+    const { useFlakyTests, useFailureCategories, useTopFailing, useTrendData } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+    ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useFailureCategories as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [{ category: 'INFRASTRUCTURE', count: 3 }] }, isLoading: false })
+    ;(useTopFailing as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [{ test_name: 'test A', fail_count: 3, test_fingerprint: 'fp-a' }] }, isLoading: false })
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { data: [{ date: '2026-07-01', passed: 6, failed: 3, skipped: 0, broken: 0, total: 9, pass_rate: 66 }] },
+      isLoading: false,
+    })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+  }
+
+  beforeEach(() => {
+    try { localStorage.removeItem('testlookup-time-window') } catch { /* ignore */ }
+    useTimeWindowStore.setState({ days: DEFAULT_TIME_WINDOW_DAYS })
+  })
+
+  it('a QA lead gets the button on the Categories card, and it opens the dialog for this project', async () => {
+    useAuthStore.setState({ user: { id: 'lead', role: 'QA_LEAD' } as never })
+    await seed()
+    const { useClassificationHints } = await import('@/hooks/useClassificationHints')
+    ;(useClassificationHints as ReturnType<typeof vi.fn>).mockClear()
+    renderFailures('?tab=categories')
+    const button = await screen.findByTestId('open-classification-hints')
+    expect(button).toHaveTextContent('Classification hints')
+    // The card's header holds it, beside the title.
+    expect(button.closest('.overflow-hidden')).toHaveTextContent('Failure category distribution')
+    // The list is asked only once the dialog opens.
+    expect(useClassificationHints).not.toHaveBeenCalled()
+    fireEvent.click(button)
+    expect(await screen.findByRole('dialog', { name: 'Classification hints' })).toBeInTheDocument()
+    expect(useClassificationHints).toHaveBeenCalledWith('proj-1')
+  })
+
+  it.each(['VIEWER', 'TESTER', 'QA_ENGINEER'])('a %s gets no button', async (role) => {
+    useAuthStore.setState({ user: { id: role, role } as never })
+    await seed()
+    renderFailures('?tab=categories')
+    await screen.findByText('Failure category distribution')
+    expect(screen.queryByTestId('open-classification-hints')).toBeNull()
   })
 })

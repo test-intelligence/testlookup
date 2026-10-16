@@ -1,6 +1,6 @@
 /**
  * Global time-window preference — shared by every page that has a
- * "Last 24h / 7d / 30d / 90d" filter.
+ * "Last 24h / 7d / 14d / 30d / 90d" filter.
  *
  * Why a store: the user expects the window selection to follow them.
  * Pick 24h on /reports/summary → /my-failures, /coverage, /trends, /live,
@@ -14,11 +14,12 @@
  * has to be read + written from a dozen pages with cross-page reactivity
  * is the canonical strong reason.
  *
- * Pages may have non-overlapping option sets (e.g. ``LiveExecutionPage``
- * offers 14d but ``SummaryReportPage`` doesn't). Use the exported
- * ``snapToAllowed`` helper to normalise the shared value against a
- * page's allowed set instead of forcing every page to expose the same
- * options.
+ * Pages may have different option sets around a common core: every
+ * windowed page offers 7d, 14d and 30d (WIN-01), but Live and My failures
+ * stop at 30d, Value metrics adds 365d, and Defects, Explore, Value
+ * metrics and the Audit dashboard start at 7d. Use the exported
+ * ``snapToAllowed`` helper to normalise the shared value against a page's
+ * allowed set instead of forcing every page to expose the same options.
  */
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
@@ -95,12 +96,13 @@ export const useTimeWindowStore = create<TimeWindowStore>()(
 /**
  * Snap a global window to the closest value in a page's allowed set.
  *
- * Used by pages whose option lists differ from the union — e.g. a page
- * that doesn't offer 14d shouldn't fail open when the user happens to
- * have picked 14d elsewhere. The "closest" rule means picking 90d on
- * Summary still maps to 30d (the largest available) on Live, which is
- * a less surprising fallback than "default to the page's hard-coded
- * starting point and lose the user's recency intent."
+ * Used by pages whose option lists differ from the union — e.g. a 365d
+ * picked on Value metrics, a 90d on a page without 90d (Live), or a 24h on
+ * a page that starts at 7d shouldn't fail open. 7d, 14d and 30d are on
+ * every windowed page (WIN-01), so those never snap. The "closest" rule
+ * means picking 90d on Summary still maps to 30d (the largest available)
+ * on Live, which is a less surprising fallback than "default to the page's
+ * hard-coded starting point and lose the user's recency intent."
  */
 export function snapToAllowed<T extends number>(
   value: number,

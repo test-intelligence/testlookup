@@ -64,7 +64,7 @@ export interface SummaryCatalogueProps {
   part: SummaryCataloguePart
   /** The page's own `/reports/summary` payload, for the selected window, release and mode. */
   report: SummaryReport
-  /** The page's window, days (one of 1, 7, 30, 90). */
+  /** The page's window, days (one of 1, 7, 14, 30, 90). */
   days: number
   /** The page's Aggregation toggle. */
   mode: SummaryReportMode

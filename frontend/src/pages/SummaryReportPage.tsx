@@ -8,7 +8,7 @@
  *   Header  → title, Views (the one secondary action), and ⋯ with every
  *             export: PDF, Excel, each "in background", the HTML analysis
  *             reports (1d, 7d).
- *   Toolbar → the global WindowPicker (24h / 7d / 30d / 90d), the
+ *   Toolbar → the global WindowPicker (24h / 7d / 14d / 30d / 90d), the
  *             Aggregation toggle, the release-scope badge.
  *   KPIs    → ONE row of five compact MetricCards (the old six tiles and the
  *             counts strip merged: every count and rate is still on it), and
@@ -66,7 +66,7 @@ const SummaryCatalogue = lazyWithRetry(loadSummaryCatalogue)
 const HELP_TOPIC = helpTopicParam('/reports/summary')
 
 /** The windows the report answers (the toolbar's WindowPicker offers these). */
-const DAYS_OPTIONS = [1, 7, 30, 90] as const
+const DAYS_OPTIONS = [1, 7, 14, 30, 90] as const
 /** Aggregation mode is page-local — different from the global window
  *  preference. Persisted here so the user's mode choice survives
  *  navigation without leaking into pages that don't have a mode. */
@@ -128,8 +128,9 @@ export default function SummaryReportPage() {
 
   // Window is a global preference — picking 24h here propagates to /live,
   // /coverage, /trends, /runs, /failures, /overview, /my-failures. The
-  // toolbar's WindowPicker writes it; a value picked elsewhere (e.g. 14d on
-  // Live) is snapped to the nearest option here, as the picker snaps it.
+  // toolbar's WindowPicker writes it; a value picked elsewhere that this page
+  // does not offer (e.g. 365d on Value metrics) is snapped to the nearest
+  // option here, as the picker snaps it. 14d is offered (WIN-01): it never snaps.
   const storedDays = useTimeWindowStore(s => s.days)
   const days = snapToAllowed(storedDays, DAYS_OPTIONS)
   const setStoredDays = useTimeWindowStore(s => s.setDays)

@@ -1,10 +1,11 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { SWRConfig } from 'swr'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ActivityPage from './ActivityPage'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import { useTimeWindowStore } from '@/store/timeWindowStore'
 import type { ActivityEvent, ActivityPage as Page } from '@/services/activityService'
 
 vi.mock('@/services/activityService', () => ({
@@ -190,6 +191,67 @@ describe('ActivityPage', () => {
     expect(Date.parse(since ?? '')).not.toBeNaN()
     // `days` is a client-side shorthand and must not reach the API.
     expect((params as Record<string, unknown> | undefined)?.days).toBeUndefined()
+  })
+})
+
+// WIN-01: the feed offers 14d like every windowed page; a fortnight picked
+// elsewhere is shown and asked for as a fortnight, never snapped to a week.
+describe('ActivityPage — the 14d window (WIN-01)', () => {
+  const NOW = Date.parse('2026-10-16T12:00:00Z')
+  const DAY_MS = 86_400_000
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(listActivityEventTypes).mockResolvedValue({
+      categories: ['runs'],
+      actor_types: ['system'],
+      entity_types: ['run'],
+      events: {},
+    })
+    useProjectStore.setState({ activeProjectId: PROJECT_ID })
+    useTimeWindowStore.setState({ days: 30 })
+    vi.mocked(listActivity).mockResolvedValue(page([event()]))
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+    useTimeWindowStore.setState({ days: 30 })
+  })
+
+  const windowButtons = () =>
+    screen.getAllByRole('button').filter(b => /^(\d+d|24h)$/.test(b.textContent ?? ''))
+  const sinceOf = (call: unknown[]) => Date.parse((call[1] as { since?: string } | undefined)?.since ?? '')
+
+  it('offers 24h · 7d · 14d · 30d · 90d, in that order (the shared labels)', async () => {
+    renderPage()
+    await screen.findByRole('feed')
+    expect(windowButtons().map(b => b.textContent)).toEqual(['24h', '7d', '14d', '30d', '90d'])
+  })
+
+  it('clicking 14d asks for events since now − 14 days', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW)
+    renderPage()
+    await screen.findByRole('feed')
+
+    fireEvent.click(screen.getByRole('button', { name: '14d' }))
+
+    await waitFor(() => {
+      expect(vi.mocked(listActivity).mock.calls.some(call => sinceOf(call) === NOW - 14 * DAY_MS)).toBe(true)
+    })
+    expect(useTimeWindowStore.getState().days).toBe(14)
+    expect(screen.getByRole('button', { name: '14d' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('a stored 14d opens as 14d and asks for 14 days (no snap to 7)', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW)
+    useTimeWindowStore.setState({ days: 14 })
+    renderPage()
+    await screen.findByRole('feed')
+
+    const sinces = vi.mocked(listActivity).mock.calls.map(sinceOf)
+    expect(sinces).toContain(NOW - 14 * DAY_MS)
+    expect(sinces).not.toContain(NOW - 7 * DAY_MS)
+    expect(screen.getByRole('button', { name: '14d' })).toHaveAttribute('aria-pressed', 'true')
+    expect(useTimeWindowStore.getState().days).toBe(14)
   })
 })
 
