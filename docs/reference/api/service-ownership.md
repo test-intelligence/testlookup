@@ -213,7 +213,7 @@ Resolve Cluster Ownership Endpoint
 
 Resolve the probable owner for a specific failure cluster.
 
-Source: [backend/app/routers/ownership.py:473](../../../backend/app/routers/ownership.py#L473).
+Source: [backend/app/routers/ownership.py:474](../../../backend/app/routers/ownership.py#L474).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -1047,7 +1047,7 @@ What an EDITED list would locate over the project's recent failures
 (the coverage sample: newest 500 FAILED/BROKEN rows of 30 days). Writes
 nothing; the same 422 texts as the PUT.
 
-Source: [backend/app/routers/ownership.py:366](../../../backend/app/routers/ownership.py#L366).
+Source: [backend/app/routers/ownership.py:367](../../../backend/app/routers/ownership.py#L367).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -1142,7 +1142,7 @@ Teams are the free-text ``team_name`` values used by the ownership
 rules; a mapping here makes transition notifications for tests owned
 by that team route directly to the team's channel.
 
-Source: [backend/app/routers/ownership.py:391](../../../backend/app/routers/ownership.py#L391).
+Source: [backend/app/routers/ownership.py:392](../../../backend/app/routers/ownership.py#L392).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -1228,7 +1228,7 @@ Delete Team Channel
 Remove a team's notification channel (QA_LEAD+). Transition events
 for that team's tests fall back to the project default channels.
 
-Source: [backend/app/routers/ownership.py:449](../../../backend/app/routers/ownership.py#L449).
+Source: [backend/app/routers/ownership.py:450](../../../backend/app/routers/ownership.py#L450).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -1317,7 +1317,7 @@ Upsert Team Channel
 
 Create or replace the notification channel for one team (QA_LEAD+).
 
-Source: [backend/app/routers/ownership.py:411](../../../backend/app/routers/ownership.py#L411).
+Source: [backend/app/routers/ownership.py:412](../../../backend/app/routers/ownership.py#L412).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
