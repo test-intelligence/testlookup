@@ -74,6 +74,8 @@ const FAILURES_PAGE_READS = [
   `GET /api/v1/analytics/failure-categories?project_id=${P}&days=30`,
   `GET /api/v1/analytics/flaky-tests?project_id=${P}&days=30`,
   `GET /api/v1/analytics/top-failing?project_id=${P}&days=30`,
+  // W07 FAIL-02: the "Median time to fix" tile.
+  `GET /api/v1/analytics/time-to-fix?project_id=${P}&days=30`,
   `GET /api/v1/metrics/trends?project_id=${P}&days=30`,
   `GET /api/v1/runs?project_id=${P}&page=1&size=1&days=30&status=FAILED`,
   `GET /api/v1/runs?project_id=${P}&page=1&size=100&days=30`,

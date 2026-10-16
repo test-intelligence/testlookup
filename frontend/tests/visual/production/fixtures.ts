@@ -269,19 +269,69 @@ export function runs() {
   })
 }
 
-/** `GET /runs?days=&size=&status=`: the builds in the window, newest first. */
-function runList(request: ApiRequest) {
-  const size = intParam(request, 'size', 100)
-  const days = intParam(request, 'days', 0)
-  const status = request.url.searchParams.get('status')
-  const all = runs().filter((run, i) => {
-    const n = RUN_SPECS[i].n
-    if (days > 0 && n >= days) return false
-    if (status && run.status !== status) return false
-    return true
-  })
-  return { ...page(all.slice(0, size), size), total: all.length }
+/**
+ * The AI verdict each build's Runs row shows (`RUNS_PAGE`'s `/runs/ai-verdicts`),
+ * by `runs()` index: a No-Go awaiting review, a Conditional awaiting review, a
+ * reviewed Go, the rest none. W07 FAIL-05: every `/runs` row carries it as
+ * `ai_recommendation`, and `?recommendation=` filters on exactly it.
+ */
+export const RUN_RECOMMENDATIONS: readonly (string | null)[] = RUN_SPECS.map((_, i) =>
+  i === 0 ? 'NO_GO' : i === 1 ? 'CONDITIONAL_GO' : i === 2 ? 'GO' : null,
+)
+
+type FixtureRun = ReturnType<typeof runs>[number]
+
+/** Whole days between a run's start and `NOW` (a run of `isoAgo(n, h)`, h < 24, is `n`). */
+const ageDays = (run: { created_at: string }) => Math.floor((NOW.getTime() - Date.parse(run.created_at)) / DAY_MS)
+
+/**
+ * `GET /runs?days=&status=&suite_name=&q=&branch=&recommendation=&page=&size=` over
+ * `source` (newest first), as `list_project_runs` answers it: `days` (0 = all
+ * time), `status`, `suite_name` (the run's suite; only with `bySuite`: the
+ * shared list ignored it before W07 and the committed baselines were shot
+ * that way), W07 FAIL-05's `q` (case-insensitive contains on build number,
+ * branch and CI job; prefix on the commit hash), `branch` (repeatable, exact)
+ * and `recommendation` (`GO` / `CONDITIONAL_GO` / `NO_GO`, or `none` = no
+ * verdict), then the page. `total` counts every match (the shared filters).
+ */
+export function runListOf(
+  source: () => FixtureRun[],
+  recommendationOf: (run: FixtureRun) => string | null,
+  { bySuite = false }: { bySuite?: boolean } = {},
+) {
+  return (request: ApiRequest) => {
+    const params = request.url.searchParams
+    const size = intParam(request, 'size', 100)
+    const pageNo = Math.max(1, intParam(request, 'page', 1))
+    const days = intParam(request, 'days', 0)
+    const status = params.get('status')
+    const q = (params.get('q') ?? '').trim().toLowerCase()
+    const branches = params.getAll('branch')
+    const recommendation = params.get('recommendation')
+    const suite = bySuite ? (params.get('suite_name') ?? '').trim() : ''
+    const all = source()
+      .map((run) => ({ ...run, ai_recommendation: recommendationOf(run) }))
+      .filter((run) => {
+        if (days > 0 && ageDays(run) >= days) return false
+        if (status && run.status !== status) return false
+        if (suite && run.primary_suite_name !== suite && !run.suite_names.includes(suite)) return false
+        if (q) {
+          const contains = [String(run.build_number), run.branch, run.jenkins_job].some((v) => (v ?? '').toLowerCase().includes(q))
+          const commit = (run as { commit_hash?: string | null }).commit_hash ?? ''
+          if (!contains && !commit.toLowerCase().startsWith(q)) return false
+        }
+        if (branches.length > 0 && !branches.includes(run.branch)) return false
+        if (recommendation === 'none' && run.ai_recommendation !== null) return false
+        if (recommendation && recommendation !== 'none' && run.ai_recommendation !== recommendation) return false
+        return true
+      })
+    const items = all.slice((pageNo - 1) * size, pageNo * size)
+    return { items, total: all.length, page: pageNo, size, pages: all.length > 0 ? Math.ceil(all.length / size) : 0 }
+  }
 }
+
+/** `GET /runs`: the builds above, each with its fixture verdict. */
+const runList = runListOf(runs, (run) => RUN_RECOMMENDATIONS[runs().findIndex((r) => r.id === run.id)] ?? null)
 
 export const RUNS: ApiHandlers = [['/api/v1/runs', runList]]
 
@@ -546,40 +596,158 @@ export const VALUE_METRICS: ApiHandlers = [...LAYOUT, ['/api/v1/value-metrics', 
 // ── Runs (/runs) ───────────────────────────────────────────────────────────
 
 /**
- * `GET /runs/{id}/intelligence` as the Runs table's AI-verdict column reads it
- * (UX redesign P4, D2; `src/pages/runsList/aiVerdict.ts`): only the fields the
- * column uses. By build, newest first: a No-Go awaiting review, a Conditional
- * awaiting review (the widest cell), a reviewed Go, an analysis with no
- * recommendation ("—"), and the rest never analysed ("—").
+ * W07 FAIL-04: ONE `GET /runs/ai-verdicts?run_id=…` (≤ 25 ids) answers the
+ * Runs table's AI-verdict column (`src/pages/runsList/aiVerdict.ts`
+ * `aiVerdictFromBatch`): per run the stored snapshot's slim `verdict_inputs`
+ * (contract §1.2) and its review state. By build, newest first: a No-Go
+ * awaiting review, a Conditional awaiting review (the widest cell), a reviewed
+ * Go (rows 0-2, `RUN_RECOMMENDATIONS`); row 3 analysed with no recommendation;
+ * row 4 analysed but not summarised yet (no snapshot: "—", `not-summarised`);
+ * the rest never analysed. An id that is not a fixture run is `unavailable`.
  */
-function runVerdict(request: ApiRequest) {
-  const id = request.path.split('/')[4]
-  const i = runs().findIndex((run) => run.id === id)
-  const decided = (recommendation: string, state: string) => ({
-    intelligence_available: true,
-    structured_summary: null,
-    top_analyses: [],
-    release_decision: { recommendation, risk_score: 50, composite_risk: 50, blocking_issues: [], conditions_for_go: [], reasoning: '' },
-    requires_human_review: state === 'pending_review',
-    review: { state, message: '' },
-  })
-  if (i === 0) return decided('NO_GO', 'pending_review')
-  if (i === 1) return decided('CONDITIONAL_GO', 'pending_review')
-  if (i === 2) return decided('GO', 'accepted')
-  return {
-    intelligence_available: i === 3,
-    structured_summary: null,
-    top_analyses: [],
-    release_decision: null,
-    requires_human_review: false,
-    review: { state: 'not_applicable', message: '' },
+export function verdictItem(i: number) {
+  const runId = runs()[i].id
+  const recommendation = RUN_RECOMMENDATIONS[i]
+  if (recommendation) {
+    return {
+      run_id: runId,
+      snapshot: true,
+      stale: false,
+      generated_at: isoAgo(RUN_SPECS[i].n, RUN_SPECS[i].hours - 1),
+      analysed: true,
+      verdict_inputs: {
+        structured_summary: null,
+        release_decision: { recommendation },
+        intelligence_available: true,
+        top_analyses: [],
+      },
+      review: { state: i === 2 ? 'accepted' : 'pending_review' },
+    }
   }
+  if (i === 3) {
+    return {
+      run_id: runId,
+      snapshot: true,
+      stale: false,
+      generated_at: isoAgo(RUN_SPECS[i].n, RUN_SPECS[i].hours - 1),
+      analysed: true,
+      verdict_inputs: { structured_summary: null, release_decision: null, intelligence_available: true, top_analyses: [] },
+      review: { state: 'pending_review' },
+    }
+  }
+  return { run_id: runId, snapshot: false, stale: null, generated_at: null, analysed: i === 4, verdict_inputs: null, review: null }
+}
+
+function aiVerdicts(request: ApiRequest) {
+  const ids = Array.from(new Set(request.url.searchParams.getAll('run_id')))
+  if (ids.length < 1 || ids.length > 25) return respond(422, { detail: 'run_id: between 1 and 25 run ids.' })
+  const all = runs()
+  const items: ReturnType<typeof verdictItem>[] = []
+  const unavailable: string[] = []
+  for (const id of ids) {
+    const i = all.findIndex((run) => run.id === id)
+    if (i < 0) unavailable.push(id)
+    else items.push(verdictItem(i))
+  }
+  return { items, unavailable, max_ids: 25 }
+}
+
+/** One failure signature of a run (`RunSignatureEntry`): the error's normalised signature, its raw first line. */
+export interface SignatureSpec {
+  signature: string
+  label: string
+  count: number
+  tests: string[]
+}
+
+export const SIGNATURE = {
+  assertion: {
+    signature: 'assertionerror: expected # but was #',
+    label: 'AssertionError: expected 3 but was 4',
+  },
+  npe: {
+    signature: 'nullpointerexception at checkoutservice.total',
+    label: 'NullPointerException at CheckoutService.total',
+  },
+  timeout: { signature: 'timeout after #s', label: 'Timeout after 30s' },
+  refused: { signature: 'connection refused: db.internal:#', label: 'Connection refused: db.internal:5432' },
+  noMessage: { signature: '__NO_MESSAGE__', label: '' },
+} as const
+
+/**
+ * The failing rows of each failed build, grouped by signature (most first),
+ * by `runs()` index. Four builds share the assertion (one test fails with it
+ * in all of them), one build fails on a NullPointerException, one carries no
+ * message: three groups over six failed builds (diversity 50).
+ */
+export const RUN_SIGNATURES: Readonly<Record<number, SignatureSpec[]>> = {
+  0: [
+    { ...SIGNATURE.assertion, count: 12, tests: ['login keeps session', 'login rejects bad password', 'token refresh'] },
+    { ...SIGNATURE.timeout, count: 3, tests: ['sso callback'] },
+  ],
+  1: [{ ...SIGNATURE.npe, count: 70, tests: ['apply coupon', 'checkout total includes tax', 'guest checkout'] }],
+  3: [
+    { ...SIGNATURE.assertion, count: 50, tests: ['card declined shows reason', 'login keeps session', 'refund webhook retried'] },
+    { ...SIGNATURE.refused, count: 23, tests: ['refund webhook retried'] },
+  ],
+  5: [{ ...SIGNATURE.assertion, count: 3, tests: ['login keeps session'] }],
+  8: [{ ...SIGNATURE.noMessage, count: 7, tests: ['mfa prompt', 'password reset mail'] }],
+  11: [{ ...SIGNATURE.assertion, count: 9, tests: ['login keeps session', 'token refresh'] }],
+}
+
+/** A `RunSignatureItem` from a run and its signature specs (the server's §1.4 shape). */
+export function signatureItem(run: FixtureRun, specs: readonly SignatureSpec[] | undefined) {
+  const failing = run.failed_tests + run.broken_tests
+  const entries = (specs ?? []).slice(0, 3).map((s) => ({
+    signature: s.signature,
+    label: s.label,
+    count: s.count,
+    test_count: s.tests.length,
+    tests: [...s.tests].sort().slice(0, 3),
+  }))
+  return {
+    run_id: run.id,
+    failing_tests: failing,
+    read: Math.min(failing, 500),
+    capped: failing > 500,
+    dominant: entries[0]?.signature ?? null,
+    signatures: entries,
+  }
+}
+
+/** `GET /runs/failure-signatures?run_id=…` (≤ 50 ids) over `source`, signatures by run index. */
+export function failureSignaturesOf(source: () => FixtureRun[], specsOf: (i: number) => readonly SignatureSpec[] | undefined) {
+  return (request: ApiRequest) => {
+    const ids = Array.from(new Set(request.url.searchParams.getAll('run_id')))
+    if (ids.length < 1 || ids.length > 50) return respond(422, { detail: 'run_id: between 1 and 50 run ids.' })
+    const all = source()
+    const items: ReturnType<typeof signatureItem>[] = []
+    const unavailable: string[] = []
+    for (const id of ids) {
+      const i = all.findIndex((run) => run.id === id)
+      if (i < 0) unavailable.push(id)
+      else items.push(signatureItem(all[i], specsOf(i)))
+    }
+    return { items, unavailable, max_ids: 50, rows_per_run_cap: 500 }
+  }
+}
+
+/** W07 FAIL-05: `GET /runs/branches?project_id=&days=`: the project's branches in the window, newest first. */
+export function runBranches(request: ApiRequest) {
+  const days = intParam(request, 'days', 30)
+  const items = [
+    { branch: 'main', runs: runs().filter((run) => days <= 0 || ageDays(run) < days).length, last_run_at: runs()[0].created_at },
+    { branch: 'release/2.4', runs: 2, last_run_at: isoAgo(6, 4) },
+  ]
+  return { items, total: items.length, truncated: false, window_days: days > 0 ? days : null }
 }
 
 export const RUNS_PAGE: ApiHandlers = [
   ...LAYOUT,
   ...RUNS,
-  [/^\/api\/v1\/runs\/[^/]+\/intelligence$/, runVerdict],
+  ['/api/v1/runs/ai-verdicts', aiVerdicts],
+  ['/api/v1/runs/failure-signatures', failureSignaturesOf(runs, (i) => RUN_SIGNATURES[i])],
+  ['/api/v1/runs/branches', runBranches],
 ]
 
 // ── Coverage and flaky tests (shared by Trends, Coverage, Failures) ────────
@@ -1482,6 +1650,69 @@ const FAILURE_CATEGORIES = {
   period_days: 30,
 }
 
+/** W07 FAIL-01: the test case ids of the rows' latest failures ("Open in run" targets). */
+export const TOP_FAILING_CASE_IDS = [0, 1, 2, 3].map((i) => `c0000000-0000-4000-8000-00000000000${i}`)
+
+/** The first row's latest error and stack head (FAIL-01): server-truncated text, rendered as text. */
+export const TOP_FAILING_DETAIL = {
+  error: 'AssertionError: expected "Card declined: insufficient funds" but was "Payment failed"',
+  stackFirstLine: 'at CardDeclinedSpec.shows reason (tests/payments/card-declined.spec.ts:41:7)',
+  stack: [
+    'AssertionError: expected "Card declined: insufficient funds" but was "Payment failed"',
+    '    at CardDeclinedSpec.shows reason (tests/payments/card-declined.spec.ts:41:7)',
+    '    at processTicksAndRejections (node:internal/process/task_queues:95:5)',
+    '    at async Runner.runTest (node_modules/@playwright/test/lib/runner.js:212:3)',
+  ].join('\n'),
+  owner: 'Priya Nair',
+  ownerTeam: 'Payments',
+} as const
+
+/**
+ * W07 FAIL-01 (contract §1.5): each Top failing row's latest failure, its
+ * owner and its run. One owner per source: an assignee (with the rule team
+ * beside it), an ownership-rule team, nobody, a component-map team; one
+ * hostile error (it must arrive as text), one row with no message and no
+ * trace.
+ */
+const TOP_FAILING_LATEST = [
+  {
+    latest_run_id: RUN_ID,
+    latest_failed_at: isoAgo(0, 2),
+    latest_error: TOP_FAILING_DETAIL.error,
+    latest_stack_head: TOP_FAILING_DETAIL.stack,
+    owner: TOP_FAILING_DETAIL.owner,
+    owner_source: 'assignee',
+    owner_team: TOP_FAILING_DETAIL.ownerTeam,
+  },
+  {
+    latest_run_id: '44444444-4444-4444-8444-100000000001',
+    latest_failed_at: isoAgo(2, 2),
+    latest_error: `TypeError: ${HOSTILE_NAME} is not a function`,
+    latest_stack_head: `TypeError: ${HOSTILE_NAME} is not a function\n    at total (src/checkout/total.ts:18:11)`,
+    owner: 'Checkout',
+    owner_source: 'rule',
+    owner_team: 'Checkout',
+  },
+  {
+    latest_run_id: '44444444-4444-4444-8444-100000000003',
+    latest_failed_at: isoAgo(3, 2),
+    latest_error: null,
+    latest_stack_head: null,
+    owner: null,
+    owner_source: null,
+    owner_team: null,
+  },
+  {
+    latest_run_id: '44444444-4444-4444-8444-100000000005',
+    latest_failed_at: isoAgo(4, 2),
+    latest_error: 'Error: locator.click: Timeout 5000ms exceeded.',
+    latest_stack_head: null,
+    owner: 'Search',
+    owner_source: 'component_map',
+    owner_team: 'Search',
+  },
+]
+
 const TOP_FAILING = {
   items: [
     ['card declined shows reason', 'Payments', 9, 'ASSERTION', 'product'],
@@ -1501,8 +1732,47 @@ const TOP_FAILING = {
     last_failed_run_id: RUN_ID,
     last_failed_build: '240',
     failure_step: null,
+    // W07 FAIL-01: one project in scope, so the detail is answered.
+    detail_available: true,
+    latest_test_case_id: TOP_FAILING_CASE_IDS[i],
+    ...TOP_FAILING_LATEST[i],
   })),
 }
+
+/** The same rows in All Projects: `detail_available: false`, every §1.5 key null. */
+const TOP_FAILING_NO_DETAIL = {
+  items: TOP_FAILING.items.map((item) => ({
+    ...item,
+    detail_available: false,
+    latest_run_id: null,
+    latest_test_case_id: null,
+    latest_failed_at: null,
+    latest_error: null,
+    latest_stack_head: null,
+    owner: null,
+    owner_source: null,
+    owner_team: null,
+  })),
+}
+
+/**
+ * W07 FAIL-02: `GET /analytics/time-to-fix` (contract §2.7): measured, the
+ * median 43.2 h (`1.8 d`), 23 fixed; `days` follows the request.
+ */
+export function timeToFixBody(days: number, measured = true) {
+  const meta = { measured, reason: measured ? null : `Fewer than 5 tests were fixed in the last ${days} days (3 fixed).` }
+  return measured
+    ? {
+        measured: true, reason: null, median_hours: 43.2, mean_hours: 51.6, fixed: 23, open: 4,
+        excluded_flaky_tests: 2, excluded_oscillating_tests: 1, min_fixes: 5, window_days: days, meta,
+      }
+    : {
+        measured: false, reason: meta.reason, median_hours: null, mean_hours: null, fixed: 3, open: 2,
+        excluded_flaky_tests: 0, excluded_oscillating_tests: 0, min_fixes: 5, window_days: days, meta,
+      }
+}
+
+export const TIME_TO_FIX_PATH = '/api/v1/analytics/time-to-fix'
 
 const JIRA_METADATA = {
   available: false,
@@ -1518,7 +1788,9 @@ export const FAILURES: ApiHandlers = [
   ...RUNS,
   ...ANALYTICS,
   ['/api/v1/analytics/failure-categories', () => FAILURE_CATEGORIES],
-  ['/api/v1/analytics/top-failing', () => TOP_FAILING],
+  // FAIL-01: the detail is answered only with ONE project in scope (All Projects: every key null).
+  ['/api/v1/analytics/top-failing', ({ url }) => (url.searchParams.get('project_id') ? TOP_FAILING : TOP_FAILING_NO_DETAIL)],
+  [TIME_TO_FIX_PATH, (request) => timeToFixBody(intParam(request, 'days', 30))],
   [/^\/api\/v1\/projects\/[^/]+\/defects\/jira\/metadata$/, () => JIRA_METADATA],
   [
     /^\/api\/v1\/runs\/[^/]+\/suspects$/,

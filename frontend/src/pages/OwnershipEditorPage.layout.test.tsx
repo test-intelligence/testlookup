@@ -31,6 +31,14 @@ vi.mock('@/hooks/useOwnershipRules', () => ({
   }),
   useCodeownersCoverage: () => ({ coverage: null, refresh: vi.fn() }),
 }))
+// FAIL-08: the Java source roots section sits between the rules and the Team
+// channels line; it reads its own list, empty here.
+vi.mock('@/hooks/useSourceRoots', () => ({
+  useSourceRoots: () => ({
+    roots: [], maxRoots: 20, isLoading: false, isError: false,
+    refresh: vi.fn(), save: vi.fn(), preview: vi.fn(),
+  }),
+}))
 const project = vi.hoisted(() => ({ id: 'proj-1' }))
 vi.mock('@/store/projectStore', () => ({
   ALL_PROJECTS_ID: '__ALL__',

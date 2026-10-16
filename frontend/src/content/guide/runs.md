@@ -6,7 +6,7 @@ A **run** is one execution of a suite: a CI job, a local `pytest`, a TestNG sess
 
 **Runs** in the sidebar opens `/runs`, titled **Test Runs**. Its tabs are **History** (this page), **Live** (runs streaming right now, see [Watching runs live](/docs/live)) and **Compare**.
 
-**Filters.** The window picker (24h to 90d), a status filter (**All statuses**, **Failed**, **Passed**, **In progress**) and a suite filter.
+**Filters.** The window picker (24h to 90d), a status filter (**All statuses**, **Failed**, **Passed**, **In progress**), a suite filter, a **search** box (a build number, branch or CI job, or the start of a commit hash), a **Branch** select (with one project selected) and an **AI verdict** select (**Any verdict**, **Go**, **Conditional**, **No-Go**, **No verdict**). The search, branch and verdict are kept in the address (`/runs?q=239&branch=main&verdict=NO_GO`), so a reload or a shared link restores them, and old `/intelligence?branch=main` links open the filtered list. When nothing matches, the table says **No runs match these filters.** with **Clear filters**.
 
 **The status banner** sums up the window: **Pipeline broken**, **Mixed**, **Pipeline healthy** or **Pending**, with the **Last green** run, the **Red streak** (how many runs in a row have failed) and the **Avg pass rate**. When the window holds both a green run and a failing one, the banner offers **Bisect from last green** (see [Bisect from last green](#bisect-from-last-green)).
 
@@ -15,20 +15,20 @@ A **run** is one execution of a suite: a CI job, a local `pytest`, a TestNG sess
 | Column | Shows |
 |---|---|
 | **Build** | `Run #<n>`, linking to the run's page. Runs that came from a file upload carry an **Uploaded** badge |
-| **Signature** | The run's failure signature |
+| **Signature** | For a failed build, a short chip naming the error most of its failing tests share (hover for the error's first line): builds with the same chip failed the same way. **—** for a passed or in-progress run, and for a failed build older than the newest 50 failed builds of the window |
 | **Status** | Passed, failed or in progress |
-| **AI verdict** | **Go**, **Conditional** or **No-Go** from the run's analysis, or **—** when there is none yet (hover for why). Click it to open the run's **Analysis** tab |
+| **AI verdict** | **Go**, **Conditional** or **No-Go** from the run's analysis (the page reads them all in one request), or **—** when there is none (hover for why: the run has not been analysed, or it was analysed but its summary is not built yet, which opening the run's analysis does). Click it to open the run's **Analysis** tab |
 | **Tests** / **Pass rate** | The run's counts |
 | **Timing** | When it ran and how long it took: the **wall clock** ("9.0s wall") when the run reported one, otherwise the **summed** test time ("17.4s summed"); hover for both. Click the header to sort |
 | **Actions** | Icon buttons: **Re-trigger standard pipeline**, **Trigger deep investigation**, and **Compare to the previous run** of the same suite |
 
 The first two actions, and the bulk controls (tick rows, then **Bulk trigger** or **Bulk deep**), need the `QA_ENGINEER` role or above. The **⋯** menu offers **Trigger all failed (N)** and **Deep all failed (N)** for every failed run in the window.
 
-**Failure signatures** (next to the page title, when any failure cluster exists) opens a side panel listing the failure signatures in the window.
+**Failure signatures** (next to the page title, when the window has a failed build) opens a side panel that groups the window's failed builds by the error most of their failing tests share. Each group is titled by that error's first line (**No message recorded** when the failures carry none), lists its builds, and says when one test fails with that error in all of them. Two builds with the same pass and fail counts but different errors are different groups. With more than 50 failed builds in the window, the newest 50 are grouped and the panel says so.
 
 Two disclosures at the bottom explain the banner:
 
-- **How this verdict is computed** — the pipeline-health gauge and its four parts: build success (40%), signature diversity (15%), fix velocity (25%) and metadata coverage (20%).
+- **How this verdict is computed** — the pipeline-health gauge and its four parts: build success (40%), signature diversity (15%: how many different errors the failed builds share; **—** while the signatures load, and the gauge then uses the other three), fix velocity (25%) and metadata coverage (20%).
 - **Build history** — the last 14 builds, build velocity, and a **Last green build** callout with **Start bisect**.
 
 **Upload report** is the primary button when uploading is enabled; see [Getting results in](/docs/ingestion#upload-a-report-from-the-app).
@@ -73,7 +73,7 @@ The run's AI analysis report. Old links to `/runs/<id>/intelligence` and `/deep-
 - **The review banner**, when the report is waiting for or has had a human review. See [Your inbox and approvals](/docs/inbox#approvals).
 - **What failed**: each failure, with **Open test case**, **Decision trail** and **File defect** (`QA_ENGINEER` or above).
 - **Proposed clusters**: the run's failures grouped by likely shared cause. **Analyze failures** starts a deep investigation of this run; it is disabled when the run has no failures, when one is already running, or for roles below `QA_ENGINEER`. See [Root cause (AI)](/docs/failure-analysis#root-cause-ai-deep-investigation).
-- Two collapsed sections: **How this score is computed**, and **Evidence behind the verdict** (the pipeline stages that ran, the test outcome, recommended actions for your role, the AI confidence, failure categories, step flips and provenance).
+- Two collapsed sections: **How this score is computed**, and **Evidence behind the verdict** (the pipeline stages that ran, the test outcome, recommended actions by role with your own role's row first and marked **· your role** — QA for testers, QA engineers and QA leads, Release Manager for administrators — the AI confidence, failure categories, step flips and provenance).
 
 The verdict is computed, not written by a model; see [Releases and gates](/docs/releases#how-it-is-produced). The stages behind it are described in [AI agents and the pipeline](/docs/ai-agents).
 
@@ -128,8 +128,8 @@ Open a test from the Tests tab (**Open full page**) to reach `/runs/<run id>/tes
 
 **Runs → Compare** (`/runs/compare`) diffs two runs. Two ways to pick them:
 
-- **Latest suite comparison** — choose a suite and **Compare latest** to diff its two most recent runs. Needs one project selected.
-- **Manual historical comparison** — choose **Left run (baseline)** and **Right run (target)**, optionally limited to one suite, then **Compare**. The pickers list the 100 newest runs.
+- **Latest suite comparison** — choose a suite and **Compare latest** to diff its two most recent runs. The section shows how many runs the suite has and its latest one (`12 runs in suite · latest Run #431 · main`); **Pick a different baseline** switches to a manual comparison of that suite and opens the left picker. Needs one project selected.
+- **Manual historical comparison** — choose **Left run (baseline)** and **Right run (target)**, optionally limited to one suite, then **Compare**. Each picker searches every run you can see, in every release, by build number, branch, CI job or the start of a commit hash, newest first and 20 at a time (**Load older** for more); or **Paste run ID** and **Use**. A pasted ID that is not a run you can open reads **Run not found or not accessible.**
 
 The result leads with what changed: **Pass rate**, **Failed tests**, **New failures** and **Duration** for each side, an **AI Comparison Report** (key differences, new risks, actions and, when the two runs' AI analyses differ, **AI analysis changes**), an **AI analysis** section, and **Status changes** — how many tests moved from one status to another.
 

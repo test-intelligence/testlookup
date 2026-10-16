@@ -13,19 +13,22 @@
  * table are closed on arrival.
  *
  * UX redesign P4 (D2, the `/intelligence` list retired into the table): the
- * AI-verdict column. Each run on screen is asked for its verdict once (no
- * batch endpoint exists), the verdict opens the run's Analysis tab, a run
- * with none reads "—", the separate "Intel" link is gone, and the column did
- * not push the table wider than its card: the table's scroller has no
- * horizontal overflow at 1280 and 1440 px (before P4 it overflowed by 6 px at
- * 1280: `minWidth: 980` in a 974 px card).
+ * AI-verdict column. W07 FAIL-04: the runs on screen are asked for their
+ * verdicts in ONE request (`GET /runs/ai-verdicts?run_id=…`, the stored
+ * snapshots only) and no run's `/intelligence` is read from this page; the
+ * verdict opens the run's Analysis tab, a run with none reads "—" with its
+ * reason (an analysed run whose summary is not built: `not-summarised`), the
+ * separate "Intel" link is gone, and the column did not push the table wider
+ * than its card: the table's scroller has no horizontal overflow at 1280 and
+ * 1440 px (before P4 it overflowed by 6 px at 1280: `minWidth: 980` in a
+ * 974 px card).
  *
  * Harness: `tests/lib/rollout.ts` (fail closed, pinned clock, the fixtures of
  * the visual specs: 13 builds in 30 days, the newest two red).
  */
 import { expect, test, type Page } from '@playwright/test'
 import { MAIN, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
-import { RUN_ID, RUNS_PAGE } from '../visual/production/fixtures'
+import { RUN_ID, RUNS_PAGE, runs } from '../visual/production/fixtures'
 
 /** The fold budget of the page template (§2): primary content top, px below the scroller's top. */
 const FOLD_BUDGET_PX = 300
@@ -115,14 +118,26 @@ test('each run on screen carries its AI verdict, and the verdict opens the run�
   await expect(table.locator('[data-ai-verdict="CONDITIONAL_GO"]')).toHaveCount(1)
   await expect(table.locator('[data-ai-verdict="none"]')).toHaveCount(10)
   await expect(table.locator('[data-ai-verdict="none"]').first()).toHaveText('—')
+  // An analysed run whose summary is not built says so (W07 FAIL-04), and a run never analysed says that.
+  await expect(table.locator(`#run-row-${runs()[4].id} [data-ai-verdict="none"]`)).toHaveAttribute(
+    'data-ai-verdict-reason',
+    'not-summarised',
+  )
+  await expect(table.locator(`#run-row-${runs()[5].id} [data-ai-verdict="none"]`)).toHaveAttribute(
+    'data-ai-verdict-reason',
+    'not-analysed',
+  )
   // The separate Intel link is gone, and no row links to the old route.
   await expect(table.getByRole('link', { name: /Intel/ })).toHaveCount(0)
   await expect(table.locator('a[href$="/intelligence"]')).toHaveCount(0)
   await networkQuiet(page, api)
-  // One verdict request per run on screen (13 rows), never more.
-  const asked = requestsTo(api, /^\/api\/v1\/runs\/[^/]+\/intelligence$/)
-  expect(asked).toHaveLength(13)
-  expect(new Set(asked).size, 'no run asked twice').toBe(13)
+  // ONE verdict request for every run on screen (13 rows), and no per-run read.
+  const asked = requestsTo(api, '/api/v1/runs/ai-verdicts')
+  expect(asked, 'one batch request').toHaveLength(1)
+  const ids = new URLSearchParams(asked[0].split('?')[1] ?? '').getAll('run_id')
+  expect(ids, 'every run on screen, once').toHaveLength(13)
+  expect([...ids].sort()).toEqual(runs().map((run) => run.id).sort())
+  expect(requestsTo(api, /^\/api\/v1\/runs\/[^/]+\/intelligence$/), 'no per-run intelligence read').toEqual([])
   expect(api.unhandled).toEqual([])
   expect(errors).toEqual([])
 })

@@ -1,7 +1,7 @@
 /**
  * W06 DEF-04 + DEF-03, hermetic (`docs/deferred-scope-2026-10-13/work/W06-contract.md` §2.4, §2.7), on `/defects`:
  *
- *  - the window picker (7d / 30d / 90d) drives the trend and the escape rate: 7d → both are asked with `days=7`;
+ *  - the window picker (7d / 14d / 30d / 90d; W07 WIN-01 added 14d) drives the trend and the escape rate: 7d → both are asked with `days=7`;
  *  - Open defects, P0 / P1 open and Time to resolve each draw a sparkline (three `[data-metric-card] svg`) and read
  *    their VALUES from the trend's totals; each measured point carries a `<title>` naming its day;
  *  - the banner's "Net this week" is the trend's `totals.net_last_7d` (+2 in the fixture), not a count of rows;
@@ -38,9 +38,9 @@ test('7d: the trend and the escape rate are asked for 7 days; three sparklines, 
   const rows = rowsWithoutOpenP0()
   const { handlers } = defectsWorld({ rows })
   const { api, errors } = await openRollout(page, '/defects', { handlers, ready })
-  // The stored window is 30 days, one of the page's own (7, 30, 90).
+  // The stored window is 30 days, one of the page's own (7, 14, 30, 90).
   await expect(windowRadio(page, '30d')).toHaveAttribute('aria-checked', 'true')
-  await expect(page.getByRole('radiogroup', { name: 'Time window' }).getByRole('radio')).toHaveText(['7d', '30d', '90d'])
+  await expect(page.getByRole('radiogroup', { name: 'Time window' }).getByRole('radio')).toHaveText(['7d', '14d', '30d', '90d'])
   await networkQuiet(page, api)
   expect(daysOf(requestsTo(api, TREND))).toContain('30')
 

@@ -17,7 +17,7 @@
  * `fixtures-pages.ts`, which imports `fixtures-run.ts`.)
  */
 import { respond, type ApiHandlers, type ApiRequest } from '../../lib/production-pages'
-import { HOSTILE_NAME, isoAgo, LAYOUT, PROJECT_ID, RUN_ID, RUNS, runs } from './fixtures'
+import { HOSTILE_NAME, isoAgo, LAYOUT, PROJECT_ID, RUN_ID, RUN_RECOMMENDATIONS, RUNS, runs } from './fixtures'
 import { TEST_CASE_FINGERPRINT, TEST_CASE_ID, TEST_CASE_NAME } from './fixtures-pages'
 
 const RUN_PATH = `/api/v1/runs/${RUN_ID}`
@@ -380,10 +380,24 @@ export const RUN_COMPARE = {
 
 export const COMPARE_PAGE_PATH = `/runs/compare?mode=manual&left=${PREVIOUS_RUN_ID}&right=${RUN_ID}&suite=Auth`
 
+/**
+ * W07 FAIL-06: `GET /runs/{id}` as the run pickers read it (the deep link's
+ * two labels, and the "Paste run ID" check): a fixture run, else 404 (the
+ * server answers a run the reader cannot see 403 or 404; the picker shows one
+ * text for both).
+ */
+export function runDetail({ path }: ApiRequest) {
+  const run = ALL_RUNS.find((r) => r.id === path.split('/')[4])
+  return run ? { ...run, ai_recommendation: RUN_RECOMMENDATIONS[ALL_RUNS.indexOf(run)] ?? null } : respond(404, { detail: 'Test run not found' })
+}
+
+export const RUN_DETAIL_PATH = /^\/api\/v1\/runs\/[0-9a-f-]{36}$/
+
 /** Everything `/runs/compare` asks for with the two runs above. */
 export const RUN_COMPARE_PAGE: ApiHandlers = [
   ...LAYOUT,
   ...RUNS,
   ['/api/v1/runs/compare', () => RUN_COMPARE],
   [AI_COMPARE_PATH, ({ url }) => compareAnswer(url.searchParams.get('baseline_run_id'))],
+  [RUN_DETAIL_PATH, runDetail],
 ]

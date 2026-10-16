@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import require_project_access, require_role
 from app.db.postgres import get_db
 from app.models.postgres import (
+    Project,
     ServiceOwnershipRule,
     TeamNotificationChannel,
     User,
@@ -23,9 +24,14 @@ from app.models.schemas import (
     OwnershipRuleCreate,
     OwnershipRuleResponse,
     OwnershipRuleUpdate,
+    SourceRoot,
+    SourceRootsPreview,
+    SourceRootsResponse,
+    SourceRootsUpdate,
     TeamChannelResponse,
     TeamChannelUpsert,
 )
+from app.services.activity.service import ActorRef, record as record_activity
 
 logger = logging.getLogger("routers.ownership")
 
@@ -268,6 +274,115 @@ async def codeowners_coverage(
         db, project_id, lookback_days=lookback,
     )
     return CodeownersCoverage(**coverage)
+
+
+# ── Java source roots (FAIL-08) ──────────────────────────────────────────────
+#
+# A JVM frame names a class and a file, not a path. A QA lead lists where the
+# project's test sources live (``{prefix, root}`` in priority order) and every
+# locator — the coverage badge, the ingest-time path-owner assignment, the
+# inbox "via CODEOWNERS" reason and the check-run annotations — places Java
+# frames through them. No default root: none listed = Java unlocated.
+
+
+def _source_roots_422(exc: Exception) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc),
+    )
+
+
+@router.get("/source-roots", response_model=SourceRootsResponse)
+async def get_source_roots(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_project_access()),
+):
+    """The project's Java source roots, in priority order (any member)."""
+    from app.services import codeowners_service
+
+    roots = await codeowners_service.load_source_roots(db, project_id)
+    return SourceRootsResponse(
+        roots=[SourceRoot(**r) for r in roots], max_roots=codeowners_service.MAX_SOURCE_ROOTS,
+    )
+
+
+@router.put("/source-roots", response_model=SourceRootsResponse)
+async def put_source_roots(
+    project_id: uuid.UUID,
+    payload: SourceRootsUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
+    _: User = Depends(require_project_access()),
+):
+    """Replace the project's Java source roots (QA_LEAD+).
+
+    The whole list is sent and stored (stripped, a trailing ``/`` removed);
+    an empty list removes every root and restores the pre-FAIL-08 behaviour.
+    A ``project.updated`` ledger row is staged only when the stored list
+    actually changes, and this router owns the single commit."""
+    from app.services import codeowners_service
+
+    try:
+        roots = codeowners_service.validate_source_roots(
+            [r.model_dump() for r in payload.roots]
+        )
+    except codeowners_service.SourceRootsError as exc:
+        raise _source_roots_422(exc) from exc
+
+    project = (
+        await db.execute(select(Project).where(Project.id == project_id))
+    ).scalar_one_or_none()
+    if project is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+
+    stored = project.source_roots
+    before_effective = codeowners_service.sanitize_stored_source_roots(stored)
+    if (stored or []) != roots:
+        project.source_roots = roots or None
+        await record_activity(
+            db,
+            project_id=project.id,
+            event_type="project.updated",
+            actor=ActorRef.from_user(current_user),
+            entity_id=project.id,
+            entity_label=project.name,
+            before={"source_roots": len(before_effective)},
+            after={"source_roots": len(roots)},
+            # Named explicitly: swapping two roots for two others leaves the
+            # counts equal, and a diff computed from them would say nothing
+            # changed beside a summary that says something did.
+            changed_fields=["source_roots"],
+            context={"changed": "Java source roots"},
+        )
+        await db.commit()
+        logger.info(
+            "Java source roots saved for project %s: %d root(s)", project_id, len(roots),
+        )
+    return SourceRootsResponse(
+        roots=[SourceRoot(**r) for r in roots], max_roots=codeowners_service.MAX_SOURCE_ROOTS,
+    )
+
+
+@router.post("/source-roots/preview", response_model=SourceRootsPreview)
+async def preview_source_roots(
+    project_id: uuid.UUID,
+    payload: SourceRootsUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_project_access()),
+):
+    """What an EDITED list would locate over the project's recent failures
+    (the coverage sample: newest 500 FAILED/BROKEN rows of 30 days). Writes
+    nothing; the same 422 texts as the PUT."""
+    from app.services import codeowners_service
+
+    try:
+        roots = codeowners_service.validate_source_roots(
+            [r.model_dump() for r in payload.roots]
+        )
+    except codeowners_service.SourceRootsError as exc:
+        raise _source_roots_422(exc) from exc
+    preview = await codeowners_service.preview_source_roots(db, project_id, roots)
+    return SourceRootsPreview(**preview)
 
 
 # ── Team notification channels (PMF US-7.3) ──────────────────────────────────
