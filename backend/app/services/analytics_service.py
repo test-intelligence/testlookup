@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
 
 from fastapi import HTTPException
-from sqlalchemy import desc, select, text
+from sqlalchemy import bindparam, desc, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import Defect, Project, ServiceOwnershipRule, TestCase, TestRun, TriageStatus
@@ -560,16 +560,34 @@ async def top_failing_tests(
     # Only resolvable when a single project is in scope (the snapshot anchor is
     # project-scoped and ``test_fingerprint`` is not salted); unscoped / multi-
     # tenant views leave ``failure_step`` as None to avoid cross-tenant reads.
+    #
+    # FAIL-01, same single-project rule: the test's NEWEST failing row inside
+    # this scope (window, suite, release) -- its first error line, the head of
+    # its trace (truncated and redacted server-side), its owner and the run /
+    # test case "Open in run" opens. One statement (three when some row needs
+    # the ownership rules); in All Projects every key is None and
+    # ``detail_available`` False, so the page says to pick a project.
+    from app.services.failure_detail_service import empty_detail as _empty_failure_detail
+
     if project_id and items:
+        from app.services.failure_detail_service import latest_failure_detail_by_fingerprint
         from app.services.runs_service import first_failed_step_by_fingerprint
 
         fingerprints = [i["test_fingerprint"] for i in items if i.get("test_fingerprint")]
         step_by_fp = await first_failed_step_by_fingerprint(db, project_id, fingerprints)
+        detail_by_fp = await latest_failure_detail_by_fingerprint(
+            db, project_id, fingerprints, days=days, suite_name=suite_name, release_id=release_id,
+            period_start=params["period_start"],
+        )
         for i in items:
             i["failure_step"] = step_by_fp.get(i.get("test_fingerprint"))
+            i["detail_available"] = True
+            i.update(detail_by_fp.get(str(i.get("test_fingerprint") or "")) or _empty_failure_detail())
     else:
         for i in items:
             i["failure_step"] = None
+            i["detail_available"] = False
+            i.update(_empty_failure_detail())
 
     return {
         "items": items,
@@ -577,6 +595,141 @@ async def top_failing_tests(
         # Every failing test in the window, and those failing twice or more.
         "total": failing_total,
         "repeat_total": repeat_total,
+    }
+
+
+# ── FAIL-02: median time to fix (owner decision D02) ────────────────────────
+
+#: Fewer fixed episodes than this in the window: "Not measured", never a number.
+TIME_TO_FIX_MIN_FIXES = 5
+#: A test that failed and recovered this many times in the window oscillates:
+#: its "fixes" are re-runs, not repairs, and it is left out (and counted).
+TIME_TO_FIX_OSCILLATION_MIN = 3
+
+
+def _time_to_fix_reason(fixed: int, days: int) -> str:
+    return f"Fewer than {TIME_TO_FIX_MIN_FIXES} tests were fixed in the last {days} days ({fixed} fixed)."
+
+
+def _hours(value: Any) -> float | None:
+    return round(float(value), 1) if value is not None else None
+
+
+async def time_to_fix(db: AsyncSession, scope: AnalyticsScope) -> dict:
+    """The MEDIAN time from a test's first failure to its next pass, over the
+    window (D02): test recovery, not defect resolution.
+
+    An episode starts at a FAILED/BROKEN execution that follows a pass (or is
+    the test's first execution in the window) and closes at the next PASSED
+    one; SKIPPED / UNKNOWN neither open nor close an episode. An episode
+    already open when the window starts begins at its first failure INSIDE
+    the window. Still-open episodes are counted (``open``) and never enter
+    the median.
+
+    Left out, and counted: tests FLAGGED flaky -- a live quarantine request
+    (``flaky_quarantine_service._LIVE_STATES``) or a human ``FLAKY_TEST``
+    triage in the window (not the /failures oscillation rule: pass, fail,
+    fail, pass is 2 flips and every genuine fix meets it); and tests with
+    ``TIME_TO_FIX_OSCILLATION_MIN`` or more episodes in the window.
+
+    A test is ``(project, fingerprint)``: the fingerprint is not salted per
+    project, so the same test in two projects is two tests. Below
+    ``TIME_TO_FIX_MIN_FIXES`` closed episodes the answer is not measured:
+    ``median_hours`` / ``mean_hours`` are None and ``reason`` says why.
+    ONE statement; the scope's suite and release fragments apply to the
+    executions, the tenant filter to every half.
+    """
+    from app.models.postgres import FlakyQuarantineRequest
+    from app.services.flaky_quarantine_service import _LIVE_STATES
+
+    days = scope.window_days
+    params: dict = {
+        "period_start": _period_start(days),
+        "live_states": list(_LIVE_STATES),
+        "flaky_status": TriageStatus.FLAKY_TEST.value,
+        "oscillation_min": TIME_TO_FIX_OSCILLATION_MIN,
+    }
+    pid, allowed = scope.project, scope.allowed_project_ids
+    project_filter = _tenant_filter(params, project_id=pid, allowed_project_ids=allowed)
+    q_project_filter = _tenant_filter(params, project_id=pid, allowed_project_ids=allowed, table_alias="q")
+    tr2_project_filter = _tenant_filter(params, project_id=pid, allowed_project_ids=allowed, table_alias="tr2")
+    suite_filter = _add_suite_param(params, scope.suite_arg)
+    release_filter = _add_release_param(params, scope.release_arg)
+    quarantine_table = FlakyQuarantineRequest.__tablename__
+    statement = scoped_text(
+        f"""
+        WITH h AS (
+            SELECT tr.project_id AS pid, tch.test_fingerprint AS fp, tch.created_at AS at, tch.id AS hid,
+                   (tch.status IN ('FAILED', 'BROKEN')) AS failing
+            FROM test_case_history tch
+            JOIN test_cases tc ON tc.id = tch.test_case_id
+            JOIN test_runs tr  ON tr.id = tch.test_run_id
+            WHERE tch.created_at >= :period_start
+              AND tch.status IN ('PASSED', 'FAILED', 'BROKEN')
+              {project_filter}
+              {suite_filter}
+              {release_filter}
+        ), m AS (
+            SELECT pid, fp, at, hid, failing,
+                   LAG(failing) OVER (PARTITION BY pid, fp ORDER BY at, hid) AS prev
+            FROM h
+        ), n AS (
+            SELECT pid, fp, at, failing, prev,
+                   SUM(CASE WHEN failing AND prev IS DISTINCT FROM TRUE THEN 1 ELSE 0 END)
+                       OVER (PARTITION BY pid, fp ORDER BY at, hid ROWS UNBOUNDED PRECEDING) AS ep
+            FROM m
+        ), e AS (
+            SELECT pid, fp, ep,
+                   MIN(at) FILTER (WHERE failing) AS started_at,
+                   MIN(at) FILTER (WHERE NOT failing AND prev IS TRUE) AS closed_at
+            FROM n WHERE ep > 0 GROUP BY pid, fp, ep
+        ), per_test AS (
+            SELECT pid, fp, COUNT(*) AS episodes FROM e GROUP BY pid, fp
+        ), flagged AS (
+            SELECT q.project_id AS pid, q.test_fingerprint AS fp
+            FROM {quarantine_table} q
+            WHERE q.status IN :live_states
+              {q_project_filter}
+            UNION
+            SELECT tr2.project_id, tc2.test_fingerprint
+            FROM test_cases tc2 JOIN test_runs tr2 ON tr2.id = tc2.test_run_id
+            WHERE tc2.triage_status = :flaky_status
+              AND tc2.triage_updated_at >= :period_start
+              {tr2_project_filter}
+        ), kept AS (
+            SELECT e.* FROM e JOIN per_test p USING (pid, fp)
+            WHERE p.episodes < :oscillation_min
+              AND NOT EXISTS (SELECT 1 FROM flagged f WHERE f.pid = e.pid AND f.fp = e.fp)
+        )
+        SELECT
+            (SELECT COUNT(*) FROM kept WHERE closed_at IS NOT NULL) AS fixed,
+            (SELECT COUNT(*) FROM kept WHERE closed_at IS NULL) AS open,
+            (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM closed_at - started_at))
+               FROM kept WHERE closed_at IS NOT NULL) / 3600.0 AS median_hours,
+            (SELECT AVG(EXTRACT(EPOCH FROM closed_at - started_at))
+               FROM kept WHERE closed_at IS NOT NULL) / 3600.0 AS mean_hours,
+            (SELECT COUNT(DISTINCT (e.pid, e.fp)) FROM e JOIN flagged f ON f.pid = e.pid AND f.fp = e.fp)
+                AS excluded_flaky_tests,
+            (SELECT COUNT(*) FROM per_test p WHERE p.episodes >= :oscillation_min
+               AND NOT EXISTS (SELECT 1 FROM flagged f WHERE f.pid = p.pid AND f.fp = p.fp))
+                AS excluded_oscillating_tests
+        """,
+        params,
+    ).bindparams(bindparam("live_states", expanding=True))
+    row = dict((await db.execute(statement, params)).one()._mapping)
+    fixed = int(row.get("fixed") or 0)
+    measured = fixed >= TIME_TO_FIX_MIN_FIXES
+    return {
+        "measured": measured,
+        "reason": None if measured else _time_to_fix_reason(fixed, days),
+        "median_hours": _hours(row.get("median_hours")) if measured else None,
+        "mean_hours": _hours(row.get("mean_hours")) if measured else None,
+        "fixed": fixed,
+        "open": int(row.get("open") or 0),
+        "excluded_flaky_tests": int(row.get("excluded_flaky_tests") or 0),
+        "excluded_oscillating_tests": int(row.get("excluded_oscillating_tests") or 0),
+        "min_fixes": TIME_TO_FIX_MIN_FIXES,
+        "window_days": days,
     }
 
 

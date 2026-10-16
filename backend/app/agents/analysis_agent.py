@@ -285,6 +285,11 @@ class AnalysisAgent(BaseAgent):
         # immediately. Stashed on state; _analyse_one applies it by fingerprint,
         # bypassing the known-wrong AI path. Best-effort, never blocks analysis.
         state["_human_corrections"] = await self._fetch_human_corrections(project_id, test_meta)
+        # W07 FAIL-10: the project's enabled classification hints, loaded once
+        # per pipeline like the corrections (THIS project's only). _analyse_one
+        # applies a matching hint before any engine runs; a correction of the
+        # same test still wins. Best-effort: an error means no hints.
+        state["_classification_hints"] = await self._fetch_classification_hints(project_id)
 
         # Sort by priority: blockers/critical first, then by severity
         all_prioritized_ids = self._prioritize_tests(failed_ids, test_meta)
@@ -805,9 +810,32 @@ class AnalysisAgent(BaseAgent):
                     test_case_id=tc_id,
                     context={"feedback_id": correction.get("feedback_id")},
                 )
+            else:
+                # W07 FAIL-10: a project classification hint (a QA lead's
+                # "<field> contains <text> -> <category>") classifies the test
+                # before ANY engine -- ML / rules ``classify_test``,
+                # ``classify_root_cause_tiered`` and ``run_triage_agent`` are all
+                # skipped below, so no model is called for it.
+                from app.services.classification_hint_service import (
+                    build_hint_analysis,
+                    hint_rationale,
+                    match_hint,
+                )
+
+                hint = match_hint(meta, state.get("_classification_hints") or [])
+                if hint is not None:
+                    analysis = build_hint_analysis(hint, meta)
+                    await self.log_decision(
+                        pipeline_run_id,
+                        decision_point="apply_project_hint",
+                        chosen=hint["category"],
+                        rationale=hint_rationale(hint),
+                        test_case_id=tc_id,
+                        context={"hint_id": hint.get("id")},
+                    )
 
             if analysis is not None:
-                pass  # human correction applied — skip the classifier dispatch
+                pass  # human correction or project hint applied — skip the classifier dispatch
             elif mode in (AnalysisMode.ML, AnalysisMode.RULES):
                 # Non-LLM path: use analysis_router (no timeout needed, <5ms)
                 from app.services.analysis_router import classify_test
@@ -1028,6 +1056,13 @@ class AnalysisAgent(BaseAgent):
                 # AIAnalysis.routing_metadata (JSONB) — no schema migration.
                 "confidence_basis": analysis.get("confidence_basis"),
                 "confidence_rule_id": analysis.get("confidence_rule_id"),
+                # W07 FAIL-10: which project hint classified the test (absent
+                # otherwise), read verbatim into AnalysisProvenance.hint_*.
+                **{
+                    key: routing.get(key)
+                    for key in ("hint_id", "hint_match_field", "hint_pattern", "hint_set_by")
+                    if routing.get(key) is not None
+                },
             }
 
             # AI-4: evidence-checklist enrichment of the derived failure kind.
@@ -1237,6 +1272,24 @@ class AnalysisAgent(BaseAgent):
         except Exception as exc:  # pragma: no cover — best-effort enrichment
             logger.debug("human_corrections_fetch_failed", error=str(exc))
             return {}
+
+    async def _fetch_classification_hints(self, project_id) -> list[dict]:
+        """W07 FAIL-10: the project's ENABLED classification hints, as plain
+        dicts in precedence order, on a short session of their own (like the
+        corrections). Best-effort: no project or any error means no hints, and
+        analysis proceeds exactly as before."""
+        try:
+            pid = project_id if isinstance(project_id, uuid.UUID) else uuid.UUID(str(project_id))
+        except (TypeError, ValueError, AttributeError):
+            return []  # no (real) project: nothing to load, and no session opened
+        try:
+            from app.services.classification_hint_service import load_enabled_hints
+
+            async with AsyncSessionLocal() as db:
+                return await load_enabled_hints(db, pid)
+        except Exception as exc:  # noqa: BLE001 — a hint read must never block analysis
+            logger.warning("classification_hints_fetch_failed", error_type=type(exc).__name__)
+            return []
 
     async def _enrich_historical_counts(
         self, db, meta: dict[str, dict], fingerprints: dict[str, str]

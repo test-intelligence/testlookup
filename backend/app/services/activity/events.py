@@ -83,6 +83,8 @@ ENTITY_TYPES: Final[tuple[str, ...]] = (
     "agent_action",
     "workflow",
     "export",
+    # W07 FAIL-10: a QA lead's "<field> contains <text> -> <category>" rule.
+    "classification_hint",
 )
 
 #: Where a row of each entity type lives in the SPA. Used to build
@@ -117,6 +119,9 @@ _ENTITY_ROUTES: Final[Mapping[str, str]] = {
     # as plain text rather than linking to a route that does not exist yet.
     "workflow": "",
     "export": "",
+    # W07 FAIL-10: hints are listed and edited from the Failures › Categories
+    # tab's "Classification hints" modal; there is no per-hint page.
+    "classification_hint": "/failures?tab=categories",
 }
 
 _EVENT_NAME_RE: Final[re.Pattern[str]] = re.compile(r"^[a-z_]+\.[a-z_]+$")
@@ -282,6 +287,12 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("attribution_rule.deleted", "configuration", "attribution_rule", "Attribution rule {entity_label} was deleted"),
     _spec("attribution_rule.enabled", "configuration", "attribution_rule", "Attribution rule {entity_label} was enabled"),
     _spec("attribution_rule.disabled", "configuration", "attribution_rule", "Attribution rule {entity_label} was disabled"),
+    # W07 FAIL-10: staged by routers/classification_hints.py on the request
+    # session (outcome: a rolled-back write leaves no row); ``updated`` only
+    # when a field really changed, ``changed`` naming the fields.
+    _spec("classification_hint.created", "configuration", "classification_hint", "Classification hint {entity_label} was created"),
+    _spec("classification_hint.updated", "configuration", "classification_hint", "Classification hint {entity_label} changed: {changed}"),
+    _spec("classification_hint.deleted", "configuration", "classification_hint", "Classification hint {entity_label} was deleted"),
     _spec("ownership_rule.created", "configuration", "ownership_rule", "Ownership rule {entity_label} was created"),
     _spec("ownership_rule.updated", "configuration", "ownership_rule", "Ownership rule {entity_label} changed: {changed}"),
     _spec("ownership_rule.deleted", "configuration", "ownership_rule", "Ownership rule {entity_label} was deleted"),

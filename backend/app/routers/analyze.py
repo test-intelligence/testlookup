@@ -84,7 +84,17 @@ def _build_provenance(
         prompt_versions={str(k): str(v) for k, v in versions.items()},
         confidence_basis=routing_metadata.get("confidence_basis"),
         threshold_check=check,
+        # W07 FAIL-10: the project hint that classified the test, verbatim.
+        **{key: _text_or_none(routing_metadata.get(key)) for key in _HINT_PROVENANCE_KEYS},
     )
+
+
+#: ``routing_metadata`` keys a project-hint verdict carries (W07 FAIL-10).
+_HINT_PROVENANCE_KEYS = ("hint_id", "hint_match_field", "hint_pattern", "hint_set_by")
+
+
+def _text_or_none(value: Any) -> str | None:
+    return str(value) if value is not None else None
 
 
 async def _build_confidence_gate(
@@ -267,6 +277,13 @@ async def analyze_test_case(
     tc = authorized.test_case
     test_run = authorized.test_run
 
+    # W07 FAIL-10: the enabled classification hints of the test's OWN project
+    # (the one ``resolve_authorized_test_case`` authorised). A matching hint
+    # classifies the test before any engine runs.
+    from app.services.classification_hint_service import load_enabled_hints
+
+    classification_hints = await load_enabled_hints(db, authorized.project_id)
+
     # Run the AI agent
     analysis = await analysis_router.classify_test(
         test_case={
@@ -292,8 +309,14 @@ async def analyze_test_case(
             "run_id": str(authorized.run_id),
             "project_id": str(authorized.project_id),
             "test_fingerprint": tc.test_fingerprint,
+            # W07 FAIL-10: a project hint may match on the class.
+            "class_name": getattr(tc, "class_name", None),
         },
-        run_context={"run_id": str(authorized.run_id), "project_id": str(authorized.project_id)},
+        run_context={
+            "run_id": str(authorized.run_id),
+            "project_id": str(authorized.project_id),
+            "classification_hints": classification_hints,
+        },
     )
 
     # Apply the confidence policy BEFORE anything is persisted or returned.
@@ -326,13 +349,22 @@ async def analyze_test_case(
     routing_metadata: dict | None = None
     if routing:
         routing_metadata = dict((ai_row.routing_metadata if ai_row else None) or {})
+        # W07 FAIL-10: a hint verdict's provenance replaces any earlier one; a
+        # non-hint verdict must not inherit a previous hint's keys.
+        for key in _HINT_PROVENANCE_KEYS:
+            routing_metadata.pop(key, None)
         routing_metadata.update({
             k: v for k, v in routing.items()
             if k in {
                 "mode_used", "mode_requested", "mode_resolved", "fallback_from",
                 "fallback_reason", "execution_path", "threshold_check",
+                *_HINT_PROVENANCE_KEYS,
             }
         })
+        if analysis.get("confidence_basis") == "project_hint":
+            routing_metadata["confidence_basis"] = "project_hint"
+        elif routing_metadata.get("confidence_basis") == "project_hint":
+            routing_metadata.pop("confidence_basis")
         # ``analysis_mode`` is the key the pipeline writes for the engine that
         # ran; keep both spellings consistent for readers of either.
         routing_metadata["analysis_mode"] = routing.get("mode_used")

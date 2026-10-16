@@ -67,6 +67,9 @@ UNGUARDED_SCOPED_PARAMS: frozenset[str] = frozenset({
     "batch_id",
     # E3.1: nested under project_id; service queries always include that project.
     "workflow_id",
+    # W07 FAIL-10: a classification hint, nested under project_id; loaded
+    # WHERE id AND project_id (another project's hint is the unknown-id 404).
+    "hint_id",
     # VIZ-607: a background report export, reached by id alone.
     "export_id",
     # W03 AIH-02: a stored AI history version. Only ever nested under

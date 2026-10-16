@@ -120,6 +120,43 @@ def _record_tier_fallback(
     return result
 
 
+def _hint_verdict(
+    test_case: Mapping[str, Any] | None,
+    history: dict | None,
+    run_context: Mapping[str, Any] | None,
+) -> dict | None:
+    """W07 FAIL-10: the verdict of the first enabled project classification
+    hint in ``run_context["classification_hints"]`` that matches the test, or
+    ``None``. A hint wins over EVERY engine: when it matches, no engine is
+    dispatched, no model is called and no confidence gate is evaluated here
+    (the caller's ``validate_confidence`` evaluates it, as for any verdict).
+    The caller loads the hints of the test's OWN project only."""
+    hints = (run_context or {}).get("classification_hints")
+    if not hints:
+        return None
+    from app.services.classification_hint_service import build_hint_analysis, match_hint
+
+    hint = match_hint(test_case or {}, hints)
+    if hint is None:
+        return None
+    result = build_hint_analysis(hint, test_case)
+    try:
+        from app.services.classifier_evidence import attach_classifier_evidence
+
+        # As for rules: a no-op here (the hint verdict already cites what it
+        # matched on), kept so every non-LLM verdict passes the same step.
+        attach_classifier_evidence(result, test_case, history)
+    except Exception as exc:  # pragma: no cover — provenance must not break analysis
+        logger.debug("classifier_evidence_attach_failed", error=str(exc))
+    result["_routing"]["prompt_versions"] = {}
+    logger.debug(
+        "classification_hint_applied",
+        hint_id=result["_routing"].get("hint_id"),
+        test_case_id=(test_case or {}).get("test_case_id"),
+    )
+    return result
+
+
 def _root_cause_artifact_types(test_case: dict, history: dict | None) -> set[str]:
     """Return the distinct input artifact types supporting classification."""
     kinds: set[str] = set()
@@ -149,6 +186,11 @@ async def classify_root_cause_tiered(
     tier_override: Literal["llm"] | None = None,
 ) -> dict:
     """Use SLM for the verdict and LLM only for explanations that need it."""
+    # W07 FAIL-10: a matching project hint answers before the SLM or the LLM.
+    hinted = _hint_verdict(test_case, history, run_context)
+    if hinted is not None:
+        return hinted
+
     from app.services.agent import run_triage_agent
     from app.services.agent_capability_registry import get_capability
     from app.services.training.classifier import FastClassifier
@@ -651,7 +693,15 @@ async def classify_test(
         evaluation ({threshold, observed_confidence, passed, source}) and the
         result carries the explicit ``low_confidence`` / ``confidence_gate_status``
         markers so no consumer has to compare numbers itself.
+
+        W07 FAIL-10: ``run_context["classification_hints"]`` (the test's own
+        project's enabled hints) is consulted FIRST; a match returns the hint's
+        verdict with ``_routing.mode_used == "hint"`` and no engine runs.
     """
+    hinted = _hint_verdict(test_case, history, run_context)
+    if hinted is not None:
+        return hinted
+
     requested = mode
     resolved = mode or get_analysis_mode()
 

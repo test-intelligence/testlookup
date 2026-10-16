@@ -451,6 +451,29 @@ async def top_failing_tests(
     return with_meta(payload, await build_meta(db, scope))
 
 
+# ── Median time to fix (W07 FAIL-02, owner decision D02) ───────────────────
+
+#: The /failures windows end at 90 days (the heatmap's precedent): one
+#: window-function statement over the project's whole history in range.
+_TIME_TO_FIX = ScopePolicy(default_days=30, max_days=90)
+
+
+@router.get("/time-to-fix")
+@analytics_error_contract
+@analytics_read(namespace="time_to_fix")
+async def time_to_fix(
+    scope: AnalyticsScope = Depends(analytics_scope(_TIME_TO_FIX)),
+    db: AsyncSession = Depends(get_db),
+):
+    """The median time from a test's first failure to its next pass, over the
+    window; tests flagged flaky (a live quarantine request or a human
+    ``FLAKY_TEST`` triage) and tests that recovered 3+ times are left out and
+    counted. Below 5 fixes ``measured`` is false and ``median_hours`` null,
+    with the reason (never 0)."""
+    payload = await analytics_service.time_to_fix(db, scope)
+    return with_meta(payload, await build_meta(db, scope, measured=payload["measured"], reason=payload["reason"]))
+
+
 # ── Failure-kind evidence checklist (AI-4) ─────────────────────────────────
 
 @router.get("/kind-evidence")
