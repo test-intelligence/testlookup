@@ -543,9 +543,11 @@ def _smtp_lines_in_app(check=connection_sites) -> dict[str, list[int]]:
 def test_the_smtp_scan_sees_every_known_connection():
     """A scan that matched nothing would pass forever."""
     found = _smtp_lines_in_app()
+    # W08 TRND-01: services/report_service.py opens no connection of its own
+    # any more -- the trends email is sent by email_service.send_html_email,
+    # gated where it opens (the three senders below).
     for module, known in (
         ("services/notification/email_service.py", 3),
-        ("services/report_service.py", 1),
         ("routers/app_settings.py", 1),
         ("services/integration_probe_service.py", 1),
     ):
@@ -649,22 +651,19 @@ async def test_the_gate_judges_the_relay_the_send_dials(offline, resolves, smtp_
     assert [call["hostname"] for call in smtp_sends] == ["relay.internal"]
 
 
-def test_the_report_email_refuses_a_public_relay_offline(offline, resolves, monkeypatch):
-    from fastapi import HTTPException
-
+@pytest.mark.asyncio
+async def test_the_report_email_refuses_a_public_relay_offline(offline, resolves, smtp_sends):
+    """W08 TRND-01: the trends email goes through email_service.send_html_email
+    with the relay saved in Settings; the gate runs on that send."""
     from app.services import report_service
 
     resolves({})
-    monkeypatch.setattr(settings, "SMTP_ENABLED", True)
-    monkeypatch.setattr(settings, "SMTP_HOST", "smtp.gmail.com")
-    opened: list[tuple] = []
-    monkeypatch.setattr(report_service.smtplib, "SMTP", lambda *a, **k: opened.append(a))
-
-    with pytest.raises(HTTPException) as exc:
-        report_service.send_email("qa@example.com", "Trends", "<p>x</p>")
-    assert exc.value.status_code == 503
-    assert "smtp.gmail.com" in str(exc.value.detail)
-    assert opened == [], "the trends report opened a connection to the public relay"
+    with pytest.raises(OfflineEgressBlocked) as exc:
+        await report_service.send_trends_email(
+            dict(_PUBLIC_RELAY), ["qa@example.com"], "Trends", "<p>x</p>"
+        )
+    assert "smtp.gmail.com" in str(exc.value)
+    assert smtp_sends == [], "the trends report reached the public relay"
 
 
 @pytest.mark.asyncio
@@ -1258,35 +1257,14 @@ async def test_an_allow_listed_relay_still_takes_the_smtp_test_email(
     assert [call["hostname"] for call in smtp_sends] == ["smtp.sendgrid.net"]
 
 
-def test_an_allow_listed_relay_still_takes_the_report_email(relay_allow_listed, monkeypatch):
+@pytest.mark.asyncio
+async def test_an_allow_listed_relay_still_takes_the_report_email(relay_allow_listed, smtp_sends):
     from app.services import report_service
 
-    monkeypatch.setattr(settings, "SMTP_ENABLED", True)
-    monkeypatch.setattr(settings, "SMTP_HOST", "smtp.sendgrid.net")
-    opened: list[str] = []
-
-    class _Server:
-        def __init__(self, host, *_args, **_kwargs):
-            opened.append(host)
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_exc):
-            return False
-
-        def starttls(self, **_kwargs):
-            return None
-
-        def login(self, *_args):
-            return None
-
-        def sendmail(self, *_args):
-            return None
-
-    monkeypatch.setattr(report_service.smtplib, "SMTP", _Server)
-    report_service.send_email("qa@example.com", "Trends", "<p>x</p>")
-    assert opened == ["smtp.sendgrid.net"]
+    await report_service.send_trends_email(
+        dict(_HOSTED_RELAY), ["qa@example.com"], "Trends", "<p>x</p>"
+    )
+    assert [call["hostname"] for call in smtp_sends] == ["smtp.sendgrid.net"]
 
 
 @pytest.mark.asyncio

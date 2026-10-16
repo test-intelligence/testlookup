@@ -29,6 +29,7 @@ from app.routers import (
     analytics_failure_groups,
     analytics_heatmap,
     analytics_test_scatter,
+    analytics_trend_summary,
     api_keys,
     app_settings,
     audit_dashboard,
@@ -92,6 +93,7 @@ from app.routers import (
     reviews,
     test_health,
     test_management,
+    timeline_notes,
     users,
     value_metric_assumptions,
     value_metrics,
@@ -163,6 +165,8 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     analytics_failure_groups.router,   # VIZ-207: GET /analytics/failure-groups
     analytics_chart_rows.router,       # VIZ-208: GET /analytics/chart-data/rows
     analytics_test_scatter.router,     # VIZ-506-BE: GET /analytics/test-scatter
+    # W08 TRND-06: GET /analytics/trend-summary (a literal; shadows nothing).
+    analytics_trend_summary.router,
     # EXEC-03: GET /runs/{run_id}/timing, /analytics/execution/suite-history and
     # /analytics/execution-metrics. After runs.router and analytics.router; every
     # path ends in a literal, so it shadows nothing and nothing shadows it.
@@ -258,6 +262,10 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     # GET /preview and PATCH/DELETE /{hint_id} use different methods, so the
     # literal cannot be shadowed.
     classification_hints.router,
+    # W08 TRND-04: /projects/{project_id}/timeline-notes[/{note_id}]. The
+    # collection routes are GET/POST on the literal, the item routes PATCH/DELETE
+    # on /{note_id}: nothing to shadow.
+    timeline_notes.router,
 )
 
 

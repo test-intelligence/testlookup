@@ -1,6 +1,7 @@
 """Pydantic v2 request/response schemas for all API endpoints."""
+import re
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, ClassVar, Dict, List, Literal, Optional, Union
 
 from pydantic import (
@@ -5404,6 +5405,13 @@ MAX_SAVED_VIEW_FILTERS_BYTES = 32 * 1024
 #: layout row (``useAnalyticsView``) has no kind.
 SAVED_VIEW_KINDS = ("report_view",)
 
+#: W08 TRND-10: ``filters.charts`` holds the customised charts of a view's page,
+#: one entry per chart key (``trends.suite-series``, ``trends.compare``) and
+#: ONLY for charts not at their default; the key is omitted when none is.
+MAX_SAVED_VIEW_CHARTS = 8
+MAX_SAVED_VIEW_CHART_BYTES = 2048
+SAVED_VIEW_CHART_KEY = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
+
 
 def _check_string_list(filters: dict, key: str) -> None:
     value = filters.get(key)
@@ -5415,6 +5423,43 @@ def _check_string_list(filters: dict, key: str) -> None:
         raise ValueError(f"filters.{key} cannot hold more than 50 values")
 
 
+def _check_saved_view_charts(filters: dict) -> None:
+    """W08 TRND-10: ``filters.charts``, when present.
+
+    An object of at most :data:`MAX_SAVED_VIEW_CHARTS` keys, each matching
+    :data:`SAVED_VIEW_CHART_KEY`, each value an object carrying an integer
+    ``version`` >= 1 and at most :data:`MAX_SAVED_VIEW_CHART_BYTES` as compact
+    JSON. What a config holds beyond ``version`` is the page's to read (it
+    falls back to its default, and says so, when a stored config no longer
+    validates). One error text per rule.
+    """
+    import json  # noqa: PLC0415
+
+    if "charts" not in filters:
+        return
+    charts = filters["charts"]
+    if not isinstance(charts, dict):
+        raise ValueError("filters.charts must be an object of chart configurations")
+    if len(charts) > MAX_SAVED_VIEW_CHARTS:
+        raise ValueError(f"filters.charts holds at most {MAX_SAVED_VIEW_CHARTS} charts")
+    for key, config in charts.items():
+        if not isinstance(key, str) or not SAVED_VIEW_CHART_KEY.match(key):
+            raise ValueError(
+                "filters.charts keys are 1-64 characters: a lower-case letter, then "
+                "lower-case letters, digits, '.', '_' or '-'"
+            )
+        if not isinstance(config, dict):
+            raise ValueError("filters.charts values must be objects")
+        version = config.get("version")
+        if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+            raise ValueError("filters.charts values need a whole-number version of 1 or more")
+        size = len(json.dumps(config, separators=(",", ":"), default=str).encode("utf-8"))
+        if size > MAX_SAVED_VIEW_CHART_BYTES:
+            raise ValueError(
+                f"filters.charts values hold at most {MAX_SAVED_VIEW_CHART_BYTES} bytes each"
+            )
+
+
 def _validate_saved_view_filters(filters: dict) -> dict:
     """Reject malformed analytics layouts while preserving legacy filters.
 
@@ -5422,7 +5467,8 @@ def _validate_saved_view_filters(filters: dict) -> dict:
     (``kind``, ``release_ids``, ``suites``, ``window``) are type-checked. Other
     keys stay free-form: ``filters`` has always been an open object (MCP
     clients and older views store ``severity``, ``category``, ``days`` ...),
-    so a key allow-list would 422 views that exist today.
+    so a key allow-list would 422 views that exist today. W08 TRND-10 adds
+    ``charts`` (:func:`_check_saved_view_charts`).
     """
     import json  # noqa: PLC0415
 
@@ -5439,6 +5485,7 @@ def _validate_saved_view_filters(filters: dict) -> dict:
     window = filters.get("window")
     if window is not None and (isinstance(window, bool) or not isinstance(window, int) or not 1 <= window <= 365):
         raise ValueError("filters.window must be a whole number of days, 1 to 365")
+    _check_saved_view_charts(filters)
     for key in ("instances", "widgets"):
         if key not in filters:
             continue
@@ -5531,6 +5578,67 @@ class SavedViewResponse(BaseModel):
     # every existing consumer is unchanged.
     release: Optional[SavedViewRelease] = None
     model_config = ConfigDict(from_attributes=True)
+
+
+# ── Timeline notes (W08 TRND-04) ─────────────────────────────────────────────
+#
+# ``280`` is written here because schemas must not import services; it equals
+# ``timeline_note_service.NOTE_TEXT_MAX`` (``tests/test_timeline_notes.py``
+# asserts the two copies agree). The service strips the text and owns every
+# other rule (blank text, the day range, the list window), each a fixed 422.
+
+TIMELINE_NOTE_TEXT_MAX = 280
+
+
+class TimelineNoteCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    starts_on: date
+    #: ``None`` = a one-day note (``ends_on := starts_on``).
+    ends_on: Optional[date] = None
+    #: Stripped by the service; blank is a 422.
+    text: str = Field(..., max_length=TIMELINE_NOTE_TEXT_MAX)
+    #: ``None`` = every suite of the project.
+    suite_name: Optional[str] = Field(None, max_length=500)
+
+
+class TimelineNoteUpdate(BaseModel):
+    """Only the fields SENT are applied (``model_fields_set``)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    starts_on: Optional[date] = None
+    ends_on: Optional[date] = None
+    text: Optional[str] = Field(None, max_length=TIMELINE_NOTE_TEXT_MAX)
+    suite_name: Optional[str] = Field(None, max_length=500)
+
+
+class TimelineNoteResponse(BaseModel):
+    id: str
+    project_id: str
+    #: YYYY-MM-DD, UTC days, inclusive.
+    starts_on: str
+    ends_on: str
+    text: str
+    suite_name: Optional[str] = None
+    #: The author's full name or username; ``None`` for a deleted user.
+    created_by_name: Optional[str] = None
+    #: For THIS reader: the author, or a QA lead or above.
+    can_edit: bool
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class TimelineNoteList(BaseModel):
+    #: ``starts_on``, ``created_at``, ``id`` order; at most 200.
+    items: List[TimelineNoteResponse]
+    #: The notes overlapping the window, not ``len(items)``.
+    total: int
+    #: ``total`` > the 200 listed.
+    truncated: bool
+    #: The window asked, YYYY-MM-DD.
+    start: str
+    end: str
 
 
 class DigestSubscriptionCreate(BaseModel):

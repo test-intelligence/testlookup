@@ -85,6 +85,8 @@ ENTITY_TYPES: Final[tuple[str, ...]] = (
     "export",
     # W07 FAIL-10: a QA lead's "<field> contains <text> -> <category>" rule.
     "classification_hint",
+    # W08 TRND-04: a note pinned on a project's daily charts (a UTC day range).
+    "timeline_note",
 )
 
 #: Where a row of each entity type lives in the SPA. Used to build
@@ -122,6 +124,9 @@ _ENTITY_ROUTES: Final[Mapping[str, str]] = {
     # W07 FAIL-10: hints are listed and edited from the Failures › Categories
     # tab's "Classification hints" modal; there is no per-hint page.
     "classification_hint": "/failures?tab=categories",
+    # W08 TRND-04: notes are drawn on the Trends hero chart (and the Coverage
+    # history tab) and listed from its "Notes (n)" chip; there is no per-note page.
+    "timeline_note": "/trends",
 }
 
 _EVENT_NAME_RE: Final[re.Pattern[str]] = re.compile(r"^[a-z_]+\.[a-z_]+$")
@@ -265,6 +270,13 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("flaky.detected", "quality", "test", "{entity_label} was detected as flaky"),
     _spec("test.newly_failing", "quality", "test", "{entity_label} started failing"),
     _spec("test.recovered", "quality", "test", "{entity_label} recovered"),
+    # W08 TRND-04: staged by routers/timeline_notes.py on the request session
+    # (outcome: a rolled-back write leaves no row). ``entity_label`` is the
+    # note's first 60 characters; ``updated`` only when a field really changed,
+    # ``changed`` naming them (text, dates, suite).
+    _spec("timeline_note.created", "quality", "timeline_note", 'Note "{entity_label}" was pinned'),
+    _spec("timeline_note.updated", "quality", "timeline_note", 'Note "{entity_label}" changed: {changed}'),
+    _spec("timeline_note.deleted", "quality", "timeline_note", 'Note "{entity_label}" was removed'),
     # ── configuration ───────────────────────────────────────────────────────
     _spec("project.created", "configuration", "project", "Project {entity_label} was created"),
     _spec("project.updated", "configuration", "project", "Project settings changed: {changed}"),
@@ -355,6 +367,10 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("compliance_pack.generated", "system", "export", "Compliance pack {entity_label} was generated"),
     _spec("report.exported", "system", "export", "Report {entity_label} was exported"),
     _spec("report.shared", "system", "export", "Report {entity_label} was shared"),
+    # W08 TRND-01: POST /reports/email-trends, staged after the relay accepted
+    # the message (outcome mode, committed with the request). ``context`` holds
+    # the recipient COUNT and the window, never an address (personal data).
+    _spec("report.emailed", "system", "export", "Report {entity_label} was emailed to {count} recipients"),
     _spec("maintenance.executed", "system", "project", "Maintenance task {entity_label} was executed", "attempt"),
 )
 

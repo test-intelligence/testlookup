@@ -12,7 +12,6 @@ accepted.
 from __future__ import annotations
 
 import pytest
-from fastapi import HTTPException
 
 from app.core.config import settings
 from app.services.notification import egress, email_service
@@ -105,18 +104,15 @@ async def test_every_email_sender_applies_the_rule(world):
     assert world == []
 
 
-def test_the_trends_report_email_applies_the_rule(world, monkeypatch):
+@pytest.mark.asyncio
+async def test_the_trends_report_email_applies_the_rule(world):
+    """W08 TRND-01: one message to every recipient; one outside address refuses it whole."""
     from app.services import report_service
 
-    opened: list = []
-    monkeypatch.setattr(settings, "SMTP_ENABLED", True)
-    monkeypatch.setattr(settings, "SMTP_HOST", HOSTED)
-    monkeypatch.setattr(report_service.smtplib, "SMTP", lambda *a, **k: opened.append(a))
-    with pytest.raises(HTTPException) as refused:
-        report_service.send_email("exec@gmail.com", "s", "<p>b</p>")
-    assert refused.value.status_code == 503
-    assert "OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS" in refused.value.detail
-    assert opened == []
+    cfg = {"enabled": True, "host": HOSTED, "port": 587}
+    with pytest.raises(OfflineEgressBlocked, match="OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS"):
+        await report_service.send_trends_email(cfg, ["exec@gmail.com"], "s", "<p>b</p>")
+    assert world == []
 
 
 @pytest.mark.asyncio

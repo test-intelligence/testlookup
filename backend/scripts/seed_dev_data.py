@@ -1040,6 +1040,8 @@ async def _seed_coverage_snapshots(
             id=uuid.uuid4(),
             project_id=project.id,
             snapshot_date=snap_date,
+            # W08 (migration 0217): one snapshot a project-day, keyed on the day.
+            snapshot_day=snap_date.date(),
             total_suites=len(suite_names),
             total_tests=total,
             automated_count=auto_count,

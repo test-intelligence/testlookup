@@ -674,48 +674,39 @@ def test_report_service_build_html_report_summarizes_totals():
     assert "18" in html
     assert "2" in html
     assert "1" in html
-    assert "81.8%" in html
+    # W08 TRND-01: the evaluated rate over the totals (18 / 21), as the page
+    # prints it -- never the mean of the daily rates (72.7 and 90.9 -> 81.8).
+    assert "85.7%" in html and "81.8%" not in html
     assert "Failure Rate" in html
 
 
 @pytest.mark.asyncio
-async def test_report_service_email_trends_report_sends_built_email():
-    db = FakeAsyncDB(
-        [
-            FakeExecuteResult(rows=[("Project Phoenix",)]),
-            FakeExecuteResult(
-                rows=[
-                    SimpleNamespace(
-                        _mapping={
-                            "date": "2026-01-01",
-                            "passed": 5,
-                            "failed": 1,
-                            "skipped": 0,
-                            "broken": 0,
-                            "total": 6,
-                            "pass_rate": 83.3,
-                        }
-                    )
-                ]
-            ),
-        ]
-    )
-    payload = SimpleNamespace(
-        project_id="project-1",
-        days=14,
-        recipient_email="qa@example.com",
-        chart_ids=["status_pie"],
+async def test_report_service_send_trends_email_sends_one_message_through_the_saved_relay(monkeypatch):
+    """W08 TRND-01: the trends email is ONE message to every recipient, sent by
+    email_service.send_html_email through the relay it is given (the one saved
+    in Settings), not the environment's stdlib smtplib path."""
+    from app.core.config import settings
+    from app.services.notification import email_service
+
+    sent: list = []
+
+    async def fake_send(message, **kwargs):
+        sent.append((message, kwargs))
+
+    # Online: the egress gate admits any relay (its offline rules are pinned in
+    # tests/regression/test_offline_notification_egress.py).
+    monkeypatch.setattr(settings, "AI_OFFLINE_MODE", False)
+    monkeypatch.setattr(email_service.aiosmtplib, "send", fake_send)
+    cfg = {"enabled": True, "host": "relay.lan", "port": 25, "tls": False, "from_address": "qa@lan"}
+    await report_service.send_trends_email(
+        cfg, ["a@corp.example", "b@corp.example"], "Trends report — Phoenix — last 14 days", "<p>r</p>",
     )
 
-    with patch.object(report_service, "send_email") as send_email_mock:
-        result = await report_service.email_trends_report(db, payload)
-
-    assert result == {"status": "sent", "recipient": "qa@example.com"}
-    send_email_mock.assert_called_once()
-    args = send_email_mock.call_args[0]
-    assert args[0] == "qa@example.com"
-    assert args[1] == "QA Trends Report - Project Phoenix (14d)"
-    assert "Project Phoenix" in args[2]
+    [(message, kwargs)] = sent
+    assert kwargs["hostname"] == "relay.lan" and kwargs["port"] == 25
+    assert message["To"] == "a@corp.example, b@corp.example"
+    assert message["Subject"] == "Trends report — Phoenix — last 14 days"
+    assert message["From"] == "qa@lan"
 
 
 @pytest.mark.asyncio
