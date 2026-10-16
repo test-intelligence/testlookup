@@ -129,9 +129,14 @@ test('the suite page: Charts › Suite execution time, and the Runs tab’s Wall
     ready: (p) => p.getByRole('heading', { name: /^Run history/ }),
     days: 30,
   })
-  // The section is the composite's last: bring it near, then it asks once.
+  // The section is the composite's last: bring it near, then it asks once. The
+  // lazy placeholder is swapped for the section as soon as it nears the viewport,
+  // which can happen mid-scroll ("Element is not attached to the DOM", both CI
+  // attempts on #263): retry the scroll on whichever of the two is attached.
   const trend = page.locator('[data-catalogue-section="suite-execution"] [data-chart-frame]')
-  await page.locator('[data-lazy-section="suite-execution"], [data-catalogue-section="suite-execution"]').first().scrollIntoViewIfNeeded()
+  await expect(async () => {
+    await page.locator('[data-lazy-section="suite-execution"], [data-catalogue-section="suite-execution"]').first().scrollIntoViewIfNeeded({ timeout: 2_000 })
+  }).toPass({ timeout: 15_000 })
   await expectDrawn(trend, 'suite execution time')
   await expect(trend.getByRole('heading', { name: 'Suite execution time' })).toBeVisible()
   await expect(trend.locator('[data-chart="execution-time-trend"]')).toHaveAttribute('data-grain', 'run')
