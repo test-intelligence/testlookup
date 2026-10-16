@@ -10,11 +10,20 @@
  * rejection with the chart stuck on `loading`. An option carrying a formatter
  * not built by `domTooltipFormatter` is refused the same way (ADR decision 4). `retry()` starts over: a fresh
  * load (a failed load is not cached by the registry) and a fresh instance.
+ *
+ * TRND-11: a chart may pass `exportOption`, the builder of its option on given
+ * tokens; it is registered for the container once the instance is ready and
+ * unregistered when the instance is disposed or the chart unmounts, so Export
+ * can redraw the chart as a true SVG or on the light theme (`exportSvg.ts`).
+ * It is read through a ref: a new function every render re-registers nothing.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { assertSafeChartOption } from '../tooltip'
+import { registerExportOption, unregisterExportOption, type ExportOptionBuilder } from './echarts/exportRegistry'
 import { isStaleBuildError } from './lazyChartEngine'
 import { loadChartEngine, type ChartEngineType, type ChartInstance } from './registry'
+
+export type { ExportOptionBuilder } from './echarts/exportRegistry'
 
 export type EChartStatus = 'loading' | 'ready' | 'stale-build' | 'error'
 
@@ -26,14 +35,22 @@ export type EChartStatus = 'loading' | 'ready' | 'stale-build' | 'error'
  */
 export type EChartEvents = Readonly<Record<string, (params: unknown) => void>>
 
-export function useEChart(type: ChartEngineType, option: object, events?: EChartEvents) {
+export function useEChart(
+  type: ChartEngineType,
+  option: object,
+  events?: EChartEvents,
+  exportOption?: ExportOptionBuilder,
+) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const instanceRef = useRef<ChartInstance | null>(null)
   const optionRef = useRef(option)
   const eventsRef = useRef(events)
+  const exportRef = useRef(exportOption)
   useEffect(() => {
     eventsRef.current = events
+    exportRef.current = exportOption
   })
+  const exports = exportOption !== undefined
   // The names, sorted, as one string: the dependency that re-binds.
   const eventNames = events ? Object.keys(events).sort().join('\n') : ''
   const [status, setStatus] = useState<EChartStatus>('loading')
@@ -129,6 +146,23 @@ export function useEChart(type: ChartEngineType, option: object, events?: EChart
       for (const [name, listener] of bound) instance.off?.(name, listener)
     }
   }, [status, eventNames, attempt])
+
+  // TRND-11: the export option, registered for the container while the
+  // instance is ready (the builder read through the ref at export time).
+  // Gone when the chart fails, retries, changes type or unmounts.
+  useEffect(() => {
+    const el = containerRef.current
+    if (status !== 'ready' || !exports || !el || !instanceRef.current) return
+    registerExportOption(el, {
+      type,
+      build: (tokens) => {
+        const build = exportRef.current
+        if (!build) throw new Error('This chart no longer offers an export option.')
+        return build(tokens)
+      },
+    })
+    return () => unregisterExportOption(el)
+  }, [status, exports, type, attempt])
 
   const retry = useCallback(() => {
     setStatus('loading')

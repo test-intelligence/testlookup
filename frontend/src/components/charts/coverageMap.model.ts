@@ -25,6 +25,15 @@
  * lowest bin: it is a GAP, drawn hatched and named in words, because "not run
  * in this window", "last run unknown" (its run was deleted) and "never run"
  * are three different facts and none of them is 0.
+ *
+ * W08 TRND-12. "Other (n)" OPENS: past 499 children a level is paged, each
+ * page the next <= 498 children of the same parent under the same 500-node
+ * cap (`other_page`, 2..50; page 1 is the request without it). The page is
+ * the section's state, never the URL (D-20): `levelPath` / `levelFromPath`
+ * ignore it, and it resets when the level changes. A node whose tests the
+ * last suite sync marked for review carries `stats.needs_review_count`
+ * (`null` outside one project): `{n} need review` on the tile when it has
+ * room, in the tooltip always, and a link to Test Management's Suites tab.
  */
 import type { DrillLevel, TreeChart, TreeNode, TreeNodeStats, VizDimension } from '@/lib/viz/contracts'
 import { writeDrillParams } from '@/hooks/useDrillPath'
@@ -53,7 +62,15 @@ export const COVERAGE_KEYBOARD_HINT = 'Arrow keys move, Enter opens, Backspace g
 export const LEVEL_NOUN: Record<CoverageDepth, string> = { 1: 'suites', 2: 'classes or files', 3: 'tests' }
 const LEVEL_NOUN_ONE: Record<CoverageDepth, string> = { 1: 'suite', 2: 'class or file', 3: 'test' }
 
-export const OTHER_NOTE = 'The smaller items of this level, combined. It does not open.'
+/** The Other tile's tooltip note: what it is, and that it opens the next page of the level. */
+export function otherTileNote(next: number | null): string {
+  return next !== null && next > 0
+    ? `The smaller items of this level, combined. Open it for the next ${formatNumber(next)}.`
+    : 'The smaller items of this level, combined. Open it for the next page.'
+}
+
+/** The Other tile's note when its size is not known (kept for readers of the pre-W08 constant). */
+export const OTHER_NOTE = otherTileNote(null)
 export const OTHER_RATE = 'Not computed for a combined group'
 
 // ── Levels ───────────────────────────────────────────────────────────────────
@@ -67,9 +84,25 @@ export interface CoverageLevel {
   suite: string | null
   /** The class KEY (depth 3). */
   classKey: string | null
+  /**
+   * W08 TRND-12: which page of the level's children (1 = the first, the
+   * request without `other_page`). Optional so a level built before W08 reads
+   * as page 1; the section's state, never the URL.
+   */
+  otherPage?: number
 }
 
+/** The top level, on its first page (an absent `otherPage` IS page 1: `pageOf`). */
 export const TOP_LEVEL: CoverageLevel = { depth: 1, suite: null, classKey: null }
+
+/** The server's page cap (`coverage_map_service.OTHER_PAGE_MAX`): 50 x 498 children is past any real level. */
+export const OTHER_PAGE_MAX = 50
+
+/** The page a level is on: 1 for an absent or invalid value. */
+export function pageOf(level: CoverageLevel): number {
+  const page = level.otherPage
+  return typeof page === 'number' && Number.isInteger(page) && page >= 1 ? Math.min(page, OTHER_PAGE_MAX) : 1
+}
 
 /** Why a link's drill-down levels were cut (C5: the cut is stated), as the page's notice says it. */
 export const COVERAGE_DROP_WORDS = {
@@ -123,11 +156,17 @@ export function levelPath(level: CoverageLevel): DrillLevel[] {
   return out
 }
 
-/** The level's own request parameters (the scope is added by `catalogueParams`). */
+/**
+ * The level's own request parameters (the scope is added by `catalogueParams`).
+ * `other_page` only past page 1: the first page is exactly the pre-W08 request
+ * (and its cache identity).
+ */
 export function levelRequest(level: CoverageLevel): CatalogParams {
   const params: CatalogParams = { depth: level.depth }
   if (level.depth >= 2 && level.suite !== null) params.suite = level.suite
   if (level.depth === 3 && level.classKey !== null) params.class_key = level.classKey
+  const page = pageOf(level)
+  if (page > 1) params.other_page = page
   return params
 }
 
@@ -221,6 +260,76 @@ export function drillTarget(child: CoverageChild): DrillLevel | null {
   if (child.kind === 'suite') return { dimension: 'suite', value: child.key }
   if (child.kind === 'class') return { dimension: 'class', value: child.key }
   return null
+}
+
+/**
+ * W08 TRND-12: the page the Other tile opens (the next one), or `null` for
+ * any other child and past the server's cap. Not a drill: the URL keeps its
+ * level, and the level's own crumb returns to the first page.
+ */
+export function otherPageTarget(child: CoverageChild, level: CoverageLevel): number | null {
+  if (child.kind !== 'other') return null
+  const next = pageOf(level) + 1
+  return next <= OTHER_PAGE_MAX ? next : null
+}
+
+const OTHER_LABEL_COUNT = /[(]([0-9]+)[)][ ]*$/
+
+/** How many children the Other tile holds, read from its `Other (n)` label; `null` when the label says no number. */
+export function otherCount(child: CoverageChild): number | null {
+  const match = OTHER_LABEL_COUNT.exec(child.node.label)
+  return match ? Number(match[1]) : null
+}
+
+/** The breadcrumb's last item while a later page of a level is shown. */
+export function otherPageCrumb(page: number): string {
+  return `Other · page ${formatNumber(page)}`
+}
+
+/**
+ * The breadcrumb with the page: on page 1 exactly `items`; past it, the level's
+ * own crumb becomes a link back to the first page (`parentTo`) and
+ * `Other · page N` is where the reader is.
+ */
+export function withOtherPageCrumb<T extends { label: string; to?: string }>(
+  items: readonly T[],
+  page: number,
+  parentTo: string,
+): { label: string; to?: string }[] {
+  if (page <= 1 || items.length === 0) return items.map((item) => ({ ...item }))
+  const out: { label: string; to?: string }[] = items.map((item) => ({ ...item }))
+  out[out.length - 1] = { label: out[out.length - 1].label, to: parentTo }
+  out.push({ label: otherPageCrumb(page) })
+  return out
+}
+
+// ── Needs review (W08 TRND-12) ───────────────────────────────────────────────
+
+/** A node's tests the last suite sync marked for review; `null` when not measured (not one project) or none. */
+export function needsReviewOf(child: CoverageChild): number | null {
+  const count = child.node.stats?.needs_review_count
+  return typeof count === 'number' && Number.isInteger(count) && count > 0 ? count : null
+}
+
+export function needsReviewText(count: number): string {
+  return `${formatNumber(count)} need review`
+}
+
+/** The link's words, in the treemap's action row. */
+export const NEEDS_REVIEW_ACTION = 'Open the tests that need review'
+
+/**
+ * Where a node's tests that need review are listed: Test Management's Suites
+ * tab with the suite expanded ("Deleted from Suite (N tests need review)").
+ * `suiteLabel` is the suite's NAME as Test Management knows it (a suite tile's
+ * own label, else the drilled suite's crumb); `null` (none, or the Other
+ * tile) = no link. The name reaches the URL only through `URLSearchParams`.
+ */
+export function needsReviewHref(child: CoverageChild, suiteLabel: string | null): string | null {
+  if (needsReviewOf(child) === null || child.kind === 'other') return null
+  const suite = child.kind === 'suite' ? child.node.label : suiteLabel
+  if (!suite || !suite.trim()) return null
+  return `/test-management?${new URLSearchParams({ tab: 'suites', suite: suite.trim() }).toString()}`
 }
 
 /**
@@ -427,7 +536,12 @@ export function nodeCanvasText(child: CoverageChild, colorBy: CoverageColorBy): 
   const name = nodeDisplayName(child.node.label, child.kind)
   // Exactly the value the fill is binned from (`nodeFill`), so text and colour never disagree.
   const { value } = measureOf(child.node.stats, colorBy)
-  return value === null ? name : `${name}\n${measureText(value, colorBy)}`
+  const lines = value === null ? [name] : [name, measureText(value, colorBy)]
+  // W08 TRND-12: the review count is the LAST line, so a tile with room for
+  // two lines keeps its name and value (ECharts drops lines it has no height for).
+  const review = needsReviewOf(child)
+  if (review !== null) lines.push(needsReviewText(review))
+  return lines.join('\n')
 }
 
 /** The legend's sentence about the tiles' second line (F-03). */
@@ -478,7 +592,10 @@ export function nodeTooltip(child: CoverageChild): TooltipContent {
     stats.staleness_days === null
       ? null
       : { key: 'staleness', label: 'Days since last run', value: formatNumber(stats.staleness_days) },
-    child.kind === 'other' ? { key: 'other', kind: 'note', label: '', value: OTHER_NOTE } : null,
+    needsReviewOf(child) !== null
+      ? { key: 'needs-review', kind: 'note', label: '', value: needsReviewText(needsReviewOf(child) as number) }
+      : null,
+    child.kind === 'other' ? { key: 'other', kind: 'note', label: '', value: otherTileNote(otherCount(child)) } : null,
   )
   return tipContent(child.node.label, rows)
 }
@@ -510,11 +627,20 @@ export function coverageEmptyText(level: CoverageLevel): string {
   return `No ${LEVEL_NOUN[level.depth]} to map${EMPTY_PLACE[level.depth]} in this window.`
 }
 
-/** The footer's truncation sentence, or `''` when the level holds every child. */
-export function otherNote(view: CoverageLevelView, total: number | null, depth: CoverageDepth): string {
+/**
+ * The footer's truncation sentence, or `''` when the level holds every child
+ * on its first page. Past page 1 it names the page (W08 TRND-12): the page's
+ * children are the next ones by size, and Other (when there is one) opens the
+ * page after.
+ */
+export function otherNote(view: CoverageLevelView, total: number | null, depth: CoverageDepth, page = 1): string {
   const folded = view.children.find((child) => child.kind === 'other')
+  const kept = folded ? view.children.length - 1 : view.children.length
+  if (page > 1) {
+    const rest = folded ? `; the rest are combined in ${folded.node.label}, which opens page ${formatNumber(page + 1)}` : ''
+    return `Page ${formatNumber(page)}: the next ${formatNumber(kept)} ${LEVEL_NOUN[depth]} by size${rest}.`
+  }
   if (!folded) return ''
-  const kept = view.children.length - 1
   const of = total !== null && total > kept ? ` of ${formatNumber(total)}` : ''
   return `Showing the ${formatNumber(kept)} largest${of} ${LEVEL_NOUN[depth]}; the rest are combined in ${folded.node.label}.`
 }

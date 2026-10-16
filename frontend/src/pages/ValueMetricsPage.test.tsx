@@ -23,8 +23,9 @@ import { cloneElement, createElement, isValidElement, type ReactElement, type Re
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SWRConfig } from 'swr'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 
-import type { ValueMetrics, ValueMetricsMonthly } from '@/types/valueMetrics'
+import type { TeamValueMetrics, ValueMetrics, ValueMetricsMonthly } from '@/types/valueMetrics'
 import { useTimeWindowStore } from '@/store/timeWindowStore'
 
 // ── mocks ───────────────────────────────────────────────────────────────────
@@ -48,6 +49,26 @@ vi.mock('@/services/valueMetricsService', () => ({
 let mockCanManage = true
 vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => ({ canAccessManagement: mockCanManage }),
+}))
+
+// W08 TRND-08: the By team read. The spy records every call, so a test can
+// prove Overview asks nothing (`enabled` false) and By team asks for one project.
+const team = vi.hoisted(() => ({
+  answer: { teams: null, malformed: false, isLoading: false, error: undefined } as {
+    teams: unknown
+    malformed: boolean
+    isLoading: boolean
+    error: unknown
+  },
+  calls: [] as unknown[][],
+}))
+vi.mock('@/hooks/useTeamValueMetrics', () => ({
+  TEAM_VALUE_KEY: 'value-metrics-by-team',
+  useTeamValueMetrics: (...args: unknown[]) => {
+    team.calls.push(args)
+    const enabled = args[2] === true && Boolean(args[0])
+    return enabled ? { ...team.answer, refresh: vi.fn() } : { teams: null, malformed: false, isLoading: false, error: undefined, refresh: vi.fn() }
+  },
 }))
 
 // Project store: mutable state so tests can flip into All-Projects mode.
@@ -183,19 +204,30 @@ beforeAll(async () => {
   ;({ default: ValueMetricsPage } = await import('./ValueMetricsPage'))
 }, 60_000)
 
-async function renderPage() {
+/** W08: the router's location, so a test can read the `?view=` the switch writes. */
+function Location() {
+  const location = useLocation()
+  return createElement('output', { 'data-testid': 'location' }, `${location.pathname}${location.search}`)
+}
+
+async function renderPage(path = '/value-metrics') {
   return render(
     createElement(
-      SWRConfig,
-      {
-        value: {
-          provider: () => new Map(),
-          dedupingInterval: 0,
-          shouldRetryOnError: false,
-          revalidateOnFocus: false,
+      MemoryRouter,
+      { initialEntries: [path] },
+      createElement(
+        SWRConfig,
+        {
+          value: {
+            provider: () => new Map(),
+            dedupingInterval: 0,
+            shouldRetryOnError: false,
+            revalidateOnFocus: false,
+          },
         },
-      },
-      createElement(ValueMetricsPage),
+        createElement(ValueMetricsPage),
+        createElement(Location),
+      ),
     ),
   )
 }
@@ -644,5 +676,137 @@ describe('ValueMetricsPage', () => {
     expect(screen.queryByText(/the Flaky Coach scans history/)).toBeNull()
     await openDisclosure('No value-generating activity yet for this window')
     expect(screen.getByText(/the Flaky Coach scans history/)).toBeInTheDocument()
+  })
+})
+
+// ── W08 TRND-08: Overview · By team ─────────────────────────────────────────
+
+function teamAnswer(overrides: Partial<TeamValueMetrics> = {}): TeamValueMetrics {
+  const row = (name: string, hours: number, extra: Partial<TeamValueMetrics['teams'][number]> = {}) => ({
+    team: name,
+    tests: 10,
+    executions: 40,
+    evaluated: 36,
+    passed: 30,
+    pass_rate: 83.3,
+    flaky_tests: 1,
+    defects: 2,
+    mttr_hours: 5.5,
+    hours_saved: hours,
+    hours: { triage: hours / 2, dedup: hours / 2 },
+    ...extra,
+  })
+  return {
+    window_days: 30,
+    measured: true,
+    reason: null,
+    rules_configured: true,
+    // The server sends Unassigned last; the view holds it last even when it is not.
+    teams: [row('Unassigned', 1, { pass_rate: null, mttr_hours: null }), row('Payments', 6), row('Identity <b>', 3)],
+    not_attributable_hours: 2,
+    headline_hours: 12,
+    ...overrides,
+  }
+}
+
+describe('ValueMetricsPage — By team (W08 TRND-08)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    useTimeWindowStore.setState({ days: 30 })
+    mockCanManage = true
+    storeState.activeProjectId = 'proj-1'
+    storeState.activeProject = { id: 'proj-1', name: 'Project One' }
+    mockGet.mockResolvedValue(baseMetrics())
+    team.calls = []
+    team.answer = { teams: teamAnswer(), malformed: false, isLoading: false, error: undefined }
+  })
+
+  const view = () => within(screen.getByRole('radiogroup', { name: 'View' }))
+
+  it('Overview is the default and asks for no by-team read; the switch writes ?view=team (replaced)', async () => {
+    await renderPage()
+    await screen.findByText(/Eng-Hours Saved · Last 30 Days/i)
+    expect(view().getByRole('radio', { name: 'Overview' })).toHaveAttribute('aria-checked', 'true')
+    expect(team.calls).toHaveLength(0)
+    fireEvent.click(view().getByRole('radio', { name: 'By team' }))
+    expect(screen.getByTestId('location')).toHaveTextContent('/value-metrics?view=team')
+    expect(view().getByRole('radio', { name: 'By team' })).toHaveAttribute('aria-checked', 'true')
+    expect(team.calls[team.calls.length - 1]).toEqual(['proj-1', 30, true])
+    fireEvent.click(view().getByRole('radio', { name: 'Overview' }))
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/value-metrics$/)
+    await screen.findByText(/Eng-Hours Saved · Last 30 Days/i)
+  })
+
+  it('any other ?view= value is Overview', async () => {
+    await renderPage('/value-metrics?view=teams')
+    await screen.findByText(/Eng-Hours Saved · Last 30 Days/i)
+    expect(team.calls).toHaveLength(0)
+  })
+
+  it('By team draws one row per team, Unassigned last, and the two totals; the header and the window picker stay', async () => {
+    await renderPage('/value-metrics?view=team')
+    const table = await screen.findByRole('table')
+    const teams = within(table).getAllByRole('row').slice(1).map((r) => within(r).getAllByRole('cell')[0].textContent)
+    expect(teams).toEqual(['Payments', 'Identity <b>', 'Unassigned'])
+    const unassigned = within(table).getAllByRole('row')[3]
+    // Not measured is "—", never 0.
+    expect(within(unassigned).getAllByRole('cell').map((c) => c.textContent)).toEqual(['Unassigned', '10', '—', '1', '2', '—', '1 h'])
+    expect(screen.getByText(/Not attributable to a team: 2 h \(runs unblocked by quarantine are counted per run\)/)).toBeInTheDocument()
+    expect(screen.getByText('Total 12 h — the headline for these 30 days')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Value Metrics' })).toBeInTheDocument()
+    expect(screen.getByRole('radiogroup', { name: 'Time window' })).toBeInTheDocument()
+    expect(screen.queryByText(/Eng-Hours Saved/i)).toBeNull()
+  })
+
+  it('a QA lead gets team links to /ownership?team=…; a viewer reads the names as text; Unassigned never links', async () => {
+    await renderPage('/value-metrics?view=team')
+    const table = await screen.findByRole('table')
+    expect(within(table).getByRole('link', { name: 'Payments' })).toHaveAttribute('href', '/ownership?team=Payments')
+    // A hostile name is text, and only an encoded query value in the link.
+    expect(within(table).getByRole('link', { name: 'Identity <b>' })).toHaveAttribute('href', '/ownership?team=Identity%20%3Cb%3E')
+    expect(within(table).queryByRole('link', { name: 'Unassigned' })).toBeNull()
+    expect(table.querySelector('b')).toBeNull()
+  })
+
+  it('a viewer sees team names as plain text', async () => {
+    mockCanManage = false
+    await renderPage('/value-metrics?view=team')
+    const table = await screen.findByRole('table')
+    expect(within(table).queryAllByRole('link')).toHaveLength(0)
+    expect(within(table).getByText('Payments')).toBeInTheDocument()
+  })
+
+  it('no ownership rules → the empty state (QA lead: Set up ownership; others: ask a QA lead)', async () => {
+    team.answer = {
+      teams: teamAnswer({ rules_configured: false, measured: false, reason: 'No ownership rules yet.', teams: [] }),
+      malformed: false,
+      isLoading: false,
+      error: undefined,
+    }
+    const { unmount } = await renderPage('/value-metrics?view=team')
+    expect(await screen.findByText('No ownership rules yet')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Set up ownership' })).toHaveAttribute('href', '/ownership')
+    unmount()
+    mockCanManage = false
+    await renderPage('/value-metrics?view=team')
+    expect(await screen.findByText('Ask a QA lead to set up ownership rules.')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Set up ownership' })).toBeNull()
+  })
+
+  it('a malformed answer says "Value by team is not available" and keeps the header', async () => {
+    team.answer = { teams: null, malformed: true, isLoading: false, error: undefined }
+    await renderPage('/value-metrics?view=team')
+    expect(await screen.findByText('Value by team is not available')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Value Metrics' })).toBeInTheDocument()
+    expect(screen.getByRole('radiogroup', { name: 'View' })).toBeInTheDocument()
+  })
+
+  it('All Projects asks nothing and says to pick a project', async () => {
+    const { ALL_PROJECTS_ID } = await import('@/store/projectStore')
+    storeState.activeProjectId = ALL_PROJECTS_ID
+    storeState.activeProject = null
+    await renderPage('/value-metrics?view=team')
+    expect(await screen.findByText('Pick a project to see value by team')).toBeInTheDocument()
+    expect(team.calls.every((args) => args[2] === false || !args[0])).toBe(true)
   })
 })

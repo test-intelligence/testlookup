@@ -33,9 +33,19 @@ import {
   NODE_LABEL_MAX,
   nodeTooltip,
   OTHER_NOTE,
+  OTHER_PAGE_MAX,
   OTHER_RATE,
+  needsReviewHref,
+  needsReviewOf,
+  needsReviewText,
+  nodeCanvasText,
   otherNote,
+  otherPageCrumb,
+  otherPageTarget,
+  otherTileNote,
+  pageOf,
   TOP_LEVEL,
+  withOtherPageCrumb,
   type CoverageChild,
   type CoverageLevel,
 } from './coverageMap.model'
@@ -448,5 +458,87 @@ describe('breadcrumb', () => {
     expect(drillSearch('', [{ dimension: 'suite', value: 's' }, { dimension: 'class', value: 'c' }])).toBe(
       '?drill=suite%7Es&drill=class%7Ec',
     )
+  })
+})
+
+// ── W08 TRND-12: Other opens the next page; the needs-review count ──────────
+describe('Other pages (W08 TRND-12)', () => {
+  const kid = (id: string, label: string, kind: CoverageChild['kind'], stats?: TreeNodeStats): CoverageChild => ({
+    node: node(id, 's:checkout', label, stats),
+    kind,
+    key: kind === 'other' ? null : id.slice(2),
+  })
+  const other = kid('other:s:checkout', 'Other (37)', 'other', seen({ pass_rate: null }))
+  const suite = kid('s:checkout', 'checkout', 'suite', seen())
+
+  it('the Other tile opens page 2 (then 3); any other child opens no page; nothing past the cap', () => {
+    expect(otherPageTarget(other, LEVEL2)).toBe(2)
+    expect(otherPageTarget(other, { ...LEVEL2, otherPage: 2 })).toBe(3)
+    expect(otherPageTarget(suite, LEVEL2)).toBeNull()
+    expect(otherPageTarget(other, { ...LEVEL2, otherPage: OTHER_PAGE_MAX })).toBeNull()
+    // Not a drill: the URL keeps its level.
+    expect(drillTarget(other)).toBeNull()
+    expect(levelPath({ ...LEVEL2, otherPage: 3 })).toEqual(levelPath(LEVEL2))
+  })
+
+  it('a page past 1 is asked with other_page; page 1 is exactly the old request', () => {
+    expect(levelRequest(LEVEL2)).toEqual({ depth: 2, suite: 'pay~ments' })
+    expect(levelRequest({ ...LEVEL2, otherPage: 1 })).toEqual({ depth: 2, suite: 'pay~ments' })
+    expect(levelRequest({ ...LEVEL2, otherPage: 2 })).toEqual({ depth: 2, suite: 'pay~ments', other_page: 2 })
+    expect(levelRequest({ ...TOP_LEVEL, otherPage: 0 })).toEqual({ depth: 1 })
+    expect(pageOf({ ...TOP_LEVEL, otherPage: 99 })).toBe(OTHER_PAGE_MAX)
+  })
+
+  it('the breadcrumb: All suites › checkout › Other · page 2, the level crumb linking back to page 1', () => {
+    const crumbs = withOtherPageCrumb([{ label: 'All suites', to: '?' }, { label: 'checkout' }], 2, '?drill=suite~checkout')
+    expect(crumbs.map((c) => c.label).join(' › ')).toBe('All suites › checkout › Other · page 2')
+    expect(crumbs[1]).toEqual({ label: 'checkout', to: '?drill=suite~checkout' })
+    expect(crumbs[2]).toEqual({ label: otherPageCrumb(2) })
+    // Page 1: the trail as it was.
+    expect(withOtherPageCrumb([{ label: 'All suites' }], 1, '?')).toEqual([{ label: 'All suites' }])
+  })
+
+  it('the Other tile says it opens, with how many it holds', () => {
+    const text = tooltipText(nodeTooltip(other))
+    expect(text).toContain(otherTileNote(37))
+    expect(otherTileNote(37)).toBe('The smaller items of this level, combined. Open it for the next 37.')
+  })
+
+  it('the footer names a later page', () => {
+    const view = { root: null, children: [suite, other] }
+    expect(otherNote(view, null, 2, 2)).toBe('Page 2: the next 1 classes or files by size; the rest are combined in Other (37), which opens page 3.')
+    expect(otherNote({ root: null, children: [suite] }, null, 1, 3)).toBe('Page 3: the next 1 suites by size.')
+  })
+})
+
+describe('needs review (W08 TRND-12)', () => {
+  const kid = (kind: CoverageChild['kind'], count: number | null | undefined, label = 'checkout'): CoverageChild => ({
+    node: node(kind === 'other' ? 'other:all' : 's:checkout', 'all', label, count === undefined ? seen() : seen({ needs_review_count: count })),
+    kind,
+    key: kind === 'other' ? null : 'checkout',
+  })
+
+  it('counts only a positive count; null (not one project) and 0 draw nothing', () => {
+    expect(needsReviewOf(kid('suite', 3))).toBe(3)
+    expect(needsReviewOf(kid('suite', 0))).toBeNull()
+    expect(needsReviewOf(kid('suite', null))).toBeNull()
+    expect(needsReviewOf(kid('suite', undefined))).toBeNull()
+  })
+
+  it('the tile gets a LAST line `{n} need review`; the tooltip always says it', () => {
+    expect(nodeCanvasText(kid('suite', 3), 'pass_rate').split('\n')).toEqual(['checkout', '92.5%', '3 need review'])
+    expect(nodeCanvasText(kid('suite', null), 'pass_rate').split('\n')).toEqual(['checkout', '92.5%'])
+    expect(tooltipText(nodeTooltip(kid('suite', 3)))).toContain(needsReviewText(3))
+    expect(tooltipText(nodeTooltip(kid('suite', null)))).not.toContain('need review')
+  })
+
+  it('links to Test Management › Suites for the suite (its name encoded); a class or test uses the drilled suite name', () => {
+    const href = needsReviewHref(kid('suite', 3, 'a&b #c'), null)
+    expect(href).toBe('/test-management?tab=suites&suite=a%26b+%23c')
+    expect(new URLSearchParams((href as string).split('?')[1]).get('suite')).toBe('a&b #c')
+    expect(needsReviewHref(kid('class', 2, 'tests/x.py'), 'Checkout')).toBe('/test-management?tab=suites&suite=Checkout')
+    expect(needsReviewHref(kid('class', 2), null)).toBeNull()
+    expect(needsReviewHref(kid('other', 4), 'Checkout')).toBeNull()
+    expect(needsReviewHref(kid('suite', null), null)).toBeNull()
   })
 })

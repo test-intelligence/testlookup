@@ -291,7 +291,10 @@ export interface MatrixChart {
 export const VIZ_RECENCY_STATES = ['seen', 'unknown', 'never'] as const
 export type VizRecency = (typeof VIZ_RECENCY_STATES)[number]
 
-/** Wave 3 (VIZ-206): a coverage-map node's figures. Every key is present. */
+/**
+ * Wave 3 (VIZ-206): a coverage-map node's figures. Every key is present, but
+ * `needs_review_count` (W08 TRND-12), which an older payload does not carry.
+ */
 export interface TreeNodeStats {
   test_count: number
   executions: number
@@ -306,6 +309,12 @@ export interface TreeNodeStats {
   staleness_days: number | null
   /** `unknown` (the last-run record was lost) must never be shown as "never run". */
   recency: VizRecency
+  /**
+   * W08 TRND-12: the node's tests the last suite sync marked for review
+   * (`suite_memberships.status = 'needs_review'`). Optional: absent in a
+   * pre-W08 payload; `null` outside one project (not measured, never 0).
+   */
+  needs_review_count?: number | null
 }
 
 export interface TreeNode {
@@ -1386,8 +1395,9 @@ function requireRangedOrNull(
 }
 
 /**
- * A tree node's optional `stats` (Wave 3, VIZ-206). Every key is required;
- * `null` is "not measured" or "not known", and `recency` says which.
+ * A tree node's optional `stats` (Wave 3, VIZ-206). Every key is required but
+ * `needs_review_count` (W08: optional, a count or `null`); `null` is "not
+ * measured" or "not known", and `recency` says which.
  */
 function checkTreeStats(node: Dict, where: string, fail: Fail): void {
   if (!optionalPresent(node, 'stats', where, fail)) return
@@ -1420,6 +1430,9 @@ function checkTreeStats(node: Dict, where: string, fail: Fail): void {
   if (has(stats, 'recency', at, fieldFail) && !oneOf(VIZ_RECENCY_STATES, stats.recency)) {
     fieldFail('invalid_value', `${at}recency ${show(stats.recency)} is not one of ${VIZ_RECENCY_STATES.join(', ')}`)
   }
+  // W08 TRND-12: optional; when sent, a count or null (outside one project).
+  const review = stats.needs_review_count
+  if (review !== undefined && review !== null) count(review, `${at}needs_review_count`, fieldFail)
   if (malformed) return
   // Null, never zero: no executions is no pass rate, no tests no share.
   if (rated && executions === 0) fail('empty_sample', `${at}pass_rate: no executions, so it is null`)

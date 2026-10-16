@@ -10,7 +10,7 @@
  * No `formatter` of any kind: every label is one of this module's own words
  * (`nodeName`), never data, and still goes through `canvasSafeText`.
  */
-import { useMemo } from 'react'
+import { useCallback, useMemo } from 'react'
 import { canvasSafeText } from './engines/echarts/canvasText'
 import { useEChart } from './engines/useEChart'
 import type { FlowStatus, StatusSankeyModel } from './statusSankeyModel'
@@ -84,7 +84,9 @@ export default function StatusSankey({ model, onSelect }: StatusSankeyProps) {
     }),
     [model, onSelect],
   )
-  const { containerRef, status, retry } = useEChart('sankey', option, onSelect ? events : undefined)
+  // TRND-11: Export redraws the same flows on the tokens it is given (the light theme's for "Light background").
+  const exportOption = useCallback((exportTokens: ChartTokens) => sankeyOption(model, exportTokens), [model])
+  const { containerRef, status, retry } = useEChart('sankey', option, onSelect ? events : undefined, exportOption)
   return (
     <div className="relative min-w-0" style={{ height: SANKEY_HEIGHT }}>
       <div ref={containerRef} data-status-sankey="" className="h-full w-full" role="img" aria-label="Status flows between the two runs" />

@@ -16,9 +16,16 @@
  *             window). The comparison strip, when asked for, sits under it.
  *   Body    → 1.65fr | 1fr from 768 px.
  *     Left  → the suite coverage table (`data-primary`): one row per suite,
+ *             its tests and its LAST RUN as chips (W08 TRND-07: `2d ago`,
+ *             linking to the run; amber when the suite has not run for
+ *             longer than the project's median gap between active days),
  *             a stacked bar, its executions, its pass rate and, where the
  *             window shows one, its gap ("No passing run", "Too few runs");
- *             then the Untagged-executions callout (data quality).
+ *             then the Untagged-executions callout (data quality) with its
+ *             **Fix tagging** button (QA engineer and above): a 400 px side
+ *             panel listing the tests behind the callout, which moves them to
+ *             a suite IN THE CATALOGUE (their executions keep the label the
+ *             reporter sent, and the panel says so).
  *     Right → Run cadence (the window-day grid).
  *   Score   → a collapsed `Disclosure` ("How this score is computed"): the
  *             verdict and its words, the health score on its threshold meter
@@ -27,7 +34,12 @@
  *             and the coverage gaps that move it. Its header states the
  *             verdict and the score.
  *   Tabs    → `?tab=`: Coverage map (the treemap, default) · Env × release
- *             heatmap — the Wave 3 sections, each in its own tab.
+ *             heatmap — the Wave 3 sections, each in its own tab — · History
+ *             (W08 TRND-07, `?tab=history`): the daily coverage snapshots
+ *             (catalogue size and the share exercised in 30 days) with the
+ *             project's timeline notes. Asked only when the tab opens; the
+ *             Fix tagging list only when its panel opens: nothing is added
+ *             to the page's load or to its default view's height.
  *
  * P3 moved every section; none was rebuilt. The verdict card is gone: its
  * score and dimensions are the Disclosure, its issue rows repeated the table,
@@ -38,11 +50,13 @@
  * P2 (UX redesign, "remove the noise"): the invented 4-stage workflow ribbon
  * and its evidence counts, the provenance footer, the recommended-actions
  * card, the widget picker and every control that only raised a not-built
- * toast (Fix tagging, Schedule, Configure schedule, Apply suite labels, Open
- * runner config) are gone: the page shows only what it does.
+ * toast (Schedule, Configure schedule, Apply suite labels, Open runner
+ * config) are gone: the page shows only what it does. (Fix tagging was one of
+ * them; W08 built it.)
  *
  * Data: derives everything from the existing useCoverage(days) +
- * useTrendData(days). Tag-quality is computed from any suite named
+ * useTrendData(days) (the suites' `last_run_at` / `last_run_id` ride on the
+ * coverage read). Tag-quality is computed from any suite named
  * "Unknown Suite" / empty / null in the suites response.
  */
 import { useMemo, useState } from 'react'
@@ -89,6 +103,11 @@ import { downloadBlob } from '@/utils/download'
 import CoverageAdvanced, { type CoverageSectionId } from '@/components/reports/catalogue/CoverageAdvanced'
 import SavedViewsMenu from '@/components/reports/SavedViewsMenu'
 import { useReportViewsMenu } from '@/components/reports/useReportViewsMenu'
+import CoverageHistorySection from '@/components/coverage/CoverageHistorySection'
+import FixTaggingPanel from '@/components/coverage/FixTaggingPanel'
+import { lastRunChip, typicalRunGapDays } from '@/components/coverage/coverageLastRun'
+import { usePermissions } from '@/hooks/usePermissions'
+import { useNow } from '@/hooks/useNow'
 
 // ── Window picker ──────────────────────────────────────────────────────────
 // 1 = last 24 hours (rendered as "24h"); the rest are day counts.
@@ -103,6 +122,8 @@ const HELP_TOPIC = helpTopicParam('/coverage')
 const COVERAGE_TABS = [
   { id: 'map', label: 'Coverage map' },
   { id: 'heatmap', label: 'Env × release heatmap' },
+  // W08 TRND-07: the daily snapshots (asked only while this tab is open).
+  { id: 'history', label: 'History' },
 ] as const
 type CoverageTab = (typeof COVERAGE_TABS)[number]['id']
 const COVERAGE_TAB_IDS: readonly CoverageTab[] = COVERAGE_TABS.map((t) => t.id)
@@ -110,9 +131,10 @@ const COVERAGE_TAB_IDS: readonly CoverageTab[] = COVERAGE_TABS.map((t) => t.id)
 /**
  * Which Wave 3 section each tab renders (`CoverageAdvanced`'s `sections`, by
  * the sections' own ids). The other tab's section is not rendered at all, so
- * it never mounts and never asks for its data.
+ * it never mounts and never asks for its data. History is not a Wave 3
+ * section: it renders `CoverageHistorySection` instead.
  */
-const COVERAGE_TAB_SECTIONS: Record<CoverageTab, readonly CoverageSectionId[]> = {
+const COVERAGE_TAB_SECTIONS: Record<Exclude<CoverageTab, 'history'>, readonly CoverageSectionId[]> = {
   map: ['coverage-map'],
   heatmap: ['heatmap-suite_environment'],
 }
@@ -668,13 +690,21 @@ function suiteGapFlag(suite: CoverageSuite, days: number): SuiteGapFlag | null {
  * The page's one primary content (P3, `data-primary`): every suite in the
  * window — its stacked bar, its executions, its pass rate and, where the
  * window shows one, its gap (a fifth column, drawn only when a suite has a
- * gap, in the full layout). The coverage response has no per-suite last run,
- * so the table shows none.
+ * gap, in the full layout). W08 TRND-07: each row's last run is a chip after
+ * its tests chip (no column: the name column is `fit-content`, so a long name
+ * truncates a little earlier and keeps its full text in its title); a row
+ * the payload gives no last run for (a pre-W08 answer) has no chip.
  */
-function SuiteBreakdown({ suites, totalExecutions, days }: { suites: CoverageSuite[]; totalExecutions: number; days: number }) {
+function SuiteBreakdown({
+  suites, totalExecutions, days, trend,
+}: { suites: CoverageSuite[]; totalExecutions: number; days: number; trend: TrendPoint[] }) {
   const tagged   = suites.filter(s => !isUntaggedRow(s))
   const untagged = suites.filter(isUntaggedRow)
   const visible = [...tagged, ...untagged]
+  // The project's typical gap between active days, from the page's own trend read.
+  const typicalGap = useMemo(() => typicalRunGapDays(trend), [trend])
+  // "Now" for the last-run ages: captured, refreshed each minute (never Date.now() in render).
+  const nowMs = useNow(60_000)
   // F-18: a row's fixed columns (160 + 64 + 76 + gaps = 348 px) left the bar
   // 0 px wide in a narrow card and scrolled the page sideways at 375 px. The
   // layout follows the rows' OWN width (the card is a column of a two-column
@@ -735,6 +765,8 @@ function SuiteBreakdown({ suites, totalExecutions, days }: { suites: CoverageSui
             isLast={i === visible.length - 1}
             layout={layout}
             gap={flagColumn ? (flags[i] ?? 'none') : undefined}
+            typicalGap={typicalGap}
+            nowMs={nowMs}
           />
         ))}
       </div>
@@ -771,6 +803,8 @@ function SuiteRow({
   isLast,
   layout,
   gap,
+  typicalGap = 1,
+  nowMs,
 }: {
   suite: CoverageSuite
   totalExecutions: number
@@ -778,9 +812,14 @@ function SuiteRow({
   layout: SuiteRowsLayout
   /** The gap column's cell: a flag, `'none'` (an empty cell), or `undefined` (no gap column). */
   gap?: SuiteGapFlag | 'none'
+  /** W08 TRND-07: the project's typical gap between active days (the chip turns amber past it). */
+  typicalGap?: number
+  /** The instant the last-run ages are measured at (`useNow` in the breakdown). */
+  nowMs: number
 }) {
   const stacked = layout === 'stacked'
   const untagged = isUntaggedRow(suite)
+  const lastRun = lastRunChip(suite, typicalGap, nowMs)
   const total = suite.passed + suite.failed + suite.skipped
   // The bar's drawn width: each segment is exactly its share of it, so a count is shown only where it fits.
   const [barRef, barWidth] = useContainerWidth<HTMLDivElement>()
@@ -833,6 +872,7 @@ function SuiteRow({
         >
           {suite.unique_tests} test{suite.unique_tests === 1 ? '' : 's'}
         </span>
+        {lastRun && <LastRunChip chip={lastRun} />}
       </div>
 
       {/* Stacked bar */}
@@ -894,6 +934,33 @@ function SuiteRow({
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * W08 TRND-07: a suite's last run, as a chip after its tests chip: the short
+ * age, linking to the run; amber past the project's typical gap. The run id
+ * reaches the URL only through `encodeURIComponent` (`lastRunChip`).
+ */
+function LastRunChip({ chip }: { chip: NonNullable<ReturnType<typeof lastRunChip>> }) {
+  const style = chip.amber
+    ? { color: 'var(--status-broken)', borderColor: 'var(--gate-conditional-border)', background: 'var(--gate-conditional-bg-soft)' }
+    : { color: 'var(--color-text-faint)', borderColor: 'var(--color-border)' }
+  const className = 'text-[9.5px] font-sans border rounded-sm px-1 py-0.5 flex-none whitespace-nowrap not-italic'
+  return chip.href ? (
+    <Link
+      to={chip.href}
+      data-suite-last-run={chip.amber ? 'stale' : 'recent'}
+      title={chip.title}
+      className={clsx(className, 'hover:underline')}
+      style={style}
+    >
+      {chip.text}
+    </Link>
+  ) : (
+    <span data-suite-last-run={chip.amber ? 'stale' : 'recent'} title={chip.title} className={className} style={style}>
+      {chip.text}
+    </span>
   )
 }
 
@@ -967,7 +1034,18 @@ function StackSegment({ count, status, color, fits }: { count: number; status: '
 }
 
 // ── Untagged callout ──────────────────────────────────────────────────────
-function UntaggedCallout({ untaggedRuns, totalRuns, suites }: { untaggedRuns: number; totalRuns: number; suites: CoverageSuite[] }) {
+/** W08 TRND-07: why Fix tagging is disabled in All Projects (its list and its moves need one project). */
+export const FIX_TAGGING_PICK_PROJECT = 'Pick a project to fix tagging'
+
+function UntaggedCallout({
+  untaggedRuns, totalRuns, suites, fixTagging,
+}: {
+  untaggedRuns: number
+  totalRuns: number
+  suites: CoverageSuite[]
+  /** The Fix tagging button: absent below QA engineer; `disabled` in All Projects. */
+  fixTagging?: { disabled: boolean; onOpen: () => void }
+}) {
   if (untaggedRuns === 0) return null
   const pct = totalRuns > 0 ? Math.round((untaggedRuns / totalRuns) * 100) : 0
   // We don't have per-test path data on the coverage endpoint — surface
@@ -985,15 +1063,31 @@ function UntaggedCallout({ untaggedRuns, totalRuns, suites }: { untaggedRuns: nu
         background: 'linear-gradient(90deg, color-mix(in srgb, var(--status-broken) 6%, transparent), transparent 50%), var(--color-bg-card)',
       }}
     >
-      <h3 className="text-[13px] font-semibold m-0 mb-1 flex items-center gap-2 text-[var(--color-text)]">
-        Untagged executions
-        <span
-          className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full uppercase"
-          style={{ background: 'color-mix(in srgb, var(--status-broken) 16%, transparent)', color: 'var(--status-broken)', letterSpacing: 'var(--tracking-wide)' }}
-        >
-          Data quality
-        </span>
-      </h3>
+      <div className="flex items-start justify-between gap-2 mb-1">
+        <h3 className="text-[13px] font-semibold m-0 flex items-center gap-2 text-[var(--color-text)]">
+          Untagged executions
+          <span
+            className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full uppercase"
+            style={{ background: 'color-mix(in srgb, var(--status-broken) 16%, transparent)', color: 'var(--status-broken)', letterSpacing: 'var(--tracking-wide)' }}
+          >
+            Data quality
+          </span>
+        </h3>
+        {/* W08 TRND-07: in the heading's row (no height added); opens the side panel. */}
+        {fixTagging && (
+          <button
+            type="button"
+            data-fix-tagging-open=""
+            disabled={fixTagging.disabled}
+            title={fixTagging.disabled ? FIX_TAGGING_PICK_PROJECT : undefined}
+            onClick={fixTagging.onOpen}
+            // 18 px line + 2 px border: no taller than the heading's own row (the fold budget).
+            className="flex-none rounded border border-[var(--color-border-light)] px-2 py-0 text-[11px] leading-[18px] text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Fix tagging
+          </button>
+        )}
+      </div>
       <p className="text-[12.5px] m-0 mb-3 max-w-[70ch]" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
         {untaggedRuns} of {totalRuns} executions ({pct}%) didn't carry a suite label, so they appear as{' '}
         <em>Unknown Suite</em>. These tests can't be assigned ownership, prioritized, or trended without a tag.
@@ -1208,6 +1302,9 @@ export default function CoveragePage() {
   const days = snapToAllowed(storedDays, WINDOWS) as Window
   // The page's own tabs (`?tab=`): the coverage map by default.
   const [tab, setTab] = useTabParam<CoverageTab>(COVERAGE_TAB_IDS, 'map')
+  // W08 TRND-07: Fix tagging (QA engineer and above); its panel asks nothing until opened.
+  const { isQaEngineer } = usePermissions()
+  const [fixTaggingOpen, setFixTaggingOpen] = useState(false)
 
   // The page-local suite filter (usePageSuiteFilter).
   const { selectedSuite, setSelectedSuite, suiteFilter, suiteNames, suiteLabel } = usePageSuiteFilter()
@@ -1517,8 +1614,13 @@ export default function CoveragePage() {
               suite table (left) is the page's primary content. */}
           <div className="body-grid grid gap-3.5" style={{ gridTemplateColumns: twoBodyColumns ? BODY_GRID_TWO_COLUMNS : BODY_GRID_ONE_COLUMN }}>
             <div className="flex flex-col gap-3.5 min-w-0">
-              <SuiteBreakdown suites={suites} totalExecutions={summary.total_executions ?? 0} days={days} />
-              <UntaggedCallout untaggedRuns={model.untaggedRuns} totalRuns={model.totalRuns} suites={suites.filter(isUntaggedRow)} />
+              <SuiteBreakdown suites={suites} totalExecutions={summary.total_executions ?? 0} days={days} trend={trend} />
+              <UntaggedCallout
+                untaggedRuns={model.untaggedRuns}
+                totalRuns={model.totalRuns}
+                suites={suites.filter(isUntaggedRow)}
+                fixTagging={isQaEngineer ? { disabled: isAllProjects || !activeProjectId, onOpen: () => setFixTaggingOpen(true) } : undefined}
+              />
             </div>
             <div className="flex flex-col gap-3.5 min-w-0">
               <CadenceHeatmap trend={trend} days={days} />
@@ -1538,12 +1640,20 @@ export default function CoveragePage() {
                 closes. The block's own top margin is dropped: the tab panel
                 spaces it. */}
             <div key={tab} data-tab-panel={tab} data-coverage-scope={tab} className="min-w-0 [&_[data-coverage-advanced]]:mt-0">
-              <PageSuiteTargetContext.Provider value={suiteTarget}>
-                <CoverageAdvanced days={days} suiteFilter={suiteFilter} sections={COVERAGE_TAB_SECTIONS[tab]} />
-              </PageSuiteTargetContext.Provider>
+              {tab === 'history' ? (
+                <CoverageHistorySection days={days} suite={suiteNames.length === 1 ? suiteNames[0] : null} />
+              ) : (
+                <PageSuiteTargetContext.Provider value={suiteTarget}>
+                  <CoverageAdvanced days={days} suiteFilter={suiteFilter} sections={COVERAGE_TAB_SECTIONS[tab]} />
+                </PageSuiteTargetContext.Provider>
+              )}
             </div>
           </div>
         </>
+      )}
+
+      {fixTaggingOpen && activeProjectId && !isAllProjects && (
+        <FixTaggingPanel projectId={activeProjectId} days={days} onClose={() => setFixTaggingOpen(false)} />
       )}
 
       {/* Below lg the two-column layout is cramped: say so rather than hide it. */}

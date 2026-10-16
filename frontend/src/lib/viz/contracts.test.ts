@@ -1441,6 +1441,16 @@ describe('Wave 3 additions (VIZ-205, 206, 207, 506)', () => {
     expect(rules(nullStats)).toEqual(['invalid_type'])
   })
 
+  it('W08 TRND-12: needs_review_count is optional — absent, null (not one project) or a count', () => {
+    expect(rules(statsTree())).toEqual([])
+    expect(rules(statsTree({ needs_review_count: null }))).toEqual([])
+    expect(rules(statsTree({ needs_review_count: 0 }))).toEqual([])
+    expect(rules(statsTree({ needs_review_count: 3 }))).toEqual([])
+    expect(rules(statsTree({ needs_review_count: -1 }))).toEqual(['non_negative'])
+    expect(rules(statsTree({ needs_review_count: 1.5 }))).toEqual(['integer_count'])
+    expect(rules(statsTree({ needs_review_count: '3' }))).toEqual(['invalid_type'])
+  })
+
   it('reads a graph node group as optional free text', () => {
     const graph = (node: Record<string, unknown>) =>
       rules({ kind: 'graph', nodes: [{ id: 'g', label: 'g', size: 1, ...node }], edges: [] })

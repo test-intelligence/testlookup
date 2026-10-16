@@ -33,6 +33,7 @@ vi.mock('@/lib/viz/chartImage', async (importOriginal) => ({
 
 import ChartExportMenu, { EXPORT_LABELS } from './ChartExportMenu'
 import { ECHARTS_INSTANCE_ATTRIBUTE } from './engines/echarts/exportImage'
+import { registerExportOption, unregisterExportOption } from './engines/echarts/exportRegistry'
 
 const CHART: PointsChart = {
   kind: 'points',
@@ -82,5 +83,25 @@ describe('ChartExportMenu with the 3D scatter showing (VIZ-508)', () => {
     expect(drawn.bodies).toEqual([body])
     expect(images.sources).toEqual([{ kind: 'raster', dataUrl: 'data:image/png;base64,AAAA', width: 640, height: 320 }])
     expect(String(downloadBlob.mock.calls[0][1])).toMatch(/\.png$/)
+  })
+
+  // TRND-11: the 2D scatter under the 3D view HAS an export option, yet the 3D
+  // view's export stays the 2D raster in the page's colours, and says so.
+  it('keeps "Light background (not for this chart)" disabled in 3D even when the 2D chart registered an export option', async () => {
+    const { body, echarts } = bodyIn3D()
+    registerExportOption(echarts, { type: 'scatter', build: () => ({}) })
+    render(
+      <SWRConfig value={{ provider: () => new Map() }}>
+        <ChartExportMenu title="Test duration vs failure rate" getBody={() => body} series={CHART} provenance={null} />
+      </SWRConfig>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: EXPORT_LABELS.trigger }))
+    const light = screen.getByRole('menuitemcheckbox')
+    expect(light).toHaveAttribute('aria-disabled', 'true')
+    expect(light).toHaveTextContent(EXPORT_LABELS.lightUnavailable)
+    fireEvent.click(screen.getByRole('menuitem', { name: EXPORT_LABELS.png }))
+    await waitFor(() => expect(downloadBlob).toHaveBeenCalledTimes(1), { timeout: LAZY_TIMEOUT })
+    expect(drawn.bodies).toEqual([body])
+    unregisterExportOption(echarts)
   })
 })
