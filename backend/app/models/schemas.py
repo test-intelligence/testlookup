@@ -555,6 +555,85 @@ class DeleteRunRefusedResponse(BaseModel):
     blockers: List[str]
 
 
+# ── W07 FAIL-04 / FAIL-03 / FAIL-05: the Runs list's batch reads ──
+# Enum-like fields are plain ``str`` (the vocabularies live in
+# ``app.services.run_verdict``); ``None`` means "not measured / not known".
+
+
+class RunVerdictItem(BaseModel):
+    """One run of ``GET /runs/ai-verdicts``: what its AI-verdict pill is computed from."""
+
+    run_id: str
+    # A servable snapshot was read (fresh or stale; schema_version current).
+    snapshot: bool
+    stale: Optional[bool] = None
+    # ISO UTC.
+    generated_at: Optional[str] = None
+    # A finished agent pipeline exists for the run.
+    analysed: bool
+    # The slim payload (``run_verdict.verdict_inputs_of``); None when snapshot is False.
+    verdict_inputs: Optional[dict[str, Any]] = None
+    # {"state": str}; None when snapshot is False.
+    review: Optional[dict[str, Any]] = None
+
+
+class RunVerdictBatchResponse(BaseModel):
+    items: list[RunVerdictItem]
+    # Unknown OR not accessible: one list, no distinction.
+    unavailable: list[str]
+    max_ids: int
+
+
+class RunSignatureEntry(BaseModel):
+    # The FAILURE_SIGNATURE_SQL value; "__NO_MESSAGE__" (NO_MESSAGE_ID) for a blank message.
+    signature: str
+    # The most common RAW first line of the group, <= 160 chars; "" for no message.
+    label: str
+    # Failing rows read with this signature.
+    count: int
+    # Distinct test fingerprints.
+    test_count: int
+    # <= 3 test names, sorted (text, never markup).
+    tests: list[str]
+
+
+class RunSignatureItem(BaseModel):
+    run_id: str
+    # Every FAILED/BROKEN row of the run.
+    failing_tests: int
+    # Rows grouped (<= SIGNATURE_ROWS_PER_RUN).
+    read: int
+    # read < failing_tests.
+    capped: bool
+    # signatures[0].signature; None when the run has no failing row.
+    dominant: Optional[str] = None
+    # <= 3, count desc, then signature COLLATE "C".
+    signatures: list[RunSignatureEntry]
+
+
+class RunSignatureBatchResponse(BaseModel):
+    items: list[RunSignatureItem]
+    unavailable: list[str]
+    max_ids: int
+    rows_per_run_cap: int
+
+
+class RunBranchItem(BaseModel):
+    branch: str
+    runs: int
+    last_run_at: Optional[str] = None
+
+
+class RunBranchListResponse(BaseModel):
+    # Newest last_run_at first, <= 100.
+    items: list[RunBranchItem]
+    # Distinct branches in the window (a COUNT, not len(items)).
+    total: int
+    truncated: bool
+    # None = all time (days=0).
+    window_days: Optional[int] = None
+
+
 class ProjectResetRequest(BaseModel):
     """Destructive reset payload. ``mode`` selects the wipe scope; the
     backend rejects any request whose ``confirmation_name`` doesn't
@@ -1416,6 +1495,68 @@ class AnalysisProvenance(BaseModel):
     # US-15.2: the gate evaluation recorded at analysis time (historical).
     # None on rows written before the gate existed.
     threshold_check: Optional[ThresholdCheck] = None
+    # W07 FAIL-10: set when a project classification hint classified the test
+    # (``routing_metadata.source == "project_hint"``), read verbatim.
+    hint_id: Optional[str] = None
+    hint_match_field: Optional[str] = None
+    hint_pattern: Optional[str] = None
+    hint_set_by: Optional[str] = None
+
+
+# ── W07 FAIL-10: project classification hints ──
+# ``match_field`` / ``category`` are plain ``str``: the vocabularies live in
+# ``app.services.classification_hint_service`` and are checked there (422).
+
+
+class ClassificationHintCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    match_field: str = Field(..., max_length=20)
+    # 3..200 after strip, checked in the service.
+    pattern: str = Field(..., max_length=200)
+    category: str = Field(..., max_length=30)
+    note: Optional[str] = Field(None, max_length=500)
+    enabled: bool = True
+
+
+class ClassificationHintUpdate(BaseModel):
+    # Only the fields SENT are applied (model_fields_set).
+    model_config = ConfigDict(extra="forbid")
+    match_field: Optional[str] = Field(None, max_length=20)
+    pattern: Optional[str] = Field(None, max_length=200)
+    category: Optional[str] = Field(None, max_length=30)
+    note: Optional[str] = Field(None, max_length=500)
+    enabled: Optional[bool] = None
+
+
+class ClassificationHintResponse(BaseModel):
+    id: str
+    project_id: str
+    match_field: str
+    pattern: str
+    category: str
+    note: Optional[str] = None
+    enabled: bool
+    # full_name or username; None for a deleted user.
+    created_by_name: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class ClassificationHintList(BaseModel):
+    # (created_at, id) order = precedence order.
+    items: list[ClassificationHintResponse]
+    total: int
+    max_hints: int
+
+
+class ClassificationHintPreview(BaseModel):
+    matched: int
+    # <= 200.
+    sampled: int
+    # 30.
+    lookback_days: int
+    # <= 5 {"test_name", "value"}: the matched field's value, <= 160 chars, text.
+    examples: list[dict[str, str]] = []
 
 
 class AnalysisResponse(BaseModel):
@@ -5163,6 +5304,44 @@ class CodeownersCoverage(BaseModel):
     # which means "rules exist and cover none of the located failures".
     coverage_pct: Optional[float] = None
     lookback_days: int = 30
+    # W07 FAIL-08: the project's Java source roots (``Project.source_roots``).
+    source_roots: int = 0
+
+
+# ── W07 FAIL-08: Java source roots (``Project.source_roots``) ──
+
+
+class SourceRoot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # Dotted Java package prefix; "" matches every package.
+    prefix: str = Field("", max_length=255)
+    # Repo-relative source root, e.g. "payments/src/test/java"; shape checked by the service.
+    root: str = Field(..., max_length=500)
+
+
+class SourceRootsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # The count (<= 20) is checked by the service: one 422 text.
+    roots: list[SourceRoot] = Field(default_factory=list)
+
+
+class SourceRootsResponse(BaseModel):
+    roots: list[SourceRoot]
+    max_roots: int = 20
+
+
+class SourceRootsPreview(BaseModel):
+    # Recent FAILED/BROKEN rows read (<= sample_cap).
+    sampled: int
+    # Of those, rows whose trace holds a Java frame.
+    java_frames: int
+    # Java rows the roots map to a repo path.
+    located: int
+    # Located rows a path rule matches.
+    matched: int
+    lookback_days: int
+    # <= 5 {"test_name", "path"}: text.
+    examples: list[dict[str, str]] = []
 
 
 class CodeownersImportResponse(BaseModel):

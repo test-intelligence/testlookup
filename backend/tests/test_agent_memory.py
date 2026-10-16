@@ -657,6 +657,8 @@ class TestSnapshotMemoryReferences:
                 evidence,
                 cluster,
             ])))),
+            # W07 FAIL-05: the test_runs.ai_recommendation projection (an UPDATE).
+            MagicMock(),
         ])
 
         await save_snapshot(

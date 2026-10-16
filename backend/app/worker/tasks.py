@@ -2303,6 +2303,11 @@ def run_agent_pipeline(
                 self.request.id,
                 type(inv_exc).__name__,
             )
+        # W07 FAIL-04: the Runs list reads stored snapshots only, so the snapshot
+        # just deleted is rebuilt -- by its own task, never here: the rebuild may
+        # wait minutes for the run's defect-candidate build, and this pipeline's
+        # worker slot is not the place to wait. Never fails the pipeline.
+        _enqueue_snapshot_rebuild(self.request.id, test_run_id)
 
         if not final_state.get("duplicate"):
             try:
@@ -2383,6 +2388,86 @@ def run_agent_pipeline(
             error=safe_error,
         ))
         raise RuntimeError(safe_error) from None
+
+
+# ── W07 FAIL-04: keep a freshly analysed run's snapshot warm ─────────────────
+
+#: How long ``rebuild_run_snapshot`` waits for the run's background
+#: defect-candidate build (its LLM calls go through the per-project budget).
+#: Owner decision pending (DECISIONS.md): 0 makes the rebuild never wait, so a
+#: failed run's first snapshot is built by its first Analysis-tab view instead.
+SNAPSHOT_REBUILD_BUILD_WAIT_SECONDS = 300.0
+
+
+def _enqueue_snapshot_rebuild(task_id: str | None, test_run_id: str) -> bool:
+    """Queue ``rebuild_run_snapshot`` for one run. Never raises; True when queued.
+
+    A broker failure only costs the warm-up: the run's Analysis tab still builds
+    the snapshot on its first view.
+    """
+    try:
+        rebuild_run_snapshot.apply_async(args=[test_run_id])
+        return True
+    except Exception as exc:  # noqa: BLE001 -- a warm-up must never fail the pipeline
+        logger.warning(
+            "[Task %s] Snapshot rebuild not queued (non-blocking, %s)",
+            task_id,
+            type(exc).__name__,
+        )
+        return False
+
+
+@celery_app.task(
+    name="app.worker.tasks.rebuild_run_snapshot",
+    bind=True,
+    max_retries=0,
+    # Not ``ai_analysis``: the rebuild may wait up to five minutes for the run's
+    # defect-candidate build, and the ai_analysis pool (2 slots on the homelab)
+    # is where pipelines run -- two failed runs would stall every new pipeline.
+    queue="default",
+    soft_time_limit=360,
+    time_limit=420,
+)
+def rebuild_run_snapshot(self, run_id: str) -> dict:
+    """Rebuild a run's intelligence snapshot after its pipeline invalidated it (W07 FAIL-04).
+
+    Queued by ``run_agent_pipeline`` right after its invalidation. Idempotent:
+    a run that already has a servable snapshot (someone opened its Analysis tab
+    first, or this task ran twice) is left alone. Otherwise
+    ``rebuild_snapshot`` computes and saves it on this task's own session; the
+    defect-candidate build the read schedules runs on THIS task's loop, and the
+    rebuild waits for it (``SNAPSHOT_REBUILD_BUILD_WAIT_SECONDS``, inside the
+    soft time limit), so the pipeline's slot never waits and the build is not
+    cancelled when the pipeline's task ends. Never raises.
+    """
+    _bind_task_context(self, run_id=run_id)
+
+    async def _rebuild() -> dict:
+        import uuid as _uuid
+
+        from app.db.mongo import get_mongo_db
+        from app.db.postgres import AsyncSessionLocal
+        from app.services.intelligence_snapshot_service import has_servable_snapshot, rebuild_snapshot
+
+        run_uuid = _uuid.UUID(run_id)
+        async with AsyncSessionLocal() as db:
+            if await has_servable_snapshot(db, run_uuid):
+                return {"status": "skipped", "reason": "snapshot_exists"}
+            saved = await rebuild_snapshot(
+                db, run_uuid, get_mongo_db(), build_wait_seconds=SNAPSHOT_REBUILD_BUILD_WAIT_SECONDS,
+            )
+        return {"status": "rebuilt"} if saved else {"status": "not_saved"}
+
+    try:
+        outcome: dict = _run_async(_rebuild())
+        return outcome
+    except Exception as exc:  # noqa: BLE001 -- best effort; the Analysis tab still builds it
+        logger.warning(
+            "[Task %s] Snapshot rebuild failed (non-blocking, %s)",
+            self.request.id,
+            type(exc).__name__,
+        )
+        return {"status": "failed", "reason": type(exc).__name__}
 
 
 async def _schedule_pipeline_retry(

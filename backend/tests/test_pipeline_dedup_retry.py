@@ -277,6 +277,8 @@ def test_the_same_persons_retrigger_after_a_finished_pipeline_runs(fake_redis, m
     import app.services.intelligence_snapshot_service as snapshots
     from app.worker import tasks
 
+    # W07 FAIL-04: the pipeline queues a snapshot rebuild; no broker here.
+    monkeypatch.setattr(tasks, "_enqueue_snapshot_rebuild", lambda *a, **k: True)
     ran: list[str] = []
 
     async def fake_offline(**kwargs):

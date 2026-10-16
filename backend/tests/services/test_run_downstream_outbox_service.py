@@ -1636,6 +1636,8 @@ def test_agent_outbox_ignores_competing_direct_pipeline_redis_dedup(monkeypatch)
     from app.services import intelligence_snapshot_service, run_downstream_outbox
     from app.worker import tasks
 
+    # W07 FAIL-04: the pipeline queues a snapshot rebuild; no broker here.
+    monkeypatch.setattr(tasks, "_enqueue_snapshot_rebuild", lambda *a, **k: True)
     outbox_id = uuid.uuid4()
     run_pipeline = AsyncMock(return_value={"completed_stages": [], "errors": []})
     monkeypatch.setattr(workflow, "run_offline_pipeline", run_pipeline)
@@ -1697,6 +1699,8 @@ def test_terminal_pipeline_retry_repairs_ai_child_before_parent_completion(monke
     from app.services import intelligence_snapshot_service, run_downstream_outbox
     from app.worker import tasks
 
+    # W07 FAIL-04: the pipeline queues a snapshot rebuild; no broker here.
+    monkeypatch.setattr(tasks, "_enqueue_snapshot_rebuild", lambda *a, **k: True)
     outbox_id = uuid.uuid4()
     dispatch_token = uuid.uuid4()
     run_id = uuid.uuid4()

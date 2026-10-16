@@ -22,11 +22,22 @@ from app.models.schemas import (
     DeleteRunRequest,
     DurationRegressionsResponse,
     EnrichedTestCaseDetailResponse,
+    RunBranchListResponse,
+    RunSignatureBatchResponse,
+    RunVerdictBatchResponse,
     TestCaseHistoryResponse,
     TestCaseListResponse,
 )
 from app.models.viz_contracts import MAX_RELEASES, MAX_SUITE_NAME_LENGTH, MAX_SUITES
+from app.services import run_signature_service, run_verdict_service, runs_service
 from app.services.analytics_scope import parse_suite_filter, resolve_release_query_scope_list
+from app.services.run_verdict import (
+    MAX_SIGNATURE_RUN_IDS,
+    MAX_VERDICT_RUN_IDS,
+    RECOMMENDATION_FILTER_VALUES,
+    RECOMMENDATION_INVALID_DETAIL,
+    RUN_IDS_INVALID_DETAIL,
+)
 from app.services.runs_service import (
     get_run_with_release,
     list_project_runs,
@@ -37,6 +48,11 @@ from app.services.runs_service import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/runs", tags=["Test Runs"])
+
+# W07 FAIL-05: the Runs toolbar's branch filter.
+MAX_BRANCHES = 20
+MAX_BRANCH_LENGTH = 255
+BRANCH_INVALID_DETAIL = "branch: at most 20 names of 1-255 characters."
 
 
 async def _require_accessible_project(
@@ -91,6 +107,19 @@ async def list_runs(
             "runs labelled with, or holding a test in, the suite; case-insensitive."
         )),
     ] = None,
+    # W07 FAIL-05: the Runs toolbar.
+    q: Optional[str] = Query(
+        None,
+        max_length=100,
+        description="Case-insensitive: contains on build number, branch and CI job; prefix on commit hash.",
+    ),
+    branch: Annotated[
+        Optional[list[str]],
+        Query(description=f"Repeatable (OR, at most {MAX_BRANCHES}): exact branch names."),
+    ] = None,
+    recommendation: Optional[str] = Query(
+        None, description="The AI verdict column: GO | CONDITIONAL_GO | NO_GO | none."
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -99,6 +128,8 @@ async def list_runs(
     # C1 before any database access: a bad or 51st suite is a 422 with the
     # analytics error body (``suite_name_length`` / ``suite_cap``).
     suites = parse_suite_filter(suite_name)
+    # The toolbar's values, also before any database access (one 422 text each).
+    toolbar = _parse_toolbar(q, branch, recommendation)
     # Verify the PROVIDED release(s). This route was the only one accepting
     # ``release_id`` that skipped the check: a malformed value reached
     # ``uuid.UUID()`` in the service and raised ValueError -> 500 rather than
@@ -125,6 +156,7 @@ async def list_runs(
             accessible_project_ids=accessible,
             days=effective_days,
             suite_name=suites,
+            **toolbar,
         )
     else:
         # Explicit project_id: verify the caller can read it (closes the
@@ -140,8 +172,33 @@ async def list_runs(
             accessible_project_ids=accessible,
             days=effective_days,
             suite_name=suites,
+            **toolbar,
         )
     return {"items": items, "total": total, "page": page, "size": size, "pages": pages}
+
+
+def _parse_toolbar(
+    q: Optional[str], branch: Optional[list[str]], recommendation: Optional[str],
+) -> dict[str, Any]:
+    """The Runs toolbar's ``q`` / ``branch`` / ``recommendation``, parsed before any database access.
+
+    ``q`` stripped (blank = no filter); each branch stripped, 1-255 characters,
+    at most 20, duplicates dropped; ``recommendation`` one of the filter
+    vocabulary. Anything else is a 422 with one fixed text per parameter.
+    """
+    text_q = (q or "").strip() or None
+    names: list[str] = []
+    for raw in branch or []:
+        name = (raw or "").strip()
+        if not 1 <= len(name) <= MAX_BRANCH_LENGTH:
+            raise HTTPException(status_code=422, detail=BRANCH_INVALID_DETAIL)
+        if name not in names:
+            names.append(name)
+    if len(names) > MAX_BRANCHES:
+        raise HTTPException(status_code=422, detail=BRANCH_INVALID_DETAIL)
+    if recommendation is not None and recommendation not in RECOMMENDATION_FILTER_VALUES:
+        raise HTTPException(status_code=422, detail=RECOMMENDATION_INVALID_DETAIL)
+    return {"q": text_q, "branches": tuple(names), "recommendation": recommendation}
 
 
 @router.get("/failed-ids")
@@ -255,6 +312,65 @@ async def list_failed_run_ids(
         "count": len(rows[:limit]),
         "truncated": truncated,
     }
+
+
+# ── W07: the Runs list's batch reads. One-segment literals, so they sit ABOVE
+# ``GET /{run_id}`` (a UUID path that would otherwise swallow them and 422;
+# tests/test_architectural_route_shadowing.py walks the assembled table).
+
+
+def _run_id_batch(run_id: list[uuid.UUID], cap: int) -> list[uuid.UUID]:
+    """De-duplicated, request order kept; 1..cap ids or a 422 with one fixed text."""
+    ids = list(dict.fromkeys(run_id))
+    if not 1 <= len(ids) <= cap:
+        raise HTTPException(status_code=422, detail=RUN_IDS_INVALID_DETAIL.format(max=cap))
+    return ids
+
+
+@router.get("/ai-verdicts", response_model=RunVerdictBatchResponse)
+async def run_ai_verdicts(
+    run_id: Annotated[list[uuid.UUID], Query(description="Repeatable: 1-25 run ids (the runs on screen).")],
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """The AI-verdict inputs of the runs on screen, from their stored snapshots (W07 FAIL-04).
+
+    Reads stored state only: a run without a servable snapshot is answered
+    ``snapshot: false`` (with ``analysed`` saying why), never computed here.
+    Every id is resolved against the caller's projects; an unknown and a
+    foreign id are both listed in ``unavailable``, the same way.
+    """
+    ids = _run_id_batch(run_id, MAX_VERDICT_RUN_IDS)
+    accessible = await get_accessible_project_ids(db, current_user)  # None = admin
+    return await run_verdict_service.batch_verdict_inputs(db, ids, accessible=accessible)
+
+
+@router.get("/failure-signatures", response_model=RunSignatureBatchResponse)
+async def run_failure_signatures(
+    run_id: Annotated[list[uuid.UUID], Query(description="Repeatable: 1-50 run ids.")],
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """The top failure signatures of each failed build, for grouping them by error (W07 FAIL-03).
+
+    Same validation and authorization shape as ``/ai-verdicts``; at most
+    ``SIGNATURE_ROWS_PER_RUN`` failing rows are read per run (``capped`` says so).
+    """
+    ids = _run_id_batch(run_id, MAX_SIGNATURE_RUN_IDS)
+    accessible = await get_accessible_project_ids(db, current_user)  # None = admin
+    return await run_signature_service.batch_run_signatures(db, ids, accessible=accessible)
+
+
+@router.get("/branches", response_model=RunBranchListResponse)
+async def list_run_branches(
+    project_id: str = Query(..., description="The project whose branches to list."),
+    days: int | None = Query(30, ge=0, le=365, description="Look back window in days (0 = all time)"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """The project's branches in the window, newest last run first, for the Runs toolbar (W07 FAIL-05)."""
+    requested, _ = await _require_accessible_project(db, current_user, project_id)  # 400 malformed, 403 foreign
+    return await runs_service.list_run_branches(db, requested, days=days if days and days > 0 else None)
 
 
 @router.get("/{run_id}")

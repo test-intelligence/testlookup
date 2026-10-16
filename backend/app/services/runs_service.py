@@ -4,7 +4,7 @@ import uuid
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import ARRAY, Integer, Numeric, case, cast, false, func, literal_column, select
+from sqlalchemy import ARRAY, Integer, Numeric, case, cast, false, func, literal_column, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
@@ -308,6 +308,111 @@ async def fetch_release_map(db: AsyncSession, run_ids: list[uuid.UUID]) -> dict[
     }
 
 
+def _like_escape(value: str) -> str:
+    """``value`` matched literally by ``LIKE ... ESCAPE '\\'``: ``\\``, ``%`` and ``_`` escaped."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def servable_snapshot_exists():
+    """EXISTS a servable intelligence snapshot for the outer ``TestRun`` (``ix_ris_run_id``).
+
+    The batch AI-verdict read's own rule (``schema_version >=
+    CURRENT_SCHEMA_VERSION``): a snapshot the read would not serve gives no
+    verdict, so the filter must not count its ``ai_recommendation`` either.
+    """
+    from app.models.postgres import RunIntelligenceSnapshot
+    from app.services.intelligence_snapshot_service import CURRENT_SCHEMA_VERSION
+
+    return (
+        select(RunIntelligenceSnapshot.id)
+        .where(
+            RunIntelligenceSnapshot.run_id == TestRun.id,
+            RunIntelligenceSnapshot.schema_version >= CURRENT_SCHEMA_VERSION,
+        )
+        .exists()
+    )
+
+
+def run_list_toolbar_filters(
+    *,
+    q: str | None = None,
+    branches: tuple[str, ...] = (),
+    recommendation: str | None = None,
+) -> list:
+    """The Runs toolbar's predicates (W07 FAIL-05); ``[]`` when none is set.
+
+    The router has parsed every value (``q`` stripped and <= 100 chars, each
+    branch 1-255 chars and <= 20 of them, ``recommendation`` in
+    ``run_verdict.RECOMMENDATION_FILTER_VALUES``).
+    """
+    from app.services.run_verdict import RECOMMENDATION_NONE, RECOMMENDATIONS
+
+    filters: list = []
+    if q:
+        esc = _like_escape(q)
+        filters.append(
+            or_(
+                TestRun.build_number.ilike(f"%{esc}%", escape="\\"),
+                TestRun.branch.ilike(f"%{esc}%", escape="\\"),
+                TestRun.jenkins_job.ilike(f"%{esc}%", escape="\\"),
+                TestRun.commit_hash.ilike(f"{esc}%", escape="\\"),
+            )
+        )
+    if branches:
+        filters.append(TestRun.branch.in_(list(branches)))
+    if recommendation in RECOMMENDATIONS:
+        filters.append(TestRun.ai_recommendation == recommendation)
+        filters.append(servable_snapshot_exists())
+    elif recommendation == RECOMMENDATION_NONE:
+        filters.append(or_(TestRun.ai_recommendation.is_(None), ~servable_snapshot_exists()))
+    return filters
+
+
+async def list_run_branches(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    *,
+    days: int | None,
+    limit: int = 100,
+) -> dict:
+    """The project's branches in the window, newest last run first (W07 FAIL-05, ``GET /runs/branches``).
+
+    ONE statement: ``limit + 1`` rows decide ``truncated``; ``total`` is the
+    window's distinct-branch COUNT (a window function), never ``len(items)``.
+    A blank branch is not a branch. ``days=None`` is all time.
+    """
+    params: dict = {"p": str(project_id), "lim": int(limit) + 1}
+    window = ""
+    if days:
+        params["cutoff"] = datetime.now(timezone.utc) - timedelta(days=int(days))
+        window = "AND created_at >= :cutoff "
+    rows = (await db.execute(
+        text(
+            "SELECT branch, COUNT(*) AS runs, MAX(created_at) AS last_run_at, "
+            "COUNT(*) OVER () AS total "
+            "FROM test_runs "
+            "WHERE project_id = CAST(:p AS uuid) AND branch IS NOT NULL AND btrim(branch) <> '' "
+            f"{window}"
+            'GROUP BY branch ORDER BY last_run_at DESC, branch COLLATE "C" LIMIT :lim'
+        ),
+        params,
+    )).mappings().all()
+    items = [
+        {
+            "branch": row["branch"],
+            "runs": int(row["runs"]),
+            "last_run_at": row["last_run_at"].isoformat() if row["last_run_at"] is not None else None,
+        }
+        for row in rows[:limit]
+    ]
+    return {
+        "items": items,
+        "total": int(rows[0]["total"]) if rows else 0,
+        "truncated": len(rows) > limit,
+        "window_days": int(days) if days else None,
+    }
+
+
 def _run_suite_filter(suite_name: str | tuple[str, ...] | None):
     """The run list's suite rule -- one name or several (OR). The clause lives
     in ``analytics_scope`` (VIZ-201 "one rule, one module"); one name compiles
@@ -327,6 +432,10 @@ async def list_project_runs(
     accessible_project_ids: set | None = None,
     days: int | None = 6,
     suite_name: str | tuple[str, ...] | None = None,
+    *,
+    q: str | None = None,
+    branches: tuple[str, ...] = (),
+    recommendation: str | None = None,
 ):
     """Paginated test run listing, enriched with release + project_name.
 
@@ -334,6 +443,17 @@ async def list_project_runs(
     statements are unchanged) or a tuple of several: OR within each, AND
     across. The router resolves and authorises every release id first
     (``analytics_scope.resolve_release_query_scope_list``).
+
+    W07 FAIL-05, the Runs toolbar (all parsed by the router; absent = no filter,
+    and the statements are then byte-identical to before):
+
+    * ``q`` -- case-insensitive contains on build number, branch and CI job,
+      prefix on the commit hash; ``%`` / ``_`` / ``\\`` are matched literally.
+    * ``branches`` -- exact branch names, OR (git branch names are case-sensitive).
+    * ``recommendation`` -- the AI-verdict column: GO / CONDITIONAL_GO / NO_GO are
+      the runs whose ``ai_recommendation`` is that value AND that have a SERVABLE
+      snapshot (the batch read's own rule, so filter and pill agree even across a
+      schema bump); ``none`` is every other run.
 
     Performance notes:
       * Filters are built once and reused by both the count query and the
@@ -426,6 +546,8 @@ async def list_project_runs(
     suite_filter = _run_suite_filter(suite_name)
     if suite_filter is not None:
         filters.append(suite_filter)
+    # W07 FAIL-05: in the SHARED list, so the count and the rows agree.
+    filters.extend(run_list_toolbar_filters(q=q, branches=branches, recommendation=recommendation))
 
     # Count query: strips ORDER BY, counts by PK, no subquery wrap.
     count_stmt = select(func.count(TestRun.id)).where(*filters)
@@ -466,7 +588,8 @@ async def list_project_runs(
         # number whatever the caller passed; page and size are the router's
         # validated integers.
         deepest = literal_column(str(int(page) * int(size)), Integer())
-        branches = [
+        # (Not ``branches``: since W07 that name is the toolbar's git-branch filter.)
+        per_project = [
             select(TestRun.id.label("id"))
             .where(*filters, TestRun.project_id == member)
             .order_by(*order_keys)
@@ -474,7 +597,7 @@ async def list_project_runs(
             for member in sorted(accessible_project_ids, key=str)
         ]
         candidates = (
-            branches[0] if len(branches) == 1 else union_all(*branches)
+            per_project[0] if len(per_project) == 1 else union_all(*per_project)
         ).subquery("page_candidates")
         items_stmt = items_stmt.join(candidates, candidates.c.id == TestRun.id)
     else:

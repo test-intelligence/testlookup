@@ -255,6 +255,10 @@ class Project(Base):
     ocp_namespace: Mapped[Optional[str]] = mapped_column(String(255))
     jenkins_job_pattern: Mapped[Optional[str]] = mapped_column(String(500))
     component_owner_map: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # added migration 0020
+    # Java source roots (migration 0215, W07 FAIL-08): ``[{"prefix": str,
+    # "root": str}, ...]`` in priority order; NULL and [] mean "none". Read and
+    # validated by ``codeowners_service.load_source_roots``.
+    source_roots: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     start_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))   # added migration 0022
     end_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))     # added migration 0022
     tags: Mapped[Optional[list]] = mapped_column(JSON)                                # added migration 0022
@@ -337,6 +341,13 @@ class TestRun(Base):
             "ix_test_runs_project_release_created",
             "project_id", "primary_release_id", "created_at",
         ),
+        # Migration 0214 (W07 FAIL-05): the Runs list's AI-verdict filter
+        # (``/runs?recommendation=GO|CONDITIONAL_GO|NO_GO``) inside a project
+        # window, built CONCURRENTLY on the existing table.
+        Index(
+            "ix_test_runs_project_recommendation_created",
+            "project_id", "ai_recommendation", "created_at",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -410,6 +421,17 @@ class TestRun(Base):
     primary_release_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("releases.id", ondelete="SET NULL"), nullable=True
     )
+
+    # The run's AI verdict as the Runs table shows it (migration 0214, W07
+    # FAIL-05): ``run_verdict.ai_recommendation_of`` of the run's SERVABLE
+    # intelligence snapshot -- GO | CONDITIONAL_GO | NO_GO, or NULL for "no
+    # verdict". A projection, not a source: written ONLY by
+    # ``intelligence_snapshot_service`` (``save_snapshot`` sets it in the
+    # snapshot's own transaction; ``invalidate`` / ``stage_invalidate`` clear
+    # it), each write leaving ``updated_at`` where it was. The list filter also
+    # requires a servable snapshot, so a schema bump cannot make it disagree
+    # with the pill.
+    ai_recommendation: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
     # Aggregated counts
     total_tests: Mapped[int] = mapped_column(Integer, default=0)
@@ -4766,6 +4788,75 @@ class ServiceOwnershipRule(Base):
     created_by: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+
+# ── Project classification hints (W07 FAIL-10, migration 0216) ───────────────
+
+# Literal copies of ``classification_hint_service.MATCH_FIELDS`` /
+# ``HINT_CATEGORIES`` (and of migration 0216's frozen ones): one test
+# (``tests/test_migration_0216_classification_hints.py``) holds the three equal.
+_HINT_MATCH_FIELDS = ("error_message", "test_name", "suite_name", "class_name")
+_HINT_CATEGORIES = ("PRODUCT_BUG", "INFRASTRUCTURE", "TEST_DATA", "AUTOMATION_DEFECT", "FLAKY")
+
+
+def _hint_in(values: tuple[str, ...]) -> str:
+    return ", ".join(f"'{value}'" for value in values)
+
+
+def _hint_check(column: str, values: tuple[str, ...]) -> str:
+    # Built, not written out: tests/test_activity_events.py reads the activity
+    # table's category CHECK out of this file by regex (a quote, the column
+    # name, IN and an opening bracket), and a second literal of that shape
+    # earlier in the file would be the one it found.
+    return f"{column} IN ({_hint_in(values)})"
+
+
+class ClassificationHint(Base):
+    """A QA lead's rule: "<field> contains <text> -> <category>" for one project.
+
+    Applied before any classification engine runs (a human correction of the
+    same test still wins); the oldest enabled matching hint, in
+    ``(created_at, id)`` order, is the one used. Case-insensitive substring
+    match, never a user regex; one rule per (project, field, lower(text)).
+    """
+    __tablename__ = "classification_hints"
+    __table_args__ = (
+        CheckConstraint(
+            _hint_check("match_field", _HINT_MATCH_FIELDS),
+            name="ck_classification_hints_match_field",
+        ),
+        CheckConstraint(
+            _hint_check("category", _HINT_CATEGORIES),
+            name="ck_classification_hints_category",
+        ),
+        Index("ix_classification_hints_project_enabled", "project_id", "enabled"),
+        Index(
+            "uq_classification_hints_project_rule",
+            "project_id", "match_field", text("lower(pattern)"),
+            unique=True,
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    match_field: Mapped[str] = mapped_column(String(20), nullable=False)
+    pattern: Mapped[str] = mapped_column(String(200), nullable=False)
+    category: Mapped[str] = mapped_column(String(30), nullable=False)
+    note: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true")
+    )
+    created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
 
 
 # ── Saved Views & Digest Subscriptions (ENT-05) ──────────────────────────────
