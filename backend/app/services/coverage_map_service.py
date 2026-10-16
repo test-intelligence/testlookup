@@ -57,7 +57,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Final, Optional
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -102,6 +102,10 @@ MAX_CHILDREN = MAX_TREE_NODES - 1
 #: When the children exceed :data:`MAX_CHILDREN`, the largest this many are kept
 #: and the rest become ONE "Other (n)" node, so the level is still 500 nodes.
 KEPT_WHEN_FOLDED = MAX_CHILDREN - 1
+#: W08 TRND-12: "Other (n)" opens. Page ``p`` is the children after the first
+#: ``(p - 1) * KEPT_WHEN_FOLDED`` under the same 500-node cap; 50 pages of 498
+#: children is past any real level (24 900 classes in one suite).
+OTHER_PAGE_MAX: Final = 50
 
 GRAIN = "execution_row"
 
@@ -121,6 +125,15 @@ class CoverageLevel:
     depth: int
     suite: Optional[str] = None
     class_key: Optional[str] = None
+    #: W08 TRND-12: which page of an opened "Other (n)" (1 = the level as it
+    #: has always been). The parent, its root node and its totals are the
+    #: same on every page.
+    other_page: int = 1
+
+    @property
+    def children_offset(self) -> int:
+        """The children the earlier pages hold, ranked first."""
+        return (self.other_page - 1) * KEPT_WHEN_FOLDED
 
     @property
     def root_id(self) -> str:
@@ -178,7 +191,25 @@ def _parent_key(param: str, value: Any) -> str:
     return value
 
 
-def parse_level(depth: Any, suite: Any = None, class_key: Any = None) -> CoverageLevel:
+def _other_page(value: Any) -> int:
+    """``other_page``: absent is page 1 (the level as it has always been); a
+    sent page is 2..:data:`OTHER_PAGE_MAX` (page 1 is never sent, so its
+    request -- and its cache identity -- is the one it always was)."""
+    if value is None:
+        return 1
+    if isinstance(value, bool) or not isinstance(value, int) or not 2 <= value <= OTHER_PAGE_MAX:
+        raise AnalyticsQueryError(
+            "other_page_range",
+            f"other_page is 2-{OTHER_PAGE_MAX}: the first page is the level without it.",
+            param="other_page",
+            allowed={"min": 2, "max": OTHER_PAGE_MAX},
+        )
+    return value
+
+
+def parse_level(
+    depth: Any, suite: Any = None, class_key: Any = None, other_page: Any = None,
+) -> CoverageLevel:
     """The level a request asks for, or a 422 naming the rule it broke.
 
     A parent key sent at a depth that does not read it is refused rather than
@@ -189,21 +220,24 @@ def parse_level(depth: Any, suite: Any = None, class_key: Any = None) -> Coverag
             "depth_enum", "depth is 1 (suites), 2 (classes) or 3 (tests).",
             param="depth", allowed=list(DEPTHS),
         )
+    page = _other_page(other_page)
     if depth == 1:
         for param, value in (("suite", suite), ("class_key", class_key)):
             if value is not None:
                 raise AnalyticsQueryError(
                     "parent_unexpected", f"{param} is not read at depth 1.", param=param,
                 )
-        return CoverageLevel(depth=1)
+        return CoverageLevel(depth=1, other_page=page)
     suite_key = _parent_key("suite", suite)
     if depth == 2:
         if class_key is not None:
             raise AnalyticsQueryError(
                 "parent_unexpected", "class_key is not read at depth 2.", param="class_key",
             )
-        return CoverageLevel(depth=2, suite=suite_key)
-    return CoverageLevel(depth=3, suite=suite_key, class_key=_parent_key("class_key", class_key))
+        return CoverageLevel(depth=2, suite=suite_key, other_page=page)
+    return CoverageLevel(
+        depth=3, suite=suite_key, class_key=_parent_key("class_key", class_key), other_page=page,
+    )
 
 
 # ── The statement ──────────────────────────────────────────────────────────
@@ -287,6 +321,26 @@ def build_statement(
     child_key, child_label, parent_label = _CHILD_SQL[level.depth]
     params["cm_cap"] = MAX_CHILDREN
     params["cm_keep"] = KEPT_WHEN_FOLDED
+    # W08 TRND-12: an opened "Other" page skips the children the earlier pages
+    # hold; page 1's offset is 0, which is the level exactly as before.
+    params["cm_offset"] = level.children_offset
+    # W08 TRND-12: the tests the last suite sync marked for review. Only in one
+    # project: ``suite_memberships`` is the legacy sync's table and the only
+    # live writer of ``needs_review`` (HYG-04 must move this read with it).
+    # Outside one project the count is not measured: NULL, never 0.
+    if scope.project_id is not None:
+        params["cm_project"] = scope.project_id
+        needs_review_cte = """, nr AS (
+            SELECT DISTINCT sm.test_fingerprint AS fp
+            FROM suite_memberships sm
+            WHERE sm.project_id = :cm_project
+              AND sm.status = 'needs_review'
+        )"""
+        needs_review_flag = ",\n                   (tests.fp IN (SELECT fp FROM nr)) AS needs_review"
+        needs_review_count = "COUNT(*) FILTER (WHERE needs_review) AS needs_review_count"
+    else:
+        needs_review_cte = needs_review_flag = ""
+        needs_review_count = "CAST(NULL AS BIGINT) AS needs_review_count"
     sums = """
             SUM(test_count) AS test_count,
             SUM(executions) AS executions,
@@ -299,7 +353,8 @@ def build_statement(
             MAX(last_at) AS last_at,
             SUM(unknown_tests) AS unknown_tests,
             COUNT(*) AS merged,
-            MAX(child_total) AS child_total"""
+            MAX(child_total) AS child_total,
+            SUM(needs_review_count) AS needs_review_count"""
     sql = f"""
         WITH ex AS (
             SELECT
@@ -350,7 +405,7 @@ def build_statement(
               {suite_scope_canonical}
               {parent_canonical}
               AND NOT EXISTS (SELECT 1 FROM seen WHERE seen.fp = c.test_fingerprint)
-        ), tests AS (
+        ){needs_review_cte}, tests AS (
             SELECT suite_key, suite_label, class_name, fp, test_name,
                    executions, passed, failed, broken, skipped, unknown,
                    flaky, last_at, FALSE AS lost, TRUE AS executed
@@ -362,7 +417,7 @@ def build_statement(
             FROM idle
         ), placed AS (
             SELECT {child_key} AS child_key, {child_label} AS child_label,
-                   {parent_label} AS parent_label, tests.*
+                   {parent_label} AS parent_label, tests.*{needs_review_flag}
             FROM tests
             {parent_class}
         ), children AS (
@@ -380,7 +435,8 @@ def build_statement(
                 SUM(unknown) AS unknown,
                 COUNT(*) FILTER (WHERE flaky) AS flaky_count,
                 MAX(last_at) AS last_at,
-                COUNT(*) FILTER (WHERE lost) AS unknown_tests
+                COUNT(*) FILTER (WHERE lost) AS unknown_tests,
+                {needs_review_count}
             FROM placed
             GROUP BY child_key
         ), ranked AS (
@@ -395,14 +451,16 @@ def build_statement(
         SELECT
             'child' AS part, rn, child_key, child_label, CAST(NULL AS TEXT) AS parent_label,
             test_count, executions, passed, failed, broken, skipped, unknown,
-            flaky_count, last_at, unknown_tests, 1 AS merged, child_total
+            flaky_count, last_at, unknown_tests, 1 AS merged, child_total,
+            needs_review_count
         FROM ranked
-        WHERE child_total <= :cm_cap OR rn <= :cm_keep
+        WHERE rn > :cm_offset
+          AND (child_total - :cm_offset <= :cm_cap OR rn <= :cm_offset + :cm_keep)
         UNION ALL
         SELECT
             'other', NULL, NULL, NULL, NULL,{sums}
         FROM ranked
-        WHERE child_total > :cm_cap AND rn > :cm_keep
+        WHERE child_total - :cm_offset > :cm_cap AND rn > :cm_offset + :cm_keep
         HAVING COUNT(*) > 0
         UNION ALL
         SELECT
@@ -459,6 +517,10 @@ def node_stats(row: Any, now: datetime, *, rate: bool = True) -> dict:
         recency = "unknown"
     else:
         recency = "never"
+    # W08 TRND-12: read directly -- a statement that lost the column must fail
+    # loudly, not draw every node as "nothing needs review". None (outside one
+    # project) stays None: not measured, never 0.
+    needs_review = row.needs_review_count
     return {
         "test_count": test_count,
         "executions": _int(row.executions),
@@ -468,6 +530,7 @@ def node_stats(row: Any, now: datetime, *, rate: bool = True) -> dict:
         "last_executed_at": _instant(last_at) if last_at is not None else None,
         "staleness_days": staleness_days(last_at, now) if last_at is not None else None,
         "recency": recency,
+        "needs_review_count": None if needs_review is None else int(needs_review),
     }
 
 
@@ -611,8 +674,20 @@ def definitions(level: CoverageLevel, now: datetime) -> dict:
             f"A level holds at most {MAX_CHILDREN} children. Beyond that the "
             f"{KEPT_WHEN_FOLDED} largest are kept and the rest are one 'Other (n)' "
             "node: counts are sums, the pass rate is left out (a rate over "
-            "unrelated leftovers answers nothing), and it does not expand. "
-            "meta.truncated_total is the true number of children."
+            "unrelated leftovers answers nothing). It opens: other_page=2 is the "
+            f"next {KEPT_WHEN_FOLDED} children of the same parent under the same "
+            "cap (with its own Other when more remain), and so on up to "
+            f"other_page={OTHER_PAGE_MAX}. The root and its totals are the same on "
+            "every page. meta.truncated_total is the true number of children."
+        ),
+        "page": level.other_page,
+        "children_offset": level.children_offset,
+        "needs_review": (
+            "needs_review_count: the node's tests whose fingerprint the last suite "
+            "sync marked for review in this project (a suite_memberships row with "
+            "status 'needs_review': the test was absent from its suite's latest "
+            "run). Test Management lists them under the suite's 'Deleted from "
+            "Suite'. Counted for one project only; null otherwise, never 0."
         ),
         "ordering": (
             "Children by test_count descending, then key ascending in code-point "
@@ -669,6 +744,7 @@ __all__ = [
     "NO_CLASS_KEY",
     "NO_CLASS_LABEL",
     "NO_SUITE",
+    "OTHER_PAGE_MAX",
     "ROOT_ID",
     "ROOT_LABEL",
     "assemble",

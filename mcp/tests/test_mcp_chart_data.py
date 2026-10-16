@@ -122,6 +122,8 @@ def test_the_arguments_are_the_rest_parameter_names():
     schema = json.loads(SNAPSHOT.read_text(encoding="utf-8"))["inputSchema"]
     assert set(schema["properties"]) == {
         "group_by", "metric", "project_id", "release_id", "suite_name", "days", "top_n",
+        # W08 TRND-13: one panel of a small multiple.
+        "facet_dimension", "facet_value",
     }
     assert schema["required"] == ["group_by"]
 
@@ -172,6 +174,20 @@ def test_unset_arguments_are_not_sent(backend):
         "metric": "executions", "group_by": "suite", "days": "30", "top_n": "5",
     }
     assert "None" not in str(seen[0].url)
+
+
+def test_a_facet_goes_out_as_the_route_s_two_parameters(backend):
+    """W08 TRND-13: a panel is ``facet_dimension`` + ``facet_value``, sent
+    unchanged; without them nothing is sent (the whole chart)."""
+    seen, _ = backend
+    asyncio.run(_tool()(group_by=["day"], facet_dimension="branch", facet_value="main"))
+    params = dict(seen[0].url.params.multi_items())
+    assert (params["facet_dimension"], params["facet_value"]) == ("branch", "main")
+    asyncio.run(_tool()(group_by=["day"]))
+    assert "facet_dimension" not in seen[1].url.params and "facet_value" not in seen[1].url.params
+    doc = " ".join((_tool().__doc__ or "").split())
+    for name in ("facet_metric_grain", "facet_pair", "branch, environment, status, failure_category, ingestion_source"):
+        assert name in doc
 
 
 # ── 3. the body ─────────────────────────────────────────────────────────────

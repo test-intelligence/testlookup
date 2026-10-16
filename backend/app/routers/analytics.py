@@ -1018,8 +1018,17 @@ def _chart_data_identity(resolved: dict) -> tuple:
     # KeyError here would mean the signature and this hook had drifted apart,
     # which is exactly the thing that must not fail quietly.
     scope: AnalyticsScope = resolved["scope"]
+    # W08 TRND-13: the facet pair is read with ``.get`` -- the one exception.
+    # The route declares both, so the layer always binds them; a hand-built
+    # ``resolved`` from before the pair existed (the read-layer guard's) means
+    # "no facet". The drift the subscripts above catch is caught for these two
+    # by ``tests/test_chart_data_facets.py``, which builds ``resolved`` from
+    # the route's own signature and requires two panels to differ.
+    facet = chart_data_service.parse_facet(
+        resolved.get("facet_dimension"), resolved.get("facet_value"),
+    )
     spec = chart_data_service.parse_chart_spec(
-        resolved["metric"], resolved["group_by"], resolved["top_n"], scope=scope,
+        resolved["metric"], resolved["group_by"], resolved["top_n"], scope=scope, facet=facet,
     )
     return chart_data_service.cache_identity_parts(scope, spec)
 
@@ -1050,6 +1059,25 @@ async def chart_data(
             "bucket. Required for group_by=test outside a single suite."
         ),
     ),
+    facet_dimension: Optional[str] = Query(
+        None,
+        description=(
+            "With facet_value: draw one panel of a small multiple, counting only "
+            "the executions whose value of this dimension is facet_value. One of: "
+            + ", ".join(chart_data_service.FACET_DIMENSIONS)
+            + ". run_count with status or failure_category is refused "
+            "(facet_metric_grain)."
+        ),
+    ),
+    facet_value: Optional[str] = Query(
+        None,
+        description=(
+            "The panel's KEY as the chart buckets it (a branch, an environment "
+            "lower-cased, a status of passed/failed/broken/skipped/unknown, a "
+            "failure category lower-cased, an ingestion source). Sent with "
+            "facet_dimension."
+        ),
+    ),
     scope: AnalyticsScope = Depends(analytics_scope(_CHART_DATA)),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1059,8 +1087,15 @@ async def chart_data(
     so the table view and CSV export need no transformation. Each point carries
     ``y`` and ``n`` (the sample behind it); a rate with nothing evaluated is
     ``y: null`` with ``measured: false`` and a reason, never 0.
+
+    ``facet_dimension`` + ``facet_value`` (W08 TRND-13) make the chart one
+    panel of the Explorer's small multiples; ``meta.definitions.facet`` states
+    it.
     """
-    spec = chart_data_service.parse_chart_spec(metric, group_by, top_n, scope=scope)
+    facet = chart_data_service.parse_facet(facet_dimension, facet_value)
+    spec = chart_data_service.parse_chart_spec(
+        metric, group_by, top_n, scope=scope, facet=facet,
+    )
     # ONE clock for the whole request. The service took its own, the statement
     # took another and this line took a third; three ``datetime.now()`` calls
     # can straddle UTC midnight, and the answer is then an axis whose last

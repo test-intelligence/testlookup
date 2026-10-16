@@ -109,6 +109,10 @@ class Plan:
     rows: list[Row]
     canons: list[Canon]
     releases: list[str] = field(default_factory=list)
+    #: W08 TRND-12: ``suite_memberships`` rows, ``(suite_name, fp, status)``.
+    #: The legacy sync marks a test absent from its suite's latest run
+    #: ``needs_review`` under ``<suite>-deleted``.
+    reviews: list[tuple[str, str, str]] = field(default_factory=list)
 
 
 P1 = Plan(
@@ -155,6 +159,14 @@ P1 = Plan(
         # Manually moved to Payments; it still RUNS under Orders.
         Canon("fp-12", "test_moved", "com.acme.OrderTest", "Payments", first="RB", last="RB"),
     ],
+    # W08 TRND-12: three Payments tests (two in test_pay.py, one ungrouped)
+    # marked for review; fp-04 is a member, but active.
+    reviews=[
+        ("Payments-deleted", "fp-01", "needs_review"),
+        ("Payments-deleted", "fp-02", "needs_review"),
+        ("Payments-deleted", "fp-03", "needs_review"),
+        ("Orders", "fp-04", "active"),
+    ],
 )
 
 P3 = Plan(
@@ -171,6 +183,8 @@ P3 = Plan(
         Canon("fp-idle", "test_idle", None, "Alpha", status="needs_review", source="managed"),
         Canon("fp-retire", "test_retire", "b.Gone", "Beta", first="RP2", last="RP2"),
     ],
+    # Another project's mark on P1's fp-04: it must never count in P1.
+    reviews=[("Alpha-deleted", "fp-04", "needs_review")],
 )
 
 
@@ -201,6 +215,7 @@ def _tests(plan: Plan, days: int, release: Optional[str] = None) -> list[dict]:
     start = _window_start(days)
     placed: dict[tuple, dict] = {}
     seen: set[str] = set()
+    reviewed = {fp for _suite, fp, status in plan.reviews if status == "needs_review"}
     for row in plan.rows:
         run = runs.get(row.run)
         if run is None or _when(run) < start or (release and run.release != release):
@@ -210,7 +225,7 @@ def _tests(plan: Plan, days: int, release: Optional[str] = None) -> list[dict]:
         test = placed.setdefault((suite, row.fp), {
             "suite": suite, "cls": _cls(row.cls), "fp": row.fp, "name": row.name,
             "executions": 0, "passed": 0, "failed": 0, "broken": 0,
-            "flaky": False, "last": None, "lost": False,
+            "flaky": False, "last": None, "lost": False, "review": row.fp in reviewed,
         })
         test["executions"] += 1
         if row.status in ("PASSED", "FAILED", "BROKEN"):
@@ -230,6 +245,7 @@ def _tests(plan: Plan, days: int, release: Optional[str] = None) -> list[dict]:
             "lost": last_run is None and (
                 first_run is not None or canon.source in ("execution", "linked") or has_rows
             ),
+            "review": canon.fp in reviewed,
         }
     return list(placed.values())
 
@@ -255,6 +271,8 @@ def _stats(tests: list[dict]) -> dict:
         "last_executed_at": last.isoformat() if last else None,
         "staleness_days": (FROZEN.date() - last.date()).days if last else None,
         "recency": recency,
+        # W08 TRND-12: in one project, the tests the plan's sync marked.
+        "needs_review_count": sum(1 for t in tests if t["review"]),
     }
 
 
@@ -311,11 +329,17 @@ async def _write_plan(db, project, plan: Plan, tag: str) -> dict:
         CanonicalTestCase,
         LaunchStatus,
         Release,
+        SuiteMembership,
         TestCase,
         TestRun,
         TestSuite,
     )
 
+    for suite_name, fp, status in plan.reviews:
+        db.add(SuiteMembership(
+            id=uuid.uuid4(), project_id=project.id, suite_name=suite_name,
+            test_fingerprint=fp, test_name=fp, status=status,
+        ))
     suites = {}
     for name in plan.suites:
         suite = TestSuite(
@@ -437,7 +461,7 @@ async def world():
             patch.setattr(module, "datetime", _FrozenDatetime)
 
     tag = uuid.uuid4().hex[:10]
-    ids = {name: uuid.uuid4() for name in ("p1", "p2", "p3", "p4", "pd")}
+    ids = {name: uuid.uuid4() for name in ("p1", "p2", "p3", "p4", "p5", "pd")}
     admin, member, outsider = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     try:
         async with sessions() as db:
@@ -474,7 +498,21 @@ async def world():
                 for index in range(501)
             ]
             db.add_all(cap_suites)
+            # P5 (W08 TRND-12): 503 suites, one idle test each -- Other opens.
+            page_suites = [
+                TestSuite(id=uuid.uuid4(), project_id=ids["p5"], name=f"q{index:03d}")
+                for index in range(503)
+            ]
+            db.add_all(page_suites)
             await db.flush()
+            db.add_all([
+                CanonicalTestCase(
+                    id=uuid.uuid4(), project_id=ids["p5"], test_suite_id=suite.id,
+                    test_fingerprint=f"page-{index:03d}", test_name=f"t{index}",
+                    status="active", source="managed",
+                )
+                for index, suite in enumerate(page_suites)
+            ])
             db.add_all([
                 CanonicalTestCase(
                     id=uuid.uuid4(), project_id=ids["p4"], test_suite_id=suite.id,
@@ -761,6 +799,70 @@ async def test_more_than_499_children_fold_into_one_other(world):
     assert (other["id"], other["label"], other["value"]) == ("other:all", "Other (3)", 3)
     assert other["measure"] is None and other["stats"]["recency"] == "never"
     assert (body["meta"]["truncated"], body["meta"]["truncated_total"]) == (True, 501)
+
+
+# ── W08 TRND-12: Other opens; the sync's review marks ──────────────────────
+
+
+async def test_other_opens_page_by_page_under_the_same_root(world):
+    """503 suites: page 1 is 498 + Other (5); page 2 those five and no Other;
+    page 3 the root alone. The root is the parent's whole total every time."""
+    _, one = await _get(world, "p5", depth=1, days=30)
+    assert len(one["nodes"]) == 500
+    assert [n["id"] for n in one["nodes"][1:-1]] == [f"s:q{i:03d}" for i in range(498)]
+    assert one["nodes"][-1]["label"] == "Other (5)"
+    _, two = await _get(world, "p5", depth=1, days=30, other_page=2)
+    assert [n["id"] for n in two["nodes"]] == ["all"] + [f"s:q{i:03d}" for i in range(498, 503)]
+    assert (two["meta"]["definitions"]["page"], two["meta"]["definitions"]["children_offset"]) == (2, 498)
+    assert two["meta"]["truncated"] is False
+    _, three = await _get(world, "p5", depth=1, days=30, other_page=3)
+    assert [n["id"] for n in three["nodes"]] == ["all"]
+    for body in (one, two, three):
+        assert body["nodes"][0]["value"] == 503
+        assert body["nodes"][0]["stats"] == one["nodes"][0]["stats"]
+    # Every child appears on exactly one page.
+    paged = [n["id"] for b in (one, two) for n in b["nodes"][1:] if not n["id"].startswith("other:")]
+    assert len(paged) == len(set(paged)) == 503
+
+
+@pytest.mark.parametrize("page", [1, 51, 0])
+async def test_other_page_outside_two_to_fifty_is_a_422(world, page):
+    _, body = await _get(world, "p5", expect=422, depth=1, other_page=page)
+    assert body.get("param") == "other_page"
+
+
+async def test_needs_review_counts_the_sync_s_marks_in_this_project_only(world):
+    """fp-01/02/03 (Payments) are marked; fp-04 is an ACTIVE member here and
+    marked only in another project, so Orders counts none."""
+    _, level1 = await _get(world, "p1", depth=1, days=30)
+    nodes = _by_id(level1)
+    assert nodes["all"]["stats"]["needs_review_count"] == 3
+    assert nodes["s:payments"]["stats"]["needs_review_count"] == 3
+    assert nodes["s:orders"]["stats"]["needs_review_count"] == 0
+    _, level2 = await _get(world, "p1", depth=2, suite="payments", days=30)
+    classes = {n["id"]: n["stats"]["needs_review_count"] for n in level2["nodes"]}
+    assert classes == {
+        "s:payments": 3,
+        f"c:payments{SEP}tests/api/test_pay.py": 2,
+        f"c:payments{SEP}__none__": 1,
+        f"c:payments{SEP}com.acme.LiveTest": 0,
+    }
+    _, level3 = await _get(world, "p1", depth=3, suite="payments", class_key="__none__", days=30)
+    assert _by_id(level3)["t:fp-03"]["stats"]["needs_review_count"] == 1
+
+
+async def test_outside_one_project_the_count_is_null_everywhere(world):
+    from app.services import coverage_map_service as svc
+    from app.services.analytics_scope import AnalyticsScope
+
+    scope = AnalyticsScope(
+        project_id=None, allowed_project_ids=frozenset({world.ids["p1"], world.ids["p3"]}),
+        release_ids=(), suite_names=(), days=30,
+    )
+    async with world.sessions() as db:
+        payload = await svc.build_coverage_map(db, scope, svc.CoverageLevel(1), now=FROZEN)
+    assert payload["nodes"]
+    assert {n["stats"]["needs_review_count"] for n in payload["nodes"]} == {None}
 
 
 async def test_hostile_names_round_trip_through_every_level(world):

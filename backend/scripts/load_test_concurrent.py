@@ -328,6 +328,25 @@ SCENARIOS: list[Scenario] = [
         "Failure signatures of up to 50 runs: <= 500 failing rows per run grouped by signature",
         budget_p95_ms=_budget("run_failure_signatures"),
     ),
+    # W08: the Trends summary, the Coverage History tab and Fix tagging list,
+    # value by team and one Explorer panel (budgets in performance_budgets.py).
+    Scenario(
+        "trend_summary",
+        "GET",
+        _project_analytics_path("/api/v1/analytics/trend-summary", 90),
+        "Trend summary, 90 d: the page's trend and coverage reads summarised (VIZ-209 layer)",
+        budget_p95_ms=_budget("trend_summary"),
+    ),
+    Scenario(
+        "value_by_team",
+        "GET",
+        _project_analytics_path("/api/v1/value-metrics/by-team", 365),
+        "Value by team, 365 d: grouped tests, defects, the headline legs and cluster members",
+        budget_p95_ms=_budget("value_by_team"),
+    ),
+    # coverage_history, coverage_untagged_tests and chart_data_facet read
+    # routes of the viz suite (under /analytics/coverage and /chart-data):
+    # they are VIZ_SCENARIOS, below, held to the same budgets.
     Scenario(
         "health_details",
         "GET",
@@ -532,6 +551,9 @@ METRICS_SUMMARY = "/api/v1/metrics/summary"
 SUMMARY_EXPORTS = "/api/v1/reports/summary/exports"
 SUMMARY_PDF = "/api/v1/reports/summary/pdf"
 SUMMARY_XLSX = "/api/v1/reports/summary/xlsx"
+#: W08 TRND-07 (``routers/analytics_coverage_map.py``).
+COVERAGE_HISTORY = "/api/v1/analytics/coverage/history"
+COVERAGE_UNTAGGED = "/api/v1/analytics/coverage/untagged-tests"
 
 #: ``analytics_scope`` (services/analytics_scope.py): ``release_id`` and
 #: ``suite_name`` REPEAT (``a=1&a=2``; a ``[]`` suffix is a different, unknown
@@ -544,7 +566,8 @@ _ROWS_BUCKETS = frozenset(
     )
 )
 VIZ_ALLOWED_PARAMS: dict[str, frozenset[str]] = {
-    CHART_DATA: _SCOPE_PARAMS | {"metric", "group_by", "top_n"},
+    # W08 TRND-13: one panel of the Explorer's small multiples.
+    CHART_DATA: _SCOPE_PARAMS | {"metric", "group_by", "top_n", "facet_dimension", "facet_value"},
     CHART_ROWS: _SCOPE_PARAMS | {"metric", "group_by", "top_n", "page", "size"} | _ROWS_BUCKETS,
     HEATMAP: _SCOPE_PARAMS | {"kind", "rows", "runs"},
     COVERAGE_MAP: _SCOPE_PARAMS | {"depth", "suite", "class_key"},
@@ -555,6 +578,8 @@ VIZ_ALLOWED_PARAMS: dict[str, frozenset[str]] = {
     SUMMARY_EXPORTS: _SCOPE_PARAMS | {"format", "mode", "background"},
     SUMMARY_PDF: _SCOPE_PARAMS | {"mode"},
     SUMMARY_XLSX: _SCOPE_PARAMS | {"mode"},
+    COVERAGE_HISTORY: _SCOPE_PARAMS,
+    COVERAGE_UNTAGGED: _SCOPE_PARAMS | {"page", "size"},
 }
 
 #: Per-principal limits (``core/analytics_read_layer.py::RATE_LIMITED_ROUTES``).
@@ -576,6 +601,11 @@ VIZ_BUDGET_KEYS: tuple[str, ...] = (
     "chart_data",          # percentile metrics (duration_p95); the route ceiling
     "analytics_heatmap",   # heatmap miss
     "chart_rows",          # rows, page 1
+    # W08 (harness-only): the Coverage History tab, the Fix tagging list and
+    # one Explorer panel faceted to a branch.
+    "coverage_history",
+    "coverage_untagged_tests",
+    "chart_data_facet",
 )
 #: The budget a WARM cell of a cacheable scenario is held to: epic §5.5
 #: "cached read <= 50 ms". Deliberately NOT a ``LATENCY_BUDGETS`` entry: a hit
@@ -753,6 +783,26 @@ def _legacy_coverage(f: dict, variant: int) -> str:
     return viz_path(LEGACY_COVERAGE, _windowed(f, 90, variant))
 
 
+def _chart_facet(f: dict, variant: int) -> str:
+    """W08 TRND-13: one Explorer panel -- executions by day and suite (the
+    execution-row grain) faceted to branch ``main``, 90 d."""
+    params: list[tuple[str, object]] = [
+        ("metric", "executions"), ("group_by", "day"), ("group_by", "suite"),
+        ("facet_dimension", "branch"), ("facet_value", "main"),
+    ]
+    return viz_path(CHART_DATA, params + _windowed(f, 90, variant))
+
+
+def _coverage_history(f: dict, variant: int) -> str:
+    """W08 TRND-07: the History tab over a year of snapshots."""
+    return viz_path(COVERAGE_HISTORY, _windowed(f, 365, variant))
+
+
+def _coverage_untagged(f: dict, variant: int) -> str:
+    """W08 TRND-07: the Fix tagging panel's first page, 90 d."""
+    return viz_path(COVERAGE_UNTAGGED, [("page", 1), ("size", 50)] + _windowed(f, 90, variant))
+
+
 def _metrics_summary(f: dict, variant: int) -> str:
     return viz_path(METRICS_SUMMARY, _windowed(f, 7, variant))
 
@@ -832,6 +882,15 @@ VIZ_SCENARIOS: list[VizScenario] = [
                 budget_key="chart_data_rate"),
     VizScenario("viz_legacy_coverage_90d", LEGACY_COVERAGE, _legacy_coverage,
                 "legacy /analytics/coverage, 90 d"),
+    # W08: operation names equal their budget names (performance_budgets.py).
+    VizScenario("chart_data_facet", CHART_DATA, _chart_facet,
+                "chart-data executions by day x suite, one branch panel (facet), 90 d",
+                budget_key="chart_data_facet"),
+    VizScenario("coverage_history", COVERAGE_HISTORY, _coverage_history,
+                "coverage history (snapshots), 365 d", budget_key="coverage_history"),
+    VizScenario("coverage_untagged_tests", COVERAGE_UNTAGGED, _coverage_untagged,
+                "coverage untagged tests, page 1 (size 50), 90 d",
+                budget_key="coverage_untagged_tests"),
     VizScenario("viz_legacy_metrics_summary", METRICS_SUMMARY, _metrics_summary,
                 "legacy /metrics/summary, 7 d (not behind the analytics read layer)",
                 cacheable=False),

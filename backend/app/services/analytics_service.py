@@ -798,7 +798,20 @@ async def coverage_stats(
             ROUND(
                 COUNT(*) FILTER (WHERE tc.status = 'PASSED') * 100.0
                 / NULLIF(COUNT(*) FILTER (WHERE tc.status IN ('PASSED', 'FAILED', 'BROKEN')), 0), 1
-            ) AS pass_rate
+            ) AS pass_rate,
+            -- W08 TRND-07: the suite's newest run in the window, for the
+            -- page's "2d ago" chip, in THIS statement (it and the total below
+            -- stay the ONLY two: tests/regression/test_release_scope_executes.py).
+            -- ``last_run_id`` is the first id of the group's runs newest first
+            -- (a tie at the microsecond takes the larger id). Measured on a
+            -- 300k-row project, 90 d: this ordered aggregate added ~70 ms to
+            -- the statement's p50 where the MAX of a "<timestamp>|<id>" string
+            -- added ~140 ms -- building a string per execution row costs more
+            -- than sorting the ids of one group at a time.
+            MAX(tr.created_at)                       AS last_run_at,
+            (
+                (array_agg(tr.id ORDER BY tr.created_at DESC, tr.id DESC))[1]
+            )::text                                  AS last_run_id
         FROM test_cases tc
         JOIN test_runs tr ON tr.id = tc.test_run_id
         LEFT JOIN projects p ON p.id = tr.project_id

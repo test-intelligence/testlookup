@@ -463,9 +463,13 @@ def parse_rows_request(
 # ── The statement ──────────────────────────────────────────────────────────
 
 
-def _selector_sql(selector: Selector, params: dict) -> str:
+def selector_predicate(selector: Selector, params: dict) -> str:
     """The predicate for one selector. Every fragment is hard-coded; the value
-    is always a bind under a ``bucket_`` name no scope fragment uses."""
+    is always a bind under a ``bucket_`` name no scope fragment uses.
+
+    Public since W08 (TRND-13): a chart-data facet is a selector, so a panel
+    of small multiples filters its rows with exactly the predicate a drill
+    into that bucket would use."""
     dim = selector.dimension
     name = selector_param(dim)
     if dim in ("day", "week"):
@@ -487,6 +491,10 @@ def _selector_sql(selector: Selector, params: dict) -> str:
     # suite, failure_category, branch, environment, ingestion_source: the
     # chart's own bucket expression against the chart's own key.
     return f"AND {charts.DIMENSIONS[dim].sql} = :{name}"
+
+
+#: The name the rows statement has always used.
+_selector_sql = selector_predicate
 
 
 def build_rows_statement(
@@ -757,4 +765,5 @@ __all__ = [
     "parse_selector",
     "row_item",
     "selector_param",
+    "selector_predicate",
 ]

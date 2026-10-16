@@ -59,13 +59,14 @@ def _scope(**kwargs) -> AnalyticsScope:
 
 def _row(part="child", rn=1, key="k", label="K", parent_label=None, *, tests=1,
          executions=0, passed=0, failed=0, broken=0, skipped=0, unknown=0,
-         flaky=0, last_at=None, unknown_tests=0, merged=1, child_total=1):
+         flaky=0, last_at=None, unknown_tests=0, merged=1, child_total=1,
+         needs_review_count=None):
     return SimpleNamespace(
         part=part, rn=rn, child_key=key, child_label=label, parent_label=parent_label,
         test_count=tests, executions=executions, passed=passed, failed=failed,
         broken=broken, skipped=skipped, unknown=unknown, flaky_count=flaky,
         last_at=last_at, unknown_tests=unknown_tests, merged=merged,
-        child_total=child_total,
+        child_total=child_total, needs_review_count=needs_review_count,
     )
 
 
@@ -75,6 +76,7 @@ def _root_of(children, *, parent_label=None):
         return sum(getattr(c, name) for c in children)
 
     dates = [c.last_at for c in children if c.last_at is not None]
+    review = [c.needs_review_count for c in children if c.needs_review_count is not None]
     return _row(
         "root", None, None, None, parent_label,
         tests=total("test_count"), executions=total("executions"),
@@ -82,6 +84,7 @@ def _root_of(children, *, parent_label=None):
         skipped=total("skipped"), unknown=total("unknown"), flaky=total("flaky_count"),
         last_at=max(dates) if dates else None, unknown_tests=total("unknown_tests"),
         merged=len(children), child_total=len(children),
+        needs_review_count=sum(review) if review else None,
     )
 
 
@@ -335,6 +338,8 @@ def test_every_stats_key_is_always_present():
         assert set(svc.node_stats(row, FROZEN)) == {
             "test_count", "executions", "pass_rate", "flaky_count", "flaky_share",
             "last_executed_at", "staleness_days", "recency",
+            # W08 TRND-12: null outside one project, a count inside one.
+            "needs_review_count",
         }
 
 

@@ -421,6 +421,8 @@ def register(mcp) -> None:  # noqa: ANN001
         suite_name: Optional[list[str]] = None,
         days: int = 30,
         top_n: Optional[int] = None,
+        facet_dimension: Optional[str] = None,
+        facet_value: Optional[str] = None,
     ) -> dict:
         """
         Return one metric grouped by one or two dimensions: the same series the
@@ -456,6 +458,18 @@ def register(mcp) -> None:  # noqa: ANN001
             days: Window in days ending today, UTC (1-365, default 30).
             top_n: Keep the N largest keys and merge the rest into "other".
                 Required for group_by test outside a single suite.
+            facet_dimension: With facet_value, draw one panel of a small
+                multiple: count only the executions whose value of this
+                dimension is facet_value. One of: branch, environment,
+                status, failure_category, ingestion_source. run_count with
+                status or failure_category is refused (422
+                facet_metric_grain); a wall_clock_* metric with either is
+                run_only_metric.
+            facet_value: The panel's key as the chart buckets it (a branch, an
+                environment or failure category lower-cased, a status of
+                passed / failed / broken / skipped / unknown). Sent with
+                facet_dimension (one without the other is 422 facet_pair);
+                meta.definitions.facet states the panel.
 
         Reading it: every point has `y` and `n` (the sample behind it). A
         `y` of null with `measured: false` means no data, never 0. Rates are
@@ -478,6 +492,8 @@ def register(mcp) -> None:  # noqa: ANN001
             "suite_name": suite_name,
             "days": days,
             "top_n": top_n,
+            "facet_dimension": facet_dimension,
+            "facet_value": facet_value,
         }
         try:
             return await api.get("/api/v1/analytics/chart-data", params=params)
