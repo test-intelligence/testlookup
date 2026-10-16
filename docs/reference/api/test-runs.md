@@ -10,14 +10,14 @@ List Runs
 
 
 
-Source: [backend/app/routers/runs.py:65](../../../backend/app/routers/runs.py#L65).
+Source: [backend/app/routers/runs.py:81](../../../backend/app/routers/runs.py#L81).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: str | None=None, page: int=Query(1, ge=1), size: int=Query(20, ge=1, le=500), status: str | None=None, release_id: Annotated[Optional[list[str]], Query(description=f"Repeatable (OR, at most {MAX_RELEASES}): a release UUID or '{UNATTRIBUTED}' for runs no release claims.")]=None, days: int | None=Query(30, ge=0, le=365, description='Show runs from last N days (0 = all time)'), suite_name: Annotated[Optional[list[str]], Query(description=f'Repeatable (OR, at most {MAX_SUITES}), 1-{MAX_SUITE_NAME_LENGTH} characters: runs labelled with, or holding a test in, the suite; case-insensitive.')]=None, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+project_id: str | None=None, page: int=Query(1, ge=1), size: int=Query(20, ge=1, le=500), status: str | None=None, release_id: Annotated[Optional[list[str]], Query(description=f"Repeatable (OR, at most {MAX_RELEASES}): a release UUID or '{UNATTRIBUTED}' for runs no release claims.")]=None, days: int | None=Query(30, ge=0, le=365, description='Show runs from last N days (0 = all time)'), suite_name: Annotated[Optional[list[str]], Query(description=f'Repeatable (OR, at most {MAX_SUITES}), 1-{MAX_SUITE_NAME_LENGTH} characters: runs labelled with, or holding a test in, the suite; case-insensitive.')]=None, q: Optional[str]=Query(None, max_length=100, description='Case-insensitive: contains on build number, branch and CI job; prefix on commit hash.'), branch: Annotated[Optional[list[str]], Query(description=f'Repeatable (OR, at most {MAX_BRANCHES}): exact branch names.')]=None, recommendation: Optional[str]=Query(None, description='The AI verdict column: GO | CONDITIONAL_GO | NO_GO | none.'), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
 ```
 
 ### Declared wire contract
@@ -147,6 +147,64 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
       }
     },
     {
+      "description": "Case-insensitive: contains on build number, branch and CI job; prefix on commit hash.",
+      "in": "query",
+      "name": "q",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "maxLength": 100,
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Case-insensitive: contains on build number, branch and CI job; prefix on commit hash.",
+        "title": "Q"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 20): exact branch names.",
+      "in": "query",
+      "name": "branch",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 20): exact branch names.",
+        "title": "Branch"
+      }
+    },
+    {
+      "description": "The AI verdict column: GO | CONDITIONAL_GO | NO_GO | none.",
+      "in": "query",
+      "name": "recommendation",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "The AI verdict column: GO | CONDITIONAL_GO | NO_GO | none.",
+        "title": "Recommendation"
+      }
+    },
+    {
       "in": "header",
       "name": "X-API-Key",
       "required": false,
@@ -200,6 +258,200 @@ Handler return expressions (source excerpts, not an inferred wire schema):
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
 
+## GET `/api/v1/runs/ai-verdicts`
+
+Run Ai Verdicts
+
+The AI-verdict inputs of the runs on screen, from their stored snapshots (W07 FAIL-04).
+
+Reads stored state only: a run without a servable snapshot is answered
+``snapshot: false`` (with ``analysed`` saying why), never computed here.
+Every id is resolved against the caller's projects; an unknown and a
+foreign id are both listed in ``unavailable``, the same way.
+
+Source: [backend/app/routers/runs.py:330](../../../backend/app/routers/runs.py#L330).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+run_id: Annotated[list[uuid.UUID], Query(description='Repeatable: 1-25 run ids (the runs on screen).')], db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "run_ai_verdicts_api_v1_runs_ai_verdicts_get",
+  "parameters": [
+    {
+      "description": "Repeatable: 1-25 run ids (the runs on screen).",
+      "in": "query",
+      "name": "run_id",
+      "required": true,
+      "schema": {
+        "description": "Repeatable: 1-25 run ids (the runs on screen).",
+        "items": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "title": "Run Id",
+        "type": "array"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/RunVerdictBatchResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+## GET `/api/v1/runs/branches`
+
+List Run Branches
+
+The project's branches in the window, newest last run first, for the Runs toolbar (W07 FAIL-05).
+
+Source: [backend/app/routers/runs.py:364](../../../backend/app/routers/runs.py#L364).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+project_id: str=Query(..., description='The project whose branches to list.'), days: int | None=Query(30, ge=0, le=365, description='Look back window in days (0 = all time)'), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "list_run_branches_api_v1_runs_branches_get",
+  "parameters": [
+    {
+      "description": "The project whose branches to list.",
+      "in": "query",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+        "description": "The project whose branches to list.",
+        "title": "Project Id",
+        "type": "string"
+      }
+    },
+    {
+      "description": "Look back window in days (0 = all time)",
+      "in": "query",
+      "name": "days",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "maximum": 365,
+            "minimum": 0,
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": 30,
+        "description": "Look back window in days (0 = all time)",
+        "title": "Days"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/RunBranchListResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## GET `/api/v1/runs/failed-ids`
 
 List Failed Run Ids
@@ -215,7 +467,7 @@ in 'running' status, or any pipeline created in the last 2h, are
 excluded — matching the Celery task's dedup window so the user doesn't
 waste a click re-firing what's already in flight.
 
-Source: [backend/app/routers/runs.py:147](../../../backend/app/routers/runs.py#L147).
+Source: [backend/app/routers/runs.py:204](../../../backend/app/routers/runs.py#L204).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -369,6 +621,95 @@ Handler return expressions (source excerpts, not an inferred wire schema):
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
 
+## GET `/api/v1/runs/failure-signatures`
+
+Run Failure Signatures
+
+The top failure signatures of each failed build, for grouping them by error (W07 FAIL-03).
+
+Same validation and authorization shape as ``/ai-verdicts``; at most
+``SIGNATURE_ROWS_PER_RUN`` failing rows are read per run (``capped`` says so).
+
+Source: [backend/app/routers/runs.py:348](../../../backend/app/routers/runs.py#L348).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+run_id: Annotated[list[uuid.UUID], Query(description='Repeatable: 1-50 run ids.')], db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "run_failure_signatures_api_v1_runs_failure_signatures_get",
+  "parameters": [
+    {
+      "description": "Repeatable: 1-50 run ids.",
+      "in": "query",
+      "name": "run_id",
+      "required": true,
+      "schema": {
+        "description": "Repeatable: 1-50 run ids.",
+        "items": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "title": "Run Id",
+        "type": "array"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/RunSignatureBatchResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## DELETE `/api/v1/runs/{run_id}`
 
 Delete Run
@@ -396,7 +737,7 @@ Four guards, each a real hazard rather than defensive habit:
   beyond non-empty. Prefixes outside the project's scope are refused and
   REPORTED, never deleted.
 
-Source: [backend/app/routers/runs.py:809](../../../backend/app/routers/runs.py#L809).
+Source: [backend/app/routers/runs.py:925](../../../backend/app/routers/runs.py#L925).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 
@@ -496,7 +837,7 @@ Get Run
 
 
 
-Source: [backend/app/routers/runs.py:260](../../../backend/app/routers/runs.py#L260).
+Source: [backend/app/routers/runs.py:376](../../../backend/app/routers/runs.py#L376).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -607,7 +948,7 @@ disagree or are too thin — not a failure to decide.
 a newly-flaky test reflects a real bug often enough that suppression is the
 one irreversible mistake available.
 
-Source: [backend/app/routers/runs.py:298](../../../backend/app/routers/runs.py#L298).
+Source: [backend/app/routers/runs.py:414](../../../backend/app/routers/runs.py#L414).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -694,7 +1035,7 @@ Get Run Downstream Status
 
 Expose durable publication state for required post-ingestion work.
 
-Source: [backend/app/routers/runs.py:272](../../../backend/app/routers/runs.py#L272).
+Source: [backend/app/routers/runs.py:388](../../../backend/app/routers/runs.py#L388).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -790,7 +1131,7 @@ check could be made -- an empty list never stands in for "no
 regressions". A live run still streaming answers the same way instead of
 404, as ``/regression-diff`` does.
 
-Source: [backend/app/routers/runs.py:527](../../../backend/app/routers/runs.py#L527).
+Source: [backend/app/routers/runs.py:643](../../../backend/app/routers/runs.py#L643).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -886,7 +1227,7 @@ re-checks whether work is already done before inserting.
 Returns 422 when the run isn't recoverable (already populated / not a
 live run / no buffer left in Redis).
 
-Source: [backend/app/routers/runs.py:644](../../../backend/app/routers/runs.py#L644).
+Source: [backend/app/routers/runs.py:760](../../../backend/app/routers/runs.py#L760).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -990,7 +1331,7 @@ broken error toast. (Bug 2026-05-19 — Run Detail page hit 404s for
 sessions clicked during the first ~30s before the drainer
 materialised the TestRun row.)
 
-Source: [backend/app/routers/runs.py:481](../../../backend/app/routers/runs.py#L481).
+Source: [backend/app/routers/runs.py:597](../../../backend/app/routers/runs.py#L597).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1084,7 +1425,7 @@ Set Run Release
 
 
 
-Source: [backend/app/routers/runs.py:565](../../../backend/app/routers/runs.py#L565).
+Source: [backend/app/routers/runs.py:681](../../../backend/app/routers/runs.py#L681).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 
@@ -1198,7 +1539,7 @@ ratchet); the underlying read is project-scoped. No DB writes. Returns 404
 when ``run_id`` has no run; otherwise a roll-up listing only the tests with at
 least one step flip (``truncated`` flags a run larger than the analysis cap).
 
-Source: [backend/app/routers/runs.py:457](../../../backend/app/routers/runs.py#L457).
+Source: [backend/app/routers/runs.py:573](../../../backend/app/routers/runs.py#L573).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1291,7 +1632,7 @@ List Test Cases
 
 
 
-Source: [backend/app/routers/runs.py:284](../../../backend/app/routers/runs.py#L284).
+Source: [backend/app/routers/runs.py:400](../../../backend/app/routers/runs.py#L400).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1427,7 +1768,7 @@ Get Test Case
 
 
 
-Source: [backend/app/routers/runs.py:341](../../../backend/app/routers/runs.py#L341).
+Source: [backend/app/routers/runs.py:457](../../../backend/app/routers/runs.py#L457).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1538,7 +1879,7 @@ leakage), the computed flakiness value (reusing
 ``analytics_service``/``test_health_coach`` thresholds), and identity
 metadata (owner / first-last seen / suite / timestamps). No DB writes.
 
-Source: [backend/app/routers/runs.py:406](../../../backend/app/routers/runs.py#L406).
+Source: [backend/app/routers/runs.py:522](../../../backend/app/routers/runs.py#L522).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1639,7 +1980,7 @@ Access is checked against the supplied run before the service query. The
 endpoint is separate from the legacy flat detail route so existing clients
 retain their response shape during gradual rollout.
 
-Source: [backend/app/routers/runs.py:382](../../../backend/app/routers/runs.py#L382).
+Source: [backend/app/routers/runs.py:498](../../../backend/app/routers/runs.py#L498).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1745,7 +2086,7 @@ verdict. Resolves the test's ``test_fingerprint`` + project via the PROVIDED
 read is project-scoped. No DB writes. Returns 404 when ``test_id`` doesn't
 belong to ``run_id``; an empty-window "insufficient history" report otherwise.
 
-Source: [backend/app/routers/runs.py:431](../../../backend/app/routers/runs.py#L431).
+Source: [backend/app/routers/runs.py:547](../../../backend/app/routers/runs.py#L547).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1853,7 +2194,7 @@ stays unchanged and clients fetch steps on demand. Guarded by
 ``require_run_access`` which verifies the PROVIDED ``run_id`` (IDOR ratchet).
 Returns the ordered, nested step tree with per-step + test-level attachments.
 
-Source: [backend/app/routers/runs.py:360](../../../backend/app/routers/runs.py#L360).
+Source: [backend/app/routers/runs.py:476](../../../backend/app/routers/runs.py#L476).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 

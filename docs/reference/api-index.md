@@ -89,6 +89,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/analytics/suite-detail` | Suite Detail | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/systemic-clusters` | Systemic Clusters | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/test-scatter` | Get Test Scatter | [Analytics](api/analytics.md) |
+| GET | `/api/v1/analytics/time-to-fix` | Time To Fix | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/top-failing` | Top Failing Tests | [Analytics](api/analytics.md) |
 | POST | `/api/v1/analyze` | Analyze Test Case | [AI Analysis](api/ai-analysis.md) |
 | GET | `/api/v1/analyze/{test_case_id}` | Fetch existing AI analysis for a test case (no re-run) | [AI Analysis](api/ai-analysis.md) |
@@ -252,6 +253,11 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/projects/{project_id}/attribution-rules/preview` | Preview Attribution Rule | [Release Attribution Rules](api/release-attribution-rules.md) |
 | DELETE | `/api/v1/projects/{project_id}/attribution-rules/{rule_id}` | Delete Attribution Rule | [Release Attribution Rules](api/release-attribution-rules.md) |
 | PUT | `/api/v1/projects/{project_id}/attribution-rules/{rule_id}` | Update Attribution Rule | [Release Attribution Rules](api/release-attribution-rules.md) |
+| GET | `/api/v1/projects/{project_id}/classification-hints` | List Classification Hints | [Classification hints](api/classification-hints.md) |
+| POST | `/api/v1/projects/{project_id}/classification-hints` | Create Classification Hint | [Classification hints](api/classification-hints.md) |
+| GET | `/api/v1/projects/{project_id}/classification-hints/preview` | Preview Classification Hint | [Classification hints](api/classification-hints.md) |
+| DELETE | `/api/v1/projects/{project_id}/classification-hints/{hint_id}` | Delete Classification Hint | [Classification hints](api/classification-hints.md) |
+| PATCH | `/api/v1/projects/{project_id}/classification-hints/{hint_id}` | Update Classification Hint | [Classification hints](api/classification-hints.md) |
 | POST | `/api/v1/projects/{project_id}/default-qa-lead/reset-password` | Reset Default Qa Lead Password Endpoint | [Projects](api/projects.md) |
 | POST | `/api/v1/projects/{project_id}/defects/jira` | Create Jira Defect One Click | [Defects](api/defects.md) |
 | GET | `/api/v1/projects/{project_id}/defects/jira/metadata` | Jira Defect Metadata | [Defects](api/defects.md) |
@@ -297,6 +303,9 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/projects/{project_id}/ownership/rules/export` | Export Ownership Rules | [Service Ownership](api/service-ownership.md) |
 | DELETE | `/api/v1/projects/{project_id}/ownership/rules/{rule_id}` | Delete Ownership Rule | [Service Ownership](api/service-ownership.md) |
 | PATCH | `/api/v1/projects/{project_id}/ownership/rules/{rule_id}` | Update Ownership Rule | [Service Ownership](api/service-ownership.md) |
+| GET | `/api/v1/projects/{project_id}/ownership/source-roots` | Get Source Roots | [Service Ownership](api/service-ownership.md) |
+| PUT | `/api/v1/projects/{project_id}/ownership/source-roots` | Put Source Roots | [Service Ownership](api/service-ownership.md) |
+| POST | `/api/v1/projects/{project_id}/ownership/source-roots/preview` | Preview Source Roots | [Service Ownership](api/service-ownership.md) |
 | GET | `/api/v1/projects/{project_id}/ownership/team-channels` | List Team Channels | [Service Ownership](api/service-ownership.md) |
 | DELETE | `/api/v1/projects/{project_id}/ownership/team-channels/{team_name}` | Delete Team Channel | [Service Ownership](api/service-ownership.md) |
 | PUT | `/api/v1/projects/{project_id}/ownership/team-channels/{team_name}` | Upsert Team Channel | [Service Ownership](api/service-ownership.md) |
@@ -379,9 +388,12 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/reviews/{review_id}/accept` | Accept Review | [Reviews](api/reviews.md) |
 | POST | `/api/v1/reviews/{review_id}/reject` | Reject Review | [Reviews](api/reviews.md) |
 | GET | `/api/v1/runs` | List Runs | [Test Runs](api/test-runs.md) |
+| GET | `/api/v1/runs/ai-verdicts` | Run Ai Verdicts | [Test Runs](api/test-runs.md) |
+| GET | `/api/v1/runs/branches` | List Run Branches | [Test Runs](api/test-runs.md) |
 | GET | `/api/v1/runs/compare` | Compare Two Runs | [Run Compare](api/run-compare.md) |
 | GET | `/api/v1/runs/compare/latest` | Compare Latest Suite Runs | [Run Compare](api/run-compare.md) |
 | GET | `/api/v1/runs/failed-ids` | List Failed Run Ids | [Test Runs](api/test-runs.md) |
+| GET | `/api/v1/runs/failure-signatures` | Run Failure Signatures | [Test Runs](api/test-runs.md) |
 | DELETE | `/api/v1/runs/{run_id}` | Delete Run | [Test Runs](api/test-runs.md) |
 | GET | `/api/v1/runs/{run_id}` | Get Run | [Test Runs](api/test-runs.md) |
 | GET | `/api/v1/runs/{run_id}/ai-compare` | Compare Ai With Baseline | [AI History](api/ai-history.md) |
@@ -594,4 +606,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **585 HTTP operations**, **494 paths**, **84 domain pages**.
+Total: **597 HTTP operations**, **503 paths**, **85 domain pages**.

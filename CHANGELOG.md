@@ -52,6 +52,27 @@ locally by default.
 
 ### Added
 
+- **Runs and failures answer more at a glance; a 14-day window everywhere**
+  (deferred-features wave W07, WIN-01, FAIL-01 to FAIL-08, FAIL-10). Every page
+  with a time window now offers **14d** (Summary, Defects, My failures, Value
+  metrics, Activity and the Audit dashboard joined the others), so a fortnight
+  chosen on one page is no longer reset to a week on the next. The Runs list
+  fills its AI verdict column from one request for the runs on screen
+  (`GET /api/v1/runs/ai-verdicts`, stored analyses only), and after each
+  analysis a background task stores the run's summary so a fresh verdict shows
+  without opening the run; builds are grouped by their dominant failure
+  signature (`GET /api/v1/runs/failure-signatures`); search, branch and AI
+  verdict filters live in the toolbar and the URL (migration 0214 adds the
+  stored recommendation); Run Compare picks runs from a server search with
+  "Paste run ID". On Failures a top-failing test expands to its latest error,
+  stack head, owner and an "Open in run" link; a **Median time to fix** tile
+  (`GET /api/v1/analytics/time-to-fix`) reads "Not measured" below five fixes;
+  and QA leads can add **classification hints** ("error message contains …
+  → Infrastructure", migration 0216) that classify new failures before any AI
+  engine, while a person's correction still wins. Ownership gains **Java source
+  roots** (migration 0215) so Java stack frames resolve to files and owners.
+  Recommended actions list the reader's own role first.
+
 - **Defects can be triaged where they are listed** (deferred-features wave W06,
   DEF-01 to DEF-07). Each row on `/defects` has a menu for a QA engineer:
   **Change status** (Open, In progress, Resolved, Invalid, with a note),
