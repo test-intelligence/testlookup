@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useModalFocus } from '@/hooks/useModalFocus'
+import { useReleases } from '@/hooks/useReleases'
 import { Bug, X } from 'lucide-react'
 import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
@@ -10,6 +11,7 @@ import type {
   DefectIntakePayload,
   DefectIntakeSeverity,
 } from '@/types/analytics'
+import type { Release } from '@/types/releases'
 
 const SEVERITIES: { id: DefectIntakeSeverity; label: string; tone: string }[] = [
   { id: 'P0', label: 'P0 — Blocker', tone: 'text-[var(--status-failed)] border-[var(--status-failed-bd)]/60 bg-[var(--status-failed-bg)]/30' },
@@ -26,6 +28,17 @@ const CATEGORIES: { id: DefectIntakeCategory; label: string }[] = [
   { id: 'FLAKY',             label: 'Flaky' },
   { id: 'UNKNOWN',           label: 'Unknown' },
 ]
+
+/** `{name} {version}`, plus ` · shipped {date}` once the release has shipped. */
+function releaseOptionLabel(release: Release): string {
+  const name = [release.name, release.version].filter((part) => part && part.trim()).join(' ')
+  if (!release.released_at) return name
+  const shipped = new Date(release.released_at)
+  const date = Number.isNaN(shipped.getTime())
+    ? release.released_at
+    : shipped.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+  return `${name} · shipped ${date}`
+}
 
 interface DefectIntakeModalProps {
   projectId: string
@@ -52,8 +65,17 @@ export default function DefectIntakeModal({
   const [testName, setTestName] = useState(prefillTestName ?? '')
   const [suiteName, setSuiteName] = useState(prefillSuiteName ?? '')
   const [jiraUrl, setJiraUrl] = useState('')
+  const [affectsRelease, setAffectsRelease] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // The top bar's release list, read as it is (no second request). Only this
+  // project's releases are offered: the server refuses any other id.
+  const { data: releaseList } = useReleases(undefined, { cached: true })
+  const releases = useMemo(
+    () => (releaseList?.items ?? []).filter((r) => !r.project_id || r.project_id === projectId),
+    [releaseList, projectId],
+  )
 
   // Escape (unless mid-submit), Tab trap, and return focus to the opener.
   const dialogRef = useModalFocus({ onClose, canClose: !submitting })
@@ -69,6 +91,8 @@ export default function DefectIntakeModal({
     setSubmitting(true)
     setError(null)
 
+    // DEF-03: `affects_releases` is sent only when a release is chosen; the server
+    // checks every id is a release of THIS project (422 otherwise).
     const payload: DefectIntakePayload = {
       project_id: projectId,
       title: titleTrimmed,
@@ -79,6 +103,7 @@ export default function DefectIntakeModal({
       ...(testName.trim()    ? { test_name: testName.trim() }      : {}),
       ...(suiteName.trim()   ? { suite_name: suiteName.trim() }    : {}),
       ...(jiraTrimmed        ? { jira_ticket_url: jiraTrimmed }    : {}),
+      ...(affectsRelease     ? { affects_releases: [affectsRelease] } : {}),
     }
 
     try {
@@ -228,6 +253,27 @@ export default function DefectIntakeModal({
                 className="w-full rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text)] focus:border-[var(--color-accent)] focus:outline-none"
               />
             </div>
+          </div>
+
+          <div>
+            <label htmlFor="defect-affects-release" className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
+              Affects release (optional)
+            </label>
+            <select
+              id="defect-affects-release"
+              aria-label="Affects release"
+              value={affectsRelease}
+              onChange={(e) => setAffectsRelease(e.target.value)}
+              className="w-full rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text)] focus:border-[var(--color-accent)] focus:outline-none"
+            >
+              <option value="">Not specified</option>
+              {releases.map((r) => (
+                <option key={r.id} value={r.id}>{releaseOptionLabel(r)}</option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+              A defect filed against a release that has already shipped counts toward the escape rate.
+            </p>
           </div>
 
           <div>

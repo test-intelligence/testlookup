@@ -14,7 +14,7 @@ VIZ-202: ``release_id`` / ``suite_name`` (repeatable) count the analyses
 of executions in those releases (run's primary release) and suites
 (effective suite).
 
-Source: [backend/app/routers/analytics.py:686](../../../backend/app/routers/analytics.py#L686).
+Source: [backend/app/routers/analytics.py:750](../../../backend/app/routers/analytics.py#L750).
 
 Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -168,7 +168,7 @@ so the table view and CSV export need no transformation. Each point carries
 ``y`` and ``n`` (the sample behind it); a rate with nothing evaluated is
 ``y: null`` with ``measured: false`` and a reason, never 0.
 
-Source: [backend/app/routers/analytics.py:940](../../../backend/app/routers/analytics.py#L940).
+Source: [backend/app/routers/analytics.py:1004](../../../backend/app/routers/analytics.py#L1004).
 
 Dependency chain: `OAuth2PasswordBearer`, `_gate_dependency.<locals>.analytics_gate`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -820,7 +820,7 @@ Used by the Failures page "Classify" CTA when the AI classifier left a
 large chunk of failures uncategorized — lets the user tag them all in
 one shot rather than per-test.
 
-Source: [backend/app/routers/analytics.py:800](../../../backend/app/routers/analytics.py#L800).
+Source: [backend/app/routers/analytics.py:864](../../../backend/app/routers/analytics.py#L864).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -907,7 +907,7 @@ Coverage Stats
 
 Return test suite coverage stats aggregated over the period.
 
-Source: [backend/app/routers/analytics.py:543](../../../backend/app/routers/analytics.py#L543).
+Source: [backend/app/routers/analytics.py:549](../../../backend/app/routers/analytics.py#L549).
 
 Dependency chain: `OAuth2PasswordBearer`, `_gate_dependency.<locals>.analytics_gate`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1254,14 +1254,20 @@ release) and suites (effective suite). A defect with no linked execution
 cannot be placed and is left out while either filter is set. The list has
 no time window (``meta.ignored_filters``): open defects of any age.
 
-Source: [backend/app/routers/analytics.py:602](../../../backend/app/routers/analytics.py#L602).
+W06: ``resolution_status=ACTIVE`` lists every live defect (OPEN and
+IN_PROGRESS). ``release_match=affects`` places a defect in a release by
+the release gate's own rule instead (asserted impact, else where it was
+found), so the page and the gate count the same set; the suite filter
+still places it through its execution.
+
+Source: [backend/app/routers/analytics.py:608](../../../backend/app/routers/analytics.py#L608).
 
 Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-resolution_status: str | None=None, page: int=Query(1, ge=1), size: int=Query(20, ge=1, le=100), scope: AnalyticsScope=Depends(analytics_scope(_DEFECTS)), db: AsyncSession=Depends(get_db)
+resolution_status: str | None=None, page: int=Query(1, ge=1), size: int=Query(20, ge=1, le=100), release_match: str=Query(_RELEASE_MATCH_DEFAULT, pattern=_RELEASE_MATCH_PATTERN), scope: AnalyticsScope=Depends(analytics_scope(_DEFECTS)), db: AsyncSession=Depends(get_db)
 ```
 
 ### Declared wire contract
@@ -1309,6 +1315,17 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
         "minimum": 1,
         "title": "Size",
         "type": "integer"
+      }
+    },
+    {
+      "in": "query",
+      "name": "release_match",
+      "required": false,
+      "schema": {
+        "default": "found_in",
+        "pattern": "^(found_in|affects)$",
+        "title": "Release Match",
+        "type": "string"
       }
     },
     {
@@ -1432,7 +1449,7 @@ Manual Defect Intake. Creates an OPEN defect for the project,
 best-effort attaching to the most-recent matching TestCase when
 ``test_name`` (and optionally ``suite_name``) are supplied.
 
-Source: [backend/app/routers/analytics.py:633](../../../backend/app/routers/analytics.py#L633).
+Source: [backend/app/routers/analytics.py:697](../../../backend/app/routers/analytics.py#L697).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1512,6 +1529,328 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
   ]
 }
 ```
+
+## GET `/api/v1/analytics/defects/escape-rate`
+
+Defect Escape Rate
+
+The share of the window's defects that were filed after a release they
+affect had shipped, among those that affect a shipped release.
+
+``measured`` is false (and ``rate`` null, never 0) below
+``ESCAPE_RATE_MIN_SAMPLE`` attributed defects, with the reason. Not cached
+on purpose: marking a release shipped bumps no analytics epoch. The suite
+filter does not apply (declared in ``meta.ignored_filters``).
+
+Source: [backend/app/routers/analytics.py:673](../../../backend/app/routers/analytics.py#L673).
+
+Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+scope: AnalyticsScope=Depends(analytics_scope(_DEFECTS_ESCAPE)), db: AsyncSession=Depends(get_db)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "defect_escape_rate_api_v1_analytics_defects_escape_rate_get",
+  "parameters": [
+    {
+      "description": "One project (single-valued). Omit for every project you can read.",
+      "in": "query",
+      "name": "project_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "One project (single-valued). Omit for every project you can read.",
+        "title": "Project Id"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+      "in": "query",
+      "name": "release_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+        "title": "Release Id"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+      "in": "query",
+      "name": "suite_name",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+        "title": "Suite Name"
+      }
+    },
+    {
+      "description": "Window in days, 1-365.",
+      "in": "query",
+      "name": "days",
+      "required": false,
+      "schema": {
+        "default": 30,
+        "description": "Window in days, 1-365.",
+        "title": "Days",
+        "type": "integer"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {}
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+Handler return expressions (source excerpts, not an inferred wire schema):
+
+```python
+with_meta(payload, await build_meta(db, scope, measured=payload['measured'], reason=payload['reason'], ignored_filters=ignored_filters))
+```
+
+Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
+
+## GET `/api/v1/analytics/defects/trend`
+
+Defect Trend
+
+One point per UTC day of the window: defects opened, closed, the open
+backlog at the end of the day, the P0/P1 part of it, and a 7-day rolling
+mean time to resolve; plus totals over EVERY defect in scope (no row cap).
+
+``points[-1].open_backlog == totals.open``. Closed rows without a
+``resolved_at`` (legacy INVALID closes) cannot be placed on a day: they are
+in no point and counted in ``totals.closed_without_time``. Release, suite
+and ``release_match`` scope it exactly as the defect list.
+
+Source: [backend/app/routers/analytics.py:650](../../../backend/app/routers/analytics.py#L650).
+
+Dependency chain: `OAuth2PasswordBearer`, `_gate_dependency.<locals>.analytics_gate`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+release_match: str=Query(_RELEASE_MATCH_DEFAULT, pattern=_RELEASE_MATCH_PATTERN), scope: AnalyticsScope=Depends(analytics_scope(_DEFECTS_TREND)), db: AsyncSession=Depends(get_db)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "defect_trend_api_v1_analytics_defects_trend_get",
+  "parameters": [
+    {
+      "in": "query",
+      "name": "release_match",
+      "required": false,
+      "schema": {
+        "default": "found_in",
+        "pattern": "^(found_in|affects)$",
+        "title": "Release Match",
+        "type": "string"
+      }
+    },
+    {
+      "description": "One project (single-valued). Omit for every project you can read.",
+      "in": "query",
+      "name": "project_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "One project (single-valued). Omit for every project you can read.",
+        "title": "Project Id"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+      "in": "query",
+      "name": "release_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 20): a release UUID or 'unattributed' for runs no release claims.",
+        "title": "Release Id"
+      }
+    },
+    {
+      "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+      "in": "query",
+      "name": "suite_name",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Repeatable (OR, at most 50), 1-500 characters; matched case-insensitively on the effective suite.",
+        "title": "Suite Name"
+      }
+    },
+    {
+      "description": "Window in days, 1-365.",
+      "in": "query",
+      "name": "days",
+      "required": false,
+      "schema": {
+        "default": 30,
+        "description": "Window in days, 1-365.",
+        "title": "Days",
+        "type": "integer"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {}
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+Handler return expressions (source excerpts, not an inferred wire schema):
+
+```python
+with_meta(payload, await build_meta(db, scope, measured=True, window_start=utc_day_window_start(scope.window_days)))
+```
+
+Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
 
 ## GET `/api/v1/analytics/execution-metrics.csv`
 
@@ -1695,7 +2034,7 @@ Failure Categories
 
 Return distribution of failure categories for AI-analysed test cases.
 
-Source: [backend/app/routers/analytics.py:405](../../../backend/app/routers/analytics.py#L405).
+Source: [backend/app/routers/analytics.py:411](../../../backend/app/routers/analytics.py#L411).
 
 Dependency chain: `OAuth2PasswordBearer`, `_gate_dependency.<locals>.analytics_gate`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -2030,7 +2369,7 @@ budget the team chooses, like an error budget.
 Returns ``flake_load: null`` with a reason below the minimum run count,
 since a share computed from three runs is noise wearing a percentage sign.
 
-Source: [backend/app/routers/analytics.py:129](../../../backend/app/routers/analytics.py#L129).
+Source: [backend/app/routers/analytics.py:135](../../../backend/app/routers/analytics.py#L135).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -2150,7 +2489,7 @@ classifier specificity swings from 100% to no-better-than-random across
 projects, so how much authority a flaky verdict carries is a per-project
 question. It is never "may act" — see the ``policy`` field.
 
-Source: [backend/app/routers/analytics.py:161](../../../backend/app/routers/analytics.py#L161).
+Source: [backend/app/routers/analytics.py:167](../../../backend/app/routers/analytics.py#L167).
 
 Dependency chain: `OAuth2PasswordBearer`, `_gate_dependency.<locals>.analytics_gate`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -2298,7 +2637,7 @@ Flaky Tests
 
 Return tests with highest flakiness rate (intermittent pass/fail pattern).
 
-Source: [backend/app/routers/analytics.py:105](../../../backend/app/routers/analytics.py#L105).
+Source: [backend/app/routers/analytics.py:111](../../../backend/app/routers/analytics.py#L111).
 
 Dependency chain: `OAuth2PasswordBearer`, `_gate_dependency.<locals>.analytics_gate`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -2679,7 +3018,7 @@ pipeline persisted one, computing on demand otherwise (no backfill).
 Returns ``{found: false}`` when no analyzed failure matches — the UI
 renders the plain badge then.
 
-Source: [backend/app/routers/analytics.py:450](../../../backend/app/routers/analytics.py#L450).
+Source: [backend/app/routers/analytics.py:456](../../../backend/app/routers/analytics.py#L456).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -2821,7 +3160,7 @@ review feature: explicit ``test_suite_owners`` row → ``Project.manager_user_id
 Returns ``{queued: false, reason}`` when no owner can be resolved instead
 of erroring, so the UI can show a clear actionable message.
 
-Source: [backend/app/routers/analytics.py:712](../../../backend/app/routers/analytics.py#L712).
+Source: [backend/app/routers/analytics.py:776](../../../backend/app/routers/analytics.py#L776).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -2913,7 +3252,7 @@ return their union, and ``suite_name`` in the response is then the list):
   - Last 10 test runs that included this suite
 No ``suite_name`` matches nothing (``suite_name: ""``), as before.
 
-Source: [backend/app/routers/analytics.py:571](../../../backend/app/routers/analytics.py#L571).
+Source: [backend/app/routers/analytics.py:577](../../../backend/app/routers/analytics.py#L577).
 
 Dependency chain: `OAuth2PasswordBearer`, `_gate_dependency.<locals>.analytics_gate`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -3084,7 +3423,7 @@ The cluster's own statistics (size, cohesion, co-failure runs) are
 project-level and are not recomputed; ``scope`` in the response says so.
 Clusters have no time window (``meta.ignored_filters``).
 
-Source: [backend/app/routers/analytics.py:282](../../../backend/app/routers/analytics.py#L282).
+Source: [backend/app/routers/analytics.py:288](../../../backend/app/routers/analytics.py#L288).
 
 Dependency chain: `OAuth2PasswordBearer`, `_gate_dependency.<locals>.analytics_gate`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -3399,7 +3738,7 @@ Top Failing Tests
 
 Return tests with the highest total failure count in the period.
 
-Source: [backend/app/routers/analytics.py:426](../../../backend/app/routers/analytics.py#L426).
+Source: [backend/app/routers/analytics.py:432](../../../backend/app/routers/analytics.py#L432).
 
 Dependency chain: `OAuth2PasswordBearer`, `_gate_dependency.<locals>.analytics_gate`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 

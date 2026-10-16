@@ -35,7 +35,7 @@ from app.models.schemas import (
     NotifyTestOwnerResponse,
 )
 from app.services import analytics_service, chart_data_service
-from app.services.analytics_meta import build_meta, with_meta
+from app.services.analytics_meta import build_meta, ignored, utc_day_window_start, with_meta
 from app.services.analytics_scope import (
     AnalyticsScope,
     ScopePolicy,
@@ -69,6 +69,12 @@ _CLUSTERS = ScopePolicy(default_days=None, project_required=True)
 _AI_SUMMARY = ScopePolicy(default_days=30, max_days=365)
 # The defect list has no window (open defects of any age).
 _DEFECTS = ScopePolicy(default_days=None)
+# W06 DEF-04 / DEF-03: the defect trend and the escape rate are windowed.
+_DEFECTS_TREND = ScopePolicy(default_days=30, max_days=365)
+_DEFECTS_ESCAPE = ScopePolicy(default_days=30, max_days=365)
+# W06 DEF-05: how a defect is placed in a release (``analytics_service.RELEASE_MATCHES``).
+_RELEASE_MATCH_DEFAULT = "found_in"
+_RELEASE_MATCH_PATTERN = "^(found_in|affects)$"
 
 
 def _membership_note(scope: AnalyticsScope, subject: str) -> dict:
@@ -605,6 +611,7 @@ async def list_defects(
     resolution_status: str | None = None,
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
+    release_match: str = Query(_RELEASE_MATCH_DEFAULT, pattern=_RELEASE_MATCH_PATTERN),
     scope: AnalyticsScope = Depends(analytics_scope(_DEFECTS)),
     db: AsyncSession = Depends(get_db),
 ):
@@ -615,6 +622,12 @@ async def list_defects(
     release) and suites (effective suite). A defect with no linked execution
     cannot be placed and is left out while either filter is set. The list has
     no time window (``meta.ignored_filters``): open defects of any age.
+
+    W06: ``resolution_status=ACTIVE`` lists every live defect (OPEN and
+    IN_PROGRESS). ``release_match=affects`` places a defect in a release by
+    the release gate's own rule instead (asserted impact, else where it was
+    found), so the page and the gate count the same set; the suite filter
+    still places it through its execution.
     """
     payload = await analytics_service.list_defects(
         db,
@@ -625,9 +638,60 @@ async def list_defects(
         allowed_project_ids=scope.allowed_project_ids,
         release_id=scope.release_arg,
         suite_name=scope.suite_arg,
+        release_match=release_match,
     )
     # Paged, not truncated: ``total`` and ``pages`` state the whole list.
     return with_meta(payload, await build_meta(db, scope, measured=True))
+
+
+# ── Defect trend and escape rate (W06 DEF-04 / DEF-03) ─────────────────────
+
+
+@router.get("/defects/trend")
+@analytics_error_contract
+@analytics_read(namespace="defect_trend")
+async def defect_trend(
+    release_match: str = Query(_RELEASE_MATCH_DEFAULT, pattern=_RELEASE_MATCH_PATTERN),
+    scope: AnalyticsScope = Depends(analytics_scope(_DEFECTS_TREND)),
+    db: AsyncSession = Depends(get_db),
+):
+    """One point per UTC day of the window: defects opened, closed, the open
+    backlog at the end of the day, the P0/P1 part of it, and a 7-day rolling
+    mean time to resolve; plus totals over EVERY defect in scope (no row cap).
+
+    ``points[-1].open_backlog == totals.open``. Closed rows without a
+    ``resolved_at`` (legacy INVALID closes) cannot be placed on a day: they are
+    in no point and counted in ``totals.closed_without_time``. Release, suite
+    and ``release_match`` scope it exactly as the defect list.
+    """
+    payload = await analytics_service.defect_trend(db, scope, release_match=release_match)
+    return with_meta(payload, await build_meta(
+        db, scope, measured=True, window_start=utc_day_window_start(scope.window_days),
+    ))
+
+
+@router.get("/defects/escape-rate")
+@analytics_error_contract
+async def defect_escape_rate(
+    scope: AnalyticsScope = Depends(analytics_scope(_DEFECTS_ESCAPE)),
+    db: AsyncSession = Depends(get_db),
+):
+    """The share of the window's defects that were filed after a release they
+    affect had shipped, among those that affect a shipped release.
+
+    ``measured`` is false (and ``rate`` null, never 0) below
+    ``ESCAPE_RATE_MIN_SAMPLE`` attributed defects, with the reason. Not cached
+    on purpose: marking a release shipped bumps no analytics epoch. The suite
+    filter does not apply (declared in ``meta.ignored_filters``).
+    """
+    payload = await analytics_service.defect_escape_rate(db, scope)
+    ignored_filters = (
+        [ignored("suite", "The escape rate is counted per release, not per suite.")]
+        if scope.suite_names else ()
+    )
+    return with_meta(payload, await build_meta(
+        db, scope, measured=payload["measured"], reason=payload["reason"], ignored_filters=ignored_filters,
+    ))
 
 
 @router.post(

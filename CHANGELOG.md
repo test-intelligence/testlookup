@@ -52,6 +52,30 @@ locally by default.
 
 ### Added
 
+- **Defects can be triaged where they are listed** (deferred-features wave W06,
+  DEF-01 to DEF-07). Each row on `/defects` has a menu for a QA engineer:
+  **Change status** (Open, In progress, Resolved, Invalid, with a note),
+  **Assign** (a project member and a team) and **Link Jira issue**
+  (`PATCH /api/v1/projects/{project_id}/defects/{defect_id}`, migration 0213
+  adds the assignee). Offline the key is saved locally; with Jira reachable it
+  is checked first and a status change is written back to the issue. A defect
+  that is In progress still counts as open everywhere, so moving a CRITICAL
+  one there does not unblock a release. The page has an **Owner** column
+  (assignee, or the team with where it came from) and queue health counts
+  ownership again; **Only this release** narrows the list to the defects that
+  affect the release the way the release gate counts them; Open, P0/P1 and
+  Time to resolve draw the window's history (`GET /analytics/defects/trend`);
+  and an **Escape rate** tile (`GET /analytics/defects/escape-rate`: defects
+  filed after a release they affect had shipped) says "Not measured" below five
+  defects instead of 0 %. A promoted defect that needs approval now waits in
+  **Inbox › Approvals › Defects** for a QA lead: Approve files the Jira ticket
+  (or says it was not filed while offline), Reject needs a reason and closes it
+  as Invalid. An effective promotion is announced as the outbound webhook
+  `defect.promoted`. Also fixed on the way: the cluster duplicate check listed
+  defect titles from every project; linking a defect to Jira from Integrations
+  always failed; the Jira resolution webhook failed once two defects shared a
+  key, and now closes and refreshes every one of them.
+
 - **Choose the RAG faithfulness evaluator in AI settings.** While the
   `rag_faithfulness_gate` flag is on, **Settings › AI Configuration ›
   Knowledge-Grounded Generation** offers the single-prompt judge or Ragas,

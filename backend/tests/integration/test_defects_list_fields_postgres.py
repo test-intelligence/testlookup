@@ -76,3 +76,11 @@ async def test_an_intake_defect_lists_with_its_title_severity_and_component(sess
     assert row["severity"] == "LOW"
     assert row["component"] == "payments-service"
     assert listed["total"] == 1
+    # W06: the row also carries its project, the server-derived priority, and the
+    # owner / assignee / approval / Jira-filing keys (null = not known, never "").
+    assert row["project_id"] == project.id
+    assert row["priority"] == "P3"
+    assert (row["owner_team"], row["owner_source"]) == (None, None)
+    assert (row["assignee_user_id"], row["assignee_name"]) == (None, None)
+    assert row["approval_status"] == "approved"
+    assert (row["jira_filing_status"], row["jira_filing_reason"]) == (None, None)

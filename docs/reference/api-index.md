@@ -73,6 +73,8 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/analytics/coverage-map` | Coverage Map | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/defects` | List Defects | [Analytics](api/analytics.md) |
 | POST | `/api/v1/analytics/defects` | Create Defect | [Analytics](api/analytics.md) |
+| GET | `/api/v1/analytics/defects/escape-rate` | Defect Escape Rate | [Analytics](api/analytics.md) |
+| GET | `/api/v1/analytics/defects/trend` | Defect Trend | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/execution-metrics` | Get Execution Metrics | [Execution Metrics](api/execution-metrics.md) |
 | GET | `/api/v1/analytics/execution-metrics.csv` | Export Execution Metrics Csv | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/execution/suite-history` | Get Suite Execution History | [Execution Metrics](api/execution-metrics.md) |
@@ -254,6 +256,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/projects/{project_id}/defects/jira` | Create Jira Defect One Click | [Defects](api/defects.md) |
 | GET | `/api/v1/projects/{project_id}/defects/jira/metadata` | Jira Defect Metadata | [Defects](api/defects.md) |
 | GET | `/api/v1/projects/{project_id}/defects/jira/preview` | Jira Defect Preview | [Defects](api/defects.md) |
+| PATCH | `/api/v1/projects/{project_id}/defects/{defect_id}` | Update Defect | [Defects](api/defects.md) |
 | POST | `/api/v1/projects/{project_id}/deletion/execute` | Execute Criteria Deletion | [Retention](api/retention.md) |
 | GET | `/api/v1/projects/{project_id}/deletion/jobs` | List Deletion Jobs | [Retention](api/retention.md) |
 | GET | `/api/v1/projects/{project_id}/deletion/jobs/{job_id}` | Get Deletion Job | [Retention](api/retention.md) |
@@ -591,4 +594,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **582 HTTP operations**, **491 paths**, **84 domain pages**.
+Total: **585 HTTP operations**, **494 paths**, **84 domain pages**.

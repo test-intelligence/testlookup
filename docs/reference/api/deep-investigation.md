@@ -20,14 +20,19 @@ legitimately unscoped; the defect was that non-admins were unscoped too.
 ``defects.project_id`` is indexed (``ix_defects_project_id``), so the schema
 already anticipated this filter.
 
-Source: [backend/app/routers/deep_investigation.py:425](../../../backend/app/routers/deep_investigation.py#L425).
+DEF-06: ``{items, total, page, page_size}``. ``total`` is a COUNT over the
+same scope, not the page length, so the Inbox badge never reads
+``min(n, page_size)``. ``project_id`` pins one project (400 malformed, 403
+not accessible); soft-deleted projects' defects never wait for anyone.
+
+Source: [backend/app/routers/deep_investigation.py:531](../../../backend/app/routers/deep_investigation.py#L531).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-page: int=Query(1, ge=1, description='Page number'), page_size: int=Query(50, ge=1, le=100, description='Items per page'), current_user: User=Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)), db: AsyncSession=Depends(get_db)
+page: int=Query(1, ge=1, description='Page number'), page_size: int=Query(50, ge=1, le=100, description='Items per page'), project_id: Optional[str]=Query(None, description="Only this project's queue (must be accessible)"), current_user: User=Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)), db: AsyncSession=Depends(get_db)
 ```
 
 ### Declared wire contract
@@ -66,6 +71,24 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
       }
     },
     {
+      "description": "Only this project's queue (must be accessible)",
+      "in": "query",
+      "name": "project_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Only this project's queue (must be accessible)",
+        "title": "Project Id"
+      }
+    },
+    {
       "in": "header",
       "name": "X-API-Key",
       "required": false,
@@ -86,7 +109,9 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
     "200": {
       "content": {
         "application/json": {
-          "schema": {}
+          "schema": {
+            "$ref": "#/components/schemas/PendingDefectList"
+          }
         }
       },
       "description": "Successful Response"
@@ -110,23 +135,23 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 }
 ```
 
-Handler return expressions (source excerpts, not an inferred wire schema):
-
-```python
-[{'defect_id': str(d.id), 'title': d.title, 'severity': d.severity, 'component': d.component, 'owner_team': d.owner_team, 'created_at': d.created_at.isoformat() if d.created_at else None, 'policy_reasons': (d.policy_evaluation or {}).get('policy_reasons', [])} for d in defects]
-```
-
-Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
-
 ## POST `/api/v1/deep-investigate/defects/{defect_id}/review`
 
 Review Defect
 
 Approve or reject a defect that is pending review (QA Lead+ only).
 
-When approved with a Jira project key, the Jira ticket is created.
+Approve (DEF-06): the approval is committed FIRST, so a slow or failing
+Jira never undoes it. Then, when a Jira project key was given at
+promotion, the ticket is filed ON this defect (or linked to the open issue
+already filed for the same failure) and committed; offline it says so.
+``defect.promoted`` (ledger + webhook) covers cluster promotions only, the
+webhook after the last commit.
 
-Source: [backend/app/routers/deep_investigation.py:327](../../../backend/app/routers/deep_investigation.py#L327).
+Reject (D-11): the defect is also closed as ``INVALID`` with the reason in
+the activity ledger, so a rejected suggestion stops blocking the gate.
+
+Source: [backend/app/routers/deep_investigation.py:343](../../../backend/app/routers/deep_investigation.py#L343).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -227,7 +252,7 @@ Trigger the deep investigation pipeline for a completed test run.
 Uses workflow_type="deep" which adds failure clustering, flaky sentinel,
 test health analysis, and release risk on top of the standard 5-stage pipeline.
 
-Source: [backend/app/routers/deep_investigation.py:88](../../../backend/app/routers/deep_investigation.py#L88).
+Source: [backend/app/routers/deep_investigation.py:94](../../../backend/app/routers/deep_investigation.py#L94).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 
@@ -325,7 +350,7 @@ Get Failure Clusters
 
 Return semantic failure clusters for a test run.
 
-Source: [backend/app/routers/deep_investigation.py:138](../../../backend/app/routers/deep_investigation.py#L138).
+Source: [backend/app/routers/deep_investigation.py:144](../../../backend/app/routers/deep_investigation.py#L144).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -410,7 +435,7 @@ Get Ranked Clusters
 
 Return failure clusters ranked by impact score for triage prioritization.
 
-Source: [backend/app/routers/deep_investigation.py:269](../../../backend/app/routers/deep_investigation.py#L269).
+Source: [backend/app/routers/deep_investigation.py:285](../../../backend/app/routers/deep_investigation.py#L285).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -498,7 +523,7 @@ Get Cluster Defect Candidate
 
 Get a pre-assembled defect candidate for a failure cluster.
 
-Source: [backend/app/routers/deep_investigation.py:202](../../../backend/app/routers/deep_investigation.py#L202).
+Source: [backend/app/routers/deep_investigation.py:208](../../../backend/app/routers/deep_investigation.py#L208).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -596,7 +621,7 @@ Check if a cluster likely duplicates an existing open defect.
 Returns duplicate info without creating anything.
 P3-9: Business logic extracted to cluster_service.
 
-Source: [backend/app/routers/deep_investigation.py:304](../../../backend/app/routers/deep_investigation.py#L304).
+Source: [backend/app/routers/deep_investigation.py:320](../../../backend/app/routers/deep_investigation.py#L320).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -698,7 +723,7 @@ Promote Cluster To Defect
 
 Promote a failure cluster to a defect record (optionally with Jira ticket).
 
-Source: [backend/app/routers/deep_investigation.py:220](../../../backend/app/routers/deep_investigation.py#L220).
+Source: [backend/app/routers/deep_investigation.py:226](../../../backend/app/routers/deep_investigation.py#L226).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 
@@ -805,7 +830,7 @@ Get Deep Findings
 
 Return deep investigation findings per failure cluster for a test run.
 
-Source: [backend/app/routers/deep_investigation.py:166](../../../backend/app/routers/deep_investigation.py#L166).
+Source: [backend/app/routers/deep_investigation.py:172](../../../backend/app/routers/deep_investigation.py#L172).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 

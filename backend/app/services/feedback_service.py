@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.mongo import Collections
+from app.services.defect_status import INVALID, RESOLVED, apply_status
 from app.services.eval_label_provenance import checksum_from_analysis
 from app.services.failure_category_sync import apply_human_category
 from app.services.privacy_service import sanitize_for_persistence
@@ -637,16 +638,40 @@ async def jira_resolution_webhook(db: AsyncSession, payload: dict) -> dict:
     if not is_resolved and not is_invalid:
         return {"message": "no action — not a resolution event"}
 
-    defect = (await db.execute(select(Defect).where(Defect.jira_ticket_id == issue_key))).scalar_one_or_none()
-    if not defect:
+    # EVERY defect linked to the issue (W06 §0.15): two defects may share one
+    # Jira key (a key linked by hand, a dedup on approve), and keys are global
+    # to the one configured Jira, so the fix closes all of them. The single-row
+    # read raised MultipleResultsFound -- a 500 -- the first time a key was shared.
+    defects = list(
+        (
+            await db.execute(
+                select(Defect)
+                .where(Defect.jira_ticket_id == issue_key)
+                .order_by(Defect.created_at.asc(), Defect.id.asc())
+            )
+        ).scalars().all()
+    ) if issue_key else []
+    if not defects:
         return {"message": f"no defect found for {issue_key}"}
 
-    defect.jira_status = status
-    defect.resolution_status = "INVALID" if is_invalid else "RESOLVED"
-    if is_resolved and not is_invalid:
-        defect.resolved_at = datetime.now(timezone.utc)
+    # ``apply_status`` stamps ``resolved_at`` on every close, INVALID included
+    # (it used to stay NULL, so the trend could not place the close).
+    target = INVALID if is_invalid else RESOLVED
+    now = datetime.now(timezone.utc)
+    for row in defects:
+        row.jira_status = status
+        apply_status(row, target, now=now)
 
-    analysis = (await db.execute(select(AIAnalysis).where(AIAnalysis.test_case_id == defect.test_case_id))).scalar_one_or_none()
+    # The feedback row: for the first linked defect whose test has an analysis (as before).
+    defect = defects[0]
+    analysis = None
+    for row in defects:
+        if row.test_case_id is None:
+            continue
+        analysis = (await db.execute(select(AIAnalysis).where(AIAnalysis.test_case_id == row.test_case_id))).scalar_one_or_none()
+        if analysis:
+            defect = row
+            break
     rating = None
     if analysis:
         rating = FeedbackRating.INCORRECT if is_invalid else FeedbackRating.CORRECT
@@ -666,7 +691,8 @@ async def jira_resolution_webhook(db: AsyncSession, payload: dict) -> dict:
     # stage-only: router handler commits
     return {
         "message": f"Feedback recorded: {issue_key} → {rating if analysis else 'no analysis found'}",
-        "defect_id": str(defect.id),
+        "defect_id": str(defects[0].id),
+        "defect_ids": [str(row.id) for row in defects],
     }
 
 # ── Immutable DecisionReport feedback (Phase 5 FR-D4) ────────────────────────

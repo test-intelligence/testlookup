@@ -21,6 +21,7 @@ from app.core.config import settings
 from app.db.postgres import AsyncSessionLocal
 from app.models.agent_contracts import DefectTriageAgentOutput, validate_agent_contract
 from app.models.postgres import Defect, TestCase
+from app.services.defect_status import ACTIVE_STATUSES
 from app.services.action_policy import (
     ActionStatus,
     check_jira_ticket_creation_policy,
@@ -72,7 +73,9 @@ async def _recurring_open_defect(db, project_id, fingerprint, tc_id, occurred_at
             .outerjoin(TestCase, TestCase.id == Defect.test_case_id)
             .where(
                 Defect.project_id == project_id,
-                Defect.resolution_status == "OPEN",
+                # Live = OPEN or IN_PROGRESS (W06 DEF-01): a recurrence attaches
+                # to an in-progress defect instead of opening a duplicate.
+                Defect.resolution_status.in_(ACTIVE_STATUSES),
                 or_(
                     Defect.signature_fingerprint == fingerprint,
                     TestCase.test_fingerprint == fingerprint,

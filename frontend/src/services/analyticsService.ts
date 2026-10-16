@@ -2,7 +2,9 @@ import type {
   CoverageResponse,
   DefectIntakePayload,
   DefectIntakeResponse,
+  DefectEscapeRateResponse,
   DefectResponse,
+  DefectTrendResponse,
   FailureCategoriesResponse,
   FlakyTestItem,
   KindEvidenceResponse,
@@ -97,6 +99,39 @@ export const analyticsService = {
   getDefects: (projectId: string | null, params?: Record<string, unknown>) =>
     getData<DefectResponse>('/api/v1/analytics/defects', {
       params: { ...projectParam(projectId), ...params },
+    }),
+
+  /**
+   * DEF-04: one point per UTC day of the window, plus totals over EVERY defect
+   * in scope (the tiles' values; the list is capped). `releaseMatch` is sent
+   * only with a release, and only when given (the default is the server's).
+   */
+  getDefectTrend: (
+    projectId: string | null,
+    {
+      days,
+      releaseIds,
+      releaseMatch,
+      suiteName,
+    }: { days: number; releaseIds?: readonly string[]; releaseMatch?: 'found_in' | 'affects'; suiteName?: string | null },
+  ) =>
+    getData<DefectTrendResponse>('/api/v1/analytics/defects/trend', {
+      params: {
+        ...projectParam(projectId),
+        days,
+        ...releaseParam(releaseIds),
+        ...(releaseMatch && releaseIds && releaseIds.length > 0 ? { release_match: releaseMatch } : {}),
+        ...scopeParam('suite_name', suiteName),
+      },
+    }),
+
+  /** DEF-03: the escape rate is counted per release, so it takes no suite. */
+  getDefectEscapeRate: (
+    projectId: string | null,
+    { days, releaseIds }: { days: number; releaseIds?: readonly string[] },
+  ) =>
+    getData<DefectEscapeRateResponse>('/api/v1/analytics/defects/escape-rate', {
+      params: { ...projectParam(projectId), days, ...releaseParam(releaseIds) },
     }),
 
   createDefect: (payload: DefectIntakePayload) =>

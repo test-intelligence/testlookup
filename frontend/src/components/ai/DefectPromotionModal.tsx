@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import {
   AlertTriangle,
   ChevronDown,
@@ -9,11 +9,16 @@ import {
   X,
 } from 'lucide-react'
 import { clsx } from 'clsx'
+import { Link } from 'react-router-dom'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useDefectCandidate, usePromoteCluster } from '@/hooks/useDefectPromotion'
 import { useModalFocus } from '@/hooks/useModalFocus'
+import { usePermissions } from '@/hooks/usePermissions'
 import type { DefectPromotionRequest } from '@/types/defect-promotion'
 import { isSafeExternalUrl } from '@/utils/safeUrl'
+
+/** Inbox › Approvals, narrowed to the defects queue (the Inbox route is `/my-failures`). */
+const DEFECT_APPROVALS_URL = '/my-failures?tab=approvals&source=defects'
 
 const SEVERITY_OPTIONS = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as const
 type Severity = (typeof SEVERITY_OPTIONS)[number]
@@ -30,7 +35,12 @@ interface DefectPromotionModalProps {
   clusterId: string
   clusterLabel: string
   onClose: () => void
-  onSuccess?: (defectId: string, jiraUrl?: string | null) => void
+  /**
+   * After a promotion is stored. `approvalStatus` is the server's: a host keeps
+   * the modal open on `pending_review`, so its result (awaiting approval, and
+   * where a QA lead approves it) is read, not closed away.
+   */
+  onSuccess?: (defectId: string, jiraUrl?: string | null, approvalStatus?: string | null) => void
 }
 
 export default function DefectPromotionModal({
@@ -43,6 +53,7 @@ export default function DefectPromotionModal({
   const { candidate, isLoading, isError } = useDefectCandidate(runId, clusterId)
   const { promote, isPromoting, promotionResult, promotionError, reset } =
     usePromoteCluster()
+  const { isQaLead } = usePermissions()
 
   const [title, setTitle] = useState('')
   const [severity, setSeverity] = useState<Severity>('HIGH')
@@ -90,7 +101,7 @@ export default function DefectPromotionModal({
     const result = await promote(runId, clusterId, request)
     if (result) {
       setSubmitted(true)
-      onSuccess?.(result.defect_id, result.jira_url)
+      onSuccess?.(result.defect_id, result.jira_url, result.approval_status)
     }
   }
 
@@ -176,6 +187,21 @@ export default function DefectPromotionModal({
                           </li>
                         ))}
                       </ul>
+                    )}
+                    {/* W06 DEF-06: where the approval happens. Only a QA lead can open that queue. */}
+                    {isQaLead ? (
+                      <Link
+                        to={DEFECT_APPROVALS_URL}
+                        onClick={handleClose}
+                        data-defect-approvals-link=""
+                        className="mt-1.5 inline-block text-xs text-[var(--color-accent)] hover:underline"
+                      >
+                        Review it in Inbox › Approvals
+                      </Link>
+                    ) : (
+                      <p className="mt-1.5 text-xs text-[var(--color-text-muted)]" data-defect-approvals-note="">
+                        A QA lead approves it in Inbox › Approvals.
+                      </p>
                     )}
                   </div>
                 </div>

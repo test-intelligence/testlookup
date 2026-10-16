@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Iterable, Optional
+from collections import defaultdict
+from datetime import date, datetime, timedelta, timezone
+from typing import Any, Iterable, Optional
 
 from fastapi import HTTPException
 from sqlalchemy import desc, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.postgres import Defect, Project, TestCase, TestRun, TriageStatus
+from app.models.postgres import Defect, Project, ServiceOwnershipRule, TestCase, TestRun, TriageStatus
 from app.services.analytics_scope import (
+    AnalyticsScope,
     ReleaseArg,
     SuiteArg,
     effective_suite_sql,
@@ -20,6 +22,7 @@ from app.services.analytics_scope import (
     suite_filter_sql,
     suite_match_sql,
 )
+from app.services.defect_status import ACTIVE_QUERY_VALUE, ACTIVE_STATUSES, ESCAPE_RATE_MIN_SAMPLE, priority_sql
 from app.services.flaky_investigator import determine_likely_cause
 from app.services.flaky_signals import (
     MIN_FLIPS_FOR_INTERMITTENCY as _FLAKY_MIN_FLIPS,
@@ -970,6 +973,158 @@ async def suite_detail(
     }
 
 
+#: How ``list_defects`` places a defect in a release (W06 DEF-05):
+#: ``found_in`` -- its originating execution's primary release (VIZ-202);
+#: ``affects`` -- the release gate's rule (asserted impact, else where found).
+RELEASE_MATCHES = ("found_in", "affects")
+
+
+def _release_list(release_id: ReleaseArg) -> list[str]:
+    if release_id is None:
+        return []
+    if isinstance(release_id, (str, uuid.UUID)):
+        return [str(release_id)]
+    return [str(item) for item in release_id]
+
+
+def _defect_scope_sql(
+    params: dict,
+    *,
+    release_id: ReleaseArg,
+    suite_name: SuiteArg,
+    release_match: str = "found_in",
+) -> tuple[str, bool]:
+    """The release + suite WHERE fragment of a defects query, and whether it needs the execution joins.
+
+    ``found_in`` keeps the VIZ-202 text exactly: release and suite place a
+    defect through its originating execution (``tc`` / ``tr``), and
+    ``tr.id IS NOT NULL`` keeps a defect with no execution out of a filtered
+    list (without it the Unattributed bucket, ``tr.primary_release_id IS
+    NULL``, would match every unlinked defect through the LEFT JOIN's NULLs).
+
+    ``affects`` (W06 DEF-05) asks the release gate's own question instead
+    (``release_defect_service.affects_release_sql``): asserted impact, else
+    where it was found. It needs NO execution, so a hand-filed defect that
+    affects the release is listed. The suite filter still places the defect
+    through its execution in both modes.
+    """
+    if release_match not in RELEASE_MATCHES:
+        raise ValueError("release_match must be found_in or affects")
+    suite_part = _add_suite_param(params, suite_name)
+    if release_match == "found_in":
+        scope = " ".join(part for part in (_add_release_param(params, release_id), suite_part) if part)
+        return (f"AND tr.id IS NOT NULL {scope}", True) if scope else ("", False)
+    from app.services.release_defect_service import affects_release_sql
+
+    affects = affects_release_sql(params, _release_list(release_id), alias="d")
+    parts = [affects] if affects else []
+    if suite_part:
+        parts.append(f"AND tr.id IS NOT NULL {suite_part}")
+    return " ".join(parts), bool(suite_part)
+
+
+def _defect_status_sql(params: dict, resolution_status: str | None) -> str:
+    """``AND`` the status filter: one stored word, or ``ACTIVE`` = every live status; ``""`` for none."""
+    if not resolution_status:
+        return ""
+    wanted = resolution_status.strip().upper()
+    if wanted == ACTIVE_QUERY_VALUE:
+        # Constants of ``defect_status``, never request text: safe to inline.
+        return "AND d.resolution_status IN (" + ", ".join(f"'{s}'" for s in ACTIVE_STATUSES) + ")"
+    params["resolution_status"] = wanted
+    return "AND d.resolution_status = :resolution_status"
+
+
+#: The page's priority (P0-P3), derived once in SQL (``defect_status.priority_sql``).
+_PRIORITY_SQL = priority_sql("d")
+#: The assignee's name when that user may own work (the W05 release-owner rule:
+#: active, not a service account, not synthetic); NULL otherwise.
+_ASSIGNEE_NAME_SQL = (
+    "CASE WHEN au.is_active IS NOT FALSE AND au.is_service_account IS NOT TRUE "
+    "AND au.is_synthetic IS NOT TRUE THEN COALESCE(au.full_name, au.username) END"
+)
+#: Test attributes the project's ownership rules match on (the attrs of
+#: ``ownership_resolver_service.resolve_cluster_ownership``). Popped from every
+#: row before it is returned: they are not part of the wire contract.
+_OWNER_HELPERS = ("own_test_case", "own_component", "own_package", "own_path", "own_label", "own_owner")
+_OWNER_HELPER_SQL = (
+    "tc.id AS own_test_case, tc.class_name AS own_component, tc.package_name AS own_package, "
+    "tc.full_name AS own_path, COALESCE(tc.feature, tc.epic) AS own_label, tc.owner AS own_owner"
+)
+#: ``OwnershipResult.match_source`` -> the row's ``owner_source`` family.
+_OWNER_SOURCE_FAMILY = {"component_owner_map": "component_map", "test_owner_label": "test_label"}
+
+
+def _own_team(value: Any) -> str | None:
+    """A team name that names a team: trimmed, not blank, not ``Unknown`` (what promotion stores for nobody)."""
+    team = str(value or "").strip()
+    if not team or team.lower() == "unknown":
+        return None
+    return team
+
+
+async def _resolve_owner_teams(db: AsyncSession, items: list[dict]) -> None:
+    """Give every row an ``owner_team`` and ``owner_source`` (W06 DEF-02), in place.
+
+    The defect's own team wins (``defect``). A row without one gets the team
+    ITS project's ownership rules resolve for its test case (``rule``,
+    ``component_map``, ``test_label``: ``ownership_resolver_service`` decides),
+    else both stay ``None``. At most two statements per page (the active rules
+    of the page's projects, their component maps) and none when every row has
+    its own team. A rule of project A is never applied to a row of project B.
+    """
+    needs: list[dict] = []
+    for item in items:
+        own = _own_team(item.get("owner_team"))
+        item["owner_team"] = own
+        item["owner_source"] = "defect" if own else None
+        if own is None and item.get("own_test_case") is not None and item.get("project_id") is not None:
+            needs.append(item)
+    if needs:
+        project_uuids = sorted({uuid.UUID(str(item["project_id"])) for item in needs}, key=str)
+        rules = (
+            await db.execute(
+                select(ServiceOwnershipRule)
+                .where(
+                    ServiceOwnershipRule.project_id.in_(project_uuids),
+                    ServiceOwnershipRule.is_active.is_(True),
+                )
+                .order_by(
+                    ServiceOwnershipRule.project_id,
+                    ServiceOwnershipRule.priority.desc(),
+                    ServiceOwnershipRule.created_at,
+                )
+            )
+        ).scalars().all()
+        maps = (
+            await db.execute(select(Project.id, Project.component_owner_map).where(Project.id.in_(project_uuids)))
+        ).all()
+        from app.services.ownership_resolver_service import resolve_test_ownership
+
+        rules_of: dict[str, list] = defaultdict(list)
+        for rule in rules:
+            rules_of[str(rule.project_id)].append(rule)
+        map_of = {str(pid): cmap for pid, cmap in maps}
+        for item in needs:
+            pid = str(item["project_id"])
+            attrs = {
+                "suite_name": item.get("suite_name") or "",
+                "component": item.get("own_component") or "",
+                "package": item.get("own_package") or "",
+                "path": item.get("own_path") or "",
+                "label": item.get("own_label") or "",
+                "owner": item.get("own_owner") or "",
+            }
+            result = resolve_test_ownership(rules_of.get(pid, []), attrs, map_of.get(pid))
+            team = str(result.team_name or "").strip() or None
+            if team and result.match_source:
+                item["owner_team"] = team
+                item["owner_source"] = _OWNER_SOURCE_FAMILY.get(result.match_source, "rule")
+    for item in items:
+        for key in _OWNER_HELPERS:
+            item.pop(key, None)
+
+
 async def list_defects(
     db: AsyncSession,
     project_id: str | None,
@@ -979,6 +1134,9 @@ async def list_defects(
     allowed_project_ids: Optional[Iterable[uuid.UUID | str]] = None,
     release_id: ReleaseArg = None,
     suite_name: SuiteArg = None,
+    *,
+    release_match: str = "found_in",
+    defect_id: str | None = None,
 ) -> dict:
     params: dict = {"limit": size, "offset": (page - 1) * size}
     # defects table is queried directly here (alias ``d``), so scope on
@@ -989,25 +1147,25 @@ async def list_defects(
         allowed_project_ids=allowed_project_ids,
         table_alias="d",
     )
-    status_filter = "AND d.resolution_status = :resolution_status" if resolution_status else ""
-    if resolution_status:
-        params["resolution_status"] = resolution_status.upper()
-    # VIZ-202: release and suite place a defect through its originating
-    # execution (``tc`` / ``tr`` below). Conditional fragments, so the
-    # unfiltered statements are unchanged. ``tr.id IS NOT NULL`` keeps a defect
-    # with no execution out of a filtered list -- without it the Unattributed
-    # bucket (``tr.primary_release_id IS NULL``) would match every unlinked
-    # defect through the LEFT JOIN's NULLs.
-    scope_filter = " ".join(
-        part for part in (_add_release_param(params, release_id), _add_suite_param(params, suite_name))
-        if part
+    # ``ACTIVE`` lists every live status (OPEN and IN_PROGRESS, W06 DEF-01).
+    status_filter = _defect_status_sql(params, resolution_status)
+    # VIZ-202 / W06 DEF-05: the release and suite fragments, and whether the
+    # count must join the execution too.
+    scope_filter, needs_execution = _defect_scope_sql(
+        params, release_id=release_id, suite_name=suite_name, release_match=release_match,
     )
-    if scope_filter:
-        scope_filter = f"AND tr.id IS NOT NULL {scope_filter}"
+    # One defect (``defect_row``): the same row shape, by id.
+    if defect_id is not None:
+        try:
+            params["defect_id"] = str(uuid.UUID(str(defect_id)))
+        except (ValueError, TypeError):
+            return {"items": [], "total": 0, "page": page, "size": size, "pages": 0}
+        scope_filter = f"{scope_filter} AND d.id = :defect_id"
     query = scoped_text(
         f"""
         SELECT
             d.id,
+            d.project_id,
             -- The defect's own title, severity and component. Without them
             -- the Defects page titled a row with its test's name (or its
             -- category: "product bug") and derived a severity from the
@@ -1028,7 +1186,15 @@ async def list_defects(
             d.resolved_at,
             tc.test_name,
             tc.suite_name,
-            r.name AS release_name
+            r.name AS release_name,
+            {_PRIORITY_SQL} AS priority,
+            d.owner_team,
+            d.assignee_user_id,
+            {_ASSIGNEE_NAME_SQL} AS assignee_name,
+            d.approval_status,
+            d.policy_evaluation -> 'jira_filing' ->> 'status' AS jira_filing_status,
+            d.policy_evaluation -> 'jira_filing' ->> 'reason' AS jira_filing_reason,
+            {_OWNER_HELPER_SQL}
         FROM defects d
         -- LEFT, not INNER: ``test_case_id`` is nullable by design. The intake
         -- path stores NULL when a failure signature matches no current test
@@ -1041,6 +1207,8 @@ async def list_defects(
         LEFT JOIN test_runs tr ON tr.id = tc.test_run_id
         LEFT JOIN release_test_run_links rtrl ON rtrl.test_run_id = tr.id
         LEFT JOIN releases r ON r.id = rtrl.release_id
+        -- W06 DEF-01: the assignee's name (LEFT: most defects have none).
+        LEFT JOIN users au ON au.id = d.assignee_user_id
         WHERE 1=1
         {project_filter}
         {status_filter}
@@ -1057,7 +1225,7 @@ async def list_defects(
     count_joins = (
         "LEFT JOIN test_cases tc ON tc.id = d.test_case_id "
         "LEFT JOIN test_runs tr ON tr.id = tc.test_run_id"
-    ) if scope_filter else ""
+    ) if needs_execution else ""
     count_params = {key: value for key, value in params.items() if key not in ("limit", "offset")}
     count_query = scoped_text(
         f"""
@@ -1071,7 +1239,326 @@ async def list_defects(
         count_params,
     )
     total = (await db.execute(count_query, count_params)).scalar() or 0
-    return {"items": [dict(row._mapping) for row in rows], "total": total, "page": page, "size": size, "pages": -(-total // size)}
+    items = [dict(row._mapping) for row in rows]
+    # W06 DEF-02: the owner column (the defect's own team, else the project's
+    # ownership rules for its test); the rule-matching helper columns are popped.
+    await _resolve_owner_teams(db, items)
+    return {"items": items, "total": total, "page": page, "size": size, "pages": -(-total // size)}
+
+
+async def defect_row(db: AsyncSession, project_id: uuid.UUID | str, defect_id: uuid.UUID | str) -> dict | None:
+    """Exactly one ``list_defects`` row (the ``GET /analytics/defects`` shape), or ``None``.
+
+    Scoped to ``project_id`` (and to a live project, as every list read is):
+    another project's defect is ``None``. The triage PATCH returns it so the
+    page replaces its row with the server's.
+    """
+    listed = await list_defects(db, str(project_id), None, 1, 1, defect_id=str(defect_id))
+    items = listed.get("items") or []
+    return items[0] if items else None
+
+
+# ── Defect trend (W06 DEF-04) ────────────────────────────────────────────────
+
+#: Live = OPEN or IN_PROGRESS, exactly the release gate's set. Every other word
+#: (RESOLVED, INVALID, the legacy CLOSED) is closed for the trend, so the last
+#: point's backlog equals the ``open`` total. Constants, safe to inline.
+_LIVE_SQL = "COALESCE(d.resolution_status, '') IN (" + ", ".join(f"'{s}'" for s in ACTIVE_STATUSES) + ")"
+_EXECUTION_JOINS = (
+    "LEFT JOIN test_cases tc ON tc.id = d.test_case_id "
+    "LEFT JOIN test_runs tr ON tr.id = tc.test_run_id"
+)
+#: Rolling window of the per-point mean time to resolve, in points (days).
+TREND_MTTR_POINTS = 7
+
+
+def trend_window(days: int, today: date | None = None) -> tuple[date, date]:
+    """``(d0, d1)``: the window's first and last UTC day, ``days`` days inclusive, ending today."""
+    d1 = today or datetime.now(timezone.utc).date()
+    return d1 - timedelta(days=days - 1), d1
+
+
+def _ratio(total: float, count: int) -> float | None:
+    return round(total / count, 2) if count else None
+
+
+def build_trend_payload(rows: list[dict], totals: dict, window_days: int) -> dict:
+    """The trend response from the two statements' rows (pure: no database).
+
+    ``rows`` are the per-day rows in date order (``day``, ``opened``,
+    ``closed``, ``open_backlog``, ``p0p1_open``, ``resolved_n``,
+    ``resolve_days_sum``); ``totals`` the totals row (``open_total``,
+    ``p0_open``, ``p1_open``, ``closed_without_time``). ``mttr_days`` is a
+    mean over RESOLVED closes only and ``None`` -- never 0 -- when nothing was
+    resolved (a point: in its trailing 7 days; the totals: in the window).
+    """
+    points: list[dict] = []
+    resolved = [int(row.get("resolved_n") or 0) for row in rows]
+    resolve_days = [float(row.get("resolve_days_sum") or 0) for row in rows]
+    for i, row in enumerate(rows):
+        lo = max(0, i - (TREND_MTTR_POINTS - 1))
+        day = row["day"]
+        points.append({
+            "date": day.isoformat() if hasattr(day, "isoformat") else str(day),
+            "opened": int(row.get("opened") or 0),
+            "closed": int(row.get("closed") or 0),
+            "open_backlog": int(row.get("open_backlog") or 0),
+            "p0p1_open": int(row.get("p0p1_open") or 0),
+            "mttr_days": _ratio(sum(resolve_days[lo:i + 1]), sum(resolved[lo:i + 1])),
+        })
+    last = points[-min(7, window_days):] if points else []
+    opened_last = sum(p["opened"] for p in last)
+    closed_last = sum(p["closed"] for p in last)
+    return {
+        "points": points,
+        "totals": {
+            "open": int(totals.get("open_total") or 0),
+            "p0_open": int(totals.get("p0_open") or 0),
+            "p1_open": int(totals.get("p1_open") or 0),
+            "mttr_days": _ratio(sum(resolve_days), sum(resolved)),
+            "resolved_in_window": sum(resolved),
+            "opened_in_window": sum(p["opened"] for p in points),
+            "closed_in_window": sum(p["closed"] for p in points),
+            "opened_last_7d": opened_last,
+            "closed_last_7d": closed_last,
+            "net_last_7d": opened_last - closed_last,
+            "closed_without_time": int(totals.get("closed_without_time") or 0),
+        },
+        "window_days": window_days,
+    }
+
+
+async def defect_trend(
+    db: AsyncSession,
+    scope: AnalyticsScope,
+    *,
+    release_match: str = "found_in",
+    today: date | None = None,
+) -> dict:
+    """Per UTC day of the window: opened, closed, the open backlog at the end of
+    the day and its P0/P1 part, with a rolling MTTR; and totals over EVERY
+    defect in scope (no row cap). Two statements, whatever the window.
+
+    "Open at the end of day ``d``" = created on or before ``d`` and not closed on
+    or before ``d``: the backlog open at the window's start plus the running
+    opened - closed. A close is placed on ``GREATEST(resolved_at, created_at)``
+    (a ``resolved_at`` before the creation clamps). A closed row WITHOUT a
+    ``resolved_at`` (legacy INVALID closes, before ``apply_status``) cannot be
+    placed: it is in no point and counted in ``closed_without_time``.
+    """
+    d0, d1 = trend_window(scope.window_days, today)
+    params: dict = {"d0": d0, "d1": d1}
+    project_filter = _tenant_filter(
+        params, project_id=scope.project, allowed_project_ids=scope.allowed_project_ids, table_alias="d",
+    )
+    scope_filter, needs_execution = _defect_scope_sql(
+        params, release_id=scope.release_arg, suite_name=scope.suite_arg, release_match=release_match,
+    )
+    joins = _EXECUTION_JOINS if needs_execution else ""
+    points_sql = scoped_text(
+        f"""
+        WITH bounds AS (SELECT CAST(:d0 AS date) AS d0, CAST(:d1 AS date) AS d1),
+        s AS (
+            SELECT d.id,
+                   CAST(d.created_at AT TIME ZONE 'UTC' AS date) AS created_day,
+                   CASE WHEN NOT ({_LIVE_SQL})
+                        THEN CAST(GREATEST(d.resolved_at, d.created_at) AT TIME ZONE 'UTC' AS date) END AS closed_day,
+                   d.resolution_status,
+                   EXTRACT(EPOCH FROM (GREATEST(d.resolved_at, d.created_at) - d.created_at)) / 86400.0 AS resolve_days,
+                   ({_PRIORITY_SQL}) IN ('P0', 'P1') AS hi
+            FROM defects d
+            {joins}
+            WHERE 1=1
+            {project_filter}
+            {scope_filter}
+              AND NOT (NOT ({_LIVE_SQL}) AND d.resolved_at IS NULL)
+        ),
+        cal AS (
+            SELECT CAST(g AS date) AS day
+            FROM bounds, generate_series(bounds.d0, bounds.d1, interval '1 day') AS g
+        ),
+        opened AS (
+            SELECT created_day AS day, COUNT(*) AS n, COUNT(*) FILTER (WHERE hi) AS n_hi
+            FROM s, bounds WHERE created_day BETWEEN bounds.d0 AND bounds.d1 GROUP BY created_day
+        ),
+        closed AS (
+            SELECT closed_day AS day, COUNT(*) AS n, COUNT(*) FILTER (WHERE hi) AS n_hi,
+                   COUNT(*) FILTER (WHERE resolution_status = 'RESOLVED') AS resolved_n,
+                   COALESCE(SUM(resolve_days) FILTER (WHERE resolution_status = 'RESOLVED'), 0) AS resolve_days_sum
+            FROM s, bounds WHERE closed_day BETWEEN bounds.d0 AND bounds.d1 GROUP BY closed_day
+        ),
+        base AS (
+            SELECT COUNT(*) FILTER (
+                       WHERE created_day < bounds.d0 AND (closed_day IS NULL OR closed_day >= bounds.d0)) AS n,
+                   COUNT(*) FILTER (
+                       WHERE hi AND created_day < bounds.d0 AND (closed_day IS NULL OR closed_day >= bounds.d0)) AS n_hi
+            FROM s, bounds
+        )
+        SELECT cal.day,
+               COALESCE(o.n, 0) AS opened,
+               COALESCE(c.n, 0) AS closed,
+               base.n + SUM(COALESCE(o.n, 0) - COALESCE(c.n, 0)) OVER (ORDER BY cal.day) AS open_backlog,
+               base.n_hi + SUM(COALESCE(o.n_hi, 0) - COALESCE(c.n_hi, 0)) OVER (ORDER BY cal.day) AS p0p1_open,
+               COALESCE(c.resolved_n, 0) AS resolved_n,
+               COALESCE(c.resolve_days_sum, 0) AS resolve_days_sum
+        FROM cal CROSS JOIN base
+        LEFT JOIN opened o ON o.day = cal.day
+        LEFT JOIN closed c ON c.day = cal.day
+        ORDER BY cal.day
+        """,
+        params,
+    )
+    rows = [dict(row._mapping) for row in (await db.execute(points_sql, params)).fetchall()]
+    totals_params = {key: value for key, value in params.items() if key not in ("d0", "d1")}
+    totals_sql = scoped_text(
+        f"""
+        SELECT COUNT(*) FILTER (WHERE {_LIVE_SQL}) AS open_total,
+               COUNT(*) FILTER (WHERE {_LIVE_SQL} AND {_PRIORITY_SQL} = 'P0') AS p0_open,
+               COUNT(*) FILTER (WHERE {_LIVE_SQL} AND {_PRIORITY_SQL} = 'P1') AS p1_open,
+               COUNT(*) FILTER (WHERE NOT ({_LIVE_SQL}) AND d.resolved_at IS NULL) AS closed_without_time
+        FROM defects d
+        {joins}
+        WHERE 1=1
+        {project_filter}
+        {scope_filter}
+        """,
+        totals_params,
+    )
+    totals = dict((await db.execute(totals_sql, totals_params)).one()._mapping)
+    return build_trend_payload(rows, totals, scope.window_days)
+
+
+# ── Escape rate (W06 DEF-03) ─────────────────────────────────────────────────
+
+ESCAPE_UNATTRIBUTED_REASON = 'Escapes are counted against shipped releases; "Unattributed" has none.'
+
+
+def escape_rate_reason(*, in_window: int, attributed: int, window_days: int) -> str | None:
+    """Why the escape rate is not measured, or ``None`` when it is (``attributed`` at the floor)."""
+    if attributed >= ESCAPE_RATE_MIN_SAMPLE:
+        return None
+    if in_window == 0:
+        return f"No defects were reported in the last {window_days} days."
+    return (
+        f"{attributed} defect(s) reported in the last {window_days} days affect a release that has shipped; "
+        f"{ESCAPE_RATE_MIN_SAMPLE} are needed."
+    )
+
+
+def build_escape_payload(
+    *, in_window: int, attributed: int, escaped: int, window_days: int, outcomes: dict, reason: str | None = None,
+) -> dict:
+    """The escape-rate response (pure). ``rate`` is a percentage with one
+    decimal when measured, ``None`` (never 0) below the floor."""
+    measured = attributed >= ESCAPE_RATE_MIN_SAMPLE and reason is None
+    return {
+        "rate": round(escaped / attributed * 100, 1) if measured else None,
+        "escaped": escaped,
+        "attributed": attributed,
+        "in_window": in_window,
+        "measured": measured,
+        "reason": None if measured else (
+            reason or escape_rate_reason(in_window=in_window, attributed=attributed, window_days=window_days)
+        ),
+        "sample_floor": ESCAPE_RATE_MIN_SAMPLE,
+        "window_days": window_days,
+        "outcomes": {
+            "incidents": int(outcomes.get("incidents") or 0),
+            "rollbacks": int(outcomes.get("rollbacks") or 0),
+            "releases": int(outcomes.get("releases") or 0),
+        },
+    }
+
+
+async def defect_escape_rate(db: AsyncSession, scope: AnalyticsScope) -> dict:
+    """The share of the window's defects filed AFTER a release they affect had shipped (owner decision D01).
+
+    "Affects" is the release gate's rule (asserted impact, else where it was
+    found); only releases of the defect's OWN project count, and only shipped
+    ones (``released_at`` set). A defect affecting several shipped releases is
+    counted once, and is an escape when it was filed after ANY of them shipped.
+    The production outcomes marked on releases in the window (incidents,
+    rollbacks) are a caption beside the rate. The suite filter does not apply.
+    """
+    from app.core.release_filter import is_unattributed
+    from app.services.release_defect_service import asserted_impact_sql
+
+    days = scope.window_days
+    params: dict = {"period_start": _period_start(days)}
+    project_filter = _tenant_filter(
+        params, project_id=scope.project, allowed_project_ids=scope.allowed_project_ids, table_alias="d",
+    )
+    outcome_params: dict = {"period_start": params["period_start"]}
+    outcome_filter = _tenant_filter(
+        outcome_params, project_id=scope.project, allowed_project_ids=scope.allowed_project_ids, table_alias="o",
+    )
+    real_ids = [rid.lower() for rid in scope.release_ids if not is_unattributed(rid)]
+    sentinel_only = bool(scope.release_ids) and not real_ids
+    release_filter = ""
+    outcome_release_filter = ""
+    if real_ids:
+        names = []
+        for i, rid in enumerate(real_ids):
+            params[f"escape_rid_{i}"] = rid
+            outcome_params[f"escape_rid_{i}"] = rid
+            names.append(f":escape_rid_{i}")
+        in_list = "(" + ", ".join(names) + ")"
+        release_filter = f"AND lower(CAST(r.id AS text)) IN {in_list}"
+        outcome_release_filter = f"AND lower(CAST(o.release_id AS text)) IN {in_list}"
+    elif sentinel_only:
+        release_filter = "AND FALSE"
+        outcome_release_filter = "AND FALSE"
+    asserted = asserted_impact_sql("d")
+    rate_sql = text(
+        f"""
+        WITH s AS (
+            SELECT d.id, d.project_id, d.created_at, d.release_id,
+                   CASE WHEN {asserted} THEN d.affects_releases END AS asserted
+            FROM defects d
+            WHERE d.created_at >= :period_start
+            {project_filter}
+        ),
+        targets AS (
+            SELECT s.id, s.project_id, s.created_at, lower(a.rid) AS rid
+            FROM s CROSS JOIN LATERAL json_array_elements_text(COALESCE(s.asserted, CAST('[]' AS json))) AS a(rid)
+            UNION ALL
+            SELECT s.id, s.project_id, s.created_at, lower(CAST(s.release_id AS text)) AS rid
+            FROM s WHERE s.asserted IS NULL AND s.release_id IS NOT NULL
+        ),
+        shipped AS (
+            SELECT t.id, t.created_at, r.released_at
+            FROM targets t
+            JOIN releases r ON lower(CAST(r.id AS text)) = t.rid AND r.project_id = t.project_id
+            WHERE r.released_at IS NOT NULL
+            {release_filter}
+        )
+        SELECT (SELECT COUNT(*) FROM s) AS in_window,
+               COUNT(DISTINCT shipped.id) AS attributed,
+               COUNT(DISTINCT shipped.id) FILTER (WHERE shipped.created_at > shipped.released_at) AS escaped
+        FROM shipped
+        """
+    )
+    counts = dict((await db.execute(rate_sql, params)).one()._mapping)
+    outcomes_sql = text(
+        f"""
+        SELECT COUNT(*) FILTER (WHERE o.outcome_kind = 'incident') AS incidents,
+               COUNT(*) FILTER (WHERE o.outcome_kind = 'rollback') AS rollbacks,
+               COUNT(DISTINCT o.release_id) AS releases
+        FROM release_outcomes o
+        WHERE o.marked_at >= :period_start
+        {outcome_filter}
+        {outcome_release_filter}
+        """
+    )
+    outcomes = dict((await db.execute(outcomes_sql, outcome_params)).one()._mapping)
+    return build_escape_payload(
+        in_window=int(counts.get("in_window") or 0),
+        attributed=int(counts.get("attributed") or 0),
+        escaped=int(counts.get("escaped") or 0),
+        window_days=days,
+        outcomes=outcomes,
+        reason=ESCAPE_UNATTRIBUTED_REASON if sentinel_only else None,
+    )
 
 
 # Maps the UI's P0–P3 vocabulary onto the defects.severity column's CRITICAL/HIGH/MEDIUM/LOW values.
@@ -1157,10 +1644,43 @@ async def create_manual_defect(db: AsyncSession, project_id: uuid.UUID, payload:
     # every audit diff look like a change.
     from app.services.release_defect_service import assert_affects
 
-    defect.affects_releases = assert_affects(defect, payload.get("affects_releases") or [])
+    affects = await _affects_releases_of_project(db, project_id, payload.get("affects_releases") or [])
+    defect.affects_releases = assert_affects(defect, affects)
     db.add(defect)
     await db.flush()
     return defect
+
+
+#: One refusal text whatever is wrong with the ids (malformed, unknown, another
+#: project's): the answer must not tell a caller which release ids exist.
+AFFECTS_RELEASES_NOT_IN_PROJECT = "One or more of these releases are not in this project."
+
+
+async def _affects_releases_of_project(db: AsyncSession, project_id: uuid.UUID, values: list) -> list[str]:
+    """``values`` as canonical lower-case release ids, each a release of ``project_id``; 422 otherwise (W06 DEF-03).
+
+    The intake stored whatever ids the body named, so a defect could claim to
+    affect another project's release (a body-id IDOR) and a typo was kept
+    forever. ONE statement checks them all.
+    """
+    if not values:
+        return []
+    ids: set[uuid.UUID] = set()
+    for value in values:
+        try:
+            ids.add(uuid.UUID(str(value).strip()))
+        except (ValueError, TypeError, AttributeError):
+            raise HTTPException(status_code=422, detail=AFFECTS_RELEASES_NOT_IN_PROJECT)
+    from app.models.postgres import Release
+
+    found = set(
+        (
+            await db.execute(select(Release.id).where(Release.project_id == project_id, Release.id.in_(ids)))
+        ).scalars().all()
+    )
+    if found != ids:
+        raise HTTPException(status_code=422, detail=AFFECTS_RELEASES_NOT_IN_PROJECT)
+    return sorted(str(rid).lower() for rid in ids)
 
 
 async def ai_analysis_summary(

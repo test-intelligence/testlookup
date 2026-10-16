@@ -1687,7 +1687,15 @@ export function RunIntelligenceBody({
           clusterId={promoteCluster.cluster_id}
           clusterLabel={promoteCluster.label}
           onClose={() => setPromoteCluster(null)}
-          onSuccess={(_defectId, jiraUrl) => {
+          onSuccess={(_defectId, jiraUrl, approvalStatus) => {
+            // W06 DEF-06: a promotion that waits for a QA lead stays on screen, so
+            // its result (awaiting approval, and the Inbox › Approvals link) is
+            // read; closing it at once said "Defect promoted" for a defect that
+            // was not.
+            if (approvalStatus === 'pending_review') {
+              toast.success('Defect created — awaiting approval')
+              return
+            }
             toast.success(jiraUrl ? 'Defect promoted and Jira ticket created' : 'Defect promoted')
             setPromoteCluster(null)
           }}

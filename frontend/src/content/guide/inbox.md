@@ -45,8 +45,9 @@ Notes are optional (up to 2,000 characters). The assignee, or a QA lead or admin
 - **AI reports** — reports produced by the AI pipeline, waiting for a human review.
 - **Quarantine proposals** — tests proposed for quarantine, the same list as **Flaky tests → Proposed**.
 - **Test cases** — authored test cases waiting for review.
+- **Defects** — promoted defects waiting for a QA lead's approval. Shown to **QA leads and administrators only**.
 
-Anyone in the project can see the queue; the decision buttons depend on your role.
+Anyone in the project can see the first three queues; the decision buttons depend on your role. The **Defects** source, and its count in the tab badge, are there only for QA leads and administrators.
 
 ### AI reports
 
@@ -69,6 +70,15 @@ QA leads and administrators **Approve** or **Reject** a proposal, then confirm. 
 ### Test cases
 
 Each row shows the test case, its priority, its review state (**Requested** or **Claimed**) and when review was requested. The actions are **Claim review**, **Unclaim**, **Approve**, **Request changes** and **Reject**; approving, requesting changes and rejecting need **Review notes**. QA engineers, QA leads and administrators can review, but never their own test case. Only the reviewer who claimed a review can decide it. See [Test management](/docs/test-management#authored-test-cases-and-reviews).
+
+### Defects
+
+A defect promoted from a failure cluster waits here when it needs approval: it names a Jira project key, its severity is **CRITICAL** or **HIGH**, or the AI's confidence is below the configured threshold. Each row shows the title, the severity, the component and owner team, **Waiting because:** with the policy's reasons, the Jira project it would be filed in (or **No Jira project: approving keeps it in TestLookup**), its age, and **Open run** for the run it came from. **Open Defects** opens the defect queue.
+
+- **Approve** makes the defect effective. When it names a Jira project and Jira is reachable, the ticket is filed on that defect (or the defect is linked to the open issue already filed for the same failure). While offline mode is on (the default) the approval still counts and the message says **Approved — Jira not filed (offline mode)**; the defect then reads **not filed (offline)** on the Defects page.
+- **Reject** asks for a reason (recorded in the activity log) and closes the defect as **Invalid**, so it stops counting toward the release gate.
+
+The queue reads one project at a time and only QA leads and administrators see it. See [Promoting to a defect](/docs/failure-analysis#promoting-to-a-defect).
 
 ## Related
 

@@ -46,6 +46,26 @@ vi.mock('@/hooks/useMetrics', () => {
     useAiSummary:         vi.fn(d),
   }
 })
+// W06: the Defects page's trend and escape rate (their own module). They
+// answered here (an empty window), and the page must STILL say the defect
+// list is unavailable: an aggregate that answered is no evidence the queue is
+// empty.
+vi.mock('@/hooks/useDefectInsights', () => ({
+  useDefectTrend: vi.fn(() => ({
+    data: {
+      points: [],
+      window_days: 30,
+      totals: {
+        open: 0, p0_open: 0, p1_open: 0, mttr_days: null, resolved_in_window: 0, opened_in_window: 0,
+        closed_in_window: 0, opened_last_7d: 0, closed_last_7d: 0, net_last_7d: 0, closed_without_time: 0,
+      },
+    },
+    isLoading: false,
+    error: undefined,
+  })),
+  useDefectEscapeRate: vi.fn(() => ({ data: undefined, isLoading: false, error: undefined })),
+  refreshDefectInsights: vi.fn(async () => undefined),
+}))
 vi.mock('@/hooks/useSuiteOptions', () => ({
   useSuiteOptions: () => ({ options: [], isLoading: false }),
 }))

@@ -78,7 +78,7 @@ Where configured, TestLookup can notify external systems and file issues. All of
 
 - **Jira** — one-click issues from a failure, with duplicate detection and status mirrored back. See [Investigating failures](/docs/failure-analysis#promoting-to-a-defect) and [Settings and administration](/docs/administration#jira-splunk-openshift-slack-and-teams).
 - **GitHub and GitLab** — a sticky pull-request or merge-request comment and a check run or commit status per run. Off by default (`github_checks` and `gitlab` feature flags). See [Settings and administration](/docs/administration#github-and-gitlab).
-- **Outbound webhooks** — signed events (`run.completed`, `defect.promoted`, `defect.create_requested`, `release.decided`, `flaky.quarantined`, `quota.exceeded`) to your own endpoints. Off by default (`outbound_webhooks` feature flag). See [Settings and administration](/docs/administration#outbound-webhooks).
+- **Outbound webhooks** — signed events (`run.completed`, `defect.promoted`, `defect.create_requested`, `release.decided`, `flaky.quarantined`, `quota.exceeded`) to your own endpoints. Off by default (`outbound_webhooks` feature flag). `defect.promoted` fires once per defect when a defect promoted from a failure cluster takes effect: at promotion when it needs no approval, or when a QA lead approves it in [Inbox › Approvals](/docs/inbox#defects). See [Settings and administration](/docs/administration#outbound-webhooks).
 - **Slack, Teams and email** — notifications and digests. See [Settings and administration](/docs/administration#notifications-and-webhooks).
 
 > **Note.** Jira ticket creation requires Jira to be explicitly enabled. It is off by default, and a defect can exist in TestLookup without any external ticket.

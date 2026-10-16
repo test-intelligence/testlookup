@@ -9,8 +9,9 @@ import { analyticsService } from '@/services/analyticsService'
 import { ALL_PROJECTS_ID } from '@/store/projectStore'
 import { useActiveProjectId, useProjectScopedSWR } from './useProjectScopedSWR'
 import { useReleaseScope } from './useReleaseScope'
-import { keyPart, scopeArg, type ScopeValue } from '@/lib/scopeParams'
+import { keyPart, scopeArg, scopeParam, type ScopeValue } from '@/lib/scopeParams'
 import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
+import type { DefectScopeQuery } from '@/types/analytics'
 
 export function refreshDefects() {
   return appMutate((key: unknown) => Array.isArray(key) && key[0] === 'analytics-defects')
@@ -91,12 +92,29 @@ const DEFECTS_PAGE_SIZE = 100 // the API's maximum
  * redesign's browser E2E pass, 2026-10-08). Pages of 100, newest first, up to
  * `DEFECTS_CAP`; `total` stays the whole count, so `items.length < total`
  * says the cap was hit.
+ *
+ * W06 DEF-05: `scope` narrows the list (the page's "Only this release" toggle
+ * and its suite). Each param is sent ONLY when set, so an unscoped call makes
+ * exactly the request it made before; `releaseMatch` goes out only with a
+ * release. The scope's parts enter the SWR key only when set, for the same
+ * reason (the unscoped key is unchanged). `days` is not a list filter.
  */
-export function useDefects(resolutionStatus?: string) {
+export function useDefects(resolutionStatus?: string, scope?: DefectScopeQuery) {
+  const releaseIds = scope?.releaseIds && scope.releaseIds.length > 0 ? scope.releaseIds : null
+  const releaseMatch = releaseIds ? scope?.releaseMatch : undefined
+  const suiteName = scope?.suiteName || null
+  const releaseKey = keyPart(releaseIds)
+  const scopeDeps = releaseIds || suiteName ? [releaseKey, releaseMatch ?? null, suiteName] : []
   return useProjectScopedSWR(
     'analytics-defects',
     async (projectId) => {
-      const params = { size: DEFECTS_PAGE_SIZE, resolution_status: resolutionStatus }
+      const params = {
+        size: DEFECTS_PAGE_SIZE,
+        resolution_status: resolutionStatus,
+        ...scopeParam('release_id', releaseIds),
+        ...(releaseMatch ? { release_match: releaseMatch } : {}),
+        ...scopeParam('suite_name', suiteName),
+      }
       const first = await analyticsService.getDefects(projectId, { ...params, page: 1 })
       const items = [...first.items]
       const pages = Math.min(first.pages, Math.ceil(DEFECTS_CAP / DEFECTS_PAGE_SIZE))
@@ -106,7 +124,7 @@ export function useDefects(resolutionStatus?: string) {
       return { ...first, items, page: 1, pages: 1, size: items.length }
     },
     { refreshInterval: REFRESH_INTERVALS.BACKGROUND },
-    [resolutionStatus],
+    [resolutionStatus, ...scopeDeps],
   )
 }
 

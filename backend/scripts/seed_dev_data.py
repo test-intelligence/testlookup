@@ -1175,6 +1175,13 @@ async def main(reset: bool = False, wipe_only: bool = False) -> None:
             viz = await apply_viz_seed(db, project, admin_user, build_viz_seed_plan(project.slug, _now()))
             print(f"  {viz.releases} viz releases · {viz.runs} viz runs ({viz.linked_runs} release-linked) · {viz.test_cases} test cases")
 
+            # Defect history for the Defects page's trend and escape rate (W06
+            # DEF-04 / DEF-03): marker-scoped rows with explicit times, its own RNG.
+            from scripts.seed_defect_history import apply_defect_history, describe
+
+            history = await apply_defect_history(db, project, now=_now())
+            print("  " + describe(history, project.slug).replace("\n", "\n  "))
+
         await db.commit()
 
     await engine.dispose()

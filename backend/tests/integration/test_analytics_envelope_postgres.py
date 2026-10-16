@@ -267,14 +267,23 @@ def _intended_value_changes(expected: dict) -> int:
     return changed
 
 
+#: Keys the defects list gained after the golden was captured, set aside before the comparison.
+#: 2026-10-08: each defect's own title, severity and component. W06 (2026-10-15): its project,
+#: the server-derived priority, the owner (team + where it came from), the assignee, the
+#: approval status and the Jira filing outcome (DEF-01 / DEF-02 / DEF-06).
+_ADDED_DEFECT_FIELDS = (
+    "title", "severity", "component",
+    "project_id", "priority", "owner_team", "owner_source", "assignee_user_id", "assignee_name",
+    "approval_status", "jira_filing_status", "jira_filing_reason",
+)
+
+
 def _without_defect_fields(actual: dict) -> None:
-    """2026-10-08 adds each defect's own ``title``, ``severity`` and
-    ``component`` to the defects list (the Defects page had titled rows with
-    their test's name and derived a severity from the category) and changes
-    nothing else: set them aside, checking every row carries them."""
+    """The defects list gained keys after the golden was captured (``_ADDED_DEFECT_FIELDS``)
+    and changed nothing else: set them aside, checking every row carries them."""
     for key in ("defects/none", "defects/member_all_projects"):
         for row in actual.get(key, {}).get("body", {}).get("items", []):
-            for field in ("title", "severity", "component"):
+            for field in _ADDED_DEFECT_FIELDS:
                 assert field in row, f"{key}: no {field}"
                 del row[field]
 

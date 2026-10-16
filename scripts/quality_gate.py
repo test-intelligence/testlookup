@@ -1418,7 +1418,9 @@ def _backend_audit_write_discipline(root: Optional[Path] = None) -> list[Violati
 # Registered writers NOT listed, because nothing cached reads what they write:
 # release-gate policy create/update (drafts only — the readiness band reads
 # the ACTIVE policy), Defect ``approval_status`` / Jira-field updates
-# (``action_policy``, ``defect_jira_service.sync_external_statuses``), quarantine
+# (``action_policy``, ``defect_jira_service.sync_external_statuses``,
+# ``defect_jira_service.file_issue_for_defect``: the approval path's ticket
+# link, whose committing caller bumps anyway), quarantine
 # ``stale_notified_at`` (``mark_stale_quarantines``), and AI-analysis
 # ``failure_category`` corrections (counts read rows, not categories).
 
@@ -1451,6 +1453,10 @@ _ANALYTICS_MUTATION_BASES: dict[str, str] = {
     "app.routers.integrations:_stage_pending_jira_defect": "defect (Jira integration)",
     "app.services.analytics_service:create_manual_defect": "defect (manual)",
     "app.services.defect_jira_service:create_or_link_issue": "defect (Jira one-click)",
+    "app.services.defect_triage_service:update_defect": (
+        "defect (triage: status, assignee, team, Jira link)"
+    ),
+    "app.services.defect_triage_service:reject_pending_defect": "defect (review rejection)",
     "app.services.feedback_service:jira_resolution_webhook": "defect resolution",
     "app.services.flaky_quarantine_service:_stage_internal_defect": (
         "defect (quarantine approval)"

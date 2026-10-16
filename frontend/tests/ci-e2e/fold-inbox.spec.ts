@@ -10,7 +10,8 @@
  * table at 140 px with 74 px rows).
  *
  * Also held here: the request inventory of one load (the Approvals count asks
- * for its three queues; nothing else), the Approvals tab and its source
+ * for its queues — W06 DEF-06 adds the defect approvals, asked for a QA lead
+ * only, as the fixture user is; nothing else), the Approvals tab and its source
  * filter, a decision taken from the inbox, and `/reviews` landing on Approvals
  * (the All Projects prompt is unit-tested: `MyFailuresPage.inbox.test.tsx`).
  *
@@ -64,12 +65,13 @@ async function foldGeometry(page: Page): Promise<FoldGeometry> {
 }
 
 const ASSIGNED_LINE = `GET /api/v1/me/assigned-failures?project_id=${P}&days=30&page=1&size=25&scope=team`
-/** The Approvals tab label's count: the three queues, asked once each. */
+/** The Approvals tab label's count: its queues, asked once each (the defect approvals: a QA lead's, W06 DEF-06). */
 const APPROVAL_COUNT_LINES = [
   `GET /api/v1/projects/${P}/reviews?limit=200&state=pending_review`,
   `GET /api/v1/quarantine?project_id=${P}&live_only=true&limit=200`,
   `GET /api/v1/test-management/cases?project_id=${P}&status=review_requested&size=50`,
   `GET /api/v1/test-management/cases?project_id=${P}&status=under_review&size=50`,
+  `GET /api/v1/deep-investigate/defects/pending-review?project_id=${P}&page=1&page_size=100`,
 ]
 
 test('the assigned failures table starts within the fold budget at 1440 x 900', async ({ page }) => {
@@ -86,18 +88,18 @@ test('the assigned failures table starts within the fold budget at 1440 x 900', 
   await expect(table.getByRole('row').nth(1)).toBeInViewport()
   const [rowTop, rowBottom] = geometry.blocks.firstRow ?? [0, 0]
   expect(rowBottom - rowTop, 'a two-line row').toBeLessThanOrEqual(56)
-  // The tabs, with their counts: 40 open, 1 report + 2 proposals + 2 cases waiting.
+  // The tabs, with their counts: 40 open, 1 report + 2 proposals + 2 cases + 1 defect waiting.
   // A lead opens on the team scope, so the tab is the team's (it read
   // "Assigned to me" over the team's count; browser E2E pass, 2026-10-08).
   await expect(page.getByRole('tab', { name: /^Team failures/ })).toHaveText('Team failures40')
-  await expect(page.getByRole('tab', { name: /^Approvals/ })).toHaveText('Approvals5')
+  await expect(page.getByRole('tab', { name: /^Approvals/ })).toHaveText('Approvals6')
   // §5 Delete: no Status column, no static status chip.
   await expect(table.getByRole('columnheader', { name: 'Status' })).toHaveCount(0)
   await expect(page.getByText('FAILED, BROKEN')).toHaveCount(0)
   expectInventory(api, errors, [...SHELL_BASE, ASSIGNED_LINE, ...APPROVAL_COUNT_LINES], '/my-failures, Assigned to me')
 })
 
-test('Approvals: the three sources, the source filter, and a decision taken from the inbox', async ({ page }) => {
+test('Approvals: the four sources, the source filter, and a decision taken from the inbox', async ({ page }) => {
   const { api, errors } = await openRollout(page, '/my-failures', { handlers: inboxHandlers(), ready })
   await networkQuiet(page, api)
   await page.getByRole('tab', { name: /^Approvals/ }).click()
@@ -107,6 +109,8 @@ test('Approvals: the three sources, the source filter, and a decision taken from
   await expect(primary.getByRole('region', { name: 'AI reports' }).getByTestId('review-row')).toHaveCount(1)
   await expect(primary.getByRole('region', { name: 'Quarantine proposals' }).getByTestId('quarantine-row')).toHaveCount(2)
   await expect(primary.getByRole('region', { name: 'Test cases' }).getByTestId('case-approval-row')).toHaveCount(2)
+  // W06 DEF-06: the defect approvals, a QA lead's (the fixture user is one).
+  await expect(primary.getByRole('region', { name: 'Defects' }).getByTestId('defect-approval-row')).toHaveCount(1)
   // The report opens on its run's Analysis tab (P4), not the old Run Intelligence URL.
   await expect(primary.getByRole('link', { name: 'Open report' })).toHaveAttribute(
     'href',
@@ -117,13 +121,14 @@ test('Approvals: the three sources, the source filter, and a decision taken from
   await page.getByRole('radio', { name: 'AI reports 1' }).click()
   await expect(page).toHaveURL(/\/my-failures\?tab=approvals&source=reports$/)
   await expect(primary.getByRole('region', { name: 'Quarantine proposals' })).toHaveCount(0)
+  await expect(primary.getByRole('region', { name: 'Defects' })).toHaveCount(0)
 
   // Accept the report: the row leaves the pending queue and the counts follow.
   await page.getByTestId('review-accept').click()
   await page.getByTestId('review-notes').fill('Evidence checked')
   await page.getByTestId('review-confirm').click()
   await expect(page.getByTestId('review-row')).toHaveCount(0)
-  await expect(page.getByRole('tab', { name: /^Approvals/ })).toHaveText('Approvals4')
+  await expect(page.getByRole('tab', { name: /^Approvals/ })).toHaveText('Approvals5')
 
   // Opening the tab asked for the quarantine counts the proposals table refreshes after a decision.
   expect(requestsTo(api, '/api/v1/quarantine/stats').length).toBeGreaterThan(0)

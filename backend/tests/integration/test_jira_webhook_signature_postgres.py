@@ -23,7 +23,7 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 pytest.importorskip("asyncpg")
@@ -381,3 +381,88 @@ async def test_signed_bodies_with_explicit_nulls_are_not_a_500(world, issue):
 
     assert resp.status_code == 200, resp.text
     assert await _status(world) == "OPEN"
+
+
+# ── W06 §0.15: every defect linked to the key closes; INVALID stamps resolved_at ─
+
+
+def _resolution_body(world, resolution: str | None) -> bytes:
+    return json.dumps({
+        "timestamp": int(time.time() * 1000),
+        "issue": {
+            "key": world.issue_key,
+            "fields": {"status": {"name": "Done"}, "resolution": {"name": resolution} if resolution else None},
+        },
+    }).encode()
+
+
+async def _row(world, defect_id):
+    async with world.sessions() as db:
+        return (await db.execute(
+            select(world.Defect.resolution_status, world.Defect.resolved_at).where(world.Defect.id == defect_id)
+        )).one()
+
+
+async def test_two_defects_sharing_the_key_both_close(world):
+    """Two defects may share one Jira key (a key linked by hand, a dedup on
+    approve). The single-row read raised MultipleResultsFound: a 500."""
+    twin = uuid.uuid4()
+    async with world.sessions.begin() as db:
+        db.add(world.Defect(id=twin, jira_ticket_id=world.issue_key, resolution_status="IN_PROGRESS"))
+    try:
+        body = _resolution_body(world, None)
+        resp = await _post(world, {"X-Hub-Signature": _sign(body)}, body=body)
+
+        assert resp.status_code == 200, resp.text
+        assert sorted(resp.json()["defect_ids"]) == sorted([str(world.defect_id), str(twin)])
+        for defect_id in (world.defect_id, twin):
+            status, resolved_at = await _row(world, defect_id)
+            assert status == "RESOLVED" and resolved_at is not None
+    finally:
+        async with world.sessions.begin() as db:
+            await db.execute(delete(world.Defect).where(world.Defect.id == twin))
+
+
+async def test_every_project_of_a_closed_key_gets_its_dashboard_refreshed(world, monkeypatch):
+    """The webhook closes every defect linked to the key, and they can sit in
+    two projects; refreshing only the first one's cache left the other
+    dashboard counting a closed defect as open."""
+    from app.models.postgres import Project
+    from app.services import cache_service
+
+    bumped: list = []
+
+    async def _bump(project_ids):
+        bumped.extend(project_ids)
+
+    monkeypatch.setattr(cache_service, "bump_analytics_epochs", _bump)
+    tag = uuid.uuid4().hex[:8]
+    first, second, twin = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    async with world.sessions.begin() as db:
+        for pid in (first, second):
+            db.add(Project(id=pid, name=f"w06-webhook-{pid.hex[:6]}-{tag}", slug=f"w06-webhook-{pid.hex[:6]}-{tag}"))
+    async with world.sessions.begin() as db:
+        await db.execute(update(world.Defect).where(world.Defect.id == world.defect_id).values(project_id=first))
+        db.add(world.Defect(id=twin, project_id=second, jira_ticket_id=world.issue_key, resolution_status="OPEN"))
+    try:
+        body = _resolution_body(world, None)
+        resp = await _post(world, {"X-Hub-Signature": _sign(body)}, body=body)
+
+        assert resp.status_code == 200, resp.text
+        assert sorted(map(str, bumped)) == sorted([str(first), str(second)])
+    finally:
+        async with world.sessions.begin() as db:
+            await db.execute(delete(world.Defect).where(world.Defect.id == twin))
+            await db.execute(update(world.Defect).where(world.Defect.id == world.defect_id).values(project_id=None))
+            await db.execute(delete(Project).where(Project.id.in_([first, second])))
+
+
+async def test_an_invalid_resolution_stamps_resolved_at(world):
+    body = _resolution_body(world, "Won't Fix")
+
+    resp = await _post(world, {"X-Hub-Signature": _sign(body)}, body=body)
+
+    assert resp.status_code == 200, resp.text
+    status, resolved_at = await _row(world, world.defect_id)
+    assert status == "INVALID"
+    assert resolved_at is not None, "an INVALID close is a close: the trend must be able to place it"
