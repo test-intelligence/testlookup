@@ -26,6 +26,7 @@ Real members and the real report: ``tests/integration/test_trends_report_postgre
 from __future__ import annotations
 
 import asyncio
+import re
 import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -44,6 +45,11 @@ HOSTILE = "<img src=x onerror=alert(1)>"
 ANA = SimpleNamespace(id=uuid.UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"), email="Ana@corp.example")
 BOB = SimpleNamespace(id=uuid.UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"), email="bob@corp.example")
 STORED = {"enabled": True, "host": "relay.lan", "port": 25, "tls": False, "from_address": "qa@corp.example"}
+
+
+def _names(text: str, host: str) -> bool:
+    """The message names ``host`` as a whole token (not as part of a longer name)."""
+    return re.search(rf"(?<![\w.-]){re.escape(host)}(?![\w-])", text) is not None
 PATH = "/api/v1/reports/email-trends"
 
 
@@ -264,11 +270,11 @@ def test_offline_a_public_relay_is_503_with_the_egress_text(world, monkeypatch):
     monkeypatch.setattr(egress, "host_is_local", lambda host: False)
     world.stored = dict(STORED, host="smtp.gmail.com")
     response = _post(world)
-    assert response.status_code == 503 and "smtp.gmail.com" in response.json()["detail"]
+    assert response.status_code == 503 and _names(response.json()["detail"], "smtp.gmail.com")
     assert "AI_OFFLINE_MODE=true" in response.json()["detail"]
     availability = world.client.get(PATH + "/availability").json()
     assert availability["available"] is False and availability["code"] == "egress_blocked"
-    assert "smtp.gmail.com" in availability["reason"]
+    assert _names(availability["reason"], "smtp.gmail.com")
     assert world.sent == [] and world.ledger == []
 
 
@@ -278,7 +284,7 @@ def test_offline_a_recipient_outside_the_allow_list_is_503(world, monkeypatch):
     monkeypatch.setattr(egress, "host_is_local", lambda host: host == "relay.lan")
     assert _post(world).status_code == 200, "a LAN relay and the corp domain pass offline"
     refused = _post(world, recipient_emails=["exec@gmail.com"])
-    assert refused.status_code == 503 and "gmail.com" in refused.json()["detail"]
+    assert refused.status_code == 503 and _names(refused.json()["detail"], "gmail.com")
     assert len(world.sent) == 1, "the refused message was never handed to the relay"
 
 

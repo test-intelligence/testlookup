@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import ast
 import pathlib
+import re
 
 import pytest
 
@@ -662,7 +663,8 @@ async def test_the_report_email_refuses_a_public_relay_offline(offline, resolves
         await report_service.send_trends_email(
             dict(_PUBLIC_RELAY), ["qa@example.com"], "Trends", "<p>x</p>"
         )
-    assert "smtp.gmail.com" in str(exc.value)
+    # The refusal names the relay host as a whole token (a regex, not a substring check).
+    assert re.search(r"(?<![\w.-])smtp\.gmail\.com(?![\w-])", str(exc.value))
     assert smtp_sends == [], "the trends report reached the public relay"
 
 
