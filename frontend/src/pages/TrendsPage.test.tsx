@@ -19,6 +19,15 @@ const frames = vi.hoisted(() => ({
   timeSeries: [] as unknown[],
 }))
 
+// The section-error test (R1-1) makes a boundary report an error; the real
+// reporter batches it for 5 s and then POSTs it, which under load lands inside
+// a LATER test and trips the network guard there (W08 gate, coverage run).
+// Same guard as ReleaseGatePage.test.tsx: keep the module, stub the report.
+vi.mock('@/utils/errorReporting', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/utils/errorReporting')>(),
+  reportBoundaryError: vi.fn(),
+}))
+
 // P1: the header's Views menu reads this page's saved views (none here).
 vi.mock('@/services/savedViewsService', () => ({
   listSavedViews: vi.fn(async () => []),
