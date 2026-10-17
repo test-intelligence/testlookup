@@ -50,7 +50,7 @@
  * the suite series and the durations sit beside run-total KPIs that can differ
  * when a run's per-test rows never landed.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import toast from 'react-hot-toast'
 import { SlidersHorizontal } from 'lucide-react'
 import ChartCustomisePanel from '@/components/charts/ChartCustomisePanel'
@@ -208,6 +208,7 @@ function SuiteSeriesSection({
   config,
   customising,
   onCustomise,
+  customisePanel,
 }: {
   state: ChartState<ChartResponse>
   windowDays: number
@@ -216,6 +217,8 @@ function SuiteSeriesSection({
   config: SeriesChartConfig
   customising: boolean
   onCustomise: () => void
+  /** W27b: the open customise section, drawn right after this chart's frame (inside the section). */
+  customisePanel?: ReactNode
 }) {
   useReportNear(onNear)
   const chart = seriesChartOf(state)
@@ -258,6 +261,7 @@ function SuiteSeriesSection({
         }
         zoom
       />
+      {customisePanel}
     </div>
   )
 }
@@ -390,6 +394,17 @@ export default function TrendsCatalogue({ days, suiteFilter, sections = DEFAULT_
             config={custom.applied}
             customising={customising === 'series'}
             onCustomise={() => toggle('series')}
+            customisePanel={
+              customising === 'series' ? (
+                <ChartCustomisePanel
+                  chartTitle={titleOf(custom.config)}
+                  spec={seriesCustomiseSpec(custom.config)}
+                  onField={(id, value) => custom.setConfig(applySeriesField(custom.config, id, value))}
+                  onReset={custom.reset}
+                  onClose={() => setCustomising(null)}
+                />
+              ) : null
+            }
           />
         </LazySection>
       )}
@@ -426,16 +441,6 @@ export default function TrendsCatalogue({ days, suiteFilter, sections = DEFAULT_
           />
         </LazySection>
       )}
-      {/* The suite series' customise panel: it opens only from that section's toolbar. */}
-      {customising === 'series' && shows('trends-multi-series') ? (
-        <ChartCustomisePanel
-          chartTitle={titleOf(custom.config)}
-          spec={seriesCustomiseSpec(custom.config)}
-          onField={(id, value) => custom.setConfig(applySeriesField(custom.config, id, value))}
-          onReset={custom.reset}
-          onClose={() => setCustomising(null)}
-        />
-      ) : null}
       {/* Its own lazy placeholder and request: nothing is asked until it is near the reader. */}
       {shows('trends-heatmap') && (
         <HeatmapSection

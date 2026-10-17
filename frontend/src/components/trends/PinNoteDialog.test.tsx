@@ -40,7 +40,7 @@ beforeEach(() => {
 describe('PinNoteDialog', () => {
   it('opens on the prefilled days with an empty text, Save disabled until there is text', () => {
     render(<PinNoteDialog range={{ from: '2026-09-13', to: '2026-09-15' }} suite={null} onClose={vi.fn()} />)
-    expect(screen.getByRole('dialog', { name: 'Pin a note' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Pin a note' })).toBeInTheDocument()
     expect(field('from').value).toBe('2026-09-13')
     expect(field('to').value).toBe('2026-09-15')
     expect(field('count')).toHaveTextContent('0 / 280')
@@ -89,7 +89,7 @@ describe('PinNoteDialog', () => {
   it('edits: sends only the fields that changed; an unchanged note sends nothing', async () => {
     const onClose = vi.fn()
     const view = render(<PinNoteDialog range={null} note={NOTE} suite="Checkout" onClose={onClose} />)
-    expect(screen.getByRole('dialog', { name: 'Edit note' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Edit note' })).toBeInTheDocument()
     expect(field('suite').checked).toBe(true)
     fireEvent.click(save())
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))

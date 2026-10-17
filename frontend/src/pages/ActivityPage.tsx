@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Activity as ActivityIcon, Download, Search } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -6,8 +6,11 @@ import toast from 'react-hot-toast'
 import ActivityDrawer from '@/components/activity/ActivityDrawer'
 import ActivityRow from '@/components/activity/ActivityRow'
 import EmptyState from '@/components/ui/EmptyState'
+import { isDetailToken } from '@/components/ui/inPage/ids'
+import { useDetailParam } from '@/components/ui/inPage/useDetailParam'
 import PageHeader from '@/components/ui/PageHeader'
 import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState'
+import { SectionErrorBoundary } from '@/components/ui/SectionErrorBoundary'
 import { windowLabel } from '@/components/ui/WindowPicker'
 import { useActivityEventTypes, useActivityFeed } from '@/hooks/useActivityFeed'
 import { exportActivity } from '@/services/activityService'
@@ -29,7 +32,7 @@ export default function ActivityPage() {
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID || activeProjectId === null
 
-  const [searchParams, setSearchParams] = useSearchParams()
+  const [searchParams] = useSearchParams()
   // HON-09: `?category=` pre-selects the filter, so a link can open the feed
   // already narrowed (the /releases rail's "View full audit log" sends
   // `release`; so does the old `/audit` bookmark). Read once, at mount: the
@@ -79,15 +82,31 @@ export default function ActivityPage() {
     error,
   } = useActivityFeed(isAllProjects ? null : activeProjectId, query, !isAllProjects && !categoryPending)
 
-  const openEventId = searchParams.get('event')
-  const openEvent = (id: string) => {
-    searchParams.set('event', id)
-    setSearchParams(searchParams, { replace: true })
-  }
-  const closeEvent = () => {
-    searchParams.delete('event')
-    setSearchParams(searchParams, { replace: true })
-  }
+  // W27b: the open event rides `?event=` through useDetailParam: opening one
+  // from closed PUSHES (Back closes it), another row REPLACES, Close pops our
+  // own entry; `category` and every other param are untouched. The value is
+  // checked first (isDetailToken: a production id is a UUID, the fixtures'
+  // `ev-rel-1` passes): a malformed one (`../../x`) is `rejected` and never
+  // reaches the request path.
+  const detail = useDetailParam('event', { accept: isDetailToken })
+  const openEventId = detail.id
+  const detailOpen = openEventId !== null || detail.rejected !== null
+  const openEvent = (id: string) => detail.open(id)
+  const closeEvent = detail.close
+  // Under its row when the feed holds it; else (a deep link to an older
+  // event, the feed still loading, or a rejected link) right above the feed.
+  const openUnderRow = openEventId !== null && events.some((e) => e.id === openEventId)
+
+  const eventDetail = detailOpen && activeProjectId && (
+    <SectionErrorBoundary key={openEventId ?? 'rejected'} message="The event could not be shown">
+      <ActivityDrawer
+        projectId={activeProjectId}
+        eventId={openEventId}
+        rejected={detail.rejected !== null}
+        onClose={closeEvent}
+      />
+    </SectionErrorBoundary>
+  )
 
   const handleExport = async (format: 'csv' | 'ndjson') => {
     if (!activeProjectId || isAllProjects) return
@@ -222,6 +241,8 @@ export default function ActivityPage() {
         </div>
       </div>
 
+      {!openUnderRow && eventDetail}
+
       {/* ── Feed ────────────────────────────────────────────────────────── */}
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)]">
         {/* An outage must never render as an empty feed. "No activity yet" and
@@ -261,7 +282,20 @@ export default function ActivityPage() {
           <>
             <ul role="feed" aria-busy={isValidating} className="list-none">
               {events.map(event => (
-                <ActivityRow key={event.id} event={event} onOpen={e => openEvent(e.id)} />
+                <Fragment key={event.id}>
+                  <ActivityRow event={event} onOpen={e => openEvent(e.id)} />
+                  {/* The open event's detail, right under its row: keyed by the
+                      event (the Fragment), so another row's detail is a new
+                      one whose focus returns to THAT row on close. */}
+                  {openUnderRow && event.id === openEventId && (
+                    <li
+                      data-in-page-row=""
+                      className="border-b border-[var(--color-border)] px-4 py-3 last:border-b-0"
+                    >
+                      {eventDetail}
+                    </li>
+                  )}
+                </Fragment>
               ))}
             </ul>
 
@@ -298,14 +332,6 @@ export default function ActivityPage() {
           </>
         )}
       </div>
-
-      {activeProjectId && (
-        <ActivityDrawer
-          projectId={activeProjectId}
-          eventId={openEventId}
-          onClose={closeEvent}
-        />
-      )}
     </div>
   )
 }

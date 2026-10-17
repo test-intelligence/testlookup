@@ -11,14 +11,19 @@
  * The server is the authority on every rule (members of THIS project only, the
  * egress allow-list, the 10-recipient cap); its refusal is shown as TEXT under
  * the form. Names and addresses are user data: React text only.
+ *
+ * W27b PAN-05b: the form renders IN THE PAGE (an `InlineFormSection`, region
+ * `Email report`) right under the Trends page header; no backdrop, no trap.
+ * It reads the relay and the members when it mounts (= opens), as before.
  */
 import { useId, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { X } from 'lucide-react'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
+import type { InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import { useEmailAvailability } from '@/hooks/useEmailAvailability'
-import { useModalFocus } from '@/hooks/useModalFocus'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useReleases } from '@/hooks/useReleases'
 import { useProjectMembers } from '@/hooks/useUserManagement'
@@ -43,6 +48,8 @@ export interface EmailReportDialogProps {
    */
   releaseLabel?: string | null
   onClose: () => void
+  /** The slot of the area under the page header (asks before typed input is replaced). */
+  slot?: InlineSlot
 }
 
 /** The server's caps (`EmailTrendsRequest`): 5 typed addresses, 10 recipients in all. */
@@ -96,6 +103,7 @@ export default function EmailReportDialog({
   suiteLabel,
   releaseLabel,
   onClose,
+  slot,
 }: EmailReportDialogProps) {
   const id = useId()
   const { isAdmin } = usePermissions()
@@ -110,7 +118,6 @@ export default function EmailReportDialog({
   const [draftProblem, setDraftProblem] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [refusal, setRefusal] = useState<string | null>(null)
-  const dialogRef = useModalFocus({ onClose, canClose: !busy })
 
   const available = availability?.available === true
   const blockedReason = availability && !availability.available ? (availability.reason ?? NOT_CONFIGURED_TEXT) : null
@@ -174,39 +181,46 @@ export default function EmailReportDialog({
   }
 
   return (
-    <div
-      ref={dialogRef}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={`${id}-title`}
-      data-email-report-dialog=""
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60"
-      onClick={() => {
-        if (!busy) onClose()
-      }}
-    >
-      <div
-        className="flex max-h-[85vh] w-full max-w-[480px] flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-card)] p-5 shadow-2xl"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="mb-1 flex items-center justify-between">
-          <h2 id={`${id}-title`} className="text-base font-semibold text-[var(--color-text)]">
-            Email report
-          </h2>
-          <button
-            type="button"
-            aria-label="Close email dialog"
-            onClick={onClose}
-            disabled={busy}
-            className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+    <InlineFormSection
+      title="Email report"
+      titleId={`${id}-title`}
+      onClose={onClose}
+      canClose={!busy}
+      busy={busy}
+      closeLabel="Close email dialog"
+      slot={slot}
+      dataAttributes={{ 'data-email-report-dialog': '' }}
+      description={
         <p data-email-report-summary="" className="m-0 text-[13px] text-[var(--color-text-secondary)] break-words">
           {reportSummaryLine(days, suiteLabel, shownRelease)}
         </p>
-
+      }
+      footer={
+        <>
+          <span className="mr-auto self-center text-xs tabular-nums text-[var(--color-text-secondary)]">{plural(recipients)}</span>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="px-4 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            data-email-send=""
+            onClick={() => void send()}
+            disabled={!canSend}
+            className="flex items-center gap-2 rounded-lg bg-[var(--color-btn-primary-bg)] px-4 py-2 text-sm font-medium text-[var(--color-btn-primary-text)] hover:bg-[var(--color-btn-primary-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {busy && <LoadingSpinner size="sm" />}
+            Send
+          </button>
+        </>
+      }
+    >
+      {/* The recipients keep a readable width; the section spans its column. */}
+      <div className="max-w-2xl">
         {checking ? (
           <p data-email-availability="checking" className="mt-3 text-xs text-[var(--color-text-secondary)]">
             Checking the mail relay…
@@ -229,7 +243,7 @@ export default function EmailReportDialog({
           </p>
         ) : null}
 
-        <fieldset className="mt-4 min-h-0 flex-1 overflow-y-auto border-0 p-0">
+        <fieldset className="mt-4 border-0 p-0">
           <legend className="mb-1 text-xs font-semibold text-[var(--color-text-secondary)]">Project members</legend>
           {membersLoading ? (
             <p className="text-xs text-[var(--color-text-secondary)]">Loading members…</p>
@@ -317,29 +331,7 @@ export default function EmailReportDialog({
             {refusal}
           </p>
         ) : null}
-
-        <div className="mt-4 flex items-center justify-end gap-3">
-          <span className="mr-auto text-xs tabular-nums text-[var(--color-text-secondary)]">{plural(recipients)}</span>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={busy}
-            className="px-4 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            data-email-send=""
-            onClick={() => void send()}
-            disabled={!canSend}
-            className="flex items-center gap-2 rounded-lg bg-[var(--color-btn-primary-bg)] px-4 py-2 text-sm font-medium text-[var(--color-btn-primary-text)] hover:bg-[var(--color-btn-primary-hover)] disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {busy && <LoadingSpinner size="sm" />}
-            Send
-          </button>
-        </div>
       </div>
-    </div>
+    </InlineFormSection>
   )
 }

@@ -170,6 +170,8 @@ import {
 import { chartConfigStore, nonDefaultOf, useChartConfigStore } from '@/store/chartConfigStore'
 import EmailReportDialog from '@/components/trends/EmailReportDialog'
 import PinNoteDialog from '@/components/trends/PinNoteDialog'
+import { useInlineSlot } from '@/components/ui/inPage/useInlineSlot'
+import { useSlotCloser } from '@/hooks/useSlotCloser'
 import type { CoverageSuite } from '@/types/analytics'
 import type { TrendPoint } from '@/types/metrics'
 
@@ -675,6 +677,20 @@ function CadenceHeatmap({
       </div>
     </CardShell>
   )
+}
+
+/** W27b: where a note form was opened from, so it renders right after that card. */
+type PinOrigin = 'cadence' | 'gap' | 'hero'
+interface PinRequest {
+  at: PinOrigin
+  range: { from: string; to: string } | null
+  note: TimelineNote | null
+}
+/** One slot key per place and days (or note): another place or other days is another form. */
+function pinRequestKey(request: PinRequest): string {
+  return request.note
+    ? `${request.at}:note:${request.note.id}`
+    : `${request.at}:${request.range?.from ?? ''}:${request.range?.to ?? ''}`
 }
 
 /**
@@ -1245,8 +1261,52 @@ export default function TrendsPage() {
   )
   const noteInputs = useMemo(() => noteInputsFor(shownNotes, pageSuite), [shownNotes, pageSuite])
   const canPin = isQaEngineer && !isAllProjects
-  const [pinning, setPinning] = useState<{ range: { from: string; to: string } | null; note: TimelineNote | null } | null>(null)
-  const pinRange = useCallback((from: string, to: string) => setPinning({ range: { from, to }, note: null }), [])
+  // W27b PAN-05b: the note form opens IN THE PAGE, right after the card whose
+  // control opened it (`at`): the cadence card (its Pin a note, a drag on its
+  // strip), the run-gap callout, or the hero (the Notes chip's Edit). One note
+  // form at a time (the page's note slot): opening it elsewhere, or on other
+  // days, moves it there — asking first when its text was typed.
+  const noteSlot = useInlineSlot<string>()
+  const closeNote = useSlotCloser(noteSlot)
+  const openNoteSlot = noteSlot.open
+  const [pinRequests, setPinRequests] = useState<Record<string, PinRequest>>({})
+  const pinAt = useCallback((request: PinRequest) => {
+    const key = pinRequestKey(request)
+    setPinRequests((current) => ({ ...current, [key]: request }))
+    openNoteSlot(key)
+  }, [openNoteSlot])
+  const pinning = noteSlot.openKey !== null ? (pinRequests[noteSlot.openKey] ?? null) : null
+  const setPinning = useCallback(
+    (at: PinOrigin, request: { range: { from: string; to: string } | null; note: TimelineNote | null }) => pinAt({ at, ...request }),
+    [pinAt],
+  )
+  const pinCadenceRange = useCallback((from: string, to: string) => setPinning('cadence', { range: { from, to }, note: null }), [setPinning])
+  const pinGapRange = useCallback((from: string, to: string) => setPinning('gap', { range: { from, to }, note: null }), [setPinning])
+  // The cadence and gap forms live in the Volume tab: another tab takes them away (as Cancel would).
+  const noteInVolume = pinning !== null && pinning.at !== 'hero'
+  const closeAnyNote = noteSlot.close
+  useEffect(() => {
+    if (tab !== 'volume' && noteInVolume) closeAnyNote()
+  }, [tab, noteInVolume, closeAnyNote])
+  const guardNote = noteSlot.guard
+  const changeTab = useCallback(
+    (next: TrendsTab) => (noteInVolume && next !== 'volume' ? guardNote(() => setTab(next)) : setTab(next)),
+    [noteInVolume, guardNote, setTab],
+  )
+  const noteForm = (at: PinOrigin) => {
+    const key = noteSlot.openKey
+    if (!pinning || pinning.at !== at || key === null) return null
+    return (
+      <PinNoteDialog
+        key={key}
+        range={pinning.range}
+        note={pinning.note}
+        suite={pageSuite}
+        slot={noteSlot}
+        onClose={() => closeNote(key)}
+      />
+    )
+  }
 
   // TRND-01: the header ⋯ — Export PDF (every role), Email report (QA lead+).
   const [emailOpen, setEmailOpen] = useState(false)
@@ -1416,6 +1476,20 @@ export default function TrendsPage() {
         overflow={overflow}
       />
 
+      {/* W27b: Email report opens IN THE PAGE, right under the header (its
+          trigger is the header's ⋯); it reads the relay and the members only
+          now, as the dialog did. */}
+      {emailOpen && activeProjectId && !isAllProjects ? (
+        <EmailReportDialog
+          projectId={activeProjectId}
+          days={days}
+          suiteFilter={suiteFilter}
+          release={releaseScope}
+          suiteLabel={suiteLabel || null}
+          onClose={() => setEmailOpen(false)}
+        />
+      ) : null}
+
       {/* The strip keeps the `Trend metrics` landmark other specs wait on.
           It wraps to fewer columns when its tiles cannot fit (KpiStrip). */}
       <section aria-label="Trend metrics">
@@ -1510,11 +1584,12 @@ export default function TrendsPage() {
             <TimelineNotesChip
               notes={shownNotes}
               truncated={notesTruncated}
-              onEdit={(note) => setPinning({ range: null, note })}
+              onEdit={(note) => setPinning('hero', { range: null, note })}
             />
           ) : undefined
         }
       />
+      {noteForm('hero')}
 
       <Disclosure title="How this score is computed" summary={scoreSummary}>
         {summary && verdict ? (
@@ -1527,17 +1602,19 @@ export default function TrendsPage() {
       </Disclosure>
 
       <div className="space-y-3">
-        <Tabs ariaLabel="Trend views" items={TRENDS_TABS} value={tab} onChange={setTab} />
+        <Tabs ariaLabel="Trend views" items={TRENDS_TABS} value={tab} onChange={changeTab} />
         <div data-tab-panel={tab}>
           {tab === 'volume' && (
             <div className="flex flex-col gap-3.5 min-w-0">
               <CadenceHeatmap
                 model={model}
                 gap={gap}
-                onPin={canPin ? () => setPinning({ range: { from: utcDayIso(), to: utcDayIso() }, note: null }) : undefined}
-                onSelectRange={canPin ? pinRange : undefined}
+                onPin={canPin ? () => setPinning('cadence', { range: { from: utcDayIso(), to: utcDayIso() }, note: null }) : undefined}
+                onSelectRange={canPin ? pinCadenceRange : undefined}
               />
-              <SchedulePausedCallout gap={gap} onPin={canPin ? pinRange : undefined} />
+              {noteForm('cadence')}
+              <SchedulePausedCallout gap={gap} onPin={canPin ? pinGapRange : undefined} />
+              {noteForm('gap')}
               <DailyBreakdown trend={trend} days={days} model={model} filtersApplied={trendFiltered} />
             </div>
           )}
@@ -1557,19 +1634,6 @@ export default function TrendsPage() {
         </div>
       </div>
 
-      {pinning ? (
-        <PinNoteDialog range={pinning.range} note={pinning.note} suite={pageSuite} onClose={() => setPinning(null)} />
-      ) : null}
-      {emailOpen && activeProjectId && !isAllProjects ? (
-        <EmailReportDialog
-          projectId={activeProjectId}
-          days={days}
-          suiteFilter={suiteFilter}
-          release={releaseScope}
-          suiteLabel={suiteLabel || null}
-          onClose={() => setEmailOpen(false)}
-        />
-      ) : null}
     </PageShell>
   )
 }

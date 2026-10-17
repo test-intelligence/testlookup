@@ -15,6 +15,7 @@ import { isAxiosError } from 'axios'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
 import DataUnavailable from '@/components/ui/DataUnavailable'
 import WindowPicker from '@/components/ui/WindowPicker'
 import KpiStrip from '@/components/ui/KpiStrip'
@@ -63,29 +64,31 @@ function asStringList(value: unknown): string[] {
 /**
  * Methodology panel — "credibility requires showing the math" (US-12.1 AC).
  * Fetched lazily from GET /api/v1/value-metrics/methodology on first open.
+ *
+ * W27b PAN-05b: a read-only section IN THE PAGE, right under the hero (named
+ * `How hours saved is calculated`, its `Close` button kept, no X); it renders
+ * nothing while closed, so the methodology is not read until it opens.
  */
 function MethodologyModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { methodology, isLoading, isError } = useValueMethodology(open)
   if (!open) return null
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-label="How hours saved is calculated"
+    <InlineFormSection
+      title="How is this calculated?"
+      ariaLabel="How hours saved is calculated"
+      description={
+        methodology ? (
+          <p className="m-0 text-xs text-[var(--color-text-muted)]">Methodology version {methodology.version}</p>
+        ) : undefined
+      }
+      onClose={onClose}
+      showClose={false}
+      dataAttributes={{ 'data-value-methodology': '' }}
+      footer={
+        <button type="button" onClick={onClose} className="btn-secondary text-xs">Close</button>
+      }
     >
-      <div className="absolute inset-0 bg-black/60" onClick={onClose} aria-hidden />
-      <div className="relative card w-full max-w-2xl max-h-[80vh] overflow-y-auto p-6 space-y-4">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-semibold text-[var(--color-text)]">How is this calculated?</h2>
-            {methodology && (
-              <p className="text-xs text-[var(--color-text-muted)]">Methodology version {methodology.version}</p>
-            )}
-          </div>
-          <button type="button" onClick={onClose} className="btn-secondary text-xs">Close</button>
-        </div>
-
+      <div className="space-y-4">
         {isLoading && <div className="flex justify-center py-6"><LoadingSpinner /></div>}
         {isError && (
           <p className="text-sm text-[var(--status-failed)]">Failed to load the methodology.</p>
@@ -136,7 +139,7 @@ function MethodologyModal({ open, onClose }: { open: boolean; onClose: () => voi
           </>
         )}
       </div>
-    </div>
+    </InlineFormSection>
   )
 }
 
@@ -614,6 +617,9 @@ export default function ValueMetricsPage() {
         </section>
       )}
 
+      {/* W27b: the methodology opens right under the hero (its two openers). */}
+      <MethodologyModal open={showMethodology} onClose={() => setShowMethodology(false)} />
+
       {/* ── The value counters, one strip (UX redesign P3: seven cards → five).
           "Defects promoted" is the second fact of "Defects grouped", and the
           derived "Release decisions" (blocked + conditional, both shown on
@@ -731,8 +737,6 @@ export default function ValueMetricsPage() {
           </ul>
         </Disclosure>
       )}
-
-      <MethodologyModal open={showMethodology} onClose={() => setShowMethodology(false)} />
     </div>
   )
 }

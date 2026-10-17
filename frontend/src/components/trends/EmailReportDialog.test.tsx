@@ -81,7 +81,7 @@ function renderDialog(props: Partial<Parameters<typeof EmailReportDialog>[0]> = 
       />
     </MemoryRouter>,
   )
-  return { onClose, dialog: screen.getByRole('dialog', { name: 'Email report' }) }
+  return { onClose, dialog: screen.getByRole('region', { name: 'Email report' }) }
 }
 
 const send = () => screen.getByRole('button', { name: 'Send' })

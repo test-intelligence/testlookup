@@ -1,7 +1,9 @@
 /**
  * W08 TRND-07 "Fix tagging": the tests behind the Untagged-executions callout
  * — the distinct tests whose executions in the window carry no suite label —
- * in a 400 px side panel (fixed, right: it adds no page height), 50 a page.
+ * 50 a page. W27b PAN-05b: a section IN THE PAGE (an `InlineFormSection
+ * as="aside"`, `Fix tagging`), which CoveragePage renders right after the
+ * callout, in the same column; it reads the list and the suites when it opens.
  *
  * Moving files tests under another suite IN THE CATALOGUE (the existing
  * `POST /canonical-test-cases/bulk-link`). It never relabels an execution:
@@ -24,7 +26,7 @@ import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useSWRConfig } from 'swr'
 import toast from 'react-hot-toast'
-import { X } from 'lucide-react'
+import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useSuites } from '@/hooks/useSuites'
 import { UNTAGGED_TESTS_KEY, useUntaggedTests } from '@/hooks/useCoverageHistory'
@@ -206,110 +208,104 @@ export default function FixTaggingPanel({ projectId, days, onClose }: FixTagging
   }
 
   return (
-    <aside
-      aria-label="Fix tagging"
-      data-fix-tagging-panel=""
-      className="fixed right-0 top-16 z-40 flex h-[calc(100vh-4rem)] w-[400px] flex-col gap-3 overflow-y-auto border-l border-[var(--color-border)] bg-[var(--color-bg-card)] p-4 shadow-xl"
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <h2 className="text-sm font-semibold text-[var(--color-text)]">Fix tagging</h2>
-          <p className="text-xs text-[var(--color-text-secondary)]">
-            {first.list ? `${plural(total, 'test')} ran without a suite label in the last ${days} days` : `Last ${days} days`}
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close the fix tagging panel"
-          className="inline-flex h-8 w-8 items-center justify-center rounded text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]"
-        >
-          <X aria-hidden="true" className="h-4 w-4" />
-        </button>
-      </div>
-
-      <p data-fix-tagging-copy="" className="m-0 text-xs text-[var(--color-text-secondary)]" style={{ lineHeight: 1.5 }}>
-        {FIX_TAGGING_COPY}{' '}
-        <Link to={REPORTER_DOCS_HREF} className="hover:underline" style={{ color: 'var(--color-accent)' }}>
-          How the reporter labels a run
-        </Link>
-      </p>
-
-      {canMove && (
-        <div className="flex flex-col gap-2 rounded border border-[var(--color-border)] p-2.5">
-          <label className="text-xs text-[var(--color-text-secondary)]" htmlFor="fix-tagging-target">
-            Target suite
-          </label>
-          <select
-            id="fix-tagging-target"
-            data-fix-tagging-target=""
-            className={SELECT}
-            value={targetId}
-            onChange={(event) => setTargetId(event.target.value)}
-          >
-            <option value="">Choose a suite…</option>
-            {suites.map((suite) => (
-              <option key={suite.id} value={suite.id}>
-                {suite.name}
-              </option>
-            ))}
-          </select>
-          {isQaLead && target && (
-            <label className="flex items-center gap-2 text-xs text-[var(--color-text)]">
-              <input type="checkbox" checked={makeDefault} onChange={(event) => setMakeDefault(event.target.checked)} />
-              Also make {target.name} the default suite for new unlabelled tests
-            </label>
-          )}
-          <button
-            type="button"
-            data-fix-tagging-move=""
-            className={BUTTON}
-            disabled={saving || !target || selected.size === 0}
-            onClick={() => void move()}
-          >
-            {saving ? 'Moving…' : target ? `Move ${plural(selected.size, 'test')} to ${target.name}` : `Move ${plural(selected.size, 'test')}`}
-          </button>
-          {outcome && (
-            <p role="status" data-fix-tagging-outcome="" className="m-0 text-xs text-[var(--color-text)]">
-              {outcome}
-            </p>
-          )}
-          {failure && (
-            <p role="alert" data-fix-tagging-error="" className="m-0 text-xs text-[var(--status-failed)]">
-              {failure}
-            </p>
-          )}
-        </div>
-      )}
-
-      {first.malformed ? (
-        <p data-fix-tagging-unavailable="" className="m-0 text-xs text-[var(--color-text-muted)]">
-          The untagged tests are not available.
+    <InlineFormSection
+      as="aside"
+      title="Fix tagging"
+      ariaLabel="Fix tagging"
+      description={
+        <p className="m-0 text-xs text-[var(--color-text-secondary)]">
+          {first.list ? `${plural(total, 'test')} ran without a suite label in the last ${days} days` : `Last ${days} days`}
         </p>
-      ) : first.list && first.list.total === 0 && first.list.items.length === 0 ? (
-        <p className="m-0 text-xs text-[var(--color-text-muted)]">No untagged tests in this window.</p>
-      ) : (
-        <>
-          <ul data-fix-tagging-list="" className="m-0 list-none p-0">
-            {Array.from({ length: pages }, (_, i) => (
-              <UntaggedPage
-                key={i + 1}
-                projectId={projectId}
-                days={days}
-                page={i + 1}
-                canMove={canMove}
-                selected={selected}
-                onToggle={toggle}
-              />
-            ))}
-          </ul>
-          {first.list && shown < total && (
-            <button type="button" className={BUTTON} onClick={() => setPages((n) => n + 1)}>
-              Load more ({plural(total - shown, 'more test')})
+      }
+      onClose={onClose}
+      closeLabel="Close the fix tagging panel"
+      dataAttributes={{ 'data-fix-tagging-panel': '' }}
+      className="min-w-0"
+    >
+      <div className="flex flex-col gap-3">
+        <p data-fix-tagging-copy="" className="m-0 text-xs text-[var(--color-text-secondary)]" style={{ lineHeight: 1.5 }}>
+          {FIX_TAGGING_COPY}{' '}
+          <Link to={REPORTER_DOCS_HREF} className="hover:underline" style={{ color: 'var(--color-accent)' }}>
+            How the reporter labels a run
+          </Link>
+        </p>
+
+        {canMove && (
+          <div className="flex flex-col gap-2 rounded border border-[var(--color-border)] p-2.5">
+            <label className="text-xs text-[var(--color-text-secondary)]" htmlFor="fix-tagging-target">
+              Target suite
+            </label>
+            <select
+              id="fix-tagging-target"
+              data-fix-tagging-target=""
+              className={SELECT}
+              value={targetId}
+              onChange={(event) => setTargetId(event.target.value)}
+            >
+              <option value="">Choose a suite…</option>
+              {suites.map((suite) => (
+                <option key={suite.id} value={suite.id}>
+                  {suite.name}
+                </option>
+              ))}
+            </select>
+            {isQaLead && target && (
+              <label className="flex items-center gap-2 text-xs text-[var(--color-text)]">
+                <input type="checkbox" checked={makeDefault} onChange={(event) => setMakeDefault(event.target.checked)} />
+                Also make {target.name} the default suite for new unlabelled tests
+              </label>
+            )}
+            <button
+              type="button"
+              data-fix-tagging-move=""
+              className={BUTTON}
+              disabled={saving || !target || selected.size === 0}
+              onClick={() => void move()}
+            >
+              {saving ? 'Moving…' : target ? `Move ${plural(selected.size, 'test')} to ${target.name}` : `Move ${plural(selected.size, 'test')}`}
             </button>
-          )}
-        </>
-      )}
-    </aside>
+            {outcome && (
+              <p role="status" data-fix-tagging-outcome="" className="m-0 text-xs text-[var(--color-text)]">
+                {outcome}
+              </p>
+            )}
+            {failure && (
+              <p role="alert" data-fix-tagging-error="" className="m-0 text-xs text-[var(--status-failed)]">
+                {failure}
+              </p>
+            )}
+          </div>
+        )}
+
+        {first.malformed ? (
+          <p data-fix-tagging-unavailable="" className="m-0 text-xs text-[var(--color-text-muted)]">
+            The untagged tests are not available.
+          </p>
+        ) : first.list && first.list.total === 0 && first.list.items.length === 0 ? (
+          <p className="m-0 text-xs text-[var(--color-text-muted)]">No untagged tests in this window.</p>
+        ) : (
+          <>
+            <ul data-fix-tagging-list="" className="m-0 list-none p-0">
+              {Array.from({ length: pages }, (_, i) => (
+                <UntaggedPage
+                  key={i + 1}
+                  projectId={projectId}
+                  days={days}
+                  page={i + 1}
+                  canMove={canMove}
+                  selected={selected}
+                  onToggle={toggle}
+                />
+              ))}
+            </ul>
+            {first.list && shown < total && (
+              <button type="button" className={BUTTON} onClick={() => setPages((n) => n + 1)}>
+                Load more ({plural(total - shown, 'more test')})
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    </InlineFormSection>
   )
 }

@@ -1,7 +1,10 @@
 /**
  * The rows panel (VIZ-208 / 602): the executions behind one chart mark, one
- * page at a time, in a `SidePanel` beside the page (focus moves in on open,
- * Escape closes, focus returns to the control that opened it).
+ * page at a time. W27b PAN-05b: a read-only section IN THE PAGE (an
+ * `InlineFormSection as="aside"`, `Executions in <title>`), which its host
+ * renders right after its chart frame, inside the section, as wide as it
+ * (it was a 420 px edge `SidePanel`): focus moves in on open, Escape with
+ * focus inside closes it, focus returns to the control that opened it.
  *
  * Shared by every Wave-3 host: a heatmap cell, a treemap leaf, a failure group,
  * a scatter point, a drill level. The host says which rows (`RowsPanelProps`,
@@ -14,7 +17,7 @@
  * through the page's one announcer; it has no live region of its own.
  */
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
-import SidePanel from '@/components/ui/SidePanel'
+import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
 import ScopedLink from '@/components/ui/ScopedLink'
 import StatusBadge from '@/components/ui/StatusBadge'
 import { useChartAnnouncer } from '@/components/charts/ChartAnnouncer'
@@ -65,12 +68,16 @@ function RowsTable({ items }: { items: readonly RowsItem[] }) {
               >
                 {item.test_name}
               </ScopedLink>
+              {/* W27b: secondary, not muted: in the page the table is audited at every impact, and the muted
+                  tone misses 4.5:1 on the card in the lab theme (the fixed panel was never audited). */}
               {item.error_line && (
-                <span className="mt-0.5 block break-words text-[var(--color-text-muted)]">{item.error_line}</span>
+                <span className="mt-0.5 block break-words text-[var(--color-text-secondary)]">{item.error_line}</span>
               )}
             </th>
             <td className="py-1 pr-2">
-              <StatusBadge status={item.status} />
+              {/* The status word in the body text colour on the badge's tint and border: the status-coloured
+                  word on its 16 % tint is 4.1:1 (passed) / 3.5:1 (failed) on the card in the signal theme. */}
+              <StatusBadge status={item.status} className="text-[var(--color-text)]" />
             </td>
             <td className="break-words py-1 pr-2">{item.suite ?? NO_VALUE}</td>
             <td className="whitespace-nowrap py-1 pr-2">{formatDuration(item.duration_ms)}</td>
@@ -140,9 +147,9 @@ function RowsBody({ selectors, chart, scope, title, expected }: Omit<RowsPanelPr
               {notice}
             </p>
           )}
-          {/* Six columns are wider than the 420 px panel: the table scrolls sideways
-              inside a named, focusable region (keyboard users can scroll it too),
-              never clipping "Run date" (B0, Wave 3). Classes the app already uses. */}
+          {/* Six columns can be wider than the section (a narrow host column): the
+              table scrolls sideways inside a named, focusable region (keyboard
+              users can scroll it too), never clipping "Run date" (B0, Wave 3). */}
           <div
             role="region"
             aria-label="Executions table"
@@ -174,9 +181,16 @@ function RowsBody({ selectors, chart, scope, title, expected }: Omit<RowsPanelPr
 export function RowsPanel({ selectors, chart, scope, title, expected, onClose }: RowsPanelProps): ReactElement | null {
   if (selectors.length === 0) return null
   return (
-    <SidePanel open onClose={onClose} title={rowsHeading(title)} closeLabel="Close executions">
+    <InlineFormSection
+      as="aside"
+      title={rowsHeading(title)}
+      onClose={onClose}
+      closeLabel="Close executions"
+      dataAttributes={{ 'data-rows-panel': '' }}
+      className="mt-3 min-w-0"
+    >
       <RowsBody key={selectorsKey(selectors)} selectors={selectors} chart={chart} scope={scope} title={title} expected={expected} />
-    </SidePanel>
+    </InlineFormSection>
   )
 }
 

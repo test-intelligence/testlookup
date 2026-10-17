@@ -130,6 +130,35 @@ describe('FailureGroupsSection', () => {
     expect(screen.queryByRole('complementary', { name: 'Failure group #1' })).toBeNull()
   })
 
+  // W27b PAN-05b: the group and its rows open IN the section, right after its frame (the tabs), as wide as the
+  // section; nothing is an edge panel or modal, and the rows still ride `rows=` through the host's drill hook.
+  it('W27b: a group opens inside the section right after the frame, then the rows section after it; no side panel', async () => {
+    drill.rows = [{ dimension: 'error_signature', value: 'error #0: assertion' }]
+    renderSection()
+    await settle()
+    fireEvent.click(screen.getByRole('button', { name: HOSTILE_GROUP_LABELS[1] }))
+    const panel = screen.getByRole('complementary', { name: 'Failure group #2' })
+    const section = document.querySelector('[data-catalogue-section="failures-groups"]') as HTMLElement
+    const frame = (section.querySelector('[role="tablist"]') as HTMLElement).parentElement as HTMLElement
+    expect(frame.parentElement).toBe(section)
+    expect(frame.nextElementSibling).toBe(panel)
+    expect(panel.nextElementSibling).toBe(screen.getByTestId('rows-panel'))
+    expect(panel).toHaveAttribute('data-in-page', 'form')
+    expect(panel.querySelector('[data-group-panel="2"]')).not.toBeNull()
+    expect(document.querySelector('[data-side-panel]')).toBeNull()
+    expect(document.querySelector('[aria-modal]')).toBeNull()
+    expect(document.body.getAttribute('style')).toBeNull()
+    expect(rowsPanels[rowsPanels.length - 1].selectors).toEqual([{ dimension: 'error_signature', value: 'error #0: assertion' }])
+
+    // Focus is on its X; Escape with focus inside closes it (the section and the rows stay).
+    const close = within(panel).getByRole('button', { name: 'Close panel' })
+    expect(close).toHaveFocus()
+    fireEvent.keyDown(close, { key: 'Escape' })
+    expect(screen.queryByRole('complementary', { name: 'Failure group #2' })).toBeNull()
+    expect(screen.getByTestId('rows-panel')).toBeInTheDocument()
+    expect(drill.closeRows).not.toHaveBeenCalled()
+  })
+
   it('Enter on a bubble opens its panel ("drill"); its "View rows" button opens the rows', async () => {
     // jsdom lays nothing out: give the plot a width so the circles are drawn and walked.
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({

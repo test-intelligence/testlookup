@@ -8,12 +8,17 @@
  * `Pin a note for these days` (prefilled with the gap). The checks here mirror
  * the server's (1-280 characters, the end on or after the start, at most 366
  * days); the server is the authority and its refusal is shown as TEXT.
+ *
+ * W27b PAN-05b: the form renders IN THE PAGE (an `InlineFormSection`, region
+ * `Pin a note` / `Edit note`), right after the card whose control opened it
+ * (TrendsPage places it); no backdrop, no trap. Escape with focus inside
+ * closes it (not mid-save), focus returns to the opener.
  */
 import { useId, useState } from 'react'
 import toast from 'react-hot-toast'
-import { X } from 'lucide-react'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import { useModalFocus } from '@/hooks/useModalFocus'
+import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
+import type { InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import { useTimelineNoteActions } from '@/hooks/useTimelineNotes'
 import { refusalText } from '@/services/trendsReportService'
 import { NOTE_RANGE_MAX_DAYS, NOTE_TEXT_MAX, type TimelineNote, type TimelineNoteBody } from '@/types/timelineNotes'
@@ -28,6 +33,8 @@ export interface PinNoteDialogProps {
   suite: string | null
   onClose: () => void
   onSaved?: (note: TimelineNote) => void
+  /** The page's note slot (one note form at a time; asks before typed text is replaced). */
+  slot?: InlineSlot
 }
 
 export const PIN_NOTE_TITLE = 'Pin a note'
@@ -50,7 +57,7 @@ export function noteFormError(from: string, to: string, text: string): string | 
   return null
 }
 
-export default function PinNoteDialog({ range, note = null, suite, onClose, onSaved }: PinNoteDialogProps) {
+export default function PinNoteDialog({ range, note = null, suite, onClose, onSaved, slot }: PinNoteDialogProps) {
   const id = useId()
   const editing = note !== null
   const [from, setFrom] = useState(note?.starts_on ?? range?.from ?? '')
@@ -63,7 +70,6 @@ export default function PinNoteDialog({ range, note = null, suite, onClose, onSa
   const [busy, setBusy] = useState(false)
   const [refusal, setRefusal] = useState<string | null>(null)
   const actions = useTimelineNoteActions()
-  const dialogRef = useModalFocus({ onClose, canClose: !busy })
 
   const problem = noteFormError(from, to, text)
   const count = Array.from(text).length
@@ -98,35 +104,40 @@ export default function PinNoteDialog({ range, note = null, suite, onClose, onSa
   }
 
   return (
-    <div
-      ref={dialogRef}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={`${id}-title`}
-      data-pin-note-dialog={editing ? 'edit' : 'create'}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60"
-      onClick={() => {
-        if (!busy) onClose()
-      }}
-    >
-      <div
-        className="w-full max-w-[420px] rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-card)] p-5 shadow-2xl"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="mb-4 flex items-center justify-between">
-          <h2 id={`${id}-title`} className="text-base font-semibold text-[var(--color-text)]">
-            {editing ? EDIT_NOTE_TITLE : PIN_NOTE_TITLE}
-          </h2>
+    <InlineFormSection
+      title={editing ? EDIT_NOTE_TITLE : PIN_NOTE_TITLE}
+      titleId={`${id}-title`}
+      onClose={onClose}
+      canClose={!busy}
+      busy={busy}
+      closeLabel="Close note dialog"
+      slot={slot}
+      dataAttributes={{ 'data-pin-note-dialog': editing ? 'edit' : 'create' }}
+      footer={
+        <>
           <button
             type="button"
-            aria-label="Close note dialog"
             onClick={onClose}
             disabled={busy}
-            className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40"
+            className="px-4 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40"
           >
-            <X className="h-4 w-4" />
+            Cancel
           </button>
-        </div>
+          <button
+            type="button"
+            data-pin-note="save"
+            onClick={() => void save()}
+            disabled={problem !== null || busy}
+            className="flex items-center gap-2 rounded-lg bg-[var(--color-btn-primary-bg)] px-4 py-2 text-sm font-medium text-[var(--color-btn-primary-text)] hover:bg-[var(--color-btn-primary-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {busy && <LoadingSpinner size="sm" />}
+            Save
+          </button>
+        </>
+      }
+    >
+      {/* The note's text keeps a readable width; the section spans its column. */}
+      <div className="max-w-2xl">
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1">
             <label htmlFor={`${id}-from`} className={LABEL}>
@@ -178,27 +189,7 @@ export default function PinNoteDialog({ range, note = null, suite, onClose, onSa
             {refusal}
           </p>
         ) : null}
-        <div className="mt-5 flex justify-end gap-3">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={busy}
-            className="px-4 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            data-pin-note="save"
-            onClick={() => void save()}
-            disabled={problem !== null || busy}
-            className="flex items-center gap-2 rounded-lg bg-[var(--color-btn-primary-bg)] px-4 py-2 text-sm font-medium text-[var(--color-btn-primary-text)] hover:bg-[var(--color-btn-primary-hover)] disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {busy && <LoadingSpinner size="sm" />}
-            Save
-          </button>
-        </div>
       </div>
-    </div>
+    </InlineFormSection>
   )
 }
