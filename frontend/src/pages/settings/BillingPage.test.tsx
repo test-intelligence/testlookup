@@ -27,7 +27,7 @@
  *   to match the backend's `int`. Bounds that drift from the schema turn a
  *   typo into a 422 the user cannot act on.
  */
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -43,6 +43,13 @@ let isAdmin = true
 let billingError: unknown
 let billingIsError = false
 const refreshBilling = vi.fn()
+// The quota read the editor makes when it opens (W27b F-6 drives its three outcomes: none configured (the
+// hook's 404 → null), a failed read, a configured quota).
+const quota = vi.hoisted(() => ({
+  state: { quota: null as unknown, isLoading: false, isError: false },
+  refresh: vi.fn(),
+  putQuota: vi.fn(),
+}))
 
 vi.mock('react-hot-toast', () => ({ default: { success: vi.fn(), error: vi.fn() } }))
 
@@ -54,7 +61,10 @@ vi.mock('@/hooks/useLlmBudget', () => ({
     isError: billingIsError,
     refresh: refreshBilling,
   }),
-  useProjectQuota: () => ({ quota: null, isLoading: false, refresh: vi.fn() }),
+  useProjectQuota: () => ({ ...quota.state, refresh: quota.refresh }),
+}))
+vi.mock('@/services/llmBudgetService', () => ({
+  llmBudgetService: { putQuota: (...args: unknown[]) => quota.putQuota(...args) },
 }))
 
 vi.mock('@/hooks/usePermissions', () => ({
@@ -95,6 +105,7 @@ beforeEach(() => {
   isAdmin = true
   billingError = undefined
   billingIsError = false
+  quota.state = { quota: null, isLoading: false, isError: false }
 })
 
 describe('a project with no quota is not reported as 0% used', () => {
@@ -317,5 +328,113 @@ describe('the settings page template (UX redesign P5)', () => {
     renderWith([project()])
     expectTemplateHeader('LLM Cost Budget', '/settings/billing')
     expect(screen.getByRole('table')).toBeInTheDocument()
+  })
+})
+
+// ── W27b: the budget form opens under its row; F-6 a failed read never shows the defaults ──
+
+const CONFIGURED = {
+  enabled: false,
+  period_type: 'MONTHLY',
+  included_usd: 25,
+  overage_rate_usd: 2,
+  hard_cap_usd: 400,
+  soft_warn_threshold_pct: 60,
+  at_cap_action: 'HARD_BLOCK',
+}
+const editor = () => screen.getByRole('region', { name: 'Edit LLM cost budget' })
+
+describe('W27b: the quota editor is in the page, under its project row', () => {
+  it('opens in a full-width row (colspan 10) right after its <tr data-billing-project>, which it does not carry', () => {
+    renderWith([project(), project({ project_id: 'p-2', project_name: 'Search' })])
+    fireEvent.click(within(rowOf('p-1')).getByRole('button', { name: 'Edit' }))
+    const section = editor()
+    expect(section.querySelector('h3')).toHaveTextContent('LLM cost budget')
+    const cellOf = section.closest('td') as HTMLElement
+    expect(cellOf).toHaveAttribute('colspan', '10')
+    const formRow = cellOf.closest('tr') as HTMLElement
+    expect(formRow).toHaveAttribute('data-in-page-row')
+    expect(formRow.hasAttribute('data-billing-project')).toBe(false)
+    expect(rowOf('p-1').nextElementSibling).toBe(formRow)
+    expect(within(section).getByRole('button', { name: 'Close' })).toBeInTheDocument()
+    expect(within(section).getByRole('button', { name: /Save/ })).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.querySelectorAll('[data-billing-project]')).toHaveLength(2)
+
+    fireEvent.click(within(section).getByRole('button', { name: 'Close' }))
+    expect(screen.queryByRole('region', { name: 'Edit LLM cost budget' })).toBeNull()
+  })
+
+  it('a QA lead\'s View: the same form, every field disabled, no Save', () => {
+    isAdmin = false
+    renderWith([project()])
+    fireEvent.click(within(rowOf('p-1')).getByRole('button', { name: 'View' }))
+    expect(within(editor()).getByLabelText(/Included per month/)).toBeDisabled()
+    expect(within(editor()).queryByRole('button', { name: /Save/ })).toBeNull()
+  })
+})
+
+describe('W27b F-6: a failed quota read never puts the defaults in front of Save', () => {
+  it('a read that failed (not a 404) shows the error with Retry, no field and no Save; nothing is sent', () => {
+    quota.state = { quota: null, isLoading: false, isError: true }
+    renderWith([project()])
+    fireEvent.click(within(rowOf('p-1')).getByRole('button', { name: 'Edit' }))
+    const section = editor()
+    expect(within(section).getByRole('alert')).toHaveTextContent('could not be read')
+    expect(within(section).queryByLabelText(/Included per month/), 'no defaults on screen').toBeNull()
+    expect(within(section).queryByRole('button', { name: /Save/ }), 'no Save until a read succeeds').toBeNull()
+    fireEvent.click(within(section).getByRole('button', { name: 'Retry' }))
+    expect(quota.refresh).toHaveBeenCalledTimes(1)
+    expect(quota.putQuota).not.toHaveBeenCalled()
+  })
+
+  it('once the retried read answers, the form shows the REAL quota (not the defaults) and Save sends it', async () => {
+    quota.state = { quota: null, isLoading: false, isError: true }
+    const view = renderWith([project()])
+    fireEvent.click(within(rowOf('p-1')).getByRole('button', { name: 'Edit' }))
+    expect(within(editor()).queryByRole('button', { name: /Save/ })).toBeNull()
+
+    quota.state = { quota: CONFIGURED, isLoading: false, isError: false }
+    view.rerender(<MemoryRouter><BillingPage /></MemoryRouter>)
+    expect(within(editor()).getByLabelText(/Hard cap/)).toHaveValue(400)
+    expect(within(editor()).getByLabelText(/Included per month/)).toHaveValue(25)
+    quota.putQuota.mockResolvedValue({ id: 'q-1', project_id: 'p-1', ...CONFIGURED })
+    fireEvent.click(within(editor()).getByRole('button', { name: /Save/ }))
+    await waitFor(() => expect(quota.putQuota).toHaveBeenCalledTimes(1))
+    expect(quota.putQuota).toHaveBeenCalledWith('p-1', CONFIGURED)
+  })
+
+  it('a 404 (no quota configured) still shows the defaults, as before, and Save sends them', async () => {
+    renderWith([project()])
+    fireEvent.click(within(rowOf('p-1')).getByRole('button', { name: 'Edit' }))
+    expect(within(editor()).queryByRole('alert')).toBeNull()
+    expect(within(editor()).getByLabelText(/Included per month/)).toHaveValue(0)
+    expect(within(editor()).getByLabelText(/Hard cap/)).toHaveValue(100)
+    expect(within(editor()).getByLabelText(/Overage rate/)).toHaveValue(1)
+    quota.putQuota.mockResolvedValue({ id: 'q-1', project_id: 'p-1' })
+    fireEvent.click(within(editor()).getByRole('button', { name: /Save/ }))
+    await waitFor(() => expect(quota.putQuota).toHaveBeenCalledTimes(1))
+    expect(quota.putQuota).toHaveBeenCalledWith('p-1', {
+      enabled: true,
+      period_type: 'MONTHLY',
+      included_usd: 0,
+      overage_rate_usd: 1,
+      hard_cap_usd: 100,
+      soft_warn_threshold_pct: 80,
+      at_cap_action: 'AUTO_DOWNGRADE_TO_ML',
+    })
+  })
+
+  it('a saved quota is written into its read\'s cache (no request), so a reopen never starts from the pre-save values', async () => {
+    quota.state = { quota: CONFIGURED, isLoading: false, isError: false }
+    renderWith([project()])
+    fireEvent.click(within(rowOf('p-1')).getByRole('button', { name: 'Edit' }))
+    fireEvent.change(within(editor()).getByLabelText(/Hard cap/), { target: { value: '500' } })
+    const saved = { id: 'q-1', project_id: 'p-1', ...CONFIGURED, hard_cap_usd: 500 }
+    quota.putQuota.mockResolvedValue(saved)
+    fireEvent.click(within(editor()).getByRole('button', { name: /Save/ }))
+    await waitFor(() => expect(quota.refresh).toHaveBeenCalledWith(saved, { revalidate: false }))
+    await waitFor(() => expect(refreshBilling).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Edit LLM cost budget' })).toBeNull())
   })
 })

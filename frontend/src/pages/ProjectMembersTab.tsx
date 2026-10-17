@@ -1,11 +1,21 @@
 // Project Members Tab component — imported into UserManagementPage
-import { useEffect, useMemo, useState } from 'react'
+//
+// W27b PAN-06: everything opens IN THE PAGE (no modal, no native confirm): Add Member under the tab's top
+// row; a member's Remove from project asks in a row under it; Reset QA Lead password asks under the Default
+// QA Lead card's footer row, and its answer (a one-time password) is shown once in that card, never in a
+// toast, until Done, a project change or unmount (it is still copied to the clipboard, as before).
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, KeyRound, ShieldCheck, UserMinus, UserPlus } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useUsers, useProjectMembers } from '@/hooks/useUserManagement'
 import { userManagementService, type ProjectMember, type UserItem, type UserRole } from '@/services/userManagementService'
 import { projectsService } from '@/services/projectsService'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import InlineConfirm from '@/components/ui/inPage/InlineConfirm'
+import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
+import InlineRowSection from '@/components/ui/inPage/InlineRowSection'
+import { useInlineSlot, type InlineSlot } from '@/components/ui/inPage/useInlineSlot'
+import { useSlotCloser } from '@/hooks/useSlotCloser'
 import { copyTextToClipboard } from '@/utils/clipboard'
 import type { Project } from '@/types/projects'
 
@@ -21,7 +31,18 @@ const ROLE_COLORS: Record<UserRole, string> = {
 export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolean; canManageUsers: boolean }) {
   const [projects, setProjects] = useState<Project[]>([])
   const [selectedProjectId, setSelectedProjectId] = useState<string>('')
-  const [showAddModal, setShowAddModal] = useState(false)
+  // W27b: Add Member opens under the top row (one form there); a member's Remove and the QA lead reset ask
+  // in a strip at their control; the reset's new password is shown once in the Default QA Lead card.
+  const addSlot = useInlineSlot<'add'>()
+  const closeAdd = useSlotCloser(addSlot)
+  const [confirmingRemove, setConfirmingRemove] = useState<string | null>(null)
+  const [confirmingReset, setConfirmingReset] = useState(false)
+  const [resetResult, setResetResult] = useState<{ email: string; password: string } | null>(null)
+  // The project a reset answer belongs to: an answer for a project no longer selected is not shown.
+  const selectedProjectRef = useRef(selectedProjectId)
+  useLayoutEffect(() => {
+    selectedProjectRef.current = selectedProjectId
+  })
   // Pending default-QA-lead selection — committed by the Save button so a
   // mis-click on the picker doesn't immediately fire a PUT.
   const [defaultQaLeadDraft, setDefaultQaLeadDraft] = useState<string>('')
@@ -94,18 +115,29 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
 
   async function handleResetDefaultQaLeadPassword() {
     if (!selectedProjectId) return
-    if (!confirm(
-      'Reset the password of this project’s auto-provisioned QA Lead user?\n\n'
-      + 'The new password will be displayed once — copy it before closing.'
-    )) return
+    const projectId = selectedProjectId
     setResettingDefaultLead(true)
     try {
-      const result = await projectsService.resetDefaultQaLeadPassword(selectedProjectId)
-      await copyTextToClipboard(result.password)
-      toast.success(
-        `Password reset for ${result.email}. Copied to clipboard.`,
-        { duration: 8000 },
-      )
+      const result = await projectsService.resetDefaultQaLeadPassword(projectId)
+      // D-15: the question promises the new password "will be displayed once": it is, in the card (never
+      // in a toast), while this project is still the one shown. It is still copied, and a refused copy says
+      // so instead of claiming the clipboard holds it.
+      const shown = selectedProjectRef.current === projectId
+      if (shown) setResetResult({ email: result.email, password: result.password })
+      const copied = await copyTextToClipboard(result.password)
+      if (copied) {
+        toast.success(
+          `Password reset for ${result.email}. Copied to clipboard.`,
+          { duration: 8000 },
+        )
+      } else if (shown) {
+        toast.success(
+          `Password reset for ${result.email}. Copy it below — it is shown once.`,
+          { duration: 8000 },
+        )
+      } else {
+        toast.error(`Password reset for ${result.email}, but it could not be copied to the clipboard.`)
+      }
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
       toast.error(msg || 'Failed to reset password')
@@ -116,7 +148,6 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
 
   async function handleRemove(userId: string) {
     if (!selectedProjectId) return
-    if (!confirm('Remove this user from the project?')) return
     try {
       await userManagementService.removeProjectMember(selectedProjectId, userId)
       toast.success('Member removed')
@@ -149,7 +180,17 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
         <label htmlFor="member-field-0" className="text-sm text-[var(--color-text-muted)] whitespace-nowrap">Select Project:</label>
         <select id="member-field-0"
           value={selectedProjectId}
-          onChange={e => setSelectedProjectId(e.target.value)}
+          onChange={e => {
+            const next = e.target.value
+            // The open form, the strips and a shown password belong to the project they were opened for.
+            addSlot.guard(() => {
+              addSlot.close()
+              setConfirmingRemove(null)
+              setConfirmingReset(false)
+              setResetResult(null)
+              setSelectedProjectId(next)
+            })
+          }}
           className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)] flex-1 max-w-xs"
         >
           <option value="">— Pick a project —</option>
@@ -157,13 +198,26 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
         </select>
         {selectedProjectId && canManageUsers && (
           <button
-            onClick={() => setShowAddModal(true)}
+            onClick={() => addSlot.open('add')}
             className="flex items-center gap-1.5 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] px-3 py-2 rounded-lg font-medium"
           >
             <UserPlus className="h-4 w-4" /> Add Member
           </button>
         )}
       </div>
+
+      {/* W27b: Add Member opens here, under the top row. */}
+      {addSlot.openKey === 'add' && selectedProjectId && (
+        <AddProjectMemberModal
+          slot={addSlot}
+          projectId={selectedProjectId}
+          projectName={selectedProject?.name ?? ''}
+          nonMembers={nonMembers}
+          usersLoading={usersLoading}
+          onClose={() => closeAdd('add')}
+          onAdded={member => { mutateMembers(prev => [...(prev ?? []), member], { revalidate: false }); closeAdd('add') }}
+        />
+      )}
 
       {/* User loading error warning */}
       {usersError && (
@@ -233,7 +287,7 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
 
               <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex items-center gap-2 flex-wrap">
                 <button
-                  onClick={handleResetDefaultQaLeadPassword}
+                  onClick={() => setConfirmingReset(true)}
                   disabled={resettingDefaultLead}
                   className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50"
                   title="Reset the auto-provisioned default QA Lead user's password"
@@ -245,6 +299,49 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
                   New password is copied to your clipboard.
                 </span>
               </div>
+              {confirmingReset && (
+                <div className="mt-3">
+                  <InlineConfirm
+                    message={<>Reset the password of this project’s auto-provisioned QA Lead user? The new password will be displayed once — copy it before closing.</>}
+                    confirmLabel="Reset password"
+                    tone="danger"
+                    onConfirm={() => { setConfirmingReset(false); void handleResetDefaultQaLeadPassword() }}
+                    onCancel={() => setConfirmingReset(false)}
+                  />
+                </div>
+              )}
+              {/* D-15: the new password, shown once (never in a toast or a status region), until Done. */}
+              {resetResult && (
+                <div
+                  data-qa-lead-reset-result=""
+                  className="mt-3 space-y-2 rounded border border-[var(--status-broken-bd)]/50 bg-[var(--color-bg-secondary)] p-3"
+                >
+                  <p className="m-0 text-xs text-[var(--color-text-muted)]">
+                    New password for <strong className="text-[var(--color-text)]">{resetResult.email}</strong>
+                  </p>
+                  <code className="block break-all text-sm font-bold text-[var(--status-broken)]">{resetResult.password}</code>
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const ok = await copyTextToClipboard(resetResult.password)
+                        if (ok) toast.success('Copied!')
+                        else toast.error('Clipboard access denied — copy manually')
+                      }}
+                      className="text-sm text-[var(--color-text)] hover:text-[var(--color-text-secondary)] px-3 py-1.5"
+                    >
+                      Copy
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setResetResult(null)}
+                      className="bg-[var(--color-bg-hover)] hover:bg-[var(--color-bg-card)] text-[var(--color-text)] text-sm px-4 py-2 rounded"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -260,7 +357,7 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
         <div className="text-center py-16 text-[var(--color-text-muted)] text-sm">
           No members assigned to <span className="text-[var(--color-text-secondary)]">{selectedProject?.name}</span> yet.
           {canManageUsers && (
-            <button onClick={() => setShowAddModal(true)} className="ml-2 text-[var(--color-text)] hover:text-[var(--color-text-secondary)] underline">
+            <button onClick={() => addSlot.open('add')} className="ml-2 text-[var(--color-text)] hover:text-[var(--color-text-secondary)] underline">
               Add the first member
             </button>
           )}
@@ -279,7 +376,8 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
               {members.map(m => (
-                <tr key={m.id} className="hover:bg-[var(--color-bg-secondary)]/60 transition-colors">
+                <Fragment key={m.id}>
+                <tr className="hover:bg-[var(--color-bg-secondary)]/60 transition-colors">
                   <td className="px-4 py-3 text-[var(--color-text)] font-medium">{m.full_name || m.username}</td>
                   <td className="px-4 py-3 text-[var(--color-text-muted)]">{m.email}</td>
                   <td className="px-4 py-3">
@@ -301,7 +399,7 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
                   {isAdmin && (
                     <td className="px-4 py-3 text-right">
                       <button
-                        onClick={() => handleRemove(m.user_id)}
+                        onClick={() => setConfirmingRemove(m.user_id)}
                         className="text-[var(--status-failed)]/70 hover:text-[var(--status-failed)] p-1 rounded transition-colors"
                         title="Remove from project"
                       >
@@ -310,22 +408,25 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
                     </td>
                   )}
                 </tr>
+                {/* W27b: Remove asks under the member's row (admin only, so the table has its 5 columns). */}
+                {confirmingRemove === m.user_id && (
+                  <InlineRowSection colSpan={5}>
+                    <InlineConfirm
+                      message="Remove this user from the project?"
+                      confirmLabel="Remove"
+                      tone="danger"
+                      onConfirm={() => { setConfirmingRemove(null); void handleRemove(m.user_id) }}
+                      onCancel={() => setConfirmingRemove(null)}
+                    />
+                  </InlineRowSection>
+                )}
+                </Fragment>
               ))}
             </tbody>
           </table>
         </div>
       )}
 
-      {showAddModal && selectedProjectId && (
-        <AddProjectMemberModal
-          projectId={selectedProjectId}
-          projectName={selectedProject?.name ?? ''}
-          nonMembers={nonMembers}
-          usersLoading={usersLoading}
-          onClose={() => setShowAddModal(false)}
-          onAdded={member => { mutateMembers(prev => [...(prev ?? []), member], { revalidate: false }); setShowAddModal(false) }}
-        />
-      )}
     </div>
   )
 }
@@ -337,9 +438,12 @@ interface AddProjectMemberModalProps {
   usersLoading: boolean
   onClose: () => void
   onAdded: (member: ProjectMember) => void
+  /** W27b: the tab's Add Member slot (dirty tracking + the discard question). */
+  slot?: InlineSlot
 }
 
-function AddProjectMemberModal({ projectId, projectName, nonMembers, usersLoading, onClose, onAdded }: AddProjectMemberModalProps) {
+/** Add Member, in the page under the tab's top row (W27b; it was a modal dialog). */
+function AddProjectMemberModal({ projectId, projectName, nonMembers, usersLoading, onClose, onAdded, slot }: AddProjectMemberModalProps) {
   const [userId, setUserId] = useState('')
   const [role, setRole] = useState<UserRole>('TESTER')
   const [saving, setSaving] = useState(false)
@@ -360,11 +464,29 @@ function AddProjectMemberModal({ projectId, projectName, nonMembers, usersLoadin
   }
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="add-member-title" className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60" onClick={onClose}>
-      <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-xl p-6 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
-        <h2 id="add-member-title" className="text-base font-semibold text-[var(--color-text)] mb-1">Add Member to {projectName}</h2>
-        <p className="text-xs text-[var(--color-text-muted)] mb-4">Assign a user to this project with a specific role.</p>
-        <div className="space-y-3">
+    <InlineFormSection
+      title={<>Add Member to {projectName}</>}
+      titleId="add-member-title"
+      description={<p className="m-0 text-xs">Assign a user to this project with a specific role.</p>}
+      onClose={onClose}
+      canClose={!saving}
+      showClose={false}
+      slot={slot}
+      footer={
+        <>
+          <button onClick={onClose} className="px-4 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
+          <button
+            onClick={handleAdd}
+            disabled={saving || !userId}
+            className="px-4 py-2 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] rounded-lg font-medium flex items-center gap-2"
+          >
+            {saving ? <LoadingSpinner size="sm" /> : <UserPlus className="h-4 w-4" />}
+            {saving ? 'Adding…' : 'Add Member'}
+          </button>
+        </>
+      }
+    >
+        <div className="max-w-2xl space-y-3">
           <div>
             <label className="block text-xs text-[var(--color-text-muted)] mb-1">User</label>
             {usersLoading ? (
@@ -399,18 +521,6 @@ function AddProjectMemberModal({ projectId, projectName, nonMembers, usersLoadin
             </select>
           </div>
         </div>
-        <div className="flex gap-3 justify-end mt-5">
-          <button onClick={onClose} className="px-4 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
-          <button
-            onClick={handleAdd}
-            disabled={saving || !userId}
-            className="px-4 py-2 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] rounded-lg font-medium flex items-center gap-2"
-          >
-            {saving ? <LoadingSpinner size="sm" /> : <UserPlus className="h-4 w-4" />}
-            {saving ? 'Adding…' : 'Add Member'}
-          </button>
-        </div>
-      </div>
-    </div>
+    </InlineFormSection>
   )
 }

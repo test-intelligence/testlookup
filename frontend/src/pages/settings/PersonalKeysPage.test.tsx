@@ -4,7 +4,7 @@
  * Users page (QA lead and admin only), while the API lets every QA engineer
  * own keys — so a QA engineer had keys and no screen for them.
  */
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -26,6 +26,7 @@ vi.mock('@/services/userManagementService', () => ({
 vi.mock('react-hot-toast', () => ({ default: Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn() }) }))
 
 import PersonalKeysPage from './PersonalKeysPage'
+import { userManagementService } from '@/services/userManagementService'
 
 function renderPage() {
   return render(
@@ -72,10 +73,10 @@ describe('PersonalKeysPage — "My API keys"', () => {
     expect(revoke).toHaveAttribute('title', 'Revoke key ci-runner')
   })
 
-  it('generates "my" key in a dialog with name | expiry side by side', () => {
+  it('generates "my" key in the page with name | expiry side by side', () => {
     renderPage()
     fireEvent.click(screen.getByRole('button', { name: /generate key/i }))
-    const dialog = screen.getByRole('dialog', { name: 'Generate my API key' })
+    const dialog = screen.getByRole('region', { name: 'Generate my API key' })
     const fields = dialog.querySelector('[data-create-key-fields]') as HTMLElement
     expect(fields.className).toContain('grid-cols-2')
     expect(within(fields).getByLabelText('Key name')).toBeInTheDocument()
@@ -96,5 +97,50 @@ describe('PersonalKeysPage — "My API keys"', () => {
     renderPage()
     expect(screen.getByTestId('my-api-keys-unavailable')).toBeInTheDocument()
     expect(screen.queryByText(/You have no API keys/)).toBeNull()
+  })
+})
+
+// ── W27b PAN-06: the form and the Revoke question are in the page ──────────
+
+describe('PersonalKeysPage in the page (W27b)', () => {
+  const KEY = { id: 'k1', name: 'ci-runner', key_prefix: 'qai_abcd', scopes: [], expires_at: null, last_used_at: null }
+
+  it('Generate my API key opens right under the intro row, above the table (no dialog)', () => {
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: 'Generate key' }))
+    const section = screen.getByRole('region', { name: 'Generate my API key' })
+    const introRow = (document.querySelector('[data-my-api-keys-intro]') as HTMLElement).parentElement as HTMLElement
+    expect(introRow.nextElementSibling).toBe(section)
+    expect(section.compareDocumentPosition(screen.getByRole('table')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.querySelector('[aria-modal]')).toBeNull()
+    expect(within(section).getByLabelText('Key name'), 'focus moves to the first field').toHaveFocus()
+  })
+
+  it('Revoke key asks in a row under the key; the trigger sends nothing, the strip\'s Revoke sends once; no native confirm', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm')
+    const revoke = vi.mocked(userManagementService.revokeApiKey)
+    revoke.mockReset()
+    revoke.mockResolvedValue(undefined as never)
+    keysState.data = [KEY]
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: 'Revoke key ci-runner' }))
+    expect(revoke, 'the trigger sends nothing').not.toHaveBeenCalled()
+    const cell = screen.getByText(/This cannot be undone/).closest('td') as HTMLElement
+    expect(cell).toHaveAttribute('colspan', '6')
+    expect(cell.closest('tr')).toHaveAttribute('data-in-page-row')
+    const strip = cell.querySelector('[data-inline-confirm]') as HTMLElement
+    expect(strip.querySelector('p')?.textContent).toBe('Revoke your key "ci-runner"? This cannot be undone.')
+
+    fireEvent.click(within(strip).getByRole('button', { name: 'Cancel' }))
+    expect(document.querySelector('[data-inline-confirm]')).toBeNull()
+    expect(revoke).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Revoke key ci-runner' }))
+    fireEvent.click(document.querySelector('[data-inline-confirm-action]') as HTMLElement)
+    await waitFor(() => expect(revoke).toHaveBeenCalledTimes(1))
+    expect(revoke).toHaveBeenCalledWith('k1')
+    expect(confirmSpy).not.toHaveBeenCalled()
+    confirmSpy.mockRestore()
   })
 })

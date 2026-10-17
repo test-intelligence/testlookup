@@ -179,3 +179,61 @@ describe('W04 AIC-07: agent stage flags are grouped', () => {
     await waitFor(() => expect(update).toHaveBeenCalledWith('defect_commander', { enabled_global: true }))
   })
 })
+
+// ── W27b PAN-06: Edit and Delete open under the flag's row ─────────────────
+
+describe('FeatureFlagsPage in the page (W27b)', () => {
+  it('Edit opens `Edit <key>` in a full-width row right after the flag, inside its group; Save sends the same PATCH', async () => {
+    flagList = SEEDED
+    render(<FeatureFlagsPage />)
+    const row = document.querySelector('tr[data-flag-key="defect_commander"]') as HTMLElement
+    fireEvent.click(within(row).getByRole('button', { name: 'Edit' }))
+    const section = screen.getByRole('region', { name: 'Edit defect_commander' })
+    expect(section.querySelector('h3')).toHaveTextContent('Edit flag: defect_commander')
+    const formRow = section.closest('tr') as HTMLElement
+    expect(formRow).toHaveAttribute('data-in-page-row')
+    expect(formRow).not.toHaveAttribute('data-flag-key')
+    expect(formRow.querySelector('td')).toHaveAttribute('colspan', '6')
+    expect(row.nextElementSibling).toBe(formRow)
+    expect(formRow.closest('tbody')).toHaveAttribute('data-flag-group-body', 'agent-stages')
+    expect(screen.queryByRole('dialog')).toBeNull()
+    // The flag rows keep their order and count (the form row carries no data-flag-key).
+    expect(document.querySelectorAll('tr[data-flag-key]')).toHaveLength(SEEDED.length)
+
+    fireEvent.change(within(section).getByLabelText(/Enabled projects/), { target: { value: '["p-1"]' } })
+    fireEvent.click(within(section).getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(update).toHaveBeenCalledWith('defect_commander', {
+        description: SEEDED[0].description,
+        enabled_projects: ['p-1'],
+        enabled_roles: null,
+      }),
+    )
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Edit defect_commander' })).toBeNull())
+  })
+
+  it('Delete flag asks under the row; the trigger sends nothing, the strip\'s Delete sends once; no native confirm', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm')
+    const { featureFlagService } = await import('@/services/featureFlagService')
+    const remove = vi.mocked(featureFlagService.remove)
+    remove.mockReset()
+    remove.mockResolvedValue(undefined as never)
+    render(<FeatureFlagsPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'Delete flag manual_upload' }))
+    expect(remove, 'the trigger sends nothing').not.toHaveBeenCalled()
+    const strip = document.querySelector('[data-inline-confirm]') as HTMLElement
+    expect(strip.closest('td')).toHaveAttribute('colspan', '6')
+    expect(strip.querySelector('p')?.textContent).toBe('Delete feature flag "manual_upload"? This cannot be undone.')
+
+    fireEvent.click(within(strip).getByRole('button', { name: 'Cancel' }))
+    expect(document.querySelector('[data-inline-confirm]')).toBeNull()
+    expect(remove).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete flag manual_upload' }))
+    fireEvent.click(document.querySelector('[data-inline-confirm-action]') as HTMLElement)
+    await waitFor(() => expect(remove).toHaveBeenCalledTimes(1))
+    expect(remove).toHaveBeenCalledWith('manual_upload')
+    expect(confirmSpy).not.toHaveBeenCalled()
+    confirmSpy.mockRestore()
+  })
+})

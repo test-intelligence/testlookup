@@ -11,10 +11,13 @@
  * `.gitignore`'s security glob `*apikey*` matches that name case-insensitively
  * on Windows, and `git add` there silently left the file out of the commit.
  */
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import toast from 'react-hot-toast'
 import type { ApiKey } from '@/types/apiKey'
+import { apiKeyService } from '@/services/apiKeyService'
+import { refreshApiKeys } from '@/hooks/useApiKeys'
 import ApiKeysPage from './ApiKeysPage'
 
 let hookState: { data?: ApiKey[]; isLoading: boolean; error?: unknown; mutate: () => void }
@@ -138,5 +141,41 @@ describe('ApiKeysPage — "Streaming API keys"', () => {
 
     expect(screen.getByText('key-a')).toBeInTheDocument()
     expect(screen.getByText('key-c')).toBeInTheDocument()
+  })
+})
+
+// ── W27b PAN-06: Revoke asks in the page ───────────────────────────────────
+
+describe('ApiKeysPage — Revoke asks under the key row (W27b)', () => {
+  it('the trigger sends nothing; the strip\'s Revoke sends once, then the list and the toast; no native confirm', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm')
+    const revoke = vi.mocked(apiKeyService.revoke)
+    revoke.mockReset()
+    revoke.mockResolvedValue(undefined as never)
+    hookState = { data: [key('a', 'project-a'), key('c', 'project-a')], isLoading: false, mutate: vi.fn() }
+    renderPage()
+
+    const row = screen.getByText('key-a').closest('tr') as HTMLElement
+    fireEvent.click(within(row).getByRole('button', { name: 'Revoke' }))
+    expect(revoke, 'the trigger sends nothing').not.toHaveBeenCalled()
+    const strip = document.querySelector('[data-inline-confirm]') as HTMLElement
+    const cell = strip.closest('td') as HTMLElement
+    expect(cell).toHaveAttribute('colspan', '7')
+    expect(cell.closest('tr')).toHaveAttribute('data-in-page-row')
+    expect(row.nextElementSibling).toBe(cell.closest('tr'))
+    expect(strip.querySelector('p')?.textContent).toBe('Revoke "key-a"? Active clients using this key will start failing immediately.')
+
+    fireEvent.click(within(strip).getByRole('button', { name: 'Cancel' }))
+    expect(document.querySelector('[data-inline-confirm]')).toBeNull()
+    expect(revoke).not.toHaveBeenCalled()
+
+    fireEvent.click(within(row).getByRole('button', { name: 'Revoke' }))
+    fireEvent.click(document.querySelector('[data-inline-confirm-action]') as HTMLElement)
+    await waitFor(() => expect(revoke).toHaveBeenCalledTimes(1))
+    expect(revoke).toHaveBeenCalledWith('a')
+    await waitFor(() => expect(refreshApiKeys).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('API key revoked'))
+    expect(confirmSpy).not.toHaveBeenCalled()
+    confirmSpy.mockRestore()
   })
 })

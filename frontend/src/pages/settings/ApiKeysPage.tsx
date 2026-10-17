@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { Fragment, useLayoutEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Check, Copy, Key, Loader2, Plus, ShieldAlert, Trash2, X } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -8,6 +8,10 @@ import EmptyState from '@/components/ui/EmptyState'
 import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import DataUnavailable from '@/components/ui/DataUnavailable'
+import InlineConfirm from '@/components/ui/inPage/InlineConfirm'
+import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
+import InlineRowSection from '@/components/ui/inPage/InlineRowSection'
+import { useInlineSlot, type InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import { apiKeyService } from '@/services/apiKeyService'
 import { refreshApiKeys, useApiKeys } from '@/hooks/useApiKeys'
 import { usePermissions } from '@/hooks/usePermissions'
@@ -16,7 +20,6 @@ import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { copyTextToClipboard } from '@/utils/clipboard'
 import type { ApiKey, ApiKeyCreatedResponse } from '@/types/apiKey'
 import { streamIngestCommand } from './apiKeysCurl'
-import { useModalFocus } from '@/hooks/useModalFocus'
 
 const STREAM_WRITE_SCOPE = 'stream:write'
 
@@ -24,6 +27,12 @@ const STREAM_WRITE_SCOPE = 'stream:write'
  * Two API-key surfaces, named apart (UX redesign P5 item 3): this page is the
  * PROJECT's keys, for CI result streaming; the keys a person owns are "My API
  * keys" on the Users page (`MY_API_KEYS_HREF`).
+ *
+ * W27b PAN-06: no modal and no native confirm. A generated key's one-time
+ * secret is shown once, IN THE PAGE, in the `API key generated` section that
+ * takes the generate form's place (X / Done / Escape close it and drop the
+ * key from state); while it is shown, Generate streaming key asks before it
+ * replaces it. A key row's Revoke asks in a row under it.
  */
 const STREAMING_API_KEYS_TITLE = 'Streaming API keys'
 const MY_API_KEYS_HREF = '/settings/my-api-keys'
@@ -169,18 +178,28 @@ function GenerateKeyForm({
   )
 }
 
+/**
+ * The one-time key, shown once in the page (W27b; it was a modal dialog). With a `slot` it keeps that slot
+ * dirty while it is shown, so opening the generate form in its place asks first instead of dropping it.
+ */
 export function CreatedKeyModal({
   created,
   baseUrl,
   projectLabel,
   onClose,
+  slot,
 }: {
   created: ApiKeyCreatedResponse
   baseUrl: string
   projectLabel: string
   onClose: () => void
+  slot?: InlineSlot
 }) {
-  const dialogRef = useModalFocus({ onClose })
+  // A layout effect: the slot is dirty before the browser can deliver the next click.
+  const setSlotDirty = slot?.setDirty
+  useLayoutEffect(() => {
+    setSlotDirty?.(true)
+  }, [setSlotDirty])
   const propertiesSnippet = useMemo(
     () =>
       `# testlookup.properties — drop into src/test/resources/ (Java/TestNG/JUnit)
@@ -224,27 +243,30 @@ asyncio.run(main())`,
   )
 
   return (
-    <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="api-key-generated-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
-      {/* max-h + overflow-y-auto are load-bearing. This dialog grew three
-          ready-to-paste snippets, which pushed it past a 720px-tall viewport.
-          Centred with `items-center` and no scroll container of its own, the
-          overflow spilled off BOTH edges with nothing able to scroll it, so
-          the "Done" button became unclickable -- Playwright reported "element
-          is outside of the viewport" after scrolling. Found by making an e2e
-          test fail closed instead of skipping. */}
-      <div className="card w-full max-w-2xl space-y-4 border-[var(--status-passed-bd)]/40 max-h-[90vh] overflow-y-auto">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h3 id="api-key-generated-title" className="text-base font-semibold text-[var(--status-passed)]">API key generated</h3>
-            <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-              Copy the key now — it won't be shown again. Store it in your CI secret manager.
-            </p>
-          </div>
-          <button type="button" onClick={onClose} aria-label="Close" className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
+    <InlineFormSection
+      title={<span className="text-[var(--status-passed)]">API key generated</span>}
+      titleId="api-key-generated-title"
+      headingLevel={3}
+      description={
+        <p className="m-0 text-xs">
+          Copy the key now — it won't be shown again. Store it in your CI secret manager.
+        </p>
+      }
+      onClose={onClose}
+      slot={slot}
+      footer={
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white"
+        >
+          Done
+        </button>
+      }
+    >
+      {/* In the page (W27b): the section grows with its three snippets and the page scrolls; the modal's
+          max-h + overflow-y-auto (its Done was once pushed off a 720 px viewport) has no job here. */}
+      <div className="space-y-4">
         <div className="rounded border border-[var(--status-passed-bd)]/40 bg-[var(--status-passed-bg)]/20 p-3">
           <div className="flex items-center justify-between gap-2">
             <code className="font-mono text-sm text-[var(--status-passed)] break-all">{created.raw_key}</code>
@@ -281,18 +303,8 @@ asyncio.run(main())`,
             {pythonSnippet}
           </pre>
         </div>
-
-        <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white"
-          >
-            Done
-          </button>
-        </div>
       </div>
-    </div>
+    </InlineFormSection>
   )
 }
 
@@ -314,18 +326,24 @@ function ApiKeysPageContent({ isAdmin }: { isAdmin: boolean }) {
     () => fetchedKeys?.filter(key => projectId !== null && key.project_id === projectId),
     [fetchedKeys, projectId],
   )
-  const [showForm, setShowForm] = useState(false)
+  // W27b: the generate form and the generated key share one place (between the pointer and the keys card),
+  // one at a time; the key's section keeps the slot dirty, so Generate streaming key asks before replacing it.
+  const slot = useInlineSlot<'generate' | 'created'>()
   const [created, setCreated] = useState<{
     key: ApiKeyCreatedResponse
     projectLabel: string
   } | null>(null)
+  // The one-time key lives only while its section is the open one: replaced (after the question) or closed,
+  // it is dropped from state.
+  if (created && slot.openKey !== 'created') setCreated(null)
   const [revokingId, setRevokingId] = useState<string | null>(null)
+  // A key row's Revoke question, under that row (one at a time; nothing is sent until its own button).
+  const [confirmingRevoke, setConfirmingRevoke] = useState<string | null>(null)
 
   // Same-origin base URL is what clients will hit; useful for snippet generation.
   const baseUrl = typeof window !== 'undefined' ? window.location.origin : ''
 
   const onRevoke = async (key: ApiKey) => {
-    if (!window.confirm(`Revoke "${key.name}"? Active clients using this key will start failing immediately.`)) return
     setRevokingId(key.id)
     try {
       await apiKeyService.revoke(key.id)
@@ -365,8 +383,8 @@ function ApiKeysPageContent({ isAdmin }: { isAdmin: boolean }) {
           isAdmin ? (
             <button
               type="button"
-              onClick={() => setShowForm(true)}
-              disabled={!projectId || showForm}
+              onClick={() => slot.open('generate')}
+              disabled={!projectId || slot.openKey === 'generate'}
               className="inline-flex items-center gap-1.5 rounded bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
             >
               <Plus className="h-3.5 w-3.5" />
@@ -391,15 +409,28 @@ function ApiKeysPageContent({ isAdmin }: { isAdmin: boolean }) {
         </div>
       )}
 
-      {showForm && projectId && (
+      {slot.openKey === 'generate' && projectId && (
         <GenerateKeyForm
           projectId={projectId}
           projectLabel={projectLabel}
           onCreated={(key) => {
-            setShowForm(false)
+            slot.open('created')
             setCreated({ key, projectLabel })
           }}
-          onCancel={() => setShowForm(false)}
+          onCancel={() => slot.close()}
+        />
+      )}
+      {/* W27b: the generated key, shown once in the generate form's place (it was a modal dialog). */}
+      {slot.openKey === 'created' && created && (
+        <CreatedKeyModal
+          created={created.key}
+          baseUrl={baseUrl}
+          projectLabel={created.projectLabel}
+          slot={slot}
+          onClose={() => {
+            setCreated(null)
+            slot.close()
+          }}
         />
       )}
 
@@ -435,7 +466,8 @@ function ApiKeysPageContent({ isAdmin }: { isAdmin: boolean }) {
             </thead>
             <tbody>
               {keys.map(key => (
-                <tr key={key.id} className="border-t border-[var(--color-border)]">
+                <Fragment key={key.id}>
+                <tr className="border-t border-[var(--color-border)]">
                   <td className="px-4 py-2 text-[var(--color-text)]">{key.name}</td>
                   <td className="px-4 py-2 font-mono text-xs text-[var(--color-text-muted)]">{key.key_hint}</td>
                   <td className="px-4 py-2">
@@ -460,7 +492,7 @@ function ApiKeysPageContent({ isAdmin }: { isAdmin: boolean }) {
                   <td className="px-4 py-2 text-right">
                     <button
                       type="button"
-                      onClick={() => onRevoke(key)}
+                      onClick={() => setConfirmingRevoke(key.id)}
                       disabled={revokingId === key.id}
                       className="inline-flex items-center gap-1 text-xs text-[var(--status-failed)] hover:text-[var(--status-failed)] disabled:opacity-50"
                     >
@@ -469,20 +501,25 @@ function ApiKeysPageContent({ isAdmin }: { isAdmin: boolean }) {
                     </button>
                   </td>
                 </tr>
+                {/* W27b: the Revoke question, in a row under the key's row. */}
+                {confirmingRevoke === key.id && (
+                  <InlineRowSection colSpan={7}>
+                    <InlineConfirm
+                      message={<>Revoke &quot;<strong>{key.name}</strong>&quot;? Active clients using this key will start failing immediately.</>}
+                      confirmLabel="Revoke"
+                      tone="danger"
+                      onConfirm={() => { setConfirmingRevoke(null); void onRevoke(key) }}
+                      onCancel={() => setConfirmingRevoke(null)}
+                    />
+                  </InlineRowSection>
+                )}
+                </Fragment>
               ))}
             </tbody>
           </table>
         )}
       </div>
 
-      {created && (
-        <CreatedKeyModal
-          created={created.key}
-          baseUrl={baseUrl}
-          projectLabel={created.projectLabel}
-          onClose={() => setCreated(null)}
-        />
-      )}
     </div>
   )
 }

@@ -136,8 +136,10 @@ describe('ApiKeysPage identity safety', () => {
   })
 })
 
-describe('CreatedKeyModal keyboard contract', () => {
-  it('contains keyboard focus, closes on Escape, and restores the trigger', () => {
+// W27b: the generated key renders in the page (the in-page keyboard contract replaces the Tab trap): focus
+// moves in, Tab from the last control is NOT prevented, Escape closes, focus returns to the trigger.
+describe('CreatedKeyModal keyboard contract (in the page)', () => {
+  it('takes focus, does not trap Tab, closes on Escape, and restores the trigger', () => {
     function Harness() {
       const [open, setOpen] = useState(false)
       return <>
@@ -149,16 +151,22 @@ describe('CreatedKeyModal keyboard contract', () => {
     const trigger = screen.getByRole('button', { name: 'Show generated key' })
     trigger.focus()
     fireEvent.click(trigger)
-    const dialog = screen.getByRole('dialog')
-    const focusable = Array.from(dialog.querySelectorAll<HTMLElement>('button:not([disabled])'))
-    expect(dialog.contains(document.activeElement)).toBe(true)
-    focusable[0].focus()
-    fireEvent.keyDown(focusable[0], { key: 'Tab', shiftKey: true })
-    expect(focusable[focusable.length - 1]).toHaveFocus()
-    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Tab' })
-    expect(focusable[0]).toHaveFocus()
-    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(document.querySelector('[aria-modal]')).toBeNull()
+    const section = screen.getByRole('region', { name: 'API key generated' })
+    expect(section.querySelector('#api-key-generated-title')?.tagName).toBe('H3')
+    const focusable = Array.from(section.querySelectorAll<HTMLElement>('button:not([disabled])'))
+    expect(section.contains(document.activeElement)).toBe(true)
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    last.focus()
+    expect(fireEvent.keyDown(last, { key: 'Tab' }), 'Tab is not trapped').toBe(true)
+    expect(last).toHaveFocus()
+    first.focus()
+    expect(fireEvent.keyDown(first, { key: 'Tab', shiftKey: true }), 'Shift+Tab is not trapped').toBe(true)
+    expect(first).toHaveFocus()
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
+    expect(screen.queryByRole('region', { name: 'API key generated' })).not.toBeInTheDocument()
     expect(trigger).toHaveFocus()
   })
 })

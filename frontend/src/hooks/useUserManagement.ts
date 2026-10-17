@@ -20,12 +20,17 @@ export function refreshUsers() {
   // literal string refreshed nothing on a filtered view -- a role change
   // would appear to succeed and the row would keep its old value until the
   // next revalidation.
+  //
+  // Revalidate WITHOUT clearing (W27b): the matcher alone re-reads every
+  // matched key and keeps its data until the answer lands. The old
+  // `mutate(matcher, undefined, { revalidate: true })` wrote `undefined` into
+  // every users key first, so `UsersTab` fell back to its loading spinner and
+  // unmounted the open Add User / Invite User form holding the one-time
+  // temporary password or invitation link: the secret was never shown.
   return mutate(
     key =>
       key === '/api/v1/users' ||
       (Array.isArray(key) && key[0] === '/api/v1/users'),
-    undefined,
-    { revalidate: true },
   )
 }
 

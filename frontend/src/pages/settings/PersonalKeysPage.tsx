@@ -12,8 +12,13 @@
  * Named PersonalKeysPage, not MyApiKeysPage: `.gitignore`'s `*apikey*` matches
  * that name case-insensitively on Windows, where git would silently leave the
  * file out of a commit.
+ *
+ * W27b PAN-06: no modal and no native confirm. Generate key opens `Generate my
+ * API key` right under the intro row, above the table; its one-time key is
+ * shown once there, with Done as its only exit (as in the modal). A row's
+ * Revoke key asks in a row under it.
  */
-import { useState } from 'react'
+import { Fragment, useLayoutEffect, useState } from 'react'
 import { Plus, RefreshCw, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useApiKeys, refreshApiKeys } from '@/hooks/useApiKeys'
@@ -27,6 +32,11 @@ import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import { usePermissions } from '@/hooks/usePermissions'
+import InlineConfirm from '@/components/ui/inPage/InlineConfirm'
+import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
+import InlineRowSection from '@/components/ui/inPage/InlineRowSection'
+import { useInlineSlot, type InlineSlot } from '@/components/ui/inPage/useInlineSlot'
+import { useSlotCloser } from '@/hooks/useSlotCloser'
 
 const HELP_TOPIC = helpTopicParam('/settings/my-api-keys')
 
@@ -61,10 +71,12 @@ export default function PersonalKeysPage() {
  */
 function ApiKeysTab({ canGenerateApiKeys }: { canGenerateApiKeys: boolean }) {
   const { data: keys, isLoading, error, mutate } = useApiKeys()
-  const [showCreateModal, setShowCreateModal] = useState(false)
+  // W27b: Generate my API key opens under the intro row (one form there); a row's Revoke asks under it.
+  const slot = useInlineSlot<'create'>()
+  const closeCreate = useSlotCloser(slot)
+  const [confirmingRevoke, setConfirmingRevoke] = useState<string | null>(null)
 
-  async function handleRevoke(keyId: string, name: string) {
-    if (!confirm(`Revoke your key "${name}"? This cannot be undone.`)) return
+  async function handleRevoke(keyId: string) {
     try {
       await userManagementService.revokeApiKey(keyId)
       refreshApiKeys()
@@ -87,12 +99,14 @@ function ApiKeysTab({ canGenerateApiKeys }: { canGenerateApiKeys: boolean }) {
           <ScopedLink to="/settings/api-keys" hintInTitleOnly className="text-[var(--color-accent)] hover:underline">Streaming API keys</ScopedLink>.
         </p>
         {canGenerateApiKeys && (
-          <button onClick={() => setShowCreateModal(true)}
+          <button onClick={() => slot.open('create')}
             className="flex shrink-0 items-center gap-1.5 bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] text-sm px-3 py-1.5 rounded transition-colors">
             <Plus className="h-4 w-4" /> Generate key
           </button>
         )}
       </div>
+      {/* W27b: Generate my API key, in the page right under the intro row, above the table. */}
+      {slot.openKey === 'create' && <CreateApiKeyModal slot={slot} onClose={() => closeCreate('create')} />}
       {/* A failed read is not "You have no API keys": that would invite
           someone to mint a second key beside the one they already have. */}
       {error && !keys ? (
@@ -112,7 +126,8 @@ function ApiKeysTab({ canGenerateApiKeys }: { canGenerateApiKeys: boolean }) {
           </thead>
           <tbody className="divide-y divide-[var(--color-border)]">
             {(keys ?? []).map((k) => (
-              <tr key={k.id} className="hover:bg-[var(--color-bg-hover)]/30 transition-colors">
+              <Fragment key={k.id}>
+              <tr className="hover:bg-[var(--color-bg-hover)]/30 transition-colors">
                 <td className="px-4 py-3 font-medium text-[var(--color-text)]">{k.name}</td>
                 <td className="px-4 py-3"><code className="text-xs text-[var(--status-passed)] bg-[var(--color-bg-card)] px-2 py-0.5 rounded">{k.key_hint}</code></td>
                 <td className="px-4 py-3">
@@ -127,7 +142,7 @@ function ApiKeysTab({ canGenerateApiKeys }: { canGenerateApiKeys: boolean }) {
                 <td className="px-4 py-3">
                   {/* Icon-only: named, and a tooltip says what the red bin does (it had neither). */}
                   <button
-                    onClick={() => handleRevoke(k.id, k.name)}
+                    onClick={() => setConfirmingRevoke(k.id)}
                     aria-label={`Revoke key ${k.name}`}
                     title={`Revoke key ${k.name}`}
                     className="text-[var(--status-failed)] hover:text-[var(--status-failed)] hover:bg-[var(--status-failed-bg)]/20 p-1 rounded transition-colors"
@@ -136,6 +151,19 @@ function ApiKeysTab({ canGenerateApiKeys }: { canGenerateApiKeys: boolean }) {
                   </button>
                 </td>
               </tr>
+              {/* W27b: the Revoke question, in a row under the key's row. */}
+              {confirmingRevoke === k.id && (
+                <InlineRowSection colSpan={6}>
+                  <InlineConfirm
+                    message={<>Revoke your key &quot;<strong>{k.name}</strong>&quot;? This cannot be undone.</>}
+                    confirmLabel="Revoke"
+                    tone="danger"
+                    onConfirm={() => { setConfirmingRevoke(null); void handleRevoke(k.id) }}
+                    onCancel={() => setConfirmingRevoke(null)}
+                  />
+                </InlineRowSection>
+              )}
+              </Fragment>
             ))}
             {(keys ?? []).length === 0 && (
               <tr><td colSpan={6} className="px-4 py-8 text-center text-[var(--color-text-muted)]">You have no API keys. Generate one to authenticate a script or pipeline as you.</td></tr>
@@ -144,20 +172,27 @@ function ApiKeysTab({ canGenerateApiKeys }: { canGenerateApiKeys: boolean }) {
         </table>
       </div>
       )}
-      {showCreateModal && <CreateApiKeyModal onClose={() => setShowCreateModal(false)} />}
     </div>
   )
 }
 
-// ── Create API Key Modal ──────────────────────────────────────
+// ── Generate my API key (in the page under the intro row) ──────────────────────────────────────
 
 
-function CreateApiKeyModal({ onClose }: { onClose: () => void }) {
+function CreateApiKeyModal({ onClose, slot }: { onClose: () => void; slot?: InlineSlot }) {
   const [name, setName] = useState('')
   const [scopes, setScopes] = useState<string[]>([])
   const [expiresDays, setExpiresDays] = useState<string>('')
   const [loading, setLoading] = useState(false)
   const [createdKey, setCreatedKey] = useState<string | null>(null)
+
+  // The key is shown once, here: while it is, the slot stays dirty (nothing replaces it without asking). A
+  // layout effect: the slot is dirty before the browser can deliver the next click.
+  const setSlotDirty = slot?.setDirty
+  const holding = createdKey !== null
+  useLayoutEffect(() => {
+    if (holding) setSlotDirty?.(true)
+  }, [holding, setSlotDirty])
 
   function toggleScope(s: string) {
     setScopes((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]))
@@ -178,9 +213,16 @@ function CreateApiKeyModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="generate-api-key-title" className="fixed inset-0 bg-[var(--color-bg)]/60 flex items-center justify-center z-50">
-      <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg w-full max-w-md p-6 space-y-4">
-        <h2 id="generate-api-key-title" className="text-lg font-semibold text-[var(--color-text)]">Generate my API key</h2>
+    <InlineFormSection
+      title="Generate my API key"
+      titleId="generate-api-key-title"
+      onClose={onClose}
+      // While the key is shown its only exit is Done (as in the modal: no X, Escape swallowed).
+      canClose={!holding && !loading}
+      showClose={false}
+      slot={slot}
+    >
+      <div className="max-w-2xl">
         {createdKey ? (
           <div className="space-y-3">
             <div className="flex items-center gap-2 p-3 bg-[var(--status-broken-bg)]/30 border border-[var(--status-broken-bd)]/50 rounded text-[var(--status-broken)] text-xs">
@@ -236,6 +278,6 @@ function CreateApiKeyModal({ onClose }: { onClose: () => void }) {
           </form>
         )}
       </div>
-    </div>
+    </InlineFormSection>
   )
 }

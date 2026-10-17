@@ -9,7 +9,7 @@
  *   4. A confirmed reset POSTs to projectsService.reset with the right
  *      payload.
  */
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
@@ -139,6 +139,49 @@ describe('ProjectDataPage', () => {
     // After success the page shows the deleted counts.
     expect(await screen.findByText(/reset complete \(runs\)/i)).toBeInTheDocument()
     expect(screen.getByText(/test_runs/)).toBeInTheDocument()
+  })
+})
+
+describe('ProjectDataPage — the typed confirmation is in the page (W27b)', () => {
+  beforeEach(() => {
+    mockReset.mockReset()
+    mockPermissions.isAdmin = true
+    mockProjectStore.activeProject = { ...mockActiveProject }
+    mockProjectStore.activeProjectId = 'proj-uuid-1'
+  })
+
+  it('opens inside the Danger zone right under the row whose button opened it, with its field focused (no dialog)', () => {
+    renderPage()
+    const trigger = screen.getByRole('button', { name: /delete test runs/i })
+    const triggerRow = trigger.parentElement as HTMLElement
+    fireEvent.click(trigger)
+    const section = screen.getByRole('region', { name: 'Delete test runs' })
+    expect(section.querySelector('h2')).toHaveAttribute('id', 'project-data-confirm-title')
+    const holder = section.closest('[data-in-page-row]') as HTMLElement
+    expect(triggerRow.nextElementSibling, 'right under its row').toBe(holder)
+    expect(screen.getByRole('region', { name: 'Danger zone' }).contains(section)).toBe(true)
+    expect(screen.getByLabelText(/type .* to confirm/i)).toHaveFocus()
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.querySelector('[aria-modal]')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    expect(screen.queryByRole('region', { name: 'Delete test runs' })).toBeNull()
+    expect(mockReset).not.toHaveBeenCalled()
+  })
+
+  it('one typed confirmation at a time: the other one replaces a clean form, and asks over a typed name', () => {
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: /delete test runs/i }))
+    fireEvent.click(screen.getByRole('button', { name: /wipe project data/i }))
+    expect(screen.queryByRole('region', { name: 'Delete test runs' })).toBeNull()
+    const full = screen.getByRole('region', { name: 'Reset project to fresh state' })
+
+    fireEvent.change(within(full).getByLabelText(/type .* to confirm/i), { target: { value: 'Goo' } })
+    fireEvent.click(screen.getAllByRole('button', { name: /delete test runs/i })[0])
+    expect(within(full).getByText(/Discard your changes to/)).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Delete test runs' })).toBeNull()
+    expect(mockReset).not.toHaveBeenCalled()
   })
 })
 

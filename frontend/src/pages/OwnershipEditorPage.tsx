@@ -1,7 +1,9 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import ScopedLink from '@/components/ui/ScopedLink';
 import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState';
+import InlineConfirm from '@/components/ui/inPage/InlineConfirm';
+import InlineFormSection from '@/components/ui/inPage/InlineFormSection';
 import toast from 'react-hot-toast';
 import { clsx } from 'clsx';
 import PageHeader from '@/components/ui/PageHeader';
@@ -40,6 +42,10 @@ const TITLE = 'Ownership';
  * the rules list to that team's rules (equal ignoring case and surrounding
  * space), with a chip `Team: {team} · Show all` that clears it. Nothing else
  * changes, and the filter asks nothing new.
+ *
+ * W27b PAN-05: no modal and no native confirm. A rule's Delete asks in a
+ * full-width strip right under that rule's row; Import CODEOWNERS opens where
+ * it always rendered, right under the page header, named by its heading.
  */
 /** `team` and a rule's team name are the same team: equal ignoring case and surrounding space. */
 export function sameTeam(a: string | null | undefined, b: string | null | undefined): boolean {
@@ -71,8 +77,10 @@ export default function OwnershipEditorPage() {
     ? `Java traces are located through ${sourceRoots} source root(s).`
     : 'Java stack traces are not located.';
 
-  // CODEOWNERS import dialog (US-8.3)
+  // CODEOWNERS import (US-8.3), in the page under the header
   const [showImport, setShowImport] = useState(false);
+  // W27b: the rule whose Delete question is open (one at a time; nothing is sent until its own button).
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
 
   // New rule form
   const [showForm, setShowForm] = useState(false);
@@ -128,7 +136,7 @@ export default function OwnershipEditorPage() {
   };
 
   const handleDelete = async (ruleId: string) => {
-    if (!projectId || !confirm('Delete this ownership rule?')) return;
+    if (!projectId) return;
     try {
       await deleteOwnershipRule(projectId, ruleId);
       toast.success('Rule deleted');
@@ -277,7 +285,8 @@ export default function OwnershipEditorPage() {
             <span>Contact</span><span>Priority</span><span>Actions</span>
           </div>
           {rules.map(rule => (
-            <div key={rule.id} className={clsx(
+            <Fragment key={rule.id}>
+            <div className={clsx(
               'bg-[var(--color-bg-secondary)] rounded-lg px-4 py-3 grid grid-cols-7 gap-2 items-center text-sm',
               !rule.is_active && 'opacity-50',
             )}>
@@ -303,12 +312,25 @@ export default function OwnershipEditorPage() {
                   className={clsx('px-2 py-0.5 rounded text-xs', rule.is_active ? 'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]' : 'bg-[var(--color-bg-card)] text-[var(--color-text-muted)]')}>
                   {rule.is_active ? 'Active' : 'Disabled'}
                 </button>
-                <button onClick={() => handleDelete(rule.id)}
+                <button onClick={() => setConfirmingDelete(rule.id)}
                   className="px-2 py-0.5 rounded text-xs bg-[var(--status-failed-bg)]/30 text-[var(--status-failed)] hover:bg-[var(--status-failed-bg)]/40">
                   Delete
                 </button>
               </div>
             </div>
+            {/* W27b: the Delete question, a full-width strip right under the rule's row. */}
+            {confirmingDelete === rule.id && (
+              <div data-in-page-row="">
+                <InlineConfirm
+                  message="Delete this ownership rule?"
+                  confirmLabel="Delete"
+                  tone="danger"
+                  onConfirm={() => { setConfirmingDelete(null); void handleDelete(rule.id); }}
+                  onCancel={() => setConfirmingDelete(null)}
+                />
+              </div>
+            )}
+            </Fragment>
           ))}
         </div>
       )}
@@ -336,7 +358,7 @@ export default function OwnershipEditorPage() {
   );
 }
 
-// ── Import CODEOWNERS dialog (US-8.3) ─────────────────────────────────────────
+// ── Import CODEOWNERS (US-8.3; in the page under the header since W27b) ─────────────────────────────────────────
 
 function ImportCodeownersDialog({
   projectId,
@@ -386,22 +408,39 @@ function ImportCodeownersDialog({
   };
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-xl shadow-xl w-full max-w-lg p-5"
-        onClick={e => e.stopPropagation()}
-      >
-        <h2 className="text-sm font-semibold text-[var(--color-text)] m-0 mb-1">Import CODEOWNERS</h2>
-        <p className="text-xs text-[var(--color-text-muted)] mb-3">
+    <InlineFormSection
+      title="Import CODEOWNERS"
+      titleId="import-codeowners-title"
+      description={
+        <p className="m-0 text-xs">
           Maps each CODEOWNERS line to a <code className="font-mono">path</code> ownership rule.
           Re-importing replaces prior CODEOWNERS-sourced rules and leaves hand-authored rules untouched.
         </p>
-
+      }
+      onClose={onClose}
+      canClose={!submitting}
+      showClose={false}
+      footer={
+        <>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-xs px-3 py-1.5 rounded border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleImport}
+            disabled={submitting || (source === 'text' && !text.trim())}
+            className="text-xs bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] px-3 py-1.5 rounded-lg font-medium"
+          >
+            {submitting ? 'Importing…' : 'Import'}
+          </button>
+        </>
+      }
+    >
+      <div className="max-w-2xl">
         <div role="radiogroup" aria-label="Import source" className="flex items-center gap-1.5 mb-3">
           {(['text', 'github'] as const).map(opt => {
             const active = source === opt;
@@ -448,25 +487,7 @@ function ImportCodeownersDialog({
             and offline mode off.
           </div>
         )}
-
-        <div className="mt-4 flex items-center justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-xs px-3 py-1.5 rounded border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleImport}
-            disabled={submitting || (source === 'text' && !text.trim())}
-            className="text-xs bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] px-3 py-1.5 rounded-lg font-medium"
-          >
-            {submitting ? 'Importing…' : 'Import'}
-          </button>
-        </div>
       </div>
-    </div>
+    </InlineFormSection>
   );
 }

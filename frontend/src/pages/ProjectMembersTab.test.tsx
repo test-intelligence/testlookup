@@ -13,7 +13,7 @@
  *  3. The Save button is disabled when the draft equals the persisted
  *     value (defence against double-PUT on accidental clicks).
  */
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ProjectMembersTab } from './ProjectMembersTab'
@@ -51,11 +51,14 @@ const mockUpdateProject = vi.fn()
 const mockUsersHook = vi.fn()
 const mockProjectMembersHook = vi.fn()
 const mockListProjects = vi.fn()
+const mockResetQaLead = vi.fn()
+const mockRemoveMember = vi.fn()
 
 vi.mock('@/services/projectsService', () => ({
   projectsService: {
     list:   (...args: unknown[]) => mockListProjects(...args),
     update: (...args: unknown[]) => mockUpdateProject(...args),
+    resetDefaultQaLeadPassword: (...args: unknown[]) => mockResetQaLead(...args),
   },
 }))
 
@@ -64,7 +67,7 @@ vi.mock('@/services/userManagementService', () => ({
     listProjectMembers:       (...args: unknown[]) => mockListProjectMembers(...args),
     addProjectMember:         vi.fn(),
     updateProjectMemberRole:  vi.fn(),
-    removeProjectMember:      vi.fn(),
+    removeProjectMember:      (...args: unknown[]) => mockRemoveMember(...args),
   },
 }))
 
@@ -170,5 +173,74 @@ describe('ProjectMembersTab — Default QA Lead', () => {
     // persisted value (the effect seeded the draft from the project).
     const saveBtn = await screen.findByRole('button', { name: /Save/i })
     expect(saveBtn).toBeDisabled()
+  })
+})
+
+// ── W27b PAN-06: Add Member, Remove and the QA lead reset are in the page ──
+
+describe('ProjectMembersTab in the page (W27b)', () => {
+  beforeEach(() => {
+    mockListProjectMembers.mockReset()
+    mockListProjects.mockReset()
+    mockUsersHook.mockReset()
+    mockProjectMembersHook.mockReset()
+    mockResetQaLead.mockReset()
+    mockRemoveMember.mockReset()
+  })
+
+  it('Add Member opens right under the tab\'s top row, named after the project (no dialog)', async () => {
+    await renderAndPickProject({ isAdmin: true, members: [makeMember('QA_LEAD')] })
+    const trigger = screen.getByRole('button', { name: 'Add Member' })
+    fireEvent.click(trigger)
+    const section = screen.getByRole('region', { name: 'Add Member to GoogleProject' })
+    const topRow = trigger.parentElement as HTMLElement
+    expect(topRow.nextElementSibling).toBe(section)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.querySelector('[aria-modal]')).toBeNull()
+    fireEvent.click(within(section).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('region', { name: 'Add Member to GoogleProject' })).toBeNull()
+  })
+
+  it('Remove from project asks in a row under the member (colspan 5); the trigger sends nothing, the strip\'s Remove sends once; no native confirm', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm')
+    mockRemoveMember.mockResolvedValue(undefined)
+    await renderAndPickProject({ isAdmin: true, members: [makeMember('QA_LEAD'), makeMember('QA_ENGINEER')] })
+    const row = (await screen.findByText('QA_ENGINEER User')).closest('tr') as HTMLElement
+    fireEvent.click(within(row).getByTitle('Remove from project'))
+    expect(mockRemoveMember, 'the trigger sends nothing').not.toHaveBeenCalled()
+    const formRow = row.nextElementSibling as HTMLElement
+    expect(formRow).toHaveAttribute('data-in-page-row')
+    expect(formRow.querySelector('td')).toHaveAttribute('colspan', '5')
+    const strip = formRow.querySelector('[data-inline-confirm]') as HTMLElement
+    expect(strip.querySelector('p')?.textContent).toBe('Remove this user from the project?')
+
+    fireEvent.click(within(strip).getByRole('button', { name: 'Cancel' }))
+    expect(document.querySelector('[data-inline-confirm]')).toBeNull()
+    fireEvent.click(within(row).getByTitle('Remove from project'))
+    fireEvent.click(document.querySelector('[data-inline-confirm-action]') as HTMLElement)
+    await waitFor(() => expect(mockRemoveMember).toHaveBeenCalledTimes(1))
+    expect(mockRemoveMember).toHaveBeenCalledWith(PROJECT_ID, QA_ENGINEER_ID)
+    expect(confirmSpy).not.toHaveBeenCalled()
+    confirmSpy.mockRestore()
+  })
+
+  it('Reset QA Lead password asks under the card\'s footer row with the old sentence; only the strip\'s button sends', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm')
+    mockResetQaLead.mockResolvedValue({ email: 'qa@x.test', password: 'Pw-once-1' })
+    await renderAndPickProject({ isAdmin: true, members: [makeMember('QA_LEAD')] })
+    const trigger = await screen.findByRole('button', { name: 'Reset QA Lead password' })
+    fireEvent.click(trigger)
+    expect(mockResetQaLead, 'the trigger sends nothing').not.toHaveBeenCalled()
+    const strip = document.querySelector('[data-inline-confirm]') as HTMLElement
+    expect(trigger.parentElement?.nextElementSibling?.contains(strip), 'right under the footer row').toBe(true)
+    expect(strip.querySelector('p')?.textContent).toBe(
+      'Reset the password of this project’s auto-provisioned QA Lead user? The new password will be displayed once — copy it before closing.',
+    )
+    expect(within(strip).getByRole('button', { name: 'Reset password' })).toHaveAttribute('data-inline-confirm-action')
+    fireEvent.click(within(strip).getByRole('button', { name: 'Reset password' }))
+    await waitFor(() => expect(mockResetQaLead).toHaveBeenCalledTimes(1))
+    expect(mockResetQaLead).toHaveBeenCalledWith(PROJECT_ID)
+    expect(confirmSpy).not.toHaveBeenCalled()
+    confirmSpy.mockRestore()
   })
 })
