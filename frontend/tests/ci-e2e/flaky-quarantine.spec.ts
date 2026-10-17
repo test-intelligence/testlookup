@@ -14,6 +14,7 @@
  * (`fixtures-notify-flaky.ts`) over `flakyHandlers` (`fixtures-pages.ts`).
  */
 import { expect, test, type Page } from '@playwright/test'
+import { opened } from '../lib/inPage'
 import { assertHermetic, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
 import { PROJECT_ID } from '../visual/production/fixtures'
 import { flakyQuarantineWorld, QA_ENGINEER, QUARANTINE_IDS } from '../visual/production/fixtures-notify-flaky'
@@ -47,7 +48,7 @@ test('a QA lead proposes fp-04, approves it in the row, sees its SLA due date, a
   // Detected → Propose quarantine (the existing modal, unchanged by W09).
   const row = detected(page).locator('tr[data-flaky-row="fp-04"]')
   await row.getByRole('button', { name: 'Propose quarantine' }).click()
-  const dialog = page.getByRole('dialog', { name: 'Propose quarantine' })
+  const dialog = opened(page, 'Propose quarantine')
   await dialog.getByRole('textbox').fill('Flips on CI only')
   await dialog.getByRole('button', { name: 'Propose quarantine' }).click()
   await expect(dialog).toHaveCount(0)

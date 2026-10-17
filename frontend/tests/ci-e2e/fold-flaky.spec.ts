@@ -17,6 +17,7 @@
  * Harness: `tests/lib/rollout.ts` (fail closed, pinned clock).
  */
 import { expect, test, type Page } from '@playwright/test'
+import { opened } from '../lib/inPage'
 import { MAIN, SHELL_BASE, expectInventory, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
 import { PROJECT_ID } from '../visual/production/fixtures'
 import { flakyHandlers } from '../visual/production/fixtures-pages'
@@ -136,7 +137,7 @@ test('Propose quarantine from a detected row; a test with a live request links t
 
   const row = table.locator('tr[data-flaky-row="fp-04"]')
   await row.getByRole('button', { name: 'Propose quarantine' }).click()
-  const dialog = page.getByRole('dialog', { name: 'Propose quarantine' })
+  const dialog = opened(page, 'Propose quarantine')
   await dialog.getByRole('textbox').fill('Flips on CI only')
   await dialog.getByRole('button', { name: 'Propose quarantine' }).click()
   await expect(dialog).toHaveCount(0)
