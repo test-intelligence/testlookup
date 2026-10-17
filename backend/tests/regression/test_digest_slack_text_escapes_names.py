@@ -23,7 +23,7 @@ def _digest(**over):
             "quarantine_debt": {"active": 1, "stale": 0, "ready_to_promote": 0},
         },
         "action_items": ["Look at <https://evil.example|click here>"],
-        "flaky_debt_review": {"teams": [{"text": "Team <!here>: 3 flaky · see http://testlookup.local/quarantine"}]},
+        "flaky_debt_review": {"teams": [{"text": "Team <!here>: 3 flaky · see https://testlookup.example.com/quarantine"}]},
         "scope": None,
     }
     digest.update(over)
@@ -32,14 +32,13 @@ def _digest(**over):
 
 def test_names_in_every_line_are_escaped():
     text = render_digest_text(_digest())
-    for raw in ("<!channel>", "<!here>", "<https://evil.example|click here>"):
-        assert raw not in text
-    assert "test_&lt;!channel&gt;_ping" in text
-    assert "test_a&amp;b" in text
-    assert "&lt;https://evil.example|click here&gt;" in text
-    assert "Team &lt;!here&gt;: 3 flaky" in text
-    # A plain URL stays a plain URL (Slack links it); nothing is meant as markup.
-    assert "see http://testlookup.local/quarantine" in text
+    lines = text.split("\n")
+    assert not any(raw in text for raw in ("<!channel>", "<!here>", "<https"))
+    assert lines[1].startswith("New failures: 2 (top: test_&lt;!channel&gt;_ping, test_a&amp;b) · ")
+    # Whole lines, compared exactly: the action item's link is text, and the
+    # draft's plain URL stays a plain URL (Slack links it; nothing is markup).
+    assert "• Look at &lt;https://evil.example|click here&gt;" in lines
+    assert "Team &lt;!here&gt;: 3 flaky · see https://testlookup.example.com/quarantine" in lines
 
 
 def test_the_scope_lines_are_escaped_exactly_once():
