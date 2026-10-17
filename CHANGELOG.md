@@ -52,6 +52,26 @@ locally by default.
 
 ### Added
 
+- **Notifications say what they send; digests can follow a release or a view;
+  quarantine leaves Experimental** (deferred-features wave W09, NTF-01 to
+  NTF-04, FLK-01 to FLK-03). Settings › Email (SMTP) & channels gains a
+  **Project notification policy** card (notify on every run, notify on state
+  changes, which state changes, the consecutive-failure threshold), and My
+  notifications says which events the selected project does not send instead
+  of dropping them silently. **Quality gate failed** is now delivered: once
+  per recorded change into NO_GO of a release or phase gate, an override, or
+  the AI's published decision (never on a read; the bell links to the release
+  or the release gate). Digests: **Per Release** names a release (and a run
+  linked to it later also triggers the digest); a Daily or Weekly digest can
+  follow a saved **report view** (its releases, suites and window), the
+  preview shows what it is filtered by, and a deleted view is named rather
+  than silently widened. `/flaky` gains a **Policy** tab (SLA, auto-defect,
+  auto-release after N passes, detection threshold, the active-quarantine cap
+  the Quarantined tab now warns past), a **Flakiness score (4 signals)**
+  column with its confidence band and a sort, and the signals with their
+  weights in the details panel. No new modal or browser confirm: every new
+  form opens in the page.
+
 - **Trends, Coverage and Value metrics tell their own story** (deferred-features
   wave W08, TRND-01, -02, -04, -06, -07, -08, -10 to -13). Trends can be sent:
   **Export PDF** for everyone and **Email report…** for QA leads, through the
@@ -270,6 +290,18 @@ locally by default.
   naming the actor and the key's owner.
 
 ### Changed
+
+- **What W09 changes on an existing install.** `flaky_auto_quarantine` turns
+  ON where nobody ever set it (migration 0219; a row an admin changed keeps
+  its value, and the downgrade reverts only the row it flipped); nothing is
+  quarantined until a QA lead approves a proposal. Stored "Flaky test
+  detected" preferences become "Test newly flaky", the same event (migration
+  0220). A Per Release digest without a release, a Per Suite digest without a
+  suite, and a release or saved view of another project are now refused with
+  422: such subscriptions never delivered. A Daily or Weekly digest with a
+  saved report view is filtered by it. `GET /api/v1/notifications/history`
+  items carry `link`, the flaky-coach entries carry `flaky_score`, and the
+  quarantine policy carries `max_active_quarantined`.
 
 - **Every LLM call is bounded by the AI timeout** (W04). Calls that had no
   limit (the decision-report and critic agents, flaky and test-health
@@ -630,6 +662,15 @@ locally by default.
   `retention_activation_nudge`.
 
 ### Security
+
+- **Digest subscriptions check every id they are given** (W09). Creating or
+  editing a subscription accepted any `saved_view_id`, and editing accepted
+  any `scope_value`, including another project's view or release; both are
+  now judged against the subscription's own project (one 422 text each) after
+  the project-access check, with a regression test.
+- **Slack and Teams digest text escapes names** (W09). Test names, action
+  items and the teams' flaky-debt drafts went out as raw markup, so a test
+  named `<!channel>` pinged the channel; every line is now escaped once.
 
 - No deploy script, seed or test carries a default admin password any more;
   every path generates one or requires it from the environment.
