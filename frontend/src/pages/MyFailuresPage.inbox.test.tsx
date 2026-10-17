@@ -424,7 +424,7 @@ describe('Inbox — Approvals (?tab=approvals)', () => {
     renderPage('/my-failures?tab=approvals&source=cases')
     const row = (await screen.findByText('Case c1')).closest('tr') as HTMLElement
     fireEvent.click(within(row).getByRole('button', { name: 'Approve' }))
-    const dialog = screen.getByRole('dialog', { name: 'Approve' })
+    const dialog = screen.getByRole('region', { name: 'Approve' })
     fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'Steps are complete' } })
     await act(async () => {
       fireEvent.click(within(dialog).getByRole('button', { name: 'Approve' }))

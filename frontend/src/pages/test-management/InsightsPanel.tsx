@@ -1,14 +1,19 @@
 import type { ReactNode } from 'react'
 import { FileText } from 'lucide-react'
-import SidePanel from '@/components/ui/SidePanel'
+import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
 import { useNow } from '@/hooks/useNow'
 import type { ManagedTestCase } from '@/types/test-management'
 
 /**
- * The Cases tab's "Insights" drawer (UX redesign P4 item 7): what used to be
- * the right rail beside the cases table, so the table has the page's width.
+ * The Cases tab's "Insights" (UX redesign P4 item 7): what used to be the
+ * right rail beside the cases table, so the table has the page's width.
  * Every card is derived from data the tab already holds (the library-health
- * roll and the audit roll); nothing here is fetched by the drawer itself.
+ * roll and the audit roll); nothing here is fetched by the section itself.
+ *
+ * It renders IN THE PAGE (W27b PAN-05): a read-only section named `Insights`
+ * right under the health banner, above the filter bar, closed by default, its
+ * cards in two columns from `lg` (each wider than the 440 px drawer they were
+ * drawn for). X `Close panel` and Escape inside it close it.
  */
 
 export type HealthTag = 'Healthy' | 'Needs attention' | 'At risk'
@@ -326,15 +331,16 @@ export function RecentActivityCard({ events }: { events: RecentEvent[] }) {
   )
 }
 
-/** The drawer itself: the library-health breakdown, then the former rail's cards. */
+/** The section itself: the library-health breakdown, then the former rail's cards. Nothing while closed. */
 export default function InsightsPanel({
   open, onClose, children,
 }: { open: boolean; onClose: () => void; children: ReactNode }) {
+  if (!open) return null
   return (
-    <SidePanel open={open} onClose={onClose} title="Insights" width={440} closeLabel="Close panel">
-      <div data-insights="" className="flex flex-col gap-3.5">
+    <InlineFormSection as="aside" title="Insights" onClose={onClose} closeLabel="Close panel">
+      <div data-insights="" className="grid gap-3.5 lg:grid-cols-2">
         {children}
       </div>
-    </SidePanel>
+    </InlineFormSection>
   )
 }

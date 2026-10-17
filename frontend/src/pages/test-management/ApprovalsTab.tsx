@@ -4,6 +4,7 @@ import toast from 'react-hot-toast'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import TransitionReasonDialog from '@/components/testManagement/TransitionReasonDialog'
+import { useInlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import { refreshTestCases, useTestCases } from '@/hooks/useTestManagement'
 import { testManagementService } from '@/services/testManagementService'
 import type { ManagedTestCase, TestCaseTransitionAction } from '@/types/test-management'
@@ -14,6 +15,8 @@ import { QualityScore, StatusPill } from './tmUi'
 //
 // The test-case review queue: cases whose review was requested, and cases a
 // reviewer has claimed. Renamed from Reviews; `?tab=reviews` still opens it.
+// A decision's review notes open IN THE PAGE (W27b PAN-05), inside that
+// case's card, under its row of actions; one at a time across the list.
 
 const REVIEW_ACTION_LABELS: Partial<Record<TestCaseTransitionAction, string>> = {
   claim_review: 'Claim review',
@@ -38,6 +41,8 @@ export default function ApprovalsTab({ projectId: _projectId, lifecycleV2 }: App
   const [reviewingId, setReviewingId] = useState<string | null>(null)
   const [transitioning, setTransitioning] = useState<{ caseId: string; action: TestCaseTransitionAction } | null>(null)
   const [pendingDecision, setPendingDecision] = useState<{ caseItem: ManagedTestCase; action: TestCaseTransitionAction } | null>(null)
+  // The list's form slot: a decision with typed notes asks before another replaces it.
+  const decisionSlot = useInlineSlot()
   const [reviewOverrides, setReviewOverrides] = useState<Map<string, ManagedTestCase>>(() => new Map())
   const [locallyAiReviewedIds, setLocallyAiReviewedIds] = useState<Set<string>>(() => new Set())
   const [queueRefreshWarning, setQueueRefreshWarning] = useState<string | null>(null)
@@ -126,7 +131,8 @@ export default function ApprovalsTab({ projectId: _projectId, lifecycleV2 }: App
     }
 
     setReviewOverrides((current) => new Map(current).set(updated.id, updated))
-    setPendingDecision(null)
+    // The case's own form closes (its version moved on); another card's form, opened meanwhile, stays.
+    setPendingDecision((current) => (current?.caseItem.id === tc.id ? null : current))
     setTransitioning(null)
     toast.success(`Test case ${action.replace(/_/g, ' ')}`)
     try {
@@ -138,7 +144,9 @@ export default function ApprovalsTab({ projectId: _projectId, lifecycleV2 }: App
 
   function chooseReviewAction(tc: ManagedTestCase, action: TestCaseTransitionAction) {
     if (REVIEW_DECISION_ACTIONS.has(action)) {
-      setPendingDecision({ caseItem: tc, action })
+      if (pendingDecision?.caseItem.id === tc.id && pendingDecision.action === action) return
+      // Typed notes in the open decision ask first (the slot's question, in that form).
+      decisionSlot.guard(() => setPendingDecision({ caseItem: tc, action }))
       return
     }
     void handleReviewAction(tc, action)
@@ -240,23 +248,26 @@ export default function ApprovalsTab({ projectId: _projectId, lifecycleV2 }: App
                   )}
                 </div>
               </div>
+              {pendingDecision?.caseItem.id === tc.id && (
+                <div className="mt-3">
+                  <TransitionReasonDialog
+                    key={`${tc.id}:${pendingDecision.action}`}
+                    title={REVIEW_ACTION_LABELS[pendingDecision.action] ?? 'Record review decision'}
+                    description="Record a nonblank review note for the audit trail."
+                    confirmLabel={REVIEW_ACTION_LABELS[pendingDecision.action] ?? 'Submit'}
+                    fieldLabel="Review notes"
+                    placeholder="Explain the review decision"
+                    busy={transitioning?.caseId === pendingDecision.caseItem.id}
+                    slot={decisionSlot}
+                    onCancel={() => setPendingDecision(null)}
+                    onConfirm={(notes) => handleReviewAction(pendingDecision.caseItem, pendingDecision.action, notes)}
+                  />
+                </div>
+              )}
             </div>
             )
           })}
         </div>
-      )}
-
-      {pendingDecision && (
-        <TransitionReasonDialog
-          title={REVIEW_ACTION_LABELS[pendingDecision.action] ?? 'Record review decision'}
-          description="Record a nonblank review note for the audit trail."
-          confirmLabel={REVIEW_ACTION_LABELS[pendingDecision.action] ?? 'Submit'}
-          fieldLabel="Review notes"
-          placeholder="Explain the review decision"
-          busy={transitioning?.caseId === pendingDecision.caseItem.id}
-          onCancel={() => setPendingDecision(null)}
-          onConfirm={(notes) => handleReviewAction(pendingDecision.caseItem, pendingDecision.action, notes)}
-        />
       )}
     </div>
   )

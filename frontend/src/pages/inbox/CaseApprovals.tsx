@@ -6,14 +6,20 @@
  * services and hooks as that queue (`useTestCases`, `transitionCase` under
  * lifecycle v2, else the legacy `reviewAction`); the full case editor and the
  * AI quality review stay on the Test cases page, linked from here.
+ *
+ * A decision's notes open IN THE PAGE (W27b PAN-05): a full-width row right
+ * under the case's row, one at a time in the table (the table's slot asks
+ * before typed notes are replaced by another row's form).
  */
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Clock, Shield } from 'lucide-react'
 import toast from 'react-hot-toast'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import TransitionReasonDialog from '@/components/testManagement/TransitionReasonDialog'
+import { InlineRowSection } from '@/components/ui/inPage/InlineRowSection'
+import { useInlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import { useFeatureEnabled } from '@/hooks/useFeatureFlags'
 import { refreshTestCases } from '@/hooks/useTestManagement'
 import { testManagementService } from '@/services/testManagementService'
@@ -43,6 +49,7 @@ export default function CaseApprovals() {
   const [overrides, setOverrides] = useState<Map<string, ManagedTestCase>>(() => new Map())
   const [transitioning, setTransitioning] = useState<{ caseId: string; action: TestCaseTransitionAction } | null>(null)
   const [pending, setPending] = useState<{ caseItem: ManagedTestCase; action: TestCaseTransitionAction } | null>(null)
+  const notesSlot = useInlineSlot()
 
   // A decision's returned case replaces the row at once (or drops it when it
   // left review), so the list does not wait on the refetch to agree.
@@ -73,15 +80,19 @@ export default function CaseApprovals() {
       return
     }
     setOverrides((current) => new Map(current).set(updated.id, updated))
-    setPending(null)
+    // The case's own form closes (its version moved on); another row's form, opened meanwhile, stays.
+    setPending((current) => (current?.caseItem.id === tc.id ? null : current))
     setTransitioning(null)
     toast.success(`Test case ${action.replace(/_/g, ' ')}`)
     void refreshQueues()
   }
 
   function choose(tc: ManagedTestCase, action: TestCaseTransitionAction) {
-    if (DECISIONS.has(action)) setPending({ caseItem: tc, action })
-    else void act(tc, action)
+    if (DECISIONS.has(action)) {
+      if (pending?.caseItem.id === tc.id && pending.action === action) return
+      // Typed notes in the open form ask first (the slot's question, in that form).
+      notesSlot.guard(() => setPending({ caseItem: tc, action }))
+    } else void act(tc, action)
   }
 
   return (
@@ -123,7 +134,8 @@ export default function CaseApprovals() {
                 const sourceFailed = source === 'requested' ? Boolean(requested.error) : Boolean(claimed.error)
                 const actions = lifecycleV2 ? tc.allowed_actions ?? [] : LEGACY_ACTIONS
                 return (
-                  <tr key={tc.id} className="border-t border-[var(--color-border)]" data-testid="case-approval-row">
+                  <Fragment key={tc.id}>
+                  <tr className="border-t border-[var(--color-border)]" data-testid="case-approval-row">
                     <td className="px-3 py-2 max-w-[420px]">
                       <div className="truncate text-[var(--color-text)]" title={tc.title}>{tc.title}</div>
                       <div className="truncate text-[11px] text-[var(--color-text-muted)]">
@@ -167,6 +179,23 @@ export default function CaseApprovals() {
                       )}
                     </td>
                   </tr>
+                  {pending?.caseItem.id === tc.id && (
+                    <InlineRowSection colSpan={5}>
+                      <TransitionReasonDialog
+                        key={`${tc.id}:${pending.action}`}
+                        title={ACTION_LABEL[pending.action] ?? 'Record review decision'}
+                        description="Record a nonblank review note for the audit trail."
+                        confirmLabel={ACTION_LABEL[pending.action] ?? 'Submit'}
+                        fieldLabel="Review notes"
+                        placeholder="Explain the review decision"
+                        busy={transitioning?.caseId === pending.caseItem.id}
+                        slot={notesSlot}
+                        onCancel={() => setPending(null)}
+                        onConfirm={(notes) => act(pending.caseItem, pending.action, notes)}
+                      />
+                    </InlineRowSection>
+                  )}
+                  </Fragment>
                 )
               })}
             </tbody>
@@ -180,19 +209,6 @@ export default function CaseApprovals() {
         </Link>{' '}
         for the case editor and its AI quality review.
       </p>
-
-      {pending && (
-        <TransitionReasonDialog
-          title={ACTION_LABEL[pending.action] ?? 'Record review decision'}
-          description="Record a nonblank review note for the audit trail."
-          confirmLabel={ACTION_LABEL[pending.action] ?? 'Submit'}
-          fieldLabel="Review notes"
-          placeholder="Explain the review decision"
-          busy={transitioning?.caseId === pending.caseItem.id}
-          onCancel={() => setPending(null)}
-          onConfirm={(notes) => act(pending.caseItem, pending.action, notes)}
-        />
-      )}
     </div>
   )
 }

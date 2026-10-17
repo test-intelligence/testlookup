@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import CitationDrawer from './CitationDrawer'
@@ -31,5 +31,19 @@ describe('CitationDrawer source safety', () => {
   it('does not render a javascript source URL', () => {
     render(<CitationDrawer citations={[citation('javascript:alert(1)')]} caseIndex={0} onClose={vi.fn()} />)
     expect(screen.queryByRole('link', { name: 'Open source' })).not.toBeInTheDocument()
+  })
+})
+
+// W27b PAN-05: in the page, not a fixed edge panel; named by its heading, its X labelled.
+describe('CitationDrawer in the page', () => {
+  it('is an aside named by its heading, with a Close X, and no fixed or full-height frame', () => {
+    const onClose = vi.fn()
+    render(<CitationDrawer citations={[citation('https://docs.example.test/r/1')]} caseIndex={0} onClose={onClose} />)
+    const aside = screen.getByRole('complementary', { name: 'Citations (1)' })
+    expect(aside).toHaveAttribute('data-in-page', 'form')
+    expect(aside.className).not.toMatch(/\bfixed\b|inset-y-0|\bw-96\b/)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 })

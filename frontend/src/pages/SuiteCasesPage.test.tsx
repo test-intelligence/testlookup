@@ -335,7 +335,7 @@ describe('SuiteCasesPage bulk move', () => {
     renderPage()
     const row = screen.getByRole('link', { name: 'test_logout' }).closest('tr') as HTMLElement
     fireEvent.click(within(row).getByRole('button', { name: /Move/ }))
-    const dialog = await screen.findByRole('dialog', { name: 'Move test case' })
+    const dialog = await screen.findByRole('region', { name: 'Move test case' })
     fireEvent.click(within(dialog).getByRole('button', { name: /^Move$/ }))
     await waitFor(() => expect(suitesService.linkCanonicalToSuite).toHaveBeenCalledWith('c2', 'suite-b'))
   })
@@ -347,6 +347,92 @@ describe('SuiteCasesPage bulk move', () => {
     expect(screen.queryByRole('region', { name: /Bulk actions/i })).toBeNull()
     fireEvent.click(screen.getByRole('tab', { name: /^Tests/ }))
     expect(screen.getByText('1 selected')).toBeInTheDocument()
+  })
+})
+
+// W27b PAN-05 (flows L18, L19): both Move forms open in the page.
+describe('SuiteCasesPage — Move in the page (W27b)', () => {
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    await scriptSuite()
+    scriptDetail(DETAIL)
+  })
+
+  const rowOf = (name: string) => screen.getByRole('link', { name }).closest('tr') as HTMLTableRowElement
+  const noOverlay = () => {
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.querySelector('[aria-modal]')).toBeNull()
+  }
+
+  it("a row's Move opens under that row, one cell over the 9 columns, its target focused; a click in it never opens the case", () => {
+    renderPage()
+    fireEvent.click(within(rowOf('test_logout')).getByRole('button', { name: /Move/ }))
+
+    const form = screen.getByRole('region', { name: 'Move test case' })
+    const formRow = rowOf('test_logout').nextElementSibling as HTMLTableRowElement
+    expect(formRow).toHaveAttribute('data-in-page-row', '')
+    expect(formRow).not.toHaveAttribute('data-test-row')
+    expect(formRow.cells).toHaveLength(1)
+    expect(formRow.cells[0]).toHaveAttribute('colspan', '9')
+    expect(formRow).toContainElement(form)
+    expect(within(form).getByText('auth.LoginTest :: test_logout')).toBeInTheDocument()
+    expect(within(form).getByLabelText('Target suite')).toHaveFocus()
+    noOverlay()
+
+    fireEvent.click(within(form).getByLabelText('Target suite'))
+    expect(location()).toBe('/suites/suite-a')
+    // Its X is labelled now (it had no name).
+    fireEvent.click(within(form).getByRole('button', { name: 'Close' }))
+    expect(screen.queryByRole('region', { name: 'Move test case' })).toBeNull()
+  })
+
+  it('the bulk Move opens right above the tests table (the bar stays a toolbar); a row Move replaces it', async () => {
+    const { suitesService } = await import('@/services/suitesService')
+    renderPage()
+    fireEvent.click(screen.getByLabelText('Select test_login'))
+    fireEvent.click(screen.getByLabelText('Select test_logout'))
+    fireEvent.click(within(screen.getByRole('region', { name: /Bulk actions/i })).getByRole('button', { name: /Move/ }))
+
+    const bulk = screen.getByRole('region', { name: 'Move 2 test cases' })
+    const table = document.querySelector('[data-suite-tests]') as HTMLElement
+    expect(table.previousElementSibling).toBe(bulk)
+    expect(within(bulk).getByLabelText('Target suite')).toHaveFocus()
+    noOverlay()
+
+    // A clean bulk form is replaced at once by a row's Move (one Move form at a time).
+    fireEvent.click(within(rowOf('test_login')).getByRole('button', { name: /Move/ }))
+    expect(screen.queryByRole('region', { name: 'Move 2 test cases' })).toBeNull()
+    expect(rowOf('test_login').nextElementSibling).toContainElement(screen.getByRole('region', { name: 'Move test case' }))
+    expect(suitesService.bulkLinkCanonicals).not.toHaveBeenCalled()
+    expect(suitesService.linkCanonicalToSuite).not.toHaveBeenCalled()
+  })
+
+  it('a changed bulk target asks before a row Move replaces it', () => {
+    renderPage()
+    fireEvent.click(screen.getByLabelText('Select all'))
+    fireEvent.click(within(screen.getByRole('region', { name: /Bulk actions/i })).getByRole('button', { name: /Move/ }))
+    const bulk = screen.getByRole('region', { name: 'Move 2 test cases' })
+    fireEvent.change(within(bulk).getByLabelText('Target suite'), { target: { value: 'suite-b' } })
+
+    fireEvent.click(within(rowOf('test_login')).getByRole('button', { name: /Move/ }))
+    expect(within(bulk).getByText(/Discard your changes to/)).toHaveTextContent('Discard your changes to "Move 2 test cases"?')
+    fireEvent.click(within(bulk).getByRole('button', { name: 'Keep editing' }))
+    expect(screen.queryByRole('region', { name: 'Move test case' })).toBeNull()
+    expect(screen.getByRole('region', { name: 'Move 2 test cases' })).toBeInTheDocument()
+  })
+
+  it('clearing the selection takes the bulk form with the bar', () => {
+    renderPage()
+    fireEvent.click(screen.getByLabelText('Select test_login'))
+    fireEvent.click(within(screen.getByRole('region', { name: /Bulk actions/i })).getByRole('button', { name: /Move/ }))
+    expect(screen.getByRole('region', { name: 'Move 1 test case' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByLabelText('Select test_login'))
+    expect(screen.queryByRole('region', { name: /Bulk actions/i })).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Move 1 test case' })).toBeNull()
+    // Selecting again shows the bar, not a stale form.
+    fireEvent.click(screen.getByLabelText('Select test_login'))
+    expect(screen.queryByRole('region', { name: 'Move 1 test case' })).toBeNull()
   })
 })
 

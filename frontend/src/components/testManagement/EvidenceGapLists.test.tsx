@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useOrphanedCanonicalCases } from '@/hooks/useSuites'
 import { useTestCaseEvidenceGaps } from '@/hooks/useTestManagement'
 import { usePermissions } from '@/hooks/usePermissions'
+import toast from 'react-hot-toast'
 import { onboardingService } from '@/services/onboardingService'
 import { suitesService } from '@/services/suitesService'
 import EvidenceGapLists from './EvidenceGapLists'
@@ -89,7 +90,7 @@ describe('EvidenceGapLists', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Unconfirmed automation retirements/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Confirm retirement' }))
-    const confirm = within(screen.getByRole('dialog')).getByRole('button', { name: 'Confirm retirement' })
+    const confirm = within(screen.getByRole('region', { name: 'Confirm automation retirement' })).getByRole('button', { name: 'Confirm retirement' })
     expect(confirm).toBeDisabled()
     fireEvent.change(screen.getByLabelText(/Reason/), { target: { value: 'Removed from the source suite' } })
     fireEvent.click(confirm)
@@ -135,10 +136,73 @@ describe('EvidenceGapLists', () => {
     fireEvent.change(screen.getByRole('textbox', { name: /Reason/ }), {
       target: { value: 'Removed intentionally' },
     })
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Confirm retirement' }))
+    fireEvent.click(within(screen.getByRole('region', { name: 'Confirm automation retirement' })).getByRole('button', { name: 'Confirm retirement' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Retirement conflicts with a newer execution')
-    expect(screen.getByRole('dialog', { name: 'Confirm automation retirement' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Confirm automation retirement' })).toBeInTheDocument()
+  })
+
+  // W27b G-E finding 2: a refusal showed the alert AND two identical toasts (the
+  // shared Axios interceptor's, and this component's own). The alert says it once;
+  // the interceptor's toast is the only toast (it is not this component's to raise).
+  it('says a refused retirement once: one alert, and no toast of its own', async () => {
+    ;(suitesService.confirmRetirement as ReturnType<typeof vi.fn>).mockRejectedValue({
+      response: { status: 409, data: { detail: 'Retirement conflicts with a newer execution' } },
+    })
+    render(<EvidenceGapLists projectId="project-1" />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Unconfirmed automation retirements/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm retirement' }))
+    fireEvent.change(screen.getByRole('textbox', { name: /Reason/ }), { target: { value: 'Removed intentionally' } })
+    fireEvent.click(within(screen.getByRole('region', { name: 'Confirm automation retirement' })).getByRole('button', { name: 'Confirm retirement' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Retirement conflicts with a newer execution')
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(toast.error).not.toHaveBeenCalled()
+    expect(toast.success).not.toHaveBeenCalled()
+
+    // Cancel takes the form and its refusal away.
+    fireEvent.click(within(screen.getByRole('region', { name: 'Confirm automation retirement' })).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('opens the reason form in the page, as the list item right after its orphan', () => {
+    render(<EvidenceGapLists projectId="project-1" />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Unconfirmed automation retirements/ }))
+    const trigger = screen.getByRole('button', { name: 'Confirm retirement' })
+    const item = trigger.closest('li') as HTMLElement
+    fireEvent.click(trigger)
+
+    const form = screen.getByRole('region', { name: 'Confirm automation retirement' })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.querySelector('[aria-modal]')).toBeNull()
+    const formItem = form.closest('li') as HTMLElement
+    expect(formItem).toHaveAttribute('data-in-page-row', '')
+    expect(item.nextElementSibling).toBe(formItem)
+    expect(screen.getByRole('textbox', { name: /Reason/ })).toHaveFocus()
+  })
+
+  it('asks before collapsing the card takes a typed reason away', () => {
+    render(<EvidenceGapLists projectId="project-1" />)
+
+    const header = screen.getByRole('button', { name: /Unconfirmed automation retirements/ })
+    fireEvent.click(header)
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm retirement' }))
+    fireEvent.input(screen.getByRole('textbox', { name: /Reason/ }), { target: { value: 'Typed' } })
+    fireEvent.change(screen.getByRole('textbox', { name: /Reason/ }), { target: { value: 'Typed' } })
+
+    fireEvent.click(header)
+    const form = screen.getByRole('region', { name: 'Confirm automation retirement' })
+    expect(within(form).getByText(/Discard your changes to/)).toBeInTheDocument()
+    fireEvent.click(within(form).getByRole('button', { name: 'Keep editing' }))
+    expect(screen.getByRole('textbox', { name: /Reason/ })).toHaveValue('Typed')
+
+    fireEvent.click(header)
+    fireEvent.click(within(screen.getByRole('region', { name: 'Confirm automation retirement' })).getByRole('button', { name: 'Discard changes' }))
+    expect(screen.queryByRole('region', { name: 'Confirm automation retirement' })).toBeNull()
+    expect(header).toHaveAttribute('aria-expanded', 'false')
+    expect(suitesService.confirmRetirement).not.toHaveBeenCalled()
   })
 
   // N16: the backend pages /orphaned at 25; the panel used to show 25 rows
@@ -208,9 +272,9 @@ describe('EvidenceGapLists', () => {
     fireEvent.change(screen.getByRole('textbox', { name: /Reason/ }), {
       target: { value: 'Removed intentionally' },
     })
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Confirm retirement' }))
+    fireEvent.click(within(screen.getByRole('region', { name: 'Confirm automation retirement' })).getByRole('button', { name: 'Confirm retirement' }))
 
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Confirm automation retirement' })).not.toBeInTheDocument())
     expect(screen.queryByText('Removed test')).not.toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('Retirement was confirmed')
     expect(suitesService.confirmRetirement).toHaveBeenCalledTimes(1)

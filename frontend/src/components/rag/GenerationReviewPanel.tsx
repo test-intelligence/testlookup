@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { Check, FileText, Loader2, X } from 'lucide-react'
 import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
@@ -11,6 +11,11 @@ interface Props {
   onCaseAccepted?: () => void
 }
 
+/**
+ * The generated cases to accept or reject. A case's Citations open IN THE
+ * PAGE (W27b PAN-05), right after that case's card (another case's Citations
+ * moves them there); they come with the generate answer, so nothing is read.
+ */
 export default function GenerationReviewPanel({ result, onCaseAccepted }: Props) {
   const [citationDrawerIdx, setCitationDrawerIdx] = useState<number | null>(null)
   const [acceptedIndices, setAcceptedIndices] = useState<Set<number>>(new Set())
@@ -89,8 +94,8 @@ export default function GenerationReviewPanel({ result, onCaseAccepted }: Props)
           const hasCitations = result.citations.some(c => c.case_index === idx)
 
           return (
+            <Fragment key={idx}>
             <div
-              key={idx}
               className={clsx(
                 'rounded-lg border p-4 space-y-2',
                 isAccepted && 'border-[var(--status-passed-bd)]/30 bg-[var(--status-passed-bg)]/5',
@@ -163,18 +168,18 @@ export default function GenerationReviewPanel({ result, onCaseAccepted }: Props)
                 )}
               </div>
             </div>
+            {/* This case's citations, right after its card. */}
+            {citationDrawerIdx === idx && (
+              <CitationDrawer
+                citations={result.citations}
+                caseIndex={idx}
+                onClose={() => setCitationDrawerIdx(null)}
+              />
+            )}
+            </Fragment>
           )
         })}
       </div>
-
-      {/* Citation drawer */}
-      {citationDrawerIdx !== null && (
-        <CitationDrawer
-          citations={result.citations}
-          caseIndex={citationDrawerIdx}
-          onClose={() => setCitationDrawerIdx(null)}
-        />
-      )}
     </div>
   )
 }

@@ -8,7 +8,11 @@
  * A catalog row the analytics have no row for did not run in the window (or,
  * past the analytics' row cap, is not among the tests it returned): its run
  * cells read "—" with the reason on hover, never 0 %.
+ *
+ * `belowRow` (W27b PAN-05) renders a row's own form (Move) as the `<tr>`
+ * right after it, in the page.
  */
+import { Fragment, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ArrowRightLeft, ExternalLink } from 'lucide-react'
 import type { CanonicalTestCase } from '@/types/suites'
@@ -52,6 +56,8 @@ export interface SuiteTestsTableProps {
   onToggleOne: (id: string) => void
   onToggleAll: () => void
   onMove: (canonical: CanonicalTestCase) => void
+  /** The `<tr>` rendered right after a case's row (its Move form, an `InlineRowSection`), or nothing. */
+  belowRow?: (canonical: CanonicalTestCase) => ReactNode
 }
 
 export default function SuiteTestsTable({
@@ -63,6 +69,7 @@ export default function SuiteTestsTable({
   onToggleOne,
   onToggleAll,
   onMove,
+  belowRow,
 }: SuiteTestsTableProps) {
   const navigate = useNavigate()
   const allSelected = cases.length > 0 && cases.every((c) => selectedIds.has(c.id))
@@ -118,8 +125,8 @@ export default function SuiteTestsTable({
             const checked = selectedIds.has(c.id)
             const stat = stats.get(c.test_fingerprint)
             return (
+              <Fragment key={c.id}>
               <tr
-                key={c.id}
                 data-test-row={c.test_fingerprint}
                 onClick={() => navigate(detailHref)}
                 className="cursor-pointer hover:bg-[var(--color-bg-secondary)]"
@@ -207,6 +214,8 @@ export default function SuiteTestsTable({
                   </div>
                 </td>
               </tr>
+              {belowRow?.(c)}
+              </Fragment>
             )
           })}
         </tbody>

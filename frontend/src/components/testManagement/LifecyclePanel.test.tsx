@@ -66,7 +66,7 @@ describe('LifecyclePanel', () => {
     expect(screen.getByRole('button', { name: 'Archive' })).toHaveAttribute('title', 'Deprecate the case first.')
 
     fireEvent.click(screen.getByRole('button', { name: 'Deprecate' }))
-    const confirm = within(screen.getByRole('dialog')).getByRole('button', { name: 'Deprecate' })
+    const confirm = within(screen.getByRole('region', { name: 'Deprecate' })).getByRole('button', { name: 'Deprecate' })
     expect(confirm).toBeDisabled()
     fireEvent.change(screen.getByLabelText(/Reason/), { target: { value: '  Superseded by case 42  ' } })
     fireEvent.click(confirm)
@@ -116,7 +116,7 @@ describe('LifecyclePanel', () => {
     render(<LifecyclePanel caseItem={underReview} onChanged={vi.fn()} />)
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
 
-    const dialog = screen.getByRole('dialog', { name: 'Approve' })
+    const dialog = screen.getByRole('region', { name: 'Approve' })
     const confirm = within(dialog).getByRole('button', { name: 'Approve' })
     expect(confirm).toBeDisabled()
     fireEvent.change(within(dialog).getByRole('textbox', { name: /Review notes/ }), {
@@ -169,10 +169,10 @@ describe('LifecyclePanel', () => {
     fireEvent.change(screen.getByRole('textbox', { name: /Reason/ }), {
       target: { value: 'Superseded' },
     })
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Deprecate' }))
+    fireEvent.click(within(screen.getByRole('region', { name: 'Deprecate' })).getByRole('button', { name: 'Deprecate' }))
 
     await waitFor(() => expect(onChanged).toHaveBeenCalledWith(updated))
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Deprecate' })).not.toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('change was saved')
     expect(screen.queryByRole('button', { name: 'Deprecate' })).not.toBeInTheDocument()
     expect(testManagementService.transitionCase).toHaveBeenCalledTimes(1)

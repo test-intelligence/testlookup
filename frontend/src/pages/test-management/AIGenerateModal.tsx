@@ -3,6 +3,7 @@ import { Clock, Sparkles } from 'lucide-react'
 import toast from 'react-hot-toast'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import Tabs from '@/components/ui/Tabs'
+import type { InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import { testManagementService } from '@/services/testManagementService'
 import KnowledgeGenerationTab from './KnowledgeGenerationTab'
 import { ModalWrap } from './tmUi'
@@ -17,6 +18,9 @@ import { ModalWrap } from './tmUi'
  *  - From documents: the knowledge-base generation flow (pick sources,
  *    preview evidence, generate, review) — the same component as the More ▾
  *    › Knowledge tab, so it behaves identically in both places.
+ *
+ * It renders in the page (W27b PAN-05): the Cases tab opens it between its
+ * alerts and the cases row, through `ModalWrap`'s in-page section.
  */
 export type GenerateSource = 'description' | 'documents'
 
@@ -25,9 +29,11 @@ interface AIGenerateModalProps {
   onClose: () => void
   /** Which source the modal opens on (default: a description). */
   initialSource?: GenerateSource
+  /** The Cases tab's form slot (shared with New test case: one form at a time, asking before a replace). */
+  slot?: InlineSlot
 }
 
-export default function AIGenerateModal({ projectId, onClose, initialSource = 'description' }: AIGenerateModalProps) {
+export default function AIGenerateModal({ projectId, onClose, initialSource = 'description', slot }: AIGenerateModalProps) {
   const [source, setSource] = useState<GenerateSource>(initialSource)
   const [requirements, setRequirements] = useState('')
   const [loading, setLoading] = useState(false)
@@ -53,7 +59,7 @@ export default function AIGenerateModal({ projectId, onClose, initialSource = 'd
   }
 
   return (
-    <ModalWrap onClose={onClose} title="AI Generate Test Cases" width={source === 'documents' ? 'max-w-4xl' : 'max-w-2xl'}>
+    <ModalWrap onClose={onClose} title="AI Generate Test Cases" width={source === 'documents' ? 'max-w-4xl' : 'max-w-2xl'} slot={slot}>
       <div className="space-y-4">
         <Tabs<GenerateSource>
           ariaLabel="Generate from"

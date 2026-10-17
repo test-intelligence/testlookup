@@ -11,14 +11,19 @@
  * `?source=defects` by URL sees no queue and no 403 toast).
  *
  * Titles, components, teams, reasons and Jira keys are rendered as text.
+ *
+ * Reject's reason opens IN THE PAGE (W27b PAN-05): the list item right after
+ * that defect (`data-in-page-row`, never a `defect-approval-row`), one at a
+ * time in the list.
  */
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Bug, Clock } from 'lucide-react'
 import toast from 'react-hot-toast'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import TransitionReasonDialog from '@/components/testManagement/TransitionReasonDialog'
+import { useInlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import { usePendingDefects } from '@/hooks/usePendingDefects'
 import { usePermissions } from '@/hooks/usePermissions'
 import { defectPromotionService } from '@/services/defectPromotionService'
@@ -87,6 +92,7 @@ export default function DefectApprovals({ projectId }: { projectId: string }) {
   const [decided, setDecided] = useState<ReadonlySet<string>>(() => new Set())
   const [busy, setBusy] = useState<{ id: string; action: 'approve' | 'reject' } | null>(null)
   const [rejecting, setRejecting] = useState<PendingDefect | null>(null)
+  const rejectSlot = useInlineSlot()
 
   if (!isQaLead) return null
 
@@ -112,7 +118,8 @@ export default function DefectApprovals({ projectId }: { projectId: string }) {
     try {
       await defectPromotionService.reviewDefect(defect.defect_id, { action: 'reject', reason })
       markDecided(defect.defect_id)
-      setRejecting(null)
+      // A late answer closes only its own form (another defect's may have replaced it).
+      setRejecting((current) => (current?.defect_id === defect.defect_id ? null : current))
       toast.success('Rejected — closed as Invalid')
       void mutate()
     } catch {
@@ -151,7 +158,8 @@ export default function DefectApprovals({ projectId }: { projectId: string }) {
             const age = ageLabel(defect.created_at)
             const rowBusy = busy?.id === defect.defect_id
             return (
-              <li key={defect.defect_id} data-testid="defect-approval-row" className="flex items-start gap-4 px-3 py-3">
+              <Fragment key={defect.defect_id}>
+              <li data-testid="defect-approval-row" className="flex items-start gap-4 px-3 py-3">
                 <div className="min-w-0 flex-1 space-y-1">
                   <div className="flex items-center gap-2">
                     <span className="truncate text-sm font-medium text-[var(--color-text)]" title={defect.title ?? undefined}>
@@ -216,29 +224,36 @@ export default function DefectApprovals({ projectId }: { projectId: string }) {
                     data-testid="defect-reject"
                     className="btn-secondary text-xs"
                     disabled={busy !== null}
-                    onClick={() => setRejecting(defect)}
+                    onClick={() => {
+                      if (rejecting?.defect_id === defect.defect_id) return
+                      // A typed reason for another defect asks first (the slot's question, in that form).
+                      rejectSlot.guard(() => setRejecting(defect))
+                    }}
                   >
                     Reject
                   </button>
                 </div>
               </li>
+              {rejecting?.defect_id === defect.defect_id && (
+                <li data-in-page-row="" className="px-3 pb-3">
+                  <TransitionReasonDialog
+                    title="Reject this defect?"
+                    description="It is closed as Invalid and stops counting toward the release gate."
+                    fieldLabel="Reason (recorded in the activity log)"
+                    placeholder="Why this is not a defect"
+                    confirmLabel="Reject"
+                    busy={busy?.id === rejecting.defect_id}
+                    slot={rejectSlot}
+                    onCancel={() => setRejecting(null)}
+                    onConfirm={(reason) => reject(rejecting, reason)}
+                  />
+                </li>
+              )}
+              </Fragment>
             )
           })}
         </ul>
       ) : null}
-
-      {rejecting && (
-        <TransitionReasonDialog
-          title="Reject this defect?"
-          description="It is closed as Invalid and stops counting toward the release gate."
-          fieldLabel="Reason (recorded in the activity log)"
-          placeholder="Why this is not a defect"
-          confirmLabel="Reject"
-          busy={busy?.id === rejecting.defect_id}
-          onCancel={() => setRejecting(null)}
-          onConfirm={(reason) => reject(rejecting, reason)}
-        />
-      )}
     </div>
   )
 }

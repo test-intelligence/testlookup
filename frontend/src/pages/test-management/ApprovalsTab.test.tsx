@@ -104,8 +104,14 @@ describe('ApprovalsTab (was Reviews) lifecycle queue', () => {
     ;(testManagementService.reviewAction as ReturnType<typeof vi.fn>).mockResolvedValue(reviewCase({ status: 'approved' }))
     render(<ApprovalsTab projectId="project-1" lifecycleV2={false} />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Request changes' }))
-    const dialog = screen.getByRole('dialog', { name: 'Request changes' })
+    const decide = screen.getByRole('button', { name: 'Request changes' })
+    fireEvent.click(decide)
+    const dialog = screen.getByRole('region', { name: 'Request changes' })
+    // W27b PAN-05: the notes open inside the case's card, under its row of actions.
+    expect(document.querySelector('[aria-modal]')).toBeNull()
+    const card = decide.closest('.card') as HTMLElement
+    expect(card).toContainElement(dialog)
+    expect(decide.compareDocumentPosition(dialog) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     const confirm = within(dialog).getByRole('button', { name: 'Request changes' })
     expect(confirm).toBeDisabled()
     fireEvent.change(within(dialog).getByRole('textbox', { name: /Review notes/ }), {
@@ -144,7 +150,7 @@ describe('ApprovalsTab (was Reviews) lifecycle queue', () => {
     render(<ApprovalsTab projectId="project-1" lifecycleV2 />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Request changes' }))
-    const dialog = screen.getByRole('dialog', { name: 'Request changes' })
+    const dialog = screen.getByRole('region', { name: 'Request changes' })
     fireEvent.change(within(dialog).getByRole('textbox', { name: /Review notes/ }), {
       target: { value: '  Clarify the expected error state  ' },
     })
@@ -157,7 +163,7 @@ describe('ApprovalsTab (was Reviews) lifecycle queue', () => {
         notes: 'Clarify the expected error state',
       })
     })
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Request changes' })).not.toBeInTheDocument()
     expect(screen.queryByText('Review sign in')).not.toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('action was saved')
     expect(testManagementService.transitionCase).toHaveBeenCalledTimes(1)
