@@ -199,6 +199,14 @@ describe('blockers', () => {
     expect(document.querySelector('[data-blockers-more]')).toHaveTextContent('+22 more · open the release for the full list')
   })
 
+  // W27 PAN-02: beside an open release the card is ~510 px at 1280; the rows
+  // truncate their names, so their list has zero intrinsic width and never
+  // sets the card's min-content (it still fills the card in layout).
+  it('the blocker list does not size the card', () => {
+    renderCard({ release: release({ gate: gate({ verdict: 'NO_GO', blocking_reasons: reasons, blocking_total: 25 }) }) })
+    expect(document.querySelector('[data-card-blockers]')).toHaveClass('w-0', 'min-w-full')
+  })
+
   it('links a reason to the release\'s gate panel in-app, without opening the card', () => {
     const onClick = vi.fn()
     renderCard({ release: release({ gate: gate({ verdict: 'NO_GO', blocking_reasons: ['test_pay (checkout-e2e) is FAILED'], blocking_total: 1 }) }), onClick })

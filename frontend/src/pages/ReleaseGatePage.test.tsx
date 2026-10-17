@@ -1044,12 +1044,15 @@ describe('ReleaseGatePage — verdict first (P4 item 6)', () => {
   })
 
   // GATE-06: Share used to mint an executive 7-day link on the click (and
-  // copy it); it now opens the dialog that chooses both and lists the links.
+  // copy it); it now opens the form that chooses both and lists the links —
+  // in the page, right under the header (W27 PAN-02), not over it.
   it('Share report opens the share dialog and creates nothing by itself', async () => {
     await renderAt('/release-gate/run-1', flooredDecision())
     fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
     fireEvent.click(screen.getByRole('menuitem', { name: /Share report/ }))
-    const dialog = await screen.findByRole('dialog', { name: 'Share report' })
+    const dialog = await screen.findByRole('region', { name: 'Share report' })
+    expect(document.querySelector('[aria-modal]')).toBeNull()
+    expect(document.querySelector('[data-page-header]')?.nextElementSibling).toBe(dialog)
     expect(within(dialog).getByRole('combobox', { name: 'Link expires after' })).toHaveValue('7')
     expect(within(dialog).getByRole('radio', { name: 'Executive' })).toBeChecked()
     expect(within(dialog).getByText('No share links for this run yet.')).toBeInTheDocument()

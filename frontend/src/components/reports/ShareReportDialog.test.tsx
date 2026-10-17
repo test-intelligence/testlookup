@@ -54,7 +54,7 @@ function renderDialog() {
   )
 }
 
-const dialog = () => screen.getByRole('dialog', { name: 'Share report' })
+const dialog = () => screen.getByRole('region', { name: 'Share report' })
 
 describe('ShareReportDialog', () => {
   beforeEach(() => {
@@ -141,5 +141,32 @@ describe('ShareReportDialog', () => {
     renderDialog()
     fireEvent.click(within(dialog()).getByRole('button', { name: 'Create link' }))
     expect(await within(dialog()).findByRole('alert')).toHaveTextContent('This report has not been reviewed yet.')
+  })
+
+  // W27 PAN-02: a section in the page (under the gate's header), not a modal side panel.
+  it('renders in the page with its hooks kept; the X and Escape close it; closed, it renders and reads nothing', async () => {
+    const onClose = vi.fn()
+    const { container, rerender } = render(
+      <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
+        <ShareReportDialog runId="run-1" open onClose={onClose} />
+      </SWRConfig>,
+    )
+    expect(container.contains(dialog())).toBe(true)
+    expect(document.querySelector('[role="dialog"], [aria-modal], [data-side-panel]')).toBeNull()
+    expect(dialog().querySelector('[data-share-dialog]')).not.toBeNull()
+    await waitFor(() => expect(service.listShareLinks).toHaveBeenCalledWith('run-1'))
+    fireEvent.keyDown(within(dialog()).getByRole('radio', { name: 'Executive' }), { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Close share report' }))
+    expect(onClose).toHaveBeenCalledTimes(2)
+
+    service.listShareLinks.mockClear()
+    rerender(
+      <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
+        <ShareReportDialog runId="run-1" open={false} onClose={onClose} />
+      </SWRConfig>,
+    )
+    expect(screen.queryByRole('region', { name: 'Share report' })).toBeNull()
+    expect(service.listShareLinks).not.toHaveBeenCalled()
   })
 })

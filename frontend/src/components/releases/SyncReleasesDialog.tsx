@@ -5,16 +5,21 @@
  * phases, gate policy and run attribution stay TestLookup's. While the
  * deployment is offline (`AI_OFFLINE_MODE`) or the integration has no
  * credential, the server answers 503 with its own sentence; a network failure
- * reaching the source is a 502. The dialog shows that sentence verbatim (the
+ * reaching the source is a 502. The form shows that sentence verbatim (the
  * request opts out of the global toast) and, for a 503, the way to Settings.
  * Nothing changes on a failure.
+ *
+ * It renders IN THE PAGE (W27 PAN-02): an `InlineFormSection` under the
+ * releases' health banner, not a modal over the page. Its name, heading id,
+ * `data-sync-releases-dialog` and close label are the dialog's, kept; Cancel,
+ * the X and Escape inside it close it (not mid-sync), as before.
  */
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import { useModalFocus } from '@/hooks/useModalFocus'
+import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
+import type { InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import { releasesService } from '@/services/releasesService'
 import { extractErrorMessage } from '@/services/apiErrors'
 
@@ -23,6 +28,8 @@ export interface SyncReleasesDialogProps {
   onClose: () => void
   /** A sync succeeded: refresh the list (and close). */
   onDone: () => void
+  /** The page's form slot: one open form at a time under the page header. */
+  slot?: InlineSlot
 }
 
 type Source = 'github' | 'jira'
@@ -34,12 +41,11 @@ interface SyncFailure {
   detail: string
 }
 
-export default function SyncReleasesDialog({ projectId, onClose, onDone }: SyncReleasesDialogProps) {
+export default function SyncReleasesDialog({ projectId, onClose, onDone, slot }: SyncReleasesDialogProps) {
   const [source, setSource] = useState<Source>('github')
   const [jiraKey, setJiraKey] = useState('')
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<SyncFailure | null>(null)
-  const dialogRef = useModalFocus({ onClose, canClose: !busy })
 
   async function sync() {
     setBusy(true)
@@ -68,31 +74,37 @@ export default function SyncReleasesDialog({ projectId, onClose, onDone }: SyncR
   const choose = (next: Source) => { setSource(next); setFailure(null) }
 
   return (
-    <div
-      ref={dialogRef}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="sync-releases-title"
-      data-sync-releases-dialog=""
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60"
-      onClick={() => { if (!busy) onClose() }}
-    >
-      <div
-        className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-xl p-6 w-full max-w-md shadow-2xl"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between mb-4">
-          <h2 id="sync-releases-title" className="text-base font-semibold text-[var(--color-text)]">Sync releases</h2>
+    <InlineFormSection
+      title="Sync releases"
+      titleId="sync-releases-title"
+      closeLabel="Close sync releases dialog"
+      onClose={onClose}
+      canClose={!busy}
+      slot={slot}
+      dataAttributes={{ 'data-sync-releases-dialog': '' }}
+      footer={(
+        <>
           <button
             type="button"
-            aria-label="Close sync releases dialog"
             onClick={onClose}
             disabled={busy}
-            className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40"
+            className="px-4 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40"
           >
-            <X className="h-4 w-4" />
+            Cancel
           </button>
-        </div>
+          <button
+            type="button"
+            onClick={() => void sync()}
+            disabled={busy}
+            className="px-4 py-2 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] rounded-lg font-medium flex items-center gap-2"
+          >
+            {busy && <LoadingSpinner size="sm" />}
+            Sync
+          </button>
+        </>
+      )}
+    >
+      <div className="max-w-2xl">
         <p className="text-[12.5px] text-[var(--color-text-muted)] mb-4">
           Pulls release names and links from the source. Phases, gate policy and run attribution stay in TestLookup.
         </p>
@@ -139,26 +151,7 @@ export default function SyncReleasesDialog({ projectId, onClose, onDone }: SyncR
             )}
           </div>
         )}
-        <div className="flex gap-3 justify-end mt-5">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={busy}
-            className="px-4 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => void sync()}
-            disabled={busy}
-            className="px-4 py-2 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] rounded-lg font-medium flex items-center gap-2"
-          >
-            {busy && <LoadingSpinner size="sm" />}
-            Sync
-          </button>
-        </div>
       </div>
-    </div>
+    </InlineFormSection>
   )
 }

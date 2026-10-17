@@ -31,7 +31,7 @@ const reason = () => screen.getByLabelText('Reason (recorded in the audit log)')
 describe('PhaseReasonDialog', () => {
   it('asks to complete the phase anyway, quoting the server sentence verbatim', () => {
     const { container } = renderDialog('complete')
-    expect(screen.getByRole('dialog', { name: 'Complete "Regression" anyway?' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Complete "Regression" anyway?' })).toBeInTheDocument()
     expect(container.querySelector('[data-phase-gate-detail]')).toHaveTextContent(NO_GO)
     expect(screen.getByText('At least 3 characters.')).toBeInTheDocument()
     expect(reason()).toHaveAttribute('maxLength', '1000')
@@ -40,8 +40,33 @@ describe('PhaseReasonDialog', () => {
 
   it('asks to skip with its own title and button', () => {
     renderDialog('skip')
-    expect(screen.getByRole('dialog', { name: 'Skip "Regression"?' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Skip "Regression"?' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Skip phase' })).toBeInTheDocument()
+  })
+
+  // W27 PAN-02: it renders in the page, where the release puts it, and keeps
+  // the dialog's hooks (its heading id, data-phase-reason-dialog, the X's label).
+  it('renders in the page, not over it, with the hooks the dialog had', () => {
+    const { container, onCancel } = renderDialog('complete')
+    const form = screen.getByRole('region', { name: 'Complete "Regression" anyway?' })
+    expect(container.contains(form)).toBe(true)
+    expect(document.querySelector('[role="dialog"], [aria-modal]')).toBeNull()
+    expect(form).toHaveAttribute('data-phase-reason-dialog', 'complete')
+    expect(form).toHaveAttribute('aria-labelledby', 'phase-reason-title')
+    expect(document.getElementById('phase-reason-title')).toHaveTextContent('Complete "Regression" anyway?')
+    // The reason field has focus, and Escape inside the form cancels it.
+    expect(reason()).toHaveFocus()
+    fireEvent.keyDown(reason(), { key: 'Escape' })
+    expect(onCancel).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Close phase reason dialog' }))
+    expect(onCancel).toHaveBeenCalledTimes(2)
+  })
+
+  it('mid-submit, Escape and the X do not close it', () => {
+    const { onCancel } = renderDialog('skip', true)
+    fireEvent.keyDown(reason(), { key: 'Escape' })
+    expect(screen.getByRole('button', { name: 'Close phase reason dialog' })).toBeDisabled()
+    expect(onCancel).not.toHaveBeenCalled()
   })
 
   it('keeps Submit disabled until the TRIMMED reason has 3 characters', () => {

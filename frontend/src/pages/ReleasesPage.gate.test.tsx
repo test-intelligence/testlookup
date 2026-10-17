@@ -149,8 +149,8 @@ describe('REL-01: Evaluate gate on a card', () => {
     for (const key of [['release-detail', 'rel-a'], ['release-gate', 'rel-a'], ['release-phase-gates', 'rel-a']]) {
       expect(appMutate, String(key)).toHaveBeenCalledWith(key)
     }
-    // The button does not open the card's side panel.
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    // The button does not open the card's pane.
+    expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
   })
 
   it('a No-Go verdict names how many items block it', async () => {
@@ -239,7 +239,7 @@ describe('REL-10: a phase-gate 409 asks for the reason', () => {
   function openPanelPhaseSelect() {
     renderAt('/releases')
     fireEvent.click(card(/^Checkout 2\.5 2\.5\.0/))
-    const panel = screen.getByRole('dialog', { name: 'Checkout 2.5 2.5.0' })
+    const panel = screen.getByRole('complementary', { name: 'Checkout 2.5 2.5.0' })
     return within(panel).getByRole('combobox', { name: 'Status of phase Regression' })
   }
 
@@ -248,7 +248,9 @@ describe('REL-10: a phase-gate 409 asks for the reason', () => {
       .mockRejectedValueOnce(httpError(409, NO_GO_DETAIL))
       .mockResolvedValueOnce({ ...phase('ph-1', 'Regression', 'completed'), all_phases_completed: true } as never)
     fireEvent.change(openPanelPhaseSelect(), { target: { value: 'completed' } })
-    const dialog = await screen.findByRole('dialog', { name: 'Complete "Regression" anyway?' })
+    const dialog = await screen.findByRole('region', { name: 'Complete "Regression" anyway?' })
+    // W27 PAN-02: right under the phase's row, inside the release's pane.
+    expect(document.getElementById('phase-ph-1')?.nextElementSibling).toBe(dialog)
     expect(dialog.querySelector('[data-phase-gate-detail]')).toHaveTextContent(NO_GO_DETAIL)
     // The first attempt is quiet: no generic toast fires before the dialog.
     expect(svc.updatePhase).toHaveBeenNthCalledWith(1, 'rel-a', 'ph-1', { status: 'completed' }, { suppressToast: true })
@@ -259,7 +261,7 @@ describe('REL-10: a phase-gate 409 asks for the reason', () => {
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Phase "Regression" completed with an override'))
     expect(svc.updatePhase).toHaveBeenCalledTimes(2)
     expect(svc.updatePhase.mock.calls[1]).toEqual(['rel-a', 'ph-1', { status: 'completed', gate_override_reason: 'Customer waiver CAB-142' }])
-    expect(screen.queryByRole('dialog', { name: /anyway\?/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: /anyway\?/ })).not.toBeInTheDocument()
     expect(detailMutate).toHaveBeenCalled()
     expect(appMutate).toHaveBeenCalledWith(['release-phase-gates', 'rel-a'])
     expect(toast.success).toHaveBeenCalledWith('All phases completed! You can now mark this release as Released.')
@@ -270,7 +272,7 @@ describe('REL-10: a phase-gate 409 asks for the reason', () => {
       .mockRejectedValueOnce(httpError(409, SKIP_DETAIL))
       .mockResolvedValueOnce({ ...phase('ph-1', 'Regression', 'skipped'), all_phases_completed: false } as never)
     fireEvent.change(openPanelPhaseSelect(), { target: { value: 'skipped' } })
-    const dialog = await screen.findByRole('dialog', { name: 'Skip "Regression"?' })
+    const dialog = await screen.findByRole('region', { name: 'Skip "Regression"?' })
     expect(dialog.querySelector('[data-phase-gate-detail]')).toHaveTextContent(/^Skipping a phase needs a reason — it counts as done/)
     fireEvent.change(within(dialog).getByLabelText('Reason (recorded in the audit log)'), { target: { value: 'Deferred to 2026.12' } })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Skip phase' }))
@@ -282,9 +284,9 @@ describe('REL-10: a phase-gate 409 asks for the reason', () => {
     svc.updatePhase.mockRejectedValueOnce(httpError(409, NO_GO_DETAIL))
     const select = openPanelPhaseSelect()
     fireEvent.change(select, { target: { value: 'completed' } })
-    const dialog = await screen.findByRole('dialog', { name: 'Complete "Regression" anyway?' })
+    const dialog = await screen.findByRole('region', { name: 'Complete "Regression" anyway?' })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
-    expect(screen.queryByRole('dialog', { name: /anyway\?/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: /anyway\?/ })).not.toBeInTheDocument()
     expect(svc.updatePhase).toHaveBeenCalledTimes(1)
     expect(select).toHaveValue('in_progress')
   })
@@ -297,14 +299,14 @@ describe('REL-10: a phase-gate 409 asks for the reason', () => {
     fireEvent.change(openPanelPhaseSelect(), { target: { value: 'completed' } })
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(detail))
     expect(toast.error).not.toHaveBeenCalledWith('Failed to update phase')
-    expect(screen.queryByRole('dialog', { name: /anyway\?/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: /anyway\?/ })).not.toBeInTheDocument()
   })
 
   it('a 409 on a transition that is not Completed or Skipped is a toast, not the dialog', async () => {
     svc.updatePhase.mockRejectedValueOnce(httpError(409, 'Some other conflict'))
     fireEvent.change(openPanelPhaseSelect(), { target: { value: 'pending' } })
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Some other conflict'))
-    expect(screen.queryByRole('dialog', { name: /anyway\?|Skip/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: /anyway\?|Skip/ })).not.toBeInTheDocument()
   })
 })
 
@@ -334,9 +336,9 @@ describe('REL-02: the owner', () => {
   function openEditor() {
     renderAt('/releases')
     fireEvent.click(card(/^Checkout 2\.5 2\.5\.0/))
-    const panel = screen.getByRole('dialog', { name: 'Checkout 2.5 2.5.0' })
+    const panel = screen.getByRole('complementary', { name: 'Checkout 2.5 2.5.0' })
     fireEvent.click(within(panel).getByRole('button', { name: 'Edit' }))
-    return screen.getByRole('dialog', { name: 'Edit Release' })
+    return screen.getByRole('region', { name: 'Edit Release' })
   }
 
   it('the editor offers the project\'s people (not the synthetic QA lead) and keeps the current owner', () => {
@@ -366,7 +368,7 @@ describe('REL-02: the owner', () => {
   it('a new release has no Owner field (the server makes its creator the owner)', () => {
     renderAt('/releases')
     fireEvent.click(screen.getByRole('button', { name: /New release/ }))
-    const editor = screen.getByRole('dialog', { name: 'New Release' })
+    const editor = screen.getByRole('region', { name: 'New Release' })
     expect(within(editor).queryByRole('combobox', { name: 'Owner' })).not.toBeInTheDocument()
   })
 
@@ -387,29 +389,40 @@ describe('REL-08: the active release and sync', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Set as active release' }))
   }
 
+  // W27 PAN-02: the question is an inline strip right under the card, in the
+  // native prompt's words; the menu item sends nothing, the strip's button does.
+  const ACTIVATE_QUESTION = 'Make "Billing 3.0" the active release? Runs that no other rule matches will land here.'
+
   it('Set as active release asks first, then activates and re-reads the list', async () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const confirm = vi.spyOn(window, 'confirm')
     svc.activate.mockResolvedValue({ release_id: 'rel-c', is_active: true, deactivated: 'rel-a', changed: true } as never)
     renderAt('/releases')
     chooseSetActive(/^Billing 3\.0/)
-    expect(confirm).toHaveBeenCalledWith('Make "Billing 3.0" the active release? Runs that no other rule matches will land here.')
+    const ask = screen.getByRole('group', { name: ACTIVATE_QUESTION })
+    expect(card(/^Billing 3\.0/).nextElementSibling).toBe(ask)
+    expect(svc.activate).not.toHaveBeenCalled()
+    fireEvent.click(within(ask).getByRole('button', { name: 'Make active' }))
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith('"Billing 3.0" is now the active release'))
     expect(svc.activate).toHaveBeenCalledWith('rel-c')
     expect(listMutate).toHaveBeenCalled()
     expect(appMutate).toHaveBeenCalledWith(['release-detail', 'rel-a'])
-    // The menu does not open the card's side panel.
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: ACTIVATE_QUESTION })).not.toBeInTheDocument()
+    // The menu does not open the card's pane.
+    expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
+    expect(confirm).not.toHaveBeenCalled()
   })
 
   it('a declined confirm sends nothing; an already-active release says so', async () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true)
     svc.activate.mockResolvedValue({ release_id: 'rel-c', is_active: true, deactivated: null, changed: false } as never)
     renderAt('/releases')
     chooseSetActive(/^Billing 3\.0/)
+    fireEvent.click(within(screen.getByRole('group', { name: ACTIVATE_QUESTION })).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('group', { name: ACTIVATE_QUESTION })).not.toBeInTheDocument()
     expect(svc.activate).not.toHaveBeenCalled()
     chooseSetActive(/^Billing 3\.0/)
+    fireEvent.click(within(screen.getByRole('group', { name: ACTIVATE_QUESTION })).getByRole('button', { name: 'Make active' }))
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith('"Billing 3.0" was already the active release'))
-    expect(confirm).toHaveBeenCalledTimes(2)
+    expect(svc.activate).toHaveBeenCalledTimes(1)
   })
 
   it('Sync releases opens the dialog; a sync that ran closes it and re-reads the list', async () => {
@@ -417,9 +430,9 @@ describe('REL-08: the active release and sync', () => {
     const { container } = renderAt('/releases')
     const header = container.querySelector('[data-page-header]') as HTMLElement
     fireEvent.click(within(header).getByRole('button', { name: /Sync releases/ }))
-    const dialog = screen.getByRole('dialog', { name: 'Sync releases' })
+    const dialog = screen.getByRole('region', { name: 'Sync releases' })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Sync' }))
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Sync releases' })).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Sync releases' })).not.toBeInTheDocument())
     expect(svc.sync).toHaveBeenCalledWith({ project_id: 'proj-1', source: 'github' })
     expect(toast.success).toHaveBeenCalledWith('Synced from GitHub: 1 created, 0 updated, 2 skipped.')
     expect(listMutate).toHaveBeenCalled()
@@ -446,7 +459,7 @@ describe('a failed phase reads Failed in its status select', () => {
     })) as never)
     renderAt('/releases')
     fireEvent.click(card(/^Checkout 2\.5 2\.5\.0/))
-    const panel = screen.getByRole('dialog', { name: 'Checkout 2.5 2.5.0' })
+    const panel = screen.getByRole('complementary', { name: 'Checkout 2.5 2.5.0' })
     const select = within(panel).getByRole('combobox', { name: 'Status of phase Regression' }) as HTMLSelectElement
     expect(select.value).toBe('failed')
     expect(select.selectedOptions[0]).toHaveTextContent('Failed')

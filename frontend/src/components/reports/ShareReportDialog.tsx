@@ -13,12 +13,19 @@
  * The URL exists only in the create response (the token is not stored), so
  * it is shown once, here. A refusal (a 403/409/422 from the API, e.g. the
  * human-review gate) is shown in the server's own words.
+ *
+ * It renders IN THE PAGE (W27 PAN-02): an `InlineFormSection` right under the
+ * release gate's header, where the page places it, not a modal side panel.
+ * Its name (`Share report`), close label and `data-share-*` hooks are the
+ * panel's, kept; the X and Escape inside it close it. It renders nothing while
+ * `open` is false.
  */
 import { useState } from 'react'
 import { Copy as CopyIcon, Link2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
-import SidePanel from '@/components/ui/SidePanel'
+import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
+import type { InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import { useShareLinks } from '@/hooks/useShareLinks'
 import {
   createShareLink,
@@ -97,7 +104,13 @@ function ShareLinkRow({ link, onRevoke, revoking }: { link: ShareLink; onRevoke:
   )
 }
 
-export default function ShareReportDialog({ runId, open, onClose }: { runId: string; open: boolean; onClose: () => void }) {
+export default function ShareReportDialog({ runId, open, onClose, slot }: {
+  runId: string
+  open: boolean
+  onClose: () => void
+  /** The page's form slot, when the page has one (one open form at a time under its header). */
+  slot?: InlineSlot
+}) {
   const { links, isLoading, isError, refresh } = useShareLinks(open ? runId : null)
   const [layout, setLayout] = useState<ShareLayout>('executive')
   const [expiryDays, setExpiryDays] = useState<number>(7)
@@ -143,9 +156,11 @@ export default function ShareReportDialog({ runId, open, onClose }: { runId: str
 
   const activeCount = links.filter((l) => linkState(l).status === 'active').length
 
+  if (!open) return null
+
   return (
-    <SidePanel open={open} onClose={onClose} title="Share report" modal width={460} closeLabel="Close share report">
-      <div className="space-y-5" data-share-dialog="">
+    <InlineFormSection title="Share report" onClose={onClose} closeLabel="Close share report" slot={slot}>
+      <div className="max-w-2xl space-y-5" data-share-dialog="">
         <section className="space-y-3">
           <fieldset className="space-y-1.5">
             <legend className="text-xs uppercase tracking-wider text-[var(--color-text-muted)]">Layout</legend>
@@ -231,6 +246,6 @@ export default function ShareReportDialog({ runId, open, onClose }: { runId: str
           )}
         </section>
       </div>
-    </SidePanel>
+    </InlineFormSection>
   )
 }

@@ -333,7 +333,7 @@ describe('ReleasesPage', () => {
     )
 
     fireEvent.click(screen.getByLabelText(/v2\.4\.0 2\.4\.0/))
-    const panel = await screen.findByRole('dialog', { name: 'v2.4.0 2.4.0' })
+    const panel = await screen.findByRole('complementary', { name: 'v2.4.0 2.4.0' })
     expect(within(panel).getByRole('heading', { name: 'Production outcome' })).toBeInTheDocument()
     expect(within(panel).getByText('Database saturation after rollout')).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('Reason'), {
@@ -413,12 +413,12 @@ describe('ReleasesPage — the release detail in a side panel (P5)', () => {
 
   it('opens a release in a side panel, not under its card', () => {
     const { container } = renderAt('/releases')
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: /Linked Test Runs/ })).not.toBeInTheDocument()
 
     fireEvent.click(card(/^Checkout 2\.5 2\.5\.0/))
 
-    const panel = screen.getByRole('dialog', { name: 'Checkout 2.5 2.5.0' })
+    const panel = screen.getByRole('complementary', { name: 'Checkout 2.5 2.5.0' })
     expect(within(panel).getByRole('heading', { name: 'Linked Test Runs (0)' })).toBeInTheDocument()
     expect(within(panel).getByText('Payment retries')).toBeInTheDocument()
     // Nothing expanded inline: the list column holds the cards only.
@@ -459,36 +459,36 @@ describe('ReleasesPage — the release detail in a side panel (P5)', () => {
     const tile = (panel: HTMLElement) => within(panel).getByText('Pass Rate').nextElementSibling as HTMLElement
     renderAt('/releases')
     fireEvent.click(card(/^Checkout 2\.6 2\.6\.0/))
-    expect(tile(screen.getByRole('dialog'))).toHaveTextContent(/^—$/)
+    expect(tile(screen.getByRole('complementary'))).toHaveTextContent(/^—$/)
     fireEvent.click(screen.getByRole('button', { name: 'Close release' }))
     fireEvent.click(card(/^Checkout 2\.5 2\.5\.0/))
-    expect(tile(screen.getByRole('dialog'))).toHaveTextContent(/^90\.0%$/)
+    expect(tile(screen.getByRole('complementary'))).toHaveTextContent(/^90\.0%$/)
   })
 
   it('closes, and opens another release in its place', () => {
     renderAt('/releases')
     fireEvent.click(card(/^Checkout 2\.5 2\.5\.0/))
     fireEvent.click(screen.getByRole('button', { name: 'Close release' }))
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
 
     fireEvent.click(card(/^Checkout 2\.6 2\.6\.0/))
-    expect(screen.getByRole('dialog', { name: 'Checkout 2.6 2.6.0' })).toBeInTheDocument()
+    expect(screen.getByRole('complementary', { name: 'Checkout 2.6 2.6.0' })).toBeInTheDocument()
     fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
   })
 
   it('links to the full page and offers Edit and Delete in its footer', () => {
     renderAt('/releases')
     fireEvent.click(card(/^Checkout 2\.5 2\.5\.0/))
-    const panel = screen.getByRole('dialog', { name: 'Checkout 2.5 2.5.0' })
+    const panel = screen.getByRole('complementary', { name: 'Checkout 2.5 2.5.0' })
     const full = within(panel).getByRole('link', { name: /Open full page/ })
     expect(full).toHaveAttribute('href', '/releases/release-1')
     expect(within(panel).getByRole('button', { name: 'Delete' })).toBeInTheDocument()
 
-    // Edit opens the release dialog ABOVE the panel (inside it, so the
-    // panel's backdrop does not cover it).
+    // Edit opens the release form INSIDE the pane (W27 PAN-02: in the page,
+    // at the top of the release).
     fireEvent.click(within(panel).getByRole('button', { name: 'Edit' }))
-    const editor = screen.getByRole('dialog', { name: 'Edit Release' })
+    const editor = screen.getByRole('region', { name: 'Edit Release' })
     expect(panel.contains(editor)).toBe(true)
     expect(screen.getByDisplayValue('Checkout 2.5')).toBeInTheDocument()
 
@@ -498,14 +498,14 @@ describe('ReleasesPage — the release detail in a side panel (P5)', () => {
 
   it('renders the detail as the page itself on /releases/:releaseId, with no panel', () => {
     const { container } = renderAt('/releases/release-1')
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
     const primary = container.querySelector('[data-primary]') as HTMLElement
     expect(within(primary).getByRole('heading', { name: 'Linked Test Runs (0)' })).toBeInTheDocument()
     expect(within(primary).getByRole('button', { name: 'Edit' })).toBeInTheDocument()
     // The card does not toggle the detail away on its own page.
     fireEvent.click(card(/^Checkout 2\.5 2\.5\.0/))
     expect(within(primary).getByRole('heading', { name: 'Linked Test Runs (0)' })).toBeInTheDocument()
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
   })
 
   it('has a compact header with its help topic and New release as the one action', () => {
@@ -653,7 +653,7 @@ describe('ReleasesPage — one banner above the list, the rest under it (P6)', (
       'Released · 30d 1',
     ])
     fireEvent.click(within(banner).getByRole('button', { name: 'Open 2026.11 →' }))
-    expect(screen.getByRole('dialog', { name: '2026.11' })).toBeInTheDocument()
+    expect(screen.getByRole('complementary', { name: '2026.11' })).toBeInTheDocument()
   })
 
   it('keeps every fact of the former band and strip: the gate lede, the top blockers and the four counts, under the list', () => {

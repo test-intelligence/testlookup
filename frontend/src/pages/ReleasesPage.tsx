@@ -1,8 +1,8 @@
 /**
  * Releases (`/releases`) and one release's page (`/releases/:releaseId`).
  *
- * UX redesign P5 item 5: on the list, a release's detail is a drill-down in a
- * side panel ("Open full page" goes to `/releases/:releaseId`), not an inline
+ * UX redesign P5 item 5: on the list, a release's detail is a drill-down beside
+ * the list ("Open full page" goes to `/releases/:releaseId`), not an inline
  * expansion that pushed every card below it down the page. The two header
  * controls that only said "(planned)" (Export schedule, Calendar view) are
  * gone: what is not built is not rendered (P2).
@@ -16,19 +16,37 @@
  * W05 "release-gate": a release shows its CURRENT recorded gate verdict; a QA
  * lead records one with Evaluate gate (a card, the gate panel) or Evaluate
  * all in progress (the toolbar). The detail has the gate panel (`#gate`) and
- * each phase's live gate chip; a phase-gate 409 opens the reason dialog
+ * each phase's live gate chip; a phase-gate 409 opens the reason form
  * (REL-10). A QA lead can make a release the active one and sync releases
  * from GitHub / Jira (REL-08); a release's owner is set in its editor (REL-02).
+ *
+ * W27 PAN-02 (the in-page rule): nothing here opens over the page. On the
+ * list a release opens in a pane BESIDE the cards (`MasterDetail`), in the
+ * right rail's place, and rides the URL (`?open=<id>`: a refresh or a
+ * shared link reopens it, Back closes it); an id that is malformed, unknown
+ * or not the reader's shows the pane's not-found card. Every form opens where
+ * its action is, one at a time per section (`useInlineSlot`): New release and
+ * Sync releases under the health banner; Edit, Link Run and a phase's reason
+ * inside the release. Delete, Remove phase and Set as active release ask in an
+ * inline strip (`InlineConfirm`) with the old prompt's sentence; only the
+ * strip's button sends the request.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import {
-  CheckCircle2, ExternalLink, Package, Pencil, Plus, RefreshCw, RotateCcw, Trash2, TriangleAlert, X,
+  CheckCircle2, ExternalLink, Package, Pencil, Plus, RefreshCw, RotateCcw, Trash2, TriangleAlert,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
-import SidePanel from '@/components/ui/SidePanel'
+import { MasterDetail } from '@/components/ui/inPage/MasterDetail'
+import { DetailPane } from '@/components/ui/inPage/DetailPane'
+import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
+import { InlineConfirm } from '@/components/ui/inPage/InlineConfirm'
+import { useInlineSlot, type InlineSlot } from '@/components/ui/inPage/useInlineSlot'
+import { useDetailParam } from '@/components/ui/inPage/useDetailParam'
+import { isDetailToken } from '@/components/ui/inPage/ids'
+import { SectionErrorBoundary } from '@/components/ui/SectionErrorBoundary'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import { appMutate } from '@/utils/swrCacheMutate'
 import EmptyState from '@/components/ui/EmptyState'
@@ -46,10 +64,10 @@ import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { releasesService, type PhaseUpdateResult } from '@/services/releasesService'
 import { extractErrorMessage } from '@/services/apiErrors'
 import { useRuns } from '@/hooks/useRuns'
-import { useModalFocus } from '@/hooks/useModalFocus'
 import { usePermissions } from '@/hooks/usePermissions'
 import type { LinkedRun, Release, ReleasePhase } from '@/types/releases'
 import { deriveRelease, computeStageCounts } from '@/components/releases/mapping'
+import type { DerivedRelease } from '@/components/releases/types'
 import { ReleaseHealthBanner, ReleaseHealthDetails } from '@/components/releases/ReleaseHealth'
 import ReleaseCard from '@/components/releases/ReleaseCard'
 import { ShippingThisWeek, AgingSignals, CompliancePacks, RecentActivity } from '@/components/releases/RightRail'
@@ -88,6 +106,9 @@ const PHASE_STATUS_COLOR: Record<string, string> = {
  */
 const ADMIN_REQUIRED = 'Admin role required'
 
+/** The list route's URL key for the release open in the pane (W27 PAN-02; see the page). */
+const RELEASE_PANE_PARAM = 'open'
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function fmtDate(iso: string | null | undefined) {
@@ -105,8 +126,8 @@ function serverDetail(err: unknown, fallback: string): string {
 
 /**
  * Revalidate one release's detail and gate reads after a write. The list is
- * the caller's own mutate; these keys are read by the side panel AND the
- * routed page, and neither polls.
+ * the caller's own mutate; these keys are read by the pane beside the list
+ * AND the routed page, and neither polls.
  */
 function revalidateReleaseReads(releaseId: string) {
   return Promise.all([
@@ -116,16 +137,24 @@ function revalidateReleaseReads(releaseId: string) {
   ])
 }
 
-// ── Create / Edit Release Modal ─────────────────────────────────────────────
+// ── Create / Edit Release form ──────────────────────────────────────────────
 
 interface ReleaseModalProps {
   projectId: string
   onClose: () => void
   onSaved: () => void
   initial?: Release
+  /** The section's form slot (one open form at a time; a typed form asks before it is replaced). */
+  slot?: InlineSlot
 }
 
-export function ReleaseModal({ projectId, onClose, onSaved, initial }: ReleaseModalProps) {
+/**
+ * The release editor (New / Edit), in the page (W27 PAN-02): New opens under
+ * the health banner, Edit inside the release. Kept from the dialog: its name
+ * (`New Release` / `Edit Release`), the heading id, the X's label, every
+ * field, the request and the order of `onSaved` then `onClose`.
+ */
+export function ReleaseModal({ projectId, onClose, onSaved, initial, slot }: ReleaseModalProps) {
   const [name, setName]           = useState(initial?.name ?? '')
   const [version, setVersion]     = useState(initial?.version ?? '')
   const [description, setDescription] = useState(initial?.description ?? '')
@@ -139,7 +168,6 @@ export function ReleaseModal({ projectId, onClose, onSaved, initial }: ReleaseMo
   const initialOwnerId = initial?.owner?.id ?? ''
   const [ownerId, setOwnerId] = useState(initialOwnerId)
   const [saving, setSaving] = useState(false)
-  const dialogRef = useModalFocus({ onClose, canClose: !saving })
 
   async function save() {
     if (!name.trim()) { toast.error('Release name is required'); return }
@@ -178,63 +206,15 @@ export function ReleaseModal({ projectId, onClose, onSaved, initial }: ReleaseMo
   }
 
   return (
-    <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="release-form-title" className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60" onClick={onClose}>
-      <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-xl p-6 w-full max-w-lg shadow-2xl" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-5">
-          <h2 id="release-form-title" className="text-base font-semibold text-[var(--color-text)]">{initial ? 'Edit Release' : 'New Release'}</h2>
-          <button type="button" aria-label="Close release dialog" onClick={onClose} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="h-4 w-4" /></button>
-        </div>
-        <div className="space-y-3">
-          <div>
-            <label htmlFor="release-field-0" className="block text-xs text-[var(--color-text-muted)] mb-1">Release Name *</label>
-            <input id="release-field-0"
-              value={name} onChange={e => setName(e.target.value)}
-              placeholder="e.g. v2.4.0 — Login Revamp"
-              className="input w-full"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label htmlFor="release-field-1" className="block text-xs text-[var(--color-text-muted)] mb-1">Version</label>
-              <input id="release-field-1" value={version} onChange={e => setVersion(e.target.value)} placeholder="e.g. 2.4.0" className="input w-full" />
-            </div>
-            <div>
-              <label htmlFor="release-field-2" className="block text-xs text-[var(--color-text-muted)] mb-1">Status</label>
-              <select id="release-field-2" value={status} onChange={e => setStatus(e.target.value)} className="input w-full">
-                <option value="planning">Planning</option>
-                <option value="in_progress">In Progress</option>
-                <option value="released">Released</option>
-                <option value="cancelled">Cancelled</option>
-              </select>
-            </div>
-          </div>
-          {initial && (
-            <div>
-              <label htmlFor="release-field-owner" className="block text-xs text-[var(--color-text-muted)] mb-1">Owner</label>
-              <OwnerSelect
-                id="release-field-owner"
-                projectId={projectId}
-                value={ownerId}
-                onChange={setOwnerId}
-                currentOwner={initial.owner ?? null}
-              />
-            </div>
-          )}
-          <div>
-            <label htmlFor="release-field-3" className="block text-xs text-[var(--color-text-muted)] mb-1">Planned Release Date</label>
-            <input id="release-field-3" type="date" value={plannedDate} onChange={e => setPlanned(e.target.value)} className="input w-full" />
-          </div>
-          <div>
-            <label htmlFor="release-field-4" className="block text-xs text-[var(--color-text-muted)] mb-1">Description</label>
-            <textarea id="release-field-4"
-              value={description} onChange={e => setDescription(e.target.value)}
-              rows={3}
-              placeholder="What's included in this release?"
-              className="input w-full resize-none"
-            />
-          </div>
-        </div>
-        <div className="flex gap-3 justify-end mt-5">
+    <InlineFormSection
+      title={initial ? 'Edit Release' : 'New Release'}
+      titleId="release-form-title"
+      closeLabel="Close release dialog"
+      onClose={onClose}
+      canClose={!saving}
+      slot={slot}
+      footer={(
+        <>
           <button onClick={onClose} className="px-4 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
           <button
             onClick={save} disabled={saving}
@@ -243,26 +223,83 @@ export function ReleaseModal({ projectId, onClose, onSaved, initial }: ReleaseMo
             {saving && <LoadingSpinner size="sm" />}
             {initial ? 'Save Changes' : 'Create Release'}
           </button>
+        </>
+      )}
+    >
+      <div className="max-w-2xl space-y-3">
+        <div>
+          <label htmlFor="release-field-0" className="block text-xs text-[var(--color-text-muted)] mb-1">Release Name *</label>
+          <input id="release-field-0"
+            value={name} onChange={e => setName(e.target.value)}
+            placeholder="e.g. v2.4.0 — Login Revamp"
+            className="input w-full"
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label htmlFor="release-field-1" className="block text-xs text-[var(--color-text-muted)] mb-1">Version</label>
+            <input id="release-field-1" value={version} onChange={e => setVersion(e.target.value)} placeholder="e.g. 2.4.0" className="input w-full" />
+          </div>
+          <div>
+            <label htmlFor="release-field-2" className="block text-xs text-[var(--color-text-muted)] mb-1">Status</label>
+            <select id="release-field-2" value={status} onChange={e => setStatus(e.target.value)} className="input w-full">
+              <option value="planning">Planning</option>
+              <option value="in_progress">In Progress</option>
+              <option value="released">Released</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          </div>
+        </div>
+        {initial && (
+          <div>
+            <label htmlFor="release-field-owner" className="block text-xs text-[var(--color-text-muted)] mb-1">Owner</label>
+            <OwnerSelect
+              id="release-field-owner"
+              projectId={projectId}
+              value={ownerId}
+              onChange={setOwnerId}
+              currentOwner={initial.owner ?? null}
+            />
+          </div>
+        )}
+        <div>
+          <label htmlFor="release-field-3" className="block text-xs text-[var(--color-text-muted)] mb-1">Planned Release Date</label>
+          <input id="release-field-3" type="date" value={plannedDate} onChange={e => setPlanned(e.target.value)} className="input w-full" />
+        </div>
+        <div>
+          <label htmlFor="release-field-4" className="block text-xs text-[var(--color-text-muted)] mb-1">Description</label>
+          <textarea id="release-field-4"
+            value={description} onChange={e => setDescription(e.target.value)}
+            rows={3}
+            placeholder="What's included in this release?"
+            className="input w-full resize-none"
+          />
         </div>
       </div>
-    </div>
+    </InlineFormSection>
   )
 }
 
-// ── Link Run Modal ──────────────────────────────────────────────────────────
+// ── Link Run form ───────────────────────────────────────────────────────────
 
-export function LinkRunModal({ releaseId, phases, onClose, onSaved }: {
+/**
+ * Link a run to the release, in the page (W27 PAN-02): it opens under the
+ * "Linked Test Runs" card's header. Kept from the dialog: its name (`Link Test
+ * Run`), the heading id, the X's label, the fields and the request.
+ */
+export function LinkRunModal({ releaseId, phases, onClose, onSaved, slot }: {
   releaseId: string
   phases: ReleasePhase[]
   onClose: () => void
   onSaved: () => void
+  /** The release's form slot (one open form at a time in a release's detail). */
+  slot?: InlineSlot
 }) {
   const { data: runsData } = useRuns()
   const runs = runsData?.items ?? []
   const [selectedRun, setSelectedRun] = useState('')
   const [selectedPhase, setSelectedPhase] = useState('')
   const [saving, setSaving] = useState(false)
-  const dialogRef = useModalFocus({ onClose, canClose: !saving })
 
   async function link() {
     if (!selectedRun) { toast.error('Select a test run'); return }
@@ -280,35 +317,15 @@ export function LinkRunModal({ releaseId, phases, onClose, onSaved }: {
   }
 
   return (
-    <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="link-test-run-title" className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60" onClick={onClose}>
-      <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-xl p-6 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-4">
-          <h2 id="link-test-run-title" className="text-base font-semibold text-[var(--color-text)]">Link Test Run</h2>
-          <button type="button" aria-label="Close link test run dialog" onClick={onClose} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"><X className="h-4 w-4" /></button>
-        </div>
-        <div className="space-y-3">
-          <div>
-            <label htmlFor="release-field-5" className="block text-xs text-[var(--color-text-muted)] mb-1">Test Run</label>
-            <select id="release-field-5" value={selectedRun} onChange={e => setSelectedRun(e.target.value)} className="input w-full">
-              <option value="">— Select run —</option>
-              {(runs as Array<{ id: string; build_number?: number; created_at: string }>).map(r => (
-                <option key={r.id} value={r.id}>
-                  {r.build_number ?? r.id.slice(0, 8)} — {new Date(r.created_at).toLocaleDateString()}
-                </option>
-              ))}
-            </select>
-          </div>
-          {phases.length > 0 && (
-            <div>
-              <label htmlFor="release-field-6" className="block text-xs text-[var(--color-text-muted)] mb-1">Phase (optional)</label>
-              <select id="release-field-6" value={selectedPhase} onChange={e => setSelectedPhase(e.target.value)} className="input w-full">
-                <option value="">— No phase —</option>
-                {phases.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
-            </div>
-          )}
-        </div>
-        <div className="flex gap-3 justify-end mt-5">
+    <InlineFormSection
+      title="Link Test Run"
+      titleId="link-test-run-title"
+      closeLabel="Close link test run dialog"
+      onClose={onClose}
+      canClose={!saving}
+      slot={slot}
+      footer={(
+        <>
           <button onClick={onClose} className="px-4 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
           <button
             onClick={link} disabled={saving || !selectedRun}
@@ -317,9 +334,32 @@ export function LinkRunModal({ releaseId, phases, onClose, onSaved }: {
             {saving && <LoadingSpinner size="sm" />}
             Link Run
           </button>
+        </>
+      )}
+    >
+      <div className="max-w-2xl space-y-3">
+        <div>
+          <label htmlFor="release-field-5" className="block text-xs text-[var(--color-text-muted)] mb-1">Test Run</label>
+          <select id="release-field-5" value={selectedRun} onChange={e => setSelectedRun(e.target.value)} className="input w-full">
+            <option value="">— Select run —</option>
+            {(runs as Array<{ id: string; build_number?: number; created_at: string }>).map(r => (
+              <option key={r.id} value={r.id}>
+                {r.build_number ?? r.id.slice(0, 8)} — {new Date(r.created_at).toLocaleDateString()}
+              </option>
+            ))}
+          </select>
         </div>
+        {phases.length > 0 && (
+          <div>
+            <label htmlFor="release-field-6" className="block text-xs text-[var(--color-text-muted)] mb-1">Phase (optional)</label>
+            <select id="release-field-6" value={selectedPhase} onChange={e => setSelectedPhase(e.target.value)} className="input w-full">
+              <option value="">— No phase —</option>
+              {phases.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+        )}
       </div>
-    </div>
+    </InlineFormSection>
   )
 }
 
@@ -438,16 +478,29 @@ interface PendingPhaseReason {
 /**
  * A release's detail: metrics, the release gate, compliance packs, production
  * outcome, phases, linked runs, and the collapsed pipeline. The same body in
- * the side panel (`/releases`) and on the release's own page
- * (`/releases/:releaseId`).
+ * the pane beside the list (`/releases?open=<id>`) and on the release's own
+ * page (`/releases/:releaseId`).
  *
  * `onEvaluate` is the page's (QA lead only): the card and the gate panel
  * record a verdict through one handler, with one toast.
+ *
+ * Its forms open in place, through the release's `slot` (one at a time; the
+ * Edit form the page opens shares it): Link Run under the "Linked Test Runs"
+ * header, a phase gate's reason under that phase's row. Remove phase asks in a
+ * strip under the row.
  */
-function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false }: {
+function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false, slot, inPane = false }: {
   releaseId: string
   onEvaluate?: () => void
   evaluating?: boolean
+  /** The release's form slot (the pane's, or the release page's). */
+  slot?: InlineSlot
+  /**
+   * In the pane beside the list (≥ 440 px wide): the metrics strip fits its
+   * tiles to the pane. `sm:grid-cols-5` is a VIEWPORT breakpoint, which would
+   * force five tiles into the pane at any desktop width.
+   */
+  inPane?: boolean
 }) {
   const navigate = useNavigate()
   const { hash } = useLocation()
@@ -456,7 +509,17 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false }: {
   // Each phase's LIVE gate, for the chips in the phase rows (D-2: never on
   // the cards, where N cards x M phases per poll is not affordable).
   const { data: phaseGates } = usePhaseGates(detail ? releaseId : null)
-  const [showLinkModal, setShowLinkModal] = useState(false)
+  const ownSlot = useInlineSlot()
+  const formSlot = slot ?? ownSlot
+  // The slot's latest state, for a form opened after a request returns (the
+  // phase-gate 409): the render that sent it may hold a stale `open`.
+  const latestSlot = useRef(formSlot)
+  useEffect(() => { latestSlot.current = formSlot })
+  // Keys are scoped to this release, so a key left in a shared slot never
+  // opens a form in another release's detail.
+  const linkKey = `link:${releaseId}`
+  const reasonKey = (phaseId: string) => `reason:${releaseId}:${phaseId}`
+  const [confirmingPhase, setConfirmingPhase] = useState<string | null>(null)
   const [markingReleased, setMarkingReleased] = useState(false)
   const [outcomeReason, setOutcomeReason] = useState('')
   const [markingOutcome, setMarkingOutcome] = useState<'incident' | 'rollback' | null>(null)
@@ -498,8 +561,8 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false }: {
    * Move a phase on. The first attempt is quiet (`suppressToast`): with
    * phase-gate enforcement on, completing a phase whose gate is not GO, or
    * skipping one, answers 409 with the server's reason, and that opens the
-   * reason dialog instead of a toast. Any other failure toasts the server's
-   * own sentence.
+   * reason form (under the phase's row) instead of a toast. Any other failure
+   * toasts the server's own sentence.
    */
   async function updatePhaseStatus(phase: ReleasePhase, status: string) {
     try {
@@ -509,6 +572,7 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false }: {
       const e = err as RequestError
       if (e?.response?.status === 409 && (status === 'completed' || status === 'skipped')) {
         setPendingReason({ phase, status, message: serverDetail(err, 'The phase gate refused this change.') })
+        latestSlot.current.open(reasonKey(phase.id))
         return
       }
       toast.error(serverDetail(err, 'The phase could not be updated.'))
@@ -524,9 +588,10 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false }: {
       const body = status === 'completed'
         ? { status, gate_override_reason: reason }
         : { status, skip_reason: reason }
-      // Not quiet: a failure now toasts the server's sentence, and the dialog stays.
+      // Not quiet: a failure now toasts the server's sentence, and the form stays.
       const result = await releasesService.updatePhase(releaseId, phase.id, body)
       setPendingReason(null)
+      if (latestSlot.current.openKey === reasonKey(phase.id)) latestSlot.current.close()
       toast.success(status === 'completed'
         ? `Phase "${phase.name}" completed with an override`
         : `Phase "${phase.name}" skipped`)
@@ -616,28 +681,18 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false }: {
     : 'text-[var(--status-failed)]'
 
   return (
-    <div className="space-y-5">
-      {showLinkModal && (
-        <LinkRunModal
-          releaseId={releaseId}
-          phases={detail.phases ?? []}
-          onClose={() => setShowLinkModal(false)}
-          onSaved={() => { refetch(); setShowLinkModal(false) }}
-        />
-      )}
-      {pendingReason && (
-        <PhaseReasonDialog
-          phaseName={pendingReason.phase.name}
-          action={pendingReason.status === 'completed' ? 'complete' : 'skip'}
-          serverMessage={pendingReason.message}
-          busy={sendingReason}
-          onSubmit={reason => void sendPhaseReason(reason)}
-          onCancel={() => setPendingReason(null)}
-        />
-      )}
-
+    // In the pane the gate scorecard's four tiles (GatePanel's `sm:grid-cols-4`,
+    // a viewport breakpoint) left ~16 px of slack at 1280 on Windows fonts: a
+    // "100.0%" overflows its tile on CI's wider DejaVu. Two columns there.
+    <div className={inPane ? 'space-y-5 [&_[data-gate-scorecard]>div:first-child]:grid-cols-2' : 'space-y-5'}>
       {/* Metrics strip */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+      {/* In the pane: as many tiles a row as fit at 140 px (a "100.0%" in
+          text-xl keeps ≥ 40 px of slack on DejaVu): two at 1280, three at 1440. */}
+      <div
+        className={inPane
+          ? 'grid grid-cols-[repeat(auto-fit,minmax(140px,1fr))] gap-2'
+          : 'grid grid-cols-2 sm:grid-cols-5 gap-2'}
+      >
         {[
           { label: 'Runs',    value: m.total_runs ?? 0,    color: 'text-[var(--color-text-secondary)]' },
           { label: 'Tests',   value: m.total_tests ?? 0,   color: 'text-[var(--color-text-secondary)]' },
@@ -740,66 +795,86 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false }: {
           {(detail.phases ?? []).map((phase, i) => {
             const phaseGate = phaseGateById.get(phase.id)
             return (
-              <div
-                id={`phase-${phase.id}`}
-                key={phase.id}
-                className="scroll-mt-24 flex items-center gap-3 p-2 rounded-lg bg-[var(--color-bg-secondary)]/60 group"
-              >
-                <div className="flex items-center justify-center h-6 w-6 rounded-full bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] text-xs font-bold flex-shrink-0">
-                  {i + 1}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-sm font-medium text-[var(--color-text)]">{phase.name}</span>
-                    <span className="text-xs text-[var(--color-text-muted)]">{PHASE_TYPES.find(t => t.value === phase.phase_type)?.label ?? phase.phase_type}</span>
-                    <span className={clsx('text-xs px-1.5 py-0.5 rounded font-medium', PHASE_STATUS_COLOR[phase.status] ?? PHASE_STATUS_COLOR.pending)}>
-                      {phase.status.replace('_', ' ')}
-                    </span>
-                    {phaseGate && <PhaseGateChip result={phaseGate} />}
+              <Fragment key={phase.id}>
+                <div
+                  id={`phase-${phase.id}`}
+                  className="scroll-mt-24 flex items-center gap-3 p-2 rounded-lg bg-[var(--color-bg-secondary)]/60 group"
+                >
+                  <div className="flex items-center justify-center h-6 w-6 rounded-full bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] text-xs font-bold flex-shrink-0">
+                    {i + 1}
                   </div>
-                  {(phase.planned_start || phase.planned_end) && (
-                    <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-                      {fmtDate(phase.planned_start)} → {fmtDate(phase.planned_end)}
-                    </p>
-                  )}
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  {isQaLead && (
-                    <button
-                      type="button"
-                      onClick={() => void recordPhaseGate(phase)}
-                      disabled={recordingPhaseId !== null}
-                      data-testid="phase-record-gate"
-                      className="text-[11px] px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50"
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-medium text-[var(--color-text)]">{phase.name}</span>
+                      <span className="text-xs text-[var(--color-text-muted)]">{PHASE_TYPES.find(t => t.value === phase.phase_type)?.label ?? phase.phase_type}</span>
+                      <span className={clsx('text-xs px-1.5 py-0.5 rounded font-medium', PHASE_STATUS_COLOR[phase.status] ?? PHASE_STATUS_COLOR.pending)}>
+                        {phase.status.replace('_', ' ')}
+                      </span>
+                      {phaseGate && <PhaseGateChip result={phaseGate} />}
+                    </div>
+                    {(phase.planned_start || phase.planned_end) && (
+                      <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+                        {fmtDate(phase.planned_start)} → {fmtDate(phase.planned_end)}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {isQaLead && (
+                      <button
+                        type="button"
+                        onClick={() => void recordPhaseGate(phase)}
+                        disabled={recordingPhaseId !== null}
+                        data-testid="phase-record-gate"
+                        className="text-[11px] px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50"
+                      >
+                        {recordingPhaseId === phase.id ? 'Recording…' : 'Record gate verdict'}
+                      </button>
+                    )}
+                    <select
+                      value={phase.status}
+                      onChange={e => void updatePhaseStatus(phase, e.target.value)}
+                      aria-label={`Status of phase ${phase.name}`}
+                      className="text-xs bg-[var(--color-bg-hover)] border border-[var(--color-border-light)] rounded px-1.5 py-0.5 text-[var(--color-text)] focus:outline-none"
                     >
-                      {recordingPhaseId === phase.id ? 'Recording…' : 'Record gate verdict'}
+                      <option value="pending">Pending</option>
+                      <option value="in_progress">In Progress</option>
+                      <option value="completed">Completed</option>
+                      <option value="skipped">Skipped</option>
+                      <option value="failed">Failed</option>
+                    </select>
+                    <button
+                      onClick={() => setConfirmingPhase(phase.id)}
+                      disabled={!isAdmin}
+                      aria-label={`Remove phase ${phase.name}`}
+                      className="text-[var(--color-text-faint)] hover:text-[var(--status-failed)] transition-colors p-0.5 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-[var(--color-text-faint)]"
+                      title={isAdmin ? 'Remove phase' : ADMIN_REQUIRED}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
                     </button>
-                  )}
-                  <select
-                    value={phase.status}
-                    onChange={e => void updatePhaseStatus(phase, e.target.value)}
-                    aria-label={`Status of phase ${phase.name}`}
-                    className="text-xs bg-[var(--color-bg-hover)] border border-[var(--color-border-light)] rounded px-1.5 py-0.5 text-[var(--color-text)] focus:outline-none"
-                  >
-                    <option value="pending">Pending</option>
-                    <option value="in_progress">In Progress</option>
-                    <option value="completed">Completed</option>
-                    <option value="skipped">Skipped</option>
-                    <option value="failed">Failed</option>
-                  </select>
-                  <button
-                    onClick={() => {
-                      if (confirm(`Remove phase "${phase.name}"?`)) deletePhase(phase.id)
-                    }}
-                    disabled={!isAdmin}
-                    aria-label={`Remove phase ${phase.name}`}
-                    className="text-[var(--color-text-faint)] hover:text-[var(--status-failed)] transition-colors p-0.5 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-[var(--color-text-faint)]"
-                    title={isAdmin ? 'Remove phase' : ADMIN_REQUIRED}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                  </div>
                 </div>
-              </div>
+                {confirmingPhase === phase.id && (
+                  <InlineConfirm
+                    message={<>Remove phase &quot;<strong>{phase.name}</strong>&quot;?</>}
+                    confirmLabel="Remove"
+                    tone="danger"
+                    onConfirm={() => { setConfirmingPhase(null); void deletePhase(phase.id) }}
+                    onCancel={() => setConfirmingPhase(null)}
+                  />
+                )}
+                {/* A phase gate's 409: the reason, right under the phase it is about. */}
+                {pendingReason?.phase.id === phase.id && formSlot.openKey === reasonKey(phase.id) && (
+                  <PhaseReasonDialog
+                    phaseName={pendingReason.phase.name}
+                    action={pendingReason.status === 'completed' ? 'complete' : 'skip'}
+                    serverMessage={pendingReason.message}
+                    busy={sendingReason}
+                    slot={formSlot}
+                    onSubmit={reason => void sendPhaseReason(reason)}
+                    onCancel={() => { setPendingReason(null); formSlot.close() }}
+                  />
+                )}
+              </Fragment>
             )
           })}
           <AddPhaseRow
@@ -815,12 +890,23 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false }: {
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-semibold text-[var(--color-text)]">Linked Test Runs ({detail.linked_runs?.length ?? 0})</h3>
           <button
-            onClick={() => setShowLinkModal(true)}
+            onClick={() => formSlot.open(linkKey)}
             className="flex items-center gap-1.5 text-xs text-[var(--color-text)] hover:text-[var(--color-text-secondary)] transition-colors"
           >
             <Plus className="h-3.5 w-3.5" /> Link Run
           </button>
         </div>
+        {formSlot.openKey === linkKey && (
+          <div className="mb-3">
+            <LinkRunModal
+              releaseId={releaseId}
+              phases={detail.phases ?? []}
+              slot={formSlot}
+              onClose={() => formSlot.close()}
+              onSaved={() => { refetch(); formSlot.close() }}
+            />
+          </div>
+        )}
         {(detail.linked_runs?.length ?? 0) === 0 ? (
           <p className="text-sm text-[var(--color-text-muted)] py-4 text-center">No test runs linked yet</p>
         ) : (() => {
@@ -939,17 +1025,39 @@ export default function ReleasesPage() {
 
   const navigate = useNavigate()
   const { isAdmin, isQaLead } = usePermissions()
-  const [showModal, setShowModal]     = useState(false)
+  // The release being edited, as it was when Edit was clicked (the editor
+  // reads its initial values once; a list re-read must not move them).
   const [editRelease, setEditRelease] = useState<Release | undefined>()
-  const [showSync, setShowSync]       = useState(false)
+  // One open form per section (W27 PAN-02): under the health banner (New
+  // release, Sync releases), and in the open release (Edit, Link Run, a
+  // phase's reason) — the pane on the list, the release block on its page.
+  const topSlot = useInlineSlot<'new' | 'sync'>()
+  const releaseSlot = useInlineSlot()
+  // The inline confirmations that replaced the native prompts.
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null)
+  const [confirmingActivate, setConfirmingActivate] = useState<string | null>(null)
   // Releases whose gate evaluation is in flight (a card's, the panel's, or
   // the one "Evaluate all" is on), and the loop's progress.
   const [evaluatingIds, setEvaluatingIds] = useState<ReadonlySet<string>>(() => new Set())
   const [evaluateAllProgress, setEvaluateAllProgress] = useState<{ index: number; total: number } | null>(null)
-  // UX redesign P5 item 5: on the list a release opens in a side panel (a
-  // drill-down, §2), not inline under its card. Its own page,
-  // `/releases/:releaseId`, shows the same detail as the page itself.
-  const [panelId, setPanelId]         = useState<string | null>(null)
+  // UX redesign P5 item 5, W27 PAN-02: on the list a release opens in a pane
+  // beside the cards (a drill-down, §2), not inline under its card, and it
+  // rides the URL: `?open=<id>`, pushed on open (Back closes it). Its own
+  // page, `/releases/:releaseId`, shows the same detail as the page itself and
+  // has no key. The id is checked before any request: a value with `.`, `/`,
+  // `?`, `#`, `%` or `&` is never put in a request path (`rejected`).
+  //
+  // NOT `?release=`: that is the top bar's global release filter on every
+  // page (`ReleasePicker`'s RELEASE_PARAM), which adopts any `?release=` it
+  // sees and writes its own selection back into the URL. On that key, opening
+  // a release set the global filter (every other page then filtered by it),
+  // choosing a release in the top bar opened its pane, and a deep-linked pane
+  // could not be closed (the picker put the key back).
+  const detail = useDetailParam(RELEASE_PANE_PARAM, { accept: isDetailToken })
+  const [paneExpanded, setPaneExpanded] = useState(false)
+  // A release this page just deleted: its pane closes at once, before the URL
+  // pop lands, so nothing asks for the deleted id again.
+  const [deletedId, setDeletedId] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [search, setSearch] = useState('')
 
@@ -1052,11 +1160,13 @@ export default function ReleasesPage() {
     await revalidateAfterWrite(targets.map(t => t.id))
   }
 
-  /** Make a release the project's active one: where runs no other rule claims land (REL-08). */
+  /**
+   * Make a release the project's active one: where runs no other rule claims
+   * land (REL-08). Asked first in the strip under its card (`askSetActive`).
+   */
   async function setActiveRelease(id: string) {
     const target = derived.find(r => r.id === id)
     const name = target?.name ?? 'this release'
-    if (!confirm(`Make "${name}" the active release? Runs that no other rule matches will land here.`)) return
     try {
       const result = await releasesService.activate(id)
       toast.success(result.changed ? `"${name}" is now the active release` : `"${name}" was already the active release`)
@@ -1067,13 +1177,21 @@ export default function ReleasesPage() {
     }
   }
 
+  /** Delete a release (admin). Asked first in the strip where its Delete is (`askDelete`). */
   async function deleteRelease(id: string) {
-    if (!confirm('Delete this release and all its phases? This cannot be undone.')) return
     try {
       await releasesService.delete(id)
       toast.success('Release deleted')
-      if (panelId === id) setPanelId(null)
+      if (latestPane.current.id === id) {
+        setDeletedId(id)
+        closeReleaseSlot()
+        setPaneExpanded(false)
+        latestPane.current.close()
+      }
       if (releaseId === id) {
+        // The list it lands on still held the deleted release (its card stayed
+        // until the 30 s poll): re-read it.
+        void refetch()
         navigate('/releases')
         return
       }
@@ -1081,9 +1199,34 @@ export default function ReleasesPage() {
     } catch { toast.error('Failed to delete release') }
   }
 
+  /** The first click on Delete asks; only the strip's Delete sends the request. */
+  function askDelete(id: string) {
+    setConfirmingActivate(null)
+    setConfirmingDelete(id)
+  }
+
+  /** The first click on "Set as active release" asks, under the card. */
+  function askSetActive(id: string) {
+    setConfirmingDelete(null)
+    setConfirmingActivate(id)
+  }
+
+  /** Edit opens inside the release (the pane, or the release's own page). */
   function openEdit(source: Release) {
-    setEditRelease(source)
-    setShowModal(true)
+    const start = () => {
+      setEditRelease(source)
+      releaseSlot.open(`edit:${source.id}`)
+    }
+    // The New form and the editor share their field and heading ids: never both at once.
+    if (topSlot.openKey === 'new') topSlot.guard(() => { topSlot.close(); start() })
+    else start()
+  }
+
+  /** New release opens under the health banner. */
+  function openNew() {
+    const start = () => topSlot.open('new')
+    if (releaseSlot.openKey?.startsWith('edit:')) releaseSlot.guard(() => { releaseSlot.close(); start() })
+    else start()
   }
 
   const activeProjectId = useProjectStore(s => s.activeProjectId)
@@ -1100,45 +1243,260 @@ export default function ReleasesPage() {
   const onEvaluateCard = isQaLead
     ? (id: string) => void evaluateRelease(id, derived.find(r => r.id === id)?.name ?? 'Release')
     : undefined
-  const onSetActiveCard = isQaLead ? (id: string) => void setActiveRelease(id) : undefined
+  const onSetActiveCard = isQaLead ? (id: string) => askSetActive(id) : undefined
 
-  // The release in the side panel (list route only). Looked up in the
-  // unfiltered list, so a search that hides its card does not close it; a
-  // release that is gone (deleted) closes it.
-  const panelRelease = !releaseId && panelId ? derived.find(r => r.id === panelId) ?? null : null
-  const openPanel = (id: string) => setPanelId(id)
-  const closePanel = () => setPanelId(null)
+  // The release in the pane (list route only). Looked up in the unfiltered
+  // list, so a search that hides its card does not close it. An id the list
+  // does not hold (another project's release, a shared link, a release that
+  // is gone) is read once through the release's own access-checked route,
+  // `useRelease` — the SWR key ReleaseDetailPanel reads too, so it costs no
+  // extra request; a 403 / 404 / network failure is the not-found card.
+  const paneId = !releaseId && detail.id !== null && detail.id !== deletedId ? detail.id : null
+  const listedRelease = paneId ? derived.find(r => r.id === paneId) ?? null : null
+  const orphanId = paneId && !listedRelease && data ? paneId : null
+  const orphan = useRelease(orphanId)
+  const orphanData = orphanId && !orphan.error ? orphan.data : undefined
+  const orphanRelease = useMemo(() => (orphanData ? deriveRelease(orphanData) : null), [orphanData])
+  const paneRelease = listedRelease ?? orphanRelease
+  const paneState: 'closed' | 'release' | 'missing' =
+    releaseId ? 'closed'
+    : detail.rejected !== null ? 'missing'
+    : paneId === null ? 'closed'
+    : listedRelease ? 'release'
+    : !data ? 'closed' // the list is still loading: the page shows its spinner
+    : orphan.error || (!orphan.isLoading && !orphan.data) ? 'missing'
+    : 'release' // while the read is in flight: the pane's own spinner
+  const paneOpen = paneState !== 'closed'
 
-  // Editing needs the release's own project, not the picker's: an edit opened
-  // under "All projects" used to render nothing.
-  const modalProjectId = editRelease?.project_id ?? (isAllProjects ? null : projectId)
-  const releaseModal = showModal && modalProjectId ? (
-    <ReleaseModal
-      projectId={modalProjectId}
-      initial={editRelease}
-      onClose={() => { setShowModal(false); setEditRelease(undefined) }}
-      // Key off the release that was EDITED, not off the route.
-      //
-      // `refetch` is the list mutator. The detail data lives under
-      // ['release-detail', id] and is read by two different things: the
-      // routed /releases/:id view AND `ReleaseDetailPanel` in the side panel
-      // on the list route. Refreshing only the routed one fixes the first and
-      // leaves the second stale — including the name it passes to
-      // CompliancePackPanel — because that key is revalidateOnFocus:false with
-      // no interval and the panel does not unmount while the modal is open.
-      onSaved={() => Promise.all([
-        refetch(),
-        editRelease ? appMutate(['release-detail', editRelease.id]) : Promise.resolve(),
-      ])}
+  const { close: closeReleaseSlot } = releaseSlot
+  const { close: closeTopSlot } = topSlot
+  // The open pane as the latest render saw it, for a delete that returns later.
+  const latestPane = useRef({ id: paneId, close: detail.close })
+  useEffect(() => { latestPane.current = { id: paneId, close: detail.close } })
+
+  // A pane closed any way (Close, Escape, Back, the full-page link) takes its
+  // forms, its question and its width with it; so does a change of route (the
+  // list and a release's page are one component: its state outlives the
+  // route). Adjusted while rendering, so no frame shows a stale form.
+  const [seen, setSeen] = useState({ paneOpen, releaseId })
+  if (seen.paneOpen !== paneOpen || seen.releaseId !== releaseId) {
+    const routeChanged = seen.releaseId !== releaseId
+    setSeen({ paneOpen, releaseId })
+    if (!paneOpen || routeChanged) {
+      closeReleaseSlot()
+      setConfirmingDelete(null)
+      setPaneExpanded(false)
+    }
+    if (routeChanged) {
+      closeTopSlot()
+      setConfirmingActivate(null)
+    }
+  }
+
+  /** A card, the banner's Open or a rail row: open the release in the pane, or switch it there. */
+  const openPane = (id: string) => {
+    // Its own card again: the pane stays as it is.
+    if (id === paneId) return
+    // A form typed into inside the pane asks before it goes.
+    releaseSlot.guard(() => {
+      releaseSlot.close()
+      setConfirmingDelete(null)
+      detail.open(id)
+    })
+  }
+  /** Close, Escape (DetailPane guards both through the slot) and the not-found card's Close. */
+  const closePane = () => {
+    releaseSlot.close()
+    setConfirmingDelete(null)
+    setPaneExpanded(false)
+    detail.close()
+  }
+
+  // Focus moves into the pane when it opens (onto its Close button, as the
+  // modal panel's did — not into its first field, which can sit far down the
+  // release and would scroll the pane to it), and back to the control that
+  // opened it when it closes. The pane itself is `manageFocus={false}`.
+  const paneRef = useRef<HTMLDivElement | null>(null)
+  useLayoutEffect(() => {
+    if (!paneOpen) return
+    const root = paneRef.current
+    if (!root) return
+    const active = document.activeElement
+    const opener = active instanceof HTMLElement && active !== document.body && !root.contains(active) ? active : null
+    if (!root.contains(active)) root.querySelector<HTMLElement>('button[aria-label="Close release"]')?.focus({ preventScroll: true })
+    return () => {
+      const now = document.activeElement
+      const focusWasOurs = !now || now === document.body || root.contains(now)
+      if (focusWasOurs && opener?.isConnected) opener.focus({ preventScroll: true })
+    }
+  }, [paneOpen])
+
+  /**
+   * The release editor, New (no release) or Edit, in `slot`. Editing needs the
+   * release's own project, not the picker's: an edit opened under "All
+   * projects" used to render nothing.
+   */
+  function releaseForm(editRelease: Release | undefined, slot: InlineSlot) {
+    const modalProjectId = editRelease?.project_id ?? (isAllProjects ? null : projectId)
+    if (!modalProjectId) return null
+    return (
+      <ReleaseModal
+        projectId={modalProjectId}
+        initial={editRelease}
+        slot={slot}
+        onClose={() => slot.close()}
+        // Key off the release that was EDITED, not off the route.
+        //
+        // `refetch` is the list mutator. The detail data lives under
+        // ['release-detail', id] and is read by two different things: the
+        // routed /releases/:id view AND `ReleaseDetailPanel` in the pane on
+        // the list route. Refreshing only the routed one fixes the first and
+        // leaves the second stale — including the name it passes to
+        // CompliancePackPanel — because that key is revalidateOnFocus:false
+        // with no interval and the pane does not unmount while the editor is open.
+        onSaved={() => Promise.all([
+          refetch(),
+          editRelease ? appMutate(['release-detail', editRelease.id]) : Promise.resolve(),
+        ])}
+      />
+    )
+  }
+
+  /** The editor of release `id`, when it is the one open in the release's slot. */
+  const editFormFor = (id: string) =>
+    releaseSlot.openKey === `edit:${id}` && editRelease?.id === id ? releaseForm(editRelease, releaseSlot) : null
+
+  // Under the health banner: New release, or Sync releases (one at a time).
+  const topForm = topSlot.openKey === 'new'
+    ? releaseForm(undefined, topSlot)
+    : topSlot.openKey === 'sync' && canSync && activeProjectId ? (
+      <SyncReleasesDialog
+        projectId={activeProjectId}
+        slot={topSlot}
+        onClose={() => topSlot.close()}
+        onDone={() => { topSlot.close(); void refetch() }}
+      />
+    ) : null
+
+  const emptyList = (
+    <EmptyState
+      icon={<Package className="h-8 w-8" />}
+      title="No releases yet"
+      // HON-07: no org template or clone exists to offer (and an empty
+      // project has nothing to clone from), so the copy promises neither.
+      description={isAllProjects ? 'No releases exist across any project yet' : 'Create your first release'}
+      action={!isAllProjects ? (
+        <button
+          onClick={openNew}
+          className="mt-4 flex items-center gap-2 px-4 py-2 bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] rounded-md text-sm font-medium mx-auto"
+        >
+          <Plus className="h-4 w-4" /> Create release
+        </button>
+      ) : undefined}
     />
-  ) : null
+  )
 
-  const syncDialog = showSync && canSync && activeProjectId ? (
-    <SyncReleasesDialog
-      projectId={activeProjectId}
-      onClose={() => setShowSync(false)}
-      onDone={() => { setShowSync(false); void refetch() }}
+  const deleteStrip = (id: string) => (
+    <InlineConfirm
+      message="Delete this release and all its phases? This cannot be undone."
+      confirmLabel="Delete"
+      tone="danger"
+      onConfirm={() => { setConfirmingDelete(null); void deleteRelease(id) }}
+      onCancel={() => setConfirmingDelete(null)}
     />
+  )
+  const activateStrip = (release: DerivedRelease) => (
+    <InlineConfirm
+      message={<>Make &quot;<strong>{release.name}</strong>&quot; the active release? Runs that no other rule matches will land here.</>}
+      confirmLabel="Make active"
+      onConfirm={() => { setConfirmingActivate(null); void setActiveRelease(release.id) }}
+      onCancel={() => setConfirmingActivate(null)}
+    />
+  )
+
+  const pane = paneOpen ? (
+    <div ref={paneRef} className="contents">
+      <DetailPane
+        title={paneRelease ? releaseTitle(paneRelease) : 'Release'}
+        onClose={closePane}
+        closeLabel="Close release"
+        slot={releaseSlot}
+        manageFocus={false}
+        expanded={paneExpanded}
+        // Nothing to expand on the not-found card.
+        onToggleExpand={paneState === 'release' ? () => setPaneExpanded(open => !open) : undefined}
+        expandLabels={{
+          expand: 'Expand the release to full width',
+          collapse: 'Show the list beside the release',
+          expandTitle: 'Expand',
+          collapseTitle: 'Show the list',
+        }}
+        bodyClassName="px-4 py-3"
+        footer={paneState === 'release' && paneRelease ? (
+          <>
+            {confirmingDelete === paneRelease.id && <div className="mb-2">{deleteStrip(paneRelease.id)}</div>}
+            <div className="flex items-center gap-2" data-release-panel-actions="">
+              <button
+                type="button"
+                onClick={() => openEdit(paneRelease.source)}
+                className="btn-secondary inline-flex items-center gap-1 text-xs"
+              >
+                <Pencil className="h-3.5 w-3.5" aria-hidden="true" /> Edit
+              </button>
+              <button
+                type="button"
+                onClick={() => askDelete(paneRelease.id)}
+                disabled={!isAdmin}
+                title={isAdmin ? undefined : ADMIN_REQUIRED}
+                className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-[var(--status-failed)] hover:bg-[var(--status-failed-bg)]/10 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Trash2 className="h-3.5 w-3.5" aria-hidden="true" /> Delete
+              </button>
+              <Link
+                to={`/releases/${paneRelease.id}`}
+                onClick={(event) => {
+                  // A form typed into inside the pane asks before the page goes.
+                  if (!releaseSlot.dirty) return
+                  event.preventDefault()
+                  releaseSlot.guard(() => navigate(`/releases/${paneRelease.id}`))
+                }}
+                className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-[var(--color-accent)] hover:underline"
+              >
+                Open full page <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+              </Link>
+            </div>
+          </>
+        ) : undefined}
+      >
+        {paneState === 'release' && paneId ? (
+          // A pane that throws shows its own fallback; the cards, the banner
+          // and the page around it keep working.
+          <SectionErrorBoundary key={paneId} message="The release could not be shown">
+            <div data-release-panel={paneId} className="space-y-3">
+              {editFormFor(paneId)}
+              {paneRelease?.source.description && (
+                <p className="text-sm text-[var(--color-text-muted)]">{paneRelease.source.description}</p>
+              )}
+              {/* Keyed: another release starts on its own detail, with its own state. */}
+              <ReleaseDetailPanel
+                key={paneId}
+                releaseId={paneId}
+                onEvaluate={isQaLead ? () => void evaluateRelease(paneId, paneRelease?.name ?? 'Release') : undefined}
+                evaluating={evaluatingIds.has(paneId)}
+                slot={releaseSlot}
+                // Expanded to the row's full width, the page's own layout fits again.
+                inPane={!paneExpanded}
+              />
+            </div>
+          </SectionErrorBoundary>
+        ) : (
+          <div data-release-not-found="" className="space-y-3">
+            <p className="text-sm text-[var(--color-text-muted)]">This release could not be found, or you cannot open it.</p>
+            <button type="button" onClick={closePane} className="btn-secondary text-xs">Close</button>
+          </div>
+        )}
+      </DetailPane>
+    </div>
   ) : null
 
   // M21: an outage used to render "No releases yet" and a create-release CTA.
@@ -1159,12 +1517,6 @@ export default function ReleasesPage() {
 
   return (
     <>
-      {/* The edit/create dialog sits above the page; while the side panel is
-          open it is rendered inside the panel instead (below), so it is not
-          drawn under the panel's backdrop. */}
-      {!panelRelease && releaseModal}
-      {syncDialog}
-
       <div className="w-full pb-10">
         <PageHeader
           compact
@@ -1184,14 +1536,14 @@ export default function ReleasesPage() {
               {canSync && (
                 <button
                   type="button"
-                  onClick={() => setShowSync(true)}
+                  onClick={() => topSlot.open('sync')}
                   className="btn-secondary inline-flex items-center gap-1.5 text-sm"
                 >
                   <RefreshCw className="h-4 w-4" aria-hidden="true" /> Sync releases
                 </button>
               )}
               <button
-                onClick={() => { setEditRelease(undefined); setShowModal(true) }}
+                onClick={openNew}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] rounded-md font-medium"
               >
                 <Plus className="h-4 w-4" /> New release
@@ -1263,182 +1615,137 @@ export default function ReleasesPage() {
 
         {/* Release health in one line: the release that ships next, its
             gate, and the counts that matter most (all releases, not the
-            filtered list). "Open" is the list's drill-down (the side panel);
-            on a release's own page the release is already the page. */}
+            filtered list). "Open" is the list's drill-down (the pane); on a
+            release's own page the release is already the page. */}
         {!isLoading && (
           <div className="mb-3.5">
             <ReleaseHealthBanner
               highlighted={highlightedRelease}
               inProgressReleases={inProgressReleases}
               releases={derived}
-              onOpen={releaseId ? undefined : openPanel}
+              onOpen={releaseId ? undefined : openPane}
             />
           </div>
         )}
 
-        {/* Body grid — release list + right rail */}
+        {/* New release / Sync releases: in the page, between the banner and the list. */}
+        {topForm && <div className="mb-3.5">{topForm}</div>}
+
+        {/* Body grid — release list + right rail; while a release is open the
+            pane takes the rail's place (the rail is folded, never the cards
+            squeezed). */}
         {isLoading ? (
           <div className="flex items-center justify-center h-64"><LoadingSpinner size="lg" /></div>
         ) : releases.length === 0 ? (
-          <EmptyState
-            icon={<Package className="h-8 w-8" />}
-            title="No releases yet"
-            // HON-07: no org template or clone exists to offer (and an empty
-            // project has nothing to clone from), so the copy promises neither.
-            description={isAllProjects ? 'No releases exist across any project yet' : 'Create your first release'}
-            action={!isAllProjects ? (
-              <button
-                onClick={() => setShowModal(true)}
-                className="mt-4 flex items-center gap-2 px-4 py-2 bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] rounded-md text-sm font-medium mx-auto"
-              >
-                <Plus className="h-4 w-4" /> Create release
-              </button>
-            ) : undefined}
-          />
+          // A deep link into another project's release still opens beside the
+          // empty list; with nothing open the empty state is as it was.
+          pane ? (
+            <MasterDetail gapClassName="gap-[18px]" list={emptyList} detail={pane} expanded={paneExpanded} />
+          ) : emptyList
         ) : (
-          <div className="grid gap-[18px]" style={{ gridTemplateColumns: 'minmax(0, 1fr) 340px' }}>
-            {/* Left — release cards (on a release's own page: its card and its
-                detail), then the release health detail, collapsed. */}
-            <div className="flex flex-col gap-3.5 min-w-0">
-              <div data-primary="" className="flex flex-col gap-2.5 min-w-0">
-                {filteredDerived.length === 0 ? (
-                  <div
-                    className="rounded-md border px-4 py-3 text-[12.5px] text-[var(--color-text-muted)] flex items-center justify-between"
-                    style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-card)' }}
-                  >
-                    <span>No releases match these filters.</span>
-                    <button
-                      type="button"
-                      onClick={() => { setStatusFilter('all'); setSearch('') }}
-                      className="text-[var(--color-accent)] hover:underline"
+          <MasterDetail
+            gapClassName="gap-[18px]"
+            railTrack="340px"
+            expanded={paneExpanded}
+            detail={pane}
+            // Left — release cards (on a release's own page: its card and its
+            // detail), then the release health detail, collapsed.
+            listProps={{ className: 'flex flex-col gap-3.5 min-w-0' }}
+            list={(
+              <>
+                <div data-primary="" className="flex flex-col gap-2.5 min-w-0">
+                  {filteredDerived.length === 0 ? (
+                    <div
+                      className="rounded-md border px-4 py-3 text-[12.5px] text-[var(--color-text-muted)] flex items-center justify-between"
+                      style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-card)' }}
                     >
-                      Clear filters
-                    </button>
-                  </div>
-                ) : releaseId ? (
-                  filteredDerived.map(r => (
-                    <div key={r.id} data-release-page="">
-                      {/* Its Evaluate is the gate panel's, right below: one button, not two. */}
-                      <ReleaseCard release={r} onSetActive={onSetActiveCard} />
-                      {/* The release's own page: its detail is the page, not a drill-down. */}
-                      <div
-                        className="mt-2 rounded-xl border p-4"
-                        style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-card)' }}
+                      <span>No releases match these filters.</span>
+                      <button
+                        type="button"
+                        onClick={() => { setStatusFilter('all'); setSearch('') }}
+                        className="text-[var(--color-accent)] hover:underline"
                       >
-                        {r.source.description && (
-                          <p className="text-sm text-[var(--color-text-muted)] mb-3">{r.source.description}</p>
-                        )}
-                        <div className="flex justify-end gap-2 mb-3">
-                          <button
-                            onClick={() => openEdit(r.source)}
-                            className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded hover:bg-[var(--color-bg-hover)] transition-colors"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => deleteRelease(r.id)}
-                            disabled={!isAdmin}
-                            title={isAdmin ? undefined : ADMIN_REQUIRED}
-                            className="text-xs text-[var(--status-failed)]/70 hover:text-[var(--status-failed)] px-2 py-1 rounded hover:bg-[var(--status-failed-bg)]/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                        <ReleaseDetailPanel
-                          releaseId={r.id}
-                          onEvaluate={isQaLead ? () => void evaluateRelease(r.id, r.name) : undefined}
-                          evaluating={evaluatingIds.has(r.id)}
-                        />
-                      </div>
+                        Clear filters
+                      </button>
                     </div>
-                  ))
-                ) : (
-                  filteredDerived.map(r => (
-                    <ReleaseCard
-                      key={r.id}
-                      release={r}
-                      onClick={() => openPanel(r.id)}
-                      onEvaluate={onEvaluateCard}
-                      evaluating={evaluatingIds.has(r.id)}
-                      onSetActive={onSetActiveCard}
-                    />
-                  ))
-                )}
+                  ) : releaseId ? (
+                    filteredDerived.map(r => (
+                      <div key={r.id} data-release-page="">
+                        {/* Its Evaluate is the gate panel's, right below: one button, not two. */}
+                        <ReleaseCard release={r} onSetActive={onSetActiveCard} />
+                        {confirmingActivate === r.id && <div className="mt-2">{activateStrip(r)}</div>}
+                        {/* The release's own page: its detail is the page, not a drill-down. */}
+                        <div
+                          className="mt-2 rounded-xl border p-4"
+                          style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-card)' }}
+                        >
+                          {r.source.description && (
+                            <p className="text-sm text-[var(--color-text-muted)] mb-3">{r.source.description}</p>
+                          )}
+                          <div className="flex justify-end gap-2 mb-3">
+                            <button
+                              onClick={() => openEdit(r.source)}
+                              className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-2 py-1 rounded hover:bg-[var(--color-bg-hover)] transition-colors"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => askDelete(r.id)}
+                              disabled={!isAdmin}
+                              title={isAdmin ? undefined : ADMIN_REQUIRED}
+                              className="text-xs text-[var(--status-failed)]/70 hover:text-[var(--status-failed)] px-2 py-1 rounded hover:bg-[var(--status-failed-bg)]/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                          {confirmingDelete === r.id && <div className="mb-3">{deleteStrip(r.id)}</div>}
+                          {/* Edit opens at the top of the release, under its actions. */}
+                          {editFormFor(r.id) && <div className="mb-3">{editFormFor(r.id)}</div>}
+                          <ReleaseDetailPanel
+                            releaseId={r.id}
+                            onEvaluate={isQaLead ? () => void evaluateRelease(r.id, r.name) : undefined}
+                            evaluating={evaluatingIds.has(r.id)}
+                            slot={releaseSlot}
+                          />
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    filteredDerived.map(r => (
+                      <Fragment key={r.id}>
+                        <ReleaseCard
+                          release={r}
+                          onClick={() => openPane(r.id)}
+                          onEvaluate={onEvaluateCard}
+                          evaluating={evaluatingIds.has(r.id)}
+                          onSetActive={onSetActiveCard}
+                        />
+                        {/* Set as active release asks right under its card. */}
+                        {confirmingActivate === r.id && activateStrip(r)}
+                      </Fragment>
+                    ))
+                  )}
+                </div>
+                <ReleaseHealthDetails highlighted={highlightedRelease} releases={derived} />
+              </>
+            )}
+            // Right — derived panels (folded while a release is open).
+            rail={(
+              <div className="flex flex-col gap-3.5 min-w-0">
+                <ShippingThisWeek releases={derived} onOpen={openPane} />
+                <AgingSignals releases={derived} onOpen={openPane} />
+                <CompliancePacks releases={derived} onOpen={openPane} projectId={railProjectId} />
+                <RecentActivity releases={derived} projectId={railProjectId} />
               </div>
-              <ReleaseHealthDetails highlighted={highlightedRelease} releases={derived} />
-            </div>
-
-            {/* Right — derived panels */}
-            <div className="flex flex-col gap-3.5 min-w-0">
-              <ShippingThisWeek releases={derived} onOpen={openPanel} />
-              <AgingSignals releases={derived} onOpen={openPanel} />
-              <CompliancePacks releases={derived} onOpen={openPanel} projectId={railProjectId} />
-              <RecentActivity releases={derived} projectId={railProjectId} />
-            </div>
-          </div>
+            )}
+          />
         )}
       </div>
-
-      {/* A release's detail, beside the list. Modal: the page keeps its
-          layout (a non-modal panel reserves its width, and this page's
-          340 px right rail would squeeze the cards to a sliver), and the
-          dialogs opened from it (edit, link a run) stack above it. */}
-      <SidePanel
-        open={panelRelease !== null}
-        modal
-        onClose={closePanel}
-        title={panelRelease ? releaseTitle(panelRelease) : 'Release'}
-        width={640}
-        closeLabel="Close release"
-        footer={panelRelease && (
-          <div className="flex items-center gap-2" data-release-panel-actions="">
-            <button
-              type="button"
-              onClick={() => openEdit(panelRelease.source)}
-              className="btn-secondary inline-flex items-center gap-1 text-xs"
-            >
-              <Pencil className="h-3.5 w-3.5" aria-hidden="true" /> Edit
-            </button>
-            <button
-              type="button"
-              onClick={() => deleteRelease(panelRelease.id)}
-              disabled={!isAdmin}
-              title={isAdmin ? undefined : ADMIN_REQUIRED}
-              className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-[var(--status-failed)] hover:bg-[var(--status-failed-bg)]/10 disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" /> Delete
-            </button>
-            <Link
-              to={`/releases/${panelRelease.id}`}
-              onClick={closePanel}
-              className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-[var(--color-accent)] hover:underline"
-            >
-              Open full page <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-            </Link>
-          </div>
-        )}
-      >
-        {panelRelease && (
-          <div data-release-panel={panelRelease.id} className="space-y-3">
-            {panelRelease.source.description && (
-              <p className="text-sm text-[var(--color-text-muted)]">{panelRelease.source.description}</p>
-            )}
-            {/* Keyed: another release starts on its own detail, with its own state. */}
-            <ReleaseDetailPanel
-              key={panelRelease.id}
-              releaseId={panelRelease.id}
-              onEvaluate={isQaLead ? () => void evaluateRelease(panelRelease.id, panelRelease.name) : undefined}
-              evaluating={evaluatingIds.has(panelRelease.id)}
-            />
-            {releaseModal}
-          </div>
-        )}
-      </SidePanel>
     </>
   )
 }
 
-/** The side panel's heading: the name, and the version when it says something the name does not. */
+/** The pane's heading: the name, and the version when it says something the name does not. */
 function releaseTitle(release: { name: string; version: string }): string {
   return release.version && release.version !== release.name ? `${release.name} ${release.version}` : release.name
 }

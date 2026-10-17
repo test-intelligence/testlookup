@@ -1,3 +1,10 @@
+/**
+ * The release editor and Link Run, in the page (W27 PAN-02): what their users
+ * kept from the modal dialogs, minus the trap. Focus moves to the form's first
+ * field when it opens; Tab and Shift+Tab are NOT trapped (the page stays
+ * usable around the form); Escape inside closes it; focus goes back to the
+ * control that opened it; the icon-only X keeps its accessible name.
+ */
 import { fireEvent, render, screen } from '@testing-library/react'
 import { useState, type ReactElement } from 'react'
 import { MemoryRouter } from 'react-router-dom'
@@ -23,13 +30,13 @@ vi.mock('@/store/projectStore', () => ({
   })),
 }))
 
-type ModalFactory = (onClose: () => void) => ReactElement
+type FormFactory = (onClose: () => void) => ReactElement
 
-const MODALS: Array<[string, ModalFactory]> = [
-  ['release editor', (onClose) => (
+const FORMS: Array<[string, string, string, FormFactory]> = [
+  ['release editor', 'New Release', 'Close release dialog', (onClose) => (
     <ReleaseModal projectId="project-1" onClose={onClose} onSaved={vi.fn()} />
   )],
-  ['link run', (onClose) => (
+  ['link run', 'Link Test Run', 'Close link test run dialog', (onClose) => (
     <LinkRunModal releaseId="release-1" phases={[]} onClose={onClose} onSaved={vi.fn()} />
   )],
 ]
@@ -37,50 +44,60 @@ const MODALS: Array<[string, ModalFactory]> = [
 const FOCUSABLE =
   'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]):not([type="hidden"]),select:not([disabled]),[tabindex]:not([tabindex="-1"])'
 
-function Harness({ modal }: { modal: ModalFactory }) {
+function Harness({ form }: { form: FormFactory }) {
   const [open, setOpen] = useState(false)
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)}>Open release dialog</button>
-      {open && modal(() => setOpen(false))}
+      <button type="button" onClick={() => setOpen(true)}>Open release form</button>
+      {open && form(() => setOpen(false))}
+      <button type="button">After the form</button>
     </>
   )
 }
 
-function openModal(modal: ModalFactory) {
+function openForm(form: FormFactory, name: string) {
   render(
     <MemoryRouter>
-      <Harness modal={modal} />
+      <Harness form={form} />
     </MemoryRouter>,
   )
-  const trigger = screen.getByRole('button', { name: 'Open release dialog' })
+  const trigger = screen.getByRole('button', { name: 'Open release form' })
   trigger.focus()
   fireEvent.click(trigger)
-  const dialog = screen.getByRole('dialog')
-  const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE))
-  return { trigger, dialog, focusable }
+  const section = screen.getByRole('region', { name })
+  const focusable = Array.from(section.querySelectorAll<HTMLElement>(FOCUSABLE))
+  return { trigger, section, focusable }
 }
 
-describe.each(MODALS)('%s modal accessibility', (_name, modal) => {
-  it('takes focus, traps Tab, closes on Escape, and restores its trigger', () => {
-    const { trigger, dialog, focusable } = openModal(modal)
-    expect(dialog.contains(document.activeElement)).toBe(true)
+describe.each(FORMS)('%s in the page', (_label, name, closeLabel, form) => {
+  it('takes focus, does not trap Tab, closes on Escape, and restores its trigger', () => {
+    const { trigger, section, focusable } = openForm(form, name)
+    // In the page: no dialog, no modal, no backdrop.
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(document.querySelector('[aria-modal]')).toBeNull()
+    // Focus is on the form's first field.
+    expect(section.querySelector('input, select, textarea')).toHaveFocus()
     expect(focusable.length).toBeGreaterThan(1)
 
+    // Tab from the last control and Shift+Tab from the first are the
+    // browser's: nothing prevents them, nothing moves focus back inside.
+    const last = focusable[focusable.length - 1]
+    last.focus()
+    expect(fireEvent.keyDown(last, { key: 'Tab' }), 'Tab is not trapped').toBe(true)
+    expect(last).toHaveFocus()
     focusable[0].focus()
-    fireEvent.keyDown(focusable[0], { key: 'Tab', shiftKey: true })
-    expect(focusable[focusable.length - 1]).toHaveFocus()
-
-    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Tab' })
+    expect(fireEvent.keyDown(focusable[0], { key: 'Tab', shiftKey: true }), 'Shift+Tab is not trapped').toBe(true)
     expect(focusable[0]).toHaveFocus()
 
     fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name })).not.toBeInTheDocument()
     expect(trigger).toHaveFocus()
   })
 
   it('gives its icon-only close control an accessible name', () => {
-    openModal(modal)
-    expect(screen.getByRole('button', { name: /close/i })).toBeVisible()
+    const { section } = openForm(form, name)
+    const close = screen.getByRole('button', { name: closeLabel })
+    expect(section.contains(close)).toBe(true)
+    expect(close).toBeVisible()
   })
 })
