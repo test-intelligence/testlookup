@@ -263,6 +263,9 @@ export function buildDigestWorkflow(
 ): { stages: WorkflowStageNode[]; events: WorkflowEventNode[]; stageOrder: string[] } {
   const activeSubscriptions = subs.filter(sub => sub.is_active && !sub.is_paused)
   const lastDelivery = latestTime(subs.map(sub => sub.last_delivered_at))
+  // NTF-04: `views` are the project's REPORT views; a Daily or Weekly digest
+  // bound to one is filtered by it.
+  const subscriptionsWithView = subs.filter(sub => !!sub.saved_view_id).length
   const stages = [
     toStage({
       stage_name: 'signal_collection',
@@ -274,10 +277,15 @@ export function buildDigestWorkflow(
     }),
     toStage({
       stage_name: 'view_resolution',
-      status: views.length > 0 ? 'completed' : 'pending',
+      status: views.length > 0 || subscriptionsWithView > 0 ? 'completed' : 'pending',
       label: 'Saved View Resolution',
-      description: 'Apply saved filters and audience-specific views',
-      result_data: { saved_views: views.length, shared_views: views.filter(v => v.is_shared).length, default_views: views.filter(v => v.is_default).length },
+      description: `Saved views: ${views.length} report views; a Daily or Weekly digest with a view is filtered by its releases, suites and window`,
+      result_data: {
+        saved_views: views.length,
+        shared_views: views.filter(v => v.is_shared).length,
+        default_views: views.filter(v => v.is_default).length,
+        subscriptions_with_view: subscriptionsWithView,
+      },
       evidence_count: views.length,
     }),
     toStage({

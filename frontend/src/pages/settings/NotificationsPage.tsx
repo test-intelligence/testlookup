@@ -8,6 +8,10 @@
  *    (`manager.preference_webhook`). They are EDITED on Integrations, the one
  *    place they are configured; this page says whether they deliver.
  *
+ *  - the top bar project's notification policy (NTF-02,
+ *    `TransitionPolicyCard`): whether the project sends per-run events and
+ *    which test state changes. One line, and no request, in All Projects.
+ *
  * A person's own channels and events are My notifications
  * (`MyNotificationsPage`, every role); until P5 this page rendered that same
  * body under the SMTP card. A team's own channel is Team channels.
@@ -23,6 +27,7 @@ import Field from '@/components/ui/Field'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { helpTopicParam } from '@/components/help/helpTopics'
+import TransitionPolicyCard from '@/components/notifications/TransitionPolicyCard'
 import { appSettingsService } from '@/services/appSettingsService'
 import { usePermissions } from '@/hooks/usePermissions'
 import type { IntegrationsConfigRead, SmtpConfigRead } from '@/services/appSettingsService'
@@ -579,6 +584,8 @@ export default function NotificationsPage() {
       <SmtpConfigCard />
 
       <SharedChannelsCard />
+
+      <TransitionPolicyCard />
 
       <p className="text-xs text-[var(--color-text-muted)]">
         Your own channels and events are on{' '}

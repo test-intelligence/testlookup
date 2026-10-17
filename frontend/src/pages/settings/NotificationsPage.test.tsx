@@ -19,6 +19,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import NotificationsPage from './NotificationsPage'
 import type { IntegrationsConfigRead } from '@/services/appSettingsService'
+import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 
 const settings = vi.hoisted(() => ({
   getSmtpConfig: vi.fn(),
@@ -43,6 +44,21 @@ vi.mock('@/hooks/useNotifications', () => ({
     return { data: [], mutate: vi.fn() }
   },
   invalidateNotifications: vi.fn(),
+}))
+// NTF-02: the policy card's read (its own hook module), scripted per test.
+const policyHook = vi.hoisted(() => ({
+  answer: { policy: null as unknown, error: undefined as unknown, isLoading: false },
+  calls: [] as (string | null)[],
+}))
+vi.mock('@/hooks/useTransitionPolicy', () => ({
+  useTransitionPolicy: (projectId: string | null) => {
+    policyHook.calls.push(projectId)
+    return { ...policyHook.answer, mutate: vi.fn(async () => undefined) }
+  },
+}))
+vi.mock('@/services/notificationPolicyService', () => ({
+  getTransitionPolicy: vi.fn(),
+  updateTransitionPolicy: vi.fn(),
 }))
 
 const SMTP = {
@@ -84,6 +100,9 @@ describe('NotificationsPage — Email (SMTP) & channels', () => {
     vi.clearAllMocks()
     settings.getSmtpConfig.mockResolvedValue(SMTP)
     settings.getIntegrationsConfig.mockResolvedValue(integrations({}))
+    policyHook.answer = { policy: null, error: undefined, isLoading: false }
+    policyHook.calls = []
+    useProjectStore.setState({ activeProjectId: ALL_PROJECTS_ID, activeProject: null })
   })
 
   it('is named for what it holds, in the compact template header (the old name is gone)', () => {
@@ -142,6 +161,49 @@ describe('NotificationsPage — Email (SMTP) & channels', () => {
     expect(sharedRow('slack')).toHaveTextContent('A webhook is set; delivery is switched off')
     expect(sharedRow('teams')).toHaveTextContent('Off, and no webhook is set')
     expect(screen.queryByText(/#qa-alerts/)).toBeNull()
+  })
+
+  // NTF-02: the third card, after Shared channels; still nothing personal on the page.
+  it('the project notification policy card follows Shared channels, and the page holds no "Notify me when"', async () => {
+    const P = '00000000-0000-4000-8000-000000000001'
+    useProjectStore.setState({ activeProjectId: P, activeProject: { id: P, name: 'Checkout' } as never })
+    policyHook.answer = {
+      policy: {
+        project_id: P, transitions_enabled: true, per_run_events_enabled: false,
+        enabled_events: ['test.newly_failing'], consecutive_failure_threshold: 2, is_default: true,
+      },
+      error: undefined,
+      isLoading: false,
+    }
+    const { container } = renderPage()
+    await screen.findByDisplayValue('smtp.corp.example.com')
+    const shared = container.querySelector('[data-shared-channels]') as HTMLElement
+    const policy = screen.getByRole('region', { name: 'Project notification policy' })
+    expect(shared.compareDocumentPosition(policy) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(within(policy).getByText('Using defaults: state changes ON, every run OFF.')).toBeInTheDocument()
+    expect(policyHook.calls.every(id => id === P)).toBe(true)
+    expect(screen.queryByText('Notify me when')).toBeNull()
+    expect(container.querySelector('[data-channel-card]')).toBeNull()
+    // Not a single-project page: no project prompt, whatever the card says.
+    expect(screen.queryByText(/Select a project/)).toBeNull()
+  })
+
+  it('in All Projects the card asks for no policy and says to pick a project', async () => {
+    renderPage()
+    await screen.findByDisplayValue('smtp.corp.example.com')
+    const policy = screen.getByRole('region', { name: 'Project notification policy' })
+    expect(within(policy).getByText(/Pick a project in the top bar/)).toBeInTheDocument()
+    expect(policyHook.calls.every(id => id === null)).toBe(true)
+  })
+
+  it('a garbage policy answer leaves the page standing: the card says it could not be read', async () => {
+    useProjectStore.setState({ activeProjectId: 'p1', activeProject: { id: 'p1', name: 'Checkout' } as never })
+    policyHook.answer = { policy: { enabled_events: 7, per_run_events_enabled: 'yes' }, error: undefined, isLoading: false }
+    renderPage()
+    expect(await screen.findByDisplayValue('smtp.corp.example.com')).toBeInTheDocument()
+    const policy = screen.getByRole('region', { name: 'Project notification policy' })
+    expect(within(policy).getByText("The project's notification policy could not be read.")).toBeInTheDocument()
+    expect(within(policy).queryByRole('button', { name: /^Save$/ })).toBeNull()
   })
 
   it('a failed read of the shared channels is said as one, never drawn as "Off"', async () => {

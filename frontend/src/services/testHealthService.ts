@@ -27,6 +27,32 @@ export interface TestHealthResponse {
   findings: TestHealthFinding[]
 }
 
+/** One of the four signals of the nightly flakiness score (FLK-03). */
+export interface FlakyScoreComponent {
+  name: string
+  /** The signal's own rate, 0..1. */
+  value: number
+  /** Its weight in the score, 0..1 (the row's stored weight). */
+  weight: number
+}
+
+/**
+ * The four-signal flakiness score of one Detected test (FLK-03), joined onto
+ * the coach entry by the server. `status` is "scored" | "insufficient" |
+ * "pending"; `score`, `computed_at` and `components` are filled only when
+ * scored. Read through `parseFlakyScore` (`pages/flaky/flakyScoreModel.ts`).
+ */
+export interface FlakyScoreBrief {
+  status: string
+  score: number | null
+  confidence: string
+  observations: number
+  min_observations: number
+  window_days: number
+  computed_at: string | null
+  components: FlakyScoreComponent[]
+}
+
 export interface FlakyCoachEntry {
   test_fingerprint: string
   test_name: string
@@ -58,6 +84,8 @@ export interface FlakyCoachEntry {
   // FLK-P5 granular step-level surgical attribution (null when no step snapshot).
   failing_step?: string | null
   failing_step_detail?: string | null
+  // FLK-03 the four-signal score (null = the enrichment did not run or failed).
+  flaky_score?: FlakyScoreBrief | null
 }
 
 export interface FlakyCoachResponse {

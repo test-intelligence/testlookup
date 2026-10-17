@@ -21,6 +21,7 @@ from app.models.schemas import (
     ReleaseCouncilResponse,
 )
 from app.services.activity.service import ActorRef, record as record_activity
+from app.services.notification import gate_notifications
 from app.services.release_council_service import apply_override, get_release_council
 
 logger = logging.getLogger("routers.release_readiness")
@@ -166,6 +167,7 @@ async def override_release_decision(
     # Staged, not committed, so it lands in the same transaction as the
     # override itself: an override that rolls back must not leave a ledger
     # entry claiming it happened.
+    project_id = None
     try:
         project_id = (
             await db.execute(select(TestRun.project_id).where(TestRun.id == run_id))
@@ -192,6 +194,14 @@ async def override_release_decision(
     except Exception as exc:  # noqa: BLE001 — the committed override stands
         logger.warning(
             "release override activity record failed for run %s: %s", run_id, exc
+        )
+
+    # W09 NTF-01: an override INTO NO_GO stages "Quality gate failed" in this
+    # same transaction (before the commit, so a rolled-back override announces
+    # nothing). The stage runs in a SAVEPOINT and never raises.
+    if project_id is not None:
+        await gate_notifications.stage_override_no_go(
+            db, run_id=run_id, project_id=project_id, council=council,
         )
 
     await db.commit()

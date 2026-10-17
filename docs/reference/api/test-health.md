@@ -11,7 +11,7 @@ Get Project Flaky Coach
 Get project-level flaky test leaderboard with quarantine recommendations.
 Ranked by impact score (failure_rate × frequency).
 
-Source: [backend/app/routers/test_health.py:59](../../../backend/app/routers/test_health.py#L59).
+Source: [backend/app/routers/test_health.py:60](../../../backend/app/routers/test_health.py#L60).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -141,7 +141,7 @@ Refresh Project Flaky Coach
 Trigger a refresh of the flaky coach data for a project.
 Recomputes quarantine recommendations from test case history.
 
-Source: [backend/app/routers/test_health.py:93](../../../backend/app/routers/test_health.py#L93).
+Source: [backend/app/routers/test_health.py:98](../../../backend/app/routers/test_health.py#L98).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -247,7 +247,7 @@ Get Test Health
 Get test health findings for a specific run.
 Returns anti-pattern analysis, health scores, and stabilization recommendations.
 
-Source: [backend/app/routers/test_health.py:35](../../../backend/app/routers/test_health.py#L35).
+Source: [backend/app/routers/test_health.py:36](../../../backend/app/routers/test_health.py#L36).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 

@@ -52,7 +52,6 @@
 3 app/services/defect_jira_service.py
 1 app/services/defect_promotion_service.py
 1 app/services/deletion_job_service.py
-2 app/services/digest_content_service.py
 4 app/services/duplicate_detection_service.py
 1 app/services/eval_gate_service.py
 2 app/services/evidence_artifact_service.py

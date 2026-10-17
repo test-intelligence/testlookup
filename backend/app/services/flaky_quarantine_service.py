@@ -163,10 +163,15 @@ async def upsert_lifecycle_policy(
     promote_after_passes: int,
     detection_flip_rate_threshold: float,
     detection_min_runs: int,
+    max_active_quarantined: int = _DEFAULT_MAX_ACTIVE_QUARANTINED,
 ) -> QuarantineLifecyclePolicy:
     """Create or update the project's lifecycle policy row. Stage-only —
     the router handler owns ``db.commit()`` (transaction-boundary
-    discipline)."""
+    discipline).
+
+    W09 FLK-02: ``max_active_quarantined`` is written too (0134 added the
+    column "before the UI warns"; nothing wrote it). It replaces like every
+    other field: a caller that omits it resets it to the default."""
     row = await get_lifecycle_policy_row(db, project_id)
     if row is None:
         row = QuarantineLifecyclePolicy(project_id=project_id)
@@ -177,6 +182,7 @@ async def upsert_lifecycle_policy(
     row.promote_after_passes = promote_after_passes
     row.detection_flip_rate_threshold = detection_flip_rate_threshold
     row.detection_min_runs = detection_min_runs
+    row.max_active_quarantined = max_active_quarantined
     await db.flush()
     return row
 

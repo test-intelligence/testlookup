@@ -95,6 +95,40 @@ describe('workflowPresets', () => {
     expect(workflow.stages.find(stage => stage.stage_name === 'digest_compilation')?.status).toBe('completed')
   })
 
+  // NTF-04: the view stage says what a saved view does to a digest, and counts
+  // the subscriptions bound to one.
+  it('the digest view stage: report views, and the subscriptions with a view', () => {
+    const base = {
+      user_id: 'u1', project_id: 'p1', schedule: 'WEEKLY' as const, channel: 'email' as const, is_active: true,
+      is_paused: false, scope_type: 'project' as const, scope_value: null, trigger_filter: 'all' as const,
+      send_when_unchanged: true, report_attachment: false, last_delivered_at: null, next_delivery_at: null,
+      delivery_count: 0, created_at: '2026-10-01T00:00:00Z', updated_at: null,
+    }
+    const subs = [
+      { ...base, id: 's1', name: 'With view', saved_view_id: 'v1' },
+      { ...base, id: 's2', name: 'Without', saved_view_id: null },
+      { ...base, id: 's3', name: 'Also with', saved_view_id: 'v2' },
+    ]
+    const views = [
+      { id: 'v1', name: 'Checkout', is_default: false, is_shared: true },
+      { id: 'v2', name: 'Payments', is_default: true, is_shared: false },
+    ]
+    const stage = buildDigestWorkflow(subs, views, null).stages.find(s => s.stage_name === 'view_resolution')
+    expect(stage?.description).toBe(
+      'Saved views: 2 report views; a Daily or Weekly digest with a view is filtered by its releases, suites and window',
+    )
+    expect(stage?.result_data).toEqual({ saved_views: 2, shared_views: 1, default_views: 1, subscriptions_with_view: 2 })
+    expect(stage?.status).toBe('completed')
+
+    // On the Subscriptions tab the views are not read: a bound subscription still completes the stage.
+    const unread = buildDigestWorkflow(subs, [], null).stages.find(s => s.stage_name === 'view_resolution')
+    expect(unread?.result_data).toMatchObject({ saved_views: 0, subscriptions_with_view: 2 })
+    expect(unread?.status).toBe('completed')
+    const none = buildDigestWorkflow([subs[1]], [], null).stages.find(s => s.stage_name === 'view_resolution')
+    expect(none?.status).toBe('pending')
+    expect(none?.description).toMatch(/^Saved views: 0 report views;/)
+  })
+
   it('builds a live integration health workflow with provider-specific stages', () => {
     const workflow = buildIntegrationHealthWorkflow(
       [

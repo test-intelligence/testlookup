@@ -20,6 +20,61 @@ const P = PROJECT_ID
 
 const RECOMMENDATIONS = ['QUARANTINE', 'INVESTIGATE', 'MONITOR', 'INVESTIGATE', 'QUARANTINE', 'MONITOR'] as const
 
+/** `flaky_score_service.DEFAULT_WEIGHTS`, in `flaky_score_brief.COMPONENT_ORDER`. */
+const SCORE_WEIGHTS = [
+  ['result_volatility', 0.45],
+  ['retry_rate', 0.25],
+  ['environment_instability', 0.2],
+  ['duration_variance', 0.1],
+] as const
+
+/** A `FlakyScoreBrief` (W09 FLK-03, contract §1.2) that the nightly sweep scored: its weighted mean IS `score`. */
+function scoredBrief(score: number, confidence: 'low' | 'medium' | 'high', observations: number, values: readonly [number, number, number, number]) {
+  return {
+    status: 'scored',
+    score,
+    confidence,
+    observations,
+    min_observations: 5,
+    window_days: 30,
+    computed_at: isoAgo(0, 10),
+    components: SCORE_WEIGHTS.map(([name, weight], k) => ({ name, value: values[k], weight })),
+  }
+}
+
+/** Below the evidence floor (no `flaky_score` row: fewer than 5 executions in 30 days), or not swept yet. */
+const unscoredBrief = (status: 'insufficient' | 'pending', observations: number) => ({
+  status,
+  score: null,
+  confidence: 'none',
+  observations,
+  min_observations: 5,
+  window_days: 30,
+  computed_at: null,
+  components: [],
+})
+
+/**
+ * W09 FLK-03: each detected test's four-signal score, by row. Six scored, with distinct scores in all three
+ * bands and the highest (fp-02) NOT first in the server's (impact) order, so "Sort › Flakiness score" moves
+ * rows; three below the floor (3, 4 and 2 observations); two the sweep has not scored; one whose
+ * enrichment failed (`null`, "—"). Each score is its components' weighted mean, to the cent.
+ */
+export const FLAKY_SCORES = [
+  scoredBrief(0.46, 'medium', 14, [0.6, 0.4, 0.3, 0.3]),
+  unscoredBrief('insufficient', 3),
+  scoredBrief(0.81, 'high', 23, [0.8, 0.8, 0.9, 0.7]),
+  unscoredBrief('pending', 9),
+  scoredBrief(0.62, 'medium', 12, [0.7, 0.6, 0.55, 0.45]),
+  unscoredBrief('insufficient', 4),
+  scoredBrief(0.27, 'low', 7, [0.2, 0.4, 0.3, 0.2]),
+  null,
+  scoredBrief(0.73, 'high', 28, [0.8, 0.6, 0.7, 0.8]),
+  unscoredBrief('insufficient', 2),
+  scoredBrief(0.35, 'low', 6, [0.4, 0.2, 0.4, 0.4]),
+  unscoredBrief('pending', 12),
+]
+
 /** Twelve flaky tests, the first three recommended for quarantine or investigation. */
 const ENTRIES = Array.from({ length: 12 }, (_, i) => ({
   test_fingerprint: `fp-${String(i).padStart(2, '0')}`,
@@ -37,9 +92,23 @@ const ENTRIES = Array.from({ length: 12 }, (_, i) => ({
   flaky_confidence_low: 0.4,
   flaky_confidence_high: 0.7,
   flaky_likely_cause: i === 0 ? 'Timing: a wait races the response' : null,
+  flaky_score: FLAKY_SCORES[i],
 }))
 
 const COACH = { project_id: P, total_flaky: 9, quarantine_candidates: 4, entries: ENTRIES }
+
+/** W09 FLK-02: `GET /projects/{p}/quarantine/policy` for a project with no row (the code defaults, `is_default`). */
+export const DEFAULT_QUARANTINE_POLICY = {
+  project_id: P,
+  sla_days: 14,
+  auto_create_defect: false,
+  auto_promote: false,
+  promote_after_passes: 20,
+  detection_flip_rate_threshold: 0.2,
+  detection_min_runs: 10,
+  max_active_quarantined: 8,
+  is_default: true,
+}
 
 function quarantineRow(i: number, status: string, fingerprint = `fp-q${i}`) {
   return {
@@ -107,13 +176,28 @@ const FLAKY_STATS = {
 
 /**
  * Fresh state per test: a proposal made in one test never leaks into the
- * next. `proposals` records every POST /quarantine body.
+ * next. `proposals` records every POST /quarantine body; `policyWrites`
+ * every PUT of the quarantine policy (W09 FLK-02), whose body the policy
+ * GET then answers (`is_default: false`), as the server does.
  */
-export function flakyHandlers(proposals: unknown[] = []): ApiHandlers {
+export function flakyHandlers(proposals: unknown[] = [], policyWrites: unknown[] = []): ApiHandlers {
   const live = [...LIVE]
+  let policy: Record<string, unknown> = { ...DEFAULT_QUARANTINE_POLICY }
   return [
     ...LAYOUT,
     [`/api/v1/projects/${P}/flaky-coach`, () => COACH],
+    // W09 FLK-02: the Quarantined and Policy tabs read the project's policy (never Detected / Proposed / History).
+    [`/api/v1/projects/${P}/quarantine/policy`, () => policy],
+    [
+      `/api/v1/projects/${P}/quarantine/policy`,
+      ({ route }) => {
+        const body = route.request().postDataJSON() as Record<string, unknown>
+        policyWrites.push(body)
+        policy = { ...body, project_id: P, is_default: false }
+        return policy
+      },
+      'PUT',
+    ],
     ['/api/v1/quarantine/stats', () => ({ ...FLAKY_STATS, proposed: live.filter((r) => r.status === 'PROPOSED').length })],
     [
       '/api/v1/quarantine',

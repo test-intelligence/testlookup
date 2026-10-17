@@ -31,8 +31,14 @@ Once enabled, the section shows how many recovery codes remain, with **Regenerat
 **My notifications** (`/settings/my-notifications`) decides what reaches you, per channel: **Email**, **Slack** and **Microsoft Teams**.
 
 - Turn a channel on, and optionally give your own email address or your own Slack or Teams webhook URL; blank uses the shared channel an administrator configured.
-- **Notify me when**: run failed or passed, high failure rate (with a threshold, 80% by default), AI analysis complete, quality gate failed, flaky test detected, and the transition events (a test newly failing, recovered, newly flaky, quarantined, released from quarantine).
+- **Notify me when**: run failed or passed, high failure rate (with a threshold, 80% by default), AI analysis complete, quality gate failed, the state changes (a test newly failing, recovered, newly flaky, quarantined, released from quarantine), the quarantine lifecycle (past its SLA, ready to release) and a test or suite becoming slower.
 - **Save**, then **Send test** to check delivery. **Remove** deletes the channel's settings.
+
+**Quality gate failed** is sent when a gate's recorded verdict turns into `NO_GO`: a QA lead evaluates a release or phase gate and the verdict recorded before it was not `NO_GO`, or a run's release-readiness decision becomes `NO_GO` (published by the analysis pipeline, or set by a QA lead's override). Evaluating again while the gate stays `NO_GO` sends nothing more, and a preview never sends. The entry names the release (or the build) and the top blocking reason; in the bell it opens the release (for QA leads and administrators) or the run's release gate. It is not ticked for you by default, and the project's notification policy does not govern it.
+
+There is no longer a **Flaky test detected** choice: it never sent anything. **Test newly flaky** is the event for a test that becomes flaky, and anyone who had ticked the old choice now has **Test newly flaky** ticked instead.
+
+With one project selected in the top bar, an event the project's notification policy will not send carries a note under its name: `Not sent in Checkout: per-run notifications are off`, `Not sent in Checkout: state-change notifications are off` or `Not sent in Checkout: this state change is turned off`. A QA lead or administrator also gets **Change it in Email (SMTP) & channels**. In **All Projects** one line says that run and state-change events depend on each project's notification policy. If the policy cannot be read, no note is shown (the server then sends, so a note would be wrong).
 
 These are your defaults for every project. **View notification history** lists recent notifications, with **Mark all read**. The bell in the top bar shows the same notifications.
 
@@ -146,9 +152,28 @@ Everything here that reaches outside the deployment is **switched off by offline
 
 **Email (SMTP) & channels** (`/settings/notifications`): the mail server (**Enable SMTP email delivery**, host, port, from address, optional username and password, and **Implicit TLS** or **STARTTLS**; port 465 picks implicit TLS and 587 or 25 STARTTLS, and plain SMTP is not supported). **Send test email** sends to your own address using the **saved** settings, so save first. QA leads can read and test it; saving needs an administrator. The **Shared channels** card shows whether the shared Slack and Teams channels are delivering, with a link to edit them under Integrations. Per-event choices are on each person's **My notifications**.
 
+The **Project notification policy** card decides, for the project selected in the top bar, which events are sent at all, whatever each person ticked. A project that never saved one reads `Using defaults: state changes ON, every run OFF.` QA leads and administrators change it and **Save**; each change is recorded in the activity feed (`Notification policy changed: every run`).
+
+| Switch | Governs | Off means |
+|---|---|---|
+| **Notify on every run** | Run failed, Run passed and High failure rate, once per run | None of the three is sent in this project |
+| **Notify on state changes** | The state changes: newly failing, recovered, newly flaky, quarantined, released from quarantine, quarantine past its SLA, ready to release | None of the seven is sent |
+| The seven state-change boxes (with state changes on) | Each state change on its own | That one is not sent |
+| **Failed runs in a row before "Test newly failing"** | How many consecutive failed runs make a test newly failing (1-20, 2 by default) | — |
+
+AI analysis complete, quality gate failed and a test or suite becoming slower are not governed by the policy. A project that existed before state changes were introduced kept its old behaviour (state changes off, every run on) until someone changes its policy. In **All Projects** the card asks you to pick a project.
+
 ### Digests and views
 
-**Digests & views** (`/settings/digests`): scheduled summaries to email, Slack or Teams — **Daily**, **Weekly**, **Per Run** (all runs, failed only, or degraded only), **Per Release** or **Per Suite**, and **Weekly Retro** when the `weekly_retro_digest` flag is on. For a daily or weekly email to one project, **Attach analysis report** adds the HTML analysis report (see [Reports and outputs](/docs/reports#summary-report-files)). Pause, resume or unsubscribe each digest. **Preview Digest** shows what one will look like. The **Saved Views** tab lists named views.
+**Digests & views** (`/settings/digests`): scheduled summaries to email, Slack or Teams — **Daily**, **Weekly**, **Per Run** (all runs, failed only, or degraded only), **Per Release** or **Per Suite**, and **Weekly Retro** when the `weekly_retro_digest` flag is on. For a daily or weekly email to one project, **Attach analysis report** adds the HTML analysis report (see [Reports and outputs](/docs/reports#summary-report-files)). Pause, resume or unsubscribe each digest. **Preview Digest** shows what one will look like.
+
+- **Per Release** names a release: pick it from the top bar project's releases (active and in-progress first). The digest goes out after the AI summary of each run of that release, including a run linked to it as a secondary release. In **All Projects** you are asked to pick a project first.
+- **Per Suite** needs a suite name.
+- A subscription that cannot deliver says so in its row (`Not delivering — choose a release`, `Not delivering — choose a suite`, `Not delivering — its release no longer exists`), with the fix in the row: choose, then **Save**.
+
+The **Saved Views** tab lists the project's saved report views: the ones saved on Trends, Failures, Coverage and the other reports, plus older empty views (`No filters — edit to add some`). Each row shows where it was saved and its scope (`Releases: 2026.10 · Suites: checkout · Last 7 days`). **New view** opens an editor at the top of the tab: a name, releases, suites (comma-separated), a window (1, 7, 14, 30 or 90 days) and **Shared with the project**; **Edit** opens the same editor in the row.
+
+A **Daily** or **Weekly** digest can use a saved view (**Saved view (optional)**): it then covers only that view's releases, suites and window, and says so (`Filtered by view: Checkout regressions — release 2026.10 · suite checkout · last 7 days`). A release in the view that no longer belongs to the project is left out, with a note; project-wide sections (flaky debt by team, hours saved) are left out of a filtered digest. If the view is deleted, or you can no longer read it, the row says so (`View deleted — this digest covers the whole project`) and the digest covers the whole project until you **Change view**. **Preview Digest** takes the same view.
 
 ### Integration health
 

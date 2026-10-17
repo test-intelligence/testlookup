@@ -15,6 +15,21 @@ import { testHealthService, type FlakyCoachEntry } from '@/services/testHealthSe
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import ChipFilter from './inbox/ChipFilter'
 import { flakySubtitle } from './flaky/flakyModel'
+import {
+  INSUFFICIENT_NOTE,
+  SCORE_HEADER_TITLE,
+  SORT_OPTIONS,
+  componentLine,
+  evidenceLine,
+  insufficientLine,
+  parseFlakyScore,
+  pendingLine,
+  scoreCell,
+  sortEntries,
+  weightsLine,
+  windowLine,
+  type FlakySort,
+} from './flaky/flakyScoreModel'
 
 type Recommendation = FlakyCoachEntry['quarantine_recommendation']
 
@@ -60,10 +75,102 @@ export function RecommendationPill({ value }: { value: Recommendation }) {
   )
 }
 
+/** The confidence band's chip (low / medium / high), in the existing status tokens. */
+const BAND_TONE: Record<string, string> = {
+  low: 'text-[var(--status-skipped)] bg-[var(--status-skipped-bg)] border-[var(--color-border)]',
+  medium: 'text-[var(--status-broken)] bg-[var(--status-broken-bg)] border-[var(--status-broken-bd)]/40',
+  high: 'text-[var(--status-flaky)] bg-[var(--status-flaky-bg)] border-[var(--status-flaky)]/30',
+}
+
+function BandChip({ band }: { band: string }) {
+  return (
+    <span
+      data-score-band={band}
+      className={clsx('rounded border px-1.5 text-[11px] leading-4', BAND_TONE[band] ?? 'border-[var(--color-border)] text-[var(--color-text-muted)]')}
+    >
+      {band}
+    </span>
+  )
+}
+
+/**
+ * The Flakiness score cell (W09 FLK-03): ONE line, never wrapped. A scored
+ * test reads `0.62` + its confidence band; below the evidence floor
+ * `insufficient`; not swept yet `not scored yet`; a failed enrichment `—`.
+ * Never `0.00` for a test that has no score.
+ */
+function ScoreCell({ entry }: { entry: FlakyCoachEntry }) {
+  const brief = parseFlakyScore(entry.flaky_score)
+  const cell = scoreCell(brief)
+  const scored = brief?.status === 'scored' && brief.score !== null
+  return (
+    <span
+      title={cell.title}
+      data-flaky-score={brief?.status ?? 'unavailable'}
+      className={clsx(
+        'inline-flex items-center gap-1.5 whitespace-nowrap',
+        scored ? 'text-[var(--color-text)]' : 'text-xs text-[var(--color-text-faint)]',
+      )}
+    >
+      {scored ? <span className="font-mono text-xs">{cell.text}</span> : cell.text}
+      {cell.band && <BandChip band={cell.band} />}
+    </span>
+  )
+}
+
+/**
+ * The details panel's score section (W09 FLK-03): the score with a 0-1 bar,
+ * its evidence (band · observations, window, when scored), the four signals
+ * with their value × weight, and the weights' sum, from the row's stored
+ * weights. Below the floor it says so (a new test is not a stable test); not
+ * swept yet says when it will be. Nothing when the enrichment failed.
+ */
+function FlakyScoreSection({ entry }: { entry: FlakyCoachEntry }) {
+  const brief = parseFlakyScore(entry.flaky_score)
+  if (!brief) return null
+  return (
+    <section aria-label="Flakiness score (4 signals)" data-flaky-score-section="" className="space-y-2">
+      <p className="text-xs text-[var(--color-text-muted)]">Flakiness score (4 signals)</p>
+      {brief.status === 'scored' && brief.score !== null ? (
+        <>
+          <div className="flex items-center gap-3">
+            <span className="font-mono text-base text-[var(--color-text)]">{brief.score.toFixed(2)}</span>
+            {/* A 0-1 bar: the width is the score, the only value set inline. */}
+            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--color-bg-secondary)]" aria-hidden>
+              <div className="h-full rounded-full bg-[var(--status-flaky)]" style={{ width: `${Math.round(brief.score * 100)}%` }} />
+            </div>
+          </div>
+          <p className="text-xs text-[var(--color-text-secondary)]">{evidenceLine(brief)}</p>
+          <p className="text-xs text-[var(--color-text-faint)]">{windowLine(brief)}</p>
+          <ul className="space-y-0.5">
+            {brief.components.map((component) => (
+              <li key={component.name} className="font-mono text-[11px] text-[var(--color-text-secondary)]">
+                {componentLine(component)}
+              </li>
+            ))}
+          </ul>
+          <p className="text-[11px] text-[var(--color-text-faint)]">{weightsLine(brief.components)}</p>
+          <p className="text-[11px] text-[var(--color-text-faint)]">
+            Separate from Fail %, the failure-rate detector: the score weighs result flips, retries, environment disagreement and runtime spread.
+          </p>
+        </>
+      ) : brief.status === 'insufficient' ? (
+        <>
+          <p className="text-xs text-[var(--color-text-secondary)]">{insufficientLine(brief)}</p>
+          <p className="text-[11px] text-[var(--color-text-faint)]">{INSUFFICIENT_NOTE}</p>
+        </>
+      ) : (
+        <p className="text-xs text-[var(--color-text-secondary)]">{pendingLine(brief)}</p>
+      )}
+    </section>
+  )
+}
+
 /** Everything the coach knows about one flaky test (the side panel's body; was the row's inline expansion). */
 export function FlakyEntryDetails({ entry }: { entry: FlakyCoachEntry }) {
   return (
     <div className="space-y-4 text-sm" data-testid="flaky-entry-details">
+      <FlakyScoreSection entry={entry} />
       {/* The test's name is the panel's title. */}
       <div>
         {entry.suite_name && <p className="text-xs text-[var(--color-text-muted)]">{entry.suite_name}</p>}
@@ -172,12 +279,21 @@ export function FlakyEntryDetails({ entry }: { entry: FlakyCoachEntry }) {
 }
 
 const TH = 'px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]'
+/**
+ * A two-line header (the score's) inside the row's own height: 2 x 13 px lines
+ * + 2 x 2 px = 30 px, under the one-line headers' 32.2 px (measured), so the
+ * header row does not grow.
+ */
+const TH_COMPACT = 'px-3 py-0.5 leading-[13px] text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]'
 
 /**
  * The flaky-test list (Flaky tests › Detected; was Flaky Coach's body): a
- * recommendation filter, then one table — test, history, failure rate,
- * recommendation, impact and, when the caller gives one, a row action. A row
- * opens its details in a side panel (they used to expand inline).
+ * recommendation filter and the Sort (Impact = the server's order, or
+ * Flakiness score) in one row, then one table — test, history, failure rate,
+ * the four-signal flakiness score (W09 FLK-03: one line per cell; a separate
+ * detector from Fail %), recommendation, impact and, when the caller gives
+ * one, a row action. A row opens its details in a side panel (they used to
+ * expand inline), whose first section is the score's breakdown.
  *
  * Marked as the page's primary content (`data-primary`).
  */
@@ -192,25 +308,51 @@ export function FlakyCoachBody({
   actionLabel?: string
 }) {
   const [filter, setFilter] = useState<Recommendation | 'all'>('all')
+  // W09 FLK-03: local state, Impact (the server's order) by default (D-14).
+  const [sort, setSort] = useState<FlakySort>('impact')
   const [openFingerprint, setOpenFingerprint] = useState<string | null>(null)
-  const filtered = filter === 'all' ? entries : entries.filter((e) => e.quarantine_recommendation === filter)
+  const ordered = sortEntries(entries, sort)
+  const filtered = filter === 'all' ? ordered : ordered.filter((e) => e.quarantine_recommendation === filter)
   const open = openFingerprint ? entries.find((e) => e.test_fingerprint === openFingerprint) ?? null : null
 
   return (
     <div className="space-y-3">
-      <ChipFilter
-        label="Recommendation"
-        value={filter}
-        onChange={setFilter}
-        options={[
-          { id: 'all', label: 'All', count: entries.length },
-          ...RECOMMENDATIONS.map((key) => ({
-            id: key,
-            label: QUARANTINE_CONFIG[key].label,
-            count: entries.filter((e) => e.quarantine_recommendation === key).length,
-          })),
-        ]}
-      />
+      {/* One row: the filter chips, and Sort right-aligned in the SAME row (no new row on the page). */}
+      <div className="flex flex-wrap items-center gap-3">
+        <ChipFilter
+          label="Recommendation"
+          value={filter}
+          onChange={setFilter}
+          options={[
+            { id: 'all', label: 'All', count: entries.length },
+            ...RECOMMENDATIONS.map((key) => ({
+              id: key,
+              label: QUARANTINE_CONFIG[key].label,
+              count: entries.filter((e) => e.quarantine_recommendation === key).length,
+            })),
+          ]}
+        />
+        <label className="ml-auto inline-flex items-center gap-2">
+          <span
+            aria-hidden
+            className="text-[10.5px] font-medium uppercase text-[var(--color-text-muted)]"
+            style={{ letterSpacing: 'var(--tracking-wider)' }}
+          >
+            Sort
+          </span>
+          <select
+            aria-label="Sort"
+            value={sort}
+            onChange={(event) => setSort(event.target.value as FlakySort)}
+            data-flaky-sort=""
+            className="h-7 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-input)] px-2 text-[12.5px] text-[var(--color-text)]"
+          >
+            {SORT_OPTIONS.map((option) => (
+              <option key={option.id} value={option.id}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+      </div>
 
       <section data-primary="" aria-label="Flaky tests">
         {filtered.length === 0 ? (
@@ -227,6 +369,11 @@ export function FlakyCoachBody({
                   <th className={clsx(TH, 'text-left')}>Test</th>
                   <th className={clsx(TH, 'text-left')}>History</th>
                   <th className={clsx(TH, 'text-right')}>Fail %</th>
+                  {/* Two compact lines in the header row's own height (py-1, 14 px leading): the row does not grow. */}
+                  <th className={clsx(TH_COMPACT, 'text-left whitespace-nowrap')} title={SCORE_HEADER_TITLE}>
+                    Flakiness score
+                    <span className="block font-normal normal-case tracking-normal text-[var(--color-text-faint)]">(4 signals)</span>
+                  </th>
                   <th className={clsx(TH, 'text-left')}>Recommendation</th>
                   <th className={clsx(TH, 'text-right')} title="Impact score: how much this flake costs the project's runs">Impact</th>
                   {renderAction && <th className={clsx(TH, 'text-right')}>{actionLabel}</th>}
@@ -243,7 +390,8 @@ export function FlakyCoachBody({
                       openFingerprint === entry.test_fingerprint && 'bg-[var(--color-bg-hover)]',
                     )}
                   >
-                    <td className="px-3 py-2 max-w-[420px]">
+                    {/* 280 px (was 420) pays for the score column: measured, see the W09 G-C report. */}
+                    <td className="px-3 py-2 max-w-[280px]">
                       <button
                         type="button"
                         onClick={(event) => {
@@ -264,6 +412,9 @@ export function FlakyCoachBody({
                     </td>
                     <td className="px-3 py-2 text-right font-mono text-[var(--status-failed)]">
                       {(entry.failure_rate * 100).toFixed(0)}%
+                    </td>
+                    <td className="px-3 py-2">
+                      <ScoreCell entry={entry} />
                     </td>
                     <td className="px-3 py-2">
                       <RecommendationPill value={entry.quarantine_recommendation} />

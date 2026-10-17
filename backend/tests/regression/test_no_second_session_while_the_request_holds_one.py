@@ -241,3 +241,77 @@ async def test_the_release_override_runs_on_the_requests_session(pool, monkeypat
     assert response.status_code == 200, response.text
     assert response.json()["recommendation"] == "GO"
     assert pool.max_held == 1
+
+
+@pytest.mark.asyncio
+async def test_a_no_go_override_stages_its_notification_on_the_requests_session(pool, monkeypatch):
+    """W09 NTF-01: an override INTO NO_GO stages "Quality gate failed" in a
+    SAVEPOINT of the request's own session, never on a second one."""
+    from contextlib import asynccontextmanager
+
+    from app.routers import release_readiness
+    from app.services.notification import gate_notifications
+
+    council = ReleaseCouncilResponse(
+        run_id=str(RUN_ID), recommendation="NO_GO", risk_score=80, original_recommendation="GO",
+        blocking_issues=["pay is broken"],
+        override_audit=[{"timestamp": "2026-10-16T00:00:00+00:00", "before_recommendation": "GO",
+                         "before_risk_score": 40, "after_recommendation": "NO_GO", "reason": "blocker"}],
+    )
+
+    class _StagingResult(_Result):
+        def first(self):
+            return ("142", "Checkout")  # the stage's build number + project name
+
+    class _RequestSession(_Session):
+        @asynccontextmanager
+        async def begin_nested(self):
+            yield self
+
+        async def execute(self, *args, **kwargs):
+            await super().execute(*args, **kwargs)
+            return _StagingResult()
+
+    sessions: list = []
+    staged_on: list = []
+
+    async def apply_override(*, run_id, override_recommendation, reason, actor, db):
+        await _query(db)
+        return council
+
+    async def stage(db, **kwargs):
+        await _query(db)  # the delivery insert runs on the session it is handed
+        staged_on.append((db, kwargs["delivery_scope"]))
+
+    monkeypatch.setattr(release_readiness, "apply_override", apply_override)
+    monkeypatch.setattr(release_readiness, "record_activity", AsyncMock())
+    monkeypatch.setattr(release_readiness, "AsyncSessionLocal", lambda: _Session(pool), raising=False)
+    monkeypatch.setattr("app.services.intelligence_snapshot_service.stage_invalidate", AsyncMock())
+    monkeypatch.setattr("app.services.release_decision_webhook.emit_release_decided", AsyncMock())
+    monkeypatch.setattr(gate_notifications.manager, "stage_scoped_preference_deliveries", stage)
+
+    app = FastAPI()
+    app.include_router(release_readiness.router)
+
+    async def _get_db():
+        session = _RequestSession(pool)
+        sessions.append(session)
+        try:
+            yield session
+        finally:
+            await session.close()
+
+    lead = User(id=uuid.uuid4(), username="lead", email="lead@example.test", role=UserRole.QA_LEAD, is_active=True)
+    app.dependency_overrides[get_db] = _get_db
+    app.dependency_overrides[get_current_active_user] = lambda: lead
+
+    async with AsyncClient(transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://t") as client:
+        response = await asyncio.wait_for(client.post(
+            f"/api/v1/release-readiness/{RUN_ID}/override",
+            json={"override_recommendation": "NO_GO", "reason": "blocker"},
+        ), timeout=5)
+    assert response.status_code == 200, response.text
+    assert response.json()["recommendation"] == "NO_GO"
+    assert staged_on == [(sessions[0], f"quality-gate-failed:run:{RUN_ID}:override:1:v1")]
+    assert len(sessions) == 1
+    assert pool.max_held == 1

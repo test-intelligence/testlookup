@@ -10,7 +10,7 @@ List History
 
 
 
-Source: [backend/app/routers/notifications.py:84](../../../backend/app/routers/notifications.py#L84).
+Source: [backend/app/routers/notifications.py:115](../../../backend/app/routers/notifications.py#L115).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -107,7 +107,7 @@ Mark All Read
 
 
 
-Source: [backend/app/routers/notifications.py:112](../../../backend/app/routers/notifications.py#L112).
+Source: [backend/app/routers/notifications.py:151](../../../backend/app/routers/notifications.py#L151).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -171,7 +171,7 @@ Unread Count
 
 
 
-Source: [backend/app/routers/notifications.py:94](../../../backend/app/routers/notifications.py#L94).
+Source: [backend/app/routers/notifications.py:133](../../../backend/app/routers/notifications.py#L133).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -248,7 +248,7 @@ Mark Read
 
 
 
-Source: [backend/app/routers/notifications.py:102](../../../backend/app/routers/notifications.py#L102).
+Source: [backend/app/routers/notifications.py:141](../../../backend/app/routers/notifications.py#L141).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -322,7 +322,7 @@ List Preferences
 
 
 
-Source: [backend/app/routers/notifications.py:41](../../../backend/app/routers/notifications.py#L41).
+Source: [backend/app/routers/notifications.py:72](../../../backend/app/routers/notifications.py#L72).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -397,7 +397,7 @@ Upsert Preference
 
 
 
-Source: [backend/app/routers/notifications.py:49](../../../backend/app/routers/notifications.py#L49).
+Source: [backend/app/routers/notifications.py:80](../../../backend/app/routers/notifications.py#L80).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -478,7 +478,7 @@ Delete Preference
 
 
 
-Source: [backend/app/routers/notifications.py:74](../../../backend/app/routers/notifications.py#L74).
+Source: [backend/app/routers/notifications.py:105](../../../backend/app/routers/notifications.py#L105).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -552,7 +552,7 @@ Update Preference
 
 
 
-Source: [backend/app/routers/notifications.py:61](../../../backend/app/routers/notifications.py#L61).
+Source: [backend/app/routers/notifications.py:92](../../../backend/app/routers/notifications.py#L92).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -644,7 +644,7 @@ Get Transition Policy
 The project's transition-notification policy. A missing row means
 the new-project defaults apply (transitions ON, per-run spam OFF).
 
-Source: [backend/app/routers/notifications.py:123](../../../backend/app/routers/notifications.py#L123).
+Source: [backend/app/routers/notifications.py:162](../../../backend/app/routers/notifications.py#L162).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -726,7 +726,11 @@ Update Transition Policy
 Create or replace the project's transition-notification policy.
 QA_LEAD+.
 
-Source: [backend/app/routers/notifications.py:161](../../../backend/app/routers/notifications.py#L161).
+W09 NTF-02: records ``notification_policy.updated`` (outcome mode, the same
+transaction as the upsert) when a field changed or the PUT created the
+project's row; a PUT that changes nothing on an existing row records nothing.
+
+Source: [backend/app/routers/notifications.py:200](../../../backend/app/routers/notifications.py#L200).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -817,7 +821,7 @@ Send Test
 
 
 
-Source: [backend/app/routers/notifications.py:196](../../../backend/app/routers/notifications.py#L196).
+Source: [backend/app/routers/notifications.py:270](../../../backend/app/routers/notifications.py#L270).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 

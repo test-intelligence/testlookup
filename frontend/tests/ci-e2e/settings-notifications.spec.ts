@@ -24,6 +24,7 @@ import type { ApiHandlers } from '../lib/production-pages'
 import { respond } from '../lib/production-pages'
 import { MAIN, SHELL_BASE, expectInventory, networkQuiet, observed, openRollout, requestsTo } from '../lib/rollout'
 import { LAYOUT, PROJECT_ID } from '../visual/production/fixtures'
+import { DEFAULT_TRANSITION_POLICY, TRANSITION_POLICY_PATH } from '../visual/production/fixtures-notify-flaky'
 
 const P = PROJECT_ID
 
@@ -103,6 +104,8 @@ function handlers(): ApiHandlers {
     ['/api/v1/settings/smtp', () => SMTP],
     ['/api/v1/settings/integrations', () => INTEGRATIONS],
     ['/api/v1/notifications/preferences', () => [SLACK_PREF]],
+    // W09 NTF-02: both notification pages read the top bar project's policy (the card; the hints).
+    [TRANSITION_POLICY_PATH, () => DEFAULT_TRANSITION_POLICY],
     [`/api/v1/projects/${P}/ownership/rules`, () => RULES],
     [`/api/v1/projects/${P}/ownership/codeowners/coverage`, () => COVERAGE],
     // W07 FAIL-08: the page's "Java source roots" section.
@@ -158,6 +161,7 @@ const RULES_LINE = `GET /api/v1/projects/${P}/ownership/rules`
 const CHANNELS_LINE = `GET /api/v1/projects/${P}/ownership/team-channels`
 const COVERAGE_LINE = `GET /api/v1/projects/${P}/ownership/codeowners/coverage?days=30`
 const SOURCE_ROOTS_LINE = `GET /api/v1/projects/${P}/ownership/source-roots`
+const POLICY_LINE = `GET /api/v1/notifications/projects/${P}/transition-policy`
 
 test('/settings/notifications is Email (SMTP) & channels: the server, two columns, and the shared channels', async ({ page }) => {
   const { api, errors } = await openRollout(page, '/settings/notifications', { handlers: handlers(), ready })
@@ -182,7 +186,8 @@ test('/settings/notifications is Email (SMTP) & channels: the server, two column
   await expect(page.getByText('Notify me when')).toHaveCount(0)
   // The SMTP card reads in a plain effect, which the dev server's StrictMode
   // runs twice (once in a production build); the shared channels are SWR (deduped).
-  expectInventory(api, errors, [...SHELL_BASE, SMTP_LINE, SMTP_LINE, INTEGRATIONS_LINE], '/settings/notifications')
+  // W09 NTF-02: the Project notification policy card (SWR: once).
+  expectInventory(api, errors, [...SHELL_BASE, SMTP_LINE, SMTP_LINE, INTEGRATIONS_LINE, POLICY_LINE], '/settings/notifications')
 })
 
 test('/settings/my-notifications holds the personal preferences, two columns, and asks for nothing of the server', async ({ page }) => {
@@ -199,8 +204,11 @@ test('/settings/my-notifications holds the personal preferences, two columns, an
   expect(Math.abs((target as { y: number }).y - (threshold as { y: number }).y)).toBeLessThan(40)
   expect((threshold as { x: number }).x).toBeGreaterThan((target as { x: number; width: number }).x + (target as { width: number }).width)
 
-  // (The sub-nav beside the page names the admin page; the page itself never mentions the server.)
-  await expect(page.locator('[data-settings-content]').getByText(/SMTP/)).toHaveCount(0)
+  // (The sub-nav beside the page names the admin page, and so does the link after each policy hint, W09
+  // NTF-02; the page itself never mentions the server.)
+  await expect(
+    page.locator('[data-settings-content]').getByText(/SMTP/).filter({ hasNotText: 'Change it in Email (SMTP) & channels' }),
+  ).toHaveCount(0)
   expect(requestsTo(api, '/api/v1/settings/smtp')).toEqual([])
   expect(requestsTo(api, '/api/v1/settings/integrations')).toEqual([])
   // The history: the top bar's bell reads it, and so does the page's (closed)
@@ -213,7 +221,8 @@ test('/settings/my-notifications holds the personal preferences, two columns, an
   expectInventory(
     { ...api, seen: api.seen.filter((line) => line !== HISTORY_LINE) },
     errors,
-    [...SHELL_BASE.filter((line) => line !== HISTORY_LINE), PREFERENCES_LINE],
+    // W09 NTF-02: the policy the event hints read, once per page.
+    [...SHELL_BASE.filter((line) => line !== HISTORY_LINE), PREFERENCES_LINE, POLICY_LINE],
     '/settings/my-notifications',
   )
 })

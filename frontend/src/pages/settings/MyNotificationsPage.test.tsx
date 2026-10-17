@@ -8,13 +8,19 @@
  * P5: the personal page is its own module (`MyNotificationsPage.tsx`), the
  * admin page no longer renders it (`NotificationsPage.test.tsx`), and its
  * channel form is two columns at >= 1280 px.
+ *
+ * W09 NTF-02: each event carries the top bar project's policy hint (§1.3),
+ * read once per page and never in All Projects; NTF-01: "Flaky test
+ * detected" is not offered, "Quality gate failed" is.
  */
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import MyNotificationsPage from './MyNotificationsPage'
 import type { NotificationPreference } from '@/types/notifications'
+import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import { useAuthStore } from '@/store/authStore'
 
 const settings = vi.hoisted(() => ({
   getSmtpConfig: vi.fn(() => new Promise(() => {})),
@@ -35,6 +41,13 @@ vi.mock('@/hooks/useNotifications', () => ({
   useNotificationHistory: () => ({ data: [], mutate: vi.fn() }),
   invalidateNotifications: vi.fn(),
 }))
+const policyHook = vi.hoisted(() => ({ policy: null as unknown, calls: [] as (string | null)[] }))
+vi.mock('@/hooks/useTransitionPolicy', () => ({
+  useTransitionPolicy: (projectId: string | null) => {
+    policyHook.calls.push(projectId)
+    return { policy: policyHook.policy, error: undefined, isLoading: false, mutate: vi.fn() }
+  },
+}))
 
 const SLACK_PREF: NotificationPreference = {
   id: 'pref-slack',
@@ -54,6 +67,13 @@ const SLACK_PREF: NotificationPreference = {
 function renderPage() {
   return render(<MemoryRouter><MyNotificationsPage /></MemoryRouter>)
 }
+
+beforeEach(() => {
+  policyHook.policy = null
+  policyHook.calls = []
+  useProjectStore.setState({ activeProjectId: ALL_PROJECTS_ID, activeProject: null })
+  useAuthStore.setState({ user: { id: 'u1', role: 'VIEWER' } as never })
+})
 
 describe('MyNotificationsPage', () => {
   it('shows the three channels, and never the SMTP server card, the shared channels or their requests', () => {
@@ -115,5 +135,152 @@ describe('MyNotificationsPage', () => {
     expect(container.querySelector('[data-channel-card]')).toBeNull()
     prefs.error = undefined
     prefs.data = []
+  })
+})
+
+// ── NTF-01 / NTF-02 ────────────────────────────────────────────
+
+const P = '00000000-0000-4000-8000-000000000001'
+
+function pref(channel: NotificationPreference['channel'], events: NotificationPreference['events']): NotificationPreference {
+  return { ...SLACK_PREF, id: `pref-${channel}`, channel, events, slack_webhook_url: channel === 'slack' ? SLACK_PREF.slack_webhook_url : null }
+}
+
+function policy(over: Record<string, unknown> = {}) {
+  return {
+    project_id: P,
+    transitions_enabled: true,
+    per_run_events_enabled: false,
+    enabled_events: [
+      'test.newly_failing', 'test.recovered', 'test.newly_flaky', 'test.quarantined',
+      'test.unquarantined', 'test.quarantine_stale', 'test.ready_to_unquarantine',
+    ],
+    consecutive_failure_threshold: 2,
+    is_default: true,
+    ...over,
+  }
+}
+
+const inCheckout = () => useProjectStore.setState({ activeProjectId: P, activeProject: { id: P, name: 'Checkout' } as never })
+const cards = (container: HTMLElement) => [...container.querySelectorAll('[data-channel-card]')] as HTMLElement[]
+/** The label of one option inside a card (its checkbox is named by the option's own text). */
+const optionLabel = (card: HTMLElement, name: string) => within(card).getByRole('checkbox', { name }).closest('label') as HTMLElement
+
+describe('MyNotificationsPage: the events offered (NTF-01)', () => {
+  it('offers Quality gate failed and never "Flaky test detected"', () => {
+    prefs.data = [SLACK_PREF]
+    const { container } = renderPage()
+    const card = within(container.querySelector('[data-channel-card="slack"]') as HTMLElement)
+    expect(card.getByRole('checkbox', { name: 'Quality gate failed' })).toBeInTheDocument()
+    expect(card.getByRole('checkbox', { name: 'Test newly flaky (transition)' })).toBeInTheDocument()
+    expect(card.queryByText('Flaky test detected')).toBeNull()
+    expect(card.queryByRole('checkbox', { name: 'Flaky test detected' })).toBeNull()
+  })
+
+  it('a stored "flaky_test_detected" reads as "Test newly flaky" ticked, counted once', () => {
+    prefs.data = [pref('slack', ['flaky_test_detected', 'test.newly_flaky'])]
+    const { container } = renderPage()
+    const card = container.querySelector('[data-channel-card="slack"]') as HTMLElement
+    expect((within(card).getByRole('checkbox', { name: 'Test newly flaky (transition)' }) as HTMLInputElement).checked).toBe(true)
+    expect(card).toHaveTextContent('1 event(s)')
+  })
+})
+
+describe('MyNotificationsPage: the project policy hints (NTF-02)', () => {
+  it('per-run off in Checkout: the hint under Run failed in every channel card, and none under ungated events', () => {
+    inCheckout()
+    policyHook.policy = policy({ per_run_events_enabled: false })
+    prefs.data = [pref('email', ['run_failed']), pref('slack', ['run_failed']), pref('teams', ['run_failed'])]
+    const { container } = renderPage()
+    expect(cards(container)).toHaveLength(3)
+    for (const card of cards(container)) {
+      expect(within(optionLabel(card, 'Run failed')).getByText('Not sent in Checkout: per-run notifications are off')).toBeInTheDocument()
+      expect(within(optionLabel(card, 'Run passed')).getByText(/per-run notifications are off/)).toBeInTheDocument()
+      expect(within(optionLabel(card, 'High failure rate')).getByText(/per-run notifications are off/)).toBeInTheDocument()
+      for (const free of ['Quality gate failed', 'AI analysis complete', 'A test or suite became slower', 'Test recovered (transition)']) {
+        expect(optionLabel(card, free).querySelector('[data-event-hint]'), free).toBeNull()
+      }
+    }
+    // One read for the page, for the top bar project.
+    expect(new Set(policyHook.calls)).toEqual(new Set([P]))
+  })
+
+  it('per-run on: no per-run hint', () => {
+    inCheckout()
+    policyHook.policy = policy({ per_run_events_enabled: true })
+    prefs.data = [SLACK_PREF]
+    const { container } = renderPage()
+    expect(container.querySelector('[data-event-hint]')).toBeNull()
+    expect(screen.queryByText(/Not sent in/)).toBeNull()
+  })
+
+  it('state changes off / one state change off: the matching hint', () => {
+    inCheckout()
+    policyHook.policy = policy({ per_run_events_enabled: true, transitions_enabled: false })
+    prefs.data = [SLACK_PREF]
+    const { container, unmount } = renderPage()
+    const card = container.querySelector('[data-channel-card="slack"]') as HTMLElement
+    expect(within(optionLabel(card, 'Test recovered (transition)')).getByText('Not sent in Checkout: state-change notifications are off')).toBeInTheDocument()
+    unmount()
+
+    policyHook.policy = policy({ per_run_events_enabled: true, enabled_events: ['test.newly_failing'] })
+    const second = renderPage()
+    const card2 = second.container.querySelector('[data-channel-card="slack"]') as HTMLElement
+    expect(within(optionLabel(card2, 'Test recovered (transition)')).getByText('Not sent in Checkout: this state change is turned off')).toBeInTheDocument()
+    expect(optionLabel(card2, 'Test newly failing (transition)').querySelector('[data-event-hint]')).toBeNull()
+  })
+
+  it('All Projects: no policy is asked for (the hook gets null), one muted line, no hint', () => {
+    policyHook.policy = policy({ per_run_events_enabled: false })
+    prefs.data = [SLACK_PREF]
+    const { container } = renderPage()
+    expect(policyHook.calls.length).toBeGreaterThan(0)
+    expect(policyHook.calls.every(id => id === null)).toBe(true)
+    const card = container.querySelector('[data-channel-card="slack"]') as HTMLElement
+    expect(within(card).getByText("Run and state-change events depend on each project's notification policy.")).toBeInTheDocument()
+    expect(container.querySelector('[data-event-hint]')).toBeNull()
+  })
+
+  it('a QA lead sees "Change it in Email (SMTP) & channels" after each hint; a viewer does not', () => {
+    inCheckout()
+    policyHook.policy = policy({ per_run_events_enabled: false })
+    prefs.data = [SLACK_PREF]
+    useAuthStore.setState({ user: { id: 'u1', role: 'QA_LEAD' } as never })
+    const lead = renderPage()
+    const links = within(lead.container).getAllByRole('link', { name: 'Change it in Email (SMTP) & channels' })
+    // Run failed, Run passed, High failure rate.
+    expect(links).toHaveLength(3)
+    for (const link of links) expect(link).toHaveAttribute('href', '/settings/notifications#notification-policy')
+    lead.unmount()
+
+    useAuthStore.setState({ user: { id: 'u1', role: 'VIEWER' } as never })
+    const viewer = renderPage()
+    expect(within(viewer.container).getAllByText(/per-run notifications are off/)).toHaveLength(3)
+    expect(within(viewer.container).queryByRole('link', { name: /Change it in Email/ })).toBeNull()
+  })
+
+  it.each([
+    ['an empty object', {}],
+    ['a string', 'per-run off'],
+    ['wrong-typed switches', { project_id: P, per_run_events_enabled: 'false', transitions_enabled: 0, enabled_events: [] }],
+    ['events not a list', { ...policy(), enabled_events: 'all' }],
+  ])('a garbage policy (%s): no hint, and the page renders', (_name, garbage) => {
+    inCheckout()
+    policyHook.policy = garbage
+    prefs.data = [SLACK_PREF]
+    const { container } = renderPage()
+    expect(screen.getByRole('heading', { name: 'My notifications' })).toBeInTheDocument()
+    expect(container.querySelector('[data-channel-card="slack"]')).toBeTruthy()
+    expect(container.querySelector('[data-event-hint]')).toBeNull()
+    expect(screen.queryByText(/Not sent in/)).toBeNull()
+  })
+
+  it('the project name is React text, never markup', () => {
+    useProjectStore.setState({ activeProjectId: P, activeProject: { id: P, name: '<img src=x onerror=alert(1)>' } as never })
+    policyHook.policy = policy({ per_run_events_enabled: false })
+    prefs.data = [SLACK_PREF]
+    const { container } = renderPage()
+    expect(container.querySelector('img')).toBeNull()
+    expect(screen.getAllByText(/Not sent in <img src=x onerror=alert\(1\)>: per-run/).length).toBe(3)
   })
 })

@@ -5143,6 +5143,10 @@ class DigestSubscription(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     project_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=True)
     saved_view_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("saved_views.id", ondelete="SET NULL"), nullable=True)
+    # W09 NTF-04 (migration 0221): the bound view's name, snapshotted on every
+    # bind. ``saved_view_id IS NULL AND saved_view_name IS NOT NULL`` = the view
+    # was deleted (the FK is ON DELETE SET NULL), so the digest can say so.
+    saved_view_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     schedule: Mapped[DigestSchedule] = mapped_column(String(20), nullable=False, default=DigestSchedule.WEEKLY.value)
     channel: Mapped[NotificationChannel] = mapped_column(String(20), nullable=False, default=NotificationChannel.EMAIL.value)

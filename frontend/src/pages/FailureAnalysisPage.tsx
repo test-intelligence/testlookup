@@ -2235,7 +2235,7 @@ export default function FailureAnalysisPage() {
       : !row.test.test_fingerprint
         ? 'Test identity (fingerprint) not available yet — cannot propose a quarantine.'
         : quarantineOn === false
-          ? 'Quarantine is off for this project: an admin turns on the flaky_auto_quarantine flag in Settings › Feature flags.'
+          ? 'Quarantine is off for this project: the flaky_auto_quarantine flag in Settings › Feature flags is switched off or limited to other projects.'
           : null,
     onCreateJira: (row) => setJiraFor(row),
     // Disabled when there's no identity/project, or when the metadata probe

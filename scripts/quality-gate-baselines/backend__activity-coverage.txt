@@ -14,7 +14,7 @@
 # ---- notes below this line are preserved across --update-baseline ----
 2676c41de6d24dda  # backend/app/routers/agent_actions.py:71  in transition_agent_action  @router.patch("/{project_id}/agent-actions/{action_id}")
 3d43a41d1ea33865  # backend/app/routers/agent_investigations.py:163  in start_investigation  @router.post(
-418819775e838798  # backend/app/routers/agent_investigations.py:231  in cancel_investigation  @router.post(
+418819775e838798  # backend/app/routers/agent_investigations.py:236  in cancel_investigation  @router.post(
 e0ca11061a227e85  # backend/app/routers/agent_memory.py:94  in recall_similar_memories  @router.post(
 6b95b209c407468d  # backend/app/routers/ai_evaluation.py:123  in create_dataset  @router.post("/datasets", response_model=AIEvalDatasetResponse, status_code=201)
 8922751081f1dc82  # backend/app/routers/ai_evaluation.py:144  in create_dataset_from_feedback  @router.post("/datasets/from-feedback", response_model=AIEvalDatasetResponse, s…
@@ -23,130 +23,114 @@ b84c8394b0d9f2e0  # backend/app/routers/ai_evaluation.py:212  in run_evaluation 
 67bce288df205e7e  # backend/app/routers/ai_evaluation.py:348  in create_report_eval_cycle  @router.post("/report-cycles", status_code=201)
 6e3f83e8db82de84  # backend/app/routers/ai_evaluation.py:476  in run_pre_release_gate  @router.post("/pre-release-gate")
 5ed19f29da9ce45d  # backend/app/routers/ai_evaluation.py:500  in run_agent_stack_release_gate  @router.post("/agent-stack-release-gate")
-d2c1a8eaeab87a74  # backend/app/routers/ai_evaluation.py:680  in set_baseline  @router.post("/baselines", status_code=201)
-1b345949ab82e681  # backend/app/routers/ai_evaluation.py:743  in seed_golden_datasets  @router.post("/golden-datasets/seed", status_code=201)
-dfd4e0516545c383  # backend/app/routers/analytics.py:536  in create_defect  @router.post(
-9d93f42ccd4b37a0  # backend/app/routers/analytics.py:604  in notify_suite_owner  @router.post("/notify-owner", response_model=NotifyTestOwnerResponse)
-cc8796540d42797a  # backend/app/routers/analytics.py:689  in classify_uncategorized_failures  @router.post("/classify-uncategorized", response_model=ClassifyUncategorizedRes…
-7080174a1098915d  # backend/app/routers/analyze.py:246  in analyze_test_case  @router.post(
-1961ac64b9cef330  # backend/app/routers/chat.py:71  in create_session  @router.post("/sessions", response_model=ChatSessionResponse, status_code=201)
-f05b2efa5645c677  # backend/app/routers/chat.py:96  in delete_session  @router.delete("/sessions/{session_id}", status_code=204)
-6255a2d1ec22662d  # backend/app/routers/chat.py:116  in send_message  @router.post("/sessions/{session_id}/messages", response_model=SendMessageRespo…
-3d03c3f8af79e8f4  # backend/app/routers/compliance_packs.py:52  in generate_compliance_pack  @router.post(
-629766d5b20d15e8  # backend/app/routers/compliance_packs.py:152  in retire_compliance_pack  @router.post(
-10406d2dacce4af6  # backend/app/routers/compliance_packs.py:205  in delete_compliance_pack  @router.delete("/api/v1/compliance-packs/{pack_id}", status_code=204)
-27c6f0a63d3aebf4  # backend/app/routers/deep_investigation.py:89  in trigger_deep_investigation  @router.post("/{run_id}", response_model=TriggerDeepResponse)
-7b4ae4423423f18c  # backend/app/routers/deep_investigation.py:224  in promote_cluster_to_defect  @router.post(
-b8782bafb3379edd  # backend/app/routers/deep_investigation.py:325  in review_defect  @router.post(
-7c99eee4182c72df  # backend/app/routers/defect_jira.py:80  in create_jira_defect_one_click  @router.post(
-7983f4daf343bbfb  # backend/app/routers/digests.py:39  in create_subscription  @router.post("/subscriptions", response_model=DigestSubscriptionResponse, statu…
-5795c02ff97404c3  # backend/app/routers/digests.py:138  in update_subscription  @router.patch("/subscriptions/{sub_id}", response_model=DigestSubscriptionRespo…
-47aeca1101daeadf  # backend/app/routers/digests.py:171  in delete_subscription  @router.delete("/subscriptions/{sub_id}", status_code=204)
-154ef6b1e9e3d3fc  # backend/app/routers/digests.py:192  in pause_subscription  @router.post("/subscriptions/{sub_id}/pause", response_model=DigestSubscription…
-6302f191ed27166e  # backend/app/routers/digests.py:214  in resume_subscription  @router.post("/subscriptions/{sub_id}/resume", response_model=DigestSubscriptio…
+d2c1a8eaeab87a74  # backend/app/routers/ai_evaluation.py:695  in set_baseline  @router.post("/baselines", status_code=201)
+1b345949ab82e681  # backend/app/routers/ai_evaluation.py:758  in seed_golden_datasets  @router.post("/golden-datasets/seed", status_code=201)
+dfd4e0516545c383  # backend/app/routers/analytics.py:720  in create_defect  @router.post(
+9d93f42ccd4b37a0  # backend/app/routers/analytics.py:799  in notify_suite_owner  @router.post("/notify-owner", response_model=NotifyTestOwnerResponse)
+1961ac64b9cef330  # backend/app/routers/chat.py:88  in create_session  @router.post("/sessions", response_model=ChatSessionResponse, status_code=201)
+f05b2efa5645c677  # backend/app/routers/chat.py:114  in delete_session  @router.delete("/sessions/{session_id}", status_code=204)
+6255a2d1ec22662d  # backend/app/routers/chat.py:134  in send_message  @router.post("/sessions/{session_id}/messages", response_model=SendMessageRespo…
+3d03c3f8af79e8f4  # backend/app/routers/compliance_packs.py:93  in generate_compliance_pack  @router.post(
+629766d5b20d15e8  # backend/app/routers/compliance_packs.py:193  in retire_compliance_pack  @router.post(
+10406d2dacce4af6  # backend/app/routers/compliance_packs.py:246  in delete_compliance_pack  @router.delete("/api/v1/compliance-packs/{pack_id}", status_code=204)
+27c6f0a63d3aebf4  # backend/app/routers/deep_investigation.py:94  in trigger_deep_investigation  @router.post("/{run_id}", response_model=TriggerDeepResponse)
+7c99eee4182c72df  # backend/app/routers/defect_jira.py:89  in create_jira_defect_one_click  @router.post(
+7983f4daf343bbfb  # backend/app/routers/digests.py:50  in create_subscription  @router.post("/subscriptions", response_model=DigestSubscriptionResponse, statu…
+5795c02ff97404c3  # backend/app/routers/digests.py:177  in update_subscription  @router.patch("/subscriptions/{sub_id}", response_model=DigestSubscriptionRespo…
+47aeca1101daeadf  # backend/app/routers/digests.py:246  in delete_subscription  @router.delete("/subscriptions/{sub_id}", status_code=204)
+154ef6b1e9e3d3fc  # backend/app/routers/digests.py:267  in pause_subscription  @router.post("/subscriptions/{sub_id}/pause", response_model=DigestSubscription…
+6302f191ed27166e  # backend/app/routers/digests.py:289  in resume_subscription  @router.post("/subscriptions/{sub_id}/resume", response_model=DigestSubscriptio…
 3ffbc388c94f6432  # backend/app/routers/duplicates.py:160  in run_duplicate_detection  @router.post(
 d87bfb8d4739e0fc  # backend/app/routers/duplicates.py:193  in dismiss_duplicate_candidate  @router.post(
 79d290548f54236a  # backend/app/routers/duplicates.py:228  in merge_duplicate_candidate  @router.post(
-8663082b8d1882f7  # backend/app/routers/feedback.py:310  in submit_feedback  @router.post("/feedback/{analysis_id}", status_code=201)
-eca144fefb74d57c  # backend/app/routers/feedback.py:323  in submit_decision_report_feedback  @router.post("/runs/{run_id}/decision-reports/{report_id}/feedback", status_cod…
-708df16e6b2ed033  # backend/app/routers/feedback.py:341  in update_feedback  @router.put("/feedback/{analysis_id}", status_code=200)
-e27c2142a7b4ce81  # backend/app/routers/feedback.py:417  in trigger_export  @router.post("/training/export", status_code=202)
-14b4bfd35b07e30b  # backend/app/routers/feedback.py:424  in trigger_finetune  @router.post("/training/finetune", status_code=202)
-d993e415ad9884b7  # backend/app/routers/feedback.py:432  in promote_model  @router.post("/training/promote", status_code=200)
-436ee4d6329480b0  # backend/app/routers/fixer.py:191  in start_fixer_run  @router.post(
+8663082b8d1882f7  # backend/app/routers/feedback.py:323  in submit_feedback  @router.post("/feedback/{analysis_id}", status_code=201)
+eca144fefb74d57c  # backend/app/routers/feedback.py:348  in submit_decision_report_feedback  @router.post("/runs/{run_id}/decision-reports/{report_id}/feedback", status_cod…
+708df16e6b2ed033  # backend/app/routers/feedback.py:366  in update_feedback  @router.put("/feedback/{analysis_id}", status_code=200)
+e27c2142a7b4ce81  # backend/app/routers/feedback.py:449  in trigger_export  @router.post("/training/export", status_code=202)
+14b4bfd35b07e30b  # backend/app/routers/feedback.py:456  in trigger_finetune  @router.post("/training/finetune", status_code=202)
+d993e415ad9884b7  # backend/app/routers/feedback.py:464  in promote_model  @router.post("/training/promote", status_code=200)
+436ee4d6329480b0  # backend/app/routers/fixer.py:190  in start_fixer_run  @router.post(
 4ec72622f9bcd5d2  # backend/app/routers/github_integration.py:61  in upsert_github_integration  @router.put(
 d5b9a63fc3a67eff  # backend/app/routers/github_integration.py:87  in test_github_integration  @router.post(
 b626b013b0daefc6  # backend/app/routers/github_integration.py:103  in delete_github_integration  @router.delete(
 1a5f57e8929f2902  # backend/app/routers/gitlab_integration.py:89  in upsert_gitlab_integration  @router.put(
 11e8b35d780836d2  # backend/app/routers/gitlab_integration.py:128  in test_gitlab_integration  @router.post(
 626734433cdee42e  # backend/app/routers/integration_health.py:43  in trigger_probe  @router.post("/probe")
-402a1dfead79ebfe  # backend/app/routers/integrations.py:22  in create_jira_defect  @router.post(
+402a1dfead79ebfe  # backend/app/routers/integrations.py:24  in create_jira_defect  @router.post(
 dae7da18587ea6a2  # backend/app/routers/knowledge_sources.py:58  in create_knowledge_source  @router.post(
 7befc7940f7d334f  # backend/app/routers/knowledge_sources.py:86  in update_knowledge_source  @router.patch(
 a352e0a95a0aae4b  # backend/app/routers/knowledge_sources.py:106  in delete_knowledge_source  @router.delete(
 6fdd9ea1b8be4fc7  # backend/app/routers/knowledge_sources.py:126  in trigger_sync  @router.post(
-933f9c05cc83e486  # backend/app/routers/knowledge_sources.py:180  in test_connector  @router.post(
-96635d33f7bee7b2  # backend/app/routers/knowledge_sources.py:213  in update_domain_allowlist  @router.put(
-c4caba0c56c5b5b8  # backend/app/routers/llm_cost_budget.py:69  in upsert_project_quota  @router.put("/projects/{project_id}/llm-quota", response_model=LlmQuotaRead)
-0856d17b97ea6cfc  # backend/app/routers/my_failures.py:469  in reassign_assigned_failure  @router.put("/assigned-failures/{test_case_id}/reassign", response_model=MyFail…
-7887b54f872c7da8  # backend/app/routers/my_failures.py:553  in update_failure_triage_status  @router.put(
-3d2a4ceeffd05281  # backend/app/routers/notifications.py:49  in upsert_preference  @router.post("/preferences", response_model=NotificationPreferenceResponse, sta…
-51248b4260dbf615  # backend/app/routers/notifications.py:61  in update_preference  @router.put("/preferences/{pref_id}", response_model=NotificationPreferenceResp…
-e60ed314f524bcbe  # backend/app/routers/notifications.py:74  in delete_preference  @router.delete("/preferences/{pref_id}", status_code=204)
-22000c8f4eb9373a  # backend/app/routers/notifications.py:102  in mark_read  @router.post("/history/{log_id}/read", status_code=204)
-4e57bd1a817ebdd8  # backend/app/routers/notifications.py:112  in mark_all_read  @router.post("/history/read-all", status_code=204)
-79d08d7bc4b5c906  # backend/app/routers/notifications.py:161  in update_transition_policy  @router.put(
-e80a7f4b276f4e44  # backend/app/routers/notifications.py:196  in send_test  @router.post("/test")
-921bc0b9ffdfc686  # backend/app/routers/ownership.py:50  in create_ownership_rule  @router.post("/rules", response_model=OwnershipRuleResponse, status_code=201)
-1ace3787164fd4e4  # backend/app/routers/ownership.py:76  in update_ownership_rule  @router.patch("/rules/{rule_id}", response_model=OwnershipRuleResponse)
-14b16f20172e832e  # backend/app/routers/ownership.py:104  in delete_ownership_rule  @router.delete("/rules/{rule_id}", status_code=204)
-c439a44b6b7623e2  # backend/app/routers/ownership.py:128  in bulk_import_rules  @router.post("/rules/bulk-import", response_model=list[OwnershipRuleResponse], …
-9a2ba2ec252346f1  # backend/app/routers/ownership.py:186  in import_codeowners  @router.post("/codeowners/import", response_model=CodeownersImportResponse, sta…
-b33d5cfa0fca25e1  # backend/app/routers/ownership.py:294  in upsert_team_channel  @router.put("/team-channels/{team_name}", response_model=TeamChannelResponse)
-7b973c0901df3fd6  # backend/app/routers/ownership.py:332  in delete_team_channel  @router.delete("/team-channels/{team_name}", status_code=204)
+933f9c05cc83e486  # backend/app/routers/knowledge_sources.py:182  in test_connector  @router.post(
+96635d33f7bee7b2  # backend/app/routers/knowledge_sources.py:221  in update_domain_allowlist  @router.put(
+c4caba0c56c5b5b8  # backend/app/routers/llm_cost_budget.py:70  in upsert_project_quota  @router.put("/projects/{project_id}/llm-quota", response_model=LlmQuotaRead)
+0856d17b97ea6cfc  # backend/app/routers/my_failures.py:512  in reassign_assigned_failure  @router.put("/assigned-failures/{test_case_id}/reassign", response_model=MyFail…
+7887b54f872c7da8  # backend/app/routers/my_failures.py:596  in update_failure_triage_status  @router.put(
+3d2a4ceeffd05281  # backend/app/routers/notifications.py:80  in upsert_preference  @router.post("/preferences", response_model=NotificationPreferenceResponse, sta…
+51248b4260dbf615  # backend/app/routers/notifications.py:92  in update_preference  @router.put("/preferences/{pref_id}", response_model=NotificationPreferenceResp…
+e60ed314f524bcbe  # backend/app/routers/notifications.py:105  in delete_preference  @router.delete("/preferences/{pref_id}", status_code=204)
+22000c8f4eb9373a  # backend/app/routers/notifications.py:141  in mark_read  @router.post("/history/{log_id}/read", status_code=204)
+4e57bd1a817ebdd8  # backend/app/routers/notifications.py:151  in mark_all_read  @router.post("/history/read-all", status_code=204)
+e80a7f4b276f4e44  # backend/app/routers/notifications.py:270  in send_test  @router.post("/test")
+921bc0b9ffdfc686  # backend/app/routers/ownership.py:56  in create_ownership_rule  @router.post("/rules", response_model=OwnershipRuleResponse, status_code=201)
+1ace3787164fd4e4  # backend/app/routers/ownership.py:82  in update_ownership_rule  @router.patch("/rules/{rule_id}", response_model=OwnershipRuleResponse)
+14b16f20172e832e  # backend/app/routers/ownership.py:110  in delete_ownership_rule  @router.delete("/rules/{rule_id}", status_code=204)
+c439a44b6b7623e2  # backend/app/routers/ownership.py:134  in bulk_import_rules  @router.post("/rules/bulk-import", response_model=list[OwnershipRuleResponse], …
+9a2ba2ec252346f1  # backend/app/routers/ownership.py:192  in import_codeowners  @router.post("/codeowners/import", response_model=CodeownersImportResponse, sta…
+b33d5cfa0fca25e1  # backend/app/routers/ownership.py:412  in upsert_team_channel  @router.put("/team-channels/{team_name}", response_model=TeamChannelResponse)
+7b973c0901df3fd6  # backend/app/routers/ownership.py:450  in delete_team_channel  @router.delete("/team-channels/{team_name}", status_code=204)
 5643602d00a55159  # backend/app/routers/projects.py:249  in delete_project  @router.delete(
-3de29359df66a68c  # backend/app/routers/projects.py:278  in reset_project_data  @router.post(
-368b03da5130cc88  # backend/app/routers/projects.py:335  in reset_default_qa_lead_password_endpoint  @router.post(
+3de29359df66a68c  # backend/app/routers/projects.py:284  in reset_project_data  @router.post(
+368b03da5130cc88  # backend/app/routers/projects.py:341  in reset_default_qa_lead_password_endpoint  @router.post(
 dd44ddea863c2bf9  # backend/app/routers/rag_generation.py:52  in rag_retrieve  @router.post(
-77196b32c91dadb5  # backend/app/routers/rag_generation.py:89  in rag_generate  @router.post(
-5853f85c8065ac5e  # backend/app/routers/rag_generation.py:202  in batch_accept  @router.post(
-e0641f1273c1de93  # backend/app/routers/rag_generation.py:226  in accept_case  @router.post(
-b8cd2a75cc4d8004  # backend/app/routers/rag_generation.py:245  in reject_case  @router.post(
-5919badeca692fff  # backend/app/routers/rag_generation.py:315  in dismiss_stale  @router.post(
-94e161b753d4afe4  # backend/app/routers/release_gate_policies.py:167  in create_policy  @router.post("", response_model=ReleaseGatePolicyResponse, status_code=201)
-bf73dc2223e5074b  # backend/app/routers/release_gate_policies.py:213  in update_policy  @router.patch("/{policy_id}", response_model=ReleaseGatePolicyResponse)
-420a5655f02e0995  # backend/app/routers/release_gate_policies.py:250  in publish_policy  @router.post("/{policy_id}/publish", response_model=ReleaseGatePolicyResponse)
-136c240a122edcdb  # backend/app/routers/release_gate_policies.py:292  in deactivate_policy  @router.post("/{policy_id}/deactivate", response_model=ReleaseGatePolicyRespons…
-4712fd14a801f354  # backend/app/routers/release_gate_policies.py:315  in simulate_policy  @router.post("/simulate", response_model=PolicySimulateResponse)
-135c69910b44cb9b  # backend/app/routers/release_readiness.py:73  in override_release_decision  @router.post("/{run_id}/override", response_model=ReleaseCouncilResponse)
-e0546e7cdec3d72c  # backend/app/routers/releases.py:280  in sync_releases_from_external  @router.post("/sync")
-f4832734540644f9  # backend/app/routers/releases.py:442  in evaluate_release_gate  @router.post("/{release_id}/gate/evaluate")
-508a656fe5a2eb47  # backend/app/routers/releases.py:480  in add_phase  @router.post("/{release_id}/phases", status_code=201)
-403eeb6797a11935  # backend/app/routers/releases.py:494  in update_phase  @router.put("/{release_id}/phases/{phase_id}")
-0dc6fc00f1c2eafd  # backend/app/routers/releases.py:516  in activate_release_endpoint  @router.post("/{release_id}/activate")
-2268f8e551edc0bb  # backend/app/routers/releases.py:627  in evaluate_release_phase_gate  @router.post("/{release_id}/phases/{phase_id}/gate/evaluate")
-4e0a69e7402662f5  # backend/app/routers/releases.py:650  in delete_phase  @router.delete("/{release_id}/phases/{phase_id}", status_code=204)
-3975c5003be5c116  # backend/app/routers/releases.py:664  in link_test_run  @router.post("/{release_id}/test-runs")
-c494baadfcf80676  # backend/app/routers/releases.py:683  in unlink_test_run  @router.delete("/{release_id}/test-runs/{run_id}", status_code=204)
-73184d93a55f91b1  # backend/app/routers/reports.py:42  in email_trends_report  @router.post("/email-trends")
-253d36928bcf0d27  # backend/app/routers/reports.py:215  in create_share_link_endpoint  @router.post("/runs/{run_id}/share", response_model=ShareLinkResponse, status_c…
-7934901b0f20ae3c  # backend/app/routers/reports.py:331  in revoke_share_link_endpoint  @router.delete("/share-links/{link_id}", status_code=204)
-4c063c6e72f0c1c2  # backend/app/routers/retention.py:83  in put_retention_policy  @router.put(
-77fdf3372a74b060  # backend/app/routers/retention.py:205  in preview_retention_purge  @router.post(
-86679de026debaea  # backend/app/routers/retention.py:226  in enqueue_retention_purge  @router.post(
-7c54fd8f377d3557  # backend/app/routers/retention.py:269  in preview_criteria_deletion  @router.post(
-78de11a0dd52bd7c  # backend/app/routers/retention.py:376  in execute_criteria_deletion  @router.post(
-1c1fd060156d2184  # backend/app/routers/run_intelligence.py:264  in refresh_intelligence  @router.post("/{run_id}/intelligence/refresh")
-24141cff79eac1ea  # backend/app/routers/runs.py:505  in set_run_release  @router.post("/{run_id}/release")
-2a57c1ce6c5ee82e  # backend/app/routers/runs.py:580  in recover_live_run_from_buffer  @router.post("/{run_id}/recover-live", status_code=202)
-0c9b42b2f9412c2d  # backend/app/routers/runs.py:745  in delete_run  @router.delete("/{run_id}", status_code=202, response_model=DeleteRunAcceptedRe…
-06160e1620eb8114  # backend/app/routers/saved_views.py:129  in create_saved_view  @router.post("", response_model=SavedViewResponse, status_code=201)
-8a313c4a49ff08e6  # backend/app/routers/saved_views.py:236  in update_saved_view  @router.patch("/{view_id}", response_model=SavedViewResponse)
-40635bf00fdf2506  # backend/app/routers/saved_views.py:272  in delete_saved_view  @router.delete("/{view_id}", status_code=204)
-f271a69b484c9cee  # backend/app/routers/search.py:87  in trigger_reindex  @router.post("/reindex")
+77196b32c91dadb5  # backend/app/routers/rag_generation.py:91  in rag_generate  @router.post(
+5853f85c8065ac5e  # backend/app/routers/rag_generation.py:213  in batch_accept  @router.post(
+e0641f1273c1de93  # backend/app/routers/rag_generation.py:237  in accept_case  @router.post(
+b8cd2a75cc4d8004  # backend/app/routers/rag_generation.py:256  in reject_case  @router.post(
+5919badeca692fff  # backend/app/routers/rag_generation.py:326  in dismiss_stale  @router.post(
+94e161b753d4afe4  # backend/app/routers/release_gate_policies.py:233  in create_policy  @router.post("", response_model=ReleaseGatePolicyResponse, status_code=201)
+bf73dc2223e5074b  # backend/app/routers/release_gate_policies.py:292  in update_policy  @router.patch("/{policy_id}", response_model=ReleaseGatePolicyResponse)
+420a5655f02e0995  # backend/app/routers/release_gate_policies.py:329  in publish_policy  @router.post("/{policy_id}/publish", response_model=ReleaseGatePolicyResponse)
+136c240a122edcdb  # backend/app/routers/release_gate_policies.py:400  in deactivate_policy  @router.post("/{policy_id}/deactivate", response_model=ReleaseGatePolicyRespons…
+4712fd14a801f354  # backend/app/routers/release_gate_policies.py:427  in simulate_policy  @router.post("/simulate", response_model=PolicySimulateResponse)
+e0546e7cdec3d72c  # backend/app/routers/releases.py:320  in sync_releases_from_external  @router.post("/sync")
+f4832734540644f9  # backend/app/routers/releases.py:520  in evaluate_release_gate  @router.post("/{release_id}/gate/evaluate")
+2268f8e551edc0bb  # backend/app/routers/releases.py:723  in evaluate_release_phase_gate  @router.post("/{release_id}/phases/{phase_id}/gate/evaluate")
+253d36928bcf0d27  # backend/app/routers/reports.py:423  in create_share_link_endpoint  @router.post("/runs/{run_id}/share", response_model=ShareLinkResponse, status_c…
+7934901b0f20ae3c  # backend/app/routers/reports.py:539  in revoke_share_link_endpoint  @router.delete("/share-links/{link_id}", status_code=204)
+4c063c6e72f0c1c2  # backend/app/routers/retention.py:85  in put_retention_policy  @router.put(
+77fdf3372a74b060  # backend/app/routers/retention.py:209  in preview_retention_purge  @router.post(
+86679de026debaea  # backend/app/routers/retention.py:231  in enqueue_retention_purge  @router.post(
+7c54fd8f377d3557  # backend/app/routers/retention.py:274  in preview_criteria_deletion  @router.post(
+78de11a0dd52bd7c  # backend/app/routers/retention.py:381  in execute_criteria_deletion  @router.post(
+1c1fd060156d2184  # backend/app/routers/run_intelligence.py:378  in refresh_intelligence  @router.post("/{run_id}/intelligence/refresh")
+24141cff79eac1ea  # backend/app/routers/runs.py:681  in set_run_release  @router.post("/{run_id}/release")
+2a57c1ce6c5ee82e  # backend/app/routers/runs.py:760  in recover_live_run_from_buffer  @router.post("/{run_id}/recover-live", status_code=202)
+0c9b42b2f9412c2d  # backend/app/routers/runs.py:925  in delete_run  @router.delete("/{run_id}", status_code=202, response_model=DeleteRunAcceptedRe…
+f271a69b484c9cee  # backend/app/routers/search.py:93  in trigger_reindex  @router.post("/reindex")
 87592c35eb87fc9f  # backend/app/routers/suites.py:171  in create_suite  @router.post(
 50c47ef524bad8ca  # backend/app/routers/suites.py:228  in update_suite  @router.patch(
-ffdba70149d701de  # backend/app/routers/suites.py:253  in delete_suite  @router.delete(
-2b9b7c0fee36b06a  # backend/app/routers/suites.py:269  in set_default  @router.post(
-4a2e7b34003f9ffb  # backend/app/routers/suites.py:416  in promote_canonical_case  @router.post(
-e5f529516a47a5f9  # backend/app/routers/suites.py:446  in unlink_canonical_managed_case  @router.delete(
-110866c322cdcadd  # backend/app/routers/suites.py:467  in confirm_canonical_retirement  @router.post(
-e5be2debf1df3036  # backend/app/routers/suites.py:489  in link_canonical_to_suite  @router.post(
-7e8ab0ee7311ab78  # backend/app/routers/suites.py:512  in bulk_link_canonicals_to_suite  @router.post(
-1560f9810f2490f9  # backend/app/routers/test_execution_reviews.py:90  in upsert_test_case_review  @router.put("/{test_case_id}/review", response_model=TestExecutionReviewRead)
-043436197189c8d9  # backend/app/routers/test_execution_reviews.py:117  in clear_test_case_review  @router.delete("/{test_case_id}/review", status_code=204)
-e6a953d7fe8914a7  # backend/app/routers/test_health.py:86  in refresh_project_flaky_coach  @router.post("/projects/{project_id}/flaky-coach/refresh")
+ffdba70149d701de  # backend/app/routers/suites.py:260  in delete_suite  @router.delete(
+2b9b7c0fee36b06a  # backend/app/routers/suites.py:276  in set_default  @router.post(
+4a2e7b34003f9ffb  # backend/app/routers/suites.py:423  in promote_canonical_case  @router.post(
+e5f529516a47a5f9  # backend/app/routers/suites.py:453  in unlink_canonical_managed_case  @router.delete(
+110866c322cdcadd  # backend/app/routers/suites.py:474  in confirm_canonical_retirement  @router.post(
+e5be2debf1df3036  # backend/app/routers/suites.py:496  in link_canonical_to_suite  @router.post(
+7e8ab0ee7311ab78  # backend/app/routers/suites.py:524  in bulk_link_canonicals_to_suite  @router.post(
+1560f9810f2490f9  # backend/app/routers/test_execution_reviews.py:91  in upsert_test_case_review  @router.put("/{test_case_id}/review", response_model=TestExecutionReviewRead)
+043436197189c8d9  # backend/app/routers/test_execution_reviews.py:120  in clear_test_case_review  @router.delete("/{test_case_id}/review", status_code=204)
+e6a953d7fe8914a7  # backend/app/routers/test_health.py:98  in refresh_project_flaky_coach  @router.post("/projects/{project_id}/flaky-coach/refresh")
 ad08ae1f9fd0bb7f  # backend/app/routers/test_management_ai.py:31  in ai_generate_cases  @router.post("/cases/ai-generate", response_model=AIGenerateTestCasesResponse)
 1257bbbcff4bd949  # backend/app/routers/test_management_ai.py:45  in ai_generate_cases_async  @router.post("/cases/ai-generate/async", response_model=AITaskEnqueueResponse)
 3587132befa9ed3b  # backend/app/routers/test_management_ai.py:64  in ai_review_case  @router.post("/cases/{case_id}/ai-review", response_model=AIReviewTestCaseRespo…
 067e1f5b1cc1dca5  # backend/app/routers/test_management_ai.py:75  in ai_coverage_analysis  @router.post("/cases/ai-coverage", response_model=AICoverageAnalysisResponse)
-899728759ca8aa30  # backend/app/routers/test_management_cases.py:199  in create_test_case  @router.post("/cases", response_model=ManagedTestCaseResponse, status_code=stat…
-d16fd32b070052a0  # backend/app/routers/test_management_cases.py:255  in update_test_case  @router.patch("/cases/{case_id}", response_model=ManagedTestCaseResponse)
-8075da70cca21ae2  # backend/app/routers/test_management_cases.py:270  in deprecate_test_case  @router.delete("/cases/{case_id}", status_code=status.HTTP_204_NO_CONTENT)
-d2ea9f628207a5fb  # backend/app/routers/test_management_cases.py:296  in request_review  @router.post("/cases/{case_id}/request-review", response_model=TestCaseReviewRe…
-a14e52d258f14923  # backend/app/routers/test_management_cases.py:310  in transition_test_case  @router.post("/cases/{case_id}/transition", response_model=ManagedTestCaseRespo…
-b131d46fa0d733fa  # backend/app/routers/test_management_cases.py:347  in review_action  @router.post("/cases/{case_id}/review-action", response_model=ManagedTestCaseRe…
-2d5ad35d93578b41  # backend/app/routers/test_management_cases.py:384  in add_comment  @router.post("/cases/{case_id}/comments", response_model=TestCaseCommentRespons…
+899728759ca8aa30  # backend/app/routers/test_management_cases.py:284  in create_test_case  @router.post("/cases", response_model=ManagedTestCaseResponse, status_code=stat…
+d16fd32b070052a0  # backend/app/routers/test_management_cases.py:341  in update_test_case  @router.patch("/cases/{case_id}", response_model=ManagedTestCaseResponse)
+8075da70cca21ae2  # backend/app/routers/test_management_cases.py:356  in deprecate_test_case  @router.delete("/cases/{case_id}", status_code=status.HTTP_204_NO_CONTENT)
+d2ea9f628207a5fb  # backend/app/routers/test_management_cases.py:382  in request_review  @router.post("/cases/{case_id}/request-review", response_model=TestCaseReviewRe…
+a14e52d258f14923  # backend/app/routers/test_management_cases.py:396  in transition_test_case  @router.post("/cases/{case_id}/transition", response_model=ManagedTestCaseRespo…
+b131d46fa0d733fa  # backend/app/routers/test_management_cases.py:434  in review_action  @router.post("/cases/{case_id}/review-action", response_model=ManagedTestCaseRe…
+2d5ad35d93578b41  # backend/app/routers/test_management_cases.py:471  in add_comment  @router.post("/cases/{case_id}/comments", response_model=TestCaseCommentRespons…
 258097ce0ffc79ab  # backend/app/routers/test_management_plans.py:66  in create_plan  @router.post("/plans", response_model=TestPlanResponse, status_code=status.HTTP…
 347fc2bde3d961d7  # backend/app/routers/test_management_plans.py:88  in update_plan  @router.patch("/plans/{plan_id}", response_model=TestPlanResponse)
 8e7f28140738b77d  # backend/app/routers/test_management_plans.py:114  in add_plan_item  @router.post("/plans/{plan_id}/items", response_model=TestPlanItemResponse, sta…

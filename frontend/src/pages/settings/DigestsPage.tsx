@@ -1,3 +1,22 @@
+/**
+ * Digests & Saved Views (`/settings/digests`).
+ *
+ * W09:
+ *  - NTF-03: a Per Release digest names a release of the top bar project
+ *    (`DigestReleaseSelect`, fed by the top bar's own cached release list: no
+ *    request of its own); a row says what it covers (`Per Release · 2026.10
+ *    via email · …`) and, when the server says it cannot deliver, a badge and
+ *    an inline fix (`SubscriptionScopeFix`).
+ *  - NTF-04: Saved Views lists the project's REPORT views and the legacy
+ *    empty rows, edited in the page (`DigestViewEditor`); a Daily or Weekly
+ *    digest may name one (`DigestViewPicker`), and the preview says what a
+ *    filtered digest covers (`DigestScopeBlock`).
+ *
+ * Nothing new is asked on load (contract §6.5): the views are read when the
+ * Saved Views or Preview tab opens, or when a picker on the Subscriptions tab
+ * is clicked. Every new form is in the page (owner rule 2026-10-16); the two
+ * existing `confirm`s (Unsubscribe, Delete view) stay until W27.
+ */
 import { useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { clsx } from 'clsx';
@@ -10,20 +29,33 @@ import Disclosure from '@/components/ui/Disclosure';
 import { buildDigestWorkflow } from '@/components/workflow/workflowPresets';
 import {
   type DigestContent,
+  type DigestScheduleType,
   createSubscription,
   deleteSubscription,
   pauseSubscription,
   previewDigest,
   resumeSubscription,
 } from '../../services/digestService';
-import {
-  createSavedView,
-  deleteSavedView,
-} from '../../services/savedViewsService';
+import { deleteSavedView } from '../../services/savedViewsService';
+import { extractErrorMessage } from '@/services/apiErrors';
 import { useDigestSavedViews, useDigestSubscriptions } from '@/hooks/useDigestData';
 import { useFeatureEnabled } from '@/hooks/useFeatureFlags';
+import { useReleases } from '@/hooks/useReleases';
 import { useProjectStore, ALL_PROJECTS_ID } from '../../store/projectStore';
 import Field from '@/components/ui/Field'
+import DigestReleaseSelect from '@/components/digests/DigestReleaseSelect';
+import DigestViewPicker, { type ViewSource } from '@/components/digests/DigestViewPicker';
+import SubscriptionScopeFix from '@/components/digests/SubscriptionScopeFix';
+import DigestViewEditor from '@/components/digests/DigestViewEditor';
+import DigestViewRow from '@/components/digests/DigestViewRow';
+import DigestScopeBlock from '@/components/digests/DigestScopeBlock';
+import {
+  isListedView,
+  pickableViews,
+  releaseOptions,
+  subscriptionSummary,
+  viewAppliesTo,
+} from '@/components/digests/digestScopeModel';
 
 type Tab = 'subscriptions' | 'saved-views' | 'preview';
 
@@ -35,17 +67,32 @@ const TAB_ITEMS: readonly TabItem<Tab>[] = [
 ];
 const HELP_TOPIC = helpTopicParam('/settings/digests');
 
+const FORM_LABEL = 'block text-xs text-[var(--color-text-muted)]';
+const SELECT = 'bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1';
+
+export const PICK_PROJECT_FOR_RELEASE = 'Pick a project in the top bar to choose a release.';
+
+type RequestError = { message?: string; response?: { data?: { detail?: unknown } } };
+
 export default function DigestsPage() {
   // The tab lives in `?tab=` (the page template's Tabs + useTabParam).
   const [tab, setTab] = useTabParam(TAB_IDS, 'subscriptions');
   const activeProjectId = useProjectStore(s => s.activeProjectId);
   const projectId: string | undefined = activeProjectId === ALL_PROJECTS_ID ? undefined : (activeProjectId ?? undefined);
 
+  // NTF-03: the top bar's own release list (the same SWR entry, never re-asked).
+  const { data: releaseData } = useReleases(undefined, { cached: true });
+  const releases = useMemo<unknown[]>(
+    () => (projectId && Array.isArray(releaseData?.items) ? releaseData.items : []),
+    [projectId, releaseData],
+  );
+  const releaseList = useMemo(() => releaseOptions(releases), [releases]);
+
   // Subscriptions
   const { subscriptions: subs, isLoading: subsLoading, isError: subsError, mutate: mutateSubs } =
     useDigestSubscriptions(tab === 'subscriptions');
   const [newSubName, setNewSubName] = useState('');
-  const [newSubSchedule, setNewSubSchedule] = useState<import('@/services/digestService').DigestScheduleType>('WEEKLY');
+  const [newSubSchedule, setNewSubSchedule] = useState<DigestScheduleType>('WEEKLY');
   // Tier 2 item 12. Gated: when `weekly_retro_digest` is off the dispatch task
   // *silently skips* WEEKLY_RETRO subscriptions, so offering the option would
   // let a user create one that never delivers and never says why.
@@ -53,8 +100,11 @@ export default function DigestsPage() {
   const [newSubChannel, setNewSubChannel] = useState<'email' | 'slack' | 'teams'>('email');
   const [newSubTriggerFilter, setNewSubTriggerFilter] = useState<'all' | 'failed_only' | 'degraded_only'>('all');
   const [newSubScopeValue, setNewSubScopeValue] = useState('');
+  const [newSubReleaseId, setNewSubReleaseId] = useState('');
+  const [newSubViewId, setNewSubViewId] = useState('');
   // US-7.5: attach the self-contained HTML analysis report (email + daily/weekly only).
   const [newSubReportAttachment, setNewSubReportAttachment] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   // If the flag flips off mid-session (30s TTL) the option disappears from the
   // selector — adjust during render rather than in an effect, which this repo
@@ -63,21 +113,46 @@ export default function DigestsPage() {
     setNewSubSchedule('WEEKLY');
   }
 
-  // Saved views
+  // Saved views: asked when their tab or the preview opens, or a picker is clicked.
+  const [viewsRequested, setViewsRequested] = useState(false);
+  const viewsWanted = tab === 'saved-views' || tab === 'preview' || viewsRequested;
   const { views, isLoading: viewsLoading, isError: viewsError, mutate: mutateViews } =
-    useDigestSavedViews(projectId, tab === 'saved-views');
-  const [newViewName, setNewViewName] = useState('');
+    useDigestSavedViews(projectId, viewsWanted);
+  // The project's report views: what a digest of it may name (and what the pipeline counts).
+  const reportViews = useMemo(() => pickableViews(views, projectId), [views, projectId]);
+  const listedViews = useMemo(() => views.filter(v => isListedView(v)), [views]);
+  const [editingView, setEditingView] = useState<'new' | string | null>(null);
+  const viewSource: ViewSource = {
+    requested: viewsWanted,
+    views,
+    loading: viewsLoading,
+    error: viewsError,
+    request: () => {
+      setViewsRequested(true);
+      if (viewsWanted) void mutateViews();
+    },
+  };
 
   // Preview
   const [preview, setPreview] = useState<DigestContent | null>(null);
   const [previewPeriod, setPreviewPeriod] = useState<'daily' | 'weekly'>('weekly');
+  const [previewViewId, setPreviewViewId] = useState('');
   const [previewing, setPreviewing] = useState(false);
 
-  const loading = subsLoading || viewsLoading;
-  const error = subsError || viewsError ? 'Failed to load data' : null;
+  const loading = tab === 'subscriptions' ? subsLoading : tab === 'saved-views' ? viewsLoading : false;
+  const error =
+    (tab === 'subscriptions' && subsError) || (tab === 'saved-views' && viewsError) ? 'Failed to load data' : null;
+
+  // A choice that no longer exists (another project, a deleted view) is no choice.
+  const releaseId = releaseList.some(r => r.id === newSubReleaseId) ? newSubReleaseId : '';
+  const viewId = viewAppliesTo(newSubSchedule) && reportViews.some(v => v.id === newSubViewId) ? newSubViewId : '';
+  const previewView = reportViews.some(v => v.id === previewViewId) ? previewViewId : '';
+  const needsRelease = newSubSchedule === 'PER_RELEASE' && (!projectId || !releaseId);
 
   const handleCreateSub = async () => {
     if (!newSubName.trim()) { toast.error('Name is required'); return; }
+    if (needsRelease) return;
+    setCreateError(null);
     try {
       await createSubscription({
         project_id: projectId || null,
@@ -85,15 +160,21 @@ export default function DigestsPage() {
         schedule: newSubSchedule,
         channel: newSubChannel,
         ...(newSubSchedule === 'PER_SUITE' && newSubScopeValue ? { scope_type: 'suite' as const, scope_value: newSubScopeValue.trim() } : {}),
+        ...(newSubSchedule === 'PER_RELEASE' ? { scope_type: 'release' as const, scope_value: releaseId } : {}),
         ...(newSubSchedule === 'PER_RUN' ? { trigger_filter: newSubTriggerFilter } : {}),
         ...(newSubChannel === 'email' && (newSubSchedule === 'DAILY' || newSubSchedule === 'WEEKLY')
           ? { report_attachment: newSubReportAttachment }
           : {}),
+        ...(viewId ? { saved_view_id: viewId } : {}),
       });
       toast.success('Subscription created');
       setNewSubName('');
       mutateSubs();
-    } catch { toast.error('Failed to create subscription'); }
+    } catch (err: unknown) {
+      // The server's own sentence, in the form (a refused scope is a 422 with one fixed text).
+      const e = err as RequestError;
+      setCreateError(extractErrorMessage(e?.response?.data?.detail, 'Failed to create subscription'));
+    }
   };
 
   const handlePause = async (id: string) => {
@@ -107,20 +188,6 @@ export default function DigestsPage() {
     try { await deleteSubscription(id); toast.success('Unsubscribed'); mutateSubs(); } catch { toast.error('Failed'); }
   };
 
-  const handleCreateView = async () => {
-    if (!newViewName.trim()) return;
-    try {
-      await createSavedView({
-        project_id: projectId || null,
-        name: newViewName.trim(),
-        filters: {},
-      });
-      toast.success('View saved');
-      setNewViewName('');
-      mutateViews();
-    } catch { toast.error('Failed to create view'); }
-  };
-
   const handleDeleteView = async (id: string) => {
     if (!confirm('Delete this saved view?')) return;
     try { await deleteSavedView(id); mutateViews(); } catch { toast.error('Failed'); }
@@ -129,19 +196,21 @@ export default function DigestsPage() {
   const handlePreview = async () => {
     setPreviewing(true);
     try {
-      setPreview(await previewDigest(projectId, previewPeriod));
+      setPreview(await (previewView
+        ? previewDigest(projectId, previewPeriod, previewView)
+        : previewDigest(projectId, previewPeriod)));
     } catch { toast.error('Preview failed'); }
     finally { setPreviewing(false); }
   };
 
   const workflow = useMemo(
-    () => buildDigestWorkflow(subs, views.map(view => ({
+    () => buildDigestWorkflow(subs, reportViews.map(view => ({
       id: view.id,
       name: view.name,
       is_default: view.is_default,
       is_shared: view.is_shared,
     })), preview),
-    [subs, views, preview],
+    [subs, reportViews, preview],
   );
 
   return (
@@ -161,9 +230,10 @@ export default function DigestsPage() {
           {/* Subscriptions tab */}
           {tab === 'subscriptions' && (
             <div className="space-y-4">
-              <div className="flex gap-2 items-end">
-                <div className="flex-1">
-                  <Field label="Digest Name" labelClassName="text-xs text-[var(--color-text-muted)]">
+              {/* Wraps rather than squeezes (CI renders on wider Linux fonts). */}
+              <div className="flex flex-wrap items-end gap-2" data-subscription-form="">
+                <div className="flex-1 min-w-[220px]">
+                  <Field label="Digest Name" labelClassName={FORM_LABEL}>
                     {id => (
                       <input id={id} value={newSubName} onChange={e => setNewSubName(e.target.value)}
                         placeholder="e.g., Weekly QA Summary"
@@ -172,10 +242,10 @@ export default function DigestsPage() {
                   </Field>
                 </div>
                 <div>
-                  <Field label="Schedule" labelClassName="text-xs text-[var(--color-text-muted)]">
+                  <Field label="Schedule" labelClassName={FORM_LABEL}>
                     {id => (
-                      <select id={id} value={newSubSchedule} onChange={e => setNewSubSchedule(e.target.value as typeof newSubSchedule)}
-                        className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1">
+                      <select id={id} value={newSubSchedule} onChange={e => setNewSubSchedule(e.target.value as DigestScheduleType)}
+                        className={SELECT}>
                         <option value="WEEKLY">Weekly</option>
                         {retroEnabled && <option value="WEEKLY_RETRO">Weekly Retro</option>}
                         <option value="DAILY">Daily</option>
@@ -187,10 +257,10 @@ export default function DigestsPage() {
                   </Field>
                 </div>
                 <div>
-                  <Field label="Channel" labelClassName="text-xs text-[var(--color-text-muted)]">
+                  <Field label="Channel" labelClassName={FORM_LABEL}>
                     {id => (
                       <select id={id} value={newSubChannel} onChange={e => setNewSubChannel(e.target.value as 'email' | 'slack' | 'teams')}
-                        className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1">
+                        className={SELECT}>
                         <option value="email">Email</option>
                         <option value="slack">Slack</option>
                         <option value="teams">Teams</option>
@@ -200,10 +270,10 @@ export default function DigestsPage() {
                 </div>
                 {newSubSchedule === 'PER_RUN' && (
                   <div>
-                    <Field label="Trigger" labelClassName="text-xs text-[var(--color-text-muted)]">
+                    <Field label="Trigger" labelClassName={FORM_LABEL}>
                       {id => (
                         <select id={id} value={newSubTriggerFilter} onChange={e => setNewSubTriggerFilter(e.target.value as typeof newSubTriggerFilter)}
-                          className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm mt-1">
+                          className={SELECT}>
                           <option value="all">All Runs</option>
                           <option value="failed_only">Failed Only</option>
                           <option value="degraded_only">Degraded Only</option>
@@ -213,8 +283,8 @@ export default function DigestsPage() {
                   </div>
                 )}
                 {newSubSchedule === 'PER_SUITE' && (
-                  <div className="flex-1">
-                    <Field label="Suite Name" labelClassName="text-xs text-[var(--color-text-muted)]">
+                  <div className="w-[240px]">
+                    <Field label="Suite Name" labelClassName={FORM_LABEL}>
                       {id => (
                         <input id={id} value={newSubScopeValue} onChange={e => setNewSubScopeValue(e.target.value)}
                           placeholder="e.g., smoke-tests"
@@ -223,10 +293,42 @@ export default function DigestsPage() {
                     </Field>
                   </div>
                 )}
-                <button onClick={handleCreateSub} className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded hover:bg-[var(--color-bg-hover)] text-sm">
+                {newSubSchedule === 'PER_RELEASE' && (
+                  <div className="max-w-[240px]">
+                    {projectId ? (
+                      <Field label="Release" labelClassName={FORM_LABEL}>
+                        {id => (
+                          <DigestReleaseSelect id={id} releases={releases} value={releaseId} onChange={setNewSubReleaseId} className="mt-1" />
+                        )}
+                      </Field>
+                    ) : (
+                      <p className="text-xs text-[var(--color-text-muted)] pb-2" data-release-needs-project="">{PICK_PROJECT_FOR_RELEASE}</p>
+                    )}
+                  </div>
+                )}
+                {viewAppliesTo(newSubSchedule) && projectId && (
+                  <div className="max-w-[240px]">
+                    <Field label="Saved view (optional)" labelClassName={FORM_LABEL}>
+                      {id => (
+                        <div className="mt-1">
+                          <DigestViewPicker id={id} source={viewSource} projectId={projectId} value={viewId} onChange={setNewSubViewId} />
+                        </div>
+                      )}
+                    </Field>
+                  </div>
+                )}
+                <button
+                  onClick={handleCreateSub}
+                  disabled={needsRelease}
+                  title={needsRelease ? (projectId ? 'Choose a release first' : PICK_PROJECT_FOR_RELEASE) : undefined}
+                  className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded hover:bg-[var(--color-bg-hover)] text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
                   Subscribe
                 </button>
               </div>
+              {createError && (
+                <p role="alert" className="text-sm text-[var(--status-failed)]" data-subscription-error="">{createError}</p>
+              )}
 
               {newSubSchedule === 'WEEKLY_RETRO' && (
                 <p className="text-xs text-[var(--color-text-muted)]">
@@ -259,24 +361,27 @@ export default function DigestsPage() {
 
               {subs.length === 0 && <div className="text-center py-8 text-[var(--color-text-muted)]">No digest subscriptions. Create one above.</div>}
               {subs.map(sub => (
-                <div key={sub.id} className="bg-[var(--color-bg-secondary)] rounded-lg p-4 flex justify-between items-center">
-                  <div>
+                <div key={sub.id} data-subscription-row={sub.id} className="bg-[var(--color-bg-secondary)] rounded-lg p-4 flex justify-between items-start gap-4">
+                  <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="text-[var(--color-text)] font-medium">{sub.name}</span>
                       <span className={clsx('px-2 py-0.5 rounded text-xs', sub.is_paused ? 'bg-[var(--status-skipped-bg)]/40 text-[var(--status-skipped)]' : sub.is_active ? 'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]' : 'bg-[var(--color-bg-card)] text-[var(--color-text-muted)]')}>
                         {sub.is_paused ? 'Paused' : sub.is_active ? 'Active' : 'Inactive'}
                       </span>
                     </div>
-                    <p className="text-xs text-[var(--color-text-muted)] mt-1">
-                      {sub.schedule.replace('_', ' ')} via {sub.channel}
-                      {sub.scope_value ? ` · Scope: ${sub.scope_value}` : ''}
-                      {sub.trigger_filter && sub.trigger_filter !== 'all' ? ` · ${sub.trigger_filter.replace('_', ' ')}` : ''}
-                      {sub.report_attachment ? ' · Report attached' : ''}
-                      {' '}· Delivered: {sub.delivery_count} times
-                      {sub.next_delivery_at && ` · Next: ${new Date(sub.next_delivery_at).toLocaleDateString()}`}
+                    <p className="text-xs text-[var(--color-text-muted)] mt-1" data-subscription-summary="">
+                      {subscriptionSummary(sub)}
                     </p>
+                    <SubscriptionScopeFix
+                      key={`${sub.id}:${sub.scope_problem ?? ''}:${sub.saved_view_id ?? ''}`}
+                      sub={sub}
+                      releases={releases}
+                      topBarProjectId={projectId ?? null}
+                      views={viewSource}
+                      onSaved={() => void mutateSubs()}
+                    />
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 shrink-0">
                     {sub.is_paused ? (
                       <button onClick={() => handleResume(sub.id)} className="px-3 py-1 text-xs bg-[var(--status-passed-bg)]/50 rounded text-[var(--status-passed)] hover:bg-[var(--status-passed-bg)]">Resume</button>
                     ) : (
@@ -292,26 +397,55 @@ export default function DigestsPage() {
           {/* Saved Views tab */}
           {tab === 'saved-views' && (
             <div className="space-y-4">
-              <div className="flex gap-2">
-                <input value={newViewName} onChange={e => setNewViewName(e.target.value)} placeholder="View name"
-                  className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm flex-1" />
-                <button onClick={handleCreateView} disabled={!newViewName.trim()}
-                  className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded hover:bg-[var(--color-bg-hover)] text-sm disabled:opacity-50">
-                  Save View
-                </button>
+              <div className="flex items-center justify-between gap-4">
+                <p className="text-xs text-[var(--color-text-muted)]">
+                  {projectId
+                    ? "This project's report views. A Daily or Weekly digest with a view covers only its releases, suites and window."
+                    : 'Pick a project in the top bar to save a view for its digests.'}
+                </p>
+                {projectId && editingView !== 'new' && (
+                  <button
+                    type="button"
+                    onClick={() => setEditingView('new')}
+                    className="shrink-0 px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded hover:bg-[var(--color-bg-hover)] text-sm"
+                  >
+                    New view
+                  </button>
+                )}
               </div>
 
-              {views.length === 0 && <div className="text-center py-8 text-[var(--color-text-muted)]">No saved views.</div>}
-              {views.map(view => (
-                <div key={view.id} className="bg-[var(--color-bg-secondary)] rounded-lg p-3 flex justify-between items-center">
-                  <div>
-                    <span className="text-[var(--color-text)] text-sm font-medium">{view.name}</span>
-                    {view.is_shared && <span className="ml-2 px-1.5 py-0.5 text-[10px] bg-[var(--color-bg-secondary)]/60 text-[var(--color-text)] rounded">Shared</span>}
-                    {view.is_default && <span className="ml-2 px-1.5 py-0.5 text-[10px] bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)] rounded">Default</span>}
-                    <p className="text-xs text-[var(--color-text-muted)] mt-0.5">{Object.keys(view.filters).length} filter(s) · Created {new Date(view.created_at).toLocaleDateString()}</p>
-                  </div>
-                  <button onClick={() => handleDeleteView(view.id)} className="px-2 py-1 text-xs bg-[var(--status-failed-bg)]/50 rounded text-[var(--status-failed)] hover:bg-[var(--status-failed-bg)]">Delete</button>
-                </div>
+              {editingView === 'new' && projectId && (
+                <DigestViewEditor
+                  projectId={projectId}
+                  releases={releases}
+                  onSaved={() => { setEditingView(null); void mutateViews(); }}
+                  onCancel={() => setEditingView(null)}
+                />
+              )}
+
+              {listedViews.length === 0 && editingView !== 'new' && (
+                <div className="text-center py-8 text-[var(--color-text-muted)]">No saved views.</div>
+              )}
+              {listedViews.map(view => (
+                editingView === view.id && projectId ? (
+                  <DigestViewEditor
+                    key={view.id}
+                    view={view}
+                    projectId={projectId}
+                    releases={releases}
+                    onSaved={() => { setEditingView(null); void mutateViews(); }}
+                    onCancel={() => setEditingView(null)}
+                  />
+                ) : (
+                  <DigestViewRow
+                    key={view.id}
+                    view={view}
+                    releases={releaseList}
+                    onEdit={() => setEditingView(view.id)}
+                    onDelete={() => void handleDeleteView(view.id)}
+                    canEdit={!!projectId}
+                  />
+                )
               ))}
             </div>
           )}
@@ -319,12 +453,29 @@ export default function DigestsPage() {
           {/* Preview tab */}
           {tab === 'preview' && (
             <div className="space-y-4">
-              <div className="flex gap-2 items-center">
-                <select value={previewPeriod} onChange={e => setPreviewPeriod(e.target.value as 'daily' | 'weekly')}
-                  className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm">
-                  <option value="weekly">Weekly</option>
-                  <option value="daily">Daily</option>
-                </select>
+              <div className="flex flex-wrap gap-2 items-end">
+                <div>
+                  <Field label="Period" labelClassName={FORM_LABEL}>
+                    {id => (
+                      <select id={id} value={previewPeriod} onChange={e => setPreviewPeriod(e.target.value as 'daily' | 'weekly')}
+                        className={SELECT}>
+                        <option value="weekly">Weekly</option>
+                        <option value="daily">Daily</option>
+                      </select>
+                    )}
+                  </Field>
+                </div>
+                {projectId && (
+                  <div className="max-w-[240px]">
+                    <Field label="Saved view" labelClassName={FORM_LABEL}>
+                      {id => (
+                        <div className="mt-1">
+                          <DigestViewPicker id={id} source={viewSource} projectId={projectId} value={previewView} onChange={setPreviewViewId} />
+                        </div>
+                      )}
+                    </Field>
+                  </div>
+                )}
                 <button onClick={handlePreview} disabled={previewing}
                   className="px-4 py-2 bg-[var(--status-flaky-bg)] text-[var(--color-text)] rounded hover:bg-[var(--status-flaky-bg)] text-sm disabled:opacity-50">
                   {previewing ? 'Generating...' : 'Generate Preview'}
@@ -334,6 +485,7 @@ export default function DigestsPage() {
               {preview && (
                 <div className="bg-[var(--color-bg-secondary)] rounded-lg p-6 space-y-4">
                   <h2 className="text-lg font-semibold text-[var(--color-text)]">{preview.period.charAt(0).toUpperCase() + preview.period.slice(1)} Digest — {preview.project_name || 'All Projects'}</h2>
+                  <DigestScopeBlock scope={preview.scope} />
 
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                     <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">

@@ -816,6 +816,28 @@ class DecisionReportCriticAgent(BaseAgent):
                 "release_decided_webhook_after_report_failed",
                 error_type=type(exc).__name__,
             )
+        # W09 NTF-01: "Quality gate failed" for a published NO_GO. Beside the
+        # webhook, never inside it (emit_release_decided returns first on an
+        # offline install). The reads and the staging run in their own task on
+        # the ``default`` queue, never in this pipeline task and never on
+        # ``ai_analysis``; a lost enqueue costs this one notification.
+        try:
+            from app.worker.tasks import notify_release_decision_no_go  # noqa: PLC0415
+
+            pipeline_run_id = state.get("pipeline_run_id")
+            notify_release_decision_no_go.apply_async(
+                args=[
+                    str(state["test_run_id"]),
+                    str(pipeline_run_id) if pipeline_run_id is not None else None,
+                    report.get("evidence_bundle_sha256"),
+                ],
+                queue="default",
+            )
+        except Exception as exc:  # noqa: BLE001 -- the notification is best-effort
+            logger.warning(
+                "release_decision_notification_not_queued",
+                error_type=type(exc).__name__,
+            )
 
     async def _persist_failure(
         self,

@@ -10653,6 +10653,16 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Release Decisions",
       "type": "array"
     },
+    "scope": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/DigestScopeInfo"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "top_blockers": {
       "default": [],
       "items": {
@@ -10681,6 +10691,87 @@ These are the full generated JSON Schema definitions, including required fields,
     "generated_at"
   ],
   "title": "DigestContentResponse",
+  "type": "object"
+}
+```
+
+## DigestScopeInfo
+
+```json
+{
+  "description": "What a digest was filtered by (W09 NTF-04); ``digest_scope_service.scope_info``.",
+  "properties": {
+    "dropped_release_count": {
+      "default": 0,
+      "title": "Dropped Release Count",
+      "type": "integer"
+    },
+    "release_ids": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Release Ids",
+      "type": "array"
+    },
+    "release_names": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Release Names",
+      "type": "array"
+    },
+    "source": {
+      "title": "Source",
+      "type": "string"
+    },
+    "suites": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Suites",
+      "type": "array"
+    },
+    "view_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "View Id"
+    },
+    "view_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "View Name"
+    },
+    "window_days": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Window Days"
+    }
+  },
+  "required": [
+    "source"
+  ],
+  "title": "DigestScopeInfo",
   "type": "object"
 }
 ```
@@ -11020,9 +11111,42 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Saved View Id"
     },
+    "saved_view_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Saved View Name"
+    },
     "schedule": {
       "title": "Schedule",
       "type": "string"
+    },
+    "scope_label": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Scope Label"
+    },
+    "scope_problem": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Scope Problem"
     },
     "scope_type": {
       "anyOf": [
@@ -14258,6 +14382,16 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Flaky Likely Cause Code"
     },
+    "flaky_score": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/FlakyScoreBrief"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "flaky_since": {
       "anyOf": [
         {
@@ -14898,6 +15032,104 @@ These are the full generated JSON Schema definitions, including required fields,
     "updated_at"
   ],
   "title": "FlakyQuarantineRead",
+  "type": "object"
+}
+```
+
+## FlakyScoreBrief
+
+```json
+{
+  "description": "The four-signal score of a Detected row; plain ``str`` vocabularies (W09 FLK-03).",
+  "properties": {
+    "components": {
+      "default": [],
+      "items": {
+        "$ref": "#/components/schemas/FlakyScoreComponent"
+      },
+      "title": "Components",
+      "type": "array"
+    },
+    "computed_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Computed At"
+    },
+    "confidence": {
+      "default": "none",
+      "title": "Confidence",
+      "type": "string"
+    },
+    "min_observations": {
+      "default": 5,
+      "title": "Min Observations",
+      "type": "integer"
+    },
+    "observations": {
+      "default": 0,
+      "title": "Observations",
+      "type": "integer"
+    },
+    "score": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Score"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    },
+    "window_days": {
+      "default": 30,
+      "title": "Window Days",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "status"
+  ],
+  "title": "FlakyScoreBrief",
+  "type": "object"
+}
+```
+
+## FlakyScoreComponent
+
+```json
+{
+  "description": "One of the four signals of the nightly flakiness score (W09 FLK-03).",
+  "properties": {
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "value": {
+      "title": "Value",
+      "type": "number"
+    },
+    "weight": {
+      "title": "Weight",
+      "type": "number"
+    }
+  },
+  "required": [
+    "name",
+    "value",
+    "weight"
+  ],
+  "title": "FlakyScoreComponent",
   "type": "object"
 }
 ```
@@ -21597,6 +21829,17 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Is Read",
       "type": "boolean"
     },
+    "link": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Link"
+    },
     "sent_at": {
       "anyOf": [
         {
@@ -24994,6 +25237,11 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Is Default",
       "type": "boolean"
     },
+    "max_active_quarantined": {
+      "default": 8,
+      "title": "Max Active Quarantined",
+      "type": "integer"
+    },
     "project_id": {
       "format": "uuid",
       "title": "Project Id",
@@ -25050,6 +25298,13 @@ These are the full generated JSON Schema definitions, including required fields,
       "maximum": 1000.0,
       "minimum": 1.0,
       "title": "Detection Min Runs",
+      "type": "integer"
+    },
+    "max_active_quarantined": {
+      "default": 8,
+      "maximum": 1000.0,
+      "minimum": 0.0,
+      "title": "Max Active Quarantined",
       "type": "integer"
     },
     "promote_after_passes": {

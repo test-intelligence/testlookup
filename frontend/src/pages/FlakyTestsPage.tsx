@@ -8,13 +8,20 @@
  *             owns the definition of a flaky test; Refresh re-runs the
  *             analysis) with the tabs, counts in their labels:
  *   Tabs    → Detected (default: the flaky-test list, `FlakyCoachBody`, with
- *             a recommendation column and the row action "Propose
+ *             a recommendation column, the four-signal Flakiness score
+ *             column and its Sort (W09 FLK-03), and the row action "Propose
  *             quarantine") · Proposed · Quarantined · History (the quarantine
- *             requests in each state, `QuarantineBody`).
+ *             requests in each state, `QuarantineBody`; Quarantined warns
+ *             past the policy's cap) · Policy (the project's quarantine
+ *             lifecycle policy, `QuarantinePolicyCard`, W09 FLK-02; no count).
  * A detected test with a live request shows that state instead of the action,
  * linking to its tab. Flaky Coach's four recommendation tiles became the
  * Detected tab's filter chips; Quarantine's four stat tiles duplicated the tab
  * counts and are gone; its `window.prompt` notes are an inline form.
+ *
+ * Quarantine graduated in W09 (FLK-01): no Experimental badge, and the
+ * `flaky_auto_quarantine` flag ships ON where nobody ever set it (migration
+ * 0219). Where it is off for the project, Detected says so in one line.
  *
  * The page needs one project, as Flaky Coach did: in All Projects mode it says
  * so here (the route-scope registry declares `/flaky` single-project, and its
@@ -30,7 +37,6 @@ import Tabs from '@/components/ui/Tabs'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import DataUnavailable from '@/components/ui/DataUnavailable'
 import AllReleasesBadge from '@/components/ui/AllReleasesBadge'
-import ExperimentalBadge from '@/components/ui/ExperimentalBadge'
 import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState'
 import { useTabParam } from '@/components/ui/useTabParam'
 import { helpTopicParam } from '@/components/help/helpTopics'
@@ -43,6 +49,7 @@ import type { FlakyQuarantineRead } from '@/services/flakyQuarantineService'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { FlakyCoachBody } from './FlakyCoachPage'
 import { QuarantineBody } from './QuarantinePage'
+import QuarantinePolicyCard from './flaky/QuarantinePolicyCard'
 import {
   QUARANTINE_VIEW_STATUSES,
   flakySubtitle,
@@ -51,10 +58,10 @@ import {
   type QuarantineView,
 } from './flaky/flakyModel'
 
-const FLAKY_TABS = ['detected', 'proposed', 'quarantined', 'history'] as const
+const FLAKY_TABS = ['detected', 'proposed', 'quarantined', 'history', 'policy'] as const
 type FlakyTab = (typeof FLAKY_TABS)[number]
 
-const VIEW_OF_TAB: Record<Exclude<FlakyTab, 'detected'>, QuarantineView> = {
+const VIEW_OF_TAB: Record<Exclude<FlakyTab, 'detected' | 'policy'>, QuarantineView> = {
   proposed: 'proposals',
   quarantined: 'active',
   history: 'history',
@@ -140,6 +147,8 @@ function FlakyTests({ projectId }: { projectId: string }) {
     { id: 'proposed' as const, label: 'Proposed', count: counts.proposals },
     { id: 'quarantined' as const, label: 'Quarantined', count: counts.active },
     { id: 'history' as const, label: 'History', count: counts.history },
+    // W09 FLK-02: the project's quarantine policy (a setting, so no count).
+    { id: 'policy' as const, label: 'Policy' },
   ]
 
   function rowAction(entry: FlakyCoachEntry) {
@@ -184,7 +193,6 @@ function FlakyTests({ projectId }: { projectId: string }) {
                 last 30 days, and a quarantine request is a standing decision
                 about a test (the endpoints take no release). */}
             <AllReleasesBadge reason="Flaky tests are analysed over the project's last 30 days, and a quarantine request is a standing decision about a test, not about one release's runs." />
-            {tab !== 'detected' && <ExperimentalBadge />}
             {canRefresh && (
               <button
                 type="button"
@@ -210,14 +218,20 @@ function FlakyTests({ projectId }: { projectId: string }) {
         ) : (
           <>
             {quarantineOn === false && canPropose && (
-              <p data-quarantine-off="" className="text-[12px] text-[var(--color-text-muted)]">
-                Quarantine is off for this project, so no test can be proposed for it. An admin turns it on with
-                the <code className="font-mono">flaky_auto_quarantine</code> flag in Settings › Feature flags.
+              // One line at 1280 and 1440 (11 px: the longer W09 copy measured
+              // ~1010 px at 12 px in a Verdana-wide face, over the 976 px box
+              // at 1280; the page has no height to spare for a second line).
+              <p data-quarantine-off="" className="text-[11px] text-[var(--color-text-muted)]">
+                Quarantine is off for this project, so no test can be proposed for it. Its flag,{' '}
+                <code className="font-mono">flaky_auto_quarantine</code> in Settings › Feature flags, is switched off
+                or limited to other projects.
               </p>
             )}
             <FlakyCoachBody entries={coach?.entries ?? []} renderAction={rowAction} actionLabel="Quarantine" />
           </>
         )
+      ) : tab === 'policy' ? (
+        <QuarantinePolicyCard projectId={projectId} canEdit={canPropose} activeCount={counts.active} />
       ) : (
         <QuarantineBody view={VIEW_OF_TAB[tab]} projectId={projectId} primary />
       )}

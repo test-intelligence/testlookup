@@ -1718,6 +1718,31 @@ class QualityGateEvaluationResult(BaseModel):
 
 # ── Notification Schemas ──────────────────────────────────────
 
+#: A retired event value and the one that replaced it (W09 NTF-01). "Flaky test
+#: detected" never had a producer; a preference holding it now holds "Test newly
+#: flaky", which fires when a test enters the known-flaky set. Migration 0220
+#: repeats the literal (migrations import no app code) and rewrites stored rows;
+#: ``tests/test_migration_0220_flaky_preference_rewrite.py`` holds the two equal.
+LEGACY_EVENT_ALIASES: Dict[str, str] = {"flaky_test_detected": "test.newly_flaky"}
+
+
+def normalise_notification_events(values: List[str]) -> List[str]:
+    """Map retired aliases to their event and drop duplicates, first occurrence kept, order kept.
+
+    ``["flaky_test_detected", "run_failed", "test.newly_flaky"]`` ->
+    ``["test.newly_flaky", "run_failed"]``.
+    """
+    out: List[str] = []
+    seen: set = set()
+    for value in values:
+        mapped = LEGACY_EVENT_ALIASES.get(value, value)
+        if mapped in seen:
+            continue
+        seen.add(mapped)
+        out.append(mapped)
+    return out
+
+
 class NotificationPreferenceCreate(BaseModel):
     """Create or replace a single channel preference."""
     project_id: Optional[uuid.UUID] = None  # None = all projects
@@ -1743,6 +1768,12 @@ class NotificationPreferenceCreate(BaseModel):
     email_override: Optional[EmailStr] = None
     slack_webhook_url: Optional[str] = Field(None, max_length=2000)
     teams_webhook_url: Optional[str] = Field(None, max_length=2000)
+
+    @field_validator("events")
+    @classmethod
+    def _normalise_events(cls, v: List[str]) -> List[str]:
+        # "flaky_test_detected" is stored as "test.newly_flaky"; duplicates dropped.
+        return normalise_notification_events(v)
 
 
 class NotificationPreferenceResponse(BaseModel):
@@ -1772,6 +1803,10 @@ class NotificationLogResponse(BaseModel):
     is_read: bool
     sent_at: Optional[datetime]
     created_at: datetime
+    # W09 NTF-01: an in-app path the bell may link to, set by the history route
+    # from ``gate_notifications.app_link(row.delivery_metadata)``: one of two
+    # allow-listed shapes (``/releases/<uuid>``, ``/release-gate/<uuid>``), else None.
+    link: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -4564,6 +4599,25 @@ class TestHealthResponse(BaseModel):
     findings: List[TestHealthFinding] = []
 
 
+class FlakyScoreComponent(BaseModel):
+    """One of the four signals of the nightly flakiness score (W09 FLK-03)."""
+    name: str                                    # flaky_score_brief.COMPONENT_ORDER
+    value: float                                 # 0..1
+    weight: float                                # 0..1
+
+
+class FlakyScoreBrief(BaseModel):
+    """The four-signal score of a Detected row; plain ``str`` vocabularies (W09 FLK-03)."""
+    status: str                                  # "scored" | "insufficient" | "pending"
+    score: Optional[float] = None                # None unless "scored"
+    confidence: str = "none"                     # flaky_score_service.CONFIDENCE_* ("none" | "low" | "medium" | "high")
+    observations: int = 0
+    min_observations: int = 5                    # flaky_score_service.MIN_OBSERVATIONS, sent so the UI never hard-codes it
+    window_days: int = 30
+    computed_at: Optional[str] = None            # ISO UTC; None unless "scored"
+    components: List[FlakyScoreComponent] = []   # [] unless "scored"
+
+
 class FlakyCoachEntry(BaseModel):
     """Single flaky test with coaching recommendation."""
     test_fingerprint: str
@@ -4606,6 +4660,9 @@ class FlakyCoachEntry(BaseModel):
     # test has no captured steps / no failing step.
     failing_step: Optional[str] = None
     failing_step_detail: Optional[str] = None
+    # W09 FLK-03: the nightly four-signal score (``flaky_score_brief``). None =
+    # the enrichment did not run, or failed.
+    flaky_score: Optional[FlakyScoreBrief] = None
 
 
 class FlakyCoachScope(BaseModel):
@@ -5721,7 +5778,25 @@ class DigestSubscriptionResponse(BaseModel):
     delivery_count: int = 0
     created_at: datetime
     updated_at: Optional[datetime] = None
+    # W09 NTF-04: the bound view's name, snapshotted on every bind (0221). With
+    # ``saved_view_id`` NULL it names a view that was deleted.
+    saved_view_name: Optional[str] = None
+    # W09 NTF-03 / NTF-04: set by ``digest_scope_service.decorate_subscriptions``.
+    scope_label: Optional[str] = None
+    scope_problem: Optional[str] = None          # digest_scope_service.SCOPE_PROBLEMS or None
     model_config = ConfigDict(from_attributes=True)
+
+
+class DigestScopeInfo(BaseModel):
+    """What a digest was filtered by (W09 NTF-04); ``digest_scope_service.scope_info``."""
+    source: str                                  # digest_scope_service.SCOPE_SOURCES
+    view_id: Optional[str] = None
+    view_name: Optional[str] = None
+    release_ids: List[str] = []
+    release_names: List[str] = []
+    suites: List[str] = []
+    window_days: Optional[int] = None
+    dropped_release_count: int = 0
 
 
 class DigestContentResponse(BaseModel):
@@ -5747,6 +5822,9 @@ class DigestContentResponse(BaseModel):
     delta: Optional[dict] = None
     is_zero_change: Optional[bool] = None
     latest_run_total_tests: Optional[int] = None
+    # W09 NTF-04: present when the digest was generated for a saved view (or one
+    # that is gone); absent / None for a whole-project digest.
+    scope: Optional[DigestScopeInfo] = None
 
 
 # ── AI Evaluation Schemas (OPS-02) ───────────────────────────────────────────
@@ -6569,6 +6647,9 @@ class QuarantineLifecyclePolicyUpdate(BaseModel):
     promote_after_passes: int = Field(20, ge=1, le=1000)
     detection_flip_rate_threshold: float = Field(0.20, ge=0.0, le=1.0)
     detection_min_runs: int = Field(10, ge=1, le=1000)
+    # W09 FLK-02: the Quarantined tab warns past it; 0 = no limit. A PUT
+    # replaces, as for every other field (omitted -> back to 8).
+    max_active_quarantined: int = Field(8, ge=0, le=1000)
 
 
 class QuarantineLifecyclePolicyResponse(BaseModel):
@@ -6579,6 +6660,7 @@ class QuarantineLifecyclePolicyResponse(BaseModel):
     promote_after_passes: int
     detection_flip_rate_threshold: float
     detection_min_runs: int
+    max_active_quarantined: int = 8
     # True when the project has no explicit row yet and code defaults apply.
     is_default: bool = False
 

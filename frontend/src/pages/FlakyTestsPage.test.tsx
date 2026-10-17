@@ -13,6 +13,10 @@
  *     linking to that tab;
  *   - All Projects mode keeps the project prompt; a failed analysis renders as
  *     unavailable, never as "no flaky tests".
+ *   - W09: no Experimental badge on any of the five tabs, the off line's copy
+ *     (FLK-01); the Policy tab's card, the policy read on Policy and
+ *     Quarantined only, the over-cap line (FLK-02); Sort by the flakiness
+ *     score (FLK-03).
  */
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
@@ -27,6 +31,16 @@ const state = vi.hoisted(() => ({
   isQaEngineer: true,
   quarantineOn: true as boolean | undefined,
   coachError: null as unknown,
+  // W09 FLK-02: what `useQuarantinePolicy` answers, and every (projectId, enabled) it was asked with.
+  policy: null as unknown,
+  policyCalls: [] as Array<[unknown, unknown]>,
+}))
+
+vi.mock('@/hooks/useQuarantinePolicy', () => ({
+  useQuarantinePolicy: (projectId: unknown, enabled: unknown) => {
+    state.policyCalls.push([projectId, enabled])
+    return { policy: enabled ? state.policy : null, error: undefined, isLoading: false, mutate: vi.fn() }
+  },
 }))
 
 const coachMock = vi.hoisted(() => ({ getFlakyCoach: vi.fn(), refreshFlakyCoach: vi.fn() }))
@@ -127,6 +141,19 @@ function request(id: string, status: FlakyQuarantineRead['status'], fingerprint 
   }
 }
 
+/** A project with no policy row (the code defaults). */
+const POLICY = {
+  project_id: 'p1',
+  sla_days: 14,
+  auto_create_defect: false,
+  auto_promote: false,
+  promote_after_passes: 20,
+  detection_flip_rate_threshold: 0.2,
+  detection_min_runs: 10,
+  max_active_quarantined: 8,
+  is_default: true,
+}
+
 // fp-1 already has a live proposal; fp-2 is quarantined; fp-3 has nothing.
 const LIVE = [request('a', 'PROPOSED', 'fp-1'), request('b', 'QUARANTINED', 'fp-2'), request('c', 'PROPOSED')]
 const SETTLED = [request('d', 'RELEASED'), request('e', 'REJECTED')]
@@ -157,6 +184,8 @@ beforeEach(() => {
   state.canAccessManagement = true
   state.isQaEngineer = true
   state.quarantineOn = true
+  state.policy = POLICY
+  state.policyCalls = []
   coachMock.getFlakyCoach.mockResolvedValue({
     project_id: 'p1',
     total_flaky: 2,
@@ -346,8 +375,9 @@ describe('FlakyTestsPage — Detected', () => {
     await screen.findByText('test_flaky_3')
     expect(screen.queryByRole('button', { name: 'Propose quarantine' })).toBeNull()
     expect(document.querySelector('[data-quarantine-off]')).toHaveTextContent(
-      'Quarantine is off for this project, so no test can be proposed for it. An admin turns it on with the flaky_auto_quarantine flag in Settings › Feature flags.',
+      'Quarantine is off for this project, so no test can be proposed for it. Its flag, flaky_auto_quarantine in Settings › Feature flags, is switched off or limited to other projects.',
     )
+    expect(document.querySelector('[data-quarantine-off] code')).toHaveTextContent('flaky_auto_quarantine')
   })
 
   it('while the flag is unknown: no proposal yet, and no claim that it is off', async () => {
@@ -366,5 +396,132 @@ describe('FlakyTestsPage — Detected', () => {
     expect(within(panel).getByText('Stabilise test 1')).toBeInTheDocument()
     fireEvent.click(within(panel).getByRole('button', { name: 'Close panel' }))
     expect(screen.queryByRole('complementary', { name: 'test_flaky_1' })).toBeNull()
+  })
+
+  // W09 FLK-03: the table's Sort (local state; Impact = the server's order).
+  it('Sort › Flakiness score reorders the rows, most flaky first; Impact restores the server order', async () => {
+    const scored = (score: number) => ({
+      status: 'scored', score, confidence: 'medium', observations: 12, min_observations: 5, window_days: 30,
+      computed_at: '2026-10-16T02:10:00Z', components: [],
+    })
+    coachMock.getFlakyCoach.mockResolvedValue({
+      project_id: 'p1',
+      total_flaky: 3,
+      quarantine_candidates: 1,
+      entries: [
+        { ...entry(1, 'QUARANTINE'), flaky_score: scored(0.2) },
+        { ...entry(2, 'INVESTIGATE'), flaky_score: null },
+        { ...entry(3, 'MONITOR'), flaky_score: scored(0.8) },
+      ],
+    })
+    renderPage()
+    await screen.findByText('test_flaky_1')
+    const order = () => Array.from(document.querySelectorAll('tr[data-flaky-row]')).map((tr) => tr.getAttribute('data-flaky-row'))
+    expect(order()).toEqual(['fp-1', 'fp-2', 'fp-3'])
+    fireEvent.change(screen.getByLabelText('Sort'), { target: { value: 'score' } })
+    expect(order()).toEqual(['fp-3', 'fp-1', 'fp-2'])
+    fireEvent.change(screen.getByLabelText('Sort'), { target: { value: 'impact' } })
+    expect(order()).toEqual(['fp-1', 'fp-2', 'fp-3'])
+    expect(coachMock.getFlakyCoach).toHaveBeenCalledTimes(1)
+  })
+})
+
+// W09 FLK-01: quarantine graduated.
+describe('FlakyTestsPage — no Experimental badge (FLK-01)', () => {
+  it.each(['detected', 'proposed', 'quarantined', 'history', 'policy'])('?tab=%s carries no Experimental badge', async (id) => {
+    renderPage(id === 'detected' ? '/flaky' : `/flaky?tab=${id}`)
+    await waitFor(() => expect(coachMock.getFlakyCoach).toHaveBeenCalled())
+    await screen.findAllByRole('tab')
+    expect(screen.queryByText(/experimental/i)).toBeNull()
+    expect(document.querySelector('[title^="This feature is experimental"]')).toBeNull()
+  })
+
+  it('offers Propose quarantine on a Detected row to a QA lead with the flag on', async () => {
+    renderPage()
+    await screen.findByText('test_flaky_3')
+    const row = screen.getByText('test_flaky_3').closest('tr') as HTMLElement
+    expect(within(row).getByRole('button', { name: 'Propose quarantine' })).toBeInTheDocument()
+    expect(document.querySelector('[data-quarantine-off]')).toBeNull()
+  })
+})
+
+// W09 FLK-02: the quarantine policy has a page, and its cap a consumer.
+describe('FlakyTestsPage — the Policy tab and the cap (FLK-02)', () => {
+  it('?tab=policy selects the fifth tab (no count) and renders the policy card as the primary content', async () => {
+    const { container } = renderPage('/flaky?tab=policy')
+    expect(tab(/^Policy/)).toHaveAttribute('aria-selected', 'true')
+    expect(tab(/^Policy/)).toHaveTextContent(/^Policy$/)
+    const policyCard = await waitFor(() => {
+      const el = container.querySelector('[data-quarantine-policy]')
+      expect(el).not.toBeNull()
+      return el as HTMLElement
+    })
+    expect(policyCard).toHaveAttribute('data-primary')
+    expect(container.querySelectorAll('[data-primary]')).toHaveLength(1)
+    expect(policyCard).toHaveTextContent('Using defaults: SLA 14 days, promote after 20 passes, detection 20 % over 10 runs.')
+    // "N of 8 active now." from the stats the page already reads (1 quarantined).
+    await waitFor(() => expect(policyCard).toHaveTextContent('1 of 8 active now.'))
+    expect(state.policyCalls).toContainEqual(['p1', true])
+    expect(container.querySelector('table[aria-label="Flaky tests"]')).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('a tab click writes ?tab=policy', async () => {
+    renderPage()
+    fireEvent.click(tab(/^Policy/))
+    expect(currentUrl()).toBe('/flaky?tab=policy')
+  })
+
+  it.each(['detected', 'proposed', 'history'])('?tab=%s never reads the policy', async (id) => {
+    renderPage(id === 'detected' ? '/flaky' : `/flaky?tab=${id}`)
+    await waitFor(() => expect(quarantineMock.list).toHaveBeenCalled())
+    await screen.findAllByRole('tab')
+    expect(state.policyCalls.filter(([, enabled]) => enabled === true)).toEqual([])
+  })
+
+  it('the Quarantined tab warns past the cap: 12 active, a cap of 8', async () => {
+    quarantineMock.stats.mockResolvedValue({
+      detected: 0, proposed: 2, approved: 0, quarantined: 12, recheck_scheduled: 0,
+      re_quarantined: 0, released: 1, rejected: 1, expired: 0, total_live: 14,
+    })
+    renderPage('/flaky?tab=quarantined')
+    await screen.findByText('test_quarantine_b')
+    const line = await waitFor(() => {
+      const el = document.querySelector('[data-quarantine-over-cap]')
+      expect(el).not.toBeNull()
+      return el as HTMLElement
+    })
+    expect(line).toHaveTextContent(/^12 tests are quarantined; this project's policy warns past 8\.$/)
+    expect(state.policyCalls).toContainEqual(['p1', true])
+  })
+
+  it.each([
+    ['a cap of 0 (no limit)', { ...POLICY, max_active_quarantined: 0 }],
+    ['a garbage policy', { max_active_quarantined: 'eight' }],
+    ['no policy (a failed read)', null],
+  ])('no warning with %s, and the tab still renders', async (_label, policy) => {
+    state.policy = policy
+    quarantineMock.stats.mockResolvedValue({
+      detected: 0, proposed: 2, approved: 0, quarantined: 12, recheck_scheduled: 0,
+      re_quarantined: 0, released: 1, rejected: 1, expired: 0, total_live: 14,
+    })
+    renderPage('/flaky?tab=quarantined')
+    await screen.findByText('test_quarantine_b')
+    await waitFor(() => expect(tab(/^Quarantined/)).toHaveTextContent('Quarantined12'))
+    expect(document.querySelector('[data-quarantine-over-cap]')).toBeNull()
+  })
+
+  it('a garbage policy on the Policy tab reads "could not be read", not a form', async () => {
+    state.policy = { sla_days: 'two weeks' }
+    const { container } = renderPage('/flaky?tab=policy')
+    await waitFor(() => expect(container.querySelector('[data-quarantine-policy]')).toHaveTextContent('The quarantine policy could not be read.'))
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull()
+  })
+
+  it('a QA engineer sees the card read-only', async () => {
+    state.canAccessManagement = false
+    const { container } = renderPage('/flaky?tab=policy')
+    await waitFor(() => expect(container.querySelector('[data-quarantine-policy]')).toHaveTextContent('Only a QA lead can change the quarantine policy.'))
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull()
   })
 })

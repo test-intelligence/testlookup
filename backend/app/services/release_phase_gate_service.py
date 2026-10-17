@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.postgres import ReleasePhase
 from app.services import release_gate_decision_service as decisions
 from app.services import release_rollup_service as rollup_svc
+from app.services.notification import gate_notifications
 from app.services import policy_resolution
 
 
@@ -76,6 +77,10 @@ async def evaluate_phase(
 
     decision = None
     if record:
+        # W09 NTF-01: the phase's previous verdict, read only when recording (see
+        # release_gate_service.evaluate_release).
+        previous = await decisions.current_decision(db, release_id, phase_id=phase_id)
+        previous_verdict = getattr(previous, "verdict", None)
         decision = await decisions.record_decision(
             db,
             release_id,
@@ -92,6 +97,12 @@ async def evaluate_phase(
             blocking_reasons=blocking,
             created_by_id=created_by_id,
         )
+        if gate_notifications.is_transition_into_no_go(previous_verdict, verdict):
+            # SAVEPOINT + swallow inside: a notification fault never fails the gate.
+            await gate_notifications.stage_gate_no_go(
+                db, release_id=release_id, decision=decision, previous_verdict=previous_verdict,
+                phase=phase,
+            )
 
     return {
         "release_id": str(release_id),

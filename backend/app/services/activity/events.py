@@ -87,6 +87,11 @@ ENTITY_TYPES: Final[tuple[str, ...]] = (
     "classification_hint",
     # W08 TRND-04: a note pinned on a project's daily charts (a UTC day range).
     "timeline_note",
+    # W09 NTF-02: a project's notification policy (one row per project; the
+    # entity id is the project's).
+    "notification_policy",
+    # W09 FLK-02: a project's quarantine lifecycle policy (one row per project).
+    "quarantine_policy",
 )
 
 #: Where a row of each entity type lives in the SPA. Used to build
@@ -127,6 +132,11 @@ _ENTITY_ROUTES: Final[Mapping[str, str]] = {
     # W08 TRND-04: notes are drawn on the Trends hero chart (and the Coverage
     # history tab) and listed from its "Notes (n)" chip; there is no per-note page.
     "timeline_note": "/trends",
+    # W09 NTF-02: the "Project notification policy" card of Settings > Email
+    # (SMTP) & channels (one policy per project; the card reads the top bar's).
+    "notification_policy": "/settings/notifications",
+    # W09 FLK-02: the Policy tab of /flaky.
+    "quarantine_policy": "/flaky?tab=policy",
 }
 
 _EVENT_NAME_RE: Final[re.Pattern[str]] = re.compile(r"^[a-z_]+\.[a-z_]+$")
@@ -313,6 +323,13 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("team_channel.set", "configuration", "ownership_rule", "Notification channel set for team {entity_label}"),
     _spec("team_channel.removed", "configuration", "ownership_rule", "Notification channel removed for team {entity_label}"),
     _spec("retention_policy.updated", "configuration", "retention_policy", "Retention policy changed: {changed}"),
+    # W09 NTF-02 / FLK-02: staged by the two policy PUTs on the request session
+    # (outcome: a rolled-back save leaves no row), only when a field changed or
+    # the PUT created the project's row. ``changed`` joins human labels
+    # ("every run, state changes"; "SLA days, auto-release"), or reads "saved
+    # the defaults as this project's policy" for a first save of the defaults.
+    _spec("notification_policy.updated", "configuration", "notification_policy", "Notification policy changed: {changed}"),
+    _spec("quarantine_policy.updated", "configuration", "quarantine_policy", "Quarantine policy changed: {changed}"),
     _spec("retention.purge_executed", "configuration", "retention_policy", "Retention purge removed {count} records"),
     _spec("saved_view.created", "configuration", "saved_view", "Saved view {entity_label} was created"),
     _spec("saved_view.updated", "configuration", "saved_view", "Saved view {entity_label} changed: {changed}"),

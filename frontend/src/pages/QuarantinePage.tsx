@@ -12,7 +12,6 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import CreateJiraIssueModal from '@/components/defects/CreateJiraIssueModal'
-import ExperimentalBadge from '@/components/ui/ExperimentalBadge'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
@@ -22,12 +21,20 @@ import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import { openHelp } from '@/store/helpStore'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useQuarantineList, useQuarantineStats } from '@/hooks/useFlakyQuarantine'
+import { useQuarantinePolicy } from '@/hooks/useQuarantinePolicy'
 import {
   flakyQuarantineService,
   type FlakyQuarantineRead,
   type QuarantineStatus,
 } from '@/services/flakyQuarantineService'
-import { QUARANTINE_VIEW_STATUSES, quarantineCounts, type QuarantineView } from './flaky/flakyModel'
+import { parseQuarantinePolicy } from '@/services/quarantinePolicyService'
+import {
+  QUARANTINE_VIEW_STATUSES,
+  overCapText,
+  quarantineCounts,
+  slaDueText,
+  type QuarantineView,
+} from './flaky/flakyModel'
 
 export type { QuarantineView } from './flaky/flakyModel'
 
@@ -68,11 +75,17 @@ export function QuarantineBody({
   // The view counts (Flaky tests' tab labels, the Inbox's Approvals count)
   // come from the stats key and sit beside this table, so every row action
   // refreshes them too.
-  const { refresh: refreshStats } = useQuarantineStats(projectId)
+  const { stats, refresh: refreshStats } = useQuarantineStats(projectId)
   const { requests, isLoading, isError, refresh } = useQuarantineList({
     projectId,
     liveOnly: view !== 'history',
   })
+  // W09 FLK-02: the policy's cap (`max_active_quarantined`) has its one
+  // consumer here. Read on the Quarantined view only: the other views'
+  // request inventories are pinned, and a failed read just omits the line.
+  const { policy: read } = useQuarantinePolicy(projectId, view === 'active')
+  const policy = parseQuarantinePolicy(read)
+  const overCap = view === 'active' ? overCapText(quarantineCounts(stats).active, policy?.max_active_quarantined) : null
 
   const rows = useMemo(() => {
     const allowed = new Set(QUARANTINE_VIEW_STATUSES[view])
@@ -91,6 +104,16 @@ export function QuarantineBody({
       }
       className="space-y-3"
     >
+      {overCap && (
+        <p
+          data-quarantine-over-cap=""
+          className="flex items-center gap-1.5 text-[12px] text-[var(--status-broken)]"
+          title="The cap is the project's quarantine policy (Flaky tests › Policy). It warns; nothing is blocked."
+        >
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          {overCap}
+        </p>
+      )}
       {isLoading && <LoadingSpinner size="lg" />}
       {isError && <EmptyState title="Failed to load quarantine requests" />}
       {!isLoading && !isError && rows.length === 0 && (
@@ -185,7 +208,6 @@ export default function QuarantinePage() {
                 no release dimension — the endpoint takes none. Without this
                 the counts below read as one release's proposals. */}
             <AllReleasesBadge reason="A quarantine request is a standing decision about a test, not about one release's runs — a test is quarantined for the project or it is not." />
-            <ExperimentalBadge />
           </span>
         }
         tabs={
@@ -233,6 +255,7 @@ function QuarantineRow({
   // it was a `window.prompt`).
   const [decision, setDecision] = useState<Decision | null>(null)
   const [notes, setNotes] = useState('')
+  const slaDue = slaDueText(row.stale_at)
 
   async function doAction(fn: () => Promise<unknown>, successMsg: string) {
     if (busy) return
@@ -334,6 +357,16 @@ function QuarantineRow({
                 title={row.sla_days != null ? `SLA: ${row.sla_days} days` : undefined}
               >
                 stale — {daysOverSla(row.stale_at)}d over SLA
+              </span>
+            )}
+            {view === 'active' && !row.stale && slaDue && (
+              // W09 FLK-02: when the policy's SLA runs out for this quarantine.
+              <span
+                data-quarantine-sla-due=""
+                className="text-[10px] text-[var(--color-text-muted)] whitespace-nowrap"
+                title={row.sla_days != null ? `SLA: ${row.sla_days} days` : undefined}
+              >
+                {slaDue}
               </span>
             )}
             {row.ready_to_promote && (
