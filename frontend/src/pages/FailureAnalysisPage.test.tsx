@@ -669,11 +669,11 @@ describe('FailureAnalysisPage', () => {
     expect(within(kpis).getByText('100%')).toBeInTheDocument()
     expect(screen.getByText(/100% of failures are sitting in/i)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /Classify them so owners can be auto-routed/i }))
-    expect(await screen.findByRole('dialog', { name: 'Classify uncategorised failures' })).toBeInTheDocument()
+    expect(await screen.findByRole('region', { name: 'Classify uncategorised failures' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     // …and the same dialog from the header's ⋯ (the verdict card's "Classify" issue row).
     fireEvent.click(await overflowItem('Classify uncategorised failures'))
-    expect(await screen.findByRole('dialog', { name: 'Classify uncategorised failures' })).toBeInTheDocument()
+    expect(await screen.findByRole('region', { name: 'Classify uncategorised failures' })).toBeInTheDocument()
   })
 
   it('Export (in the header ⋯) triggers a CSV download with the in-window failure data', async () => {
@@ -916,7 +916,7 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
     }
   })
 
-  it('Suspects opens the ranked suspect commits in a side panel beside the table, and closes it', async () => {
+  it('Suspects opens the ranked suspect commits under its row (in the page), and closes it', async () => {
     await seedFailingScenario({
       topFailingItem: {
         test_name: 'checkout_flow', fail_count: 4, test_fingerprint: 'fp-top', suite_name: 'Checkout',
@@ -927,11 +927,16 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
     renderPage()
 
     // Closed at load: the panel (and its ranking) is a drill-down, not page content.
-    expect(document.querySelector('[data-side-panel]')).toBeNull()
+    expect(document.querySelector('[data-in-page-row]')).toBeNull()
     expect(screen.queryByTestId('suspects-panel')).toBeNull()
-    fireEvent.click(await screen.findByRole('button', { name: 'Suspects for checkout_flow' }))
+    const trigger = await screen.findByRole('button', { name: 'Suspects for checkout_flow' })
+    fireEvent.click(trigger)
     const panel = await screen.findByRole('complementary', { name: 'Suspects: checkout_flow' })
-    expect(panel).toHaveAttribute('data-side-panel', 'non-modal')
+    // W27 PAN-04: in a full-width row right under its own row, across all six columns.
+    const formRow = panel.closest('tr[data-in-page-row]') as HTMLElement
+    expect(formRow).not.toBeNull()
+    expect(formRow.previousElementSibling).toBe(trigger.closest('tr'))
+    expect(formRow.querySelector('td')).toHaveAttribute('colspan', '6')
     expect(within(panel).getByTestId('suspects-panel')).toBeInTheDocument()
     expect(within(panel).getByText(/No commit range available for this failure yet/)).toBeInTheDocument()
     // The ranking is asked for that run and that row's test.
@@ -940,7 +945,7 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
     expect(screen.getByRole('table', { name: 'Top failing tests' })).toBeInTheDocument()
 
     fireEvent.click(within(panel).getByRole('button', { name: 'Close suspects' }))
-    await waitFor(() => expect(document.querySelector('[data-side-panel]')).toBeNull())
+    await waitFor(() => expect(document.querySelector('[data-in-page-row]')).toBeNull())
   })
 
   // HON-05: every row's panel used the project's newest FAILED run (useRuns
@@ -979,7 +984,7 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
     expect(runLine).toHaveTextContent(/in run build-41/)
     expect(within(runLine).getByRole('link', { name: 'build-41' })).toHaveAttribute('href', '/runs/run-older')
     fireEvent.click(within(first).getByRole('button', { name: 'Close suspects' }))
-    await waitFor(() => expect(document.querySelector('[data-side-panel]')).toBeNull())
+    await waitFor(() => expect(document.querySelector('[data-in-page-row]')).toBeNull())
 
     fireEvent.click(screen.getByRole('button', { name: 'Suspects for login_flow' }))
     await screen.findByRole('complementary', { name: 'Suspects: login_flow' })
@@ -1019,7 +1024,7 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
     renderPage()
 
     fireEvent.click(await screen.findByRole('button', { name: /Mute test/i }))
-    const dialog = await screen.findByRole('dialog', { name: /Mute test \(propose quarantine\)/i })
+    const dialog = await screen.findByRole('region', { name: /Mute test \(propose quarantine\)/i })
 
     // Submit is disabled until a reason is provided (required field).
     const submit = within(dialog).getByRole('button', { name: /Propose quarantine/i })
@@ -1042,7 +1047,7 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
       rationale: expect.objectContaining({ reason: 'Known infra flake, tracked in JIRA-123' }),
     }))
     // Modal closes after a successful proposal.
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Mute test/i })).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('region', { name: /Mute test/i })).toBeNull())
   })
 
   it('disables "Mute test" with a tooltip when the top failing test has no fingerprint', async () => {
@@ -1056,7 +1061,7 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
     expect(muteBtn).toBeDisabled()
     expect(muteBtn).toHaveAttribute('title', expect.stringMatching(/fingerprint/i))
     fireEvent.click(muteBtn)
-    expect(screen.queryByRole('dialog', { name: /Mute test/i })).toBeNull()
+    expect(screen.queryByRole('region', { name: /Mute test/i })).toBeNull()
   })
 
   it('opens the correct-classification dialog and submits rating=incorrect feedback', async () => {
@@ -1074,7 +1079,7 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
     renderPage('?tab=categories')
 
     fireEvent.click(await screen.findByRole('button', { name: /Correct the classification/i }))
-    const dialog = await screen.findByRole('dialog', { name: /Correct classification/i })
+    const dialog = await screen.findByRole('region', { name: /Correct classification/i })
 
     // Shows the current category from the lookup.
     expect(within(dialog).getByText('UNKNOWN')).toBeInTheDocument()
@@ -1095,7 +1100,7 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
       corrected_category: 'INFRASTRUCTURE',
       comment: 'Stack trace is a DNS timeout',
     }))
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Correct classification/i })).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('region', { name: /Correct classification/i })).toBeNull())
   })
 
   it('shows the "no AI analysis recorded" empty state instead of a form when the lookup finds nothing', async () => {
@@ -1110,7 +1115,7 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
     renderPage('?tab=categories')
 
     fireEvent.click(await screen.findByRole('button', { name: /Correct the classification/i }))
-    const dialog = await screen.findByRole('dialog', { name: /Correct classification/i })
+    const dialog = await screen.findByRole('region', { name: /Correct classification/i })
 
     expect(within(dialog).getByText(/No AI analysis recorded for this test yet/i)).toBeInTheDocument()
     // No submit button in the empty state — nothing to correct.
@@ -1135,7 +1140,7 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
     expect(screen.queryByText(/QA · clustering/i)).toBeNull()
     expect(screen.queryByRole('button', { name: /^Open$/i })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /Correct the classification/i }))
-    expect(await screen.findByRole('dialog', { name: /Correct classification/i })).toBeInTheDocument()
+    expect(await screen.findByRole('region', { name: /Correct classification/i })).toBeInTheDocument()
   })
 
   it('shows no fabricated detail on the Top failing table or the footer (P2)', async () => {
@@ -2046,7 +2051,7 @@ describe('FailureAnalysisPage — Classification hints (W07 FAIL-10)', () => {
     // The list is asked only once the dialog opens.
     expect(useClassificationHints).not.toHaveBeenCalled()
     fireEvent.click(button)
-    expect(await screen.findByRole('dialog', { name: 'Classification hints' })).toBeInTheDocument()
+    expect(await screen.findByRole('region', { name: 'Classification hints' })).toBeInTheDocument()
     expect(useClassificationHints).toHaveBeenCalledWith('proj-1')
   })
 

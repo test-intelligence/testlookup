@@ -37,8 +37,11 @@ const ROW: DefectItem = {
 function renderDialog(defect: DefectItem = ROW) {
   const onClose = vi.fn()
   const onUpdated = vi.fn()
-  render(<AssignDefectDialog defect={defect} onClose={onClose} onUpdated={onUpdated} />)
-  return { onClose, onUpdated, dialog: screen.getByRole('dialog', { name: 'Assign defect' }) }
+  const { container } = render(<AssignDefectDialog defect={defect} onClose={onClose} onUpdated={onUpdated} />)
+  // W27 PAN-04: in the page — a region by the same name, rendered where it is mounted (no portal).
+  const dialog = screen.getByRole('region', { name: 'Assign defect' })
+  expect(container.contains(dialog)).toBe(true)
+  return { onClose, onUpdated, dialog }
 }
 
 const assignee = () => screen.getByRole('combobox', { name: 'Assignee' })

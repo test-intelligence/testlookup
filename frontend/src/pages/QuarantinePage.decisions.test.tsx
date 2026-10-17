@@ -34,8 +34,15 @@ vi.mock('@/hooks/useQuarantinePolicy', () => ({
   },
 }))
 
+const perms = vi.hoisted(() => ({ isQaEngineer: false }))
 vi.mock('@/hooks/usePermissions', () => ({
-  usePermissions: () => ({ canAccessManagement: true, isQaEngineer: false }),
+  usePermissions: () => ({ canAccessManagement: true, isQaEngineer: perms.isQaEngineer }),
+}))
+
+// W27 PAN-04: File Jira's form (its reads stay loading here: nothing is filed in these tests).
+vi.mock('@/hooks/useJiraDefects', () => ({
+  useJiraDefectMetadata: () => ({ metadata: undefined, isLoading: true, isError: false }),
+  useJiraDefectPreview: () => ({ preview: undefined, isLoading: true, isError: false }),
 }))
 
 const service = vi.hoisted(() => ({
@@ -83,6 +90,7 @@ const prompt = vi.fn()
 beforeEach(() => {
   vi.clearAllMocks()
   vi.stubGlobal('prompt', prompt)
+  perms.isQaEngineer = false
   hooks.stats = undefined
   hooks.policy = null
   hooks.policyCalls = []
@@ -221,5 +229,43 @@ describe('the Quarantined view: SLA due and the cap (W09 FLK-02)', () => {
     renderBody('active')
     expect(document.querySelector('[data-quarantine-over-cap]')).toBeNull()
     expect(screen.getByTestId('quarantine-row')).toBeInTheDocument()
+  })
+})
+
+// W27 PAN-04: File Jira opens its prefilled form IN THE PAGE, under the row it was filed from.
+describe('File Jira opens under its row', () => {
+  beforeEach(() => {
+    perms.isQaEngineer = true
+    hooks.requests = [row('a', 'QUARANTINED'), row('b', 'QUARANTINED')]
+  })
+
+  const rowOf = (id: string) => document.querySelector(`tr[data-quarantine-id="${id}"]`) as HTMLElement
+
+  it('renders Create Jira issue in td[colspan="8"] right after that row, above its decision form; no modal', () => {
+    renderBody('active')
+    fireEvent.click(within(rowOf('b')).getByRole('button', { name: 'File Jira' }))
+    const form = screen.getByRole('region', { name: 'Create Jira issue' })
+    const formRow = form.closest('tr') as HTMLElement
+    expect(formRow).toHaveAttribute('data-in-page-row')
+    expect(formRow.previousElementSibling).toBe(rowOf('b'))
+    expect(formRow.querySelector('td')).toHaveAttribute('colspan', '8')
+    expect(within(form).getByText('test_b')).toBeInTheDocument()
+    expect(document.querySelector('[aria-modal]')).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    // The row's own decision form opens below the Jira form.
+    fireEvent.click(within(rowOf('b')).getByRole('button', { name: /Release/ }))
+    expect(formRow.nextElementSibling).toHaveAttribute('data-testid', 'quarantine-decision-form')
+  })
+
+  it('one Jira form per table: another row replaces it; Cancel closes it', () => {
+    renderBody('active')
+    fireEvent.click(within(rowOf('a')).getByRole('button', { name: 'File Jira' }))
+    fireEvent.click(within(rowOf('b')).getByRole('button', { name: 'File Jira' }))
+    const forms = screen.getAllByRole('region', { name: 'Create Jira issue' })
+    expect(forms).toHaveLength(1)
+    expect((forms[0].closest('tr') as HTMLElement).previousElementSibling).toBe(rowOf('b'))
+    fireEvent.click(within(forms[0]).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('region', { name: 'Create Jira issue' })).toBeNull()
   })
 })

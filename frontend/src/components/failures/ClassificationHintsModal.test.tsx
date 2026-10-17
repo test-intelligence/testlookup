@@ -1,5 +1,5 @@
 /**
- * W07 FAIL-10: the Classification hints dialog (Failures › Categories, QA lead).
+ * W07 FAIL-10: the Classification hints section (Failures › Categories, QA lead; in the page since W27 PAN-04).
  *
  * Pins: the list reads as the ledger's sentence (`error message contains "…" →
  * Infrastructure`) with its note and author; Add sends ONE body and refreshes
@@ -29,6 +29,7 @@ vi.mock('@/services/classificationHintService', () => ({ classificationHintServi
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }))
 vi.mock('react-hot-toast', () => ({ default: toast }))
 
+import { useInlineSlot, type InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import ClassificationHintsModal from './ClassificationHintsModal'
 import { PREVIEW_DEBOUNCE_MS, hintSentence } from './classificationHintWords'
 
@@ -71,7 +72,10 @@ describe('ClassificationHintsModal — the list', () => {
   it("reads the project's hints as the ledger sentence, with the note and who set it", () => {
     renderModal()
     expect(hooks.list).toHaveBeenCalledWith('proj-1')
-    expect(screen.getByRole('dialog', { name: 'Classification hints' })).toBeInTheDocument()
+    // W27 PAN-04: a region in the page, by the dialog's name; no modal anywhere.
+    expect(screen.getByRole('region', { name: 'Classification hints' })).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.querySelector('[aria-modal]')).toBeNull()
     expect(screen.getByText(/Hints classify new failures before the AI does\. A failure that matches several uses the oldest hint\. Existing analyses are not changed\./)).toBeInTheDocument()
     const row = document.querySelector('[data-hint-row="h1"]') as HTMLElement
     expect(within(row).getByText('error message contains "ECONNREFUSED" → Infrastructure')).toBeInTheDocument()
@@ -112,20 +116,77 @@ describe('ClassificationHintsModal — the list', () => {
     expect(hooks.mutate).toHaveBeenCalled()
   })
 
-  it('Delete asks first, and deletes only on yes', async () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+  it('Delete asks first, in the hint\'s row, and deletes only on the strip\'s Delete', async () => {
+    // W27 PAN-04: an inline strip, never the browser's prompt.
+    const confirm = vi.spyOn(window, 'confirm')
     renderModal()
+    const row = document.querySelector('[data-hint-row="h1"]') as HTMLElement
+    const strip = () => row.querySelector<HTMLElement>('[data-inline-confirm]')
     fireEvent.click(screen.getByRole('button', { name: /^Delete hint: / }))
-    expect(confirm).toHaveBeenCalledWith('Delete this hint?')
+    expect(strip()).not.toBeNull()
+    expect(within(row).getByRole('group', { name: 'Delete this hint?' })).toBe(strip())
+    // The trigger was the first click: nothing is sent until the strip answers.
+    expect(service.remove).not.toHaveBeenCalled()
+    fireEvent.click(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }))
+    expect(strip()).toBeNull()
     expect(service.remove).not.toHaveBeenCalled()
 
-    confirm.mockReturnValue(true)
+    fireEvent.click(screen.getByRole('button', { name: /^Delete hint: / }))
+    const action = (strip() as HTMLElement).querySelector('[data-inline-confirm-action]') as HTMLElement
+    expect(action).toHaveTextContent('Delete')
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /^Delete hint: / }))
+      fireEvent.click(action)
     })
+    expect(strip(), 'the strip closes once answered').toBeNull()
     expect(service.remove).toHaveBeenCalledTimes(1)
     expect(service.remove).toHaveBeenCalledWith('proj-1', 'h1')
     expect(toast.success).toHaveBeenCalledWith('Hint deleted')
+    expect(confirm).not.toHaveBeenCalled()
+  })
+
+  it('Escape inside the strip is its Cancel: the section stays open, nothing is sent', () => {
+    const { onClose } = renderModal()
+    fireEvent.click(screen.getByRole('button', { name: /^Delete hint: / }))
+    const strip = document.querySelector('[data-inline-confirm]') as HTMLElement
+    fireEvent.keyDown(within(strip).getByRole('button', { name: 'Cancel' }), { key: 'Escape' })
+    expect(document.querySelector('[data-inline-confirm]')).toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(service.remove).not.toHaveBeenCalled()
+  })
+})
+
+describe('ClassificationHintsModal — in its page slot (W27 PAN-04)', () => {
+  function SlotHost({ onSlot }: { onSlot: (slot: InlineSlot) => void }) {
+    const slot = useInlineSlot()
+    onSlot(slot)
+    return <ClassificationHintsModal projectId="proj-1" onClose={() => slot.close()} slot={slot} />
+  }
+  const renderInSlot = () => {
+    let latest: InlineSlot | null = null
+    render(<SlotHost onSlot={(s) => { latest = s }} />)
+    return () => latest as unknown as InlineSlot
+  }
+
+  it('typing a pattern marks the section dirty; the Enabled toggle (it saves at once) does not', async () => {
+    const slot = renderInSlot()
+    await act(async () => {
+      fireEvent.click(screen.getByRole('checkbox', { name: /^Enabled: / }))
+    })
+    expect(service.update).toHaveBeenCalledTimes(1)
+    expect(slot().dirty).toBe(false)
+    fireEvent.change(containsInput(), { target: { value: 'ECONNRESET' } })
+    expect(slot().dirty).toBe(true)
+  })
+
+  it('a hint added leaves nothing typed to lose', async () => {
+    const slot = renderInSlot()
+    fireEvent.change(containsInput(), { target: { value: 'ECONNRESET' } })
+    expect(slot().dirty).toBe(true)
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Add hint' }))
+    })
+    expect(service.create).toHaveBeenCalledTimes(1)
+    expect(slot().dirty).toBe(false)
   })
 })
 

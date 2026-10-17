@@ -28,10 +28,30 @@ describe('ProposeQuarantineModal', () => {
   })
 
   it('says where the proposal waits: Flaky tests › Proposed, not the old /quarantine URL', () => {
-    renderModal()
-    const dialog = screen.getByRole('dialog')
+    const { container } = renderModal()
+    // W27 PAN-04: a region in the page by the dialog's name, rendered where it is mounted.
+    const dialog = screen.getByRole('region', { name: 'Propose quarantine' })
+    expect(container.contains(dialog)).toBe(true)
+    expect(document.querySelector('[aria-modal]')).toBeNull()
     expect(dialog).toHaveTextContent('A QA Lead approves or rejects it under Flaky tests › Proposed')
     expect(dialog).not.toHaveTextContent('/quarantine')
+  })
+
+  it('Escape inside closes it, Cancel closes it; neither sends anything', () => {
+    const onClose = vi.fn()
+    render(
+      <ProposeQuarantineModal
+        prefill={{ project_id: 'p-1', test_fingerprint: 'fp', test_name: 'checkout total' }}
+        source="test"
+        onClose={onClose}
+      />,
+    )
+    // Focus lands on the reason (the first field), as the modal's did.
+    expect(document.activeElement).toBe(screen.getByRole('textbox'))
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Escape' })
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(onClose).toHaveBeenCalledTimes(2)
+    expect(propose).not.toHaveBeenCalled()
   })
 
   it('the toast after proposing names the same place', async () => {

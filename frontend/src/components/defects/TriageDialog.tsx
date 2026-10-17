@@ -1,13 +1,14 @@
 /**
- * The frame of a defect triage dialog (W06 DEF-01): rendered into
- * `document.body` (the trigger sits in a right-aligned table cell, whose
- * alignment and stacking would otherwise leak into the dialog), above the row
- * menu, with the shared modal keyboard behaviour (`useModalFocus`: Escape
- * closes unless busy).
+ * The frame of a defect triage form (W06 DEF-01), rendered IN THE PAGE (W27
+ * PAN-04): the defects table puts it in a full-width row under the defect's
+ * own row (`DefectRowActions`' `DefectActionForm` in an `InlineRowSection`).
+ * It keeps the dialog's name (its heading), its test id and its keyboard
+ * behaviour minus the trap: focus moves to the first field when it opens,
+ * Escape inside closes it unless busy, and focus goes back to the opener.
  */
 import { useId, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
-import { useModalFocus } from '@/hooks/useModalFocus'
+import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
+import type { InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 
 export default function TriageDialog({
   title,
@@ -15,34 +16,31 @@ export default function TriageDialog({
   onClose,
   children,
   testId,
+  slot,
 }: {
   title: string
   busy: boolean
   onClose: () => void
   children: ReactNode
   testId?: string
+  /** The table's slot: one triage form open per table, and a typed form asks before it is replaced. */
+  slot?: InlineSlot
 }) {
   const id = useId()
-  const titleId = `${id}-title`
-  const dialogRef = useModalFocus({ onClose, canClose: !busy })
-  return createPortal(
-    <div
-      ref={dialogRef}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={titleId}
-      aria-busy={busy || undefined}
-      data-testid={testId}
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-[var(--color-bg)]/70 p-4 text-left"
+  return (
+    <InlineFormSection
+      title={title}
+      titleId={`${id}-title`}
+      onClose={onClose}
+      canClose={!busy}
+      showClose={false}
+      busy={busy}
+      testId={testId}
+      slot={slot}
+      className="text-left"
     >
-      <div className="w-full max-w-md rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-card)] p-5 shadow-2xl">
-        <h2 id={titleId} className="text-base font-semibold text-[var(--color-text)]">
-          {title}
-        </h2>
-        {children}
-      </div>
-    </div>,
-    document.body,
+      <div className="max-w-md">{children}</div>
+    </InlineFormSection>
   )
 }
 

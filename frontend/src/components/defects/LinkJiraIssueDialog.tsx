@@ -14,6 +14,7 @@ import { updateDefect } from '@/services/defectService'
 import type { DefectItem } from '@/types/analytics'
 import type { DefectPatchResponse } from '@/types/defectTriage'
 import { isSafeExternalUrl } from '@/utils/safeUrl'
+import type { InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import TriageDialog, { TriageConflict } from './TriageDialog'
 import {
   JIRA_KEY_MAX_LENGTH,
@@ -28,6 +29,8 @@ export interface LinkJiraIssueDialogProps {
   defect: DefectItem
   onClose: () => void
   onUpdated: (row: DefectItem) => void
+  /** The defects table's slot (W27 PAN-04): one form per table; a typed form asks before it is replaced. */
+  slot?: InlineSlot
 }
 
 function linkedToast(response: DefectPatchResponse, sentKey: string): string {
@@ -40,7 +43,7 @@ function linkedToast(response: DefectPatchResponse, sentKey: string): string {
   return `Linked to ${key}`
 }
 
-export default function LinkJiraIssueDialog({ defect, onClose, onUpdated }: LinkJiraIssueDialogProps) {
+export default function LinkJiraIssueDialog({ defect, onClose, onUpdated, slot }: LinkJiraIssueDialogProps) {
   // Mounted only while the dialog is open, so the metadata is read only then.
   const { metadata } = useJiraDefectMetadata(defect.project_id)
   const currentKey = defect.jira_ticket_id?.trim() || null
@@ -77,7 +80,7 @@ export default function LinkJiraIssueDialog({ defect, onClose, onUpdated }: Link
   }
 
   return (
-    <TriageDialog title="Link a Jira issue" busy={busy !== null} onClose={onClose} testId="link-jira-dialog">
+    <TriageDialog title="Link a Jira issue" busy={busy !== null} onClose={onClose} testId="link-jira-dialog" slot={slot}>
       {currentKey && (
         <p className="mt-2 text-sm text-[var(--color-text-muted)]" data-current-jira-link="">
           Linked to{' '}

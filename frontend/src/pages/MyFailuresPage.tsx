@@ -18,11 +18,15 @@
  *
  * Project scope is driven by the project store (ALL_PROJECTS_ID = "all").
  */
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AlertTriangle, CheckSquare, Clock, ExternalLink, Inbox, UserCog, X } from 'lucide-react'
+import { AlertTriangle, CheckSquare, Clock, ExternalLink, Inbox, UserCog } from 'lucide-react'
 import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
+import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
+import { InlineRowSection } from '@/components/ui/inPage/InlineRowSection'
+import { useInlineSlot, type InlineSlot } from '@/components/ui/inPage/useInlineSlot'
+import { useSlotCloser } from '@/hooks/useSlotCloser'
 import PageHeader from '@/components/ui/PageHeader'
 import Tabs from '@/components/ui/Tabs'
 import WindowPicker from '@/components/ui/WindowPicker'
@@ -87,14 +91,13 @@ export default function MyFailuresPage() {
   // The Approvals queues belong to one project: their count is only asked for
   // (and only shown) while one is active.
   const singleProjectId = !isAllProjects && activeProjectId ? activeProjectId : null
-  // Reassignment modal state. ``reassignFor`` is the failure currently
-  // being reassigned (null = modal closed). Only QA_LEAD+ ever sees
-  // the button that opens this modal; the backend enforces the same
-  // contract independently — clients can't pivot it.
-  const [reassignFor, setReassignFor] = useState<MyFailureItem | null>(null)
-  // Triage-status modal state. Same single-target pattern as
-  // ``reassignFor`` — only one modal open at a time.
-  const [triageFor, setTriageFor] = useState<MyFailureItem | null>(null)
+  // The row form open in the table (W27 PAN-04): Reassign (`${id}:reassign`)
+  // or Update status (`${id}:triage`), in a full-width row under its row,
+  // one at a time; another row's form while this one has a choice typed in
+  // asks first. Only QA_LEAD+ ever sees the button that opens Reassign; the
+  // backend enforces the same contract independently — clients can't pivot it.
+  const formSlot = useInlineSlot<string>()
+  const closeForm = useSlotCloser(formSlot)
 
   // Time window comes from the shared user-level preference (the toolbar's
   // `WindowPicker` writes it), so a selection made on any other page
@@ -257,17 +260,66 @@ export default function MyFailuresPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--color-border)]">
-                    {data.items.map(item => (
-                      <FailureRow
-                        key={item.id}
-                        item={item}
-                        windowDays={days}
-                        canReassign={isQaLead}
-                        onOpen={() => navigate(item.navigation_url)}
-                        onReassign={() => setReassignFor(item)}
-                        onTriage={() => setTriageFor(item)}
-                      />
-                    ))}
+                    {data.items.map(item => {
+                      const triageKey = `${item.id}:triage`
+                      const reassignKey = `${item.id}:reassign`
+                      return (
+                        <FailureRow
+                          key={item.id}
+                          item={item}
+                          windowDays={days}
+                          canReassign={isQaLead}
+                          onOpen={() => navigate(item.navigation_url)}
+                          onReassign={() => formSlot.open(reassignKey)}
+                          onTriage={() => formSlot.open(triageKey)}
+                          below={
+                            formSlot.openKey === triageKey ? (
+                              <TriageStatusModal
+                                failure={item}
+                                slot={formSlot}
+                                onClose={() => closeForm(triageKey)}
+                                onUpdated={() => {
+                                  closeForm(triageKey)
+                                  // Any non-PENDING_REVIEW status drops the row off the
+                                  // inbox — refetch so the count + page reflect that.
+                                  void appMutate(
+                                    (key: unknown) => Array.isArray(key) && key[0] === 'my-failures',
+                                  )
+                                  void appMutate(
+                                    (key: unknown) => Array.isArray(key) && key[0] === 'my-failures-count',
+                                  )
+                                  void appMutate(
+                                    (key: unknown) => Array.isArray(key) && key[0] === 'my-failures-count-unscoped',
+                                  )
+                                }}
+                              />
+                            ) : formSlot.openKey === reassignKey ? (
+                              <ReassignModal
+                                failure={item}
+                                slot={formSlot}
+                                onClose={() => closeForm(reassignKey)}
+                                onReassigned={() => {
+                                  closeForm(reassignKey)
+                                  // The reassigned row no longer belongs to the caller's
+                                  // inbox — refetch instead of relying on optimistic
+                                  // splice, since `failure_count` and pagination would
+                                  // otherwise drift.
+                                  void appMutate(
+                                    (key: unknown) => Array.isArray(key) && key[0] === 'my-failures',
+                                  )
+                                  void appMutate(
+                                    (key: unknown) => Array.isArray(key) && key[0] === 'my-failures-count',
+                                  )
+                                  void appMutate(
+                                    (key: unknown) => Array.isArray(key) && key[0] === 'my-failures-count-unscoped',
+                                  )
+                                }}
+                              />
+                            ) : null
+                          }
+                        />
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -278,50 +330,6 @@ export default function MyFailuresPage() {
             )}
           </section>
         </>
-      )}
-
-      {triageFor && (
-        <TriageStatusModal
-          failure={triageFor}
-          onClose={() => setTriageFor(null)}
-          onUpdated={() => {
-            setTriageFor(null)
-            // Any non-PENDING_REVIEW status drops the row off the
-            // inbox — refetch so the count + page reflect that.
-            void appMutate(
-              (key: unknown) => Array.isArray(key) && key[0] === 'my-failures',
-            )
-            void appMutate(
-              (key: unknown) => Array.isArray(key) && key[0] === 'my-failures-count',
-            )
-            void appMutate(
-              (key: unknown) => Array.isArray(key) && key[0] === 'my-failures-count-unscoped',
-            )
-          }}
-        />
-      )}
-
-      {reassignFor && (
-        <ReassignModal
-          failure={reassignFor}
-          onClose={() => setReassignFor(null)}
-          onReassigned={() => {
-            setReassignFor(null)
-            // The reassigned row no longer belongs to the caller's
-            // inbox — refetch instead of relying on optimistic
-            // splice, since `failure_count` and pagination would
-            // otherwise drift.
-            void appMutate(
-              (key: unknown) => Array.isArray(key) && key[0] === 'my-failures',
-            )
-            void appMutate(
-              (key: unknown) => Array.isArray(key) && key[0] === 'my-failures-count',
-            )
-            void appMutate(
-              (key: unknown) => Array.isArray(key) && key[0] === 'my-failures-count-unscoped',
-            )
-          }}
-        />
       )}
     </div>
   )
@@ -334,6 +342,7 @@ function FailureRow({
   onOpen,
   onReassign,
   onTriage,
+  below,
 }: {
   item: MyFailureItem
   windowDays: number
@@ -341,6 +350,8 @@ function FailureRow({
   onOpen: () => void
   onReassign: () => void
   onTriage: () => void
+  /** W27 PAN-04: this row's open form (Reassign / Update status), in a full-width row under it. */
+  below?: ReactNode
 }) {
   const dot = severityDot(item.severity)
   const count = item.failure_count ?? 1
@@ -363,6 +374,7 @@ function FailureRow({
   ].filter(Boolean).join(' · ')
   const when = formatRunWhen(item.created_at)
   return (
+    <>
     <tr
       onClick={onOpen}
       className="cursor-pointer hover:bg-[var(--color-bg-secondary)]/60 transition-colors"
@@ -476,18 +488,29 @@ function FailureRow({
         <ExternalLink className="h-3.5 w-3.5 text-[var(--color-text-faint)] inline-block" />
       </td>
     </tr>
+    {/* Across all seven columns; its content can never widen the table (InlineRowSection). */}
+    {below ? <InlineRowSection colSpan={7}>{below}</InlineRowSection> : null}
+    </>
   )
 }
 
 
+/**
+ * Reassign a failure (QA lead): a form IN THE PAGE (W27 PAN-04), under the
+ * failure's row, named by its heading "Reassign failure". The options are
+ * read only while it is open.
+ */
 function ReassignModal({
   failure,
   onClose,
   onReassigned,
+  slot,
 }: {
   failure: MyFailureItem
   onClose: () => void
   onReassigned: () => void
+  /** The table's slot: one row form open; a changed choice asks before it is replaced. */
+  slot?: InlineSlot
 }) {
   // SWR owns the fetch/loading/error state declaratively — this was a
   // load-on-mount useEffect driving three setState calls (set-state-in-effect).
@@ -539,38 +562,43 @@ function ReassignModal({
     : false
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-xl shadow-xl w-full max-w-md p-5"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-start justify-between mb-3">
-          <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-[var(--color-text)] m-0">Reassign failure</h2>
-            <p className="text-xs text-[var(--color-text-muted)] mt-0.5 truncate">
-              {failure.test_name}
+    <InlineFormSection
+      title="Reassign failure"
+      description={
+        <>
+          <p className="text-xs text-[var(--color-text-muted)] m-0 truncate">{failure.test_name}</p>
+          {failure.suite_name && (
+            <p className="text-[11px] text-[var(--color-text-faint)] mt-0.5 mb-0 truncate">
+              Suite: {failure.suite_name}
             </p>
-            {failure.suite_name && (
-              <p className="text-[11px] text-[var(--color-text-faint)] mt-0.5 truncate">
-                Suite: {failure.suite_name}
-              </p>
-            )}
-          </div>
+          )}
+        </>
+      }
+      onClose={onClose}
+      slot={slot}
+      busy={submitting}
+      footer={!loading && !error && hasAny ? (
+        <>
           <button
             type="button"
             onClick={onClose}
-            className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] p-1 -mt-1 -mr-1"
-            aria-label="Close"
+            className="text-xs px-3 py-1.5 rounded border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]"
           >
-            <X className="h-4 w-4" />
+            Cancel
           </button>
-        </div>
-
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={submitting || !selectedUserId}
+            className="flex items-center gap-1.5 text-xs bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] px-3 py-1.5 rounded-lg font-medium"
+          >
+            {submitting && <LoadingSpinner size="sm" />}
+            {submitting ? 'Reassigning…' : 'Reassign'}
+          </button>
+        </>
+      ) : undefined}
+    >
+      <div className="max-w-md">
         {loading ? (
           <div className="py-8 flex justify-center"><LoadingSpinner /></div>
         ) : error ? (
@@ -603,28 +631,10 @@ function ReassignModal({
                 />
               ))}
             </div>
-            <div className="mt-4 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={onClose}
-                className="text-xs px-3 py-1.5 rounded border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleSubmit}
-                disabled={submitting || !selectedUserId}
-                className="flex items-center gap-1.5 text-xs bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] px-3 py-1.5 rounded-lg font-medium"
-              >
-                {submitting && <LoadingSpinner size="sm" />}
-                {submitting ? 'Reassigning…' : 'Reassign'}
-              </button>
-            </div>
           </>
         )}
       </div>
-    </div>
+    </InlineFormSection>
   )
 }
 
@@ -665,14 +675,21 @@ const TRIAGE_CHOICES: Array<{
 ]
 
 
+/**
+ * Update a failure's triage status: a form IN THE PAGE (W27 PAN-04), under
+ * the failure's row, named by its heading "Update triage status".
+ */
 function TriageStatusModal({
   failure,
   onClose,
   onUpdated,
+  slot,
 }: {
   failure: MyFailureItem
   onClose: () => void
   onUpdated: () => void
+  /** The table's slot: one row form open; a changed status or notes ask before it is replaced. */
+  slot?: InlineSlot
 }) {
   const [selected, setSelected] = useState<TriageStatus>('REVIEWED_APPROVED')
   const [notes, setNotes] = useState<string>('')
@@ -697,36 +714,41 @@ function TriageStatusModal({
   }
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="bg-[var(--color-bg)] border border-[var(--color-border)] rounded-xl shadow-xl w-full max-w-md p-5"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-start justify-between mb-3">
-          <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-[var(--color-text)] m-0">Update triage status</h2>
-            <p className="text-xs text-[var(--color-text-muted)] mt-0.5 truncate">
-              {failure.test_name}
-            </p>
-            <p className="text-[11px] text-[var(--color-text-faint)] mt-0.5">
-              Anything other than &quot;Pending review&quot; removes this row from your inbox.
-            </p>
-          </div>
+    <InlineFormSection
+      title="Update triage status"
+      description={
+        <>
+          <p className="text-xs text-[var(--color-text-muted)] m-0 truncate">{failure.test_name}</p>
+          <p className="text-[11px] text-[var(--color-text-faint)] mt-0.5 mb-0">
+            Anything other than &quot;Pending review&quot; removes this row from your inbox.
+          </p>
+        </>
+      }
+      onClose={onClose}
+      slot={slot}
+      busy={submitting}
+      footer={
+        <>
           <button
             type="button"
             onClick={onClose}
-            className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] p-1 -mt-1 -mr-1"
-            aria-label="Close"
+            className="text-xs px-3 py-1.5 rounded border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]"
           >
-            <X className="h-4 w-4" />
+            Cancel
           </button>
-        </div>
-
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={submitting}
+            className="flex items-center gap-1.5 text-xs bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] px-3 py-1.5 rounded-lg font-medium"
+          >
+            {submitting && <LoadingSpinner size="sm" />}
+            {submitting ? 'Saving…' : 'Update status'}
+          </button>
+        </>
+      }
+    >
+      <div className="max-w-md">
         <div role="radiogroup" aria-label="New triage status" className="space-y-1 mb-3">
           {TRIAGE_CHOICES.map(choice => (
             <label
@@ -769,27 +791,8 @@ function TriageStatusModal({
           }
           className="w-full text-xs px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)]"
         />
-
-        <div className="mt-4 flex items-center justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-xs px-3 py-1.5 rounded border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={submitting}
-            className="flex items-center gap-1.5 text-xs bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] px-3 py-1.5 rounded-lg font-medium"
-          >
-            {submitting && <LoadingSpinner size="sm" />}
-            {submitting ? 'Saving…' : 'Update status'}
-          </button>
-        </div>
       </div>
-    </div>
+    </InlineFormSection>
   )
 }
 

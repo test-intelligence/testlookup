@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
   AlertTriangle,
@@ -17,9 +17,12 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import Tabs from '@/components/ui/Tabs'
 import AllReleasesBadge from '@/components/ui/AllReleasesBadge'
+import { InlineRowSection } from '@/components/ui/inPage/InlineRowSection'
+import { useInlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import { openHelp } from '@/store/helpStore'
 import { usePermissions } from '@/hooks/usePermissions'
+import { useSlotCloser } from '@/hooks/useSlotCloser'
 import { useQuarantineList, useQuarantineStats } from '@/hooks/useFlakyQuarantine'
 import { useQuarantinePolicy } from '@/hooks/useQuarantinePolicy'
 import {
@@ -70,8 +73,10 @@ export function QuarantineBody({
   primary?: boolean
 }) {
   const { canAccessManagement: hasQaLeadAccess, isQaEngineer } = usePermissions()
-  // US-6.1: quarantine row being filed to Jira via the one-click dialog.
-  const [jiraTarget, setJiraTarget] = useState<FlakyQuarantineRead | null>(null)
+  // US-6.1: the quarantine row being filed to Jira, its prefilled form UNDER that row (W27 PAN-04:
+  // `${row.id}:jira`, one per table; another row's while one has typed input asks first).
+  const jiraSlot = useInlineSlot<string>()
+  const closeJira = useSlotCloser(jiraSlot)
   // The view counts (Flaky tests' tab labels, the Inbox's Approvals count)
   // come from the stats key and sit beside this table, so every row action
   // refreshes them too.
@@ -145,34 +150,37 @@ export function QuarantineBody({
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
-                <QuarantineRow
-                  key={row.id}
-                  row={row}
-                  view={view}
-                  canAct={hasQaLeadAccess}
-                  canFileJira={isQaEngineer}
-                  onFileJira={(r) => setJiraTarget(r)}
-                  // The counts beside the table are a SEPARATE SWR key and are
-                  // on screen at the same time, so approving a row updated the
-                  // row and left the counts beside it disagreeing until their
-                  // own 30s poll landed.
-                  onRefresh={() => Promise.all([refresh(), refreshStats()])}
-                />
-              ))}
+              {rows.map((row) => {
+                const jiraKey = `${row.id}:jira`
+                return (
+                  <QuarantineRow
+                    key={row.id}
+                    row={row}
+                    view={view}
+                    canAct={hasQaLeadAccess}
+                    canFileJira={isQaEngineer}
+                    onFileJira={(r) => jiraSlot.open(`${r.id}:jira`)}
+                    // The counts beside the table are a SEPARATE SWR key and are
+                    // on screen at the same time, so approving a row updated the
+                    // row and left the counts beside it disagreeing until their
+                    // own 30s poll landed.
+                    onRefresh={() => Promise.all([refresh(), refreshStats()])}
+                    below={jiraSlot.openKey === jiraKey ? (
+                      <CreateJiraIssueModal
+                        projectId={row.project_id}
+                        fingerprint={row.test_fingerprint}
+                        testName={row.test_name || row.test_fingerprint.slice(0, 16)}
+                        onClose={() => closeJira(jiraKey)}
+                        onCreated={() => void refresh()}
+                        slot={jiraSlot}
+                      />
+                    ) : null}
+                  />
+                )
+              })}
             </tbody>
           </table>
         </div>
-      )}
-
-      {jiraTarget && (
-        <CreateJiraIssueModal
-          projectId={jiraTarget.project_id}
-          fingerprint={jiraTarget.test_fingerprint}
-          testName={jiraTarget.test_name || jiraTarget.test_fingerprint.slice(0, 16)}
-          onClose={() => setJiraTarget(null)}
-          onCreated={() => void refresh()}
-        />
       )}
     </section>
   )
@@ -241,6 +249,7 @@ function QuarantineRow({
   canFileJira,
   onFileJira,
   onRefresh,
+  below,
 }: {
   row: FlakyQuarantineRead
   view: QuarantineView
@@ -249,6 +258,8 @@ function QuarantineRow({
   canFileJira: boolean
   onFileJira: (row: FlakyQuarantineRead) => void
   onRefresh: () => Promise<unknown>
+  /** W27 PAN-04: this row's open form from the table (File Jira), in a full-width row under it. */
+  below?: ReactNode
 }) {
   const [busy, setBusy] = useState(false)
   // The decision being recorded, with its notes (an inline form under the row;
@@ -444,7 +455,7 @@ function QuarantineRow({
           )}
           {canFileJira && view !== 'history' && !row.defect_jira_key && (
             // US-6.1: one-click Jira issue for quarantined tests that don't
-            // have a linked defect yet. Opens the prefilled review dialog —
+            // have a linked defect yet. Opens the prefilled review form under the row —
             // the backend dedups against open defects for the fingerprint.
             <button
               type="button"
@@ -466,6 +477,8 @@ function QuarantineRow({
           )}
         </td>
       </tr>
+      {/* Across all eight columns; its content can never widen the table (InlineRowSection). */}
+      {below ? <InlineRowSection colSpan={8}>{below}</InlineRowSection> : null}
       {decision !== null && (
         <tr data-testid="quarantine-decision-form">
           <td colSpan={8} className="px-3 pb-3">

@@ -29,8 +29,11 @@ const answer = (row: Partial<DefectItem>, writeBack: DefectPatchResponse['write_
 function renderDialog(defect: DefectItem = ROW) {
   const onClose = vi.fn()
   const onUpdated = vi.fn()
-  render(<DefectStatusDialog defect={defect} onClose={onClose} onUpdated={onUpdated} />)
-  return { onClose, onUpdated, dialog: screen.getByRole('dialog', { name: 'Change status' }) }
+  const { container } = render(<DefectStatusDialog defect={defect} onClose={onClose} onUpdated={onUpdated} />)
+  // W27 PAN-04: in the page — a region by the same name, rendered where it is mounted (no portal).
+  const dialog = screen.getByRole('region', { name: 'Change status' })
+  expect(container.contains(dialog)).toBe(true)
+  return { onClose, onUpdated, dialog }
 }
 
 const save = () => screen.getByRole('button', { name: 'Save' })
@@ -124,7 +127,7 @@ describe('DefectStatusDialog', () => {
     expect(onUpdated).not.toHaveBeenCalled()
     expect(onClose).not.toHaveBeenCalled()
     expect(toast.error).not.toHaveBeenCalled()
-    expect(screen.getByRole('dialog', { name: 'Change status' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Change status' })).toBeInTheDocument()
     expect(save()).toBeEnabled()
   })
 

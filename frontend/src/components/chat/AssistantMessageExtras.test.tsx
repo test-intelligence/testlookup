@@ -122,7 +122,8 @@ describe('AssistantMessageExtras', () => {
     fireEvent.click(
       screen.getByRole('button', { name: /propose quarantine: test_checkout_flow/i }),
     )
-    const dialog = screen.getByRole('dialog', { name: /propose quarantine/i })
+    // W27 PAN-04: the form renders in place, inside the message (a region by the dialog's name).
+    const dialog = screen.getByRole('region', { name: /propose quarantine/i })
     expect(dialog.textContent).toContain('test_checkout_flow')
 
     // Human supplies the reason — the agent never submits on its own
@@ -160,6 +161,39 @@ describe('AssistantMessageExtras', () => {
         testName: 'test_checkout_flow',
       }),
     )
+  })
+
+  // W27 PAN-04: no backdrop stops the other action any more, so a typed reason asks before it is replaced.
+  it('switching to the other action asks first when the open form has a typed reason; a clean one switches at once', () => {
+    render(
+      <AssistantMessageExtras toolTrace={[]} suggestedActions={[QUARANTINE_ACTION, JIRA_ACTION]} />,
+    )
+    const openQuarantine = () =>
+      fireEvent.click(screen.getByRole('button', { name: /propose quarantine: test_checkout_flow/i }))
+    const openJira = () => fireEvent.click(screen.getByRole('button', { name: /create jira issue: test_checkout_flow/i }))
+
+    // Clean: at once.
+    openQuarantine()
+    openJira()
+    expect(screen.queryByRole('region', { name: /propose quarantine/i })).toBeNull()
+    expect(screen.getByRole('dialog', { name: /create jira issue \(stub\)/i })).toBeTruthy()
+
+    // Typed: the question, inside the open form.
+    openQuarantine()
+    const reason = screen.getByPlaceholderText(/why should this test stop gating/i)
+    fireEvent.change(reason, { target: { value: 'half typed' } })
+    openJira()
+    const form = screen.getByRole('region', { name: /propose quarantine/i })
+    expect(form).toHaveTextContent('Discard your changes to "Propose quarantine"?')
+    fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }))
+    expect(screen.getByPlaceholderText(/why should this test stop gating/i)).toHaveValue('half typed')
+    expect(screen.queryByRole('dialog', { name: /create jira issue \(stub\)/i })).toBeNull()
+
+    openJira()
+    fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }))
+    expect(screen.queryByRole('region', { name: /propose quarantine/i })).toBeNull()
+    expect(screen.getByRole('dialog', { name: /create jira issue \(stub\)/i })).toBeTruthy()
+    expect(mockPropose).not.toHaveBeenCalled()
   })
 })
 

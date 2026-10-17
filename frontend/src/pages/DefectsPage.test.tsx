@@ -57,16 +57,32 @@ vi.mock('@/hooks/useDefectInsights', () => ({
 }))
 // W06 DEF-01: the row menu is G-D's (`DefectRowActions`, its own tests). The
 // stub records what each row hands it and lets a test play its answer back.
+// W27 PAN-04: the row controls it (`action` + `onAction`) and renders the
+// chosen action's form (`DefectActionForm`) under itself; the stubs record both.
 const rowActions = vi.hoisted(() => ({
   defects: new Map<string, Record<string, unknown>>(),
   onUpdated: new Map<string, (row: unknown) => void>(),
+  action: new Map<string, string | null | undefined>(),
+  onAction: new Map<string, ((action: string | null) => void) | undefined>(),
 }))
 vi.mock('@/components/defects/DefectRowActions', () => ({
-  default: ({ defect, onUpdated }: { defect: Record<string, unknown> & { id: string }; onUpdated: (row: unknown) => void }) => {
+  default: ({ defect, onUpdated, action, onAction }: {
+    defect: Record<string, unknown> & { id: string }
+    onUpdated: (row: unknown) => void
+    action?: string | null
+    onAction?: (action: string | null) => void
+  }) => {
     rowActions.defects.set(defect.id, defect)
     rowActions.onUpdated.set(defect.id, onUpdated)
+    rowActions.action.set(defect.id, action)
+    rowActions.onAction.set(defect.id, onAction)
     return <span data-testid="row-actions" data-defect-id={defect.id} />
   },
+  DefectActionForm: ({ defect, action, onClose }: { defect: { id: string }; action: string; onClose: () => void }) => (
+    <section aria-label={`form ${action}`} data-testid="row-action-form" data-defect-id={defect.id} data-action={action}>
+      <button type="button" onClick={onClose}>Cancel</button>
+    </section>
+  ),
 }))
 // Default: settings not yet loaded. Tests that care set a config.
 type IntegrationsHookResult = {

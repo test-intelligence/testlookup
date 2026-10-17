@@ -1,10 +1,11 @@
 /**
- * Create-Jira-issue dialog — PMF US-6.1 / US-6.3.
+ * Create-Jira-issue form — PMF US-6.1 / US-6.3.
  *
  * One-click defect creation from a failure signature (test fingerprint on
- * /failures, quarantine row on /quarantine). Follows the US-2.4 modal
- * pattern (MuteTestModal / CorrectClassificationModal on the Failure
- * Analysis page).
+ * /failures, quarantine row on /flaky, a suggested action in /chat). It
+ * renders IN THE PAGE where its action lives (W27 PAN-04): under the row it
+ * was opened from (an `InlineRowSection`), or inside the chat message; an
+ * `InlineFormSection` named "Create Jira issue", as the dialog was.
  *
  * The payload is assembled SERVER-side (preview endpoint) and shown here
  * read-only — the user reviews before create, never silent. Dedup is also
@@ -23,7 +24,8 @@ import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import { useJiraDefectMetadata, useJiraDefectPreview } from '@/hooks/useJiraDefects'
 import { defectJiraService, type JiraOutcomeUnknownDetail } from '@/services/defectJiraService'
-import { useModalFocus } from '@/hooks/useModalFocus'
+import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
+import type { InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 
 /** The 409 an earlier request whose outcome is unknown produces, or null. */
 function jiraOutcomeUnknownDetail(err: unknown): JiraOutcomeUnknownDetail | null {
@@ -52,6 +54,7 @@ export default function CreateJiraIssueModal({
   testName,
   onClose,
   onCreated,
+  slot,
 }: {
   projectId: string
   /** Exactly one of fingerprint / clusterId identifies the failure. */
@@ -61,6 +64,8 @@ export default function CreateJiraIssueModal({
   onClose: () => void
   /** Invoked after a successful create/link so callers can refresh lists. */
   onCreated?: () => void
+  /** The host section's slot: one form open there; a typed form asks before it is replaced. */
+  slot?: InlineSlot
 }) {
   const { metadata, isLoading: metaLoading } = useJiraDefectMetadata(projectId)
   const { preview, isLoading: previewLoading, isError: previewError } =
@@ -79,7 +84,6 @@ export default function CreateJiraIssueModal({
   const [submitting, setSubmitting] = useState(false)
   // Set by a 409: an earlier request may already have filed this issue.
   const [outcomeUnknown, setOutcomeUnknown] = useState<JiraOutcomeUnknownDetail | null>(null)
-  const dialogRef = useModalFocus({ onClose, canClose: !submitting })
 
   const target:'jira' | 'webhook' =
     targetChoice ?? (metadata && !metadata.available && metadata.webhook_available ? 'webhook' : 'jira')
@@ -167,25 +171,50 @@ export default function CreateJiraIssueModal({
   }
 
   return (
-    <div
-      ref={dialogRef}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Create Jira issue"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={() => !submitting && onClose()}
+    <InlineFormSection
+      title="Create Jira issue"
+      onClose={onClose}
+      canClose={!submitting}
+      showClose={false}
+      busy={submitting}
+      slot={slot}
+      description={<code className="font-mono text-[11.5px] [overflow-wrap:anywhere]">{testName}</code>}
+      footer={
+        <>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSubmit()}
+            disabled={!canSubmit}
+            title={
+              !preview
+                ? 'Waiting for the prefilled payload'
+                : target === 'jira' && !jiraAvailable
+                  ? jiraUnavailableCopy(metadata?.reason)
+                  : undefined
+            }
+            className="text-[12.5px] font-medium rounded-md px-3 py-1.5 disabled:opacity-50"
+            style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
+          >
+            {submitting
+              ? 'Submitting…'
+              : existing && target === 'jira'
+                ? 'Note recurrence'
+                : target === 'webhook'
+                  ? 'Emit webhook event'
+                  : 'Create issue'}
+          </button>
+        </>
+      }
     >
-      <div
-        className="w-full max-w-lg rounded-lg bg-[var(--color-bg-card)] border border-[var(--color-border)] p-5 shadow-xl max-h-[90vh] overflow-y-auto"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2 className="text-base font-semibold text-[var(--color-text)] m-0">
-          Create Jira issue
-        </h2>
-        <p className="mt-1 text-[12.5px] text-[var(--color-text-muted)]">
-          <code className="font-mono text-[11.5px]">{testName}</code>
-        </p>
-
+      <div className="max-w-2xl">
         {previewLoading || metaLoading ? (
           <p className="mt-4 text-[12.5px] text-[var(--color-text-muted)]">
             Assembling the pre-filled payload…
@@ -309,7 +338,7 @@ export default function CreateJiraIssueModal({
               <span className="block text-[12px] font-medium text-[var(--color-text)] mb-1">
                 Summary <span className="text-[var(--color-text-faint)] font-normal">(prefilled)</span>
               </span>
-              <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 text-[12.5px] font-mono text-[var(--color-text-secondary)]">
+              <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 text-[12.5px] font-mono text-[var(--color-text-secondary)] [overflow-wrap:anywhere]">
                 {preview.summary}
               </div>
             </div>
@@ -319,7 +348,7 @@ export default function CreateJiraIssueModal({
               </span>
               <pre
                 aria-label="Prefilled description"
-                className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 text-[11px] font-mono text-[var(--color-text-muted)] whitespace-pre-wrap m-0 max-h-44 overflow-y-auto"
+                className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 text-[11px] font-mono text-[var(--color-text-muted)] whitespace-pre-wrap [overflow-wrap:anywhere] m-0 max-h-44 overflow-y-auto"
               >
                 {preview.description}
               </pre>
@@ -361,40 +390,7 @@ export default function CreateJiraIssueModal({
             </div>
           </div>
         ) : null}
-
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={submitting}
-            className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 disabled:opacity-50"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => handleSubmit()}
-            disabled={!canSubmit}
-            title={
-              !preview
-                ? 'Waiting for the prefilled payload'
-                : target === 'jira' && !jiraAvailable
-                  ? jiraUnavailableCopy(metadata?.reason)
-                  : undefined
-            }
-            className="text-[12.5px] font-medium rounded-md px-3 py-1.5 disabled:opacity-50"
-            style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
-          >
-            {submitting
-              ? 'Submitting…'
-              : existing && target === 'jira'
-                ? 'Note recurrence'
-                : target === 'webhook'
-                  ? 'Emit webhook event'
-                  : 'Create issue'}
-          </button>
-        </div>
       </div>
-    </div>
+    </InlineFormSection>
   )
 }
