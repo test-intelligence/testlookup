@@ -40,8 +40,8 @@ API endpoint, a pipeline agent, a UI page and a migration.
 
 ## 1. Quality gates — the invariant ratchets
 
-`make quality-gate` runs `scripts/quality_gate.py`, which enforces **55 guards**.
-18 are *ratchets*: pre-existing violations are baselined in
+`make quality-gate` runs `scripts/quality_gate.py`, which enforces **56 guards**.
+19 are *ratchets*: pre-existing violations are baselined in
 `scripts/quality-gate-baselines/` and the count can only shrink. New violations
 fail CI. The other 37 ship at zero with **no baseline file at all** — those are
 absolute rules, not ratchets, and are marked **†** in the tables below. Know
@@ -105,10 +105,26 @@ fails if a *second* deleter appears.
 | `frontend.tabs-primitive-only` † | a hand-rolled `role="tablist"` outside `components/ui/Tabs.tsx` (tests exempt) | Use `Tabs` from `@/components/ui/Tabs` — `useTabParam` for a page's own tabs (`?tab=`), local state for a component's. There were 19 hand-rolled bars when the redesign began |
 | `frontend.clipboard-util` | raw `navigator.clipboard` | Use `copyTextToClipboard` from `@/utils/clipboard` (HTTP homelabs lack the secure-context API) |
 | `frontend.modal-dialog-role` † | a `fixed inset-0` modal overlay with no `role="dialog"` | Add `role="dialog" aria-modal="true"` and name it with `aria-labelledby` pointing at the modal heading's `id` — a static `aria-label` goes stale when the title is dynamic. A full-screen overlay that genuinely is not a dialog opts out with a `not-a-dialog` comment |
+| `frontend.no-page-modals` | a page modal (`role="dialog"` / `aria-modal`), a `<SidePanel>`, or a native `confirm()` under `frontend/src/pages` / `components`, outside the OR-03 allow-list | Open it in the page: `MasterDetail` + `DetailPane`, `InlineFormSection` (in an `InlineRowSection` under a row), `InlineConfirm` (`components/ui/inPage/`). An overlay of an OR-03 class gets an allow-list entry with its reason |
 | `frontend.refresh-intervals-from-config` † | a hand-picked SWR `refreshInterval` | `import { REFRESH_INTERVALS } from '@/config/refreshIntervals'` and take a tier — `REALTIME` / `ACTIVE` / `POLLING` / `BACKGROUND` (`0` = disabled is fine) |
 | `frontend.ai-output-hedging` † | AI output rendered as a verdict — a bare `Root cause:`, `Root Cause Summary`, "the cause is …", "is caused by" | Hedge the copy ("Suggested root cause", "likely caused by") and render the conclusion through `components/ai/AISuggestion` so it carries the badge, basis and provenance (US-15.1). Pipeline **stage** names like "Root Cause Analysis" are already allowed |
 | `frontend.ingest-formats-match-backend` † | the upload dropdown (`reportUploadService.ts::SUPPORTED_FORMATS`) advertising a format `/ingest/file` rejects, the backend accepting a parser the UI never offers, or either registry becoming unparseable by the guard | Add or remove the format on **both** sides of the language boundary — the `SUPPORTED_FORMATS` array (value + label) and the `ReportFormat` union in `reportUploadService.ts`, and `_SUPPORTED_FORMATS` in `routers/ingest.py` (a new backend parser also needs `_detect_format` wired). If a refactor changes a registry's source shape, update the guard parser in the same change; otherwise CI fails instead of silently disabling parity enforcement |
 | `frontend.sdk-symbols-fresh` † | `frontend/src/components/live/sdkSymbols.json` differing from what `scripts/gen_sdk_symbols.py` reads out of `client/go` and `client/js` (the `/live` "Connect a test runner" snippet test checks every Go and JavaScript identifier against it) | Run `python scripts/gen_sdk_symbols.py` after an SDK change and commit the JSON, then `npx vitest run src/components/live/sdkSnippets.test.ts` in `frontend/` and fix any snippet that names a symbol the SDK no longer has |
+
+**Details and forms open in the page** (`frontend.no-page-modals`, W27). An
+item's detail docks beside its list (`MasterDetail` + `DetailPane`); a form
+opens where its action lives (`InlineFormSection`, under a table row inside an
+`InlineRowSection` spanning every column); a confirmation is a strip where its
+action lives (`InlineConfirm`, whose own button is the only sender) — all in
+`components/ui/inPage/`: no backdrop, no trap, no portal. One form is open per
+section (a table, a pane, the area under a page header: `useInlineSlot`), and
+replacing a form someone typed into asks first, inline. Only a detail rides the
+URL, through `useDetailParam`: one key per page, the id checked by `isUuid` /
+`isDetailToken` before any request; opening pushes a history entry so Back
+closes it, switching replaces, closing pops (`/test-management` replaces
+throughout). A form or a confirmation never rides the URL. A genuine overlay of
+an OR-03 class (a popover anchored to its control, an app-wide drawer, a chart's
+full screen) is allow-listed with its reason in `_NO_PAGE_MODALS_ALLOWED`.
 
 ### Database
 
