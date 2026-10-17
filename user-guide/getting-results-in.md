@@ -45,7 +45,7 @@ Besides each test's duration, TestLookup keeps what the report says about **when
 
 ## 1. Upload from the dashboard
 
-**Runs → Upload** (or the deep link `/runs?upload=1`) opens the upload dialog: pick the project, the report file and a build number. It works in the **All Projects** view too, because the dialog asks for the project itself.
+**Runs → Upload** (or the deep link `/runs?upload=1`) opens the upload form under the page header: pick the project, the report file and a build number. It works in the **All Projects** view too, because the form asks for the project itself.
 
 The button is controlled by the `manual_upload` feature flag. On a new install it is **on**. An administrator can turn it off under **Settings → System → Feature flags**, for example to force every result through CI; the button then disappears for everyone. Installs upgraded from a version before the flag defaulted on keep whatever value they had, so if the button is missing on an older instance, check that flag.
 

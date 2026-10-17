@@ -7,8 +7,11 @@
  *  - `releases-gate-panel`: a release's own page, the gate panel (scorecard, 25 reasons, the baseline) and the
  *    phase rows with their live gate chips;
  *  - `releases-rail`: the rail with the real pack (`412.3 KB · sha256:ab12cd34`) and the ledger's rows;
- *  - `releases-phase-reason-dialog`: a refused completion's dialog quoting the server;
- *  - `releases-sync-offline`: the sync dialog with the offline 503 and the Settings link.
+ *  - `releases-phase-reason-dialog`: a refused completion's reason form quoting the server;
+ *  - `releases-sync-offline`: the sync form with the offline 503 and the Settings link.
+ *
+ * Since W27a (PAN-02) both forms are in-page sections (the region is the section that carries the kept
+ * `data-phase-reason-dialog` / `data-sync-releases-dialog`); the names of the two regions are unchanged.
  *
  * Hermetic fixtures: `production/fixtures-releases.ts`. PNGs are rendered by CI only (`visual-baselines.yml`,
  * Linux).
@@ -60,7 +63,7 @@ for (const theme of THEMES) {
     const dialog = page.locator('[data-phase-reason-dialog="complete"]')
     await expect(dialog.locator('[data-phase-gate-detail]')).toContainText('test_pay (checkout-e2e) is FAILED')
     await networkQuiet(page, api)
-    await visualRegion(page, 'releases-phase-reason-dialog', theme, dialog.locator(':scope > div'))
+    await visualRegion(page, 'releases-phase-reason-dialog', theme, dialog)
     assertHermetic(api, errors)
   })
 
@@ -72,7 +75,7 @@ for (const theme of THEMES) {
     await dialog.getByRole('button', { name: 'Sync', exact: true }).click()
     await expect(dialog.locator('[data-sync-error]')).toContainText(SYNC_OFFLINE)
     await networkQuiet(page, api)
-    await visualRegion(page, 'releases-sync-offline', theme, dialog.locator(':scope > div'))
+    await visualRegion(page, 'releases-sync-offline', theme, dialog)
     assertHermetic(api, errors)
   })
 

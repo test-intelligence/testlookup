@@ -85,7 +85,7 @@ Task recipes. Each names the role it needs and what success looks like.
 **Role:** `QA_LEAD` or higher
 
 1. **Releases → New release**: name, version, status, planned date.
-2. Get runs into it: send them with the release name (**Release** in the upload dialog, `--release`, the SDK setting), or **Link Run** on the release's page.
+2. Get runs into it: send them with the release name (**Release** in the upload form, `--release`, the SDK setting), or **Link Run** on the release's page.
 3. Add phases (**Add Phase**) and move each through **In Progress** to **Completed**.
 4. Open the **Release gate** for the release's latest run. Read **blocking issues and conditions** — not just the GO / NO_GO word.
 5. **Override decision** if you disagree, with a reason; the override is recorded.

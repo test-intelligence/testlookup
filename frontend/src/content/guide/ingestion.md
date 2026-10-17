@@ -23,7 +23,7 @@ All of them authenticate with either an `X-API-Key` header or a signed-in sessio
 3. In **All Projects**, choose the **Project**. Otherwise the selected project is used.
 4. Leave **Format** on **Auto-detect** unless detection gets it wrong.
 5. Optionally open **Optional metadata** to set a **Build label**, **Release**, **Branch** and **Commit**. Without a build label, one is generated.
-6. **Upload**. The dialog shows the report being processed, then **View run** opens it.
+6. **Upload**. The upload form, which opens under the page header, shows the report being processed, then **View run** opens it.
 
 Ticking **Skip AI analysis** makes the upload faster; you can run the analysis later from the run's page.
 
@@ -45,7 +45,7 @@ An uploaded report arrives after the suite finishes. A **reporter SDK** instead 
 
 ## Attaching a run to a release
 
-A run joins a [release](/docs/releases) when it arrives with a release name: **Release** in the upload dialog, `release_name` on the API, `--release` on the CLI, or the SDK's release setting. A QA lead can also set or change it afterwards with **Set release** on the run's page.
+A run joins a [release](/docs/releases) when it arrives with a release name: **Release** in the upload form, `release_name` on the API, `--release` on the CLI, or the SDK's release setting. A QA lead can also set or change it afterwards with **Set release** on the run's page.
 
 ## Supported formats
 

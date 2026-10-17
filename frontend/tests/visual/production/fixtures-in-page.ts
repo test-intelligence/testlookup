@@ -409,9 +409,13 @@ export const JIRA_AVAILABLE = {
 /**
  * The Create Jira issue form's three calls for `projectId`, writes recorded into `writes`: the metadata, the
  * server-assembled preview (for the fingerprint or the cluster asked), and the create (a new issue; the
- * webhook target answers one notified subscription).
+ * webhook target answers one notified subscription). With `longLine` (phase 2, `in-page-tables.spec.ts`) the
+ * preview's description ends with one 1,000-character unbreakable line (a generated stack frame): its min-content is
+ * wider than any table, so only `InlineRowSection`'s zero-intrinsic-width cell keeps the table at its width.
  */
-export function jiraHandlers(writes: RecordedWrite[], projectId = PROJECT_ID): ApiHandlers {
+export const LONG_PREVIEW_LINE = `at com.example.checkout.${'GeneratedPaymentRetryFrame'.repeat(38)}(Retry.java:42)`
+
+export function jiraHandlers(writes: RecordedWrite[], projectId = PROJECT_ID, options: { longLine?: boolean } = {}): ApiHandlers {
   const base = `/api/v1/projects/${projectId}/defects/jira`
   return [
     [`${base}/metadata`, () => JIRA_AVAILABLE],
@@ -420,7 +424,7 @@ export function jiraHandlers(writes: RecordedWrite[], projectId = PROJECT_ID): A
       return {
         signature,
         summary: `[TestLookup] ${signature} keeps failing`,
-        description: `Failure: ${signature}\nFailing runs: 3\nFirst seen: ${isoAgo(6)}`,
+        description: `Failure: ${signature}\nFailing runs: 3\nFirst seen: ${isoAgo(6)}${options.longLine ? `\n${LONG_PREVIEW_LINE}` : ''}`,
         test_name: signature,
         suite_name: 'Payments',
         cluster_id: url.searchParams.get('cluster_id'),
@@ -492,8 +496,9 @@ export const CLASSIFIED_COUNT = 26
  * `/failures` (`hintsWorld()` over `FAILURES_ON`) with: one stored hint (F5), the hint toggle and delete, most
  * failures uncategorised (F4, F6), Jira reachable (F2), the analysis lookup and the classification feedback
  * (F4), the quarantine proposal (F1) and the bulk classification (F6). Every write is recorded in `writes`.
+ * `longJiraLine`: the Jira preview carries `LONG_PREVIEW_LINE` (phase 2's width guard; default off).
  */
-export function failuresInPageWorld() {
+export function failuresInPageWorld(options: { longJiraLine?: boolean } = {}) {
   const hints = hintsWorld()
   const { writes } = hints
   hints.hints.push({ ...SEEDED_HINT })
@@ -519,7 +524,7 @@ export function failuresInPageWorld() {
       return respond(204)
     }, 'DELETE'],
     ['/api/v1/analytics/failure-categories', () => UNCATEGORISED_CATEGORIES],
-    ...jiraHandlers(writes),
+    ...jiraHandlers(writes, PROJECT_ID, { longLine: options.longJiraLine }),
     [`/api/v1/projects/${PROJECT_ID}/analyses/lookup`, ({ url }) => ({
       analysis_id: `analysis-${url.searchParams.get('fingerprint')}`,
       failure_category: 'UNKNOWN',

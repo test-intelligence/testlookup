@@ -8,9 +8,9 @@
  * before / after the template can be compared: measured on the unchanged page
  * first (1748 px, the table at 652 px).
  *
- * Also held here, in a browser: the failure signatures open in the side panel
- * (beside the page, not under the table), and the two Disclosures below the
- * table are closed on arrival.
+ * Also held here, in a browser: the failure signatures open in the page, in a
+ * section above the table (W27a PAN-03: the table keeps its box), and the two
+ * Disclosures below the table are closed on arrival.
  *
  * UX redesign P4 (D2, the `/intelligence` list retired into the table): the
  * AI-verdict column. W07 FAIL-04: the runs on screen are asked for their
@@ -142,16 +142,21 @@ test('each run on screen carries its AI verdict, and the verdict opens the runâ€
   expect(errors).toEqual([])
 })
 
-test('the failure signatures open beside the page, from the header and from a row', async ({ page }) => {
+test('the failure signatures open above the table, from the header and from a row, and the table keeps its box', async ({ page }) => {
   const { api, errors } = await openRollout(page, '/runs', { handlers: RUNS_PAGE, ready })
   const panel = page.getByRole('complementary', { name: 'Failure signatures' })
   await expect(panel).toHaveCount(0)
+  await networkQuiet(page, api)
+  const closedBox = await page.locator('[data-primary]').boundingBox()
   await page.getByRole('button', { name: /^Failure signatures/ }).click()
   await expect(panel).toBeVisible()
   await expect(panel.getByRole('meter', { name: 'Failed builds by signature' })).toBeVisible()
-  // Non-modal: the table stays usable beside it (the panel reserves its width, never covers it).
+  // W27a PAN-03: in the page, above the table (never beside it, never over it): the table keeps its full card width
+  // and starts below the section.
   const [panelBox, primaryBox] = [await panel.boundingBox(), await page.locator('[data-primary]').boundingBox()]
-  expect(panelBox && primaryBox && primaryBox.x + primaryBox.width <= panelBox.x + 1, 'the table ends where the panel begins').toBe(true)
+  expect(panelBox && primaryBox && panelBox.y + panelBox.height <= primaryBox.y + 1, 'the section ends above the table').toBe(true)
+  expect(Math.abs((primaryBox?.width ?? 0) - (closedBox?.width ?? 0)), 'the table card keeps its width').toBeLessThanOrEqual(1)
+  expect(Math.abs((primaryBox?.x ?? 0) - (closedBox?.x ?? 0)), 'the table card keeps its left edge').toBeLessThanOrEqual(1)
   await panel.getByRole('button', { name: 'Close panel' }).click()
   await expect(panel).toHaveCount(0)
   // A row's signature chip opens it too.
