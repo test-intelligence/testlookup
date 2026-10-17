@@ -1,5 +1,6 @@
 """Celery background tasks for ingestion and AI analysis."""
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import time
 import uuid
@@ -73,6 +74,22 @@ def digest_email_config_error(smtp_cfg: dict[str, Any]) -> str | None:
     return None if smtp_cfg.get("enabled") else "SMTP is disabled"
 
 
+@dataclass(frozen=True)
+class DigestRunScope:
+    """What :func:`run_matches_digest_scope` reads of a run; duck-types a TestRun.
+
+    ``linked_release_ids`` are the run's ``release_test_run_links`` (W09
+    NTF-03): a run that belongs to a release by a SECONDARY link -- a
+    cherry-pick verified against two releases -- is that release's run too.
+    The dispatcher reads them with one statement, and only when it meets a
+    ``PER_RELEASE`` subscription.
+    """
+
+    primary_suite_name: str | None
+    primary_release_id: uuid.UUID | str | None
+    linked_release_ids: frozenset[str] = frozenset()
+
+
 def run_matches_digest_scope(sub, run) -> bool:
     """Whether this run falls inside an event-driven subscription's scope.
 
@@ -81,6 +98,10 @@ def run_matches_digest_scope(sub, run) -> bool:
     widened: a ``PER_SUITE`` row with no ``scope_value`` would deliver every
     run in the project, which is what ``PER_RUN`` already is, and silently
     turning one subscription into another is worse than delivering nothing.
+
+    ``PER_RELEASE`` matches the run's primary release, or any release it is
+    linked to (``run`` may be a :class:`DigestRunScope` carrying the links; a
+    plain run has none, and matches on its primary release alone).
     """
     if sub.schedule == "PER_SUITE":
         wanted = (getattr(sub, "scope_value", None) or "").strip().lower()
@@ -89,7 +110,9 @@ def run_matches_digest_scope(sub, run) -> bool:
     if sub.schedule == "PER_RELEASE":
         wanted = (getattr(sub, "scope_value", None) or "").strip()
         actual = str(getattr(run, "primary_release_id", None) or "")
-        return bool(wanted) and wanted == actual
+        return bool(wanted) and (
+            wanted == actual or wanted in getattr(run, "linked_release_ids", frozenset())
+        )
     return True
 
 logger = logging.getLogger(__name__)
@@ -3555,12 +3578,36 @@ def dispatch_ai_summary_email(
                 )
             )
             digest_deliveries = []
+            # W09 NTF-03: the releases this run is linked to (a secondary link
+            # included), read once, and only if a PER_RELEASE subscription of
+            # this project is met.
+            linked: frozenset[str] | None = None
 
             for sub, user_email in per_run_result.all():
                 # Scope check: global or matching project
                 if sub.project_id and str(sub.project_id) != project_id:
                     continue
-                if not run_matches_digest_scope(sub, run):
+                if getattr(sub, "schedule", None) == "PER_RELEASE" and linked is None:
+                    from app.models.postgres import ReleaseTestRunLink as _Link
+
+                    linked = frozenset(
+                        str(release_id)
+                        for release_id in (
+                            await db.execute(
+                                select(_Link.release_id).where(
+                                    _Link.test_run_id == _uuid.UUID(test_run_id)
+                                )
+                            )
+                        ).scalars().all()
+                    )
+                if not run_matches_digest_scope(
+                    sub,
+                    DigestRunScope(
+                        getattr(run, "primary_suite_name", None),
+                        getattr(run, "primary_release_id", None),
+                        linked or frozenset(),
+                    ),
+                ):
                     continue
                 # Trigger filter: failed_only skips all-green runs
                 if sub.trigger_filter == "failed_only" and _failed_tests == 0:
@@ -3634,6 +3681,49 @@ def dispatch_ai_summary_email(
         logger.error("[AI Email] Failed for run %s: %s", test_run_id, exc)
         countdown = _exponential_backoff(self.request.retries)
         raise self.retry(exc=exc, countdown=countdown)
+
+
+@celery_app.task(name="app.worker.tasks.notify_release_decision_no_go", bind=True, max_retries=0,
+                 queue="default", time_limit=60)
+def notify_release_decision_no_go(self, run_id: str, pipeline_run_id: str | None = None,
+                                  evidence_bundle_sha256: str | None = None) -> dict:
+    """W09 NTF-01: stage "Quality gate failed" for a run the deep pipeline
+    published as NO_GO.
+
+    Enqueued by the decision-report critic after it publishes
+    (``decision_report_critic_agent._persist``), so the reads and the staging
+    run here on ``default`` -- never inside the pipeline task, never on
+    ``ai_analysis``. ``gate_notifications.stage_agent_decision_no_go`` decides
+    (no decision, a pipeline mismatch, a human override, a withheld value and
+    anything but NO_GO stage nothing; one delivery per run however often the
+    pipeline re-publishes) and this task owns the commit.
+
+    No retry: the relay of staged rows is the durable half. A lost enqueue or
+    a failure here costs this one notification, as it does for the
+    ``release.decided`` webhook; it is logged and never raised.
+    """
+    _bind_task_context(self, run_id=run_id)
+
+    async def _notify() -> str:
+        from app.db.postgres import AsyncSessionLocal
+        from app.services.notification import gate_notifications
+
+        async with AsyncSessionLocal() as db:
+            outcome = await gate_notifications.stage_agent_decision_no_go(
+                db,
+                run_id=run_id,
+                pipeline_run_id=pipeline_run_id,
+                evidence_bundle_sha256=evidence_bundle_sha256,
+            )
+            await db.commit()
+        return outcome
+
+    try:
+        outcome = _run_async(_notify())
+    except Exception as exc:  # noqa: BLE001 -- best-effort, like release.decided
+        _slog.warning("release_decision_notification_failed", error_type=type(exc).__name__)
+        return {"run_id": run_id, "outcome": "error"}
+    return {"run_id": run_id, "outcome": outcome}
 
 
 @celery_app.task(
@@ -4478,6 +4568,7 @@ def dispatch_scheduled_digests(self):
         from app.db.postgres import AsyncSessionLocal
         from app.models.postgres import DigestSubscription, NotificationLog, User
         from app.services.digest_content_service import generate_digest, render_digest_html
+        from app.services.digest_scope_service import PROJECT_SCOPE, resolve_digest_scope
 
         now = datetime.now(timezone.utc)
 
@@ -4495,6 +4586,11 @@ def dispatch_scheduled_digests(self):
                     DigestSubscription.created_at,
                     DigestSubscription.send_when_unchanged,
                     DigestSubscription.report_attachment,
+                    # W09 NTF-04: the bound saved view, and its name snapshot
+                    # (an id gone NULL with a name kept = the view was
+                    # deleted). LAST, so the columns before keep their place.
+                    DigestSubscription.saved_view_id,
+                    DigestSubscription.saved_view_name,
                 ).where(
                     DigestSubscription.is_active.is_(True),
                     DigestSubscription.is_paused.is_(False),
@@ -4524,6 +4620,8 @@ def dispatch_scheduled_digests(self):
             created_at,
             send_when_unchanged,
             report_attachment,
+            saved_view_id,
+            saved_view_name,
         ) in due:
             delta = timedelta(days=1) if schedule == "DAILY" else timedelta(weeks=1)
             scheduled_next = now + delta
@@ -4571,6 +4669,7 @@ def dispatch_scheduled_digests(self):
             # the next beat tick.
             status = "sent"
             error_detail = None
+            scope = PROJECT_SCOPE
             try:
                 async with AsyncSessionLocal() as db:
                     if is_retro:
@@ -4586,10 +4685,22 @@ def dispatch_scheduled_digests(self):
                         if digest is None:
                             digest = await generate_digest(db, project_id, "weekly")
                     else:
+                        # W09 NTF-04: a saved report view filters a Daily /
+                        # Weekly digest. Re-read for its owner at every send;
+                        # no view costs no statement, and a view that is gone
+                        # or no longer readable yields the whole project (the
+                        # digest says which).
+                        scope = await resolve_digest_scope(
+                            db,
+                            project_id=project_id,
+                            owner_id=user_id,
+                            saved_view_id=saved_view_id,
+                            saved_view_name=saved_view_name,
+                        )
                         # US-7.4: delta digest — content is structured
                         # around changes since the last successful send.
                         digest = await generate_digest(
-                            db, project_id, period, since=window_start,
+                            db, project_id, period, since=window_start, scope=scope,
                         )
 
                     user_result = await db.execute(
@@ -4806,6 +4917,19 @@ def dispatch_scheduled_digests(self):
                         ),
                         status=status,
                         error_detail=error_detail,
+                        # W09 NTF-04: which view filtered this digest (or that
+                        # it was gone). A whole-project digest keeps NULL, and
+                        # the row has no delivery_key, so the relay never
+                        # claims it.
+                        delivery_metadata=(
+                            {
+                                "scope_source": scope.source,
+                                "saved_view_id": scope.view_id,
+                                "saved_view_name": scope.view_name,
+                            }
+                            if scope.source != "project"
+                            else None
+                        ),
                     ))
                     outcome = digest_delivery_updates(
                         status=status,

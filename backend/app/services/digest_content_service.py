@@ -22,12 +22,26 @@ flaky-debt review drafts for teams WITHOUT a US-7.3 channel (teams WITH a
 channel get theirs directly via ``flaky_debt_review``). All narrative text
 is quoted from stored investigation verdicts — generating a digest makes
 NO LLM calls (guarded by ``tests/test_proactive_narratives.py``).
+
+Saved views (W09 NTF-04): ``generate_digest(..., scope=...)`` takes the
+``DigestScope`` that ``digest_scope_service.resolve_digest_scope`` built for a
+subscription's report view. ``scope=None`` and ``PROJECT_SCOPE`` emit exactly
+the statements and the dict they always did. A FILTERED scope adds the view's
+predicates to every statement -- runs by ``TestRun.primary_release_id`` (one
+row per run, never a join through release links) and by
+``analytics_scope.run_in_suite_scope_clause``; test-case rows by
+``effective_suite_clause`` (a ``COALESCE``: no OR across tables); quarantine
+rows by ``suite_label_clause`` (a quarantine is a standing decision about a
+test, so no release predicate) -- shortens the period to the view's window
+when that is shorter, and leaves out the two project-wide sections (flaky debt
+by team, hours saved), which it says.
 """
 from __future__ import annotations
 
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from sqlalchemy import Float, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,7 +57,13 @@ from app.models.postgres import (
     TestRun,
     TestStatus,
 )
+from app.services.analytics_scope import (
+    effective_suite_clause,
+    run_in_suite_scope_clause,
+    suite_label_clause,
+)
 from app.services.cluster_snapshot import is_current_snapshot
+from app.services.digest_scope_service import DigestScope, scope_info, slack_text
 
 logger = logging.getLogger("services.digest_content")
 
@@ -84,11 +104,51 @@ def is_zero_change(delta: dict) -> bool:
     )
 
 
+def _filtered(scope: DigestScope | None) -> bool:
+    return scope is not None and scope.is_filtered
+
+
+def _release_predicate(scope: DigestScope) -> list[Any]:
+    """The view's releases, by the run's denormalised primary release."""
+    if not scope.release_ids:
+        return []
+    return [TestRun.primary_release_id.in_([uuid.UUID(rid) for rid in scope.release_ids])]
+
+
+def _run_predicates(scope: DigestScope | None) -> list[Any]:
+    """A filtered view's predicates on a statement over ``TestRun``; ``[]``
+    otherwise, so an unfiltered statement is the one it always was."""
+    if scope is None or not scope.is_filtered:
+        return []
+    suite = run_in_suite_scope_clause(scope.suites)
+    return _release_predicate(scope) + ([suite] if suite is not None else [])
+
+
+def _case_predicates(scope: DigestScope | None) -> list[Any]:
+    """The same on a ``TestCase`` statement that joins ``TestRun``: the row's
+    EFFECTIVE suite (a live-stream run's rows carry no suite of their own)."""
+    if scope is None or not scope.is_filtered:
+        return []
+    suite = effective_suite_clause(scope.suites)
+    return _release_predicate(scope) + ([suite] if suite is not None else [])
+
+
+def _quarantine_predicates(scope: DigestScope | None) -> list[Any]:
+    """Quarantine rows by their suite only: a quarantine is a standing
+    decision about a test, not about a release."""
+    if scope is None or not scope.is_filtered:
+        return []
+    suite = suite_label_clause(FlakyQuarantineRequest.suite_name, scope.suites)
+    return [suite] if suite is not None else []
+
+
 async def compute_digest_deltas(
     db: AsyncSession,
     project_id: uuid.UUID,
     since: datetime,
     now: datetime | None = None,
+    *,
+    scope: DigestScope | None = None,
 ) -> dict:
     """Changes in the window [since, now] for one project.
 
@@ -102,10 +162,16 @@ async def compute_digest_deltas(
       (past ``stale_at``) and ready-to-promote (US-5.4/5.5 lifecycle fields).
     * gate change — latest ReleaseDecision recommendation before the window
       vs. the latest inside it, when both exist and differ.
+
+    A filtered ``scope`` (W09 NTF-04) narrows every statement to the view's
+    releases and suites; ``None`` / ``PROJECT_SCOPE`` change nothing.
     """
     now = now or datetime.now(timezone.utc)
     window = now - since if now > since else timedelta(days=1)
     pre_start = since - window
+    case_scope = _case_predicates(scope)
+    run_scope = _run_predicates(scope)
+    quarantine_scope = _quarantine_predicates(scope)
 
     # ── Failed fingerprints in window (with names + counts) ─────────────
     window_failed_rows = (
@@ -122,6 +188,7 @@ async def compute_digest_deltas(
                 TestCase.created_at < now,
                 TestCase.status.in_(_FAILED_STATUSES),
                 TestCase.test_fingerprint.isnot(None),
+                *case_scope,
             )
             .group_by(TestCase.test_fingerprint)
         )
@@ -142,6 +209,7 @@ async def compute_digest_deltas(
                 TestCase.created_at < since,
                 TestCase.status.in_(_FAILED_STATUSES),
                 TestCase.test_fingerprint.isnot(None),
+                *case_scope,
             )
             .distinct()
         )
@@ -165,6 +233,7 @@ async def compute_digest_deltas(
                     TestCase.created_at < now,
                     TestCase.status == TestStatus.PASSED.value,
                     TestCase.test_fingerprint.in_(pre_failed),
+                    *case_scope,
                 )
                 .distinct()
             )
@@ -181,6 +250,7 @@ async def compute_digest_deltas(
                     FlakyQuarantineRequest.project_id == project_id,
                     FlakyQuarantineRequest.detected_at >= since,
                     FlakyQuarantineRequest.detected_at < now,
+                    *quarantine_scope,
                 )
             )
         ).scalar()
@@ -201,6 +271,7 @@ async def compute_digest_deltas(
             ).where(
                 FlakyQuarantineRequest.project_id == project_id,
                 FlakyQuarantineRequest.status.in_(_ACTIVE_QUARANTINE_STATUSES),
+                *quarantine_scope,
             )
         )
     ).one()
@@ -215,7 +286,7 @@ async def compute_digest_deltas(
         query = (
             select(ReleaseDecision.recommendation)
             .join(TestRun, TestRun.id == ReleaseDecision.test_run_id)
-            .where(TestRun.project_id == project_id)
+            .where(TestRun.project_id == project_id, *run_scope)
             .order_by(ReleaseDecision.created_at.desc())
             .limit(1)
         )
@@ -244,6 +315,7 @@ async def compute_digest_deltas(
                 AgentInvestigation.status == "completed",
                 AgentInvestigation.completed_at >= since,
                 AgentInvestigation.completed_at < now,
+                *run_scope,
             )
             .order_by(AgentInvestigation.completed_at.desc())
         )
@@ -279,6 +351,8 @@ async def generate_digest(
     project_id: uuid.UUID | None,
     period: str = "weekly",
     since: datetime | None = None,
+    *,
+    scope: DigestScope | None = None,
 ) -> dict:
     """
     Generate actionable digest content for a project over a time period.
@@ -287,15 +361,29 @@ async def generate_digest(
     is provided (the previous digest send for the subscription), the
     window starts there and the result additionally carries ``delta`` /
     ``is_zero_change`` / ``changes_since`` (PMF US-7.4).
+
+    ``scope`` (W09 NTF-04): ``None`` or ``PROJECT_SCOPE`` is the whole
+    project, exactly as before (no ``scope`` key). Any other scope adds
+    ``scope`` (``digest_scope_service.scope_info``); a FILTERED one narrows
+    every statement to the view and shortens the period to its window.
     """
+    filtered = _filtered(scope)
     days = 7 if period == "weekly" else 1
+    view_days = scope.window_days if filtered and scope is not None else None
+    if view_days:
+        # The view's window applies only where it is SHORTER than the period
+        # (or than the span since the last send, which a skipped send widens).
+        days = min(days, view_days)
     now = datetime.now(timezone.utc)
     cutoff = since if since is not None else now - timedelta(days=days)
+    if view_days and since is not None:
+        cutoff = max(cutoff, now - timedelta(days=view_days))
     window = now - cutoff
     if window.total_seconds() <= 0:  # clock skew / same-instant watermark
         window = timedelta(days=days)
         cutoff = now - window
     prev_cutoff = cutoff - window
+    run_scope = _run_predicates(scope)
 
     project_name = None
     if project_id:
@@ -306,6 +394,8 @@ async def generate_digest(
     runs_query = select(TestRun).where(TestRun.created_at >= cutoff)
     if project_id:
         runs_query = runs_query.where(TestRun.project_id == project_id)
+    for clause in run_scope:
+        runs_query = runs_query.where(clause)
     runs_result = await db.execute(runs_query.order_by(TestRun.created_at.desc()))
     runs = runs_result.scalars().all()
     total_runs = len(runs)
@@ -325,6 +415,8 @@ async def generate_digest(
         )
         if project_id:
             prev_query = prev_query.where(TestRun.project_id == project_id)
+        for clause in run_scope:
+            prev_query = prev_query.where(clause)
         prev_avg = (await db.execute(prev_query)).scalar()
         if prev_avg is not None:
             pass_rate_trend = round(avg_pass_rate - float(prev_avg), 1)
@@ -370,11 +462,17 @@ async def generate_digest(
     # ── Flaky test count ────────────────────────────────────────────────
     flaky_count = 0
     if run_ids:
-        flaky_result = await db.execute(
+        flaky_query = (
             select(func.count(TestCase.id))
             .where(TestCase.test_run_id.in_(run_ids))
             .where(TestCase.failure_category == "FLAKY")
         )
+        # The runs are already the view's; a suite filter also narrows their
+        # rows, by the effective suite (which needs the run joined).
+        suite_rows = effective_suite_clause(scope.suites) if filtered and scope is not None else None
+        if suite_rows is not None:
+            flaky_query = flaky_query.join(TestRun, TestRun.id == TestCase.test_run_id).where(suite_rows)
+        flaky_result = await db.execute(flaky_query)
         flaky_count = flaky_result.scalar() or 0
 
     # ── Release decisions summary ───────────────────────────────────────
@@ -406,7 +504,7 @@ async def generate_digest(
     if not action_items:
         action_items.append("Quality metrics are stable — no urgent action items")
 
-    digest = {
+    digest: dict[str, Any] = {
         "project_name": project_name,
         "period": period,
         "generated_at": now.isoformat(),
@@ -425,7 +523,10 @@ async def generate_digest(
     # ── Delta structure (US-7.4) — only for watermark-driven digests ────
     if since is not None and project_id is not None:
         try:
-            delta = await compute_digest_deltas(db, project_id, cutoff, now)
+            if filtered:
+                delta = await compute_digest_deltas(db, project_id, cutoff, now, scope=scope)
+            else:
+                delta = await compute_digest_deltas(db, project_id, cutoff, now)
         except Exception as exc:  # noqa: BLE001 — a delta fault must not kill the digest
             logger.warning("Digest delta computation failed for %s: %s", project_id, exc)
             delta = None
@@ -439,8 +540,9 @@ async def generate_digest(
     # ``dispatch_weekly_flaky_debt_reviews`` beat). Unconditional-when-
     # data-exists: an opt-in subscription flag would need a migration
     # (see the 0106/0107 precedents) and this slice ships without one.
-    # A review fault must never kill the digest.
-    if period == "weekly" and project_id is not None:
+    # A review fault must never kill the digest. A digest filtered by a saved
+    # view leaves it out: it is project-wide, by team (the scope note says so).
+    if period == "weekly" and project_id is not None and not filtered:
         try:
             from app.services.flaky_debt_review import build_flaky_debt_reviews
             from app.services.notification_routing import load_team_channels
@@ -466,8 +568,9 @@ async def generate_digest(
     # Only set when the availability gate passes (enough history + a
     # nonzero leg in the last 30 days) — the renderers stay silent when
     # the key is absent, and the zero-change short-circuits return before
-    # ever reaching it. A headline fault must never kill the digest.
-    if project_id is not None:
+    # ever reaching it. A headline fault must never kill the digest. Left out
+    # of a view-filtered digest: hours saved are the project's, not the view's.
+    if project_id is not None and not filtered:
         try:
             from app.services.value_metrics_service import compute_headline
 
@@ -481,7 +584,92 @@ async def generate_digest(
                 "Value headline computation failed for %s: %s", project_id, exc
             )
 
+    # W09 NTF-04: what the digest was filtered by -- or that its view is gone.
+    # Absent for a whole-project digest, so that dict is unchanged.
+    if scope is not None and scope.source != "project":
+        digest["scope"] = scope_info(scope)
+
     return digest
+
+
+#: A view, release or suite name in a scope line is clipped to this many characters.
+SCOPE_NAME_MAX = 120
+#: At most this many release / suite names are spelled out in a scope line.
+_SCOPE_NAMES_SHOWN = 5
+FILTERED_SECTIONS_NOTE = (
+    "Project-wide sections (flaky debt by team, hours saved) are left out of a filtered digest."
+)
+
+
+def _clip_name(value: Any) -> str:
+    text = str(value or "")
+    return text if len(text) <= SCOPE_NAME_MAX else text[: SCOPE_NAME_MAX - 1] + "…"
+
+
+def _name_list(names: list, singular: str, plural: str) -> str | None:
+    shown = [_clip_name(name) for name in names[:_SCOPE_NAMES_SHOWN] if str(name or "")]
+    if not shown:
+        return None
+    more = len(names) - _SCOPE_NAMES_SHOWN
+    tail = f" +{more} more" if more > 0 else ""
+    return f"{singular if len(names) == 1 else plural} {', '.join(shown)}{tail}"
+
+
+def digest_scope_lines(digest: dict) -> list[str]:
+    """What a digest was filtered by, as RAW text lines (W09 NTF-04).
+
+    ``[]`` for a whole-project digest (no ``scope``, or ``source`` "project",
+    or a malformed value). The renderers escape each line for their medium
+    (``_e`` in HTML, ``slack_text`` in Slack / Teams text): names here are
+    user text. The window is named only where it narrowed the period (a view's
+    longer window does not shorten a daily or weekly digest).
+    """
+    scope = digest.get("scope")
+    if not isinstance(scope, dict):
+        return []
+    source = scope.get("source")
+    view_name = _clip_name(scope.get("view_name")) or "a saved view"
+    if source == "saved_view_deleted":
+        return [f"View deleted: {view_name} — this digest covers the whole project."]
+    if source == "saved_view_unavailable":
+        return [f"View no longer available to you: {view_name} — this digest covers the whole project."]
+    if source != "saved_view":
+        return []
+
+    raw_releases, raw_suites = scope.get("release_names"), scope.get("suites")
+    release_names: list = raw_releases if isinstance(raw_releases, list) else []
+    suites: list = raw_suites if isinstance(raw_suites, list) else []
+    window = scope.get("window_days")
+    period_days = 7 if digest.get("period", "weekly") == "weekly" else 1
+    parts = [
+        part
+        for part in (
+            _name_list(release_names, "release", "releases"),
+            _name_list(suites, "suite", "suites"),
+            f"last {window} day{'s' if window != 1 else ''}"
+            if isinstance(window, int) and not isinstance(window, bool) and 0 < window < period_days
+            else None,
+        )
+        if part
+    ]
+    filtered = bool(scope.get("release_ids") or suites or (isinstance(window, int) and window))
+    if parts:
+        lines = [f"Filtered by view: {view_name} — {' · '.join(parts)}"]
+    elif filtered:
+        lines = [f"Filtered by view: {view_name}"]
+    else:
+        lines = [f"View: {view_name} — it sets no filter, so this digest covers the whole project."]
+    try:
+        dropped = int(scope.get("dropped_release_count") or 0)
+    except (TypeError, ValueError):
+        dropped = 0
+    if dropped == 1:
+        lines.append("1 release in this view no longer exists in this project and was left out.")
+    elif dropped > 1:
+        lines.append(f"{dropped} releases in this view no longer exist in this project and were left out.")
+    if filtered:
+        lines.append(FILTERED_SECTIONS_NOTE)
+    return lines
 
 
 def zero_change_line(digest: dict) -> str:
@@ -556,11 +744,21 @@ def render_digest_text(digest: dict) -> str:
 
     Delta-first when a delta window is present; absolute totals stay as
     the secondary line. Zero-change windows collapse to the one-liner.
-    """
-    if digest.get("is_zero_change"):
-        return zero_change_line(digest)
+    A saved view's scope lines (W09 NTF-04) come first -- after the one-liner
+    of a zero-change window.
 
-    lines: list[str] = []
+    This text is Slack / Teams markup, and its lines carry names from users
+    and CI (views, releases, suites, the new-failure tests, action items, the
+    teams' flaky-debt drafts), so EVERY line is escaped once with
+    ``slack_text`` at the join: a test named ``<!channel>`` reads as text and
+    pings nobody. Nothing here is meant as markup (the drafts carry plain
+    URLs, which Slack still links).
+    """
+    scope_lines = digest_scope_lines(digest)
+    if digest.get("is_zero_change"):
+        return _slack_lines([zero_change_line(digest), *scope_lines])
+
+    lines: list[str] = list(scope_lines)
     delta = digest.get("delta")
     if delta:
         lines.append("Since last digest:")
@@ -590,7 +788,12 @@ def render_digest_text(digest: dict) -> str:
         if team.get("text"):
             lines.append("")
             lines.append(str(team["text"]))
-    return "\n".join(lines)
+    return _slack_lines(lines)
+
+
+def _slack_lines(lines: list[str]) -> str:
+    """Join the Slack / Teams digest lines, each escaped once (``slack_text``)."""
+    return "\n".join(slack_text(line) for line in lines)
 
 
 # PMF US-7.5 — appended to Slack/Teams digest text when the subscription
@@ -642,6 +845,19 @@ def render_digest_html(digest: dict) -> str:
     trend = digest.get("pass_rate_trend")
     is_retro = digest.get("schedule_type") == "WEEKLY_RETRO"
 
+    # W09 NTF-04: what a saved view filtered (or that it is gone). Every line
+    # is user text (view, release and suite names) and goes through _e().
+    scope_lines = digest_scope_lines(digest)
+    scope_html = (
+        "<div data-digest-scope style=\"background:#F5F3FF;border-left:4px solid #7C3AED;"
+        "padding:8px 12px;margin-bottom:12px;border-radius:4px;font-size:12px;color:#374151\">"
+        + f"<div style='font-weight:600'>{_e(scope_lines[0], 2000)}</div>"
+        + "".join(f"<div style='margin-top:4px'>{_e(line, 2000)}</div>" for line in scope_lines[1:])
+        + "</div>"
+        if scope_lines
+        else ""
+    )
+
     # US-7.4: a zero-change window renders as a single line, nothing else.
     if digest.get("is_zero_change"):
         return f"""<!DOCTYPE html>
@@ -649,7 +865,7 @@ def render_digest_html(digest: dict) -> str:
 <body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto;padding:16px;color:#1F2937">
     <h2 style="color:#1E40AF;margin-bottom:4px">TestLookup — {period} Digest</h2>
     <p style="color:#6B7280;font-size:13px;margin-top:0">{_e(project_name)} · {_e(digest.get('generated_at', ''))}</p>
-    <p style="font-size:14px;color:#1F2937">✅ {_e(zero_change_line(digest))}</p>
+    {scope_html}<p style="font-size:14px;color:#1F2937">✅ {_e(zero_change_line(digest))}</p>
     <div style="margin-top:20px;padding-top:10px;border-top:1px solid #E5E7EB;font-size:11px;color:#9CA3AF">
         You received this digest because you subscribed in TestLookup.
         Manage your subscriptions in Settings &gt; Digests.
@@ -811,7 +1027,7 @@ def render_digest_html(digest: dict) -> str:
 <body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto;padding:16px;color:#1F2937">
     <h2 style="color:#1E40AF;margin-bottom:4px">TestLookup — {period} Digest</h2>
     <p style="color:#6B7280;font-size:13px;margin-top:0">{_e(project_name)} · {_e(digest.get('generated_at', ''))}</p>
-    {body}
+    {scope_html}{body}
     <div style="margin-top:20px;padding-top:10px;border-top:1px solid #E5E7EB;font-size:11px;color:#9CA3AF">
         You received this digest because you subscribed in TestLookup.
         Manage your subscriptions in Settings &gt; Digests.
