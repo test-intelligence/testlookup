@@ -12,6 +12,7 @@
  * Harness: `tests/lib/rollout.ts` (fail closed, pinned clock). Fixtures: `fixtures-agents-billing-flags.ts`.
  */
 import { expect, test, type Page } from '@playwright/test'
+import { opened } from '../lib/inPage'
 import { assertHermetic, networkQuiet, openRollout } from '../lib/rollout'
 import { respond, type ApiHandlers } from '../lib/production-pages'
 import { ADMIN, BILLING_PROJECT, billingHandlers } from '../visual/production/fixtures-agents-billing-flags'
@@ -31,7 +32,7 @@ test('Included 20 and Overage rate 1.5 -> Covered $20.00, Overage $10.00, Charge
   for (const name of ['covered', 'overage', 'charge']) await expect(cell(page, payments, name)).toHaveText('—')
 
   await row(page, payments).getByRole('button', { name: 'Edit' }).click()
-  const dialog = page.getByRole('dialog', { name: 'Edit LLM cost budget' })
+  const dialog = opened(page, 'Edit LLM cost budget')
   await expect(dialog.locator('[data-billing-hint="included"]')).toHaveText('Spend up to this amount each month is covered; spend above it is overage.')
   await expect(dialog.locator('[data-billing-hint="rate"]')).toHaveText('Charge = overage × rate. Shown in the table; it does not limit spend (the hard cap does).')
   await dialog.getByLabel('Included per month ($)').fill('20')
@@ -88,7 +89,7 @@ test('a QA lead reads the table and the editor (read-only) with no request a QA 
   const { api, errors } = await openRollout(page, '/settings/billing', { handlers: [...forbidden, ...handlers], user: USER, ready: table })
   await expect(cell(page, BILLING_PROJECT.search, 'projection')).toHaveText('proj. $2.00 by month end')
   await row(page, BILLING_PROJECT.search).getByRole('button', { name: 'View' }).click()
-  const dialog = page.getByRole('dialog', { name: 'Edit LLM cost budget' })
+  const dialog = opened(page, 'Edit LLM cost budget')
   await expect(dialog.getByLabel('Included per month ($)')).toBeDisabled()
   await expect(dialog.getByRole('button', { name: 'Save' })).toHaveCount(0)
   await networkQuiet(page, api)

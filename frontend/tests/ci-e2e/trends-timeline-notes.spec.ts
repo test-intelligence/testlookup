@@ -17,6 +17,7 @@
  * closed, pinned clock). Fixtures: `notesWorld()` (`fixtures-trends-coverage.ts`).
  */
 import { expect, test, type Locator, type Page } from '@playwright/test'
+import { opened } from '../lib/inPage'
 import { landmark } from '../lib/production-pages'
 import { assertHermetic, expectHostileAsText, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
 import { COVERAGE_ON, daysAgo, HOSTILE_NAME, PROJECT_ID, TRENDS_ON } from '../visual/production/fixtures'
@@ -30,7 +31,7 @@ const ready = (p: Page) => landmark(p, 'Trend metrics')
 const hero = (page: Page) => page.locator('[data-catalogue-section="trends-pass-rate"]')
 const cadence = (page: Page): Locator =>
   page.locator('div, section').filter({ has: page.getByRole('heading', { name: /^Run cadence — last/ }) }).filter({ has: page.locator('[data-day-strip]') }).last()
-const pinDialog = (page: Page) => page.getByRole('dialog', { name: 'Pin a note' })
+const pinDialog = (page: Page) => opened(page, 'Pin a note')
 
 /** Press on cell `from` of the cadence strip, move over to cell `to`, release. */
 async function dragDays(page: Page, from: number, to: number) {

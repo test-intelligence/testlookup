@@ -15,6 +15,7 @@
  * `fixtures-pages.ts` (shared with the fold budget, P6).
  */
 import { expect, test, type Page } from '@playwright/test'
+import { opened } from '../lib/inPage'
 import { MAIN, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
 import { TEST_CASES, TEST_CASES_SUITE_IDS as SUITE_IDS } from '../visual/production/fixtures-pages'
 
@@ -121,9 +122,9 @@ test('Cases: a clicked case docks beside the list, not over it (master-detail)',
 
 test('Cases: the Insights drawer holds the former right rail', async ({ page }, testInfo) => {
   const { api, errors } = await openRollout(page, '/test-management', { handlers: TEST_CASES, ready })
-  await expect(page.getByRole('complementary', { name: 'Insights' })).toHaveCount(0)
+  await expect(opened(page, 'Insights')).toHaveCount(0)
   await page.getByRole('button', { name: /^Insights/ }).click()
-  const drawer = page.getByRole('complementary', { name: 'Insights' })
+  const drawer = opened(page, 'Insights')
   await expect(drawer).toBeVisible()
   if (process.env.FOLD_SHOT) await page.screenshot({ path: testInfo.outputPath('test-cases-insights.png') })
   await expect(drawer.getByRole('heading', { name: /^Review queue/ })).toBeVisible()
@@ -148,7 +149,7 @@ test('AI Generate offers "From documents" (the knowledge generation flow) beside
     ready,
   })
   await page.getByRole('button', { name: 'AI Generate' }).first().click()
-  const dialog = page.getByRole('dialog', { name: 'AI Generate Test Cases' })
+  const dialog = opened(page, 'AI Generate Test Cases')
   await expect(dialog).toBeVisible()
   await expect(dialog.getByRole('tab', { name: 'From a description' })).toHaveAttribute('aria-selected', 'true')
   await dialog.getByRole('tab', { name: 'From documents' }).click()

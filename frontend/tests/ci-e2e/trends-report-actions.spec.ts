@@ -22,6 +22,7 @@
  * `trendsReportWorld()` (`fixtures-trends-coverage.ts`).
  */
 import { expect, test, type Page } from '@playwright/test'
+import { opened } from '../lib/inPage'
 import { landmark, openProductionPage, type ApiHandlers } from '../lib/production-pages'
 import { assertHermetic, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
 import { NOW, PROJECT_ID, TRENDS_ON, USER } from '../visual/production/fixtures'
@@ -46,7 +47,7 @@ const MEMBERS_PATH = `/api/v1/projects/${P}/members`
 
 const menuTrigger = (page: Page) => page.locator('[data-page-header]').getByRole('button', { name: 'More actions' })
 const menuItem = (page: Page, name: string | RegExp) => page.getByRole('menuitem', { name })
-const dialog = (page: Page) => page.getByRole('dialog', { name: /Email report/ })
+const dialog = (page: Page) => opened(page, /Email report/)
 
 async function openTrends(page: Page, handlers: ApiHandlers, user = USER) {
   return openRollout(page, '/trends', { handlers: [...handlers, ...TRENDS_ON], ready, user })

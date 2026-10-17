@@ -246,7 +246,7 @@ test.describe('heatmaps, everything on screen (1280 x 4000)', () => {
       await expectNoBlockingViolations(page, theme, [], [`[data-catalogue-section="${TRENDS.id}"]`])
       await page.keyboard.press('Enter')
       await expectOneRowsPanel(page, /^Executions in /)
-      await expectNoBlockingViolations(page, theme, [], ['[data-side-panel]'])
+      await expectNoBlockingViolations(page, theme, [], ['[data-side-panel], [data-in-page]'])
     })
   }
 })
