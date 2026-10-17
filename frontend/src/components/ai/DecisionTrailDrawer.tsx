@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import {
   ActivitySquare,
   AlertTriangle,
@@ -7,15 +7,15 @@ import {
   ChevronRight,
   Clock,
   Cpu,
-  FileSearch,
   GitBranch,
   Info,
   Search,
   SkipForward,
-  X,
 } from 'lucide-react'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
+import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
+import type { InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import { useDecisionTrail } from '@/hooks/useDecisionTrail'
 import type {
   DecisionLogEntry,
@@ -28,11 +28,17 @@ interface Props {
   runId: string | null
   open: boolean
   onClose: () => void
+  /** The host section's one-form slot (W27a; the trail is read-only, so it never asks). */
+  slot?: InlineSlot
 }
 
 /**
- * AI decision trail drawer — the user-facing "why did the AI do that" audit
- * surface introduced in Tier 0B. Renders the full trail in a single scroll:
+ * AI decision trail — the user-facing "why did the AI do that" audit
+ * surface introduced in Tier 0B. It renders IN THE PAGE (W27a PAN-03): the
+ * run's Analysis tab places it right under the verdict banner as a read-only
+ * `InlineFormSection` named "AI decision trail" (the old drawer's name), its
+ * entries scrolling inside it; the search field takes focus once the trail is
+ * there. Renders the full trail in a single scroll:
  *
  * 1. Top summary: pipeline status, cost, token count, mode distribution
  * 2. Timeline: stages in execution order, each with its decision_log expanded
@@ -41,12 +47,13 @@ interface Props {
  * The drawer is lazy — the ``useDecisionTrail`` hook only fires when ``open``
  * flips to true, so closed runs don't incur the round trip.
  */
-export default function DecisionTrailDrawer({ runId, open, onClose }: Props) {
+export default function DecisionTrailDrawer({ runId, open, onClose, slot }: Props) {
   const { data, error, isLoading } = useDecisionTrail(runId, open)
   const [query, setQuery] = useState('')
   const [stageFilter, setStageFilter] = useState<string>('all')
+  const searchRef = useRef<HTMLInputElement>(null)
 
-  // Reset filters when the drawer is closed so reopening a different run
+  // Reset filters when the trail is closed so reopening a different run
   // doesn't inherit stale query state. Synced during render via previous-value
   // tracking rather than a setState-in-effect.
   const [prevOpen, setPrevOpen] = useState(open)
@@ -64,32 +71,30 @@ export default function DecisionTrailDrawer({ runId, open, onClose }: Props) {
     return filterTrail(data, normQuery, stageFilter)
   }, [data, normQuery, stageFilter])
 
+  // The search field is the trail's first control, but it renders only once
+  // the trail has loaded: take focus to it then, unless the reader has moved
+  // focus out of the section meanwhile.
+  const ready = open && !isLoading && !error && !!data
+  useEffect(() => {
+    if (!ready) return
+    const active = document.activeElement
+    const ours = !active || active === document.body || active.closest('[data-decision-trail]') !== null
+    if (ours) searchRef.current?.focus()
+  }, [ready])
+
   if (!open) return null
 
   return (
-    <div
-      role="dialog"
-      aria-label="AI decision trail"
-      className="fixed inset-y-0 right-0 w-[540px] max-w-[95vw] bg-[var(--color-bg-card)] border-l border-[var(--color-border)] shadow-2xl z-50 flex flex-col"
+    <InlineFormSection
+      title="AI Decision Trail"
+      ariaLabel="AI decision trail"
+      headingLevel={3}
+      closeLabel="Close decision trail"
+      onClose={onClose}
+      slot={slot}
+      dataAttributes={{ 'data-decision-trail': '' }}
     >
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
-        <div className="flex items-center gap-2">
-          <FileSearch className="h-4 w-4 text-[var(--color-accent)]" />
-          <h3 className="text-sm font-semibold text-[var(--color-text)]">
-            AI Decision Trail
-          </h3>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="p-1 rounded hover:bg-[var(--color-bg-secondary)]"
-          aria-label="Close decision trail"
-        >
-          <X className="h-4 w-4 text-[var(--color-text-muted)]" />
-        </button>
-      </div>
-
-      <div className="flex-1 overflow-y-auto">
+      <div className="max-h-[60vh] overflow-y-auto">
         {isLoading && (
           <div className="flex items-center justify-center py-16">
             <LoadingSpinner size="lg" />
@@ -102,9 +107,10 @@ export default function DecisionTrailDrawer({ runId, open, onClose }: Props) {
           />
         )}
         {!isLoading && !error && data && filtered && (
-          <div className="p-4 space-y-5">
+          <div className="space-y-5">
             <TrailHeader data={data} />
             <FilterBar
+              searchRef={searchRef}
               query={query}
               onQueryChange={setQuery}
               stageFilter={stageFilter}
@@ -126,13 +132,14 @@ export default function DecisionTrailDrawer({ runId, open, onClose }: Props) {
           </div>
         )}
       </div>
-    </div>
+    </InlineFormSection>
   )
 }
 
 // ── Filter bar ───────────────────────────────────────────────────────────
 
 function FilterBar({
+  searchRef,
   query,
   onQueryChange,
   stageFilter,
@@ -141,6 +148,7 @@ function FilterBar({
   matchCounts,
   queryActive,
 }: {
+  searchRef: RefObject<HTMLInputElement | null>
   query: string
   onQueryChange: (value: string) => void
   stageFilter: string
@@ -155,6 +163,7 @@ function FilterBar({
         <div className="relative flex-1">
           <Search className="h-3 w-3 text-[var(--color-text-muted)] absolute left-2 top-1/2 -translate-y-1/2" />
           <input
+            ref={searchRef}
             type="search"
             value={query}
             onChange={(e) => onQueryChange(e.target.value)}

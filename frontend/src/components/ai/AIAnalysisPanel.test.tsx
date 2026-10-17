@@ -448,10 +448,10 @@ describe('AIAnalysisPanel', () => {
       )
     })
 
-    it('opens the shared correction modal from the Correct button', async () => {
+    it('opens the shared correction form from the Correct button, in the panel (W27a: no longer a modal)', async () => {
       await renderResolvedResult({ analysis_id: 'an-42' })
       fireEvent.click(screen.getByRole('button', { name: /Correct/i }))
-      expect(await screen.findByRole('dialog', { name: /Correct classification/i })).toBeInTheDocument()
+      expect(await screen.findByRole('region', { name: /Correct classification/i })).toBeInTheDocument()
     })
 
     it('renders evidence through the chrome', async () => {

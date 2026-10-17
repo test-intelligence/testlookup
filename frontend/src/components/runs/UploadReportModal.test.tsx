@@ -166,14 +166,42 @@ describe('UploadReportModal', () => {
     const { unzipSync } = await import('fflate')
     expect(Object.keys(unzipSync(bytes)).sort()).toEqual(['2-dup.xml', 'dup.xml'])
   })
-  // The static quality gate (frontend.modal-dialog-role) proves the attributes
-  // are present; only a render proves the accessible NAME actually computes —
-  // an aria-labelledby pointing at a missing id would satisfy the gate and
-  // still leave the dialog nameless. This modal is the one that sent live
-  // probes to anchor on heading text because getByRole("dialog") found nothing.
-  it('exposes itself as a named dialog', () => {
-    setup()
+  // Only a render proves the accessible NAME actually computes — an
+  // aria-labelledby pointing at a missing id would still leave the form
+  // nameless. This form is the one that sent live probes to anchor on heading
+  // text because getByRole("dialog") found nothing. W27a PAN-03: it renders in
+  // the page (a region named by its kept heading), no longer a modal dialog.
+  it('exposes itself as a named region in the page, not a modal dialog', () => {
+    const { container } = setup()
 
-    expect(screen.getByRole('dialog', { name: 'Upload test report' })).toBeInTheDocument()
+    const form = screen.getByRole('region', { name: 'Upload test report' })
+    expect(container.contains(form), 'rendered in place, not portalled').toBe(true)
+    expect(form.querySelector('#upload-report-title')).toHaveTextContent('Upload test report')
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.querySelector('[aria-modal]')).toBeNull()
+  })
+
+  it('moves focus to its first visible field, and Escape inside closes it (not mid-upload)', async () => {
+    mockUpload.mockReturnValue(new Promise(() => undefined))
+    const { input, uploadBtn, onClose } = setup()
+    expect(screen.getByLabelText('Format'), 'the hidden file input is skipped').toHaveFocus()
+    selectFile(input, new File(['<testsuite/>'], 'junit.xml', { type: 'text/xml' }))
+    fireEvent.click(uploadBtn())
+    await screen.findByRole('button', { name: /uploading/i })
+    fireEvent.keyDown(screen.getByLabelText('Format'), { key: 'Escape' })
+    expect(onClose, 'not while the upload is in flight').not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Close' }), 'the X waits too').toBeDisabled()
+  })
+
+  it('gives each optional field its own label (they all once pointed at the Build label input)', () => {
+    setup()
+    fireEvent.click(screen.getByRole('button', { name: 'Optional metadata' }))
+    const fields = ['Build label', 'Release', 'Branch', 'Commit'].map((label) => screen.getByLabelText(label))
+    expect(new Set(fields.map((field) => field.id)).size).toBe(4)
+    expect(screen.getByLabelText('Release')).toHaveAttribute('placeholder', 'e.g. v2.1.0')
+    expect(screen.getByLabelText('Branch')).toHaveAttribute('placeholder', 'e.g. main')
+    expect(screen.getByLabelText('Commit')).toHaveAttribute('placeholder', 'sha')
+    fireEvent.change(screen.getByLabelText('Branch'), { target: { value: 'main' } })
+    expect(screen.getByLabelText('Build label')).toHaveValue('')
   })
 })

@@ -12,6 +12,7 @@
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { useEffect, type ReactNode } from 'react'
 import { MemoryRouter, Route, Routes, useLocation, useParams } from 'react-router-dom'
+import { SWRConfig } from 'swr'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FailureClusterIntel, Provenance, RunModeSummary, ScoringModel } from '@/services/runIntelligenceService'
 import { releaseCouncilService, type ReleaseCouncilDecision } from '@/services/releaseCouncilService'
@@ -69,6 +70,17 @@ vi.mock('@/hooks/useRuns', async (importOriginal) => ({
 vi.mock('@/hooks/useDecisionTrail', () => ({
   useDecisionTrail: () => ({ data: undefined, error: undefined, isLoading: false }),
 }))
+// File defect (W27a): the REAL candidate / promote hooks over a mocked service, one candidate per cluster.
+const { defectPromotion, candidateFor } = vi.hoisted(() => ({
+  defectPromotion: { getCandidate: vi.fn(), promote: vi.fn() },
+  candidateFor: (cluster: string) => ({
+    cluster_id: cluster, run_id: 'run-abc', title: `Defect for ${cluster}`, description: 'What failed…', severity: 'HIGH',
+    component: 'payments', owner_team: 'payments-backend', labels: ['regression'], duplicate_hint: '',
+    duplicate_detected: false, duplicate_defect_id: null, criticality_scores: {}, composite_score: 0,
+    evidence_bundle: { stack_traces: [], log_anomalies: [], data_sources: [] }, failure_category: 'PRODUCT_BUG', member_count: 8,
+  }),
+}))
+vi.mock('@/services/defectPromotionService', () => ({ defectPromotionService: defectPromotion }))
 // W03 AIH-04: the AI history on top of the body (its own tests sit beside the
 // components in components/ai/): no stored version, the comparison still loading.
 vi.mock('@/hooks/useAIHistory', () => {
@@ -1034,7 +1046,7 @@ describe('RunIntelligenceBody — the page template (P4)', () => {
     mockHooks({ intelligence: MOCK_INTELLIGENCE })
     renderBody()
     fireEvent.click(within(screen.getByRole('region', { name: 'Release verdict' })).getByRole('button', { name: /Decision trail/ }))
-    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'AI decision trail' })).toBeInTheDocument()
   })
 
   it('shows only the failure categories the data names: no "None detected this run" placeholder rows', () => {
@@ -1354,5 +1366,102 @@ describe('RunIntelligenceBody — Recommended actions puts my role first (FAIL-0
     expect(before.radios + before.tabs).toBe(0)
     expect(writes.mock.calls.filter(([key]) => /persona|role/i.test(String(key)))).toEqual([])
     writes.mockRestore()
+  })
+})
+
+// ── W27a PAN-03: File defect opens IN the failure block it was filed from ──
+describe('RunIntelligenceBody — File defect opens inside its failure block, one form at a time (W27a PAN-03)', () => {
+  const TWO_CLUSTERS = {
+    ...MOCK_INTELLIGENCE,
+    failure_clusters: [
+      MOCK_INTELLIGENCE.failure_clusters[0],
+      {
+        ...MOCK_INTELLIGENCE.failure_clusters[0],
+        id: 'cluster-row-2', cluster_id: 'cl-2', label: 'Auth token expiry', size: 4,
+        representative_error: 'TokenExpiredError: jwt expired', member_test_ids: ['t9', 't10', 't11', 't12'],
+      },
+    ],
+  }
+
+  beforeEach(() => {
+    // Self-contained (a `-t` filtered run skips the other describes' setup).
+    mockCompleteStep.mockReset()
+    mockCompleteStep.mockResolvedValue(undefined)
+    mockProjectState.activeProjectId = 'proj-1'
+    useAuthStore.setState({ user: { id: 'u', role: 'QA_ENGINEER' } as never })
+    defectPromotion.getCandidate.mockReset()
+    defectPromotion.getCandidate.mockImplementation(async (_run: string, cluster: string) => candidateFor(cluster))
+    defectPromotion.promote.mockReset()
+  })
+  afterEach(() => {
+    useAuthStore.setState({ user: null } as never)
+  })
+
+  function renderBody() {
+    return render(
+      <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
+        <MemoryRouter initialEntries={['/runs/run-abc?tab=analysis']}>
+          <Routes><Route path="/runs/:runId" element={<RunIntelligenceBody runId="run-abc" />} /></Routes>
+        </MemoryRouter>
+      </SWRConfig>,
+    )
+  }
+
+  /** A failure block: the block that names `label`. */
+  const blockOf = (label: string) => {
+    const blocks = Array.from(document.querySelectorAll<HTMLElement>('section[aria-label="What failed"] [data-failure-block]'))
+    const block = blocks.find((b) => b.textContent?.includes(label))
+    if (!block) throw new Error(`no failure block for ${label}`)
+    return block
+  }
+  const form = () => screen.queryByRole('region', { name: 'Promote to Defect' })
+
+  it('the form renders INSIDE the block that filed it, under its buttons (not at the page end, not a modal)', async () => {
+    mockHooks({ intelligence: TWO_CLUSTERS })
+    renderBody()
+    const second = blockOf('Auth token expiry')
+    fireEvent.click(within(second).getByRole('button', { name: /File defect/ }))
+    const opened = form() as HTMLElement
+    expect(second.contains(opened), 'inside the second block').toBe(true)
+    expect(blockOf('DB Timeouts').contains(opened)).toBe(false)
+    expect(document.querySelector('[aria-modal]')).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    await waitFor(() => expect(within(opened).getByLabelText(/^Title/)).toHaveValue('Defect for cl-2'))
+    expect(defectPromotion.getCandidate).toHaveBeenCalledWith('run-abc', 'cl-2')
+  })
+
+  it('a second File defect while the first has typed text asks first; Discard changes moves the form', async () => {
+    mockHooks({ intelligence: TWO_CLUSTERS })
+    renderBody()
+    fireEvent.click(within(blockOf('DB Timeouts')).getByRole('button', { name: /File defect/ }))
+    await waitFor(() => expect(within(form() as HTMLElement).getByLabelText(/^Title/)).toHaveValue('Defect for cl-1'))
+    fireEvent.change(within(form() as HTMLElement).getByLabelText(/^Title/), { target: { value: 'Pool exhausted under load' } })
+
+    fireEvent.click(within(blockOf('Auth token expiry')).getByRole('button', { name: /File defect/ }))
+    const first = form() as HTMLElement
+    expect(blockOf('DB Timeouts').contains(first), 'still the first block').toBe(true)
+    expect(within(first).getByText(/Discard your changes to/)).toHaveTextContent('Discard your changes to "Promote to Defect"?')
+    fireEvent.click(within(first).getByRole('button', { name: 'Keep editing' }))
+    expect(within(first).getByLabelText(/^Title/)).toHaveValue('Pool exhausted under load')
+
+    fireEvent.click(within(blockOf('Auth token expiry')).getByRole('button', { name: /File defect/ }))
+    fireEvent.click(within(form() as HTMLElement).getByRole('button', { name: 'Discard changes' }))
+    const moved = form() as HTMLElement
+    expect(blockOf('Auth token expiry').contains(moved)).toBe(true)
+    expect(screen.getAllByRole('region', { name: 'Promote to Defect' })).toHaveLength(1)
+    await waitFor(() => expect(within(moved).getByLabelText(/^Title/)).toHaveValue('Defect for cl-2'))
+    expect(defectPromotion.promote).not.toHaveBeenCalled()
+  })
+
+  it('a clean form is replaced at once; Cancel closes it and sends nothing', async () => {
+    mockHooks({ intelligence: TWO_CLUSTERS })
+    renderBody()
+    fireEvent.click(within(blockOf('DB Timeouts')).getByRole('button', { name: /File defect/ }))
+    fireEvent.click(within(blockOf('Auth token expiry')).getByRole('button', { name: /File defect/ }))
+    expect(blockOf('Auth token expiry').contains(form())).toBe(true)
+    expect(screen.queryByText(/Discard your changes/)).toBeNull()
+    fireEvent.click(within(form() as HTMLElement).getByRole('button', { name: 'Cancel' }))
+    expect(form()).toBeNull()
+    expect(defectPromotion.promote).not.toHaveBeenCalled()
   })
 })

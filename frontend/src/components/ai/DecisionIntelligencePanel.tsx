@@ -2,7 +2,7 @@ import { AlertTriangle, CheckCircle2, Clock3, ShieldCheck, ShieldX } from 'lucid
 import { useId, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { useModalFocus } from '@/hooks/useModalFocus'
+import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
 import type {
   DecisionIntelligence,
   DecisionReportAttempt,
@@ -117,8 +117,13 @@ function ClaimsSection({ claims, actions, onInspect }: { claims: DecisionClaim[]
   )
 }
 
+/**
+ * A claim's evidence, IN THE PAGE (W27a PAN-03): a read-only section where it
+ * renders, under the claims, named by the claim text (the old dialog's name and
+ * heading id); `Close evidence` and Escape inside close it, focus goes back to
+ * the claim's Inspect control.
+ */
 function EvidenceDrawer({ claim, reportHash, reportVersion, runId, onClose }: { claim: DecisionClaim; reportHash: string; reportVersion?: DecisionReportVersion | null; runId: string; onClose: () => void }) {
-  const dialogRef = useModalFocus({ onClose })
   const renderEvidence = (items: Array<Record<string, unknown>>, label: string) => (
     <section className="mt-3">
       <h4 className="m-0 text-[12px] font-semibold">{label} · {items.length}</h4>
@@ -139,21 +144,23 @@ function EvidenceDrawer({ claim, reportHash, reportVersion, runId, onClose }: { 
     </section>
   )
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="presentation" onClick={onClose}>
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="claim-evidence-heading" className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-card)] p-4 shadow-xl" onClick={event => event.stopPropagation()}>
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="m-0 text-[11px] uppercase tracking-wider text-[var(--color-text-muted)]">Claim evidence</p>
-            <h3 id="claim-evidence-heading" className="mt-1 mb-0 text-[16px] font-semibold">{claim.text}</h3>
-            <p className="mb-0 mt-1 text-[11px] text-[var(--color-text-muted)]">Source stage: {claim.source_stage} · Confidence {Math.round(claim.confidence * 100)}% · Report {reportHash.slice(0, 12)}…</p>
-          </div>
-          <button type="button" aria-label="Close evidence" className="rounded border border-[var(--color-border)] px-2 py-1 text-[12px]" onClick={onClose}>Close</button>
-        </div>
-        <p className="mt-3 mb-0 text-[12px] text-[var(--color-text-secondary)]"><strong>Confidence basis:</strong> {claim.confidence_basis}</p>
-        {renderEvidence(claim.evidence, 'Evidence')}
-        {renderEvidence(claim.counter_evidence, 'Counter-evidence')}
-      </div>
-    </div>
+    <InlineFormSection
+      className="mt-3"
+      title={claim.text}
+      titleId="claim-evidence-heading"
+      headingLevel={3}
+      closeLabel="Close evidence"
+      onClose={onClose}
+      description={
+        <p className="m-0 text-[11px] text-[var(--color-text-muted)]">
+          <span className="uppercase tracking-wider">Claim evidence</span> · Source stage: {claim.source_stage} · Confidence {Math.round(claim.confidence * 100)}% · Report {reportHash.slice(0, 12)}…
+        </p>
+      }
+    >
+      <p className="m-0 text-[12px] text-[var(--color-text-secondary)]"><strong>Confidence basis:</strong> {claim.confidence_basis}</p>
+      {renderEvidence(claim.evidence, 'Evidence')}
+      {renderEvidence(claim.counter_evidence, 'Counter-evidence')}
+    </InlineFormSection>
   )
 }
 function EvidenceList({ report }: { report: DecisionIntelligence }) {
@@ -347,7 +354,8 @@ export default function DecisionIntelligencePanel({
             <EvidenceList report={displayReport} />
       <ClaimsSection claims={displayReport.claims ?? []} actions={displayReport.proposed_actions ?? []} onInspect={setSelectedClaim} />
             <DecisionReportFeedbackControls runId={runId} reportVersion={verified ? reportVersion : null} claims={displayReport.claims ?? []} />
-            {selectedClaim && <EvidenceDrawer claim={selectedClaim} reportHash={displayReport.evidence_bundle_sha256} reportVersion={reportVersion} runId={runId} onClose={() => setSelectedClaim(null)} />}
+            {/* Keyed: inspecting another claim opens its own section (focus and scroll move to it). */}
+            {selectedClaim && <EvidenceDrawer key={selectedClaim.claim_id} claim={selectedClaim} reportHash={displayReport.evidence_bundle_sha256} reportVersion={reportVersion} runId={runId} onClose={() => setSelectedClaim(null)} />}
           </div>
 
           {(displayReport.quality_review.requires_human_review
