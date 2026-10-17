@@ -31,10 +31,21 @@ spec:
         testlookup.io/live-fanout-protocol: "v1"
     spec:
       serviceAccountName: testlookup-sa
+      # Drain before stop (2026-10-17: /chat got a 504 while a deploy replaced
+      # this pod). A deleted pod keeps receiving requests until the ingress
+      # drops it from its endpoints; the preStop sleep keeps gunicorn accepting
+      # through that lag, then SIGTERM starts gunicorn's graceful stop (30 s
+      # for in-flight requests, e.g. a chat answer). 45 s covers both, so the
+      # kubelet's SIGKILL never cuts a finishing request.
+      terminationGracePeriodSeconds: 45
       containers:
         - name: backend
           image: testlookup/backend:0.0.1
           imagePullPolicy: IfNotPresent
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 10"]
           command: ["sh", "-c"]
           args:
             - rm -f "$PROMETHEUS_MULTIPROC_DIR"/*.db && exec gunicorn -c gunicorn_conf.py app.main:app
