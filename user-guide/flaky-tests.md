@@ -1,18 +1,20 @@
 # Quarantine policy and CI gating
 
-How to turn on flaky-test quarantine for a project, tune its policy, and make a CI pipeline fail only on real (non-quarantined) failures. Using the **Flaky tests** page itself (the Detected, Proposed, Quarantined and History tabs, proposing and approving) is covered in the in-app guide: **Flaky tests** (`/docs/flaky`, source [flaky.md](../frontend/src/content/guide/flaky.md)). Internals: [architecture/FLAKY_INTELLIGENCE.md](../architecture/FLAKY_INTELLIGENCE.md).
+How flaky-test quarantine is switched on or off for a project, how to tune its policy, and how to make a CI pipeline fail only on real (non-quarantined) failures. Using the **Flaky tests** page itself (the Detected, Proposed, Quarantined, History and Policy tabs, the flakiness score, proposing and approving) is covered in the in-app guide: **Flaky tests** (`/docs/flaky`, source [flaky.md](../frontend/src/content/guide/flaky.md)). Internals: [architecture/FLAKY_INTELLIGENCE.md](../architecture/FLAKY_INTELLIGENCE.md).
 
 TestLookup treats flakiness as a **verdict backed by evidence**, not a failure-rate threshold: pass/fail alternation, error-signature variety, a confidence interval on the failure ratio and an ML score combine into a flaky verdict and a likely cause. A test that fails *consistently with the same error* is a **regression** and is never recommended for quarantine.
 
-## Turning quarantine on
+## Turning quarantine on (and off)
 
-Quarantine is switched per deployment by the **`flaky_auto_quarantine`** feature flag, which ships **off**. With it off:
+Quarantine is switched by the **`flaky_auto_quarantine`** feature flag. Migration 0065 seeded it **off**; since migration **0219** it is **on** for a new install and for every existing install whose row is still that untouched seed (off, never edited by an administrator). A row an administrator changed (switched on or off, given a project list, toggled later) keeps its value. Turning it on quarantines nothing by itself: a test is quarantined only after a QA lead approves a proposal, so the release gate and `testlookup ci-verdict` behave exactly as before until someone does.
 
-- **Propose quarantine** is unavailable (the page says "Quarantine is off for this project"; the API answers `503`).
+With the flag off for a project:
+
+- **Propose quarantine** is unavailable (the Detected tab says "Quarantine is off for this project, so no test can be proposed for it." and names the flag; **Mute** on Failures is disabled with the same reason; the API answers `503`).
 - **Existing quarantines are not enforced**: the release gate counts their failures again, and the quarantine manifest that `testlookup ci-verdict` reads is **empty**, so every failure counts as real.
 - Proposals do not expire.
 
-Turn it on under **Settings → System → Feature flags** (administrators), globally or for listed projects. See the [feature-flag reference](../docs/operations/feature-flags.md) for how project lists and rollout combine.
+To turn it off, or limit it, use **Settings → System → Feature flags** (administrators): switch `enabled_global` off for the whole instance, or keep it on and list the projects that may use it (`enabled_projects`, an allow-list; a project left out reads off). See the [feature-flag reference](../docs/operations/feature-flags.md) for how project lists and rollout combine; the change applies within 30 seconds. Migration 0219's downgrade turns the flag back off only where 0219 itself turned it on and nobody has edited it since.
 
 ## The quarantine workflow
 
@@ -27,17 +29,18 @@ Every transition is audit-logged. All quarantine writes need `QA_LEAD`.
 
 ## Quarantine policy
 
-Each project has a quarantine policy, served at `GET/PUT /api/v1/projects/{project_id}/quarantine/policy` (`QA_LEAD` to change). There is no page for it yet. Defaults:
+Each project has a quarantine policy, on the **Policy** tab of **Flaky tests** (`/flaky?tab=policy`) and served at `GET/PUT /api/v1/projects/{project_id}/quarantine/policy`. Everyone can read it; changing it needs `QA_LEAD`, and each change is recorded in the activity feed as `quarantine_policy.updated` ("Quarantine policy changed: SLA days, auto-release"). Until a project saves one, the tab reads "Using defaults: …" and the defaults apply:
 
-| Setting | Default |
-|---|---|
-| Quarantine SLA | 14 days |
-| Automatically file a defect for a quarantined test | off |
-| Automatically promote a test out of quarantine | off |
-| Consecutive passes before a test is ready to promote out | 20 |
-| Detection threshold | 20% flip rate over the last 10 runs |
+| Setting | Field | Default |
+|---|---|---|
+| Quarantine SLA (1-365 days) | `sla_days` | 14 days |
+| File an internal TestLookup defect when a quarantine is approved (no Jira issue) | `auto_create_defect` | off |
+| Release automatically after the consecutive passes below (off: the row is only flagged "Ready to promote") | `auto_promote` | off |
+| Consecutive passes before a test is ready to promote out (1-1000) | `promote_after_passes` | 20 |
+| Detection threshold: the flip rate (0-1) over at least the minimum runs (1-1000) at which the flaky sentinel proposes a test | `detection_flip_rate_threshold`, `detection_min_runs` | 20% over 10 runs |
+| Warn when more than this many tests are quarantined (0-1000, `0` = no limit) | `max_active_quarantined` | 8 |
 
-The exact field names are in the API reference (`/api-docs`, the flaky-quarantine section).
+`max_active_quarantined` only warns: past it the **Quarantined** tab says "12 tests are quarantined; this project's policy warns past 8." It never blocks an approval. A `PUT` replaces every field, so a body without `max_active_quarantined` resets it to 8. A new SLA applies to tests quarantined after the change. The exact schema is in the API reference (`/api-docs`, the flaky-quarantine section).
 
 ## Gating CI on real failures only (`testlookup ci-verdict`)
 

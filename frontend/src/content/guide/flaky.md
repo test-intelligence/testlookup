@@ -62,31 +62,48 @@ Duration uses the coefficient of variation (standard deviation ÷ mean). At or a
 
 ## The Flaky tests page
 
-**Flaky tests** in the sidebar (`/flaky`) works on one project at a time; in **All Projects** it asks you to pick one. Old links to `/flaky-coach` and `/quarantine` open here. It has four tabs:
+**Flaky tests** in the sidebar (`/flaky`) works on one project at a time; in **All Projects** it asks you to pick one. Old links to `/flaky-coach` and `/quarantine` open here. It has five tabs:
 
 | Tab | Shows |
 |---|---|
-| **Detected** | Every test the detector considers unstable over the last 30 days, with its recent history, failure percentage, a recommendation (**Quarantine**, **Investigate**, **Monitor** or **Healthy**) and its impact. Filter by recommendation |
+| **Detected** | Every test the detector considers unstable over the last 30 days, with its recent history, failure percentage, the four-signal **Flakiness score**, a recommendation (**Quarantine**, **Investigate**, **Monitor** or **Healthy**) and its impact. Filter by recommendation; sort by impact or by score |
 | **Proposed** | Quarantine proposals waiting for a decision |
-| **Quarantined** | Tests currently in quarantine |
+| **Quarantined** | Tests currently in quarantine, each with the day its SLA is due |
 | **History** | Released, rejected and expired quarantines |
+| **Policy** | The project's quarantine policy (below) |
 
-Click a test on **Detected** for the detail: total and failed runs, when it became flaky, the failure rate with its 95% confidence interval, the ML flakiness confidence, the likely cause, the step that fails (for step-based tests), and suggested stabilisation actions. The test's own page shows **Cross-run step flakiness**: which step flips between pass and fail across runs, so you can fix that step rather than the whole test.
+**Two numbers, two detectors.** **Fail %** is the failure rate the detector found over the window; **Flakiness score (4 signals)** is the nightly score described above, which is separate from it. A cell reads `0.62` with its confidence band (`low`, `medium` or `high`); `insufficient` when the test has fewer than 5 observations in the last 30 days (hover it for `3 of 5 observations`); `not scored yet` when it has enough but the nightly sweep has not scored it; and `—` when the score could not be read. None of those is a zero. **Sort** → **Flakiness score** puts the most flaky first and every unscored test after them; **Impact**, the default, keeps the detector's order.
 
-**Refresh** recomputes the detection now (`QA_ENGINEER` or higher). The three quarantine tabs carry an **Experimental** badge.
+Click a test on **Detected** for the detail. It opens with the flakiness score: the score on a 0-1 bar, its band and observation count (`medium · 23 observations`), when it was scored, and the four signals with their value and weight (`Result volatility (pass/fail flips) 0.70 × 0.45`, then `Weights sum to 1.00`); a test below the floor reads `insufficient: 3 of 5 observations`. Below that: total and failed runs, when it became flaky, the failure rate with its 95% confidence interval, the ML flakiness confidence, the likely cause, the step that fails (for step-based tests), and suggested stabilisation actions. The test's own page shows **Cross-run step flakiness**: which step flips between pass and fail across runs, so you can fix that step rather than the whole test.
+
+**Refresh** recomputes the detection now (`QA_ENGINEER` or higher).
 
 ## Quarantine on the Flaky tests page
 
-> **Off by default.** Quarantine proposals are switched by the `flaky_auto_quarantine` feature flag, which ships **off** for every project. Until an administrator turns it on (**Settings → System → Feature flags**), a QA lead sees "Quarantine is off for this project, so no test can be proposed for it." and **Mute** on the Failures page is disabled. The flag reference is in the repository docs (`docs/operations/feature-flags.md`).
+> **On by default.** Quarantine is switched by the `flaky_auto_quarantine` feature flag. It is **on** for a new install and, since migration 0219, for every install where nobody had ever changed the flag; where an administrator had set it, it keeps that setting. Turning it on quarantines nothing by itself: a test is quarantined only after a QA lead approves a proposal. Where the flag is off for the project (switched off, or limited to other projects under **Settings → System → Feature flags**), the Detected tab says "Quarantine is off for this project, so no test can be proposed for it." and names the flag, and **Mute** on the Failures page is disabled with the same reason. The flag reference is in the repository docs (`docs/operations/feature-flags.md`).
 
 With the flag on, quarantine is a reviewed, audited holding state:
 
 1. **Propose.** A QA lead clicks **Propose quarantine** on a **Detected** test (or **Mute** on the Failures page) and gives a reason. The detector also proposes tests whose verdict is flaky; a test that fails consistently with the same error is a regression and is never proposed.
 2. **Decide.** On **Proposed** (or **Inbox → Approvals**), a QA lead clicks **Approve** or **Reject**, then confirms. A proposal nobody decides **expires after 7 days**.
-3. **Quarantined.** An approved test is quarantined for **14 days** by default. It still runs and still records results; it is only left out of the release gate's failure signal and out of CI gating with `testlookup ci-verdict`. A row can show **stale** when it has been quarantined beyond its time limit, and **Ready to promote** once it has passed consistently again.
+3. **Quarantined.** An approved test is quarantined for the policy's SLA, **14 days** by default; its row shows when that is due (`SLA due 23 Oct`). It still runs and still records results; it is only left out of the release gate's failure signal and out of CI gating with `testlookup ci-verdict`. A row shows **stale** once it has been quarantined beyond its SLA, and **Ready to promote** once it has passed consistently again.
 4. **Release.** When the fix lands, **Release** (or **Promote out**, when it is ready to promote) and confirm. The test counts again.
 
 Proposing, approving, rejecting and releasing need `QA_LEAD` or higher; everyone else sees the tables without the decision buttons. **File Jira** on a proposed or quarantined test (`QA_ENGINEER` or higher) opens the Jira dialog described under [Promoting to a defect](/docs/failure-analysis#promoting-to-a-defect). Every transition is recorded in the audit log.
+
+### The quarantine policy
+
+The **Policy** tab holds the project's quarantine policy. Until someone saves one it reads `Using defaults: SLA 14 days, promote after 20 passes, detection 20 % over 10 runs.`
+
+| Setting | What it does |
+|---|---|
+| **SLA (days a test may stay quarantined)** | 1-365 days; past it the row is **stale** |
+| **File an internal defect when a quarantine is approved** | An internal TestLookup defect; no Jira issue is created |
+| **Release automatically after N consecutive passes** | Off: the row is only flagged **Ready to promote** after N passes |
+| **Detection threshold** and **minimum runs** | The flip rate (in %) and the number of runs at which the detector proposes a test |
+| **Warn when more than N tests are quarantined** | `0` means no limit. Past it the **Quarantined** tab says `12 tests are quarantined; this project's policy warns past 8.` It warns; it never blocks an approval |
+
+A QA lead or administrator edits it and clicks **Save**; each change is recorded in the activity feed (`Quarantine policy changed: SLA days, auto-release`). Everyone else sees the card read-only. A new SLA applies to tests quarantined after the change; a quarantine already running keeps its due date.
 
 ## Quarantine is a recommendation, not an action
 

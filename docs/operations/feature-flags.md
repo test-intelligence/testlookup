@@ -68,7 +68,7 @@ Default = the value on a fresh install after `alembic upgrade head`. "Not seeded
 | `ask_ai_chat` | 0100 | on | UI | The "Ask AI" sidebar entry and "Ask AI about this run" on run detail (`Sidebar.tsx`, `RunDetailPage.tsx`). The entry is also hidden while the analysis mode is `rules`. The `/chat` route itself stays reachable. |
 | `cypress_ingest` | 0063 (off), 0099 (on) | on | project | Parsing Cypress / Mochawesome JSON reports. Off: such uploads answer 503 (`backend/app/routers/ingest.py`). |
 | `playwright_ingest` | 0063 (off), 0099 (on) | on | project | Parsing Playwright JSON reports; same behaviour. |
-| `flaky_auto_quarantine` | 0065 | **off** | global (the flaky page reads it per project) | The whole quarantine workflow: proposals, approvals, rechecks and the CI quarantine manifest (`GET /api/v1/projects/{project_id}/quarantine/manifest`, empty while off) that `testlookup ci-verdict` reads, so with the flag off every failure counts as real (`backend/app/services/flaky_quarantine_service.py`). While off, the Flaky tests page says quarantine is off for the project. |
+| `flaky_auto_quarantine` | 0065 (off); 0219 turns it on where the row was never touched | **on** for a new install and for an upgraded install whose row is still 0065's untouched seed; a row an admin changed keeps its value | global (the flaky page reads it per project) | The whole quarantine workflow: proposals, approvals, rechecks and the CI quarantine manifest (`GET /api/v1/projects/{project_id}/quarantine/manifest`, empty while off) that `testlookup ci-verdict` reads, so with the flag off every failure counts as real (`backend/app/services/flaky_quarantine_service.py`). On, nothing is quarantined until a QA lead approves a proposal. While off (or limited to other projects), the Flaky tests page says quarantine is off for the project and Failures' Mute is disabled. See [below](#flaky_auto_quarantine-on-unless-an-admin-changed-it). |
 | `outbound_webhooks` | 0068 | **off** | global | Outbound webhook deliveries, test sends and replays (`backend/app/services/webhook_service.py`). Also requires `AI_OFFLINE_MODE=false`. See [Outbound webhooks](integrations.md#outbound-webhooks). |
 | `github_checks` | 0067 | **off** | global | GitHub check runs and the sticky PR comment (`backend/app/services/github_checks_service.py`). Also requires `AI_OFFLINE_MODE=false`. Setup: the GitHub section of [user-guide/administration.md](../../user-guide/administration.md). |
 | `gitlab` | 0111 | **off** | global | GitLab merge-request notes and commit statuses (`backend/app/services/gitlab_integration_service.py`). Also requires `AI_OFFLINE_MODE=false`. Setup: the GitLab section of [user-guide/administration.md](../../user-guide/administration.md). |
@@ -149,6 +149,26 @@ done
 ```
 
 `GET /api/v1/feature-flags/release_phase_gate_enforcement/status` then reports `enabled: true`. With enforcement on, a release manager moving a phase to Completed while its gate is not GO, or to Skipped, gets a dialog quoting the gate and asking for a reason; the reason is stored with the change.
+
+## `flaky_auto_quarantine` on unless an admin changed it
+
+Migration 0065 seeded `flaky_auto_quarantine` off, so quarantine, the Flaky tests page's main workflow, was unavailable until an administrator found the flag. Migration **0219** turns it on wherever the row is still exactly 0065's untouched seed: `enabled_global = false`, no `updated_by_user_id`, and `updated_at = created_at` (every save through the API or UI stamps the actor and moves `updated_at`). That covers a new install and an upgraded install nobody configured; a row an administrator changed (switched on or off, given a project list, toggled at any time) keeps its value. The flipped row's description gains "Default ON since migration 0219: a test is quarantined only after a QA lead approves it." The API sees the change within 30 seconds (the cache).
+
+Turning it on quarantines nothing by itself: a QA lead must approve each proposal, and only then do the release gate and `testlookup ci-verdict` leave that test's failures out. To turn it off for the whole instance, or limit it to some projects (ADMIN token):
+
+```bash
+# Off everywhere.
+curl -X PATCH "$TL_URL/api/v1/feature-flags/flaky_auto_quarantine" \
+  -H "Authorization: Bearer $TL_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"enabled_global": false}'
+
+# On only for the listed projects (the allow-list narrows a flag that is on).
+curl -X PATCH "$TL_URL/api/v1/feature-flags/flaky_auto_quarantine" \
+  -H "Authorization: Bearer $TL_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"enabled_global": true, "enabled_projects": ["<project-id>"]}'
+```
+
+Either is an admin change, so a later upgrade leaves it alone. Downgrading 0219 turns the flag back off only on the row 0219 flipped and nobody has edited since.
 
 ## LLM cost budget
 
