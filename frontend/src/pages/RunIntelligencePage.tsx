@@ -58,6 +58,7 @@ import RunStepFlipCard from '@/components/runs/RunStepFlipCard'
 import AIAnalysisHistory from '@/components/ai/AIAnalysisHistory'
 import AIVersionSnapshot from '@/components/ai/AIVersionSnapshot'
 import { SectionErrorBoundary } from '@/components/ui/SectionErrorBoundary'
+import { useInlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import {
   applyReportVersion,
   isSnapshotVersion,
@@ -691,6 +692,7 @@ function WhatFailedCard({
   runId,
   onPromote,
   onDecisionTrail,
+  belowCluster,
   aggregateFailedTests,
   aggregateTotalTests,
   failedTestRows,
@@ -700,6 +702,8 @@ function WhatFailedCard({
   /** Absent below QA engineer: filing a defect needs that role. */
   onPromote?: (cluster: FailureClusterIntel) => void
   onDecisionTrail: () => void
+  /** What opens inside a failure block, under its buttons (W27a: the File defect form). */
+  belowCluster?: (cluster: FailureClusterIntel) => ReactNode
   /** ``test_runs.failed_tests`` aggregate (set by ingest even when per-test
    *  rows are missing). When > 0 with zero clusters, surface the data gap. */
   aggregateFailedTests: number
@@ -792,6 +796,7 @@ function WhatFailedCard({
           runId={runId}
           onPromote={onPromote ? () => onPromote(c) : undefined}
           onDecisionTrail={onDecisionTrail}
+          below={belowCluster?.(c)}
         />
       ))}
       {clusters.length > shown.length && (
@@ -808,16 +813,20 @@ function FailureBlock({
   runId,
   onPromote,
   onDecisionTrail,
+  below,
 }: {
   cluster: FailureClusterIntel
   runId: string
   onPromote?: () => void
   onDecisionTrail: () => void
+  /** Rendered at the end of the block, under its buttons (the File defect form). */
+  below?: ReactNode
 }) {
   const firstTestId = cluster.member_test_ids[0]
   const errPreview = cluster.representative_error?.split('\n').slice(0, 4).join('\n') ?? ''
   return (
     <div
+      data-failure-block={cluster.cluster_id}
       className="relative"
       style={{
         padding: 16,
@@ -874,6 +883,7 @@ function FailureBlock({
           </GhostBtn>
         )}
       </div>
+      {below && <div className="mt-3">{below}</div>}
     </div>
   )
 }
@@ -1519,8 +1529,25 @@ export function RunIntelligenceBody({
     void onboardingService.completeStep(activeProjectId, 'view_intelligence').catch(() => {})
   }, [intelligenceViewed, activeProjectId])
 
+  // The decision trail: a read-only section under the verdict banner (W27a: it
+  // was a fixed drawer). Each opener (the banner, a failure block, the
+  // provenance footer) opens it and brings it into view.
   const [decisionTrailOpen, setDecisionTrailOpen] = useState(false)
-  const [promoteCluster, setPromoteCluster] = useState<FailureClusterIntel | null>(null)
+  const [trailReveal, setTrailReveal] = useState(0)
+  const openDecisionTrail = () => {
+    setDecisionTrailOpen(true)
+    setTrailReveal((n) => n + 1)
+  }
+  useEffect(() => {
+    if (trailReveal === 0) return
+    const section = document.querySelector<HTMLElement>('[data-decision-trail]')
+    if (typeof section?.scrollIntoView === 'function') section.scrollIntoView({ block: 'nearest' })
+  }, [trailReveal])
+  // File defect: ONE promotion form at a time across the What failed card, in
+  // the failure block it was filed from (W27a: it was a modal). The slot's key
+  // is the cluster id; filing another cluster while this one has typed input
+  // asks first.
+  const promoteSlot = useInlineSlot<string>()
   // Filing a defect needs QA engineer (POST .../promote, like /analytics/defects).
   const { isQaEngineer } = usePermissions()
 
@@ -1606,10 +1633,17 @@ export function RunIntelligenceBody({
         runId={runId}
         verdict={verdict}
         confidencePct={confidencePct}
-        onDecisionTrail={() => setDecisionTrailOpen(true)}
+        onDecisionTrail={openDecisionTrail}
         // The override deletes the run's intelligence snapshot server-side:
         // re-read it, or the banner keeps the pre-override verdict.
         onOverridden={() => refreshIntelligence()}
+      />
+
+      {/* The decision trail, in the page under the verdict (read when it opens). */}
+      <DecisionTrailDrawer
+        runId={run.id}
+        open={decisionTrailOpen}
+        onClose={() => setDecisionTrailOpen(false)}
       />
 
       {/* E8.5: the AI report's human-review status (E8.3 envelope). */}
@@ -1619,8 +1653,31 @@ export function RunIntelligenceBody({
         <WhatFailedCard
           clusters={failure_clusters}
           runId={run.id}
-          onPromote={isQaEngineer ? (c) => setPromoteCluster(c) : undefined}
-          onDecisionTrail={() => setDecisionTrailOpen(true)}
+          onPromote={isQaEngineer ? (c) => promoteSlot.open(c.cluster_id) : undefined}
+          onDecisionTrail={openDecisionTrail}
+          belowCluster={(c) =>
+            isQaEngineer && promoteSlot.openKey === c.cluster_id ? (
+              <DefectPromotionModal
+                runId={run.id}
+                clusterId={c.cluster_id}
+                clusterLabel={c.label}
+                slot={promoteSlot}
+                onClose={promoteSlot.close}
+                onSuccess={(_defectId, jiraUrl, approvalStatus) => {
+                  // W06 DEF-06: a promotion that waits for a QA lead stays on screen, so
+                  // its result (awaiting approval, and the Inbox › Approvals link) is
+                  // read; closing it at once said "Defect promoted" for a defect that
+                  // was not.
+                  if (approvalStatus === 'pending_review') {
+                    toast.success('Defect created — awaiting approval')
+                    return
+                  }
+                  toast.success(jiraUrl ? 'Defect promoted and Jira ticket created' : 'Defect promoted')
+                  promoteSlot.close()
+                }}
+              />
+            ) : null
+          }
           aggregateFailedTests={(run.failed_tests ?? 0) + (run.broken_tests ?? 0)}
           aggregateTotalTests={run.total_tests ?? 0}
           failedTestRows={(intelligence.affected_suites ?? []).reduce((n, s) => n + (s.failed_count ?? 0), 0)}
@@ -1689,39 +1746,12 @@ export function RunIntelligenceBody({
                 evidenceCount={evidenceCount}
                 toolCount={toolCount}
                 schemaVersion={provenance?.schema_version}
-                onDecisionTrail={() => setDecisionTrailOpen(true)}
+                onDecisionTrail={openDecisionTrail}
               />
             </div>
           </div>
         </div>
       </Disclosure>
-
-      <DecisionTrailDrawer
-        runId={run.id}
-        open={decisionTrailOpen}
-        onClose={() => setDecisionTrailOpen(false)}
-      />
-
-      {promoteCluster && (
-        <DefectPromotionModal
-          runId={run.id}
-          clusterId={promoteCluster.cluster_id}
-          clusterLabel={promoteCluster.label}
-          onClose={() => setPromoteCluster(null)}
-          onSuccess={(_defectId, jiraUrl, approvalStatus) => {
-            // W06 DEF-06: a promotion that waits for a QA lead stays on screen, so
-            // its result (awaiting approval, and the Inbox › Approvals link) is
-            // read; closing it at once said "Defect promoted" for a defect that
-            // was not.
-            if (approvalStatus === 'pending_review') {
-              toast.success('Defect created — awaiting approval')
-              return
-            }
-            toast.success(jiraUrl ? 'Defect promoted and Jira ticket created' : 'Defect promoted')
-            setPromoteCluster(null)
-          }}
-        />
-      )}
     </div>
   )
 }

@@ -3,9 +3,10 @@
  *
  * Top to bottom at 1440 x 900:
  *   Header  → title, ONE primary action (Upload report, behind the
- *             `manual_upload` flag; `/runs?upload=1` still opens it), ONE
- *             secondary (Failure signatures → the side panel), and ⋯ (Trigger
- *             all failed, Deep all failed).
+ *             `manual_upload` flag; `/runs?upload=1` still opens it: the
+ *             upload form opens IN THE PAGE right under the header, W27a
+ *             PAN-03), ONE secondary (Failure signatures → the section above
+ *             the table), and ⋯ (Trigger all failed, Deep all failed).
  *   Toolbar → the global WindowPicker, the status filter, the suite filter,
  *             and (FAIL-05) a search box (build, branch, CI job; a commit
  *             prefix), a branch select (one project only) and an AI-verdict
@@ -19,7 +20,7 @@
  *             selectable, each run's AI verdict (P4, D2: the retired
  *             `/intelligence` list's job; the verdict opens the run's
  *             Analysis tab), per-row Trigger / Deep / Compare, bulk actions;
- *             a failed row's signature opens the side panel.
+ *             a failed row's signature opens the signatures section.
  *   Below   → two collapsed Disclosures: "How this verdict is computed" (the
  *             composite pipeline-health gauge and its four weighted dimensions:
  *             Build success 40 % / Signature diversity 15 % / Fix velocity
@@ -27,10 +28,12 @@
  *             reads "—" and the composite re-weights the others) and "Build
  *             history" (the 14-build velocity strip, the per-build pass rate,
  *             the last green build).
- *   Panel   → the failure signatures (`SidePanel`, FAIL-03): the window's
- *             failed builds grouped by the error most of their failing tests
- *             share (`runsList/runSignatures.ts`), each group titled by that
- *             error's first line, paginated.
+ *   Signatures → the failure signatures (FAIL-03), a read-only section in
+ *             the page between the banner and the table (W27a PAN-03: it was
+ *             an edge side panel; the table keeps its full card width): the
+ *             window's failed builds grouped by the error most of their
+ *             failing tests share (`runsList/runSignatures.ts`), each group
+ *             titled by that error's first line, paginated.
  *
  * Data: every section derives from one useRuns(...) window, plus two batch
  * reads (`hooks/useRunListInsights`): ONE `GET /runs/ai-verdicts` for the
@@ -57,7 +60,7 @@ import PageHeader from '@/components/ui/PageHeader'
 import type { OverflowItem } from '@/components/ui/OverflowMenu'
 import StatusBanner, { type BannerFact, type BannerState } from '@/components/ui/StatusBanner'
 import Disclosure from '@/components/ui/Disclosure'
-import SidePanel from '@/components/ui/SidePanel'
+import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
 import WindowPicker, { DEFAULT_WINDOW_OPTIONS } from '@/components/ui/WindowPicker'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
@@ -1480,11 +1483,12 @@ export default function RunsPage() {
   const uploadEnabled = useFeatureEnabled('manual_upload')
 
   // Manual report upload. Opens from the header's primary button
-  // or via the deep-link ``/runs?upload=1`` (bookmarks, docs). The modal asks
-  // for the project itself, so All Projects does not block it.
+  // or via the deep-link ``/runs?upload=1`` (bookmarks, docs), as a form in the
+  // page right under the header. The form asks for the project itself, so All
+  // Projects does not block it.
   const [searchParams, setSearchParams] = useSearchParams()
   const [uploadOpen, setUploadOpen] = useState(false)
-  // Auto-open the upload drawer when the deep-link condition (``?upload=1`` with
+  // Auto-open the upload form when the deep-link condition (``?upload=1`` with
   // the flag enabled) first becomes true. Tracked during render via the
   // previous-value pattern instead of a setState-in-effect so a transition
   // false→true opens once, and re-navigating after a close re-opens.
@@ -1588,8 +1592,17 @@ export default function RunsPage() {
     writeFilters({ q: '', branch: '', verdict: '' })
   }
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  // The failure-signature side panel (P3: the cluster card became a drill-down).
+  // The failure-signature section (P3: the cluster card became a drill-down;
+  // W27a: in the page above the table, no longer an edge panel).
   const [signaturesOpen, setSignaturesOpen] = useState(false)
+  // A header button or a row chip while it is already open brings it back into view.
+  const openSignatures = () => {
+    if (signaturesOpen) {
+      const section = document.querySelector<HTMLElement>('[data-signatures-section]')
+      if (typeof section?.scrollIntoView === 'function') section.scrollIntoView({ block: 'nearest' })
+    }
+    setSignaturesOpen(true)
+  }
   // Client-side table pagination. The banner, the signatures and the build
   // history consume the full fetched window so their derived metrics stay
   // accurate; only the table view is sliced.
@@ -1886,7 +1899,7 @@ export default function RunsPage() {
             )}
             {signatureCount > 0 && (
               <GhostBtn
-                onClick={() => setSignaturesOpen(true)}
+                onClick={openSignatures}
                 title="Failed builds grouped by the error most of their failing tests share"
               >
                 <Layers className="h-3.5 w-3.5" />
@@ -1900,6 +1913,18 @@ export default function RunsPage() {
         }
         overflow={overflow}
       />
+
+      {/* The upload form, in the page where Upload report lives (W27a PAN-03). */}
+      {uploadOpen && uploadEnabled && isQaEngineer && (
+        <UploadReportModal
+          projectId={isAllProjects ? null : activeProjectId}
+          onClose={closeUpload}
+          onSuccess={(runId) => {
+            closeUpload()
+            navigate(`/runs/${runId}`)
+          }}
+        />
+      )}
 
       {uploadBlockedReason === 'role' && (
         <div
@@ -1986,6 +2011,24 @@ export default function RunsPage() {
         action={canBisect ? { label: 'Bisect from last green', onClick: handleBisect } : undefined}
       />
 
+      {/* The failure signatures: read-only, in the page above the table, which
+          keeps its full card width (W27a PAN-03; the edge panel narrowed it). */}
+      {signaturesOpen && (
+        <InlineFormSection
+          as="aside"
+          title="Failure signatures"
+          closeLabel="Close panel"
+          onClose={() => setSignaturesOpen(false)}
+          dataAttributes={{ 'data-signatures-section': '' }}
+        >
+          <SignatureClusters
+            model={model.signatures}
+            failed={signatureRequest.failed}
+            onJumpToRow={onJumpToRow}
+          />
+        </InlineFormSection>
+      )}
+
       {/* The page's primary content: the runs table. */}
       <div data-primary="">
         <RunsTable
@@ -2002,7 +2045,7 @@ export default function RunsPage() {
           onTrigger={handleTrigger}
           onDeep={handleDeep}
           onCompareWithPrevious={(run) => void handleCompareWithPrevious(run)}
-          onOpenSignatures={() => setSignaturesOpen(true)}
+          onOpenSignatures={openSignatures}
           isQaEngineer={isQaEngineer}
           page={tablePage}
           pages={tableTotalPages}
@@ -2033,33 +2076,9 @@ export default function RunsPage() {
         </div>
       </Disclosure>
 
-      <SidePanel
-        open={signaturesOpen}
-        onClose={() => setSignaturesOpen(false)}
-        title="Failure signatures"
-        width={480}
-      >
-        <SignatureClusters
-          model={model.signatures}
-          failed={signatureRequest.failed}
-          onJumpToRow={onJumpToRow}
-        />
-      </SidePanel>
-
       <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-[12px] text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
         Wider screen needed for the full layout. Some sections may overflow on narrow viewports.
       </div>
-
-      {uploadOpen && uploadEnabled && isQaEngineer && (
-        <UploadReportModal
-          projectId={isAllProjects ? null : activeProjectId}
-          onClose={closeUpload}
-          onSuccess={(runId) => {
-            closeUpload()
-            navigate(`/runs/${runId}`)
-          }}
-        />
-      )}
     </PageShell>
   )
 }

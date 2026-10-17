@@ -38,7 +38,7 @@ beforeEach(() => {
 describe('SyncReleasesDialog', () => {
   it('says what a sync writes and what it leaves alone', () => {
     renderDialog()
-    expect(screen.getByRole('dialog', { name: 'Sync releases' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Sync releases' })).toBeInTheDocument()
     expect(screen.getByText('Pulls release names and links from the source. Phases, gate policy and run attribution stay in TestLookup.')).toBeInTheDocument()
     expect(screen.getByLabelText('GitHub milestones')).toBeChecked()
     // The Jira key belongs to Jira only.
@@ -85,5 +85,28 @@ describe('SyncReleasesDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(onClose).toHaveBeenCalledTimes(1)
     expect(sync).not.toHaveBeenCalled()
+  })
+
+  // W27 PAN-02: in the page (under the releases' banner), with the dialog's hooks kept.
+  it('renders in the page, keeps its hooks, and Escape inside closes it except mid-sync', async () => {
+    let finish: (v: unknown) => void = () => {}
+    sync.mockImplementation(() => new Promise((resolve) => { finish = resolve }))
+    const { container, onClose } = renderDialog()
+    const form = screen.getByRole('region', { name: 'Sync releases' })
+    expect(container.contains(form)).toBe(true)
+    expect(document.querySelector('[role="dialog"], [aria-modal]')).toBeNull()
+    expect(form).toHaveAttribute('data-sync-releases-dialog', '')
+    expect(form).toHaveAttribute('aria-labelledby', 'sync-releases-title')
+    expect(screen.getByLabelText('GitHub milestones')).toHaveFocus()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sync' }))
+    fireEvent.keyDown(screen.getByLabelText('GitHub milestones'), { key: 'Escape' })
+    expect(screen.getByRole('button', { name: 'Close sync releases dialog' })).toBeDisabled()
+    expect(onClose).not.toHaveBeenCalled()
+
+    finish({ source: 'github', created: 0, updated: 0, skipped: 0 })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Close sync releases dialog' })).toBeEnabled())
+    fireEvent.keyDown(screen.getByLabelText('GitHub milestones'), { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 })

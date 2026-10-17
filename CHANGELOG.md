@@ -52,6 +52,28 @@ locally by default.
 
 ### Added
 
+- **Details and forms open in the page, not over it** (owner request
+  2026-10-16, wave W27a, PAN-01 to PAN-04). On `/releases` a release now
+  opens beside the cards (the right rail folds while it is open) instead of
+  in an overlay: the URL carries `?open=<id>`, so a refresh or a shared link
+  reopens it and Back closes it. Its Edit and Link Run forms open inside it,
+  New release and Sync releases under the health banner, and Delete, Remove
+  phase and Set as active ask in a strip where the button is. On `/runs` the
+  upload form and the failure signatures are sections of the page, and a
+  run's test opens beside its Tests or Timing list (`?test=`). File defect,
+  the decision trail, correct classification and the claim forms open where
+  they are used. On `/failures`, `/defects`, `/flaky` (`?test=<fingerprint>`),
+  the quarantine tabs, My failures and chat, a row's form opens right under
+  its row and never widens the table. Escape closes the innermost form,
+  focus goes back to the button that opened it, and a form with typed
+  changes asks before it is discarded. The shapes come from three shared
+  pieces (`MasterDetail`, `InlineFormSection`, `InlineConfirm`) that
+  `/test-management` now uses too, unchanged; a new quality-gate ratchet
+  (`frontend.no-page-modals`) only lets the count of page overlays go down
+  (81 to 51 in this wave; the rest in W27b). Every converted flow was pinned
+  first by a characterization spec on the old dialogs, which passes
+  unedited on the new shapes: the requests are byte-identical.
+
 - **Notifications say what they send; digests can follow a release or a view;
   quarantine leaves Experimental** (deferred-features wave W09, NTF-01 to
   NTF-04, FLK-01 to FLK-03). Settings › Email (SMTP) & channels gains a
@@ -453,6 +475,13 @@ locally by default.
   changed nothing.
 
 ### Fixed
+
+- **Found while moving the dialogs into the page** (W27a). Deleting a
+  release from its own page left its card on `/releases` until the 30 s
+  poll; reopening File defect for the same cluster showed an empty form;
+  the upload form's Release, Branch and Commit labels all pointed at the
+  Build field; Escape inside Correct classification also closed the test
+  panel behind it.
 
 - **The RAG faithfulness gate reads the AI settings.** It imported a resolver
   function that does not exist and swallowed the error, so it always used the

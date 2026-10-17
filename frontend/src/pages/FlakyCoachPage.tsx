@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import {
   HeartPulse, ShieldAlert, AlertTriangle, Eye, RefreshCw, CheckCircle,
 } from 'lucide-react'
@@ -7,8 +7,11 @@ import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
-import SidePanel from '@/components/ui/SidePanel'
 import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState'
+import { isDetailToken } from '@/components/ui/inPage/ids'
+import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
+import { InlineRowSection } from '@/components/ui/inPage/InlineRowSection'
+import { useDetailParam } from '@/components/ui/inPage/useDetailParam'
 import { useFlakyCoach } from '@/hooks/useTestHealth'
 import { usePermissions } from '@/hooks/usePermissions'
 import { testHealthService, type FlakyCoachEntry } from '@/services/testHealthService'
@@ -166,7 +169,7 @@ function FlakyScoreSection({ entry }: { entry: FlakyCoachEntry }) {
   )
 }
 
-/** Everything the coach knows about one flaky test (the side panel's body; was the row's inline expansion). */
+/** Everything the coach knows about one flaky test (the details under its row, W27 PAN-04). */
 export function FlakyEntryDetails({ entry }: { entry: FlakyCoachEntry }) {
   return (
     <div className="space-y-4 text-sm" data-testid="flaky-entry-details">
@@ -292,8 +295,13 @@ const TH_COMPACT = 'px-3 py-0.5 leading-[13px] text-[11px] font-semibold upperca
  * Flakiness score) in one row, then one table — test, history, failure rate,
  * the four-signal flakiness score (W09 FLK-03: one line per cell; a separate
  * detector from Fail %), recommendation, impact and, when the caller gives
- * one, a row action. A row opens its details in a side panel (they used to
- * expand inline), whose first section is the score's breakdown.
+ * one, a row action. A row opens its details UNDER itself (W27 PAN-04: a
+ * full-width row, since the table is at its width limit at 1280 px), whose
+ * first section is the score's breakdown. The open test rides the URL
+ * (`?test=<fingerprint>`, pushed: Back closes it, a refresh reopens it once
+ * the entries load); a fingerprint no entry has, or one that is not a plain
+ * token, is dropped. `renderBelowRow` puts the caller's row form (the
+ * proposal) under its row too, above the details.
  *
  * Marked as the page's primary content (`data-primary`).
  */
@@ -301,19 +309,31 @@ export function FlakyCoachBody({
   entries,
   renderAction,
   actionLabel = 'Action',
+  renderBelowRow,
 }: {
   entries: readonly FlakyCoachEntry[]
   /** The last column's cell for a row (e.g. "Propose quarantine"); no column without it. */
   renderAction?: (entry: FlakyCoachEntry) => ReactNode
   actionLabel?: string
+  /** A row's form (e.g. the proposal), in a full-width row under that row; null for none. */
+  renderBelowRow?: (entry: FlakyCoachEntry) => ReactNode
 }) {
   const [filter, setFilter] = useState<Recommendation | 'all'>('all')
   // W09 FLK-03: local state, Impact (the server's order) by default (D-14).
   const [sort, setSort] = useState<FlakySort>('impact')
-  const [openFingerprint, setOpenFingerprint] = useState<string | null>(null)
+  // A fingerprint is matched against the loaded entries only; it never reaches a request.
+  const detail = useDetailParam('test', { accept: isDetailToken })
+  const openFingerprint = detail.id
   const ordered = sortEntries(entries, sort)
   const filtered = filter === 'all' ? ordered : ordered.filter((e) => e.quarantine_recommendation === filter)
   const open = openFingerprint ? entries.find((e) => e.test_fingerprint === openFingerprint) ?? null : null
+  // The body renders once the analysis has loaded: a key no entry has (or not a token) is dropped.
+  const stale = detail.rejected !== null || (openFingerprint !== null && open === null)
+  const closeDetail = detail.close
+  useEffect(() => {
+    if (stale) closeDetail()
+  }, [stale, closeDetail])
+  const columns = renderAction ? 7 : 6
 
   return (
     <div className="space-y-3">
@@ -380,11 +400,13 @@ export function FlakyCoachBody({
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((entry) => (
+                {filtered.map((entry) => {
+                  const below = renderBelowRow?.(entry)
+                  return (
+                  <Fragment key={entry.test_fingerprint}>
                   <tr
-                    key={entry.test_fingerprint}
                     data-flaky-row={entry.test_fingerprint}
-                    onClick={() => setOpenFingerprint(entry.test_fingerprint)}
+                    onClick={() => detail.open(entry.test_fingerprint)}
                     className={clsx(
                       'cursor-pointer border-t border-[var(--color-border)] hover:bg-[var(--color-bg-hover)]',
                       openFingerprint === entry.test_fingerprint && 'bg-[var(--color-bg-hover)]',
@@ -396,7 +418,7 @@ export function FlakyCoachBody({
                         type="button"
                         onClick={(event) => {
                           event.stopPropagation()
-                          setOpenFingerprint(entry.test_fingerprint)
+                          detail.open(entry.test_fingerprint)
                         }}
                         className="block max-w-full truncate text-left text-[var(--color-text)] hover:underline"
                         title={entry.test_name}
@@ -428,16 +450,28 @@ export function FlakyCoachBody({
                       </td>
                     )}
                   </tr>
-                ))}
+                  {/* Across every column; neither can widen the table (InlineRowSection). */}
+                  {below ? <InlineRowSection colSpan={columns}>{below}</InlineRowSection> : null}
+                  {open && open.test_fingerprint === entry.test_fingerprint && (
+                    <InlineRowSection colSpan={columns} dataAttributes={{ 'data-flaky-details': entry.test_fingerprint }}>
+                      <InlineFormSection
+                        as="aside"
+                        title={<span className="[overflow-wrap:anywhere]">{open.test_name || 'Flaky test'}</span>}
+                        closeLabel="Close panel"
+                        onClose={closeDetail}
+                      >
+                        <FlakyEntryDetails entry={open} />
+                      </InlineFormSection>
+                    </InlineRowSection>
+                  )}
+                  </Fragment>
+                  )
+                })}
               </tbody>
             </table>
           </div>
         )}
       </section>
-
-      <SidePanel open={open !== null} onClose={() => setOpenFingerprint(null)} title={open?.test_name ?? 'Flaky test'}>
-        {open && <FlakyEntryDetails entry={open} />}
-      </SidePanel>
     </div>
   )
 }

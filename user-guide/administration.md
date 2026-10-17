@@ -192,7 +192,7 @@ Per-project subscriptions that POST events to your own HTTPS endpoints.
 
 > **Off by default.** Delivery needs the `outbound_webhooks` feature flag (ships **off**) and `AI_OFFLINE_MODE=false`. The page does not show a banner when the flag is off: **Test** answers "No delivery enqueued — check that outbound_webhooks is enabled, AI_OFFLINE_MODE is off…" and **Replay** answers `503`.
 
-- **Events**: `run.completed`, `defect.promoted`, `defect.create_requested` (the Jira-dialog fallback, see [defects.md](defects.md#no-jira-use-the-webhook-fallback)), `release.decided`, `flaky.quarantined`, `quota.exceeded`.
+- **Events**: `run.completed`, `defect.promoted`, `defect.create_requested` (the Jira form's fallback, see [defects.md](defects.md#no-jira-use-the-webhook-fallback)), `release.decided`, `flaky.quarantined`, `quota.exceeded`.
 - **Headers**: `X-TestLookup-Event` (the event type), `X-TestLookup-Delivery` (a delivery id), and, when the subscription has a secret, `X-TestLookup-Signature`: the hex HMAC-SHA256 of the raw request body, keyed with the secret. Verify it before trusting a payload.
 - **Retries**: 408, 425, 429, 5xx and network errors are retried with backoff up to **Max retries** (default 5, at most 10); other 4xx responses fail at once. **Recent deliveries** lists the last 20 attempts, with **Replay** for failed ones.
 - Creating, editing, testing and replaying need `QA_LEAD`.

@@ -1,7 +1,11 @@
 /**
- * Propose-quarantine modal — a lifted, prefill-friendly variant of the
- * US-2.4 MuteTestModal on the Failure Analysis page, reused by the Ask-AI
- * copilot's action handoffs (AI-6).
+ * Propose-quarantine form — a lifted, prefill-friendly variant of the
+ * US-2.4 MuteTestModal on the Failure Analysis page, reused by Flaky tests ›
+ * Detected and the Ask-AI copilot's action handoffs (AI-6).
+ *
+ * It renders IN THE PAGE where its action lives (W27 PAN-04): under the
+ * Detected row it was opened from, or inside the chat message; an
+ * `InlineFormSection` named "Propose quarantine", as the dialog was.
  *
  * Submission goes through the SAME audited flow as /failures: a manual
  * PROPOSED row via POST /api/v1/quarantine (QA_LEAD+), which then awaits
@@ -12,7 +16,8 @@
 import { useState } from 'react'
 import toast from 'react-hot-toast'
 import { flakyQuarantineService } from '@/services/flakyQuarantineService'
-import { useModalFocus } from '@/hooks/useModalFocus'
+import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
+import type { InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 
 export interface QuarantinePrefill {
   project_id: string
@@ -23,16 +28,17 @@ export interface QuarantinePrefill {
 }
 
 export default function ProposeQuarantineModal({
-  prefill, source, onClose,
+  prefill, source, onClose, slot,
 }: {
   prefill: QuarantinePrefill
   /** Audit tag recorded in the proposal rationale (e.g. "ask-ai-copilot"). */
   source: string
   onClose: () => void
+  /** The host section's slot: one form open there; a typed reason asks before it is replaced. */
+  slot?: InlineSlot
 }) {
   const [reason, setReason] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const dialogRef = useModalFocus({ onClose, canClose: !submitting })
   const trimmedReason = reason.trim()
 
   async function handleSubmit() {
@@ -67,39 +73,22 @@ export default function ProposeQuarantineModal({
   }
 
   return (
-    <div
-      ref={dialogRef}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Propose quarantine"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={() => !submitting && onClose()}
-    >
-      <div
-        className="w-full max-w-md rounded-lg bg-[var(--color-bg-card)] border border-[var(--color-border)] p-5 shadow-xl"
-        onClick={e => e.stopPropagation()}
-      >
-        <h2 className="text-base font-semibold text-[var(--color-text)] m-0">
-          Propose quarantine
-        </h2>
-        <p className="mt-1 text-[12.5px] text-[var(--color-text-muted)]">
-          Proposes <code className="font-mono text-[11.5px]">{prefill.test_name}</code> for
+    <InlineFormSection
+      title="Propose quarantine"
+      description={
+        <span className="text-[12.5px]">
+          Proposes <code className="font-mono text-[11.5px] [overflow-wrap:anywhere]">{prefill.test_name}</code> for
           quarantine. A QA Lead approves or rejects it under Flaky tests › Proposed —
           nothing is muted until then.
-        </p>
-
-        <label className="block mt-3 text-[12px] font-medium text-[var(--color-text)]">
-          Reason <span style={{ color: 'var(--status-failed)' }}>*</span>
-          <textarea
-            value={reason}
-            onChange={e => setReason(e.target.value)}
-            rows={3}
-            placeholder="Why should this test stop gating runs? (goes to the quarantine audit trail)"
-            className="mt-1 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 text-[12.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]"
-          />
-        </label>
-
-        <div className="mt-4 flex justify-end gap-2">
+        </span>
+      }
+      onClose={onClose}
+      canClose={!submitting}
+      showClose={false}
+      busy={submitting}
+      slot={slot}
+      footer={
+        <>
           <button
             type="button"
             onClick={onClose}
@@ -118,8 +107,19 @@ export default function ProposeQuarantineModal({
           >
             {submitting ? 'Proposing…' : 'Propose quarantine'}
           </button>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    >
+      <label className="block max-w-2xl text-[12px] font-medium text-[var(--color-text)]">
+        Reason <span style={{ color: 'var(--status-failed)' }}>*</span>
+        <textarea
+          value={reason}
+          onChange={e => setReason(e.target.value)}
+          rows={3}
+          placeholder="Why should this test stop gating runs? (goes to the quarantine audit trail)"
+          className="mt-1 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 text-[12.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]"
+        />
+      </label>
+    </InlineFormSection>
   )
 }

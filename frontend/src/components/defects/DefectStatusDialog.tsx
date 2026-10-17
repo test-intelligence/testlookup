@@ -10,6 +10,7 @@ import toast from 'react-hot-toast'
 import { updateDefect } from '@/services/defectService'
 import type { DefectItem } from '@/types/analytics'
 import type { DefectPatchBody } from '@/types/defectTriage'
+import type { InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import TriageDialog, { TriageConflict } from './TriageDialog'
 import {
   DEFECT_STATUS_OPTIONS,
@@ -25,6 +26,8 @@ export interface DefectStatusDialogProps {
   defect: DefectItem
   onClose: () => void
   onUpdated: (row: DefectItem) => void
+  /** The defects table's slot (W27 PAN-04): one form per table; a typed form asks before it is replaced. */
+  slot?: InlineSlot
 }
 
 /** The toast's tail for the Jira write-back (`skipped` and none say nothing). */
@@ -34,7 +37,7 @@ function writeBackSuffix(status: string | undefined): string {
   return ''
 }
 
-export default function DefectStatusDialog({ defect, onClose, onUpdated }: DefectStatusDialogProps) {
+export default function DefectStatusDialog({ defect, onClose, onUpdated, slot }: DefectStatusDialogProps) {
   const current = normalizeDefectStatus(defect.resolution_status)
   const [target, setTarget] = useState<string>(() =>
     DEFECT_STATUS_OPTIONS.some((o) => o.id === current) ? current : '',
@@ -73,7 +76,7 @@ export default function DefectStatusDialog({ defect, onClose, onUpdated }: Defec
   }
 
   return (
-    <TriageDialog title="Change status" busy={busy} onClose={onClose} testId="defect-status-dialog">
+    <TriageDialog title="Change status" busy={busy} onClose={onClose} testId="defect-status-dialog" slot={slot}>
       <fieldset className="mt-4 space-y-1.5">
         <legend className="mb-1 block text-xs font-medium text-[var(--color-text-secondary)]">Status</legend>
         {DEFECT_STATUS_OPTIONS.map((option) => (

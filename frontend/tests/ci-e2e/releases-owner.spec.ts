@@ -13,6 +13,7 @@
  * Harness: `tests/lib/rollout.ts` (fail closed, pinned clock). Fixtures: `fixtures-releases.ts`.
  */
 import { expect, test, type Page } from '@playwright/test'
+import { opened } from '../lib/inPage'
 import { assertHermetic, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
 import { RELEASE, RELEASE_PEOPLE, releasesHandlers } from '../visual/production/fixtures-releases'
 
@@ -26,9 +27,9 @@ const ownerLine = (page: Page, name: string) => card(page, name).locator('div:ha
 
 async function editOwner(page: Page, release: string) {
   await card(page, release).click()
-  const panel = page.getByRole('dialog', { name: release })
+  const panel = opened(page, release)
   await panel.getByRole('button', { name: 'Edit' }).click()
-  const editor = page.getByRole('dialog', { name: 'Edit Release' })
+  const editor = opened(page, 'Edit Release')
   await expect(editor).toBeVisible()
   return { panel, editor, owner: editor.getByLabel('Owner') }
 }
@@ -88,7 +89,7 @@ test('"No owner" -> Save sends owner_user_id null; leaving the owner alone sends
 
   // Now clear it.
   await edit.panel.getByRole('button', { name: 'Edit' }).click()
-  edit = { ...edit, editor: page.getByRole('dialog', { name: 'Edit Release' }) }
+  edit = { ...edit, editor: opened(page, 'Edit Release') }
   await edit.editor.getByLabel('Owner').selectOption({ label: 'No owner' })
   await edit.editor.getByRole('button', { name: 'Save Changes' }).click()
   await expect(edit.editor).toHaveCount(0)

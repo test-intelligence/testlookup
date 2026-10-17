@@ -4433,3 +4433,213 @@ def test_sdk_symbols_guard_reports_an_sdk_it_cannot_read(monkeypatch, tmp_path) 
     assert messages == [
         "cannot read the SDK sources: mocha-reporter.ts has no reporterOptions block"
     ]
+
+
+# ── frontend.no-page-modals (W27 PAN-01; OR-03) ──────────────────────────────
+#
+# Details and forms open in the page. The guard counts, per site: an element
+# whose role is dialog OR that carries aria-modal (once per element), every
+# <SidePanel> element, every confirm( call — JSX attributes only, comments
+# blanked first by TEMPERED patterns that can never run past a comment's end.
+
+
+_NPM_KIND_BY_MESSAGE = {message: kind for kind, message in qg._NPM_MESSAGES.items()}
+
+
+def _npm_repo(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, allowed=None) -> None:
+    """A tmp repo with its OWN allow-list (the real one names 13 files that a
+    tmp repo does not have, each of which would be a missing-file violation)."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    monkeypatch.setattr(qg, "_NO_PAGE_MODALS_ALLOWED", allowed or {})
+
+
+def _npm_sites(violations: list) -> list[tuple[str, int, str]]:
+    return [(v.relpath, v.line, _NPM_KIND_BY_MESSAGE.get(v.message, v.message)) for v in violations]
+
+
+def test_no_page_modals_fails_a_page_that_adds_aria_modal(monkeypatch, tmp_path) -> None:
+    """The acceptance criterion: the gate fails a branch that adds
+    aria-modal="true" to a page."""
+    _npm_repo(monkeypatch, tmp_path)
+    _write(tmp_path / "frontend" / "src" / "pages" / "Foo.tsx", """
+        export function Foo() {
+          return <div aria-modal="true">x</div>
+        }
+    """)
+    assert _npm_sites(qg._frontend_no_page_modals()) == [("frontend/src/pages/Foo.tsx", 2, "dialog")]
+    assert qg.run_guard(qg.GUARD_BY_NAME["frontend.no-page-modals"], update_baseline=False) is False
+
+
+def test_no_page_modals_ignores_tokens_inside_comments(monkeypatch, tmp_path) -> None:
+    _npm_repo(monkeypatch, tmp_path)
+    _write(tmp_path / "frontend" / "src" / "components" / "Doc.tsx", """
+        /**
+         * Renders in the page. It used to be
+         * `role="dialog" aria-modal="true"` with a <SidePanel> and a confirm().
+         */
+        // role="dialog" aria-modal="true" <SidePanel confirm(
+        export function Doc() {
+          return (
+            <div>
+              {/* carries role="dialog" and aria-modal */}
+              {/*
+                 multi-line: <SidePanel open> and window.confirm('x')
+              */}
+            </div>
+          )
+        }
+    """)
+    assert qg._frontend_no_page_modals() == []
+
+
+def test_no_page_modals_ignores_a_selector_string(monkeypatch, tmp_path) -> None:
+    _npm_repo(monkeypatch, tmp_path)
+    _write(tmp_path / "frontend" / "src" / "pages" / "Esc.tsx", """
+        export function onKey() {
+          if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
+        }
+    """)
+    assert qg._frontend_no_page_modals() == []
+
+
+def test_no_page_modals_a_slash_star_in_a_string_cannot_hide_a_real_site(monkeypatch, tmp_path) -> None:
+    """The _strip_ts_comments regression (contract §0.6): its `/\\*.*?\\*/` ran
+    from the `/*` inside placeholder="release/*" to the next `*/` in the file
+    and blanked the real dialog between them. Here the next `*/` closes a JSX
+    comment on a separate element, so a guard that stops blanking comments
+    altogether fails too (it counts the comment's token as a second site)."""
+    _npm_repo(monkeypatch, tmp_path)
+    _write(tmp_path / "frontend" / "src" / "pages" / "Releases.tsx", """
+        export function Releases() {
+          return (
+            <form>
+              <input placeholder="release/*" />
+              <div role="dialog" aria-modal="true">x</div>
+              <p>{/* not the role="dialog" one */}</p>
+            </form>
+          )
+        }
+    """)
+    assert _npm_sites(qg._frontend_no_page_modals()) == [("frontend/src/pages/Releases.tsx", 5, "dialog")]
+
+
+def test_no_page_modals_counts_bare_and_window_confirm_only(monkeypatch, tmp_path) -> None:
+    """A .ts file is scanned too; onConfirm(, dialog.confirm( and
+    handleConfirm( are not the native prompt."""
+    _npm_repo(monkeypatch, tmp_path)
+    _write(tmp_path / "frontend" / "src" / "components" / "confirmer.ts", """
+        export function f(dialog: Prompt, onConfirm: () => void, handleConfirm: (n: number) => void) {
+          if (confirm('x')) go()
+          if (window.confirm(`y`)) go()
+          onConfirm()
+          dialog.confirm()
+          handleConfirm(1)
+        }
+    """)
+    assert _npm_sites(qg._frontend_no_page_modals()) == [
+        ("frontend/src/components/confirmer.ts", 2, "confirm"),
+        ("frontend/src/components/confirmer.ts", 3, "confirm"),
+    ]
+
+
+def test_no_page_modals_expression_role_and_aria_modal_on_one_element_count_once(monkeypatch, tmp_path) -> None:
+    _npm_repo(monkeypatch, tmp_path)
+    _write(tmp_path / "frontend" / "src" / "components" / "Sheet.tsx", """
+        export function Sheet({ open }: { open: boolean }) {
+          return (
+            <div
+              role={open ? 'dialog' : undefined}
+              aria-modal={open ? true : undefined}
+            >x</div>
+          )
+        }
+    """)
+    assert _npm_sites(qg._frontend_no_page_modals()) == [("frontend/src/components/Sheet.tsx", 4, "dialog")]
+
+
+def test_no_page_modals_role_and_aria_modal_literals_count_once(monkeypatch, tmp_path) -> None:
+    _npm_repo(monkeypatch, tmp_path)
+    _write(tmp_path / "frontend" / "src" / "pages" / "Two.tsx", """
+        export function Two() {
+          return (
+            <>
+              <div role="dialog" aria-modal="true" aria-labelledby="a">x</div>
+              <section role="dialog" aria-modal="true" aria-labelledby="b">y</section>
+            </>
+          )
+        }
+    """)
+    assert _npm_sites(qg._frontend_no_page_modals()) == [
+        ("frontend/src/pages/Two.tsx", 4, "dialog"),
+        ("frontend/src/pages/Two.tsx", 5, "dialog"),
+    ]
+
+
+def test_no_page_modals_counts_every_side_panel_modal_or_not(monkeypatch, tmp_path) -> None:
+    _npm_repo(monkeypatch, tmp_path)
+    _write(tmp_path / "frontend" / "src" / "pages" / "Panels.tsx", """
+        export function Panels({ f }: { f: () => void }) {
+          return (
+            <>
+              <SidePanel open modal title="a" onClose={f}>x</SidePanel>
+              <SidePanel open title="b" onClose={f}>y</SidePanel>
+            </>
+          )
+        }
+    """)
+    assert _npm_sites(qg._frontend_no_page_modals()) == [
+        ("frontend/src/pages/Panels.tsx", 4, "side-panel"),
+        ("frontend/src/pages/Panels.tsx", 5, "side-panel"),
+    ]
+
+
+def test_no_page_modals_allow_list_is_per_file_and_per_kind(monkeypatch, tmp_path) -> None:
+    """SavedViewsMenu's popover is OR-03 OUT; its delete prompt is not."""
+    rel = "frontend/src/components/reports/SavedViewsMenu.tsx"
+    _npm_repo(monkeypatch, tmp_path, {rel: (frozenset({"dialog"}), "OR-03: a menu anchored to its button")})
+    _write(tmp_path / rel, """
+        export function SavedViewsMenu({ remove }: { remove: () => void }) {
+          return (
+            <div role="dialog" aria-label="Saved views">
+              <button onClick={() => { if (confirm('Delete this view?')) remove() }}>Delete</button>
+            </div>
+          )
+        }
+    """)
+    assert _npm_sites(qg._frontend_no_page_modals()) == [(rel, 4, "confirm")]
+
+
+def test_no_page_modals_skips_tests_and_files_outside_pages_and_components(monkeypatch, tmp_path) -> None:
+    _npm_repo(monkeypatch, tmp_path)
+    src = tmp_path / "frontend" / "src"
+    _write(src / "pages" / "Foo.test.tsx", """
+        it('opens', () => render(<div role="dialog" aria-modal="true" />))
+    """)
+    _write(src / "components" / "Bar.test.ts", """
+        expect(window.confirm('x')).toBe(true)
+    """)
+    _write(src / "hooks" / "useAsk.ts", """
+        export const ask = () => confirm('sure?')
+    """)
+    _write(src / "utils" / "x.ts", """
+        export const ask = () => window.confirm('sure?')
+    """)
+    assert qg._frontend_no_page_modals() == []
+
+
+def test_no_page_modals_an_allow_list_entry_for_a_missing_file_is_a_violation(monkeypatch, tmp_path) -> None:
+    """A rename must move its entry, or the allow-list silently tolerates
+    nothing where it meant something and nothing where the file went."""
+    rel = "frontend/src/components/ui/Gone.tsx"
+    _npm_repo(monkeypatch, tmp_path, {rel: (frozenset({"dialog"}), "OR-03: a popover")})
+    violations = qg._frontend_no_page_modals()
+    assert [(v.relpath, v.line, v.source_line) for v in violations] == [(rel, 0, "<file>")]
+    assert "missing file" in violations[0].message
+
+
+def test_no_page_modals_is_a_ratchet_registered_after_modal_dialog_role() -> None:
+    """A baseline file exists (81 entries at A0, contract §2.1), so the guide
+    documents it without the dagger; and it sits beside the guard it extends."""
+    names = [g.name for g in qg.GUARDS]
+    assert names.index("frontend.no-page-modals") == names.index("frontend.modal-dialog-role") + 1
+    assert qg.GUARD_BY_NAME["frontend.no-page-modals"].baseline_path.exists()

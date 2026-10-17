@@ -16,6 +16,7 @@
  * Harness: `tests/lib/rollout.ts` (fail closed, pinned clock). Fixtures: `fixtures-defects.ts`.
  */
 import { expect, test, type Page } from '@playwright/test'
+import { opened } from '../lib/inPage'
 import { landmark } from '../lib/production-pages'
 import { assertHermetic, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
 import { PROJECT_ID } from '../visual/production/fixtures'
@@ -74,7 +75,7 @@ test('Change status… → In progress: the PATCH body is {"resolution_status":"
   await expect(statusTab(page, 'In progress')).toHaveText('In progress1')
 
   await openMenuItem(page, 'search paginates', 'Change status…')
-  const dialog = page.getByRole('dialog', { name: 'Change status' })
+  const dialog = opened(page, 'Change status')
   await expect(dialog.getByRole('radio', { name: 'Open', exact: true })).toBeChecked()
   const save = dialog.getByRole('button', { name: 'Save' })
   await expect(save, 'nothing to save until another status is picked').toBeDisabled()
@@ -100,7 +101,7 @@ test('a linked defect\'s status change is saved and, offline, not written back t
   const { handlers, writes } = defectsWorld()
   const { api, errors } = await openRollout(page, '/defects', { handlers, ready, user: QA_ENGINEER })
   await openMenuItem(page, 'login rejects bad password', 'Change status…')
-  const dialog = page.getByRole('dialog', { name: 'Change status' })
+  const dialog = opened(page, 'Change status')
   await dialog.getByRole('radio', { name: 'Resolved', exact: true }).check()
   await dialog.getByRole('button', { name: 'Save' }).click()
   await expect(page.getByText('Status changed to Resolved · Jira not updated (offline)', { exact: true })).toBeVisible()
@@ -114,7 +115,7 @@ test('Assign… → Priya Nair: the PATCH carries only assignee_user_id and the 
   const { handlers, writes } = defectsWorld()
   const { api, errors } = await openRollout(page, '/defects', { handlers, ready, user: QA_ENGINEER })
   await openMenuItem(page, 'search paginates', 'Assign…')
-  const dialog = page.getByRole('dialog', { name: 'Assign defect' })
+  const dialog = opened(page, 'Assign defect')
   const assignee = dialog.getByLabel('Assignee')
   await expect(assignee).toHaveValue('')
   const offered = await assignee.locator('option').allTextContents()
@@ -142,7 +143,7 @@ test('Link Jira issue… → ABC-123 offline: saved locally, linked to the confi
   expect(requestsTo(api, /\/defects\/jira\/metadata$/), 'no Jira metadata until the dialog opens').toEqual([])
 
   await openMenuItem(page, 'search paginates', 'Link Jira issue…')
-  const dialog = page.getByRole('dialog', { name: 'Link a Jira issue' })
+  const dialog = opened(page, 'Link a Jira issue')
   await expect(dialog.getByText('Jira is not reachable from here (offline mode), so the key is saved without a check.')).toBeVisible()
   const key = dialog.getByLabel('Jira issue key')
   const save = dialog.getByRole('button', { name: 'Save' })

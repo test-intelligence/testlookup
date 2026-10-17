@@ -50,9 +50,9 @@ Open a failed test from a run (see [Runs and run detail](/docs/runs#one-test-res
 - **The verdict banner** sums up the window: **Repeat failure**, **Flaky**, **First-time failure**, **Recovering**, **Stable** or **Pending**, with stability, pass rate and the latest failing suite. **Compare to previous window** shows the change against the window before.
 - **KPIs**: **Repeat failures**, **Flaky tests**, **Uncategorized**, **Total executions** and **Median time to fix**: the median time from a test's first failure to its next pass, over the window, with how many tests were fixed (`1.8 d`, `23 fixed`; hover for the rule). Tests flagged flaky (an open quarantine, or a human **Flaky test** triage) and tests that failed and recovered three or more times in the window are left out; a failure already open when the window starts counts from its first failure inside it. With fewer than 5 fixes in the window the tile reads **Not measured** with the reason. In **How this score is computed**, **Time to fix** scores that median (0 hours → 100, a week or more → 0), or reads **—** when it is not measured and the score uses the other three parts.
 - **Top failing tests**: each test's kind, failure count, signal and when it last failed. With one project selected, the arrow before a test's name opens its **latest failure**: when and in which build it happened, the first line of its error (or **No message recorded**), the first 20 lines of its stack trace (secrets are redacted), its **Owner** (`Priya Nair · assignee`, a team `· ownership rule`, `· component map` or `· owner label`, or **Unassigned**) and **Open in run**, which opens that test in that run. In **All Projects** the row reads **Select a project to see failure detail**. Each row has three actions:
-  - **Mute** — proposes the test for quarantine, with a required reason. A QA lead decides the proposal under **Flaky tests → Proposed**. Needs quarantine to be on for the project; see [Flaky tests](/docs/flaky#quarantine-on-the-flaky-tests-page).
-  - **Jira** — opens **Create Jira issue** (see [Promoting to a defect](#promoting-to-a-defect)).
-  - **Suspects** — opens **Who / what changed**: the commits that landed since the last green run, ranked by how much their changed files overlap with the failing test. They are suspects to check, never a verdict. Needs the run to carry a commit range.
+  - **Mute** — opens a form under the row that proposes the test for quarantine, with a required reason. A QA lead decides the proposal under **Flaky tests → Proposed**. Needs quarantine to be on for the project; see [Flaky tests](/docs/flaky#quarantine-on-the-flaky-tests-page).
+  - **Jira** — opens **Create Jira issue** under the row (see [Promoting to a defect](#promoting-to-a-defect)).
+  - **Suspects** — opens **Who / what changed** under the row: the commits that landed since the last green run, ranked by how much their changed files overlap with the failing test. They are suspects to check, never a verdict. Needs the run to carry a commit range.
 - **Tabs**: **Groups** (failure groups, and **Systemic flake clusters** — flaky failures that share a cause), **By suite** (drill down from suite to status to test to execution), **Scatter** (test duration against failure rate) and **Categories** (the split by failure category).
 - **⋯ menu**: **Export CSV**; **Notify suite owner**; and **Classify uncategorised failures**, offered when half or more of the window's failures have no category, which applies one category you choose to all of them (pick a single suite first).
 - **Open triage queue** opens Runs for the same window.
@@ -65,7 +65,7 @@ In **All Projects**, the actions ask you to pick a project first.
 
 When a category is wrong, record the right one:
 
-- On a test result, **Correct** (next to the AI result). On the Failures page's **Categories** tab, when half or more of the failures are uncategorised, **Correct the classification** offers the same dialog.
+- On a test result, **Correct** (next to the AI result). On the Failures page's **Categories** tab, when half or more of the failures are uncategorised, **Correct the classification** opens the same form under the page header.
 - In **Correct classification**, pick **Flaky**, **Product Bug**, **Infrastructure**, **Test Data** or **Automation Defect**, add an optional comment, and **Record correction**.
 - **Confirm** on a result records that the analysis was right.
 
@@ -79,7 +79,7 @@ A correction fixes one test. A **classification hint** classifies every new fail
 
 - While you type, the preview says how many recent failures the hint would match (`7 of the last 200 failures match`) and shows a few of them.
 - From the next analysis on, a failure a hint matches is classified by that hint before the rules, the ML classifier or a language model runs. Its result says **project hint**, and the run's decision trail reads `Matched project hint (set by Priya Nair): error message contains "ECONNREFUSED" → Infrastructure`. A human correction of the same test still wins over a hint.
-- When several hints match, the oldest one is used. A hint can be disabled without deleting it.
+- When several hints match, the oldest one is used. A hint can be disabled without deleting it; **Delete** asks in the hint's own row before it removes it.
 - Existing analyses are not changed; re-run the analysis of a run to apply new hints to it.
 
 Adding, changing and deleting hints is recorded in the activity feed. Required role to edit: `QA_LEAD` or higher; other roles do not see the button.
@@ -94,7 +94,7 @@ A failure becomes a tracked **defect** in one of three ways (all need `QA_ENGINE
 
 A promotion that names a Jira project key, is **CRITICAL** or **HIGH**, or has low AI confidence comes back as **Defect created — awaiting approval**. A QA lead decides it in [Inbox › Approvals](/docs/inbox#defects) (source **Defects**): **Approve** makes it effective and, when a Jira project key was given and Jira is reachable, files the ticket on that defect; **Reject** (with a reason) closes it as **Invalid**.
 
-If an open defect is already linked to Jira for the same failure, **Create Jira issue** does not file a duplicate: the button reads **Note recurrence**, and the existing issue gets a "recurred" comment instead. With no Jira, the same dialog can **Deliver via** **Webhook event**, which sends the filled-in issue to your own system as an outbound webhook (an administrator sets that up).
+If an open defect is already linked to Jira for the same failure, **Create Jira issue** does not file a duplicate: the button reads **Note recurrence**, and the existing issue gets a "recurred" comment instead. With no Jira, the same form can **Deliver via** **Webhook event**, which sends the filled-in issue to your own system as an outbound webhook (an administrator sets that up).
 
 Jira ticket creation needs Jira to be configured and offline mode to be off. A defect can always exist in TestLookup without an external ticket.
 

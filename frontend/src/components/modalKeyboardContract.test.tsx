@@ -8,85 +8,26 @@
  *     wraps to the first (focus never walks out behind the backdrop);
  *   - Escape closes it and focus goes back to the trigger.
  *
- * The seven are the five the audit counted, the correct reference
- * implementation (TransitionReasonDialog, now on the shared hook), and
- * UploadReportModal; the eighth is the shared SidePanel in modal mode (VIZ-109),
- * and a NON-modal SidePanel on a phone-width screen, where it renders modal.
+ * What is still a modal: the correct reference implementation
+ * (TransitionReasonDialog, on the shared hook; W27b), the shared SidePanel
+ * in modal mode (VIZ-109), and a NON-modal SidePanel on a phone-width screen,
+ * where it renders modal. The six W27a forms that used to be driven here
+ * (CorrectClassificationModal, DefectPromotionModal, CreateJiraIssueModal,
+ * DefectIntakeModal, ProposeQuarantineModal, UploadReportModal) open in the
+ * page now: their contract — focus in, no trap, Escape closes, focus back —
+ * is inPageKeyboardContract.test.tsx (W27 PAN-01).
  */
 import { fireEvent, render, screen } from '@testing-library/react'
 import { useState, type ReactElement } from 'react'
 import { SWRConfig } from 'swr'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/hooks/useJiraDefects', () => ({
-  useJiraDefectMetadata: () => ({
-    metadata: {
-      available: true, reason: null, projects: [{ key: 'QA', name: 'Quality' }],
-      issue_types: ['Bug'], default_project_key: 'QA', webhook_available: false,
-    },
-    isLoading: false, isError: false,
-  }),
-  useJiraDefectPreview: () => ({
-    preview: {
-      signature: 'f'.repeat(16), summary: 's', description: 'd', test_name: 't', suite_name: null,
-      cluster_id: null, error_message: null,
-      occurrences: { first_seen: null, last_seen: null, failing_runs: 1 },
-      context: { branch: null, build_number: null, ci_run_url: null },
-      ai_analysis: null, deep_link: null, latest_run_id: null, existing_defect: null,
-    },
-    isLoading: false, isError: false,
-  }),
-}))
-// W06 DEF-03: New defect's "Affects release" select reads the top bar's cached release list.
-vi.mock('@/hooks/useReleases', () => ({
-  useReleases: () => ({
-    data: {
-      items: [{ id: 'rel-1', project_id: 'p-1', name: 'Checkout', version: '2.4', released_at: null }],
-      total: 1,
-    },
-    isLoading: false,
-    error: undefined,
-  }),
-}))
-vi.mock('@/hooks/useDefectPromotion', () => ({
-  useDefectCandidate: () => ({ candidate: undefined, isLoading: false, isError: false, mutate: vi.fn() }),
-  usePromoteCluster: () => ({
-    promote: vi.fn(), isPromoting: false, promotionResult: null, promotionError: null, reset: vi.fn(),
-  }),
-}))
-
-import CorrectClassificationModal from './ai/CorrectClassificationModal'
-import DefectPromotionModal from './ai/DefectPromotionModal'
-import CreateJiraIssueModal from './defects/CreateJiraIssueModal'
-import DefectIntakeModal from './defects/DefectIntakeModal'
-import ProposeQuarantineModal from './quarantine/ProposeQuarantineModal'
-import UploadReportModal from './runs/UploadReportModal'
 import TransitionReasonDialog from './testManagement/TransitionReasonDialog'
 import SidePanel from './ui/SidePanel'
 
 type Render = (onClose: () => void) => ReactElement
 
 const MODALS: Array<[string, Render]> = [
-  ['CorrectClassificationModal', (onClose) => (
-    <CorrectClassificationModal testName="checkout" analysisId="a-1" currentCategory="FLAKY" onClose={onClose} />
-  )],
-  ['DefectPromotionModal', (onClose) => (
-    <DefectPromotionModal runId="r-1" clusterId="c-1" clusterLabel="NPE cluster" onClose={onClose} />
-  )],
-  ['CreateJiraIssueModal', (onClose) => (
-    <CreateJiraIssueModal projectId="p-1" fingerprint="fp" testName="checkout" onClose={onClose} />
-  )],
-  ['DefectIntakeModal', (onClose) => <DefectIntakeModal projectId="p-1" onClose={onClose} />],
-  ['ProposeQuarantineModal', (onClose) => (
-    <ProposeQuarantineModal
-      prefill={{ project_id: 'p-1', test_fingerprint: 'fp', test_name: 'checkout' }}
-      source="test"
-      onClose={onClose}
-    />
-  )],
-  ['UploadReportModal', (onClose) => (
-    <UploadReportModal projectId="p-1" onClose={onClose} onSuccess={vi.fn()} />
-  )],
   ['TransitionReasonDialog', (onClose) => (
     <TransitionReasonDialog
       title="Archive" description="Archive this case." confirmLabel="Archive"

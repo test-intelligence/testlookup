@@ -8,10 +8,12 @@
  *  - an old JUnit run: every null is "not reported" (never "0ms"), each
  *    unmeasured block states its reason, no empty chart frame, and the
  *    slowest list still comes from the durations;
- *  - a bar or a slowest test opens the test beside the tab.
+ *  - a bar or a slowest test opens the test beside the tab — W27a PAN-03: in the page
+ *    (a `DetailPane` beside the blocks), on the Tests tab's URL key `?test=` (pushed;
+ *    Back closes it; a malformed value never reaches `TestCaseBody`).
  */
-import { fireEvent, render, screen, within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { MemoryRouter, RouterProvider, createMemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RunTiming, RunTimelineItem, RunTimingTest } from '@/types/executionMetrics'
 
@@ -23,8 +25,13 @@ vi.mock('@/hooks/useExecutionMetrics', () => ({ useRunTiming: hooks.useRunTiming
 vi.mock('@/hooks/useDurationRegressions', () => ({ useDurationRegressions: hooks.useDurationRegressions }))
 const service = vi.hoisted(() => ({ downloadRunTimingCsv: vi.fn(() => Promise.resolve(true)) }))
 vi.mock('@/services/executionMetricsService', () => ({ executionMetricsService: service }))
+// Every render's props are recorded: a value that is not an id must never reach it.
+const bodies = vi.hoisted(() => ({ ids: [] as string[] }))
 vi.mock('@/pages/testCase/TestCaseBody', () => ({
-  default: ({ testId }: { testId: string }) => <div data-testid="test-case-body">{`body of ${testId}`}</div>,
+  default: ({ testId }: { testId: string }) => {
+    bodies.ids.push(testId)
+    return <div data-testid="test-case-body">{`body of ${testId}`}</div>
+  },
 }))
 
 import RunTimingTab from './RunTimingTab'
@@ -147,6 +154,7 @@ const kpi = (container: HTMLElement, id: string) =>
   (container.querySelector(`[data-timing-kpi="${id}"] [data-timing-kpi-value]`) as HTMLElement).textContent
 
 beforeEach(() => {
+  bodies.ids = []
   hooks.useRunTiming.mockReset()
   hooks.useDurationRegressions.mockReset()
   hooks.useDurationRegressions.mockReturnValue({ data: undefined, error: undefined, isLoading: false })
@@ -304,5 +312,80 @@ describe('helpers', () => {
     expect(reasonSentence(null)).toBe('Not measured.')
     expect(runSourceText(null)).toMatch(/^Not timed yet/)
     expect(runSourceText('report')).toMatch(/own run clock/)
+  })
+})
+
+// ── W27a PAN-03: the test opens in the page, on ?test= ──────────────────────
+
+function routed(entries: string[], data: RunTiming = TIMED) {
+  hooks.useRunTiming.mockReturnValue({ data, error: undefined, isLoading: false, mutate: vi.fn() })
+  const router = createMemoryRouter(
+    [
+      { path: '/start', element: <p>START</p> },
+      { path: '/runs/:runId', element: <RunTimingTab runId="run-1" /> },
+    ],
+    { initialEntries: entries, initialIndex: entries.length - 1 },
+  )
+  const view = render(<RouterProvider router={router} />)
+  return { router, ...view }
+}
+
+/** The COMMITTED location, read inside the same waitFor (W08). */
+async function expectAt(router: ReturnType<typeof createMemoryRouter>, search: string, action?: 'PUSH' | 'REPLACE' | 'POP') {
+  await waitFor(() => {
+    expect(router.state.location.pathname).toBe('/runs/run-1')
+    expect(router.state.location.search).toBe(search)
+    if (action) expect(router.state.historyAction).toBe(action)
+  })
+}
+
+const pane = () => screen.queryByRole('complementary', { name: /./ })
+
+describe('RunTimingTab — the test pane is in the page and rides ?test= (W27a PAN-03)', () => {
+  it('a bar PUSHES ?test=<id> and docks the test beside the blocks (no modal); Back closes it', async () => {
+    const { router, container } = routed(['/start', '/runs/run-1?tab=timing'])
+    fireEvent.click(container.querySelector('[data-timeline-bar][data-test-id="t-0-2"]') as Element)
+    await expectAt(router, '?tab=timing&test=t-0-2', 'PUSH')
+    const opened = pane() as HTMLElement
+    expect(within(opened).getByRole('heading', { name: 'test_pay' })).toBeInTheDocument()
+    expect(within(opened).getByTestId('test-case-body')).toHaveTextContent('body of t-0-2')
+    expect(opened.tagName).toBe('ASIDE')
+    expect(document.querySelector('[aria-modal]')).toBeNull()
+    const split = container.querySelector('[data-run-timing-tab]') as HTMLElement
+    expect(split).toHaveAttribute('data-master-detail', 'split')
+    expect(split.contains(opened)).toBe(true)
+    expect(split.contains(container.querySelector('[data-primary]'))).toBe(true)
+
+    await act(() => router.navigate(-1))
+    await expectAt(router, '?tab=timing', 'POP')
+    expect(pane()).toBeNull()
+    expect(container.querySelector('[data-run-timing-tab]')).toHaveAttribute('data-master-detail', 'list')
+  })
+
+  it('a slowest test while one is open REPLACES; Close pops the pushed entry', async () => {
+    const { router, container } = routed(['/start', '/runs/run-1'])
+    fireEvent.click(container.querySelector('[data-timeline-bar][data-test-id="t-0-2"]') as Element)
+    await expectAt(router, '?test=t-0-2', 'PUSH')
+    fireEvent.click(within(screen.getByRole('region', { name: 'Slowest tests' })).getByRole('button', { name: 'test_1_0' }))
+    await expectAt(router, '?test=t-1-0', 'REPLACE')
+    expect(within(pane() as HTMLElement).getByTestId('test-case-body')).toHaveTextContent('body of t-1-0')
+    fireEvent.click(within(pane() as HTMLElement).getByRole('button', { name: 'Close panel' }))
+    await expectAt(router, '', 'POP')
+    expect(pane()).toBeNull()
+  })
+
+  it('a refresh reopens it', () => {
+    routed(['/runs/run-1?tab=timing&test=t-1-0'])
+    expect(within(pane() as HTMLElement).getByRole('heading', { name: 'test_1_0' })).toBeInTheDocument()
+    expect(bodies.ids[bodies.ids.length - 1]).toBe('t-1-0')
+  })
+
+  it.each(['not-a-uuid', '../../admin'])('?test=%s: "Test case not found", and TestCaseBody is never rendered', (raw) => {
+    routed([`/runs/run-1?tab=timing&test=${raw}`])
+    const opened = pane() as HTMLElement
+    expect(within(opened).getByRole('heading', { name: 'Test' })).toBeInTheDocument()
+    expect(within(opened).getByText('Test case not found')).toBeInTheDocument()
+    expect(within(opened).queryByRole('link', { name: /Open full page/ })).toBeNull()
+    expect(bodies.ids).toEqual([])
   })
 })

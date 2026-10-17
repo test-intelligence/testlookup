@@ -103,7 +103,7 @@ const signInAs = (role: string) => useAuthStore.setState({ user: { id: role, rol
 function openPanel() {
   renderAt('/releases')
   fireEvent.click(screen.getByRole('article', { name: /^Checkout 2\.5 2\.5\.0/ }))
-  return screen.getByRole('dialog', { name: 'Checkout 2.5 2.5.0' })
+  return screen.getByRole('complementary', { name: 'Checkout 2.5 2.5.0' })
 }
 
 describe('a QA lead', () => {
@@ -146,12 +146,20 @@ describe('an admin (the control)', () => {
 
   it('deletes the release, removes the phase and unlinks the run', () => {
     const panel = openPanel()
+    // W27 PAN-02: Remove phase and Delete ask in an inline strip (no native
+    // confirm); only the strip's button sends the request.
     fireEvent.click(within(panel).getByRole('button', { name: 'Remove phase Smoke' }))
+    expect(releasesService.deletePhase).not.toHaveBeenCalled()
+    fireEvent.click(within(within(panel).getByRole('group', { name: 'Remove phase "Smoke"?' })).getByRole('button', { name: 'Remove' }))
     expect(releasesService.deletePhase).toHaveBeenCalledWith('release-1', 'phase-1')
     fireEvent.click(within(panel).getByRole('button', { name: 'Unlink run b42' }))
     expect(releasesService.unlinkRun).toHaveBeenCalledWith('release-1', 'run-1')
     fireEvent.click(within(panel).getByRole('button', { name: 'Delete' }))
+    expect(releasesService.delete).not.toHaveBeenCalled()
+    const ask = within(panel).getByRole('group', { name: 'Delete this release and all its phases? This cannot be undone.' })
+    fireEvent.click(within(ask).getByRole('button', { name: 'Delete' }))
     expect(releasesService.delete).toHaveBeenCalledWith('release-1')
+    expect(window.confirm).not.toHaveBeenCalled()
   })
 })
 
@@ -185,7 +193,7 @@ describe('W05 gate, activation and sync controls follow the role', () => {
     expect(screen.getByTestId('release-evaluate-all')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Sync releases/ })).toBeInTheDocument()
     fireEvent.click(card)
-    const panel = screen.getByRole('dialog', { name: 'Checkout 2.5 2.5.0' })
+    const panel = screen.getByRole('complementary', { name: 'Checkout 2.5 2.5.0' })
     expect(within(panel).getByTestId('gate-panel-evaluate')).toBeInTheDocument()
     expect(within(panel).getByRole('button', { name: 'Record gate verdict' })).toBeInTheDocument()
   })
@@ -200,7 +208,7 @@ describe('W05 gate, activation and sync controls follow the role', () => {
     expect(screen.queryByTestId('release-evaluate-all')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Sync releases/ })).not.toBeInTheDocument()
     fireEvent.click(card)
-    const panel = screen.getByRole('dialog', { name: 'Checkout 2.5 2.5.0' })
+    const panel = screen.getByRole('complementary', { name: 'Checkout 2.5 2.5.0' })
     expect(within(panel).getByRole('heading', { name: 'Release gate' })).toBeInTheDocument()
     expect(within(panel).queryByTestId('gate-panel-evaluate')).not.toBeInTheDocument()
     expect(within(panel).queryByRole('button', { name: 'Record gate verdict' })).not.toBeInTheDocument()

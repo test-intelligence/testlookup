@@ -50,7 +50,7 @@ The **`release_phase_gate_enforcement`** feature flag (**on** for a new install;
 - complete a phase whose gate verdict is not GO, unless the request carries `gate_override_reason`;
 - skip a phase, unless the request carries `skip_reason`.
 
-On the release page this is one step: setting a phase to **Completed** over a failing gate, or to **Skipped**, opens a dialog that quotes the gate's own sentence (for example `This phase's gate says NO_GO: test_pay (checkout-e2e) is FAILED. ...`) and asks for a reason of at least 3 characters; **Complete with override** / **Skip phase** resends the change with the reason. Cancel changes nothing. Each reason is recorded in the access audit log and in the project's activity feed (`/activity?category=release`), for example `Phase gate Regression overridden on release 2026.11: Customer waiver CAB-142`. The API takes the same two fields (see `/api-docs`, the Releases section).
+On the release page this is one step: setting a phase to **Completed** over a failing gate, or to **Skipped**, opens a reason form under that phase that quotes the gate's own sentence (for example `This phase's gate says NO_GO: test_pay (checkout-e2e) is FAILED. ...`) and asks for a reason of at least 3 characters; **Complete with override** / **Skip phase** resends the change with the reason. Cancel changes nothing. Each reason is recorded in the access audit log and in the project's activity feed (`/activity?category=release`), for example `Phase gate Regression overridden on release 2026.11: Customer waiver CAB-142`. The API takes the same two fields (see `/api-docs`, the Releases section).
 
 ## Compliance packs
 

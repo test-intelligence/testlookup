@@ -69,7 +69,10 @@ import { useTabParam } from '@/components/ui/useTabParam'
 import Disclosure from '@/components/ui/Disclosure'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import DefectIntakeModal from '@/components/defects/DefectIntakeModal'
-import DefectRowActions from '@/components/defects/DefectRowActions'
+import DefectRowActions, { DefectActionForm, type DefectAction } from '@/components/defects/DefectRowActions'
+import { InlineRowSection } from '@/components/ui/inPage/InlineRowSection'
+import { useInlineSlot, type InlineSlot } from '@/components/ui/inPage/useInlineSlot'
+import { useSlotCloser } from '@/hooks/useSlotCloser'
 import GaugeBar from '@/components/charts/GaugeBar'
 import Sparkline, { type SparklineTone } from '@/components/charts/Sparkline'
 import type { GaugeBands, GaugeTick, GaugeTone } from '@/components/charts/gaugeBar.model'
@@ -842,6 +845,10 @@ function DefectsTable({
   /** Registers the highlighted row's element, so the page can scroll to it. */
   rowRef?: (el: HTMLTableRowElement | null) => void
 }) {
+  // W27 PAN-04: one row form open per table (`${row.id}:${action}`), in a full-width row under its row;
+  // opening another row's form while this one has typed input asks first.
+  const formSlot = useInlineSlot<string>()
+  const closeForm = useSlotCloser(formSlot)
   const filtered = useMemo(() => {
     if (!search.trim()) return rows
     const q = search.toLowerCase()
@@ -928,6 +935,8 @@ function DefectsTable({
                 highlighted={highlightId === r.id}
                 onUpdated={onUpdated}
                 rowRef={highlightId === r.id ? rowRef : undefined}
+                formSlot={formSlot}
+                closeForm={closeForm}
               />
             ))}
           </tbody>
@@ -957,14 +966,22 @@ function OwnerCell({ row }: { row: DefectRow }) {
   )
 }
 
+const DEFECT_ACTIONS: readonly DefectAction[] = ['status', 'assign', 'link']
+
 function DefectRowEl({
-  row, highlighted = false, onUpdated, rowRef,
+  row, highlighted = false, onUpdated, rowRef, formSlot, closeForm,
 }: {
   row: DefectRow
   highlighted?: boolean
   onUpdated: (row: DefectItem) => void
   rowRef?: (el: HTMLTableRowElement | null) => void
+  /** The table's slot (W27 PAN-04): this row's open action is `${row.id}:${action}`. */
+  formSlot: InlineSlot<string>
+  closeForm: (key: string) => void
 }) {
+  // The row's open form, if the table's slot holds one of its actions.
+  const action = DEFECT_ACTIONS.find((a) => formSlot.openKey === `${row.id}:${a}`) ?? null
+  const formKey = action ? `${row.id}:${action}` : null
   const isP0 = row.severity === 'P0'
   const filing = row.isUnlinked ? filingLabel(row) : null
   const sevPalette: Record<Severity, { bg: string; bd: string; fg: string }> = {
@@ -993,6 +1010,7 @@ function DefectRowEl({
     : null
 
   return (
+    <>
     <tr
       ref={rowRef}
       data-defect-row={row.id}
@@ -1104,9 +1122,31 @@ function DefectRowEl({
         </span>
       </td>
       <td style={{ padding: '10px 12px', textAlign: 'right' }}>
-        <DefectRowActions defect={row.source} onUpdated={onUpdated} />
+        {/* Controlled by the row: the chosen action's form opens UNDER the row (a cell cannot host a row). */}
+        <DefectRowActions
+          defect={row.source}
+          onUpdated={onUpdated}
+          action={action}
+          onAction={(next) => {
+            if (next) formSlot.open(`${row.id}:${next}`)
+            else if (formKey) closeForm(formKey)
+          }}
+        />
       </td>
     </tr>
+    {action && formKey && (
+      // Across all eight columns; its content can never widen the table (InlineRowSection).
+      <InlineRowSection colSpan={8}>
+        <DefectActionForm
+          defect={row.source}
+          action={action}
+          onClose={() => closeForm(formKey)}
+          onUpdated={onUpdated}
+          slot={formSlot}
+        />
+      </InlineRowSection>
+    )}
+    </>
   )
 }
 
@@ -1585,6 +1625,18 @@ export default function DefectsPage() {
         }
       />
 
+      {/* W27 PAN-04: New defect opens here, under the header, in the page. */}
+      {intakeOpen && intakeProjectId && (
+        <DefectIntakeModal
+          projectId={intakeProjectId}
+          onClose={() => setIntakeOpen(false)}
+          onSuccess={() => {
+            void refreshDefects()
+            void refreshDefectInsights()
+          }}
+        />
+      )}
+
       <section aria-label="Defect queue verdict" aria-live="polite">
         <StatusBanner
           state={theme.banner}
@@ -1678,17 +1730,6 @@ export default function DefectsPage() {
       >
         <QueueHealthDetails model={model} verdict={verdict} />
       </Disclosure>
-
-      {intakeOpen && intakeProjectId && (
-        <DefectIntakeModal
-          projectId={intakeProjectId}
-          onClose={() => setIntakeOpen(false)}
-          onSuccess={() => {
-            void refreshDefects()
-            void refreshDefectInsights()
-          }}
-        />
-      )}
 
       <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-[12px] text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
         Wider screen needed for the full layout. Some sections may overflow on narrow viewports.

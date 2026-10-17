@@ -1,8 +1,15 @@
+/**
+ * A decision report's feedback: was it useful, and "Correct a claim". The
+ * correction is a form IN THE PAGE (W27a PAN-03), right under the "Correct a
+ * claim:" row, named "Correct claim" (the old dialog's name and heading id) —
+ * no backdrop, no focus trap; Cancel and Escape inside close it (not
+ * mid-submit), focus returns to the claim that opened it.
+ */
 import { useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import type { DecisionClaim, DecisionReportVersion, DecisionReportCorrectionType, DecisionReportUtilityRating } from '@/services/runIntelligenceService'
 import { submitDecisionReportFeedback } from '@/services/runIntelligenceService'
-import { useModalFocus } from '@/hooks/useModalFocus'
+import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
 
 type Props = {
   runId: string
@@ -36,11 +43,6 @@ export default function DecisionReportFeedbackControls({ runId, reportVersion, c
   const [evidenceId, setEvidenceId] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const correctionDialogRef = useModalFocus<HTMLFormElement>({
-    onClose: () => setSelectedClaim(null),
-    canClose: !submitting,
-    open: selectedClaim !== null,
-  })
 
   const evidenceOptions = useMemo(() => {
     if (!selectedClaim) return []
@@ -123,13 +125,30 @@ export default function DecisionReportFeedbackControls({ runId, reportVersion, c
           ))}
         </div>
       )}
-      {error && <p role="alert" className="mb-0 mt-2 text-[11px] text-[var(--status-failed)]">{error}</p>}
       {selectedClaim && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="presentation" onClick={() => setSelectedClaim(null)}>
-          <form ref={correctionDialogRef} role="dialog" aria-modal="true" aria-labelledby="claim-correction-heading" className="w-full max-w-lg rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-card)] p-4 shadow-xl" onClick={event => event.stopPropagation()} onSubmit={submitCorrection}>
-            <h3 id="claim-correction-heading" className="m-0 text-[16px] font-semibold">Correct claim</h3>
-            <p className="mt-2 text-[12px] text-[var(--color-text-secondary)]">{selectedClaim.text}</p>
-            <label className="mt-3 block text-[12px] font-semibold">Correction type
+        <InlineFormSection
+          // Keyed: another claim opens its own form (focus and scroll move to it).
+          key={selectedClaim.claim_id}
+          className="mt-2"
+          title="Correct claim"
+          titleId="claim-correction-heading"
+          headingLevel={3}
+          description={<span className="text-[12px] text-[var(--color-text-secondary)]">{selectedClaim.text}</span>}
+          onClose={() => setSelectedClaim(null)}
+          canClose={!submitting}
+          // The dialog had no X: Cancel and Escape close it.
+          showClose={false}
+          busy={submitting}
+          onSubmit={submitCorrection}
+          footer={
+            <>
+              <button type="button" className="rounded border border-[var(--color-border)] px-3 py-1.5 text-[12px]" onClick={() => setSelectedClaim(null)}>Cancel</button>
+              <button type="submit" disabled={submitting || evidenceOptions.length === 0} className="rounded bg-[var(--color-accent)] px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-50">{submitting ? 'Recording…' : 'Record correction'}</button>
+            </>
+          }
+        >
+          <div className="max-w-2xl">
+            <label className="block text-[12px] font-semibold">Correction type
               <select className="mt-1 block w-full rounded border border-[var(--color-border)] bg-transparent p-2 text-[12px]" value={correctionType} onChange={event => setCorrectionType(event.target.value as DecisionReportCorrectionType)}>
                 {correctionChoices.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
               </select>
@@ -146,13 +165,10 @@ export default function DecisionReportFeedbackControls({ runId, reportVersion, c
                 {evidenceOptions.map(id => <option key={id} value={id}>{id}</option>)}
               </select>
             </label>
-            <div className="mt-4 flex justify-end gap-2">
-              <button type="button" className="rounded border border-[var(--color-border)] px-3 py-1.5 text-[12px]" onClick={() => setSelectedClaim(null)}>Cancel</button>
-              <button type="submit" disabled={submitting || evidenceOptions.length === 0} className="rounded bg-[var(--color-accent)] px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-50">{submitting ? 'Recording…' : 'Record correction'}</button>
-            </div>
-          </form>
-        </div>
+          </div>
+        </InlineFormSection>
       )}
+      {error && <p role="alert" className="mb-0 mt-2 text-[11px] text-[var(--status-failed)]">{error}</p>}
     </div>
   )
 }

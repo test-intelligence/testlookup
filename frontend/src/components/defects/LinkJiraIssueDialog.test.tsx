@@ -34,8 +34,11 @@ const ONLINE = { ...OFFLINE, available: true, reason: null }
 function renderDialog(defect: DefectItem = ROW) {
   const onClose = vi.fn()
   const onUpdated = vi.fn()
-  render(<LinkJiraIssueDialog defect={defect} onClose={onClose} onUpdated={onUpdated} />)
-  return { onClose, onUpdated, dialog: screen.getByRole('dialog', { name: 'Link a Jira issue' }) }
+  const { container } = render(<LinkJiraIssueDialog defect={defect} onClose={onClose} onUpdated={onUpdated} />)
+  // W27 PAN-04: in the page — a region by the same name, rendered where it is mounted (no portal).
+  const dialog = screen.getByRole('region', { name: 'Link a Jira issue' })
+  expect(container.contains(dialog)).toBe(true)
+  return { onClose, onUpdated, dialog }
 }
 
 const keyInput = () => screen.getByLabelText('Jira issue key')

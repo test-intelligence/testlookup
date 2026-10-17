@@ -3,18 +3,23 @@
  *
  * With `release_phase_gate_enforcement` on, the server answers 409 to
  * completing a phase whose gate is not GO, and to skipping one, unless a
- * reason travels with the request. The release page opens this dialog on that
+ * reason travels with the request. The release page opens this form on that
  * 409, quoting the server's own sentence (which names what is failing), takes
  * the reason, and resends with the exact field name. The reason is recorded in
  * the audit log and the activity feed.
  *
- * The page tells the dialog nothing about the flag: both transitions are
+ * The page tells the form nothing about the flag: both transitions are
  * 409-driven, so a project with enforcement off never sees it.
+ *
+ * It renders IN THE PAGE (W27 PAN-02), right under the phase row it is about:
+ * an `InlineFormSection`, not a modal over the page. Its name, its heading id,
+ * `data-phase-reason-dialog` and its close label are the dialog's, kept; Cancel,
+ * the X and Escape inside it close it (not mid-submit), as before.
  */
 import { useState } from 'react'
-import { X } from 'lucide-react'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import { useModalFocus } from '@/hooks/useModalFocus'
+import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
+import type { InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 
 /** The server's floor (`PhaseUpdate.gate_override_reason` / `skip_reason`, `min_length=3`). */
 export const PHASE_REASON_MIN = 3
@@ -30,13 +35,14 @@ export interface PhaseReasonDialogProps {
   /** Called with the TRIMMED reason. */
   onSubmit: (reason: string) => void
   onCancel: () => void
+  /** The release's form slot: one open form at a time in a release's detail. */
+  slot?: InlineSlot
 }
 
 export default function PhaseReasonDialog({
-  phaseName, action, serverMessage, busy = false, onSubmit, onCancel,
+  phaseName, action, serverMessage, busy = false, onSubmit, onCancel, slot,
 }: PhaseReasonDialogProps) {
   const [reason, setReason] = useState('')
-  const dialogRef = useModalFocus({ onClose: onCancel, canClose: !busy })
   const trimmed = reason.trim()
   const canSubmit = trimmed.length >= PHASE_REASON_MIN && !busy
   const title = action === 'complete' ? `Complete "${phaseName}" anyway?` : `Skip "${phaseName}"?`
@@ -48,31 +54,37 @@ export default function PhaseReasonDialog({
   }
 
   return (
-    <div
-      ref={dialogRef}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="phase-reason-title"
-      data-phase-reason-dialog={action}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60"
-      onClick={() => { if (!busy) onCancel() }}
-    >
-      <div
-        className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-xl p-6 w-full max-w-lg shadow-2xl"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between mb-4">
-          <h2 id="phase-reason-title" className="text-base font-semibold text-[var(--color-text)]">{title}</h2>
+    <InlineFormSection
+      title={title}
+      titleId="phase-reason-title"
+      closeLabel="Close phase reason dialog"
+      onClose={onCancel}
+      canClose={!busy}
+      slot={slot}
+      dataAttributes={{ 'data-phase-reason-dialog': action }}
+      footer={(
+        <>
           <button
             type="button"
-            aria-label="Close phase reason dialog"
             onClick={onCancel}
             disabled={busy}
-            className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40"
+            className="px-4 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40"
           >
-            <X className="h-4 w-4" />
+            Cancel
           </button>
-        </div>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={!canSubmit}
+            className="px-4 py-2 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 disabled:cursor-not-allowed text-[var(--color-btn-primary-text)] rounded-lg font-medium flex items-center gap-2"
+          >
+            {busy && <LoadingSpinner size="sm" />}
+            {submitLabel}
+          </button>
+        </>
+      )}
+    >
+      <div className="max-w-2xl">
         <blockquote
           data-phase-gate-detail=""
           className="mb-4 border-l-2 border-[var(--status-broken)] bg-[var(--color-bg-secondary)] px-3 py-2 text-[12.5px] text-[var(--color-text-secondary)] whitespace-pre-wrap break-words"
@@ -93,26 +105,7 @@ export default function PhaseReasonDialog({
           autoFocus
         />
         <p id="phase-reason-hint" className="mt-1 text-[11px] text-[var(--color-text-faint)]">At least 3 characters.</p>
-        <div className="flex gap-3 justify-end mt-5">
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={busy}
-            className="px-4 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-40"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={submit}
-            disabled={!canSubmit}
-            className="px-4 py-2 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 disabled:cursor-not-allowed text-[var(--color-btn-primary-text)] rounded-lg font-medium flex items-center gap-2"
-          >
-            {busy && <LoadingSpinner size="sm" />}
-            {submitLabel}
-          </button>
-        </div>
       </div>
-    </div>
+    </InlineFormSection>
   )
 }

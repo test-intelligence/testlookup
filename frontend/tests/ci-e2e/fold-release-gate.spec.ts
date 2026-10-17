@@ -13,6 +13,7 @@
  * the `prod-release-gate` visual spec).
  */
 import { expect, test, type Page } from '@playwright/test'
+import { opened } from '../lib/inPage'
 import { MAIN, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
 import { respond } from '../lib/production-pages'
 import { CHART_DATA_PATH, GATE_CLUSTERS, releaseGateOn, RUN_ID } from '../visual/production/fixtures'
@@ -253,7 +254,7 @@ test('Share report: Engineering for 14 days, listed with its expiry and views, t
   })
   await page.getByRole('button', { name: 'More actions' }).click()
   await page.getByRole('menuitem', { name: /Share report/ }).click()
-  const dialog = page.getByRole('dialog', { name: 'Share report' })
+  const dialog = opened(page, 'Share report')
   await expect(dialog.getByText('No share links for this run yet.')).toBeVisible()
 
   await dialog.getByRole('radio', { name: 'Engineering' }).check()

@@ -14,6 +14,7 @@
  * closed, pinned clock). Fixtures: `fixtures-releases.ts`.
  */
 import { expect, test, type Page } from '@playwright/test'
+import { opened } from '../lib/inPage'
 import { assertHermetic, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
 import { openProductionPage } from '../lib/production-pages'
 import { NOW, PROJECT_ID } from '../visual/production/fixtures'
@@ -42,7 +43,7 @@ test('the rail lists the real pack, with the release panel’s size and digest, 
 
   // The release's own pack panel: the same pack, the same size text, the full digest the rail abbreviates.
   await page.getByRole('article', { name: /^2026\.10 / }).click()
-  const detail = page.getByRole('dialog', { name: '2026.10' })
+  const detail = opened(page, '2026.10')
   await expect(detail.getByText('412.3 KB · 9 files')).toBeVisible()
   await expect(detail.getByText(`sha256: ${RELEASE_PACK.manifest_sha256}`)).toBeVisible()
   expect(RELEASE_PACK.manifest_sha256.startsWith('ab12cd34')).toBe(true)

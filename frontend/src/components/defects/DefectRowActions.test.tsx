@@ -24,7 +24,7 @@ vi.mock('@/hooks/useJiraDefects', () => ({
 }))
 vi.mock('react-hot-toast', () => ({ default: { success: vi.fn(), error: vi.fn() } }))
 
-import DefectRowActions from './DefectRowActions'
+import DefectRowActions, { DefectActionForm } from './DefectRowActions'
 
 const ROW: DefectItem = {
   id: 'd-1',
@@ -77,17 +77,53 @@ describe('DefectRowActions', () => {
     expect(menuButton()).toBeNull()
   })
 
-  it('opens each dialog from its item', () => {
-    renderActions()
+  it('opens each form from its item (uncontrolled: right after the menu, in the page)', () => {
+    const { container } = render(
+      <MemoryRouter>
+        <DefectRowActions defect={ROW} onUpdated={vi.fn()} />
+      </MemoryRouter>,
+    )
     fireEvent.click(menuButton() as HTMLElement)
     fireEvent.click(screen.getByRole('menuitem', { name: 'Assign…' }))
-    expect(screen.getByRole('dialog', { name: 'Assign defect' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    const assign = screen.getByRole('region', { name: 'Assign defect' })
+    // W27 PAN-04: no portal, no modal — the form is inside what was rendered.
+    expect(container.contains(assign)).toBe(true)
+    expect(document.querySelector('[aria-modal]')).toBeNull()
     expect(screen.queryByRole('dialog')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('region', { name: 'Assign defect' })).toBeNull()
 
     fireEvent.click(menuButton() as HTMLElement)
     fireEvent.click(screen.getByRole('menuitem', { name: 'Link Jira issue…' }))
-    expect(screen.getByRole('dialog', { name: 'Link a Jira issue' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Link a Jira issue' })).toBeInTheDocument()
+  })
+
+  it('controlled by its row: an item reports its action and the menu renders no form', () => {
+    const onAction = vi.fn()
+    render(
+      <MemoryRouter>
+        <DefectRowActions defect={ROW} onUpdated={vi.fn()} action={null} onAction={onAction} />
+      </MemoryRouter>,
+    )
+    for (const [item, action] of [['Change status…', 'status'], ['Assign…', 'assign'], ['Link Jira issue…', 'link']] as const) {
+      fireEvent.click(menuButton() as HTMLElement)
+      fireEvent.click(screen.getByRole('menuitem', { name: item }))
+      expect(onAction).toHaveBeenLastCalledWith(action)
+    }
+    expect(onAction).toHaveBeenCalledTimes(3)
+    expect(screen.queryByRole('region')).toBeNull()
+  })
+
+  it('DefectActionForm renders the chosen action\'s form', () => {
+    const onClose = vi.fn()
+    const { rerender } = render(<DefectActionForm defect={ROW} action="status" onClose={onClose} onUpdated={vi.fn()} />)
+    expect(screen.getByRole('region', { name: 'Change status' })).toBeInTheDocument()
+    rerender(<DefectActionForm defect={ROW} action="assign" onClose={onClose} onUpdated={vi.fn()} />)
+    expect(screen.getByRole('region', { name: 'Assign defect' })).toBeInTheDocument()
+    rerender(<DefectActionForm defect={ROW} action="link" onClose={onClose} onUpdated={vi.fn()} />)
+    expect(screen.getByRole('region', { name: 'Link a Jira issue' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   it("hands the server's row to onUpdated once after a status change", async () => {
@@ -104,6 +140,6 @@ describe('DefectRowActions', () => {
     expect(updateDefect).toHaveBeenCalledWith('p-1', 'd-1', { resolution_status: 'IN_PROGRESS' }, { suppressToast: true })
     expect(onUpdated).toHaveBeenCalledTimes(1)
     expect(onUpdated).toHaveBeenCalledWith(serverRow)
-    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Change status' })).toBeNull()
   })
 })

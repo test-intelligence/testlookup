@@ -14,6 +14,7 @@
  * over `FAILURES_ON`).
  */
 import { expect, test, type Page } from '@playwright/test'
+import { opened } from '../lib/inPage'
 import { landmark } from '../lib/production-pages'
 import { assertHermetic, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
 import { FAILURES_ON, PROJECT_ID } from '../visual/production/fixtures'
@@ -35,7 +36,7 @@ test('a QA lead previews and adds a hint; the list shows it', async ({ page }) =
   expect(requestsTo(api, HINTS), 'no hint read before the modal opens').toEqual([])
 
   await openButton(page).click()
-  const dialog = page.getByRole('dialog', { name: 'Classification hints' })
+  const dialog = opened(page, 'Classification hints')
   await expect(dialog).toBeVisible()
   await expect(dialog).toContainText('Hints classify new failures before the AI does.')
   await expect(dialog.locator('[data-hints-empty]')).toHaveText('No hints yet.')

@@ -14,7 +14,7 @@
  * "Evaluate gate" / "Re-evaluate".
  *
  * On the list the whole card is clickable — selecting one opens the release's
- * detail (``ReleaseDetailPanel``) in a side panel. On a release's own page
+ * detail (``ReleaseDetailPanel``) in a pane beside the list. On a release's own page
  * the card has no ``onClick``: the detail is already the page. The Evaluate
  * button, the external link, the blocker links and the "Release actions"
  * menu never also open the card.
@@ -365,9 +365,13 @@ export default function ReleaseCard({
           {/* No phases yet */}
           {showCallout && <PlanningCallout releaseName={release.name} />}
 
-          {/* Blocker rows (in-progress only) */}
+          {/* Blocker rows (in-progress only). Each row truncates its test name,
+              so the list must not size the card: zero intrinsic width
+              (`w-0 min-w-full`), the full width in layout. With a release open
+              beside the list the card is ~510 px at 1280, and the untruncated
+              names set its min-content (W27 PAN-02). */}
           {showBlockers && (
-            <div className="space-y-1.5">
+            <div data-card-blockers="" className="space-y-1.5 w-0 min-w-full">
               {release.blockers.slice(0, 3).map(b => <BlockerRow key={b.id} blocker={b} />)}
               {release.blockerCount > 3 && (
                 <div data-blockers-more="" className="text-[11.5px] text-[var(--color-text-muted)] flex items-center gap-1">

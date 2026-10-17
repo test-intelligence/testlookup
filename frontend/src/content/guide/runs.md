@@ -24,7 +24,7 @@ A **run** is one execution of a suite: a CI job, a local `pytest`, a TestNG sess
 
 The first two actions, and the bulk controls (tick rows, then **Bulk trigger** or **Bulk deep**), need the `QA_ENGINEER` role or above. The **⋯** menu offers **Trigger all failed (N)** and **Deep all failed (N)** for every failed run in the window.
 
-**Failure signatures** (next to the page title, when the window has a failed build) opens a side panel that groups the window's failed builds by the error most of their failing tests share. Each group is titled by that error's first line (**No message recorded** when the failures carry none), lists its builds, and says when one test fails with that error in all of them. Two builds with the same pass and fail counts but different errors are different groups. With more than 50 failed builds in the window, the newest 50 are grouped and the panel says so.
+**Failure signatures** (next to the page title, when the window has a failed build, or a row's signature chip) opens a section above the runs table that groups the window's failed builds by the error most of their failing tests share. Each group is titled by that error's first line (**No message recorded** when the failures carry none), lists its builds, and says when one test fails with that error in all of them. Two builds with the same pass and fail counts but different errors are different groups. With more than 50 failed builds in the window, the newest 50 are grouped and the section says so. Its **Close panel** button closes it.
 
 Two disclosures at the bottom explain the banner:
 
@@ -59,7 +59,7 @@ The page has five tabs. The tab is in the address (`?tab=`), so a link can open 
 
 Every test result in the run. Filter chips (**All**, **failed**, **broken**, **passed**, **skipped**, and **unrecognised** when the report had statuses TestLookup could not map) and a suite filter narrow the list. Columns: test name, suite, status, duration and failure category.
 
-Click a row to open it in a side panel, with **Previous failure** / **Next failure** to step through the failures on the page and **Open full page** for the test result page. Ctrl- or ⌘-click opens the full page directly.
+Click a row to open the test beside the list, with **Previous failure** / **Next failure** to step through the failures on the page and **Open full page** for the test result page. The address carries the open test (`?test=`), so a refresh or a shared link opens it again, and **Back** closes it. Ctrl- or ⌘-click opens the full page directly.
 
 While a run is still streaming, the list is read from the live buffer, so it matches what **Live** shows. If a live run shows no tests, **Recover from buffer** asks the server to rebuild them.
 
@@ -106,7 +106,7 @@ How long the run took and where the time went (`?tab=timing`).
 
 - **Execution time** — **Wall clock**, **Test time (summed)**, **Parallelism** (summed ÷ wall clock) and the setup / teardown share, with where the figures come from (the report's own run span, or its tests' start and finish times).
 - **Setup, test and teardown** — the time the run's tests spent in each phase, when the report recorded them.
-- **Timeline** — one row per worker, one bar per test, coloured by status, so you can see what ran in parallel and where a worker sat idle. Click a bar to open that test. A run with more than 2,000 timed tests shows the 2,000 longest and says so.
+- **Timeline** — one row per worker, one bar per test, coloured by status, so you can see what ran in parallel and where a worker sat idle. Click a bar (or a row of **Slowest tests**) to open that test beside the tab, as on **Tests**. A run with more than 2,000 timed tests shows the 2,000 longest and says so.
 - **Workers**, **Suites** — per worker and per suite: tests, wall clock and summed time.
 - **Slowest tests** — the 20 slowest tests, each with its duration baseline when it has one.
 - **Duration regressions** — tests and suites slower than their usual time, the same findings as the **Changes** tab.

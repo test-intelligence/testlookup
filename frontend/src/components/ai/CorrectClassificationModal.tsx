@@ -8,13 +8,20 @@
  * `analysisId` directly when the caller already has one), then submits
  * rating=incorrect + corrected_category feedback: the backend overwrites the
  * analysis category and persists an AIFeedback row for the training export.
+ *
+ * It renders IN THE PAGE (W27a PAN-03): each host places it where its Correct
+ * control lives (the AI panel of a test's pane or page; /failures under its
+ * header), as an `InlineFormSection` named "Correct classification" (the old
+ * dialog's name) — no backdrop, no focus trap; Escape inside closes it (not
+ * mid-submit) and focus returns to Correct.
  */
 import { useState } from 'react'
 import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
 import { aiFeedbackService } from '@/services/aiFeedbackService'
 import { useAnalysisLookup } from '@/hooks/useAnalysisLookup'
-import { useModalFocus } from '@/hooks/useModalFocus'
+import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
+import type { InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 
 export const CATEGORY_CHOICES = [
   { id: 'FLAKY',             label: 'Flaky',              desc: 'Intermittent — passes on retry; race or fixture issue.' },
@@ -27,7 +34,7 @@ export const CATEGORY_CHOICES = [
 export type CategoryChoiceId = (typeof CATEGORY_CHOICES)[number]['id']
 
 export default function CorrectClassificationModal({
-  projectId, fingerprint, testName, analysisId: analysisIdProp, currentCategory: currentCategoryProp, onClose,
+  projectId, fingerprint, testName, analysisId: analysisIdProp, currentCategory: currentCategoryProp, onClose, slot,
 }: {
   /** Omit together with `fingerprint` when `analysisId` is supplied. */
   projectId?: string | null
@@ -37,6 +44,8 @@ export default function CorrectClassificationModal({
   analysisId?: string | null
   currentCategory?: string | null
   onClose: () => void
+  /** The host section's one-form slot (W27a): typed input asks before another form replaces it. */
+  slot?: InlineSlot
 }) {
   const skipLookup = Boolean(analysisIdProp)
   const { lookup, isLoading, isError } = useAnalysisLookup(
@@ -46,7 +55,6 @@ export default function CorrectClassificationModal({
   const [selected, setSelected] = useState<CategoryChoiceId | ''>('')
   const [comment, setComment] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const dialogRef = useModalFocus({ onClose, canClose: !submitting })
 
   const analysisId = analysisIdProp ?? lookup?.analysis_id ?? null
   const currentCategory = currentCategoryProp ?? lookup?.failure_category ?? 'UNKNOWN'
@@ -74,25 +82,42 @@ export default function CorrectClassificationModal({
   }
 
   return (
-    <div
-      ref={dialogRef}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Correct classification"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={() => !submitting && onClose()}
+    <InlineFormSection
+      title="Correct classification"
+      ariaLabel="Correct classification"
+      description={<code className="font-mono text-[11.5px]">{testName}</code>}
+      onClose={onClose}
+      canClose={!submitting}
+      // The dialog had no X: Cancel (or Close) and Escape close it.
+      showClose={false}
+      busy={submitting}
+      slot={slot}
+      footer={
+        <>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 disabled:opacity-50"
+          >
+            {analysisId ? 'Cancel' : 'Close'}
+          </button>
+          {analysisId && (
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={submitting || !selected}
+              title={!selected ? 'Pick the corrected category first' : undefined}
+              className="text-[12.5px] font-medium rounded-md px-3 py-1.5 disabled:opacity-50"
+              style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
+            >
+              {submitting ? 'Recording…' : 'Record correction'}
+            </button>
+          )}
+        </>
+      }
     >
-      <div
-        className="w-full max-w-md rounded-lg bg-[var(--color-bg-card)] border border-[var(--color-border)] p-5 shadow-xl"
-        onClick={e => e.stopPropagation()}
-      >
-        <h2 className="text-base font-semibold text-[var(--color-text)] m-0">
-          Correct classification
-        </h2>
-        <p className="mt-1 text-[12.5px] text-[var(--color-text-muted)]">
-          <code className="font-mono text-[11.5px]">{testName}</code>
-        </p>
-
+      <div className="max-w-2xl">
         {isLoading && !skipLookup ? (
           <p className="mt-4 text-[12.5px] text-[var(--color-text-muted)]">
             Looking up the AI analysis…
@@ -150,30 +175,7 @@ export default function CorrectClassificationModal({
             </label>
           </>
         )}
-
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={submitting}
-            className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 disabled:opacity-50"
-          >
-            {analysisId ? 'Cancel' : 'Close'}
-          </button>
-          {analysisId && (
-            <button
-              type="button"
-              onClick={handleSubmit}
-              disabled={submitting || !selected}
-              title={!selected ? 'Pick the corrected category first' : undefined}
-              className="text-[12.5px] font-medium rounded-md px-3 py-1.5 disabled:opacity-50"
-              style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
-            >
-              {submitting ? 'Recording…' : 'Record correction'}
-            </button>
-          )}
-        </div>
       </div>
-    </div>
+    </InlineFormSection>
   )
 }

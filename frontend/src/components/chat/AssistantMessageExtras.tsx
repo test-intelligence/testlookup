@@ -8,14 +8,19 @@
  *  - "How I looked this up" — a subtle, collapsed-by-default trace of the
  *    read tools the bounded loop consulted ({tool, summary} entries).
  *  - Suggested action buttons — one-click handoffs that OPEN the existing
- *    audited dialogs pre-filled (US-2.4 quarantine proposal, US-6.1 Jira
+ *    audited forms pre-filled (US-2.4 quarantine proposal, US-6.1 Jira
  *    issue). The human reviews and submits; the agent never does.
+ *
+ * W27 PAN-04: the forms render in place, inside this message (one at a time,
+ * `openAction`). Switching to the other action while a form has typed input
+ * asks first, in that form (the message's `useInlineSlot`).
  */
 import { useState } from 'react'
 import { ChevronDown, ChevronRight, ExternalLink, Search, ShieldAlert } from 'lucide-react'
 import AISuggestion, { normalizeProvenance } from '@/components/ai/AISuggestion'
 import CreateJiraIssueModal from '@/components/defects/CreateJiraIssueModal'
 import ProposeQuarantineModal from '@/components/quarantine/ProposeQuarantineModal'
+import { useInlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import type { SuggestedAction, ToolTraceEntry } from '@/types/chat'
 
 export default function AssistantMessageExtras({
@@ -28,6 +33,16 @@ export default function AssistantMessageExtras({
 }) {
   const [traceOpen, setTraceOpen] = useState(false)
   const [openAction, setOpenAction] = useState<SuggestedAction | null>(null)
+  // One form per message: the slot only asks before a typed form is replaced.
+  const slot = useInlineSlot()
+  const choose = (action: SuggestedAction) => {
+    if (action === openAction) return
+    slot.guard(() => setOpenAction(action))
+  }
+  // A form closes itself only (a proposal that answers after the other form
+  // replaced it must not close that one).
+  const opened = openAction
+  const closeOpened = () => setOpenAction((current) => (current === opened ? null : current))
 
   const quarantineOpen =
     openAction?.type === 'propose_quarantine' &&
@@ -79,7 +94,7 @@ export default function AssistantMessageExtras({
             <button
               key={i}
               type="button"
-              onClick={() => setOpenAction(action)}
+              onClick={() => choose(action)}
               className="flex items-center gap-1.5 text-xs bg-[var(--color-bg-hover)] hover:bg-[var(--color-bg-hover)]/70 text-[var(--color-text-secondary)] border border-[var(--color-border-light)] px-2.5 py-1 rounded transition-colors"
             >
               {action.type === 'propose_quarantine'
@@ -101,7 +116,8 @@ export default function AssistantMessageExtras({
             fail_count: openAction.prefill.fail_count ?? null,
           }}
           source="ask-ai-copilot"
-          onClose={() => setOpenAction(null)}
+          onClose={closeOpened}
+          slot={slot}
         />
       )}
 
@@ -110,7 +126,8 @@ export default function AssistantMessageExtras({
           projectId={openAction.prefill.project_id}
           fingerprint={openAction.prefill.fingerprint ?? openAction.prefill.test_fingerprint}
           testName={openAction.prefill.test_name}
-          onClose={() => setOpenAction(null)}
+          onClose={closeOpened}
+          slot={slot}
         />
       )}
     </div>

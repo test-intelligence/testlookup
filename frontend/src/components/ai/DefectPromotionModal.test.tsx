@@ -3,8 +3,13 @@
  * approved. A QA lead gets a link straight to Inbox › Approvals › Defects
  * (`/my-failures?tab=approvals&source=defects`: the Inbox route); anyone else
  * is told a QA lead approves it there (they cannot open that queue).
+ *
+ * W27a PAN-03: the form renders in the page, inside the failure block that
+ * opened it (a region named "Promote to Defect"), and reopening it for the
+ * same cluster shows the cached candidate again.
  */
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { useState } from 'react'
 import { MemoryRouter } from 'react-router-dom'
 import { SWRConfig } from 'swr'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -20,6 +25,7 @@ const service = vi.hoisted(() => ({ getCandidate: vi.fn(), promote: vi.fn() }))
 vi.mock('@/services/defectPromotionService', () => ({ defectPromotionService: service }))
 
 import DefectPromotionModal from './DefectPromotionModal'
+import { useInlineSlot } from '@/components/ui/inPage/useInlineSlot'
 
 const CANDIDATE: DefectCandidateResponse = {
   cluster_id: 'c-1', run_id: 'r-1', title: 'NPE in checkout', description: 'What failed…', severity: 'CRITICAL',
@@ -88,5 +94,100 @@ describe('DefectPromotionModal — awaiting approval', () => {
     expect(screen.getByText('Defect promoted successfully')).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Review it in Inbox › Approvals' })).toBeNull()
     expect(screen.queryByText('A QA lead approves it in Inbox › Approvals.')).toBeNull()
+  })
+})
+
+// ── W27a PAN-03: the form renders in the page, inside its host ──────────────
+
+function Host({ slot }: { slot?: boolean }) {
+  const [open, setOpen] = useState(true)
+  const formSlot = useInlineSlot<string>()
+  return (
+    <div data-testid="failure-block">
+      <button type="button" onClick={() => (slot ? formSlot.open('c-1') : setOpen(true))}>File defect</button>
+      {slot && <button type="button" onClick={() => formSlot.open('c-2')}>File another</button>}
+      {(slot ? formSlot.openKey === 'c-1' : open) && (
+        <DefectPromotionModal
+          runId="r-1"
+          clusterId="c-1"
+          clusterLabel="NPE cluster"
+          slot={slot ? formSlot : undefined}
+          onClose={() => (slot ? formSlot.close() : setOpen(false))}
+        />
+      )}
+    </div>
+  )
+}
+
+function renderHost(slot = false) {
+  return render(
+    <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
+      <MemoryRouter>
+        <Host slot={slot} />
+      </MemoryRouter>
+    </SWRConfig>,
+  )
+}
+
+describe('DefectPromotionModal — in the page (W27a PAN-03)', () => {
+  it('renders inside its host as a region named "Promote to Defect" (no portal, no modal), the title focused', async () => {
+    renderHost()
+    const form = screen.getByRole('region', { name: 'Promote to Defect' })
+    expect(screen.getByTestId('failure-block').contains(form)).toBe(true)
+    expect(form.querySelector('#defect-promotion-title')).toHaveTextContent('Promote to Defect')
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.querySelector('[aria-modal]')).toBeNull()
+    expect(screen.getByLabelText(/^Title/)).toHaveFocus()
+    await screen.findByDisplayValue('NPE in checkout')
+  })
+
+  it('a pending_review answer keeps the form mounted, with its result and the approvals link', async () => {
+    service.promote.mockResolvedValue(result('pending_review'))
+    renderHost()
+    await screen.findByDisplayValue('NPE in checkout')
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Promote to Defect' }))
+    })
+    const form = screen.getByRole('region', { name: 'Promote to Defect' })
+    expect(within(form).getByText('Defect created — awaiting approval')).toBeInTheDocument()
+    expect(within(form).getByRole('link', { name: 'Review it in Inbox › Approvals' })).toHaveAttribute('href', '/my-failures?tab=approvals&source=defects')
+    expect(screen.getByTestId('failure-block').contains(form)).toBe(true)
+  })
+
+  it('Escape inside closes it; File defect again shows the candidate again (it once reopened empty)', async () => {
+    renderHost()
+    await screen.findByDisplayValue('NPE in checkout')
+    fireEvent.keyDown(screen.getByLabelText(/^Title/), { key: 'Escape' })
+    expect(screen.queryByRole('region', { name: 'Promote to Defect' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'File defect' }))
+    const form = screen.getByRole('region', { name: 'Promote to Defect' })
+    // The cached candidate, at once: no empty form, no second read.
+    expect(within(form).getByLabelText(/^Title/)).toHaveValue('NPE in checkout')
+    expect(within(form).getByLabelText('Component')).toHaveValue('checkout')
+    expect(within(form).getByLabelText('Owner Team')).toHaveValue('payments')
+    expect(within(form).getByLabelText(/^Labels/)).toHaveValue('regression')
+    expect(within(form).getByLabelText('Description')).toHaveValue('What failed…')
+    expect(within(form).getByRole('group', { name: 'Severity' })).toBeInTheDocument()
+  })
+
+  it('typed input asks before another form replaces it; a stored promotion leaves nothing to lose', async () => {
+    service.promote.mockResolvedValue(result('pending_review'))
+    renderHost(true)
+    fireEvent.click(screen.getByRole('button', { name: 'File defect' }))
+    await screen.findByDisplayValue('NPE in checkout')
+    fireEvent.change(screen.getByLabelText(/^Title/), { target: { value: 'NPE in checkout v2' } })
+    // Typed into: another cluster's File defect asks first, and Keep editing keeps the text.
+    fireEvent.click(screen.getByRole('button', { name: 'File another' }))
+    expect(screen.getByText(/Discard your changes to/)).toHaveTextContent('Discard your changes to "Promote to Defect"?')
+    fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }))
+    expect(screen.getByLabelText(/^Title/)).toHaveValue('NPE in checkout v2')
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Promote to Defect' }))
+    })
+    expect(screen.getByText('Defect created — awaiting approval')).toBeInTheDocument()
+    // Stored: the next form replaces this one at once.
+    fireEvent.click(screen.getByRole('button', { name: 'File another' }))
+    expect(screen.queryByText(/Discard your changes/)).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Promote to Defect' })).toBeNull()
   })
 })

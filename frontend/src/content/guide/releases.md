@@ -16,7 +16,7 @@ A **release** is a named grouping of test runs in one project (for example `v2.5
 
 A release is also created automatically the first time a run arrives with a release name that does not exist yet. Creating or editing a release needs `QA_LEAD` or higher; deleting one needs an administrator.
 
-The list shows each release's **recorded** gate verdict: **Go**, **Conditional Go**, **No-Go**, **Not evaluated** (it was evaluated, but too few tests carried results to decide) or **Not evaluated yet** (nobody has evaluated it), with when it was evaluated. An evaluated release also shows its **Pass rate**, **Evidence** (tests with results, of those in scope) and **Runs**, and a No-Go one its first blocking tests (`test_pay (checkout-e2e) is FAILED`); **Open gate →** goes to the full list on its page. The list filters by status and searches names, versions and owners. Click a release for a side panel, or **Open full page** for its detail.
+The list shows each release's **recorded** gate verdict: **Go**, **Conditional Go**, **No-Go**, **Not evaluated** (it was evaluated, but too few tests carried results to decide) or **Not evaluated yet** (nobody has evaluated it), with when it was evaluated. An evaluated release also shows its **Pass rate**, **Evidence** (tests with results, of those in scope) and **Runs**, and a No-Go one its first blocking tests (`test_pay (checkout-e2e) is FAILED`); **Open gate →** goes to the full list on its page. The list filters by status and searches names, versions and owners. Click a release to open its detail beside the list; the right-hand panels make way while it is open, and clicking another release switches to it. The address carries the open release (`?open=`), so a refresh or a shared link opens it again, and **Back** (or **Close release**) closes it. **Edit** and **Link Run** open their forms inside the detail; **Open full page** goes to the release's own page.
 
 ### Evaluating the release gate
 
@@ -30,7 +30,7 @@ A release can have an **owner**: a person who can work on its project. A release
 
 ### The active release and syncing
 
-A project's **active** release (marked **ACTIVE**) is where a run lands when nothing else names its release. A QA lead makes another release active with **Release actions** (**⋯** on the release) → **Set as active release**; a released or cancelled release cannot be made active.
+A project's **active** release (marked **ACTIVE**) is where a run lands when nothing else names its release. A QA lead makes another release active with **Release actions** (**⋯** on the release) → **Set as active release**, then **Make active** in the question that appears under the release; a released or cancelled release cannot be made active. **Delete** (a release) and **Remove phase** ask the same way, in place, and change nothing until you confirm.
 
 **Sync releases** (QA lead, one project selected) pulls releases in from **GitHub milestones** or **Jira fix versions** (optionally with a **Jira project key**; empty uses the configured default). It brings names and links only; phases, gate policy and run attribution stay in TestLookup. A synced release links to its milestone or fix version. While the deployment runs offline (`AI_OFFLINE_MODE`), or the integration has no credential, the sync says why and changes nothing; **Open Settings › Integrations** goes to the integration settings.
 
@@ -38,7 +38,7 @@ A project's **active** release (marked **ACTIVE**) is where a run lands when not
 
 A run belongs to a release in one of these ways, in this order:
 
-1. **It arrived with a release name**: **Release** in the upload dialog, `release_name` on the API, `--release` on the CLI, or the SDK's release setting (`TESTLOOKUP_RELEASE`).
+1. **It arrived with a release name**: **Release** in the upload form, `release_name` on the API, `--release` on the CLI, or the SDK's release setting (`TESTLOOKUP_RELEASE`).
 2. **A git tag or pull-request milestone** on the run names it.
 3. **An attribution rule** for the project matches the run's branch, build number, environment or tag. Rules are managed through the API (`/api/v1/projects/<id>/attribution-rules`); there is no page for them yet.
 4. **The release's cut-off window** contains the run, or the release was **active** when the run executed.

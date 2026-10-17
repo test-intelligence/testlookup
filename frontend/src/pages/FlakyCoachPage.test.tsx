@@ -110,7 +110,13 @@ const SCORE_ROWS = [
   scoreEntry('garbage', { status: 'scored', score: 'very', components: 'all of them' }),
 ]
 
-const renderBody = (entries: FlakyCoachEntry[] = SCORE_ROWS) => render(<FlakyCoachBody entries={entries} />)
+// W27 PAN-04: the open test rides the URL (`?test=<fingerprint>`), so the body renders inside a router.
+const renderBody = (entries: FlakyCoachEntry[] = SCORE_ROWS) =>
+  render(
+    <MemoryRouter>
+      <FlakyCoachBody entries={entries} />
+    </MemoryRouter>,
+  )
 
 /** The cell under "Flakiness score" in a row. */
 function scoreCellOf(fp: string): HTMLElement {

@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+/**
+ * The manual report upload form (MRU-4). It renders IN THE PAGE (W27a PAN-03):
+ * /runs places it right under its header, where Upload report lives, as an
+ * `InlineFormSection` named "Upload test report" (the old dialog's name and
+ * heading id) — no backdrop, no focus trap. Focus moves to its first field when
+ * it opens, Escape inside closes it (not mid-upload), focus returns to Upload
+ * report.
+ */
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import {
   AlertTriangle,
   CheckCircle2,
@@ -8,11 +16,11 @@ import {
   FileText,
   Loader2,
   UploadCloud,
-  X,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import { useProjectStore } from '@/store/projectStore'
-import { useModalFocus } from '@/hooks/useModalFocus'
+import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
+import type { InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import { zip as zipAsync, zipSync } from 'fflate'
 import toast from 'react-hot-toast'
 import {
@@ -34,6 +42,8 @@ interface UploadReportModalProps {
   onClose: () => void
   /** Called with the new run_id once the upload is accepted (202). */
   onSuccess: (runId: string) => void
+  /** The page section's one-form slot (W27a): typed input asks before another form replaces it. */
+  slot?: InlineSlot
 }
 
 type Phase = 'idle' | 'uploading' | 'processing' | 'success' | 'error'
@@ -74,6 +84,7 @@ export default function UploadReportModal({
   projectId,
   onClose,
   onSuccess,
+  slot,
 }: UploadReportModalProps) {
   // When the caller has no concrete project (All Projects scope), pick one
   // here. Sourced from the same store that backs the header selector, so the
@@ -102,7 +113,6 @@ export default function UploadReportModal({
   const [result, setResult] = useState<UploadStatus['result']>(null)
 
   const busy = phase === 'uploading' || phase === 'processing'
-  const dialogRef = useModalFocus({ onClose, canClose: !busy })
 
   // Poll the async parse/ingest status once the upload is accepted, so the user
   // sees a real outcome (parsed N tests / parse error) instead of a silent run.
@@ -266,287 +276,278 @@ export default function UploadReportModal({
     }
   }, [files, busy, effectiveProjectId, buildNumber, format, branch, commitHash, releaseName, runAi])
 
+  const footer = (
+    <>
+      {phase === 'success' ? (
+        <>
+          <button
+            onClick={onClose}
+            className="px-4 py-2 rounded-lg text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
+          >
+            Close
+          </button>
+          <button
+            onClick={() => newRunId && onSuccess(newRunId)}
+            className="px-5 py-2 rounded-lg text-sm font-medium text-white bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)]"
+          >
+            View run
+          </button>
+        </>
+      ) : phase === 'processing' ? (
+        // Run continues server-side if the user closes mid-processing.
+        <button
+          onClick={onClose}
+          className="px-4 py-2 rounded-lg text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
+        >
+          Close
+        </button>
+      ) : (
+        <>
+          <button
+            onClick={onClose}
+            disabled={busy}
+            className="px-4 py-2 rounded-lg text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={!files.length || busy || !effectiveProjectId}
+            className="inline-flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium text-white bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+            {busy ? 'Uploading…' : 'Upload'}
+          </button>
+        </>
+      )}
+    </>
+  )
+
   return (
-    <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="upload-report-title" className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60 backdrop-blur-sm">
-      <div className="relative w-full max-w-xl mx-4 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-2xl shadow-2xl max-h-[90vh] flex flex-col">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)] shrink-0">
-          <div className="flex items-center gap-3">
-            <UploadCloud className="h-5 w-5 text-[var(--color-text)]" />
+    <InlineFormSection
+      title="Upload test report"
+      titleId="upload-report-title"
+      description="JUnit · TestNG · Allure · Playwright · Cypress · Robot · Cucumber · NUnit · TRX · xUnit"
+      onClose={onClose}
+      canClose={!busy}
+      closeLabel="Close"
+      busy={busy}
+      slot={slot}
+      footer={footer}
+    >
+      <div className="max-w-2xl space-y-4">
+        {phase === 'processing' ? (
+          <div className="flex flex-col items-center text-center gap-3 py-6">
+            <Loader2 className="h-8 w-8 text-[var(--color-text-muted)] animate-spin" />
             <div>
-              <h2 id="upload-report-title" className="text-base font-semibold text-[var(--color-text)]">Upload test report</h2>
-              <p className="text-xs text-[var(--color-text-muted)]">
-                JUnit · TestNG · Allure · Playwright · Cypress · Robot · Cucumber · NUnit · TRX · xUnit
+              <p className="text-sm font-medium text-[var(--color-text)]">Processing report…</p>
+              <p className="text-xs text-[var(--color-text-muted)] mt-1 max-w-sm">
+                Parsing and ingesting the test results.
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
-            aria-label="Close"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        {/* Body */}
-        <div className="px-6 py-4 overflow-y-auto space-y-4">
-          {phase === 'processing' ? (
-            <div className="flex flex-col items-center text-center gap-3 py-6">
-              <Loader2 className="h-8 w-8 text-[var(--color-text-muted)] animate-spin" />
-              <div>
-                <p className="text-sm font-medium text-[var(--color-text)]">Processing report…</p>
-                <p className="text-xs text-[var(--color-text-muted)] mt-1 max-w-sm">
-                  Parsing and ingesting the test results.
-                </p>
-              </div>
-            </div>
-          ) : phase === 'success' ? (
-            <div className="flex flex-col items-center text-center gap-3 py-4">
+        ) : phase === 'success' ? (
+          <div className="flex flex-col items-center text-center gap-3 py-4">
+            {result ? (
+              <CheckCircle2 className="h-10 w-10 text-[var(--status-passed)]" />
+            ) : (
+              <Clock className="h-10 w-10 text-[var(--color-text-muted)]" />
+            )}
+            <div>
               {result ? (
-                <CheckCircle2 className="h-10 w-10 text-[var(--status-passed)]" />
+                <>
+                  <p className="text-sm font-medium text-[var(--color-text)]">
+                    Processed {result.total ?? 0} test{(result.total ?? 0) === 1 ? '' : 's'}
+                  </p>
+                  <p className="text-xs text-[var(--color-text-muted)] mt-1">
+                    {result.passed ?? 0} passed · {result.failed ?? 0} failed
+                    {result.broken ? ` · ${result.broken} broken` : ''}
+                    {result.skipped ? ` · ${result.skipped} skipped` : ''}
+                  </p>
+                </>
               ) : (
-                <Clock className="h-10 w-10 text-[var(--color-text-muted)]" />
+                <>
+                  <p className="text-sm font-medium text-[var(--color-text)]">Upload accepted</p>
+                  <p className="text-xs text-[var(--color-text-muted)] mt-1 max-w-sm">
+                    The report is still being processed in the background. The run will
+                    populate on its detail page shortly.
+                  </p>
+                </>
               )}
-              <div>
-                {result ? (
-                  <>
-                    <p className="text-sm font-medium text-[var(--color-text)]">
-                      Processed {result.total ?? 0} test{(result.total ?? 0) === 1 ? '' : 's'}
-                    </p>
-                    <p className="text-xs text-[var(--color-text-muted)] mt-1">
-                      {result.passed ?? 0} passed · {result.failed ?? 0} failed
-                      {result.broken ? ` · ${result.broken} broken` : ''}
-                      {result.skipped ? ` · ${result.skipped} skipped` : ''}
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <p className="text-sm font-medium text-[var(--color-text)]">Upload accepted</p>
-                    <p className="text-xs text-[var(--color-text-muted)] mt-1 max-w-sm">
-                      The report is still being processed in the background. The run will
-                      populate on its detail page shortly.
-                    </p>
-                  </>
-                )}
-              </div>
             </div>
-          ) : (
-            <>
-              {/* Dropzone */}
-              <div
-                role="button"
-                tabIndex={0}
-                onClick={() => !busy && fileInputRef.current?.click()}
-                onKeyDown={(e) => {
-                  if ((e.key === 'Enter' || e.key === ' ') && !busy) {
-                    e.preventDefault() // Space would otherwise scroll the modal body
-                    fileInputRef.current?.click()
-                  }
-                }}
-                onDragOver={(e) => { e.preventDefault(); if (!busy) setDragActive(true) }}
-                onDragLeave={() => setDragActive(false)}
-                onDrop={onDrop}
-                className={clsx(
-                  'flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 cursor-pointer transition-colors',
-                  dragActive
-                    ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/5'
-                    : 'border-[var(--color-border)] hover:border-[var(--color-text-muted)]',
-                  busy && 'opacity-60 cursor-not-allowed',
-                )}
-              >
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept={ACCEPT}
-                  multiple
-                  className="hidden"
-                  onChange={(e) => pickFiles(Array.from(e.target.files ?? []))}
-                />
-                {files.length === 1 ? (
-                  <div className="flex items-center gap-2 text-sm text-[var(--color-text)]">
-                    <FileText className="h-4 w-4 text-[var(--color-text-muted)]" />
-                    <span className="font-medium">{files[0].name}</span>
-                    <span className="text-[var(--color-text-muted)]">({humanSize(files[0].size)})</span>
-                  </div>
-                ) : files.length > 1 ? (
-                  <div className="flex items-center gap-2 text-sm text-[var(--color-text)]">
-                    <FileText className="h-4 w-4 text-[var(--color-text-muted)]" />
-                    <span className="font-medium">{files.length} files selected</span>
-                    <span className="text-[var(--color-text-muted)]">
-                      ({humanSize(files.reduce((n, f) => n + f.size, 0))}, zipped on upload)
-                    </span>
-                  </div>
-                ) : (
-                  <>
-                    <UploadCloud className="h-7 w-7 text-[var(--color-text-muted)]" />
-                    <p className="text-sm text-[var(--color-text)]">Drop report file(s) or click to browse</p>
-                    <p className="text-xs text-[var(--color-text-muted)]">.xml, .trx, .json, or .zip · multiple allowed · up to {humanSize(MAX_UPLOAD_BYTES)}</p>
-                  </>
-                )}
-              </div>
-
-              {/* Project — only when the app scope is All Projects. A report
-                  lands in exactly one project, so ask here instead of sending
-                  the user back to the header selector. */}
-              {needsProjectChoice && (
-                <div>
-                  <label htmlFor="upload-field-0" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">
-                    Project <span className="text-[var(--status-failed)]">*</span>
-                  </label>
-                  <select id="upload-field-0"
-                    value={chosenProjectId}
-                    disabled={busy}
-                    onChange={(e) => setChosenProjectId(e.target.value)}
-                    className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] border border-[var(--color-border)] rounded px-3 py-2 text-sm"
-                  >
-                    <option value="">Select a project…</option>
-                    {projects.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
-                    ))}
-                  </select>
-                  {!chosenProjectId && (
-                    <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-                      Choose which project this report belongs to.
-                    </p>
-                  )}
-                </div>
+          </div>
+        ) : (
+          <>
+            {/* Dropzone */}
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => !busy && fileInputRef.current?.click()}
+              onKeyDown={(e) => {
+                if ((e.key === 'Enter' || e.key === ' ') && !busy) {
+                  e.preventDefault() // Space would otherwise scroll the modal body
+                  fileInputRef.current?.click()
+                }
+              }}
+              onDragOver={(e) => { e.preventDefault(); if (!busy) setDragActive(true) }}
+              onDragLeave={() => setDragActive(false)}
+              onDrop={onDrop}
+              className={clsx(
+                'flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 cursor-pointer transition-colors',
+                dragActive
+                  ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/5'
+                  : 'border-[var(--color-border)] hover:border-[var(--color-text-muted)]',
+                busy && 'opacity-60 cursor-not-allowed',
               )}
+            >
+              {/* Never shown (the dropzone is its control), so never the field
+                  the form's focus lands on when it opens. */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={ACCEPT}
+                multiple
+                aria-hidden="true"
+                className="hidden"
+                onChange={(e) => pickFiles(Array.from(e.target.files ?? []))}
+              />
+              {files.length === 1 ? (
+                <div className="flex items-center gap-2 text-sm text-[var(--color-text)]">
+                  <FileText className="h-4 w-4 text-[var(--color-text-muted)]" />
+                  <span className="font-medium">{files[0].name}</span>
+                  <span className="text-[var(--color-text-muted)]">({humanSize(files[0].size)})</span>
+                </div>
+              ) : files.length > 1 ? (
+                <div className="flex items-center gap-2 text-sm text-[var(--color-text)]">
+                  <FileText className="h-4 w-4 text-[var(--color-text-muted)]" />
+                  <span className="font-medium">{files.length} files selected</span>
+                  <span className="text-[var(--color-text-muted)]">
+                    ({humanSize(files.reduce((n, f) => n + f.size, 0))}, zipped on upload)
+                  </span>
+                </div>
+              ) : (
+                <>
+                  <UploadCloud className="h-7 w-7 text-[var(--color-text-muted)]" />
+                  <p className="text-sm text-[var(--color-text)]">Drop report file(s) or click to browse</p>
+                  <p className="text-xs text-[var(--color-text-muted)]">.xml, .trx, .json, or .zip · multiple allowed · up to {humanSize(MAX_UPLOAD_BYTES)}</p>
+                </>
+              )}
+            </div>
 
-              {/* Format */}
+            {/* Project — only when the app scope is All Projects. A report
+                lands in exactly one project, so ask here instead of sending
+                the user back to the header selector. */}
+            {needsProjectChoice && (
               <div>
-                <label htmlFor="upload-field-1" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">Format</label>
-                <select id="upload-field-1"
-                  value={format}
+                <label htmlFor="upload-field-0" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">
+                  Project <span className="text-[var(--status-failed)]">*</span>
+                </label>
+                <select id="upload-field-0"
+                  value={chosenProjectId}
                   disabled={busy}
-                  onChange={(e) => setFormat(e.target.value as ReportFormat)}
-                  className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:border-[var(--color-border)] outline-none"
+                  onChange={(e) => setChosenProjectId(e.target.value)}
+                  className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] border border-[var(--color-border)] rounded px-3 py-2 text-sm"
                 >
-                  {SUPPORTED_FORMATS.map((f) => (
-                    <option key={f.value} value={f.value}>{f.label}</option>
+                  <option value="">Select a project…</option>
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
                 </select>
+                {!chosenProjectId && (
+                  <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                    Choose which project this report belongs to.
+                  </p>
+                )}
               </div>
+            )}
 
-              {/* Skip AI toggle (MRU-8) */}
-              <label className="flex items-center gap-2 text-sm text-[var(--color-text)] cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={!runAi}
-                  disabled={busy}
-                  onChange={(e) => setRunAi(!e.target.checked)}
-                  className="h-3.5 w-3.5 accent-[var(--color-accent)]"
-                />
-                Skip AI analysis
-                <span className="text-xs text-[var(--color-text-muted)]">(faster — run it later from the run page)</span>
-              </label>
-
-              {/* Supported formats & how to export (MRU-16) */}
-              <details className="text-xs text-[var(--color-text-muted)]">
-                <summary className="cursor-pointer hover:text-[var(--color-text)] select-none">
-                  Supported formats &amp; how to export
-                </summary>
-                <ul className="mt-2 space-y-1 pl-1 leading-relaxed">
-                  <li><b>JUnit / TestNG</b> — <code>.xml</code> (Maven Surefire, Gradle, pytest <code>--junitxml</code>, TestNG <code>testng-results.xml</code>)</li>
-                  <li><b>Allure</b> — a single <code>*-result.json</code>, or a <code>.zip</code> of the <code>allure-results/</code> folder</li>
-                  <li><b>Playwright</b> — <code>--reporter=json</code> output</li>
-                  <li><b>Cypress</b> — Mochawesome merged <code>.json</code></li>
-                  <li><b>pytest</b> — <code>--junitxml</code> (XML), or <code>pytest --json-report</code> (JSON)</li>
-                  <li><b>Robot Framework</b> — the <code>output.xml</code> result file</li>
-                  <li><b>Cucumber</b> — <code>--format json</code> output (cucumber-jvm/js, behave, SpecFlow)</li>
-                  <li><b>NUnit</b> — <code>nunit3-console</code> result XML, or <code>dotnet test --logger:nunit</code></li>
-                  <li><b>TRX</b> — <code>dotnet test --logger trx</code> (MSTest / vstest <code>.trx</code>)</li>
-                  <li><b>xUnit.net</b> — <code>xunit.runner</code> XML, or <code>dotnet test --logger:xunit</code></li>
-                  <li><b>Multiple files</b> — select several (zipped automatically) or upload one <code>.zip</code></li>
-                </ul>
-              </details>
-
-              {/* Advanced metadata */}
-              <button
-                type="button"
-                onClick={() => setShowAdvanced((v) => !v)}
-                className="flex items-center gap-1 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              >
-                {showAdvanced ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-                Optional metadata
-              </button>
-              {showAdvanced && (
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Build label" placeholder={defaultBuildLabel()} value={buildNumber} onChange={setBuildNumber} disabled={busy} />
-                  <Field label="Release" placeholder="e.g. v2.1.0" value={releaseName} onChange={setReleaseName} disabled={busy} />
-                  <Field label="Branch" placeholder="e.g. main" value={branch} onChange={setBranch} disabled={busy} />
-                  <Field label="Commit" placeholder="sha" value={commitHash} onChange={setCommitHash} disabled={busy} />
-                </div>
-              )}
-
-              {/* Progress */}
-              {busy && (
-                <div className="space-y-1">
-                  <div className="h-1.5 w-full bg-[var(--color-bg-secondary)] rounded-full overflow-hidden">
-                    <div className="h-full bg-[var(--color-accent)] transition-all" style={{ width: `${progress}%` }} />
-                  </div>
-                  <p className="text-xs text-[var(--color-text-muted)] text-right">{progress}%</p>
-                </div>
-              )}
-
-              {/* Error */}
-              {phase === 'error' && errorMsg && (
-                <div className="flex items-start gap-2 text-xs text-[var(--status-failed)] bg-[var(--status-failed-bg)]/20 border border-[var(--status-failed-bd)]/40 rounded-lg px-3 py-2">
-                  <AlertTriangle className="h-4 w-4 shrink-0 mt-px" />
-                  <span>{errorMsg}</span>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-[var(--color-border)] shrink-0">
-          {phase === 'success' ? (
-            <>
-              <button
-                onClick={onClose}
-                className="px-4 py-2 rounded-lg text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
-              >
-                Close
-              </button>
-              <button
-                onClick={() => newRunId && onSuccess(newRunId)}
-                className="px-5 py-2 rounded-lg text-sm font-medium text-white bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)]"
-              >
-                View run
-              </button>
-            </>
-          ) : phase === 'processing' ? (
-            // Run continues server-side if the user closes mid-processing.
-            <button
-              onClick={onClose}
-              className="px-4 py-2 rounded-lg text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
-            >
-              Close
-            </button>
-          ) : (
-            <>
-              <button
-                onClick={onClose}
+            {/* Format */}
+            <div>
+              <label htmlFor="upload-field-1" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">Format</label>
+              <select id="upload-field-1"
+                value={format}
                 disabled={busy}
-                className="px-4 py-2 rounded-lg text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors disabled:opacity-50"
+                onChange={(e) => setFormat(e.target.value as ReportFormat)}
+                className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:border-[var(--color-border)] outline-none"
               >
-                Cancel
-              </button>
-              <button
-                onClick={handleSubmit}
-                disabled={!files.length || busy || !effectiveProjectId}
-                className="inline-flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium text-white bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-                {busy ? 'Uploading…' : 'Upload'}
-              </button>
-            </>
-          )}
-        </div>
+                {SUPPORTED_FORMATS.map((f) => (
+                  <option key={f.value} value={f.value}>{f.label}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Skip AI toggle (MRU-8) */}
+            <label className="flex items-center gap-2 text-sm text-[var(--color-text)] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!runAi}
+                disabled={busy}
+                onChange={(e) => setRunAi(!e.target.checked)}
+                className="h-3.5 w-3.5 accent-[var(--color-accent)]"
+              />
+              Skip AI analysis
+              <span className="text-xs text-[var(--color-text-muted)]">(faster — run it later from the run page)</span>
+            </label>
+
+            {/* Supported formats & how to export (MRU-16) */}
+            <details className="text-xs text-[var(--color-text-muted)]">
+              <summary className="cursor-pointer hover:text-[var(--color-text)] select-none">
+                Supported formats &amp; how to export
+              </summary>
+              <ul className="mt-2 space-y-1 pl-1 leading-relaxed">
+                <li><b>JUnit / TestNG</b> — <code>.xml</code> (Maven Surefire, Gradle, pytest <code>--junitxml</code>, TestNG <code>testng-results.xml</code>)</li>
+                <li><b>Allure</b> — a single <code>*-result.json</code>, or a <code>.zip</code> of the <code>allure-results/</code> folder</li>
+                <li><b>Playwright</b> — <code>--reporter=json</code> output</li>
+                <li><b>Cypress</b> — Mochawesome merged <code>.json</code></li>
+                <li><b>pytest</b> — <code>--junitxml</code> (XML), or <code>pytest --json-report</code> (JSON)</li>
+                <li><b>Robot Framework</b> — the <code>output.xml</code> result file</li>
+                <li><b>Cucumber</b> — <code>--format json</code> output (cucumber-jvm/js, behave, SpecFlow)</li>
+                <li><b>NUnit</b> — <code>nunit3-console</code> result XML, or <code>dotnet test --logger:nunit</code></li>
+                <li><b>TRX</b> — <code>dotnet test --logger trx</code> (MSTest / vstest <code>.trx</code>)</li>
+                <li><b>xUnit.net</b> — <code>xunit.runner</code> XML, or <code>dotnet test --logger:xunit</code></li>
+                <li><b>Multiple files</b> — select several (zipped automatically) or upload one <code>.zip</code></li>
+              </ul>
+            </details>
+
+            {/* Advanced metadata */}
+            <button
+              type="button"
+              onClick={() => setShowAdvanced((v) => !v)}
+              className="flex items-center gap-1 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+            >
+              {showAdvanced ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+              Optional metadata
+            </button>
+            {showAdvanced && (
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Build label" placeholder={defaultBuildLabel()} value={buildNumber} onChange={setBuildNumber} disabled={busy} />
+                <Field label="Release" placeholder="e.g. v2.1.0" value={releaseName} onChange={setReleaseName} disabled={busy} />
+                <Field label="Branch" placeholder="e.g. main" value={branch} onChange={setBranch} disabled={busy} />
+                <Field label="Commit" placeholder="sha" value={commitHash} onChange={setCommitHash} disabled={busy} />
+              </div>
+            )}
+
+            {/* Progress */}
+            {busy && (
+              <div className="space-y-1">
+                <div className="h-1.5 w-full bg-[var(--color-bg-secondary)] rounded-full overflow-hidden">
+                  <div className="h-full bg-[var(--color-accent)] transition-all" style={{ width: `${progress}%` }} />
+                </div>
+                <p className="text-xs text-[var(--color-text-muted)] text-right">{progress}%</p>
+              </div>
+            )}
+
+            {/* Error */}
+            {phase === 'error' && errorMsg && (
+              <div className="flex items-start gap-2 text-xs text-[var(--status-failed)] bg-[var(--status-failed-bg)]/20 border border-[var(--status-failed-bd)]/40 rounded-lg px-3 py-2">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-px" />
+                <span>{errorMsg}</span>
+              </div>
+            )}
+          </>
+        )}
       </div>
-    </div>
+    </InlineFormSection>
   )
 }
 
@@ -563,10 +564,13 @@ function Field({
   onChange: (v: string) => void
   disabled?: boolean
 }) {
+  // Each field its own id: all four once shared `upload-field-2`, so the
+  // Release, Branch and Commit labels pointed at the Build label input.
+  const id = useId()
   return (
     <div>
-      <label htmlFor="upload-field-2" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">{label}</label>
-      <input id="upload-field-2"
+      <label htmlFor={id} className="block text-xs font-medium text-[var(--color-text-muted)] mb-1">{label}</label>
+      <input id={id}
         type="text"
         value={value}
         placeholder={placeholder}

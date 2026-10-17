@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import bisect
 import fnmatch
 import hashlib
 import io
@@ -2125,6 +2126,131 @@ def _frontend_modal_dialog_role() -> list[Violation]:
                 'aria-labelledby="' + ref + '" matches no id in this file — '
                 "the dialog ends up with no accessible name",
             ))
+    return violations
+
+
+# ── frontend.no-page-modals (W27 PAN-01; OR-03) ─────────────────────────────
+#
+# Details and forms open in the page (owner, 2026-10-16): an item's detail
+# beside its list (MasterDetail + DetailPane), a form where its action lives
+# (InlineFormSection, inside an InlineRowSection under a table row), a
+# confirmation strip where its action lives (InlineConfirm) — all in
+# frontend/src/components/ui/inPage/. Counted per site: an element whose role
+# is dialog (a literal or an expression naming 'dialog') OR that carries
+# aria-modal (any value), ONCE per element; every <SidePanel> element, modal
+# or not; every confirm( call, bare or window.-qualified. A ratchet: the sites
+# of the A0 tree are baselined and only go down.
+_NO_PAGE_MODALS_ROOTS = ("frontend/src/pages", "frontend/src/components")
+# Comments are blanked (newlines kept) by THREE tempered patterns, in this
+# order. A body may not contain "*/", so a match can never run past the
+# comment's own end — _strip_ts_comments' `.*?` from a `{` before a JSDoc ran
+# to the NEXT `*/ }` in the file and blanked real code between them.
+_NPM_JSX_COMMENT_RE = re.compile(r"\{\s*/\*(?:(?!\*/).)*\*/\s*\}", re.DOTALL)
+_NPM_BLOCK_COMMENT_RE = re.compile(r"^[ \t]*/\*(?:(?!\*/).)*\*/", re.DOTALL | re.MULTILINE)
+_NPM_LINE_COMMENT_RE = re.compile(r"^[ \t]*//.*$", re.MULTILINE)
+# (A trailing `// …` after code, or a `/*` inside a string such as
+# placeholder="release/*", is NOT a comment start here: it is left alone, so it
+# can never swallow a real site. Known blind spot, accepted: a token written
+# inside a trailing comment is counted — reword the comment.)
+_NPM_DIALOG_ATTR_RE = re.compile(
+    r"(?<=\s)(?:role=(?:\"dialog\"|'dialog'|\{[^}]*['\"]dialog['\"][^}]*\})"
+    r"|aria-modal=(?:\"true\"|'true'|\{[^}]*\}))"
+)  # (?<=\s): a JSX attribute, never the selector '[aria-modal="true"]'
+_NPM_SIDE_PANEL_RE = re.compile(r"<SidePanel\b")
+_NPM_CONFIRM_RE = re.compile(r"\bwindow\.confirm\(|(?<![\w.$])confirm\(")  # not onConfirm(, x.confirm(, $confirm(
+_NPM_TAG_START_RE = re.compile(r"<[A-Za-z]")
+_NO_PAGE_MODALS_ALLOWED: dict[str, tuple[frozenset[str], str]] = {  # relpath -> (kinds, reason)
+    "frontend/src/components/ui/SidePanel.tsx": (frozenset({"dialog"}), "the SidePanel primitive itself; every <SidePanel> use is counted where it is written"),
+    "frontend/src/components/ui/MultiSelect.tsx": (frozenset({"dialog"}), "OR-03: a listbox popover anchored to its control"),
+    "frontend/src/components/reports/SavedViewsMenu.tsx": (frozenset({"dialog"}), "OR-03: a menu anchored to its button (its confirm() IS counted: W27b)"),
+    "frontend/src/components/runs/RunPicker.tsx": (frozenset({"dialog"}), "OR-03: a run picker anchored to its control"),
+    "frontend/src/components/ai/TestAIVersionsPopover.tsx": (frozenset({"dialog"}), "OR-03: a popover anchored to its chip"),
+    "frontend/src/components/failures/AttributionVerdictBadge.tsx": (frozenset({"dialog"}), "OR-03: a popover anchored to its badge"),
+    "frontend/src/components/failures/KindEvidence.tsx": (frozenset({"dialog"}), "OR-03: a popover anchored to its badge"),
+    "frontend/src/components/charts/TimelineNotesChip.tsx": (frozenset({"dialog"}), "OR-03: the timeline-notes chip's popover"),
+    "frontend/src/components/layout/TopBar.tsx": (frozenset({"dialog"}), "OR-03: the top bar's notifications popover (app-wide)"),
+    "frontend/src/components/layout/Sidebar.tsx": (frozenset({"dialog"}), "OR-03: the mobile sidebar drawer (app-wide)"),
+    "frontend/src/components/help/HelpDrawer.tsx": (frozenset({"side-panel"}), "OR-03: the Help drawer (app-wide)"),
+    "frontend/src/components/charts/ChartFrame.tsx": (frozenset({"dialog"}), "OR-03: a chart's full-screen view, which the reader asked for"),
+    "frontend/src/pages/dev/PrimitivesPage.tsx": (frozenset({"side-panel"}), "OR-03: the dev-only primitives page"),
+}
+_NPM_MESSAGES = {
+    "dialog": 'page modal (role="dialog" / aria-modal) — open it in the page: components/ui/inPage',
+    "side-panel": "<SidePanel> — a detail opens beside its list (MasterDetail) or under its row (InlineRowSection)",
+    "confirm": "native confirm() — use InlineConfirm (components/ui/inPage/InlineConfirm)",
+}
+
+
+def _npm_blank_comments(text: str) -> str:
+    """Comments → spaces, newlines and every other offset kept, so a reported
+    line (and column) is the source's own."""
+    def _blank(match: re.Match[str]) -> str:
+        return re.sub(r"[^\n]", " ", match.group(0))
+
+    text = _NPM_JSX_COMMENT_RE.sub(_blank, text)
+    text = _NPM_BLOCK_COMMENT_RE.sub(_blank, text)
+    return _NPM_LINE_COMMENT_RE.sub(_blank, text)
+
+
+def _npm_sites(text: str) -> list[tuple[int, str]]:
+    """``(offset, kind)`` of every counted site in a file's text, in source
+    order. ``text`` is the raw source; comments are blanked here."""
+    code = _npm_blank_comments(text)
+    sites: list[tuple[int, str]] = []
+
+    # A dialog is one ELEMENT, however many of its attributes match
+    # (`<div role="dialog" aria-modal="true">` is one site): key each match by
+    # the nearest preceding "<" that opens a tag, and report the element at its
+    # first matching attribute.
+    tag_starts = [m.start() for m in _NPM_TAG_START_RE.finditer(code)]
+    seen_elements: set[int] = set()
+    for m in _NPM_DIALOG_ATTR_RE.finditer(code):
+        i = bisect.bisect_left(tag_starts, m.start()) - 1
+        element = tag_starts[i] if i >= 0 else -1
+        if element in seen_elements:
+            continue
+        seen_elements.add(element)
+        sites.append((m.start(), "dialog"))
+    sites.extend((m.start(), "side-panel") for m in _NPM_SIDE_PANEL_RE.finditer(code))
+    sites.extend((m.start(), "confirm") for m in _NPM_CONFIRM_RE.finditer(code))
+    sites.sort()
+    return sites
+
+
+def _frontend_no_page_modals() -> list[Violation]:
+    """Details and forms open in the page (OR-03): no page modal, no SidePanel,
+    no native confirm() under frontend/src/pages and frontend/src/components
+    outside the reviewed allow-list. A RATCHET: the 81 sites of the A0 tree are
+    baselined and only go down (W27a converts 30, W27b the rest).
+
+    An allow-list entry names the KINDS it tolerates in one file, with the
+    OR-03 reason (a popover anchored to its control, an app-wide drawer, a
+    chart's full screen, the primitive itself). An entry whose file is gone is
+    itself a violation, so a rename never leaves a silent hole."""
+    violations: list[Violation] = []
+    allowed = _NO_PAGE_MODALS_ALLOWED
+    for rel in sorted(allowed):
+        if not (REPO_ROOT / rel).is_file():
+            violations.append(Violation(
+                REPO_ROOT / rel, 0,
+                "allow-list entry for a missing file — a rename must move its entry",
+            ))
+    files: list[Path] = []
+    for root in _NO_PAGE_MODALS_ROOTS:
+        files.extend(iter_files(REPO_ROOT / root, (".ts", ".tsx")))
+    for path in sorted(set(files)):
+        if path.name.endswith((".test.ts", ".test.tsx")):
+            continue
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        tolerated = allowed.get(rel, (frozenset(), ""))[0]
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for offset, kind in _npm_sites(text):
+            if kind in tolerated:
+                continue
+            violations.append(Violation(path, text.count("\n", 0, offset) + 1, _NPM_MESSAGES[kind]))
     return violations
 
 
@@ -6496,7 +6622,27 @@ GUARDS: list[Guard] = [
             "aria-labelledby pointing at the modal heading's id — a static "
             "aria-label goes stale when the title is dynamic. A full-screen "
             "overlay that genuinely is not a dialog can opt out with a "
-            "`not-a-dialog` comment on the element."
+            "`not-a-dialog` comment on the element. A new modal on a page "
+            "also needs an allow-list entry in frontend.no-page-modals: "
+            "details and forms open in the page."
+        ),
+    ),
+    Guard(
+        name="frontend.no-page-modals",
+        description=(
+            "No page modal, SidePanel or native confirm() in frontend/src/pages "
+            "or components outside the reviewed OR-03 allow-list: details and "
+            "forms open in the page."
+        ),
+        check=_frontend_no_page_modals,
+        fix_hint=(
+            "Use components/ui/inPage: MasterDetail + DetailPane for an item's "
+            "detail beside its list, InlineFormSection (inside an "
+            "InlineRowSection under a table row) for a form, InlineConfirm for "
+            "a confirmation. A genuine overlay of an OR-03 class (a popover "
+            "anchored to its control, an app-wide drawer, a chart's full "
+            "screen) needs an entry in _NO_PAGE_MODALS_ALLOWED with its "
+            "reason, reviewed in the PR."
         ),
     ),
     Guard(

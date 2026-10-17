@@ -20,9 +20,11 @@
  *             (14-day run strip in its header). Each row expands (W07
  *             FAIL-01) to its latest failure: the first error line, the stack
  *             head, the owner and "Open in run". Row actions: Mute
- *             (quarantine proposal), Jira (dedup-first defect), Suspects (a
- *             `SidePanel` with the ranked suspect commits, Epic 8 US-8.2 —
- *             the bisect).
+ *             (quarantine proposal), Jira (dedup-first defect), Suspects (the
+ *             ranked suspect commits, Epic 8 US-8.2 — the bisect); each opens
+ *             IN THE PAGE, in a full-width row under its row (W27 PAN-04),
+ *             one per table. Correct, Classification hints and Classify open
+ *             as a section under the header, one at a time.
  *   Tabs    → `?tab=`: Groups (failure groups + systemic clusters) · By suite
  *             (the drill ladder) · Scatter (the project test scatter) ·
  *             Categories (failure-kind chips + category distribution; a QA
@@ -60,7 +62,7 @@
  *     GET /api/v1/runs/{id}/suspects). Bisect = "show the suspect commit range
  *     for this failure". Framed as suspects, never culprits (monorepo caveat).
  */
-import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   AlertTriangle, ChevronRight, Download, GitCommit, Mail, Search, ShieldCheck,
@@ -80,7 +82,9 @@ import MetricCard from '@/components/ui/MetricCard'
 import Tabs, { type TabItem } from '@/components/ui/Tabs'
 import { useTabParam } from '@/components/ui/useTabParam'
 import Disclosure from '@/components/ui/Disclosure'
-import SidePanel from '@/components/ui/SidePanel'
+import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
+import { InlineRowSection } from '@/components/ui/inPage/InlineRowSection'
+import { useInlineSlot, type InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import WindowPicker from '@/components/ui/WindowPicker'
 import { SectionErrorBoundary } from '@/components/ui/SectionErrorBoundary'
 import SuiteBadge from '@/components/ui/SuiteBadge'
@@ -95,6 +99,7 @@ import { useJiraDefectMetadata } from '@/hooks/useJiraDefects'
 import { useRuns } from '@/hooks/useRuns'
 import { useDataFreshness } from '@/hooks/useDataFreshness'
 import { usePermissions } from '@/hooks/usePermissions'
+import { useSlotCloser } from '@/hooks/useSlotCloser'
 import { shortAgo } from '@/utils/formatters'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import { flakyQuarantineService } from '@/services/flakyQuarantineService'
@@ -817,6 +822,9 @@ function testSearchHref(name: string): string {
 const NOT_A_FLAKE =
   'Failed in two or more runs and not on the flaky list: a real failure, not a flake. A test is flaky when it both passed and failed on the same fingerprint within the window; re-running will not fix this one.'
 
+/** W27 PAN-04: the page's own actions, one open at a time in a section under the header. */
+type PageSection = 'correct' | 'hints' | 'classify'
+
 interface RowActionHandlers {
   onMute: (row: FailingRow) => void
   muteDisabledReason: (row: FailingRow) => string | null
@@ -828,7 +836,7 @@ interface RowActionHandlers {
 }
 
 function TopFailingTable({
-  rows, trend, totalRuns, failedExecutions, actions,
+  rows, trend, totalRuns, failedExecutions, actions, belowRow,
 }: {
   rows: FailingRow[]
   trend: TrendPoint[]
@@ -836,6 +844,8 @@ function TopFailingTable({
   /** The window's failed executions: the denominator of a test's share of failures. */
   failedExecutions: number
   actions: RowActionHandlers
+  /** W27 PAN-04: a row action's form or detail (Mute, Jira, Suspects), in a full-width row under that row. */
+  belowRow?: (row: FailingRow) => ReactNode
 }) {
   const [showAll, setShowAll] = useState(false)
   // W07 FAIL-01: the rows whose failure detail is open, by row key. Local and
@@ -950,6 +960,7 @@ function TopFailingTable({
                 actions={actions}
                 open={expanded.has(row.key)}
                 onToggle={toggleRow}
+                below={belowRow?.(row)}
               />
             ))}
           </tbody>
@@ -987,7 +998,7 @@ function Th({ label, align }: { label: string; align?: 'right' }) {
 }
 
 function FailingRowEl({
-  row, failedExecutions, actions, open, onToggle,
+  row, failedExecutions, actions, open, onToggle, below,
 }: {
   row: FailingRow
   failedExecutions: number
@@ -995,6 +1006,8 @@ function FailingRowEl({
   /** W07 FAIL-01: the detail row under this one is shown. */
   open: boolean
   onToggle: (key: string) => void
+  /** W27 PAN-04: this row's open action (its form or the Suspects), right under it and above the W07 detail. */
+  below?: ReactNode
 }) {
   const { test, flaky } = row
   // AI-classified failure kind (US-9.2): the server-derived value, else the
@@ -1087,7 +1100,7 @@ function FailingRowEl({
           >
             Jira
           </RowAction>
-          {/* Epic 8 US-8.2 — the bisect: the suspect commit range for this failure, in a side panel. */}
+          {/* Epic 8 US-8.2 — the bisect: the suspect commit range for this failure, under the row. */}
           <RowAction
             label={`Suspects for ${test.test_name}`}
             title={suspectsReason ?? 'Bisect: show the suspect commits between the last green run and this failure'}
@@ -1099,6 +1112,8 @@ function FailingRowEl({
         </div>
       </td>
     </tr>
+    {/* Across all six columns; its content can never widen the table (InlineRowSection). */}
+    {below ? <InlineRowSection colSpan={6}>{below}</InlineRowSection> : null}
     {open && (
       <tr data-failure-detail="" style={{ borderBottom: '1px solid var(--color-border)' }}>
         <td colSpan={6} style={{ padding: 12, background: 'var(--color-bg)' }}>
@@ -1887,13 +1902,17 @@ function Pill({ children, tone, title }: { children: React.ReactNode; tone: 'goo
 // submits a manual PROPOSED row via POST /api/v1/quarantine (QA_LEAD+),
 // which then awaits approval on /quarantine. The reason is required — it
 // lands in the proposal's rationale and the quarantine audit trail.
+// W27 PAN-04: rendered IN THE PAGE, in a full-width row under the test's row
+// (an `InlineFormSection` named as the dialog was); Escape inside closes it.
 function MuteTestModal({
-  test, flakyEntry, projectId, onClose,
+  test, flakyEntry, projectId, onClose, slot,
 }: {
   test: TopFailingItem
   flakyEntry: FlakyTestItem | null
   projectId: string
   onClose: () => void
+  /** The table's slot: one row form open; a typed reason asks before it is replaced. */
+  slot?: InlineSlot
 }) {
   const [reason, setReason] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -1939,28 +1958,46 @@ function MuteTestModal({
   }
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="Mute test (propose quarantine)"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={() => !submitting && onClose()}
-    >
-      <div
-        className="w-full max-w-md rounded-lg bg-[var(--color-bg-card)] border border-[var(--color-border)] p-5 shadow-xl"
-        onClick={e => e.stopPropagation()}
-      >
-        <h2 className="text-base font-semibold text-[var(--color-text)] m-0">
-          Mute test (propose quarantine)
-        </h2>
-        <p className="mt-1 text-[12.5px] text-[var(--color-text-muted)]">
-          Proposes <code className="font-mono text-[11.5px]">{test.test_name}</code> for
+    <InlineFormSection
+      title="Mute test (propose quarantine)"
+      description={
+        <span className="text-[12.5px]">
+          Proposes <code className="font-mono text-[11.5px] [overflow-wrap:anywhere]">{test.test_name}</code> for
           quarantine. A QA Lead approves or rejects the proposal on /quarantine —
           nothing is muted until then.
-        </p>
-
+        </span>
+      }
+      onClose={onClose}
+      canClose={!submitting}
+      showClose={false}
+      busy={submitting}
+      slot={slot}
+      footer={
+        <>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={submitting || !trimmedReason}
+            title={!trimmedReason ? 'A reason is required' : undefined}
+            className="text-[12.5px] font-medium rounded-md px-3 py-1.5 disabled:opacity-50"
+            style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
+          >
+            {submitting ? 'Proposing…' : 'Propose quarantine'}
+          </button>
+        </>
+      }
+    >
+      <div className="max-w-2xl">
         <div
-          className="mt-3 rounded-md border px-3 py-2 text-[12px]"
+          className="rounded-md border px-3 py-2 text-[12px]"
           style={{ background: 'var(--color-bg)', borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}
         >
           {flakyEntry ? (
@@ -1984,29 +2021,8 @@ function MuteTestModal({
             className="mt-1 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 text-[12.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]"
           />
         </label>
-
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={submitting}
-            className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 disabled:opacity-50"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={submitting || !trimmedReason}
-            title={!trimmedReason ? 'A reason is required' : undefined}
-            className="text-[12.5px] font-medium rounded-md px-3 py-1.5 disabled:opacity-50"
-            style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
-          >
-            {submitting ? 'Proposing…' : 'Propose quarantine'}
-          </button>
-        </div>
       </div>
-    </div>
+    </InlineFormSection>
   )
 }
 
@@ -2206,12 +2222,13 @@ export default function FailureAnalysisPage() {
 
   // ── US-2.4 action state: mute-to-quarantine, Jira, suspects (per row) ──
   // + the classifier correction, which targets the headline failing test.
-  const [muteFor, setMuteFor] = useState<FailingRow | null>(null)
-  const [jiraFor, setJiraFor] = useState<FailingRow | null>(null)
-  const [suspectsFor, setSuspectsFor] = useState<FailingRow | null>(null)
-  const [correctionOpen, setCorrectionOpen] = useState(false)
-  // W07 FAIL-10: the project's classification hints (a QA lead, one project).
-  const [hintsOpen, setHintsOpen] = useState(false)
+  // W27 PAN-04: in the page. One row action open per table (`${row.key}:mute|jira|suspects`, in a
+  // full-width row under its row) and one section under the page header (Correct · W07 FAIL-10's
+  // classification hints · Classify); each slot asks before a form with typed input is replaced.
+  const tableSlot = useInlineSlot<string>()
+  const pageSlot = useInlineSlot<PageSection>()
+  const closeRowAction = useSlotCloser(tableSlot)
+  const closePageSection = useSlotCloser(pageSlot)
   const { metadata: jiraMeta } = useJiraDefectMetadata(project?.id ?? null)
   // Every quarantine endpoint answers 503 while this flag is off ("Flaky
   // auto-quarantine is disabled"): Mute says so instead of opening a dialog
@@ -2226,8 +2243,9 @@ export default function FailureAnalysisPage() {
   const { isQaEngineer, isQaLead } = usePermissions()
 
   const actionTarget = model.topFailingTest
+  const openRowAction = tableSlot.open
   const rowActions = useMemo<RowActionHandlers>(() => ({
-    onMute: (row) => setMuteFor(row),
+    onMute: (row) => openRowAction(`${row.key}:mute`),
     muteDisabledReason: (row) => !isQaLead
       ? 'QA Lead role required'
       : !project?.id
@@ -2237,7 +2255,7 @@ export default function FailureAnalysisPage() {
         : quarantineOn === false
           ? 'Quarantine is off for this project: the flaky_auto_quarantine flag in Settings › Feature flags is switched off or limited to other projects.'
           : null,
-    onCreateJira: (row) => setJiraFor(row),
+    onCreateJira: (row) => openRowAction(`${row.key}:jira`),
     // Disabled when there's no identity/project, or when the metadata probe
     // says BOTH delivery paths are dead (Jira gated/unconfigured AND no
     // webhook receiver). While metadata is still loading the button stays
@@ -2251,14 +2269,15 @@ export default function FailureAnalysisPage() {
         : jiraMeta && !jiraMeta.available && !jiraMeta.webhook_available
           ? jiraUnavailableCopy(jiraMeta.reason)
           : null,
-    onShowSuspects: (row) => setSuspectsFor(row),
+    onShowSuspects: (row) => openRowAction(`${row.key}:suspects`),
     // Per row: the run that holds THIS test's last failure. A flaky-only row
     // (no top-failing entry) carries none.
     suspectsDisabledReason: (row) => row.test.last_failed_run_id
       ? null
       : 'No failing run of this test in this window to attribute commits against.',
-  }), [project?.id, jiraMeta, quarantineOn, isQaLead, isQaEngineer])
+  }), [project?.id, jiraMeta, quarantineOn, isQaLead, isQaEngineer, openRowAction])
 
+  const openPageSection = pageSlot.open
   const openCorrection = useCallback(() => {
     if (!project?.id) {
       toast.error('Pick a specific project to correct a classification.')
@@ -2268,8 +2287,69 @@ export default function FailureAnalysisPage() {
       toast('No per-test identity available yet — corrections need a failing test with a fingerprint.', { icon: '🏷️' })
       return
     }
-    setCorrectionOpen(true)
-  }, [project?.id, actionTarget])
+    openPageSection('correct')
+  }, [project?.id, actionTarget, openPageSection])
+
+  // A row's open action, right under that row (Mute's reason, the Jira form, the Suspects). The
+  // request each one sends, and when it reads, are the dialogs' (the forms mount only while open).
+  const belowRow = (row: FailingRow): ReactNode => {
+    const open = tableSlot.openKey
+    if (!open) return null
+    if (open === `${row.key}:mute` && row.test.test_fingerprint && project?.id) {
+      return (
+        <MuteTestModal
+          test={row.test}
+          flakyEntry={row.flaky}
+          projectId={project.id}
+          onClose={() => closeRowAction(open)}
+          slot={tableSlot}
+        />
+      )
+    }
+    if (open === `${row.key}:jira` && row.test.test_fingerprint && project?.id) {
+      return (
+        <CreateJiraIssueModal
+          projectId={project.id}
+          fingerprint={row.test.test_fingerprint}
+          testName={row.test.test_name}
+          onClose={() => closeRowAction(open)}
+          slot={tableSlot}
+        />
+      )
+    }
+    if (open === `${row.key}:suspects` && row.test.last_failed_run_id) {
+      const runId = row.test.last_failed_run_id
+      // Epic 8 US-8.2 — the bisect: the suspect commits for this row's test.
+      return (
+        <InlineFormSection
+          as="aside"
+          title={<span className="[overflow-wrap:anywhere]">Suspects: {row.test.test_name}</span>}
+          closeLabel="Close suspects"
+          onClose={() => closeRowAction(open)}
+          slot={tableSlot}
+        >
+          {/* HON-05: name the run the commits are attributed against — this
+              test's own last failure, not the project's newest failed run. */}
+          <p className="m-0 mb-3 text-[12px] text-[var(--color-text-muted)]" data-testid="suspects-run">
+            Commits leading up to this test&apos;s last failure, in run{' '}
+            <Link
+              to={`/runs/${encodeURIComponent(runId)}`}
+              className="font-mono text-[var(--color-accent)] hover:underline"
+            >
+              {row.test.last_failed_build || runId.slice(0, 8)}
+            </Link>
+            {row.test.last_failed ? ` (${shortAgo(row.test.last_failed)})` : ''}.
+          </p>
+          <SuspectsPanel
+            runId={runId}
+            fingerprint={row.test.test_fingerprint ?? null}
+            panelId="suspects-panel"
+          />
+        </InlineFormSection>
+      )
+    }
+    return null
+  }
 
   const isLoading = flakyLoading || categoryLoading || topLoading || trendsLoading
 
@@ -2326,12 +2406,12 @@ export default function FailureAnalysisPage() {
     }
   }
 
-  // Classify modal — opened from ⋯ and from the category card's low-confidence
-  // note. Lets the user bulk-assign a category (Flaky / Product Bug /
+  // Classify — opened from ⋯ and from the category card's low-confidence
+  // note, as a section under the page header (W27 PAN-04, the page slot).
+  // Lets the user bulk-assign a category (Flaky / Product Bug /
   // Infrastructure / Test Data / Automation Defect) to every uncategorised
   // failure in the current project + window. The selection persists via the
   // ``/analytics/classify-uncategorized`` endpoint.
-  const [classifyOpen, setClassifyOpen] = useState(false)
   const [classifying, setClassifying] = useState(false)
 
   async function handleClassify(category: 'FLAKY' | 'PRODUCT_BUG' | 'INFRASTRUCTURE' | 'TEST_DATA' | 'AUTOMATION_DEFECT') {
@@ -2364,7 +2444,7 @@ export default function FailureAnalysisPage() {
           ? `Tagged ${resp.updated} failure${resp.updated === 1 ? '' : 's'} as ${category.replace('_', ' ').toLowerCase()}.`
           : 'No uncategorised failures in this window.',
       )
-      setClassifyOpen(false)
+      closePageSection('classify')
     } catch (err: unknown) {
       const detail =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
@@ -2447,7 +2527,7 @@ export default function FailureAnalysisPage() {
       ? [{
           label: 'Classify uncategorised failures',
           icon: <Tags className="h-3.5 w-3.5" aria-hidden="true" />,
-          onClick: () => setClassifyOpen(true),
+          onClick: () => openPageSection('classify'),
         }]
       : []),
   ]
@@ -2481,6 +2561,64 @@ export default function FailureAnalysisPage() {
         }
         overflow={overflow}
       />
+
+      {/* W27 PAN-04: the page's own actions open here, under the header, one at a time (the page slot). */}
+      {pageSlot.openKey === 'correct' && actionTarget?.test_fingerprint && project?.id && (
+        <CorrectClassificationModal
+          projectId={project.id}
+          fingerprint={actionTarget.test_fingerprint}
+          testName={actionTarget.test_name}
+          onClose={() => closePageSection('correct')}
+          slot={pageSlot}
+        />
+      )}
+      {pageSlot.openKey === 'hints' && project?.id && (
+        <ClassificationHintsModal projectId={project.id} onClose={() => closePageSection('hints')} slot={pageSlot} />
+      )}
+      {pageSlot.openKey === 'classify' && (
+        <InlineFormSection
+          title="Classify uncategorised failures"
+          description={
+            <span className="text-[12.5px]">
+              Every failing test in the last <strong>{days}</strong> day{days === 1 ? '' : 's'}
+              {suiteLabel && <> in <code className="font-mono">{suiteLabel}</code></>} that
+              has no category yet will be tagged with the selected category.
+            </span>
+          }
+          onClose={() => closePageSection('classify')}
+          canClose={!classifying}
+          // The X is the first control, so opening the section never puts focus on a
+          // category button (one Enter there would tag every uncategorised failure).
+          closeLabel="Close"
+          busy={classifying}
+          slot={pageSlot}
+          footer={
+            <button
+              type="button"
+              onClick={() => closePageSection('classify')}
+              disabled={classifying}
+              className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          }
+        >
+          <div className="max-w-2xl space-y-2">
+            {CATEGORY_CHOICES.map(c => (
+              <button
+                key={c.id}
+                type="button"
+                disabled={classifying}
+                onClick={() => handleClassify(c.id)}
+                className="w-full text-left px-3 py-2.5 rounded-md border border-[var(--color-border)] hover:border-[var(--color-accent)] hover:bg-[var(--color-bg-hover)]/40 transition-colors disabled:opacity-50"
+              >
+                <div className="text-[13px] font-medium text-[var(--color-text)]">{c.label}</div>
+                <div className="text-[11.5px] text-[var(--color-text-muted)] mt-0.5">{c.desc}</div>
+              </button>
+            ))}
+          </div>
+        </InlineFormSection>
+      )}
 
       {/* "Failure verdict" stays the page's landmark (the shell and rollout specs wait for it). */}
       <section aria-label="Failure verdict" aria-live="polite">
@@ -2526,6 +2664,7 @@ export default function FailureAnalysisPage() {
           totalRuns={model.totalRuns}
           failedExecutions={model.failedRuns}
           actions={rowActions}
+          belowRow={belowRow}
         />
       </section>
 
@@ -2584,8 +2723,8 @@ export default function FailureAnalysisPage() {
                   totalFailures={model.failedRuns}
                   uncategorizedPct={model.uncategorizedPct}
                   onCorrect={isQaEngineer ? openCorrection : undefined}
-                  onClassify={isQaEngineer ? () => setClassifyOpen(true) : undefined}
-                  onOpenHints={isQaLead && project?.id ? () => setHintsOpen(true) : undefined}
+                  onClassify={isQaEngineer ? () => openPageSection('classify') : undefined}
+                  onOpenHints={isQaLead && project?.id ? () => openPageSection('hints') : undefined}
                   kindFilter={kindFilter}
                 />
               </>
@@ -2608,115 +2747,6 @@ export default function FailureAnalysisPage() {
       <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-[12px] text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
         Wider screen needed for the full layout. Some sections may overflow on narrow viewports.
       </div>
-
-      {/* Epic 8 US-8.2 — the bisect: the suspect commits for a row's test, beside the table. */}
-      <SidePanel
-        open={Boolean(suspectsFor?.test.last_failed_run_id)}
-        onClose={() => setSuspectsFor(null)}
-        title={suspectsFor ? `Suspects: ${suspectsFor.test.test_name}` : 'Suspects'}
-        closeLabel="Close suspects"
-      >
-        {/* HON-05: name the run the commits are attributed against — this
-            test's own last failure, not the project's newest failed run. */}
-        {suspectsFor?.test.last_failed_run_id && (
-          <p className="m-0 mb-3 text-[12px] text-[var(--color-text-muted)]" data-testid="suspects-run">
-            Commits leading up to this test&apos;s last failure, in run{' '}
-            <Link
-              to={`/runs/${encodeURIComponent(suspectsFor.test.last_failed_run_id)}`}
-              className="font-mono text-[var(--color-accent)] hover:underline"
-            >
-              {suspectsFor.test.last_failed_build || suspectsFor.test.last_failed_run_id.slice(0, 8)}
-            </Link>
-            {suspectsFor.test.last_failed ? ` (${shortAgo(suspectsFor.test.last_failed)})` : ''}.
-          </p>
-        )}
-        <SuspectsPanel
-          runId={suspectsFor?.test.last_failed_run_id ?? null}
-          fingerprint={suspectsFor?.test.test_fingerprint ?? null}
-          panelId="suspects-panel"
-        />
-      </SidePanel>
-
-      {muteFor?.test.test_fingerprint && project?.id && (
-        <MuteTestModal
-          test={muteFor.test}
-          flakyEntry={muteFor.flaky}
-          projectId={project.id}
-          onClose={() => setMuteFor(null)}
-        />
-      )}
-
-      {correctionOpen && actionTarget?.test_fingerprint && project?.id && (
-        <CorrectClassificationModal
-          projectId={project.id}
-          fingerprint={actionTarget.test_fingerprint}
-          testName={actionTarget.test_name}
-          onClose={() => setCorrectionOpen(false)}
-        />
-      )}
-
-      {hintsOpen && project?.id && (
-        <ClassificationHintsModal projectId={project.id} onClose={() => setHintsOpen(false)} />
-      )}
-
-      {jiraFor?.test.test_fingerprint && project?.id && (
-        <CreateJiraIssueModal
-          projectId={project.id}
-          fingerprint={jiraFor.test.test_fingerprint}
-          testName={jiraFor.test.test_name}
-          onClose={() => setJiraFor(null)}
-        />
-      )}
-
-      {classifyOpen && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Classify uncategorised failures"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          onClick={() => !classifying && setClassifyOpen(false)}
-        >
-          <div
-            className="w-full max-w-md rounded-lg bg-[var(--color-bg-card)] border border-[var(--color-border)] p-5 shadow-xl"
-            onClick={e => e.stopPropagation()}
-          >
-            <h2 className="text-base font-semibold text-[var(--color-text)] m-0">
-              Classify uncategorised failures
-            </h2>
-            <p className="mt-1 text-[12.5px] text-[var(--color-text-muted)]">
-              Every failing test in the last <strong>{days}</strong> day{days === 1 ? '' : 's'}
-              {suiteLabel && <> in <code className="font-mono">{suiteLabel}</code></>} that
-              has no category yet will be tagged with the selected category.
-            </p>
-
-            <div className="mt-4 space-y-2">
-              {CATEGORY_CHOICES.map(c => (
-                <button
-                  key={c.id}
-                  type="button"
-                  disabled={classifying}
-                  onClick={() => handleClassify(c.id)}
-                  className="w-full text-left px-3 py-2.5 rounded-md border border-[var(--color-border)] hover:border-[var(--color-accent)] hover:bg-[var(--color-bg-hover)]/40 transition-colors disabled:opacity-50"
-                >
-                  <div className="text-[13px] font-medium text-[var(--color-text)]">{c.label}</div>
-                  <div className="text-[11.5px] text-[var(--color-text-muted)] mt-0.5">{c.desc}</div>
-                </button>
-              ))}
-            </div>
-
-            <div className="mt-4 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setClassifyOpen(false)}
-                disabled={classifying}
-                className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 disabled:opacity-50"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </PageShell>
   )
 }

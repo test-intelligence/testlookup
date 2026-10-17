@@ -9,6 +9,7 @@ import { updateDefect } from '@/services/defectService'
 import type { DefectItem } from '@/types/analytics'
 import type { DefectPatchBody } from '@/types/defectTriage'
 import AssigneeSelect, { type AssigneeOption } from './AssigneeSelect'
+import type { InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import TriageDialog, { TriageConflict } from './TriageDialog'
 import { describeTriageFailure } from './defectTriage'
 
@@ -19,9 +20,11 @@ export interface AssignDefectDialogProps {
   defect: DefectItem
   onClose: () => void
   onUpdated: (row: DefectItem) => void
+  /** The defects table's slot (W27 PAN-04): one form per table; a typed form asks before it is replaced. */
+  slot?: InlineSlot
 }
 
-export default function AssignDefectDialog({ defect, onClose, onUpdated }: AssignDefectDialogProps) {
+export default function AssignDefectDialog({ defect, onClose, onUpdated, slot }: AssignDefectDialogProps) {
   const initialAssignee = defect.assignee_user_id ?? ''
   // Only the defect's OWN team is editable here; a team the project's
   // ownership rules give it is not the defect's, so the field starts empty.
@@ -76,7 +79,7 @@ export default function AssignDefectDialog({ defect, onClose, onUpdated }: Assig
   }
 
   return (
-    <TriageDialog title="Assign defect" busy={busy} onClose={onClose} testId="assign-defect-dialog">
+    <TriageDialog title="Assign defect" busy={busy} onClose={onClose} testId="assign-defect-dialog" slot={slot}>
       <label htmlFor={assigneeId} className="mt-4 block text-xs font-medium text-[var(--color-text-secondary)]">
         Assignee
       </label>

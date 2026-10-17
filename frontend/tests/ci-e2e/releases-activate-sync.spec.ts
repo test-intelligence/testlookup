@@ -12,6 +12,7 @@
  * Harness: `tests/lib/rollout.ts` (fail closed, pinned clock). Fixtures: `fixtures-releases.ts`.
  */
 import { expect, test, type Page } from '@playwright/test'
+import { answerConfirm, opened } from '../lib/inPage'
 import { assertHermetic, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
 import { respond } from '../lib/production-pages'
 import { PROJECT_ID } from '../visual/production/fixtures'
@@ -33,20 +34,15 @@ test('Set as active release: the confirm, the POST, and the ACTIVE pill moves', 
   await expect(card(page, '2026.11').getByRole('button', { name: 'Release actions' })).toHaveCount(0)
   await expect(card(page, '2026.10').getByRole('button', { name: 'Release actions' })).toHaveCount(0)
 
-  const dialogs: string[] = []
-  page.on('dialog', (dialog) => {
-    dialogs.push(dialog.message())
-    void dialog.accept()
-  })
   await card(page, '2026.12').getByRole('button', { name: 'Release actions' }).click()
-  await page.getByRole('menuitem', { name: 'Set as active release' }).click()
+  const asked = await answerConfirm(page, page.getByRole('menuitem', { name: 'Set as active release' }), 'accept', { confirmLabel: 'Make active' })
 
   await expect(page.getByText('"2026.12" is now the active release')).toBeVisible()
   await expect(activePill(page, '2026.12')).toHaveText('ACTIVE')
   await expect(activePill(page, '2026.11')).toHaveCount(0)
   // Clicking the menu did not open the card.
-  await expect(page.getByRole('dialog')).toHaveCount(0)
-  expect(dialogs).toEqual(['Make "2026.12" the active release? Runs that no other rule matches will land here.'])
+  await expect(opened(page, '2026.12')).toHaveCount(0)
+  expect(asked.message).toBe('Make "2026.12" the active release? Runs that no other rule matches will land here.')
   await networkQuiet(page, api)
   expect(writes).toEqual([{ line: `POST /api/v1/releases/${RELEASE.planning}/activate`, body: null }])
   assertHermetic(api, errors)
@@ -55,9 +51,8 @@ test('Set as active release: the confirm, the POST, and the ACTIVE pill moves', 
 test('declining the confirm sends nothing', async ({ page }) => {
   const { handlers, writes } = releasesHandlers()
   const { api, errors } = await openRollout(page, '/releases', { handlers, ready })
-  page.on('dialog', (dialog) => void dialog.dismiss())
   await card(page, '2026.12').getByRole('button', { name: 'Release actions' }).click()
-  await page.getByRole('menuitem', { name: 'Set as active release' }).click()
+  await answerConfirm(page, page.getByRole('menuitem', { name: 'Set as active release' }), 'dismiss', { confirmLabel: 'Make active' })
   await networkQuiet(page, api)
   expect(writes).toEqual([])
   await expect(activePill(page, '2026.11')).toHaveText('ACTIVE')
@@ -71,7 +66,7 @@ test('Sync releases offline: the server sentence verbatim, the Settings link, an
   const before = listReads(api)
 
   await page.locator('[data-page-header]').getByRole('button', { name: 'Sync releases' }).click()
-  const dialog = page.getByRole('dialog', { name: 'Sync releases' })
+  const dialog = opened(page, 'Sync releases')
   await expect(dialog).toContainText('Pulls release names and links from the source. Phases, gate policy and run attribution stay in TestLookup.')
   await expect(dialog.getByLabel('GitHub milestones')).toBeChecked()
   await dialog.getByRole('button', { name: 'Sync', exact: true }).click()
@@ -93,7 +88,7 @@ test('a sync that cannot reach GitHub (502) shows its sentence with no Settings 
   const { handlers } = releasesHandlers({ sync: () => respond(502, { detail: 'Could not reach GitHub: ConnectError' }) })
   const { api, errors } = await openRollout(page, '/releases', { handlers, ready })
   await page.locator('[data-page-header]').getByRole('button', { name: 'Sync releases' }).click()
-  const dialog = page.getByRole('dialog', { name: 'Sync releases' })
+  const dialog = opened(page, 'Sync releases')
   await dialog.getByRole('button', { name: 'Sync', exact: true }).click()
   const failure = dialog.locator('[data-sync-error]')
   await expect(failure).toContainText('Could not reach GitHub: ConnectError')
@@ -108,9 +103,9 @@ test('a successful sync toasts the counts and re-reads the list', async ({ page 
   await networkQuiet(page, api)
   const before = listReads(api)
   await page.locator('[data-page-header]').getByRole('button', { name: 'Sync releases' }).click()
-  await page.getByRole('dialog', { name: 'Sync releases' }).getByRole('button', { name: 'Sync', exact: true }).click()
+  await opened(page, 'Sync releases').getByRole('button', { name: 'Sync', exact: true }).click()
   await expect(page.getByText('Synced from GitHub: 1 created, 2 updated, 0 skipped.')).toBeVisible()
-  await expect(page.getByRole('dialog', { name: 'Sync releases' })).toHaveCount(0)
+  await expect(opened(page, 'Sync releases')).toHaveCount(0)
   await networkQuiet(page, api)
   expect(listReads(api)).toBeGreaterThan(before)
   expect(writes).toHaveLength(1)

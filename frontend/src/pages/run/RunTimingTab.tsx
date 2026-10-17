@@ -19,12 +19,21 @@
  * untrusted text from ingested files: React text children only.
  *
  * Mounted only while the tab is open, so the timing is asked for then.
+ *
+ * A bar or a slowest test opens that test beside the blocks, IN THE PAGE (W27a
+ * PAN-03: a `DetailPane` in the /test-management split, no longer an edge
+ * panel), on the Tests tab's URL key `?test=<id>`: Back closes it, a refresh
+ * reopens it. A value that is neither a UUID nor a test of this answer is never
+ * handed to `TestCaseBody` (so never to a request path).
  */
 import { useMemo, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { ExternalLink, Timer } from 'lucide-react'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
-import SidePanel from '@/components/ui/SidePanel'
+import MasterDetail from '@/components/ui/inPage/MasterDetail'
+import DetailPane from '@/components/ui/inPage/DetailPane'
+import { useDetailParam } from '@/components/ui/inPage/useDetailParam'
+import { isUuid } from '@/components/ui/inPage/ids'
 import StatusBadge from '@/components/ui/StatusBadge'
 import DurationRegressionsCard from '@/components/runs/DurationRegressionsCard'
 import ExecutionTimeline from '@/components/charts/ExecutionTimeline'
@@ -416,7 +425,7 @@ function Slowest({ timing, onSelect }: { timing: RunTiming; onSelect: (testId: s
   )
 }
 
-/** The name of a test the timing answer mentions (the side panel's title). */
+/** The name of a test the timing answer mentions (the pane's title). */
 function testNameOf(timing: RunTiming | undefined, testId: string | null): string {
   if (!timing || !testId) return 'Test'
   return (
@@ -426,9 +435,25 @@ function testNameOf(timing: RunTiming | undefined, testId: string | null): strin
   )
 }
 
+/** A test the timing answer lists (a bar or a slowest row). */
+function mentions(timing: RunTiming | undefined, testId: string): boolean {
+  if (!timing) return false
+  return (
+    (timing.slowest?.items ?? []).some((t) => t.test_id === testId) ||
+    (timing.timeline?.items ?? []).some((t) => t.test_id === testId)
+  )
+}
+
 export default function RunTimingTab({ runId }: { runId: string }) {
   const { data, error, isLoading } = useRunTiming(runId)
-  const [openTestId, setOpenTestId] = useState<string | null>(null)
+  // The test open beside the blocks: the Tests tab's `?test=` key. A server id
+  // (a UUID), or a test of this answer; anything else never reaches a request.
+  const testParam = useDetailParam('test', { accept: (raw) => isUuid(raw) || mentions(data, raw) })
+  const openTestId = testParam.id
+  const paneOpen = testParam.id !== null || testParam.rejected !== null
+  const [paneExpanded, setPaneExpanded] = useState(false)
+  // Closed from anywhere (Close, Escape, Back): the next test opens beside the blocks again.
+  if (!paneOpen && paneExpanded) setPaneExpanded(false)
 
   if (!data && (isLoading || !error)) {
     return (
@@ -450,35 +475,53 @@ export default function RunTimingTab({ runId }: { runId: string }) {
   }
 
   return (
-    <div className="space-y-4" data-run-timing-tab="">
-      <Headline timing={data} />
-      <TimelineSection timing={data} onSelect={setOpenTestId} selectedTestId={openTestId} />
-      <Slowest timing={data} onSelect={setOpenTestId} />
-      <div className="grid gap-4 xl:grid-cols-2">
-        <Suites timing={data} />
-        <Workers timing={data} />
-      </div>
-      <Phases phases={data.phases} testCount={data.run.test_count} />
-      <DurationRegressionsCard runId={runId} findings={data.duration_findings} />
-
-      <SidePanel
-        open={openTestId !== null}
-        onClose={() => setOpenTestId(null)}
-        title={testNameOf(data, openTestId)}
-        width={640}
-        footer={
-          openTestId && (
-            <Link
-              to={`/runs/${runId}/tests/${openTestId}`}
-              className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-[var(--color-accent)] hover:underline"
-            >
-              Open full page <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-            </Link>
-          )
-        }
-      >
-        {openTestId && <TestCaseBody key={openTestId} runId={runId} testId={openTestId} compact />}
-      </SidePanel>
-    </div>
+    <MasterDetail
+      rowProps={{ 'data-run-timing-tab': '' }}
+      listProps={{ className: 'min-w-0 space-y-4' }}
+      expanded={paneExpanded}
+      list={
+        <>
+          <Headline timing={data} />
+          <TimelineSection timing={data} onSelect={testParam.open} selectedTestId={openTestId} />
+          <Slowest timing={data} onSelect={testParam.open} />
+          <div className="grid gap-4 xl:grid-cols-2">
+            <Suites timing={data} />
+            <Workers timing={data} />
+          </div>
+          <Phases phases={data.phases} testCount={data.run.test_count} />
+          <DurationRegressionsCard runId={runId} findings={data.duration_findings} />
+        </>
+      }
+      detail={
+        paneOpen ? (
+          <DetailPane
+            title={testNameOf(data, openTestId)}
+            closeLabel="Close panel"
+            onClose={testParam.close}
+            expanded={paneExpanded}
+            onToggleExpand={() => setPaneExpanded((v) => !v)}
+            bodyClassName="px-4 py-3"
+            footer={
+              openTestId !== null && (
+                <Link
+                  to={`/runs/${runId}/tests/${openTestId}`}
+                  className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-[var(--color-accent)] hover:underline"
+                >
+                  Open full page <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                </Link>
+              )
+            }
+          >
+            {/* Keyed: a new test starts on its own History tab. A value that is not an id is never
+                mounted (no request): its line, said here. */}
+            {openTestId !== null ? (
+              <TestCaseBody key={openTestId} runId={runId} testId={openTestId} compact />
+            ) : (
+              <div className="text-[var(--color-text-muted)] text-center py-20">Test case not found</div>
+            )}
+          </DetailPane>
+        ) : null
+      }
+    />
   )
 }

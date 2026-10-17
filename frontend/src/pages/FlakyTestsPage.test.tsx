@@ -342,9 +342,12 @@ describe('FlakyTestsPage — Detected', () => {
   it('"Propose quarantine" opens the proposal dialog, prefilled, and refreshes the live list after it', async () => {
     renderPage()
     await screen.findByText('test_flaky_1')
-    const button = await within(row('test_flaky_3')).findByRole('button', { name: 'Propose quarantine' })
+    const target = row('test_flaky_3')
+    const button = await within(target).findByRole('button', { name: 'Propose quarantine' })
     fireEvent.click(button)
-    const dialog = screen.getByRole('dialog', { name: 'Propose quarantine' })
+    // W27 PAN-04: the form opens under its row, a region by the dialog's name.
+    const dialog = screen.getByRole('region', { name: 'Propose quarantine' })
+    expect(target.nextElementSibling?.contains(dialog)).toBe(true)
     expect(within(dialog).getByText('test_flaky_3')).toBeInTheDocument()
     quarantineMock.propose.mockResolvedValue(request('f', 'PROPOSED', 'fp-3'))
     fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'Flips on CI only' } })
@@ -355,7 +358,7 @@ describe('FlakyTestsPage — Detected', () => {
     expect(quarantineMock.propose).toHaveBeenCalledWith(
       expect.objectContaining({ project_id: 'p1', test_fingerprint: 'fp-3', test_name: 'test_flaky_3', fail_count: 8 }),
     )
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Propose quarantine' })).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Propose quarantine' })).toBeNull())
     await waitFor(() => expect(quarantineMock.list.mock.calls.length).toBeGreaterThan(listCalls))
   })
 

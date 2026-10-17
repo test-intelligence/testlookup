@@ -102,8 +102,8 @@ Outbound webhooks need the `outbound_webhooks` flag on and offline mode off.
 **"Release compliance pack feature is disabled".**
 Generating a compliance pack needs the `release_compliance_pack` flag (on for a new install; an upgraded install may still have it off). Existing packs can always be listed and downloaded.
 
-**A dialog asks for a reason when I complete or skip a phase.**
-Release phase enforcement (`release_phase_gate_enforcement`) is on: the phase's gate is not GO, or the phase is being skipped. The dialog quotes the gate; enter a reason of at least 3 characters to go ahead, or Cancel to leave the phase unchanged. The reason is recorded in the audit log and the activity feed. See [Releases and gates](/docs/releases#phases).
+**The page asks for a reason when I complete or skip a phase.**
+Release phase enforcement (`release_phase_gate_enforcement`) is on: the phase's gate is not GO, or the phase is being skipped. The reason form, under the phase, quotes the gate; enter a reason of at least 3 characters to go ahead, or Cancel to leave the phase unchanged. The reason is recorded in the audit log and the activity feed. See [Releases and gates](/docs/releases#phases).
 
 ## Search
 

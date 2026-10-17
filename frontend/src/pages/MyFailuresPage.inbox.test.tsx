@@ -23,7 +23,9 @@ import type { MyFailureListResponse } from '@/types/myFailures'
 
 const state = vi.hoisted(() => ({ projectId: 'p1' as string, isQaLead: true }))
 
-const failures = vi.hoisted(() => ({ list: vi.fn(), count: vi.fn() }))
+const failures = vi.hoisted(() => ({
+  list: vi.fn(), count: vi.fn(), getReassignOptions: vi.fn(), reassign: vi.fn(), updateTriageStatus: vi.fn(),
+}))
 vi.mock('@/services/myFailuresService', () => ({ myFailuresService: failures }))
 
 const reviews = vi.hoisted(() => ({ list: vi.fn(), accept: vi.fn(), reject: vi.fn() }))
@@ -168,6 +170,60 @@ beforeEach(() => {
 })
 
 const tab = (name: RegExp) => screen.getByRole('tab', { name })
+
+// W27 PAN-04: a row's Update status / Reassign open IN THE PAGE, under that row.
+describe('Inbox — the row forms open under their row', () => {
+  const OTHER = { ...FAILURE, id: 'cc2', test_name: 'test_refund_twice', navigation_url: '/runs/run-12345678/tests/cc2' }
+  const rowOf = (name: string) =>
+    (screen.getAllByText(name).map((el) => el.closest('tr')).find((tr) => tr && !tr.hasAttribute('data-in-page-row')) as HTMLElement)
+
+  beforeEach(() => {
+    failures.list.mockResolvedValue(assigned([FAILURE, OTHER]))
+    failures.getReassignOptions.mockResolvedValue({
+      suite_owner: { user_id: 'u-dana', username: 'dana', full_name: 'Dana Whitfield', email: 'dana@example.test' },
+      qa_engineers: [{ user_id: 'u-priya', username: 'priya', full_name: 'Priya Nair', email: 'priya@example.test' }],
+    })
+  })
+
+  it('Update status renders in td[colspan="7"] right after its row, named by its heading; Escape closes it; no modal', async () => {
+    renderPage()
+    await screen.findByText('test_refund_twice')
+    fireEvent.click(within(rowOf('test_checkout_pays')).getByRole('button', { name: 'Update status' }))
+    const form = screen.getByRole('region', { name: 'Update triage status' })
+    const formRow = form.closest('tr') as HTMLElement
+    expect(formRow).toHaveAttribute('data-in-page-row')
+    expect(formRow.previousElementSibling).toBe(rowOf('test_checkout_pays'))
+    expect(formRow.querySelector('td')).toHaveAttribute('colspan', '7')
+    expect(document.querySelector('[aria-modal]')).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    // A click inside the form does not open the row's test page (the row's own click).
+    fireEvent.click(within(form).getByRole('radio', { name: /^Flaky test/ }))
+    expect(currentUrl()).toBe('/my-failures')
+    fireEvent.keyDown(within(form).getByRole('radio', { name: /^Flaky test/ }), { key: 'Escape' })
+    expect(screen.queryByRole('region', { name: 'Update triage status' })).toBeNull()
+    expect(failures.updateTriageStatus).not.toHaveBeenCalled()
+  })
+
+  it("Reassign on another row while a status is picked asks first; Discard changes opens it under that row", async () => {
+    renderPage()
+    await screen.findByText('test_refund_twice')
+    fireEvent.click(within(rowOf('test_checkout_pays')).getByRole('button', { name: 'Update status' }))
+    const triage = screen.getByRole('region', { name: 'Update triage status' })
+    fireEvent.click(within(triage).getByRole('radio', { name: /^Defect created/ }))
+
+    fireEvent.click(within(rowOf('test_refund_twice')).getByRole('button', { name: 'Reassign' }))
+    expect(within(triage).getByRole('group', { name: 'Discard your changes to "Update triage status"?' })).toBeInTheDocument()
+    expect(failures.getReassignOptions).not.toHaveBeenCalled()
+    fireEvent.click(within(triage).getByRole('button', { name: 'Discard changes' }))
+
+    const reassign = screen.getByRole('region', { name: 'Reassign failure' })
+    expect((reassign.closest('tr') as HTMLElement).previousElementSibling).toBe(rowOf('test_refund_twice'))
+    expect(screen.queryByRole('region', { name: 'Update triage status' })).toBeNull()
+    // The options are read only once the form opens, for that row.
+    await waitFor(() => expect(failures.getReassignOptions).toHaveBeenCalledWith('cc2'))
+    expect(await within(reassign).findByRole('radio', { name: /Dana Whitfield/ })).toBeChecked()
+  })
+})
 
 describe('Inbox — Assigned to me', () => {
   it('puts the failures first: header and tabs, toolbar, then [data-primary]; no other tab bar or Disclosure before it', async () => {

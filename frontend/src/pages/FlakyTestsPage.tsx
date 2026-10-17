@@ -15,7 +15,9 @@
  *             past the policy's cap) · Policy (the project's quarantine
  *             lifecycle policy, `QuarantinePolicyCard`, W09 FLK-02; no count).
  * A detected test with a live request shows that state instead of the action,
- * linking to its tab. Flaky Coach's four recommendation tiles became the
+ * linking to its tab. In the page (W27 PAN-04): a Detected row's details and
+ * its proposal open UNDER the row (`?test=<fingerprint>` for the details),
+ * and a request row's File Jira under its row. Flaky Coach's four recommendation tiles became the
  * Detected tab's filter chips; Quarantine's four stat tiles duplicated the tab
  * counts and are gone; its `window.prompt` notes are an inline form.
  *
@@ -27,7 +29,7 @@
  * so here (the route-scope registry declares `/flaky` single-project, and its
  * ratchet reads this page for the prompt).
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import useSWR from 'swr'
 import { HeartPulse, RefreshCw, ShieldAlert } from 'lucide-react'
 import { clsx } from 'clsx'
@@ -41,7 +43,9 @@ import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState
 import { useTabParam } from '@/components/ui/useTabParam'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import ProposeQuarantineModal from '@/components/quarantine/ProposeQuarantineModal'
+import { useInlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import { usePermissions } from '@/hooks/usePermissions'
+import { useSlotCloser } from '@/hooks/useSlotCloser'
 import { useFeatureFlagStatus } from '@/hooks/useFeatureFlags'
 import { useQuarantineList, useQuarantineStats } from '@/hooks/useFlakyQuarantine'
 import { testHealthService, type FlakyCoachEntry, type FlakyCoachResponse } from '@/services/testHealthService'
@@ -124,7 +128,15 @@ function FlakyTests({ projectId }: { projectId: string }) {
   }, [live])
 
   const [refreshing, setRefreshing] = useState(false)
-  const [proposeFor, setProposeFor] = useState<FlakyCoachEntry | null>(null)
+  // W27 PAN-04: the proposal opens under its Detected row (`${fingerprint}:propose`), one per table;
+  // opening another row's while a reason is typed asks first.
+  const proposeSlot = useInlineSlot<string>()
+  const closePropose = useSlotCloser(proposeSlot)
+  // The form lives under its Detected row: another tab takes it away (as Cancel would).
+  const closeAnyProposal = proposeSlot.close
+  useEffect(() => {
+    if (tab !== 'detected') closeAnyProposal()
+  }, [tab, closeAnyProposal])
 
   const handleRefresh = async () => {
     setRefreshing(true)
@@ -170,12 +182,37 @@ function FlakyTests({ projectId }: { projectId: string }) {
     return (
       <button
         type="button"
-        onClick={() => setProposeFor(entry)}
+        onClick={() => proposeSlot.open(`${entry.test_fingerprint}:propose`)}
         className="btn-ghost inline-flex items-center gap-1 text-xs"
       >
         <ShieldAlert className="h-3.5 w-3.5" aria-hidden />
         Propose quarantine
       </button>
+    )
+  }
+
+  function belowRow(entry: FlakyCoachEntry) {
+    const key = `${entry.test_fingerprint}:propose`
+    if (proposeSlot.openKey !== key) return null
+    return (
+      <ProposeQuarantineModal
+        prefill={{
+          project_id: projectId,
+          test_fingerprint: entry.test_fingerprint,
+          test_name: entry.test_name,
+          suite_name: entry.suite_name,
+          fail_count: entry.failed_runs,
+        }}
+        source="flaky-tests"
+        slot={proposeSlot}
+        onClose={() => {
+          closePropose(key)
+          // Closed after a proposal too: the row's state and the Proposed
+          // count come from these two keys.
+          void refreshLive()
+          void refreshStats()
+        }}
+      />
     )
   }
 
@@ -227,33 +264,18 @@ function FlakyTests({ projectId }: { projectId: string }) {
                 or limited to other projects.
               </p>
             )}
-            <FlakyCoachBody entries={coach?.entries ?? []} renderAction={rowAction} actionLabel="Quarantine" />
+            <FlakyCoachBody
+              entries={coach?.entries ?? []}
+              renderAction={rowAction}
+              actionLabel="Quarantine"
+              renderBelowRow={belowRow}
+            />
           </>
         )
       ) : tab === 'policy' ? (
         <QuarantinePolicyCard projectId={projectId} canEdit={canPropose} activeCount={counts.active} />
       ) : (
         <QuarantineBody view={VIEW_OF_TAB[tab]} projectId={projectId} primary />
-      )}
-
-      {proposeFor && (
-        <ProposeQuarantineModal
-          prefill={{
-            project_id: projectId,
-            test_fingerprint: proposeFor.test_fingerprint,
-            test_name: proposeFor.test_name,
-            suite_name: proposeFor.suite_name,
-            fail_count: proposeFor.failed_runs,
-          }}
-          source="flaky-tests"
-          onClose={() => {
-            setProposeFor(null)
-            // Closed after a proposal too: the row's state and the Proposed
-            // count come from these two keys.
-            void refreshLive()
-            void refreshStats()
-          }}
-        />
       )}
     </div>
   )

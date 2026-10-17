@@ -11,7 +11,7 @@ How TestLookup files and tracks issues in Jira (or your own tracker through a we
 
 ## One-click Jira issues
 
-From **Failures** (**Jira** on a failing test), from a quarantined or proposed test (**File Jira** on Flaky tests), or from Ask AI's suggested action, **Create Jira issue** opens a review dialog with a **server-prefilled** ticket: summary (`[TestLookup] <test or cluster>`), failure message and truncated stack trace, occurrence history (first and last seen, failing-run count), branch and build, a link back to TestLookup, and — when an AI analysis exists — a clearly labelled *"Suggested root cause (AI, confidence X%)"* block. The person picks the Jira project and issue type (fetched live from Jira), optionally adds a comment, and confirms — **nothing is filed silently**. Filing needs `QA_ENGINEER`.
+From **Failures** (**Jira** on a failing test), from a quarantined or proposed test (**File Jira** on Flaky tests), or from Ask AI's suggested action, **Create Jira issue** opens a review form (under the test's row, or inside the Ask AI answer) with a **server-prefilled** ticket: summary (`[TestLookup] <test or cluster>`), failure message and truncated stack trace, occurrence history (first and last seen, failing-run count), branch and build, a link back to TestLookup, and — when an AI analysis exists — a clearly labelled *"Suggested root cause (AI, confidence X%)"* block. The person picks the Jira project and issue type (fetched live from Jira), optionally adds a comment, and confirms — **nothing is filed silently**. Filing needs `QA_ENGINEER`.
 
 Two guarantees:
 
@@ -22,7 +22,7 @@ A test result's **Create Jira Defect** button (on the AI root-cause panel) is di
 
 ### No Jira? Use the webhook fallback
 
-The create dialog also offers **Webhook event** as the delivery target: instead of calling Jira, TestLookup emits a `defect.create_requested` [outbound webhook](administration.md#outbound-webhooks-settingswebhooks) carrying the full prefilled payload:
+The create form also offers **Webhook event** as the delivery target: instead of calling Jira, TestLookup emits a `defect.create_requested` [outbound webhook](administration.md#outbound-webhooks-settingswebhooks) carrying the full prefilled payload:
 
 ```json
 {
@@ -72,7 +72,7 @@ On a run's **Analysis** tab, **File defect** promotes a failure cluster to a def
 
 ### Approving a promoted defect
 
-A promotion that names a Jira project key, has severity **CRITICAL** or **HIGH**, or scores below the configured AI confidence threshold comes back as "Defect created — awaiting approval". It waits for a QA lead in **Inbox › Approvals**, source **Defects** (`/my-failures?tab=approvals&source=defects`; the promotion dialog links there for a QA lead). Each row shows the title, severity, component and owner team, why it waits (the policy reasons), the Jira project it would be filed in (or "No Jira project: approving keeps it in TestLookup"), its age and a link to the run it came from. The queue and its count are a QA lead's: QA engineers and viewers do not see the source and never request it.
+A promotion that names a Jira project key, has severity **CRITICAL** or **HIGH**, or scores below the configured AI confidence threshold comes back as "Defect created — awaiting approval". It waits for a QA lead in **Inbox › Approvals**, source **Defects** (`/my-failures?tab=approvals&source=defects`; the promotion form links there for a QA lead). Each row shows the title, severity, component and owner team, why it waits (the policy reasons), the Jira project it would be filed in (or "No Jira project: approving keeps it in TestLookup"), its age and a link to the run it came from. The queue and its count are a QA lead's: QA engineers and viewers do not see the source and never request it.
 
 - **Approve** makes the defect effective. When the promotion named a Jira project key and Jira is reachable (configured, enabled, offline mode off), approving files the ticket **on that defect**, or links it to the open issue already filed for the same failure (the same recurrence rule as the one-click issue, so the two paths never file one failure twice). The approval is saved before Jira is called, so a slow or failing Jira never undoes it. Offline, the toast says **Approved — Jira not filed (offline mode)** (or *Jira integration disabled*, *Jira not configured*) and the defect's Jira cell on **Defects** reads **not filed (offline)**; a failed filing reads **filing failed** with the server's message. Without a key the defect simply becomes effective (**Approved**).
 - **Reject** needs a reason. The defect is closed as **Invalid** (so it stops counting toward the release gate and the open KPIs), and the reason is recorded in the activity log, not on the defect.

@@ -48,7 +48,7 @@ describe('DecisionReportFeedbackControls', () => {
   it('requires reason and bound evidence when correcting a claim', async () => {
     render(<MemoryRouter><DecisionReportFeedbackControls runId="run-1" reportVersion={reportVersion} claims={claims} /></MemoryRouter>)
     fireEvent.click(screen.getByRole('button', { name: 'claim-1' }))
-    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Correct claim' })).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('Correct value'), { target: { value: 'service timeout' } })
     fireEvent.change(screen.getByLabelText('Reason'), { target: { value: 'The stack trace names the timeout boundary.' } })
     fireEvent.change(screen.getByLabelText('Supporting evidence'), { target: { value: 'artifact-1' } })
@@ -64,26 +64,30 @@ describe('DecisionReportFeedbackControls', () => {
     }))
   })
 
-  it('keeps keyboard focus in the correction dialog and restores the claim trigger', () => {
-    render(<MemoryRouter><DecisionReportFeedbackControls runId="run-1" reportVersion={reportVersion} claims={claims} /></MemoryRouter>)
+  // W27a PAN-03: the correction opens in the page, under the "Correct a claim:" row. It keeps what the modal gave
+  // its user minus the trap: focus moves in, Tab walks out (not prevented), Escape closes it, focus comes back.
+  it('opens the correction in the page under the claims row: focus in, no Tab trap, Escape closes, focus back on the claim', () => {
+    const { container } = render(<MemoryRouter><DecisionReportFeedbackControls runId="run-1" reportVersion={reportVersion} claims={claims} /></MemoryRouter>)
     const trigger = screen.getByRole('button', { name: 'claim-1' })
     trigger.focus()
     fireEvent.click(trigger)
 
-    const dialog = screen.getByRole('dialog')
-    const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+    const form = screen.getByRole('region', { name: 'Correct claim' })
+    expect(container.contains(form), 'rendered in place, not portalled').toBe(true)
+    expect(document.querySelector('[aria-modal]')).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByLabelText('Correction type'), 'the first field takes focus').toHaveFocus()
+
+    const focusable = Array.from(form.querySelectorAll<HTMLElement>(
       'button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])',
     ))
-    expect(dialog.contains(document.activeElement)).toBe(true)
+    const last = focusable[focusable.length - 1]
+    last.focus()
+    expect(fireEvent.keyDown(last, { key: 'Tab' }), 'Tab is not trapped').toBe(true)
 
-    focusable[0].focus()
-    fireEvent.keyDown(focusable[0], { key: 'Tab', shiftKey: true })
-    expect(focusable[focusable.length - 1]).toHaveFocus()
-    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Tab' })
-    expect(focusable[0]).toHaveFocus()
-
+    screen.getByLabelText('Reason').focus()
     fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Correct claim' })).not.toBeInTheDocument()
     expect(trigger).toHaveFocus()
   })
 })

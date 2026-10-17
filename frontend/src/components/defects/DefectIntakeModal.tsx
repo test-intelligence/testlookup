@@ -1,10 +1,16 @@
+/**
+ * New defect (manual intake): a form IN THE PAGE (W27 PAN-04), opened by the
+ * /defects header's "New defect" right under the page header. An
+ * `InlineFormSection` named "New defect", as the dialog was: focus moves to
+ * the title, Escape inside closes it (not mid-submit), the X is "Close".
+ */
 import { useMemo, useState } from 'react'
-import { useModalFocus } from '@/hooks/useModalFocus'
 import { useReleases } from '@/hooks/useReleases'
-import { Bug, X } from 'lucide-react'
 import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
+import type { InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import { analyticsService } from '@/services/analyticsService'
 import type {
   DefectIntakeCategory,
@@ -47,6 +53,8 @@ interface DefectIntakeModalProps {
   prefillComponent?: string | null
   onClose: () => void
   onSuccess?: () => void
+  /** The host section's slot: one form open there; a typed form asks before it is replaced. */
+  slot?: InlineSlot
 }
 
 export default function DefectIntakeModal({
@@ -56,6 +64,7 @@ export default function DefectIntakeModal({
   prefillComponent,
   onClose,
   onSuccess,
+  slot,
 }: DefectIntakeModalProps) {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
@@ -76,9 +85,6 @@ export default function DefectIntakeModal({
     () => (releaseList?.items ?? []).filter((r) => !r.project_id || r.project_id === projectId),
     [releaseList, projectId],
   )
-
-  // Escape (unless mid-submit), Tab trap, and return focus to the opener.
-  const dialogRef = useModalFocus({ onClose, canClose: !submitting })
 
   const titleTrimmed = title.trim()
   const jiraTrimmed = jiraUrl.trim()
@@ -122,36 +128,39 @@ export default function DefectIntakeModal({
   }
 
   return (
-    <div
-      ref={dialogRef}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
-      aria-label="New defect"
-    >
-      <div className="relative w-full max-w-2xl mx-4 bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-2xl shadow-2xl max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)] shrink-0">
-          <div className="flex items-center gap-3">
-            <Bug className="h-5 w-5 text-[var(--color-text)]" />
-            <div>
-              <h2 className="text-base font-semibold text-[var(--color-text)]">New defect</h2>
-              <p className="text-xs text-[var(--color-text-muted)]">
-                Create a defect in the current project. Attach a Jira link if it already exists.
-              </p>
-            </div>
-          </div>
+    <InlineFormSection
+      title="New defect"
+      description={
+        <span className="text-xs">Create a defect in the current project. Attach a Jira link if it already exists.</span>
+      }
+      onClose={onClose}
+      canClose={!submitting}
+      closeLabel="Close"
+      busy={submitting}
+      slot={slot}
+      onSubmit={handleSubmit}
+      footer={
+        <>
           <button
             type="button"
             onClick={onClose}
             disabled={submitting}
-            className="text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors disabled:opacity-40"
-            aria-label="Close"
+            className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-1.5 text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] disabled:opacity-40"
           >
-            <X className="h-5 w-5" />
+            Cancel
           </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="overflow-y-auto flex-1 px-6 py-5 space-y-4">
+          <button
+            type="submit"
+            disabled={!canSubmit}
+            className="inline-flex items-center gap-2 rounded-lg bg-[var(--color-accent)] px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {submitting && <LoadingSpinner size="sm" />}
+            {submitting ? 'Creating…' : 'Create defect'}
+          </button>
+        </>
+      }
+    >
+        <div className="max-w-2xl space-y-4">
           <div>
             <label htmlFor="defect-title" className="block text-xs font-medium text-[var(--color-text-secondary)] mb-1.5">
               Title <span className="text-[var(--status-failed)]">*</span>
@@ -319,27 +328,7 @@ export default function DefectIntakeModal({
               {error}
             </div>
           )}
-
-          <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--color-border)]">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={submitting}
-              className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-1.5 text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text)] disabled:opacity-40"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={!canSubmit}
-              className="inline-flex items-center gap-2 rounded-lg bg-[var(--color-accent)] px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {submitting && <LoadingSpinner size="sm" />}
-              {submitting ? 'Creating…' : 'Create defect'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        </div>
+    </InlineFormSection>
   )
 }

@@ -11,14 +11,21 @@
  * test names, matched values, names): it renders as React text only, never as
  * markup and never inside an `href`.
  *
- * The list is read while the dialog is mounted (`useClassificationHints`), the
+ * The list is read while the section is mounted (`useClassificationHints`), the
  * preview 400 ms after the reader stops typing and only at 3+ characters
  * (`useClassificationHintPreview`). A refused write (409 duplicate, 422 text)
  * shows the server's detail in ONE toast: the service suppresses the global one.
+ *
+ * W27 PAN-04: it renders IN THE PAGE, right under the /failures header (an
+ * `InlineFormSection` named "Classification hints", as the dialog was), and a
+ * hint's Delete asks in that hint's row (`InlineConfirm`, `Delete this hint?`)
+ * instead of the browser's native prompt: the strip's Delete is the only sender.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type SyntheticEvent } from 'react'
 import toast from 'react-hot-toast'
-import { useModalFocus } from '@/hooks/useModalFocus'
+import { InlineConfirm } from '@/components/ui/inPage/InlineConfirm'
+import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
+import type { InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import {
   PREVIEW_MIN_CHARS, useClassificationHintPreview, useClassificationHints,
 } from '@/hooks/useClassificationHints'
@@ -45,14 +52,27 @@ function useDebounced<T>(value: T, ms: number): T {
   return settled
 }
 
-export default function ClassificationHintsModal({ projectId, onClose }: { projectId: string; onClose: () => void }) {
+/** A hint's Enabled toggle saves at once: it is not typed input the section would ask about losing. */
+const notTyping = (event: SyntheticEvent) => event.stopPropagation()
+
+export default function ClassificationHintsModal({
+  projectId,
+  onClose,
+  slot,
+}: {
+  projectId: string
+  onClose: () => void
+  /** The page-header slot: one section open there; typed input asks before it is replaced. */
+  slot?: InlineSlot
+}) {
   const { data, error, isLoading, mutate } = useClassificationHints(projectId)
   const [field, setField] = useState<string>(HINT_FIELDS[0].id)
   const [pattern, setPattern] = useState('')
   const [category, setCategory] = useState<string>('INFRASTRUCTURE')
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
-  const dialogRef = useModalFocus({ onClose, canClose: !busy })
+  // The hint whose Delete asks right now (its row shows the strip).
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null)
 
   const settledPattern = useDebounced(pattern, PREVIEW_DEBOUNCE_MS)
   const preview = useClassificationHintPreview(projectId, field, settledPattern)
@@ -88,6 +108,8 @@ export default function ClassificationHintsModal({ projectId, onClose }: { proje
     if (ok) {
       setPattern('')
       setNote('')
+      // Nothing typed is left to lose.
+      slot?.setDirty(false)
     }
   }
 
@@ -98,34 +120,32 @@ export default function ClassificationHintsModal({ projectId, onClose }: { proje
       'Could not update the hint',
     )
 
+  // The row's Delete asks (the strip); the strip's Delete is the only thing that sends.
   const deleteHint = (hint: ClassificationHint) => {
-    if (!window.confirm('Delete this hint?')) return
+    setConfirmingDelete(null)
     void run(() => classificationHintService.remove(projectId, hint.id), 'Hint deleted', 'Could not delete the hint')
   }
 
   const hints = data?.items ?? []
 
   return (
-    <div
-      ref={dialogRef}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Classification hints"
-      data-classification-hints-modal=""
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={() => !busy && onClose()}
-    >
-      <div
-        className="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-lg bg-[var(--color-bg-card)] border border-[var(--color-border)] p-5 shadow-xl"
-        onClick={e => e.stopPropagation()}
-      >
-        <h2 className="text-base font-semibold text-[var(--color-text)] m-0">Classification hints</h2>
-        <p className="mt-1 text-[12.5px] text-[var(--color-text-muted)]">
+    <InlineFormSection
+      title="Classification hints"
+      description={
+        <span className="text-[12.5px]">
           Hints classify new failures before the AI does. A failure that matches several uses the oldest hint.
           Existing analyses are not changed.
-        </p>
-
-        <section aria-label="Hints" className="mt-4">
+        </span>
+      }
+      onClose={onClose}
+      canClose={!busy}
+      showClose={false}
+      busy={busy}
+      slot={slot}
+      dataAttributes={{ 'data-classification-hints-modal': '' }}
+    >
+      <div className="max-w-2xl">
+        <section aria-label="Hints" className="mt-1">
           {isLoading && !data ? (
             <p className="m-0 text-[12.5px] text-[var(--color-text-muted)]">Loading hints…</p>
           ) : error && !data ? (
@@ -150,7 +170,11 @@ export default function ClassificationHintsModal({ projectId, onClose }: { proje
                           type="checkbox"
                           checked={hint.enabled}
                           disabled={busy}
-                          onChange={() => void toggleHint(hint)}
+                          onInput={notTyping}
+                          onChange={(event) => {
+                            notTyping(event)
+                            void toggleHint(hint)
+                          }}
                           aria-label={`Enabled: ${hintSentence(hint)}`}
                         />
                         Enabled
@@ -158,7 +182,7 @@ export default function ClassificationHintsModal({ projectId, onClose }: { proje
                       <button
                         type="button"
                         disabled={busy}
-                        onClick={() => deleteHint(hint)}
+                        onClick={() => setConfirmingDelete(hint.id)}
                         aria-label={`Delete hint: ${hintSentence(hint)}`}
                         className="text-[12px] text-[var(--status-failed)] hover:underline disabled:opacity-50"
                       >
@@ -166,6 +190,18 @@ export default function ClassificationHintsModal({ projectId, onClose }: { proje
                       </button>
                     </div>
                   </div>
+                  {confirmingDelete === hint.id && (
+                    <div className="mt-2">
+                      <InlineConfirm
+                        message="Delete this hint?"
+                        confirmLabel="Delete"
+                        tone="danger"
+                        busy={busy}
+                        onConfirm={() => deleteHint(hint)}
+                        onCancel={() => setConfirmingDelete(null)}
+                      />
+                    </div>
+                  )}
                   {hint.note && (
                     <p className="m-0 mt-1 text-[11.5px] text-[var(--color-text-muted)] [overflow-wrap:anywhere]">{hint.note}</p>
                   )}
@@ -267,6 +303,6 @@ export default function ClassificationHintsModal({ projectId, onClose }: { proje
           </div>
         </form>
       </div>
-    </div>
+    </InlineFormSection>
   )
 }

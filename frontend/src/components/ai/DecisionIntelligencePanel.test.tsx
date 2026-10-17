@@ -178,11 +178,11 @@ describe('DecisionIntelligencePanel', () => {
     const evidenceTrigger = screen.getByRole('button', { name: 'Inspect evidence for fact-1' })
     evidenceTrigger.focus()
     fireEvent.click(evidenceTrigger)
-    expect(screen.getByRole('dialog')).toBeTruthy()
+    expect(screen.getByRole('region', { name: '2 of 10 tests failed.' })).toBeTruthy()
     expect(screen.getByText('bundle-1')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Close evidence' })).toHaveFocus()
     fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
-    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.queryByRole('region', { name: '2 of 10 tests failed.' })).toBeNull()
     expect(evidenceTrigger).toHaveFocus()
   })
 
