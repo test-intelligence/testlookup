@@ -45,6 +45,11 @@ const mocked = vi.hoisted(() => {
     logout,
   })
 
+  const DEFAULT_HISTORY = [
+    { id: 'n1', title: 'Run failed', status: 'failed', channel: 'email', is_read: false, created_at: new Date().toISOString() },
+  ] as Array<Record<string, unknown>>
+  const history = { logs: DEFAULT_HISTORY }
+
   return {
     navigate,
     setActiveProject,
@@ -55,6 +60,9 @@ const mocked = vi.hoisted(() => {
     useProjectStore,
     useAuthStore,
     projectStoreState,
+    authState,
+    history,
+    DEFAULT_HISTORY,
   }
 })
 
@@ -84,7 +92,7 @@ vi.mock('@/services/projectsService', () => ({
 vi.mock('@/hooks/useNotifications', () => ({
   useUnreadCount: () => ({ data: { unread: 3 } }),
   useNotificationHistory: () => ({
-    data: [{ id: 'n1', title: 'Run failed', status: 'failed', channel: 'email', is_read: false, created_at: new Date().toISOString() }],
+    data: mocked.history.logs,
     mutate: mocked.refreshLogs,
   }),
   invalidateNotifications: vi.fn(),
@@ -106,6 +114,8 @@ describe('TopBar', () => {
     mocked.refreshLogs.mockClear()
     mocked.projectStoreState.activeProjectId = null
     mocked.projectStoreState.activeProject = null
+    mocked.history.logs = mocked.DEFAULT_HISTORY
+    mocked.authState.user.role = 'ADMIN'
   })
 
   it('navigates to search page on Enter', () => {
@@ -277,6 +287,73 @@ describe('TopBar', () => {
     const links = screen.getAllByRole('link').filter((a) => /Settings|Manage notification/.test(a.textContent ?? ''))
     expect(links.length).toBe(2)
     for (const a of links) expect(a).toHaveAttribute('href', '/settings/my-notifications')
+  })
+
+  // NTF-01: a bell entry links only to the server's two allow-listed shapes,
+  // re-checked by role (/releases is a management route).
+  describe('bell entry links', () => {
+    const RUN = '0f8fad5b-d9cb-469f-a165-70867728950e'
+    const REL = '7c9e6679-7425-40de-944b-e07fc1f90ae7'
+    const entry = (id: string, title: string, link?: unknown) => ({
+      id, title, status: 'pending', channel: 'email', is_read: false, created_at: new Date().toISOString(),
+      ...(link === undefined ? {} : { link }),
+    })
+
+    function openBell() {
+      render(
+        <MemoryRouter>
+          <TopBar />
+        </MemoryRouter>,
+      )
+      fireEvent.click(screen.getByRole('button', { name: /^Notifications/ }))
+    }
+
+    it('a run decision entry is a link with exactly that href, and a click closes the popover', () => {
+      mocked.history.logs = [entry('g1', 'Quality gate failed: Checkout build 142 — test_pay is FAILED', `/release-gate/${RUN}`)]
+      mocked.authState.user.role = 'VIEWER'
+      openBell()
+      const link = screen.getByRole('link', { name: /Quality gate failed: Checkout build 142/ })
+      expect(link.getAttribute('href')).toBe(`/release-gate/${RUN}`)
+      fireEvent.click(link)
+      expect(screen.queryByRole('link', { name: /Quality gate failed: Checkout build 142/ })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Mark all read' })).toBeNull()
+    })
+
+    it('a release entry is a link for a QA lead and text for a viewer', () => {
+      mocked.history.logs = [entry('g2', 'Quality gate failed: 2026.10 — test_pay (checkout-e2e) is FAILED', `/releases/${REL}`)]
+      mocked.authState.user.role = 'QA_LEAD'
+      openBell()
+      expect(screen.getByRole('link', { name: /Quality gate failed: 2026\.10/ }).getAttribute('href')).toBe(`/releases/${REL}`)
+    })
+
+    it('...and for a viewer the same entry is text', () => {
+      mocked.history.logs = [entry('g2', 'Quality gate failed: 2026.10 — test_pay (checkout-e2e) is FAILED', `/releases/${REL}`)]
+      mocked.authState.user.role = 'VIEWER'
+      openBell()
+      expect(screen.getByText(/Quality gate failed: 2026\.10/)).toBeInTheDocument()
+      expect(screen.queryByRole('link', { name: /Quality gate failed/ })).toBeNull()
+    })
+
+    it.each([
+      ['no link', undefined],
+      ['null', null],
+      ['an absolute URL', `https://example.com/releases/${REL}`],
+      ['protocol-relative', '//example.com'],
+      ['another route', '/settings'],
+      ['not a uuid', '/releases/x'],
+    ])('an entry with %s is text', (_name, link) => {
+      mocked.history.logs = [entry('t1', 'Something happened', link)]
+      openBell()
+      expect(screen.getByText('Something happened')).toBeInTheDocument()
+      expect(screen.queryByRole('link', { name: 'Something happened' })).toBeNull()
+    })
+
+    it('a hostile title is React text inside the link', () => {
+      mocked.history.logs = [entry('h1', '<img src=x onerror=alert(1)>', `/release-gate/${RUN}`)]
+      openBell()
+      const link = screen.getByRole('link', { name: '<img src=x onerror=alert(1)>' })
+      expect(link.querySelector('img')).toBeNull()
+    })
   })
 
   it('closes the profile menu on Escape', () => {

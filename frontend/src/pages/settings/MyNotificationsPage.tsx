@@ -8,8 +8,15 @@
  * (SMTP) & channels"), and a team's own channel is Team channels'. Until P5
  * the admin page rendered this same body under its SMTP card, so an admin
  * edited their personal preferences on a page named for the server's.
+ *
+ * W09 NTF-01 / NTF-02: the event labels live in `notificationEventsModel.ts`;
+ * "Flaky test detected" is no longer offered (it is "Test newly flaky", and a
+ * stored one reads and saves as that); each event carries a hint when the top
+ * bar project's notification policy keeps it from being sent there. The
+ * policy is read once, at page level, and only with one project selected.
  */
 import { useId, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Bell, Mail, MessageSquare, Users, CheckCircle, XCircle, Send, Trash2, ChevronDown, ChevronUp } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
@@ -21,52 +28,45 @@ import {
   useNotificationHistory,
   invalidateNotifications,
 } from '@/hooks/useNotifications'
+import { useTransitionPolicy } from '@/hooks/useTransitionPolicy'
+import { usePermissions } from '@/hooks/usePermissions'
 import { notificationService } from '@/services/notificationService'
-import type {
-  NotificationChannel,
-  NotificationEventType,
-  NotificationPreference,
-  NotificationPreferencePayload,
+import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import {
+  parseTransitionPolicy,
+  type NotificationChannel,
+  type NotificationEventType,
+  type NotificationPreference,
+  type NotificationPreferencePayload,
+  type TransitionPolicy,
 } from '@/types/notifications'
+import {
+  ALL_PROJECTS_POLICY_NOTE,
+  EVENT_OPTIONS,
+  POLICY_LINK_PATH,
+  POLICY_LINK_TEXT,
+  normaliseEvents,
+  optionSuppression,
+  suppressionText,
+} from '@/components/notifications/notificationEventsModel'
 import { formatCompactDateTime } from '@/utils/formatters'
 
 const HELP_TOPIC = helpTopicParam('/settings/my-notifications')
 
 // ── Config ────────────────────────────────────────────────────
 
-const EVENT_LABELS: Record<NotificationEventType, string> = {
-  run_failed: 'Run failed',
-  run_passed: 'Run passed',
-  high_failure_rate: 'High failure rate',
-  ai_analysis_complete: 'AI analysis complete',
-  quality_gate_failed: 'Quality gate failed',
-  flaky_test_detected: 'Flaky test detected',
-  // Transition events — fire on state changes only (alert-fatigue fix)
-  'test.newly_failing': 'Test newly failing (transition)',
-  'test.recovered': 'Test recovered (transition)',
-  'test.newly_flaky': 'Test newly flaky (transition)',
-  'test.quarantined': 'Test quarantined (transition)',
-  'test.unquarantined': 'Test released from quarantine (transition)',
-  // Quarantine lifecycle events (US-5.4 / US-5.5)
-  'test.quarantine_stale': 'Quarantine past its SLA (lifecycle)',
-  'test.ready_to_unquarantine': 'Quarantined test ready to release (lifecycle)',
-  // Duration regressions (EXEC-05): one toggle below stands for both.
-  'test.newly_slow': 'A test or suite became slower',
-  'suite.newly_slow': 'A test or suite became slower',
-}
-
 /**
- * One checkbox per option. An option may stand for several events: "A test
- * or suite became slower" subscribes to `test.newly_slow` and
- * `suite.newly_slow` together, as one message names both.
+ * What the event list says about the top bar project's policy: hints for one
+ * project (`policy` null = not read, or unreadable: no hint, since the
+ * dispatcher fails open), or the All Projects line.
  */
-const SLOW_EVENTS: NotificationEventType[] = ['test.newly_slow', 'suite.newly_slow']
-const EVENT_OPTIONS: { key: string; label: string; events: NotificationEventType[] }[] = [
-  ...(Object.keys(EVENT_LABELS) as NotificationEventType[])
-    .filter(ev => !SLOW_EVENTS.includes(ev))
-    .map(ev => ({ key: ev, label: EVENT_LABELS[ev], events: [ev] })),
-  { key: 'became-slower', label: EVENT_LABELS['test.newly_slow'], events: SLOW_EVENTS },
-]
+interface PolicyContext {
+  allProjects: boolean
+  policy: TransitionPolicy | null
+  projectName: string
+  /** QA lead and admin: a link to the policy card after each hint. */
+  canChange: boolean
+}
 
 const CHANNEL_META: Record<NotificationChannel, { label: string; icon: React.ElementType; colour: string; placeholder: string }> = {
   email: {
@@ -98,10 +98,13 @@ const FIELD_LABEL = 'block text-xs font-medium text-[var(--color-text-muted)] mb
 function EventCheckboxes({
   selected,
   onChange,
+  policyContext,
 }: {
   selected: NotificationEventType[]
   onChange: (v: NotificationEventType[]) => void
+  policyContext: PolicyContext
 }) {
+  const hintBase = useId()
   // An option is on when any of its events is (a preference saved through the
   // API may hold one of a pair); toggling it sets or clears all of them.
   const isOn = (events: NotificationEventType[]) => events.some(e => selected.includes(e))
@@ -114,19 +117,44 @@ function EventCheckboxes({
 
   return (
     <div className="grid grid-cols-2 gap-2">
-      {EVENT_OPTIONS.map(option => (
-        <label key={option.key} className="flex items-center gap-2 cursor-pointer group">
-          <input
-            type="checkbox"
-            className="w-4 h-4 rounded border-[var(--color-border-light)] bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)] focus:ring-[var(--color-ring)]"
-            checked={isOn(option.events)}
-            onChange={() => toggle(option.events)}
-          />
-          <span className="text-sm text-[var(--color-text-secondary)] group-hover:text-[var(--color-text)] transition-colors">
-            {option.label}
-          </span>
-        </label>
-      ))}
+      {EVENT_OPTIONS.map(option => {
+        const suppression = policyContext.allProjects ? null : optionSuppression(option.events, policyContext.policy)
+        const hintId = `${hintBase}-${option.key}`
+        return (
+          <label
+            key={option.key}
+            className={`flex ${suppression ? 'items-start' : 'items-center'} gap-2 cursor-pointer group`}
+          >
+            <input
+              type="checkbox"
+              // The option's own name, whatever hint sits in the label beside it.
+              aria-label={option.label}
+              aria-describedby={suppression ? hintId : undefined}
+              className={`w-4 h-4 rounded border-[var(--color-border-light)] bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)] focus:ring-[var(--color-ring)]${suppression ? ' mt-0.5 shrink-0' : ''}`}
+              checked={isOn(option.events)}
+              onChange={() => toggle(option.events)}
+            />
+            <span className="min-w-0">
+              <span className="text-sm text-[var(--color-text-secondary)] group-hover:text-[var(--color-text)] transition-colors">
+                {option.label}
+              </span>
+              {suppression && (
+                <span id={hintId} data-event-hint={suppression} className="block text-[11px] leading-[14px] text-[var(--color-text-muted)]">
+                  {suppressionText(suppression, policyContext.projectName)}
+                  {policyContext.canChange && (
+                    <>
+                      {' · '}
+                      <Link to={POLICY_LINK_PATH} className="text-[var(--color-accent)] hover:underline">
+                        {POLICY_LINK_TEXT}
+                      </Link>
+                    </>
+                  )}
+                </span>
+              )}
+            </span>
+          </label>
+        )
+      })}
     </div>
   )
 }
@@ -135,10 +163,12 @@ function ChannelCard({
   channel,
   preference,
   onSaved,
+  policyContext,
 }: {
   channel: NotificationChannel
   preference?: NotificationPreference
   onSaved: () => void
+  policyContext: PolicyContext
 }) {
   const meta = CHANNEL_META[channel]
   const Icon = meta.icon
@@ -149,7 +179,9 @@ function ChannelCard({
   const [expanded, setExpanded] = useState(!!preference)
   const [enabled, setEnabled] = useState(preference?.enabled ?? true)
   const [events, setEvents] = useState<NotificationEventType[]>(
-    preference?.events ?? [
+    // A stored "flaky_test_detected" reads (and saves) as "test.newly_flaky":
+    // the server's alias rule, mirrored.
+    preference ? normaliseEvents(preference.events) : [
       'run_failed',
       'high_failure_rate',
       // Transition events on by default for new preferences — existing
@@ -242,7 +274,7 @@ function ChannelCard({
           <p className="font-semibold text-[var(--color-text)]">{meta.label}</p>
           <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
             {preference
-              ? `${preference.events.length} event(s) · ${preference.enabled ? 'Active' : 'Paused'}`
+              ? `${normaliseEvents(preference.events).length} event(s) · ${preference.enabled ? 'Active' : 'Paused'}`
               : 'Not configured'}
           </p>
         </div>
@@ -337,7 +369,12 @@ function ChannelCard({
           {/* Event selection: the long list keeps the full width. */}
           <div>
             <p className="block text-xs font-medium text-[var(--color-text-muted)] mb-2">Notify me when</p>
-            <EventCheckboxes selected={events} onChange={setEvents} />
+            {policyContext.allProjects && (
+              <p data-policy-note="" className="text-[11px] text-[var(--color-text-muted)] -mt-1 mb-2">
+                {ALL_PROJECTS_POLICY_NOTE}
+              </p>
+            )}
+            <EventCheckboxes selected={events} onChange={setEvents} policyContext={policyContext} />
           </div>
 
           {/* Actions */}
@@ -472,6 +509,20 @@ const CHANNELS: NotificationChannel[] = ['email', 'slack', 'teams']
 
 export default function MyNotificationsPage() {
   const { data: preferences, mutate: reload, isLoading, error } = useNotificationPreferences()
+  const activeProjectId = useProjectStore(s => s.activeProjectId)
+  const activeProject = useProjectStore(s => s.activeProject)
+  const { canAccessManagement } = usePermissions()
+
+  // One read for the page, only with one project selected (never in All Projects).
+  const policyProjectId = activeProjectId && activeProjectId !== ALL_PROJECTS_ID ? activeProjectId : null
+  const { policy: rawPolicy } = useTransitionPolicy(policyProjectId)
+  const policyContext: PolicyContext = {
+    allProjects: policyProjectId === null,
+    // Parsed again here: the hints never trust a shape they did not check.
+    policy: parseTransitionPolicy(rawPolicy),
+    projectName: activeProject?.name ?? 'this project',
+    canChange: canAccessManagement,
+  }
 
   const prefByChannel = (ch: NotificationChannel) =>
     preferences?.find(p => p.channel === ch && p.project_id === null)
@@ -501,6 +552,7 @@ export default function MyNotificationsPage() {
                 channel={ch}
                 preference={prefByChannel(ch)}
                 onSaved={reload}
+                policyContext={policyContext}
               />
             ))}
           </div>

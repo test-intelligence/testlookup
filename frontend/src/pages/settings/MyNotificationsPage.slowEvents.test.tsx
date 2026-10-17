@@ -32,6 +32,10 @@ vi.mock('@/hooks/useNotifications', () => ({
   useNotificationHistory: () => ({ data: [], mutate: vi.fn() }),
   invalidateNotifications: vi.fn(() => Promise.resolve()),
 }))
+// NTF-02's policy read (its own hook module): no project policy in these tests.
+vi.mock('@/hooks/useTransitionPolicy', () => ({
+  useTransitionPolicy: () => ({ policy: null, error: undefined, isLoading: false, mutate: vi.fn() }),
+}))
 
 function slackPref(events: NotificationPreference['events']): NotificationPreference {
   return {
@@ -97,5 +101,36 @@ describe('MyNotificationsPage: became slower', () => {
     const { container } = render(<MemoryRouter><MyNotificationsPage /></MemoryRouter>)
     fireEvent.click(slackCard(container).getByRole('button', { name: /Slack/ }))
     expect((screen.getByLabelText(SLOWER) as HTMLInputElement).checked).toBe(false)
+  })
+})
+
+// NTF-01: "Flaky test detected" never fired (no producer); it is "Test newly
+// flaky". A preference still holding it reads and SAVES as test.newly_flaky.
+describe('MyNotificationsPage: Flaky test detected folds into Test newly flaky', () => {
+  beforeEach(() => {
+    svc.updatePreference.mockClear()
+  })
+
+  it('a stored ["flaky_test_detected"] renders "Test newly flaky (transition)" ticked and Save sends ["test.newly_flaky"]', async () => {
+    prefs.data = [slackPref(['flaky_test_detected'])]
+    const { container } = render(<MemoryRouter><MyNotificationsPage /></MemoryRouter>)
+    const card = slackCard(container)
+    expect(card.queryByLabelText('Flaky test detected')).toBeNull()
+    expect((card.getByLabelText('Test newly flaky (transition)') as HTMLInputElement).checked).toBe(true)
+    fireEvent.click(card.getByRole('button', { name: /Save/ }))
+    await waitFor(() => expect(svc.updatePreference).toHaveBeenCalledTimes(1))
+    const [, payload] = svc.updatePreference.mock.calls[0] as unknown as [string, { events: string[] }]
+    expect(payload.events).toEqual(['test.newly_flaky'])
+  })
+
+  it('ticking Quality gate failed saves it', async () => {
+    prefs.data = [slackPref(['run_failed'])]
+    const { container } = render(<MemoryRouter><MyNotificationsPage /></MemoryRouter>)
+    const card = slackCard(container)
+    fireEvent.click(card.getByLabelText('Quality gate failed'))
+    fireEvent.click(card.getByRole('button', { name: /Save/ }))
+    await waitFor(() => expect(svc.updatePreference).toHaveBeenCalledTimes(1))
+    const [, payload] = svc.updatePreference.mock.calls[0] as unknown as [string, { events: string[] }]
+    expect(payload.events).toEqual(['run_failed', 'quality_gate_failed'])
   })
 })

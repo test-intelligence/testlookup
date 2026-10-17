@@ -13,6 +13,7 @@ import PresentationToggle from '@/components/ui/PresentationToggle'
 import HelpMenu from './HelpMenu'
 import { HeaderPopover } from '@/components/ui/HeaderPopover'
 import { formatCompactDateTime } from '@/utils/formatCompactDateTime'
+import { notificationHref } from './notificationHref'
 
 const AVATAR_BG: Record<string, string> = {
   slate: 'bg-[var(--color-bg-hover)]', red: 'bg-[var(--status-failed-bg)]', orange: 'bg-[var(--status-broken-bg)]',
@@ -169,7 +170,7 @@ export default function TopBar({ navToggle = null }: { navToggle?: TopBarNavTogg
   const [bellOpen, setBellOpen] = useState(false)
   const bellTriggerRef = useRef<HTMLButtonElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
-  const { isAdmin } = usePermissions()
+  const { isAdmin, canAccessManagement } = usePermissions()
 
   const { data: unreadData } = useUnreadCount()
   const { data: recentLogs, mutate: refreshLogs } = useNotificationHistory(false)
@@ -359,36 +360,50 @@ export default function TopBar({ navToggle = null }: { navToggle?: TopBarNavTogg
                 </div>
               ) : (
                 <ul>
-                  {recentLogs.slice(0, 15).map(log => (
-                    <li
-                      key={log.id}
-                      className={`px-4 py-3 border-b border-[var(--color-border)] last:border-0 flex items-start gap-3 hover:bg-[var(--color-bg-hover)]/30 transition-colors ${
-                        !log.is_read ? 'bg-[var(--color-bg-hover)]/20' : ''
-                      }`}
-                    >
-                      <span className="mt-0.5 shrink-0">
-                        {log.status === 'sent' ? (
-                          <CheckCircle className="w-4 h-4 text-[var(--status-passed)]" />
-                        ) : (
-                          <XCircle className="w-4 h-4 text-[var(--status-failed)]" />
+                  {recentLogs.slice(0, 15).map(log => {
+                    // NTF-01: an allow-listed in-app path (re-checked by shape
+                    // and role), else the entry stays text.
+                    const href = notificationHref(log, { canAccessManagement })
+                    const title = (
+                      <p className={`text-sm truncate ${!log.is_read ? 'text-[var(--color-text)] font-medium' : 'text-[var(--color-text-muted)]'}`}>
+                        {log.title}
+                      </p>
+                    )
+                    return (
+                      <li
+                        key={log.id}
+                        className={`px-4 py-3 border-b border-[var(--color-border)] last:border-0 flex items-start gap-3 hover:bg-[var(--color-bg-hover)]/30 transition-colors ${
+                          !log.is_read ? 'bg-[var(--color-bg-hover)]/20' : ''
+                        }`}
+                      >
+                        <span className="mt-0.5 shrink-0">
+                          {log.status === 'sent' ? (
+                            <CheckCircle className="w-4 h-4 text-[var(--status-passed)]" />
+                          ) : (
+                            <XCircle className="w-4 h-4 text-[var(--status-failed)]" />
+                          )}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          {href ? (
+                            <Link to={href} onClick={() => setBellOpen(false)} className="block hover:underline" data-notification-link="">
+                              {title}
+                            </Link>
+                          ) : (
+                            title
+                          )}
+                          <p
+                            className="text-xs text-[var(--color-text-muted)] mt-0.5"
+                            title={new Date(log.created_at).toISOString()}
+                          >
+                            {log.channel.toUpperCase()} · {formatCompactDateTime(log.created_at)}
+                          </p>
+                        </div>
+                        {!log.is_read && (
+                          <span className="w-2 h-2 rounded-full bg-[var(--color-bg-hover)] shrink-0 mt-1.5" />
                         )}
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <p className={`text-sm truncate ${!log.is_read ? 'text-[var(--color-text)] font-medium' : 'text-[var(--color-text-muted)]'}`}>
-                          {log.title}
-                        </p>
-                        <p
-                          className="text-xs text-[var(--color-text-muted)] mt-0.5"
-                          title={new Date(log.created_at).toISOString()}
-                        >
-                          {log.channel.toUpperCase()} · {formatCompactDateTime(log.created_at)}
-                        </p>
-                      </div>
-                      {!log.is_read && (
-                        <span className="w-2 h-2 rounded-full bg-[var(--color-bg-hover)] shrink-0 mt-1.5" />
-                      )}
-                    </li>
-                  ))}
+                      </li>
+                    )
+                  })}
                 </ul>
               )}
             </div>
