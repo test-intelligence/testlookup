@@ -37,6 +37,7 @@ import {
 import toast from 'react-hot-toast'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import AllReleasesBadge from '@/components/ui/AllReleasesBadge'
+import InlineConfirm from '@/components/ui/inPage/InlineConfirm'
 import { useNow } from '@/hooks/useNow'
 import PageShell from '@/components/layout/PageShell'
 import PageHeader from '@/components/ui/PageHeader'
@@ -560,12 +561,20 @@ function renderHighlightedQuery(q: string): React.ReactNode {
   return parts
 }
 
+/**
+ * The recent searches card. Clear history asks inside the card, right under its
+ * header (W27b: in the page, never the browser's prompt); the strip's Clear is
+ * the only control that clears.
+ */
 function RecentList({
-  rows, onPick, onClear,
+  rows, onPick, onClear, confirming, onConfirmClear, onCancelClear,
 }: {
   rows: RecentSearch[]
   onPick: (r: RecentSearch) => void
   onClear: () => void
+  confirming: boolean
+  onConfirmClear: () => void
+  onCancelClear: () => void
 }) {
   return (
     <CardShell
@@ -588,6 +597,17 @@ function RecentList({
         )
       }
     >
+      {confirming && rows.length > 0 && (
+        <div className="px-4 pt-3">
+          <InlineConfirm
+            message={`Clear all ${rows.length} recent search${rows.length === 1 ? '' : 'es'}? This can't be undone.`}
+            confirmLabel="Clear"
+            tone="danger"
+            onConfirm={onConfirmClear}
+            onCancel={onCancelClear}
+          />
+        </div>
+      )}
       {rows.length === 0 ? (
         <div className="px-4 py-6 text-center">
           <p className="text-[13px] m-0 mb-2" style={{ color: 'var(--color-text-secondary)' }}>
@@ -889,6 +909,10 @@ export default function SearchPage() {
   // though the data was sitting in Postgres.
   const [totalCounts, setTotalCounts] = useState<Record<SearchEntityType, number> | null>(null)
   const [recents, setRecents] = useState<RecentSearch[]>(() => readRecents())
+  // Clear history asks in the recent searches card (W27b). The card leaves the
+  // page while a query is typed, and its question goes with it.
+  const [confirmingClear, setConfirmingClear] = useState(false)
+  if (confirmingClear && query.trim() !== '') setConfirmingClear(false)
   const [saved, setSaved] = useState<SavedSearch[]>(() => readSaved())
 
   const inputRef = useRef<HTMLInputElement>(null)
@@ -1061,11 +1085,9 @@ export default function SearchPage() {
 
   const handleClearHistory = () => {
     if (recents.length === 0) return
-    if (window.confirm(`Clear all ${recents.length} recent search${recents.length === 1 ? '' : 'es'}? This can't be undone.`)) {
-      setRecents([])
-      writeRecents([])
-      toast.success('Recent searches cleared')
-    }
+    setRecents([])
+    writeRecents([])
+    toast.success('Recent searches cleared')
   }
 
   const handleOpenResult = (row: GlobalSearchResult) => {
@@ -1282,7 +1304,10 @@ export default function SearchPage() {
             <RecentList
               rows={recents}
               onPick={(r) => handlePick(r.query, r.mode, r.scope)}
-              onClear={handleClearHistory}
+              onClear={() => { if (recents.length > 0) setConfirmingClear(true) }}
+              confirming={confirmingClear}
+              onConfirmClear={() => { setConfirmingClear(false); handleClearHistory() }}
+              onCancelClear={() => setConfirmingClear(false)}
             />
             <SavedList
               rows={saved}

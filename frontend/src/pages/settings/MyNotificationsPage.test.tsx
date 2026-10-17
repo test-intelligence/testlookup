@@ -13,11 +13,13 @@
  * read once per page and never in All Projects; NTF-01: "Flaky test
  * detected" is not offered, "Quality gate failed" is.
  */
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import toast from 'react-hot-toast'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import MyNotificationsPage from './MyNotificationsPage'
+import { invalidateNotifications } from '@/hooks/useNotifications'
 import type { NotificationPreference } from '@/types/notifications'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { useAuthStore } from '@/store/authStore'
@@ -40,6 +42,16 @@ vi.mock('@/hooks/useNotifications', () => ({
   useNotificationPreferences: () => ({ data: prefs.data, error: prefs.error, mutate: vi.fn(), isLoading: false }),
   useNotificationHistory: () => ({ data: [], mutate: vi.fn() }),
   invalidateNotifications: vi.fn(),
+}))
+// W27b: the channel card's Remove (no other case here writes).
+const notify = vi.hoisted(() => ({ deletePreference: vi.fn() }))
+vi.mock('@/services/notificationService', () => ({
+  notificationService: {
+    deletePreference: notify.deletePreference,
+    updatePreference: vi.fn(),
+    upsertPreference: vi.fn(),
+    sendTest: vi.fn(),
+  },
 }))
 const policyHook = vi.hoisted(() => ({ policy: null as unknown, calls: [] as (string | null)[] }))
 vi.mock('@/hooks/useTransitionPolicy', () => ({
@@ -282,5 +294,69 @@ describe('MyNotificationsPage: the project policy hints (NTF-02)', () => {
     const { container } = renderPage()
     expect(container.querySelector('img')).toBeNull()
     expect(screen.getAllByText(/Not sent in <img src=x onerror=alert\(1\)>: per-run/).length).toBe(3)
+  })
+})
+
+/**
+ * W27b PAN-06 (Z1): a channel card's Remove asks inside the card, under its
+ * actions row, never with the browser's prompt. The card's Remove sends
+ * nothing; the strip's Remove is the only sender, once, and still refreshes
+ * every notification key (`invalidateNotifications`); Cancel and Escape send
+ * nothing.
+ */
+describe('MyNotificationsPage: Remove asks in the channel card (W27b)', () => {
+  const strip = () => document.querySelector('[data-inline-confirm]') as HTMLElement | null
+
+  beforeEach(() => {
+    notify.deletePreference.mockReset().mockResolvedValue(undefined)
+    vi.mocked(invalidateNotifications).mockClear()
+    prefs.data = [SLACK_PREF]
+  })
+
+  it('asks under the actions row; the strip sends one DELETE, refreshes, and toasts', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm')
+    const success = vi.spyOn(toast, 'success')
+    const { container } = renderPage()
+    const card = container.querySelector('[data-channel-card="slack"]') as HTMLElement
+    const remove = within(card).getByRole('button', { name: 'Remove' })
+
+    fireEvent.click(remove)
+    expect(notify.deletePreference).not.toHaveBeenCalled()
+    const asked = strip() as HTMLElement
+    expect(asked.querySelector('p')?.textContent).toBe('Remove Slack notification preference?')
+    expect(card.contains(asked)).toBe(true)
+    const actions = remove.parentElement as HTMLElement
+    expect(actions.nextElementSibling).toBe(asked)
+
+    fireEvent.click(within(asked).getByRole('button', { name: 'Remove' }))
+    expect(strip()).toBeNull()
+    await waitFor(() => expect(success).toHaveBeenCalledWith('Slack preference removed'))
+    expect(notify.deletePreference).toHaveBeenCalledTimes(1)
+    expect(notify.deletePreference).toHaveBeenCalledWith('pref-slack')
+    expect(invalidateNotifications).toHaveBeenCalledTimes(1)
+    expect(confirmSpy).not.toHaveBeenCalled()
+    confirmSpy.mockRestore()
+    success.mockRestore()
+  })
+
+  it('Cancel and Escape send nothing; collapsing the card drops the question', () => {
+    const { container } = renderPage()
+    const card = container.querySelector('[data-channel-card="slack"]') as HTMLElement
+    const remove = () => within(card).getByRole('button', { name: 'Remove' })
+
+    fireEvent.click(remove())
+    fireEvent.click(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }))
+    expect(strip()).toBeNull()
+    fireEvent.click(remove())
+    fireEvent.keyDown(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }), { key: 'Escape' })
+    expect(strip()).toBeNull()
+
+    fireEvent.click(remove())
+    const header = within(card).getByRole('button', { name: /Slack/ })
+    fireEvent.click(header)
+    fireEvent.click(header)
+    expect(strip()).toBeNull()
+    expect(notify.deletePreference).not.toHaveBeenCalled()
+    expect(invalidateNotifications).not.toHaveBeenCalled()
   })
 })

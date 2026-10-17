@@ -142,12 +142,63 @@ describe('TeamChannelsPage', () => {
 
   it('Remove deletes the team’s channel after a confirm', async () => {
     service.deleteTeamChannel.mockResolvedValue(undefined)
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
     renderPage()
     fireEvent.click(within(row('Identity')).getByRole('button', { name: 'Remove' }))
+    // W27b: the question is asked in the row under it; its Remove sends.
+    fireEvent.click(within(document.querySelector('[data-inline-confirm]') as HTMLElement).getByRole('button', { name: 'Remove' }))
     await waitFor(() => expect(service.deleteTeamChannel).toHaveBeenCalledWith('proj-1', 'Identity'))
     expect(state.refreshChannels).toHaveBeenCalled()
-    confirm.mockRestore()
+  })
+
+  /**
+   * W27b PAN-06 (C1): Remove asks in a full-width row right under the team's
+   * row, never with the browser's prompt. The row's Remove sends nothing; the
+   * strip's Remove is the only sender, once; Cancel and Escape send nothing.
+   * The strip row is `data-in-page-row` (never `data-team-row`) and spans every
+   * column.
+   */
+  it('Remove asks in a full-width row under the team; the strip sends one DELETE', async () => {
+    const nativeConfirm = vi.spyOn(window, 'confirm')
+    service.deleteTeamChannel.mockResolvedValue(undefined)
+    renderPage()
+    const teamRows = document.querySelectorAll('[data-team-row]').length
+
+    fireEvent.click(within(row('Identity')).getByRole('button', { name: 'Remove' }))
+    expect(service.deleteTeamChannel).not.toHaveBeenCalled()
+    const asked = document.querySelector('[data-inline-confirm]') as HTMLElement
+    expect(asked.querySelector('p')?.textContent).toBe('Remove the notification channel for Identity?')
+    expect(asked.querySelector('strong')?.textContent).toBe('Identity')
+    const stripRow = row('Identity').nextElementSibling as HTMLElement
+    expect(stripRow).toHaveAttribute('data-in-page-row')
+    expect(stripRow.hasAttribute('data-team-row')).toBe(false)
+    expect(stripRow.contains(asked)).toBe(true)
+    expect(stripRow.querySelector('td')).toHaveAttribute('colspan', '4')
+    expect(document.querySelectorAll('[data-team-row]')).toHaveLength(teamRows)
+
+    fireEvent.click(within(asked).getByRole('button', { name: 'Remove' }))
+    expect(document.querySelector('[data-inline-confirm]')).toBeNull()
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Team channel removed'))
+    expect(service.deleteTeamChannel).toHaveBeenCalledTimes(1)
+    expect(service.deleteTeamChannel).toHaveBeenCalledWith('proj-1', 'Identity')
+    expect(state.refreshChannels).toHaveBeenCalledTimes(1)
+    expect(nativeConfirm).not.toHaveBeenCalled()
+    nativeConfirm.mockRestore()
+  })
+
+  it('Remove: Cancel and Escape send nothing; one question per table', () => {
+    renderPage()
+    const strip = () => document.querySelector('[data-inline-confirm]') as HTMLElement | null
+    fireEvent.click(within(row('Identity')).getByRole('button', { name: 'Remove' }))
+    fireEvent.click(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }))
+    expect(strip()).toBeNull()
+
+    fireEvent.click(within(row('Identity')).getByRole('button', { name: 'Remove' }))
+    fireEvent.click(within(row('Legacy')).getByRole('button', { name: 'Remove' }))
+    expect(document.querySelectorAll('[data-inline-confirm]')).toHaveLength(1)
+    expect(row('Legacy').nextElementSibling?.contains(strip())).toBe(true)
+    fireEvent.keyDown(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }), { key: 'Escape' })
+    expect(strip()).toBeNull()
+    expect(service.deleteTeamChannel).not.toHaveBeenCalled()
   })
 
   it('says when either load failed', () => {

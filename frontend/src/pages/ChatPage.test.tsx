@@ -204,4 +204,61 @@ describe('ChatPage', () => {
     renderPage()
     expect(screen.getByTestId('chat-messages-unavailable')).toBeInTheDocument()
   })
+
+  /**
+   * W27b PAN-05 (Y4): a conversation's delete asks right under that conversation
+   * in the list, never with the browser's prompt. The trash button sends nothing;
+   * the strip's Delete is the only sender, once; Cancel and Escape send nothing.
+   */
+  describe('a conversation\'s delete asks in the list', () => {
+    const SESSIONS = [
+      { id: 's-1', project_id: 'p-1', title: 'Why did Auth fail?', created_at: 't', updated_at: 't' },
+      { id: 's-2', project_id: 'p-1', title: 'Flaky checkout tests', created_at: 't', updated_at: 't' },
+    ]
+    const strip = () => document.querySelector('[data-inline-confirm]') as HTMLElement | null
+    const item = (title: string) =>
+      screen.getAllByTestId('chat-session').find((el) => el.textContent?.includes(title)) as HTMLElement
+
+    it('asks right under the conversation; the strip\'s Delete removes it, once', () => {
+      const confirmSpy = vi.spyOn(window, 'confirm')
+      const removeSession = vi.fn().mockResolvedValue(undefined)
+      state.conversation = conversation({ sessions: SESSIONS, removeSession })
+      renderPage()
+
+      fireEvent.click(within(item('Why did Auth fail?')).getByRole('button', { name: 'Delete conversation' }))
+      expect(removeSession).not.toHaveBeenCalled()
+      const asked = strip() as HTMLElement
+      expect(asked.querySelector('p')?.textContent).toBe('Delete this conversation?')
+      // Right under that conversation, outside it (its click selects the conversation).
+      expect(item('Why did Auth fail?').nextElementSibling).toBe(asked.closest('[data-in-page-row]'))
+      expect(item('Why did Auth fail?').contains(asked)).toBe(false)
+      expect(state.conversation.selectSession).not.toHaveBeenCalled()
+
+      fireEvent.click(within(asked).getByRole('button', { name: 'Delete' }))
+      expect(strip()).toBeNull()
+      expect(removeSession).toHaveBeenCalledTimes(1)
+      expect(removeSession).toHaveBeenCalledWith('s-1')
+      expect(confirmSpy).not.toHaveBeenCalled()
+      confirmSpy.mockRestore()
+    })
+
+    it('Cancel and Escape send nothing; one strip at a time', () => {
+      const removeSession = vi.fn()
+      state.conversation = conversation({ sessions: SESSIONS, removeSession })
+      renderPage()
+
+      fireEvent.click(within(item('Why did Auth fail?')).getByRole('button', { name: 'Delete conversation' }))
+      fireEvent.click(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }))
+      expect(strip()).toBeNull()
+
+      fireEvent.click(within(item('Why did Auth fail?')).getByRole('button', { name: 'Delete conversation' }))
+      fireEvent.click(within(item('Flaky checkout tests')).getByRole('button', { name: 'Delete conversation' }))
+      expect(document.querySelectorAll('[data-inline-confirm]')).toHaveLength(1)
+      expect(item('Flaky checkout tests').nextElementSibling).toBe((strip() as HTMLElement).closest('[data-in-page-row]'))
+
+      fireEvent.keyDown(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }), { key: 'Escape' })
+      expect(strip()).toBeNull()
+      expect(removeSession).not.toHaveBeenCalled()
+    })
+  })
 })

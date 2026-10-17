@@ -43,7 +43,7 @@
  * → NO_GO", which is wrong at exactly the threshold — the backend returns
  * NO_GO there, so an operator setting 55 was told 55 would not trip it.
  */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { SWRConfig } from 'swr'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -55,18 +55,22 @@ import { useAuthStore } from '@/store/authStore'
 const mockCreatePolicy = vi.fn()
 const mockPublishPolicy = vi.fn()
 const mockToastError = vi.fn()
+const mockToastSuccess = vi.fn()
 const mockAppMutate = vi.fn()
-/** Every `usePolicies(enabled)` call, so a test can see the list asked for after a refused publish. */
-const listHook = vi.hoisted(() => ({ enabledCalls: [] as boolean[] }))
+const mockDeactivatePolicy = vi.fn()
+const mockRefreshPolicies = vi.fn()
+/** Every `usePolicies(enabled)` call, so a test can see the list asked for after a refused publish;
+ *  `policies` is what the list shows (empty unless a test lists some). */
+const listHook = vi.hoisted(() => ({ enabledCalls: [] as boolean[], policies: [] as unknown[] }))
 
 vi.mock('react-hot-toast', () => ({
-  default: { error: (m: string) => mockToastError(m), success: vi.fn() },
+  default: { error: (m: string) => mockToastError(m), success: (m: string) => mockToastSuccess(m) },
 }))
 
 vi.mock('@/hooks/usePolicyEditor', () => ({
   usePolicies: (enabled: boolean) => {
     listHook.enabledCalls.push(enabled)
-    return { policies: [], isLoading: false, isError: false, mutate: vi.fn() }
+    return { policies: listHook.policies, isLoading: false, isError: false, mutate: mockRefreshPolicies }
   },
   usePolicy: () => ({ policy: null, isLoading: false, isError: false }),
 }))
@@ -84,7 +88,7 @@ vi.mock('../services/policyService', async () => {
     createPolicy: (...a: unknown[]) => mockCreatePolicy(...a),
     updatePolicy: vi.fn(),
     publishPolicy: (...a: unknown[]) => mockPublishPolicy(...a),
-    deactivatePolicy: vi.fn(),
+    deactivatePolicy: (...a: unknown[]) => mockDeactivatePolicy(...a),
     simulatePolicy: vi.fn(),
   }
 })
@@ -142,6 +146,7 @@ function nameIt(value = 'Release gate') {
 beforeEach(() => {
   vi.clearAllMocks()
   listHook.enabledCalls.length = 0
+  listHook.policies = []
   // Every write on this page is ADMIN on the API; these tests author policies.
   // What a QA lead sees is PolicyEditorPage.roles.test.tsx.
   useAuthStore.setState({ user: { id: 'admin', role: 'ADMIN' } as never })
@@ -447,6 +452,13 @@ describe('the Performance regression rule is opt-in', () => {
  * page shows one, carrying the detail, and reloads the list so the winner's
  * Active badge is what the reader sees next.
  */
+/** The header's Publish, then the strip's Publish (W27b: the question is asked in the page). */
+function publishThroughTheStrip() {
+  fireEvent.click(screen.getByRole('button', { name: 'Publish' }))
+  const asked = document.querySelector('[data-inline-confirm]') as HTMLElement
+  fireEvent.click(within(asked).getByRole('button', { name: 'Publish' }))
+}
+
 describe('a refused publish', () => {
   const RACE =
     'Another policy was published for this scope at the same moment. Reload the policies and publish again if you still want this version.'
@@ -458,12 +470,11 @@ describe('a refused publish', () => {
   }
 
   it('shows exactly one toast, the server sentence, and reloads the policy list', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     refuse(409, RACE)
     renderAt('/policies/pol-9')
     expect(listHook.enabledCalls.every((enabled) => !enabled)).toBe(true)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Publish' }))
+    publishThroughTheStrip()
 
     await waitFor(() => expect(mockToastError).toHaveBeenCalledTimes(1))
     expect(mockPublishPolicy).toHaveBeenCalledWith('pol-9')
@@ -476,21 +487,103 @@ describe('a refused publish', () => {
   })
 
   it('says "Policy is already published" for the same draft published twice', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     refuse(409, 'Policy is already published')
     renderAt('/policies/pol-9')
-    fireEvent.click(screen.getByRole('button', { name: 'Publish' }))
+    publishThroughTheStrip()
     await waitFor(() => expect(mockToastError).toHaveBeenCalledTimes(1))
     expect(mockToastError).toHaveBeenCalledWith('Policy is already published')
   })
 
   it('stays on the editor for a failure that is not a conflict, still with one toast', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     mockPublishPolicy.mockRejectedValue(new Error('Network Error'))
     renderAt('/policies/pol-9')
-    fireEvent.click(screen.getByRole('button', { name: 'Publish' }))
+    publishThroughTheStrip()
     await waitFor(() => expect(mockToastError).toHaveBeenCalledTimes(1))
     expect(mockToastError).toHaveBeenCalledWith('Publish failed')
     expect(screen.getByRole('heading', { name: /^edit:/i })).toBeInTheDocument()
+  })
+})
+
+/**
+ * W27b PAN-05 (Y1, Y2): Publish and Deactivate ask in the page, not with the
+ * browser's prompt. The first click sends nothing; the strip's own button is
+ * the only sender, once; Cancel and Escape send nothing; the sentence is the
+ * old prompt's, word for word.
+ */
+const ACTIVE_POLICY = {
+  id: 'p-active', name: 'Checkout gate', version: 2, is_active: true, is_draft: false,
+  project_id: null, created_at: '2026-10-01T00:00:00Z', description: '', rules: {},
+}
+const PUBLISH_SENTENCE = 'Publish this policy? It will become active and the previous version will be deactivated.'
+
+const strip = () => document.querySelector('[data-inline-confirm]') as HTMLElement | null
+
+describe('Publish and Deactivate ask in the page', () => {
+  it('Publish: the header button only asks, right under the page header; the strip sends once', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm')
+    mockPublishPolicy.mockResolvedValue(undefined)
+    const { container } = renderAt('/policies/pol-9')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Publish' }))
+    expect(mockPublishPolicy).not.toHaveBeenCalled()
+    const asked = strip() as HTMLElement
+    expect(asked).not.toBeNull()
+    expect(asked.querySelector('p')?.textContent).toBe(PUBLISH_SENTENCE)
+    // Right under the page header, in the page (no overlay).
+    expect(container.querySelector('[data-page-header]')?.nextElementSibling).toBe(asked)
+    expect(container.querySelector('[aria-modal], [role="dialog"]')).toBeNull()
+
+    fireEvent.click(within(asked).getByRole('button', { name: 'Publish' }))
+    expect(strip()).toBeNull()
+    await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledWith('Policy published and activated'))
+    expect(mockPublishPolicy).toHaveBeenCalledTimes(1)
+    expect(mockPublishPolicy).toHaveBeenCalledWith('pol-9')
+    expect(confirmSpy).not.toHaveBeenCalled()
+    confirmSpy.mockRestore()
+  })
+
+  it('Publish: Cancel and Escape close the strip and send nothing', () => {
+    renderAt('/policies/pol-9')
+    fireEvent.click(screen.getByRole('button', { name: 'Publish' }))
+    fireEvent.click(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }))
+    expect(strip()).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Publish' }))
+    fireEvent.keyDown(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }), { key: 'Escape' })
+    expect(strip()).toBeNull()
+    expect(mockPublishPolicy).not.toHaveBeenCalled()
+  })
+
+  it('Deactivate: asks right under its policy card; the strip sends once and re-reads the list', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm')
+    listHook.policies = [ACTIVE_POLICY]
+    mockDeactivatePolicy.mockResolvedValue(undefined)
+    renderAt('/policies')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Deactivate' }))
+    expect(mockDeactivatePolicy).not.toHaveBeenCalled()
+    const asked = strip() as HTMLElement
+    expect(asked.querySelector('p')?.textContent).toBe('Deactivate this policy?')
+    const card = screen.getByText('Checkout gate').closest('.card') as HTMLElement
+    expect(card.nextElementSibling).toBe(asked.closest('[data-in-page-row]'))
+    expect(card.contains(asked)).toBe(false)
+
+    fireEvent.click(within(asked).getByRole('button', { name: 'Deactivate' }))
+    expect(strip()).toBeNull()
+    await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledWith('Policy deactivated'))
+    expect(mockDeactivatePolicy).toHaveBeenCalledTimes(1)
+    expect(mockDeactivatePolicy).toHaveBeenCalledWith('p-active')
+    expect(mockRefreshPolicies).toHaveBeenCalledTimes(1)
+    expect(confirmSpy).not.toHaveBeenCalled()
+    confirmSpy.mockRestore()
+  })
+
+  it('Deactivate: Escape in the strip is Cancel', () => {
+    listHook.policies = [ACTIVE_POLICY]
+    renderAt('/policies')
+    fireEvent.click(screen.getByRole('button', { name: 'Deactivate' }))
+    fireEvent.keyDown(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }), { key: 'Escape' })
+    expect(strip()).toBeNull()
+    expect(mockDeactivatePolicy).not.toHaveBeenCalled()
   })
 })

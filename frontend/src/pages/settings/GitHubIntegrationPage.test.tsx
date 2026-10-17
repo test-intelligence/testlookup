@@ -5,8 +5,10 @@
  * Pinned here: the page renders the whole GitHub form (repository, API URL,
  * token), its template header (compact, help topic), the two-column field
  * layout at >= 1280 px (P5 item 4), and that Save sends what was typed.
+ * W27b PAN-06 (I1): Remove asks in the page, inside the Repository card under
+ * its action row; the strip's Delete is the only sender.
  */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -14,12 +16,13 @@ import type { GitHubIntegrationRead } from '@/services/githubIntegrationService'
 
 const mockGet = vi.fn()
 const mockUpsert = vi.fn()
+const mockRemove = vi.fn()
 vi.mock('@/services/githubIntegrationService', () => ({
   githubIntegrationService: {
     get: (...a: unknown[]) => mockGet(...a),
     upsert: (...a: unknown[]) => mockUpsert(...a),
     test: vi.fn(),
-    remove: vi.fn(),
+    remove: (...a: unknown[]) => mockRemove(...a),
   },
 }))
 vi.mock('@/hooks/usePermissions', () => ({
@@ -33,7 +36,8 @@ vi.mock('@/store/projectStore', async (importOriginal) => {
     useProjectStore: (sel: (s: typeof state) => unknown) => sel(state),
   }
 })
-vi.mock('react-hot-toast', () => ({ default: { success: vi.fn(), error: vi.fn() } }))
+const mockToastSuccess = vi.fn()
+vi.mock('react-hot-toast', () => ({ default: { success: (m: string) => mockToastSuccess(m), error: vi.fn() } }))
 vi.mock('@/components/ui/ExperimentalBadge', () => ({ default: () => null }))
 
 import GitHubIntegrationPage from './GitHubIntegrationPage'
@@ -115,5 +119,49 @@ describe('GitHubIntegrationPage — the one place GitHub is configured', () => {
       'proj-1',
       expect.objectContaining({ repo_owner: 'acme', repo_name: 'api', pat: 'ghp_new' }),
     )
+  })
+
+  describe('Remove asks in the Repository card (W27b)', () => {
+    const strip = () => document.querySelector('[data-inline-confirm]') as HTMLElement | null
+
+    it('asks under the action row, inside the card; the strip Delete removes, once', async () => {
+      const confirmSpy = vi.spyOn(window, 'confirm')
+      mockGet.mockResolvedValue(existing())
+      mockRemove.mockResolvedValue(undefined)
+      renderPage()
+      const remove = await screen.findByRole('button', { name: 'Remove' })
+
+      fireEvent.click(remove)
+      expect(mockRemove).not.toHaveBeenCalled()
+      const asked = strip() as HTMLElement
+      expect(asked.querySelector('p')?.textContent).toBe('Delete GitHub integration for this project?')
+      // Inside the Repository card, right after the action row (not inside that flex row).
+      const actionRow = remove.parentElement as HTMLElement
+      expect(actionRow.nextElementSibling).toBe(asked)
+      expect(actionRow.contains(asked)).toBe(false)
+      expect(screen.getByRole('heading', { name: 'Repository' }).closest('section')?.contains(asked)).toBe(true)
+
+      fireEvent.click(within(asked).getByRole('button', { name: 'Delete' }))
+      expect(strip()).toBeNull()
+      await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledWith('Integration removed'))
+      expect(mockRemove).toHaveBeenCalledTimes(1)
+      expect(mockRemove).toHaveBeenCalledWith('proj-1')
+      expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull()
+      expect(screen.getByLabelText('Repository name')).toHaveValue('')
+      expect(confirmSpy).not.toHaveBeenCalled()
+      confirmSpy.mockRestore()
+    })
+
+    it('Cancel and Escape send nothing', async () => {
+      mockGet.mockResolvedValue(existing())
+      renderPage()
+      fireEvent.click(await screen.findByRole('button', { name: 'Remove' }))
+      fireEvent.click(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }))
+      expect(strip()).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
+      fireEvent.keyDown(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }), { key: 'Escape' })
+      expect(strip()).toBeNull()
+      expect(mockRemove).not.toHaveBeenCalled()
+    })
   })
 })

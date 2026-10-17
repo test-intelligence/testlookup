@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   AlertTriangle,
   CheckCircle2,
@@ -12,6 +12,7 @@ import {
 import { isAxiosError } from 'axios'
 import toast from 'react-hot-toast'
 import ExperimentalBadge from '@/components/ui/ExperimentalBadge'
+import InlineConfirm from '@/components/ui/inPage/InlineConfirm'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState'
@@ -69,7 +70,9 @@ function toFormState(config: GitLabConfig): FormState {
  * `has_token` is the only signal. When a token is stored the page shows
  * "Token set" plus "Replace token" / "Remove token" affordances; otherwise
  * an input. "Remove token" sends `token: ""` (the contract's clear semantics)
- * on the next save.
+ * on the next save. It asks first, in the token cell in place of the "Token
+ * set" line (W27b: `InlineConfirm`, never the browser's prompt); its Remove
+ * token only arms the removal — nothing is sent until Save.
  *
  * Project-scoped — in All Projects mode we prompt the user to pick one.
  */
@@ -89,6 +92,16 @@ export default function GitLabIntegrationPage() {
   const [replacing, setReplacing] = useState(false)
   const [tokenDraft, setTokenDraft] = useState('')
   const [removingToken, setRemovingToken] = useState(false)
+  // "Remove token" asks in place of the "Token set" line; a Cancel puts the
+  // line back and focus on its Remove token again (the strip replaced it).
+  const [confirmingRemoveToken, setConfirmingRemoveToken] = useState(false)
+  const removeTokenButton = useRef<HTMLButtonElement>(null)
+  const refocusRemoveToken = useRef(false)
+  useEffect(() => {
+    if (confirmingRemoveToken || !refocusRemoveToken.current) return
+    refocusRemoveToken.current = false
+    removeTokenButton.current?.focus()
+  }, [confirmingRemoveToken])
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [lastTest, setLastTest] = useState<GitLabConnectionTest | null>(null)
@@ -309,6 +322,21 @@ export default function GitLabIntegrationPage() {
                 </button>
               )}
             </div>
+          ) : confirmingRemoveToken && canEdit ? (
+            <InlineConfirm
+              message="Remove the stored GitLab token? The removal is applied when you save."
+              confirmLabel="Remove token"
+              tone="danger"
+              onConfirm={() => {
+                setConfirmingRemoveToken(false)
+                setRemovingToken(true)
+                setDirty(true)
+              }}
+              onCancel={() => {
+                refocusRemoveToken.current = true
+                setConfirmingRemoveToken(false)
+              }}
+            />
           ) : (
             <div className="flex items-center gap-2 text-xs">
               <span className="inline-flex items-center gap-1 text-[var(--status-passed)]">
@@ -325,17 +353,9 @@ export default function GitLabIntegrationPage() {
               )}
               {canEdit && (
                 <button
+                  ref={removeTokenButton}
                   type="button"
-                  onClick={() => {
-                    if (
-                      window.confirm(
-                        'Remove the stored GitLab token? The removal is applied when you save.',
-                      )
-                    ) {
-                      setRemovingToken(true)
-                      setDirty(true)
-                    }
-                  }}
+                  onClick={() => setConfirmingRemoveToken(true)}
                   className="text-[var(--status-failed)] hover:underline"
                 >
                   Remove token

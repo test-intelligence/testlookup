@@ -14,6 +14,9 @@
  * stored one reads and saves as that); each event carries a hint when the top
  * bar project's notification policy keeps it from being sent there. The
  * policy is read once, at page level, and only with one project selected.
+ *
+ * W27b PAN-06: a channel card's Remove asks inside the card, under its actions
+ * row (`InlineConfirm`), never with the browser's prompt.
  */
 import { useId, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -22,6 +25,7 @@ import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import DataUnavailable from '@/components/ui/DataUnavailable'
+import InlineConfirm from '@/components/ui/inPage/InlineConfirm'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import {
   useNotificationPreferences,
@@ -204,6 +208,8 @@ function ChannelCard({
   )
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
+  // Remove asks under the actions row first (W27b).
+  const [confirmingRemove, setConfirmingRemove] = useState(false)
 
   const buildPayload = (): NotificationPreferencePayload => ({
     channel,
@@ -236,7 +242,6 @@ function ChannelCard({
 
   const handleDelete = async () => {
     if (!preference) return
-    if (!confirm(`Remove ${meta.label} notification preference?`)) return
     try {
       await notificationService.deletePreference(preference.id)
       await invalidateNotifications()
@@ -265,7 +270,7 @@ function ChannelCard({
       {/* Header row */}
       <button
         className="w-full flex items-center gap-3 p-4 text-left hover:bg-[var(--color-bg-secondary)]/60 transition-colors"
-        onClick={() => setExpanded(v => !v)}
+        onClick={() => { setExpanded(v => !v); setConfirmingRemove(false) }}
       >
         <div className={`p-2 rounded-lg bg-[var(--color-bg-secondary)] ${meta.colour}`}>
           <Icon className="w-4 h-4" />
@@ -401,7 +406,7 @@ function ChannelCard({
 
             {preference && (
               <button
-                onClick={handleDelete}
+                onClick={() => setConfirmingRemove(true)}
                 className="ml-auto flex items-center gap-1.5 text-sm text-[var(--status-failed)] hover:text-[var(--status-failed)] transition-colors"
               >
                 <Trash2 className="w-4 h-4" />
@@ -409,6 +414,16 @@ function ChannelCard({
               </button>
             )}
           </div>
+
+          {preference && confirmingRemove && (
+            <InlineConfirm
+              message={`Remove ${meta.label} notification preference?`}
+              confirmLabel="Remove"
+              tone="danger"
+              onConfirm={() => { setConfirmingRemove(false); void handleDelete() }}
+              onCancel={() => setConfirmingRemove(false)}
+            />
+          )}
         </div>
       )}
     </div>

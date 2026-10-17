@@ -14,10 +14,11 @@
  *
  * Nothing new is asked on load (contract §6.5): the views are read when the
  * Saved Views or Preview tab opens, or when a picker on the Subscriptions tab
- * is clicked. Every new form is in the page (owner rule 2026-10-16); the two
- * existing `confirm`s (Unsubscribe, Delete view) stay until W27.
+ * is clicked. Every new form is in the page (owner rule 2026-10-16); since
+ * W27b the two questions (Unsubscribe, Delete view) are asked in the page too,
+ * each right under its row (`InlineConfirm`), never with the browser's prompt.
  */
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { clsx } from 'clsx';
 import PageHeader from '@/components/ui/PageHeader';
@@ -26,6 +27,7 @@ import { useTabParam } from '@/components/ui/useTabParam';
 import { helpTopicParam } from '@/components/help/helpTopics';
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline';
 import Disclosure from '@/components/ui/Disclosure';
+import InlineConfirm from '@/components/ui/inPage/InlineConfirm';
 import { buildDigestWorkflow } from '@/components/workflow/workflowPresets';
 import {
   type DigestContent,
@@ -122,6 +124,10 @@ export default function DigestsPage() {
   const reportViews = useMemo(() => pickableViews(views, projectId), [views, projectId]);
   const listedViews = useMemo(() => views.filter(v => isListedView(v)), [views]);
   const [editingView, setEditingView] = useState<'new' | string | null>(null);
+  // The question asked under one row (a subscription's Unsubscribe or a view's
+  // Delete); it belongs to its tab, so leaving the tab drops it.
+  const [confirming, setConfirming] = useState<{ tab: Tab; id: string } | null>(null);
+  if (confirming && confirming.tab !== tab) setConfirming(null);
   const viewSource: ViewSource = {
     requested: viewsWanted,
     views,
@@ -184,12 +190,10 @@ export default function DigestsPage() {
     try { await resumeSubscription(id); mutateSubs(); } catch { toast.error('Failed'); }
   };
   const handleDeleteSub = async (id: string) => {
-    if (!confirm('Unsubscribe from this digest?')) return;
     try { await deleteSubscription(id); toast.success('Unsubscribed'); mutateSubs(); } catch { toast.error('Failed'); }
   };
 
   const handleDeleteView = async (id: string) => {
-    if (!confirm('Delete this saved view?')) return;
     try { await deleteSavedView(id); mutateViews(); } catch { toast.error('Failed'); }
   };
 
@@ -361,35 +365,48 @@ export default function DigestsPage() {
 
               {subs.length === 0 && <div className="text-center py-8 text-[var(--color-text-muted)]">No digest subscriptions. Create one above.</div>}
               {subs.map(sub => (
-                <div key={sub.id} data-subscription-row={sub.id} className="bg-[var(--color-bg-secondary)] rounded-lg p-4 flex justify-between items-start gap-4">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[var(--color-text)] font-medium">{sub.name}</span>
-                      <span className={clsx('px-2 py-0.5 rounded text-xs', sub.is_paused ? 'bg-[var(--status-skipped-bg)]/40 text-[var(--status-skipped)]' : sub.is_active ? 'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]' : 'bg-[var(--color-bg-card)] text-[var(--color-text-muted)]')}>
-                        {sub.is_paused ? 'Paused' : sub.is_active ? 'Active' : 'Inactive'}
-                      </span>
+                <Fragment key={sub.id}>
+                  <div data-subscription-row={sub.id} className="bg-[var(--color-bg-secondary)] rounded-lg p-4 flex justify-between items-start gap-4">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[var(--color-text)] font-medium">{sub.name}</span>
+                        <span className={clsx('px-2 py-0.5 rounded text-xs', sub.is_paused ? 'bg-[var(--status-skipped-bg)]/40 text-[var(--status-skipped)]' : sub.is_active ? 'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]' : 'bg-[var(--color-bg-card)] text-[var(--color-text-muted)]')}>
+                          {sub.is_paused ? 'Paused' : sub.is_active ? 'Active' : 'Inactive'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-[var(--color-text-muted)] mt-1" data-subscription-summary="">
+                        {subscriptionSummary(sub)}
+                      </p>
+                      <SubscriptionScopeFix
+                        key={`${sub.id}:${sub.scope_problem ?? ''}:${sub.saved_view_id ?? ''}`}
+                        sub={sub}
+                        releases={releases}
+                        topBarProjectId={projectId ?? null}
+                        views={viewSource}
+                        onSaved={() => void mutateSubs()}
+                      />
                     </div>
-                    <p className="text-xs text-[var(--color-text-muted)] mt-1" data-subscription-summary="">
-                      {subscriptionSummary(sub)}
-                    </p>
-                    <SubscriptionScopeFix
-                      key={`${sub.id}:${sub.scope_problem ?? ''}:${sub.saved_view_id ?? ''}`}
-                      sub={sub}
-                      releases={releases}
-                      topBarProjectId={projectId ?? null}
-                      views={viewSource}
-                      onSaved={() => void mutateSubs()}
-                    />
+                    <div className="flex gap-2 shrink-0">
+                      {sub.is_paused ? (
+                        <button onClick={() => handleResume(sub.id)} className="px-3 py-1 text-xs bg-[var(--status-passed-bg)]/50 rounded text-[var(--status-passed)] hover:bg-[var(--status-passed-bg)]">Resume</button>
+                      ) : (
+                        <button onClick={() => handlePause(sub.id)} className="px-3 py-1 text-xs bg-[var(--status-skipped-bg)]/50 rounded text-[var(--status-skipped)] hover:bg-[var(--status-skipped-bg)]">Pause</button>
+                      )}
+                      <button onClick={() => setConfirming({ tab: 'subscriptions', id: sub.id })} className="px-3 py-1 text-xs bg-[var(--status-failed-bg)]/50 rounded text-[var(--status-failed)] hover:bg-[var(--status-failed-bg)]">Unsubscribe</button>
+                    </div>
                   </div>
-                  <div className="flex gap-2 shrink-0">
-                    {sub.is_paused ? (
-                      <button onClick={() => handleResume(sub.id)} className="px-3 py-1 text-xs bg-[var(--status-passed-bg)]/50 rounded text-[var(--status-passed)] hover:bg-[var(--status-passed-bg)]">Resume</button>
-                    ) : (
-                      <button onClick={() => handlePause(sub.id)} className="px-3 py-1 text-xs bg-[var(--status-skipped-bg)]/50 rounded text-[var(--status-skipped)] hover:bg-[var(--status-skipped-bg)]">Pause</button>
-                    )}
-                    <button onClick={() => handleDeleteSub(sub.id)} className="px-3 py-1 text-xs bg-[var(--status-failed-bg)]/50 rounded text-[var(--status-failed)] hover:bg-[var(--status-failed-bg)]">Unsubscribe</button>
-                  </div>
-                </div>
+                  {confirming?.tab === 'subscriptions' && confirming.id === sub.id && (
+                    <div data-in-page-row="">
+                      <InlineConfirm
+                        message="Unsubscribe from this digest?"
+                        confirmLabel="Unsubscribe"
+                        tone="danger"
+                        onConfirm={() => { setConfirming(null); void handleDeleteSub(sub.id); }}
+                        onCancel={() => setConfirming(null)}
+                      />
+                    </div>
+                  )}
+                </Fragment>
               ))}
             </div>
           )}
@@ -437,14 +454,26 @@ export default function DigestsPage() {
                     onCancel={() => setEditingView(null)}
                   />
                 ) : (
-                  <DigestViewRow
-                    key={view.id}
-                    view={view}
-                    releases={releaseList}
-                    onEdit={() => setEditingView(view.id)}
-                    onDelete={() => void handleDeleteView(view.id)}
-                    canEdit={!!projectId}
-                  />
+                  <Fragment key={view.id}>
+                    <DigestViewRow
+                      view={view}
+                      releases={releaseList}
+                      onEdit={() => { setConfirming(null); setEditingView(view.id); }}
+                      onDelete={() => setConfirming({ tab: 'saved-views', id: view.id })}
+                      canEdit={!!projectId}
+                    />
+                    {confirming?.tab === 'saved-views' && confirming.id === view.id && (
+                      <div data-in-page-row="">
+                        <InlineConfirm
+                          message="Delete this saved view?"
+                          confirmLabel="Delete"
+                          tone="danger"
+                          onConfirm={() => { setConfirming(null); void handleDeleteView(view.id); }}
+                          onCancel={() => setConfirming(null)}
+                        />
+                      </div>
+                    )}
+                  </Fragment>
                 )
               ))}
             </div>

@@ -20,7 +20,9 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, useLocation } from 'react-router-dom'
+import toast from 'react-hot-toast'
 import DigestsPage from './DigestsPage'
+import { deleteSubscription } from '../../services/digestService'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 
 const mockFlags = vi.hoisted(() => ({ byKey: {} as Record<string, boolean> }))
@@ -528,5 +530,105 @@ describe('DigestsPage NTF-04: saved report views', () => {
     expect(await screen.findByText(/Weekly Digest — Checkout/)).toBeInTheDocument()
     expect(document.querySelector('[data-digest-scope]')).toBeNull()
     expect(screen.queryByText(/Filtered by view/)).toBeNull()
+  })
+})
+
+/**
+ * W27b PAN-06 (G1, G2): Unsubscribe and a view's Delete ask right under their
+ * row, never with the browser's prompt. The row's button sends nothing; the
+ * strip's button is the only sender, once; Cancel, Escape and leaving the tab
+ * send nothing. The rows keep their own hooks (`data-subscription-row`,
+ * `data-digest-view-row`); the strip row carries `data-in-page-row`.
+ */
+describe('DigestsPage W27b: Unsubscribe and Delete view ask under their row', () => {
+  const strip = () => document.querySelector('[data-inline-confirm]') as HTMLElement | null
+  const question = () => (strip() as HTMLElement).querySelector('p')?.textContent
+  const viewRow = (id: string) => document.querySelector(`[data-digest-view-row="${id}"]`) as HTMLElement
+
+  beforeEach(() => {
+    vi.mocked(deleteSubscription).mockReset().mockResolvedValue(undefined as never)
+    views.deleteSavedView.mockReset().mockResolvedValue(undefined)
+  })
+
+  it('Unsubscribe: asks right under its row; the strip sends one DELETE, the toast, the re-read', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm')
+    const success = vi.spyOn(toast, 'success')
+    inCheckout()
+    digestData.subs = [sub({ scope_label: '2026.10' })]
+    render(<DigestsPage />, { wrapper: MemoryRouter })
+
+    fireEvent.click(within(row('sub-1')).getByRole('button', { name: 'Unsubscribe' }))
+    expect(deleteSubscription).not.toHaveBeenCalled()
+    expect(question()).toBe('Unsubscribe from this digest?')
+    expect(row('sub-1').nextElementSibling).toBe((strip() as HTMLElement).closest('[data-in-page-row]'))
+    expect(document.querySelectorAll('[data-subscription-row]')).toHaveLength(1)
+
+    fireEvent.click(within(strip() as HTMLElement).getByRole('button', { name: 'Unsubscribe' }))
+    expect(strip()).toBeNull()
+    await waitFor(() => expect(success).toHaveBeenCalledWith('Unsubscribed'))
+    expect(deleteSubscription).toHaveBeenCalledTimes(1)
+    expect(deleteSubscription).toHaveBeenCalledWith('sub-1')
+    expect(digestData.mutateSubs).toHaveBeenCalled()
+    expect(confirmSpy).not.toHaveBeenCalled()
+    confirmSpy.mockRestore()
+    success.mockRestore()
+  })
+
+  it('Unsubscribe: Cancel and Escape send nothing; leaving the tab drops the question', () => {
+    inCheckout()
+    digestData.subs = [sub({ scope_label: '2026.10' })]
+    render(<DigestsPage />, { wrapper: MemoryRouter })
+    const unsubscribe = () => within(row('sub-1')).getByRole('button', { name: 'Unsubscribe' })
+
+    fireEvent.click(unsubscribe())
+    fireEvent.click(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }))
+    expect(strip()).toBeNull()
+    fireEvent.click(unsubscribe())
+    fireEvent.keyDown(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }), { key: 'Escape' })
+    expect(strip()).toBeNull()
+
+    fireEvent.click(unsubscribe())
+    fireEvent.click(screen.getByRole('tab', { name: 'Saved Views' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Digest Subscriptions' }))
+    expect(strip()).toBeNull()
+    expect(deleteSubscription).not.toHaveBeenCalled()
+  })
+
+  it('Delete view: asks right under the view row; the strip sends one DELETE and re-reads, no toast', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm')
+    const success = vi.spyOn(toast, 'success')
+    inCheckout()
+    digestData.views = [REPORT_VIEW, LEGACY_VIEW]
+    render(<MemoryRouter initialEntries={['/settings/digests?tab=saved-views']}><DigestsPage /></MemoryRouter>)
+
+    fireEvent.click(within(viewRow('v-report')).getByRole('button', { name: 'Delete' }))
+    expect(views.deleteSavedView).not.toHaveBeenCalled()
+    expect(question()).toBe('Delete this saved view?')
+    expect(viewRow('v-report').nextElementSibling).toBe((strip() as HTMLElement).closest('[data-in-page-row]'))
+    expect(viewRow('v-report').contains(strip())).toBe(false)
+
+    fireEvent.click(within(strip() as HTMLElement).getByRole('button', { name: 'Delete' }))
+    expect(strip()).toBeNull()
+    await waitFor(() => expect(digestData.mutateViews).toHaveBeenCalled())
+    expect(views.deleteSavedView).toHaveBeenCalledTimes(1)
+    expect(views.deleteSavedView).toHaveBeenCalledWith('v-report')
+    expect(success).not.toHaveBeenCalled()
+    expect(confirmSpy).not.toHaveBeenCalled()
+    confirmSpy.mockRestore()
+    success.mockRestore()
+  })
+
+  it('Delete view: Escape is Cancel, and Edit drops the question', () => {
+    inCheckout()
+    digestData.views = [REPORT_VIEW]
+    render(<MemoryRouter initialEntries={['/settings/digests?tab=saved-views']}><DigestsPage /></MemoryRouter>)
+    fireEvent.click(within(viewRow('v-report')).getByRole('button', { name: 'Delete' }))
+    fireEvent.keyDown(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }), { key: 'Escape' })
+    expect(strip()).toBeNull()
+
+    fireEvent.click(within(viewRow('v-report')).getByRole('button', { name: 'Delete' }))
+    fireEvent.click(within(viewRow('v-report')).getByRole('button', { name: 'Edit' }))
+    expect(strip()).toBeNull()
+    expect(views.deleteSavedView).not.toHaveBeenCalled()
   })
 })

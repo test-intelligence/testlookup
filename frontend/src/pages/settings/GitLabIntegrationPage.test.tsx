@@ -18,7 +18,7 @@
  * under an isolated SWRConfig so seeding/revalidation behaviour is covered.
  */
 import { createElement } from 'react'
-import { act, render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { act, render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SWRConfig } from 'swr'
 
@@ -249,11 +249,12 @@ describe('GitLabIntegrationPage', () => {
 
   it('sends token: "" on save after "Remove token" is confirmed', async () => {
     mockGet.mockResolvedValue(baseConfig({ has_token: true }))
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     await renderPage()
 
     await waitFor(() => expect(screen.getByText('Token set')).toBeTruthy())
     fireEvent.click(screen.getByText('Remove token'))
+    // W27b: the question is asked in the page; its own Remove token arms the removal.
+    fireEvent.click(screen.getByRole('button', { name: 'Remove token' }))
     expect(screen.getByText(/Token will be removed when you save/)).toBeTruthy()
 
     await act(async () => {
@@ -393,5 +394,61 @@ describe('GitLabIntegrationPage', () => {
     expect(grid.contains(screen.getByText('Enable GitLab integration for this project'))).toBe(true)
     // The comment mode and its explanation keep the full width, below the grid.
     expect(grid.contains(screen.getByRole('combobox'))).toBe(false)
+  })
+
+  /**
+   * W27b PAN-06 (I2): "Remove token" asks in the token cell, in place of the
+   * "Token set" line, never with the browser's prompt. Its Remove token only
+   * ARMS the removal (nothing is sent until Save); Cancel and Escape put the
+   * line back, with focus on Remove token again.
+   */
+  describe('Remove token asks in the token cell', () => {
+    const strip = () => document.querySelector('[data-inline-confirm]') as HTMLElement | null
+
+    it('the question replaces the Token set line; its Remove token arms the removal and sends nothing', async () => {
+      const confirmSpy = vi.spyOn(window, 'confirm')
+      mockGet.mockResolvedValue(baseConfig({ has_token: true }))
+      await renderPage()
+      await waitFor(() => expect(screen.getByText('Token set')).toBeTruthy())
+      const calls = mockGet.mock.calls.length
+
+      fireEvent.click(screen.getByRole('button', { name: 'Remove token' }))
+      const asked = strip() as HTMLElement
+      expect(asked.querySelector('p')?.textContent).toBe(
+        'Remove the stored GitLab token? The removal is applied when you save.',
+      )
+      expect(screen.queryByText('Token set')).toBeNull()
+      expect(screen.getAllByRole('button', { name: 'Remove token' })).toHaveLength(1)
+
+      fireEvent.click(within(asked).getByRole('button', { name: 'Remove token' }))
+      expect(strip()).toBeNull()
+      expect(screen.getByText(/Token will be removed when you save/)).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Cancel — keep the stored token' })).toBeTruthy()
+      // Nothing sent until Save.
+      expect(mockUpdate).not.toHaveBeenCalled()
+      expect(mockGet.mock.calls.length).toBe(calls)
+      expect(confirmSpy).not.toHaveBeenCalled()
+      confirmSpy.mockRestore()
+    })
+
+    it('Cancel and Escape put the Token set line back, focus on Remove token, nothing armed', async () => {
+      mockGet.mockResolvedValue(baseConfig({ has_token: true }))
+      await renderPage()
+      await waitFor(() => expect(screen.getByText('Token set')).toBeTruthy())
+
+      screen.getByRole('button', { name: 'Remove token' }).focus()
+      fireEvent.click(screen.getByRole('button', { name: 'Remove token' }))
+      fireEvent.click(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }))
+      expect(strip()).toBeNull()
+      expect(screen.getByText('Token set')).toBeTruthy()
+      await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Remove token' })))
+
+      fireEvent.click(screen.getByRole('button', { name: 'Remove token' }))
+      fireEvent.keyDown(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }), { key: 'Escape' })
+      expect(strip()).toBeNull()
+      expect(screen.getByText('Token set')).toBeTruthy()
+      expect(screen.queryByText(/Token will be removed when you save/)).toBeNull()
+      expect(mockUpdate).not.toHaveBeenCalled()
+    })
   })
 })

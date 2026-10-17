@@ -6,7 +6,7 @@
  * than criteria. Everything else is form plumbing.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import CriteriaDeletionPanel from './CriteriaDeletionPanel'
 import { buildCriteria, EMPTY_CRITERIA_FORM, narrowsNothing } from './criteriaForm'
 
@@ -269,5 +269,77 @@ describe('buildCriteria', () => {
     // `any` deletes multi-suite runs where only one suite matched; `only` does
     // not. The default must be the conservative one.
     expect(EMPTY_CRITERIA_FORM.suiteMatch).toBe('only')
+  })
+})
+
+// ── the typed confirmation, in the page (W27b PAN-06, R2) ───────────────────
+
+describe('the typed confirmation opens in the preview box', () => {
+  async function openConfirmation() {
+    renderPanel()
+    fireEvent.change(screen.getByLabelText(/older than days/i), { target: { value: '90' } })
+    fireEvent.click(screen.getByRole('button', { name: /preview/i }))
+    await screen.findByTestId('criteria-preview')
+    const trigger = screen.getByRole('button', { name: /delete 3 runs/i })
+    trigger.focus()
+    fireEvent.click(trigger)
+    return { trigger, form: screen.getByRole('region', { name: 'Delete 3 runs' }) }
+  }
+
+  it('renders inside the preview, right under its Delete button, with no overlay; the field is focused', async () => {
+    const { trigger, form } = await openConfirmation()
+    const box = screen.getByTestId('criteria-preview')
+    expect(box.contains(form)).toBe(true)
+    expect(trigger.nextElementSibling).toBe(form)
+    expect(document.querySelector('[aria-modal]')).toBeNull()
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.activeElement).toBe(screen.getByLabelText(/type.*to confirm/i))
+    expect(within(form).getByRole('button', { name: /delete permanently/i })).toHaveAttribute('aria-disabled', 'true')
+  })
+
+  it('Escape closes it and focus goes back to Delete n runs; nothing is sent', async () => {
+    const { trigger } = await openConfirmation()
+    fireEvent.keyDown(screen.getByLabelText(/type.*to confirm/i), { key: 'Escape' })
+    expect(screen.queryByRole('region', { name: 'Delete 3 runs' })).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+    expect(execute).not.toHaveBeenCalled()
+  })
+
+  it('while the delete is being sent, Escape is swallowed and the X is disabled', async () => {
+    let answer: () => void = () => undefined
+    execute.mockReturnValue(new Promise((resolve) => { answer = () => resolve({ job_id: 'job-1', run_count: 3, status: 'accepted' }) }))
+    const { form } = await openConfirmation()
+    fireEvent.change(screen.getByLabelText(/type.*to confirm/i), { target: { value: 'Checkout' } })
+    fireEvent.click(within(form).getByRole('button', { name: /delete permanently/i }))
+    await waitFor(() => expect(execute).toHaveBeenCalledTimes(1))
+
+    fireEvent.keyDown(form, { key: 'Escape' })
+    expect(screen.getByRole('region', { name: 'Delete 3 runs' })).toBe(form)
+    expect(within(form).getByRole('button', { name: 'Close' })).toBeDisabled()
+
+    answer()
+    await waitFor(() => expect(screen.queryByTestId('criteria-preview')).not.toBeInTheDocument())
+    expect(execute).toHaveBeenCalledTimes(1)
+    expect(execute).toHaveBeenCalledWith('p1', 'job-1', 'Checkout')
+  })
+
+  it('editing a criterion, or previewing again, closes it with the set it described', async () => {
+    await openConfirmation()
+    fireEvent.change(screen.getByLabelText(/branches/i), { target: { value: 'main' } })
+    expect(screen.queryByRole('region', { name: 'Delete 3 runs' })).toBeNull()
+
+    // A fresh preview shows its own Delete button, not the old confirmation.
+    fireEvent.click(screen.getByRole('button', { name: /preview/i }))
+    await screen.findByTestId('criteria-preview')
+    expect(screen.queryByRole('region', { name: 'Delete 3 runs' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /delete 3 runs/i }))
+    expect(screen.getByRole('region', { name: 'Delete 3 runs' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /preview/i }))
+    expect(screen.queryByRole('region', { name: 'Delete 3 runs' })).toBeNull()
+    // The preview answered (its button reads Preview again, not Resolving…).
+    await screen.findByRole('button', { name: /preview/i })
+    expect(screen.queryByRole('region', { name: 'Delete 3 runs' })).toBeNull()
+    expect(execute).not.toHaveBeenCalled()
   })
 })

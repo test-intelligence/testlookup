@@ -13,6 +13,7 @@ import {
   XCircle,
 } from 'lucide-react'
 import ExperimentalBadge from '@/components/ui/ExperimentalBadge'
+import InlineConfirm from '@/components/ui/inPage/InlineConfirm'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -47,6 +48,9 @@ const HELP_TOPIC = helpTopicParam('/settings/webhooks')
  * Per-project CRUD over ``webhook_subscriptions`` plus a delivery history
  * drawer per subscription. QA_LEAD+ can create/edit/delete/test; any
  * project member sees the list and history.
+ *
+ * W27b PAN-06: a webhook's delete asks inside its card, under the header row
+ * (`InlineConfirm`), never with the browser's prompt.
  */
 export default function OutboundWebhooksPage() {
   const { canAccessManagement: canEdit } = usePermissions()
@@ -61,6 +65,8 @@ export default function OutboundWebhooksPage() {
   const [form, setForm] = useState<WebhookSubscriptionWrite>(EMPTY_FORM)
   const [expandedSub, setExpandedSub] = useState<string | null>(null)
   const [deliveries, setDeliveries] = useState<Record<string, WebhookDeliveryRead[]>>({})
+  // A webhook's delete asks inside its card first (W27b).
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -130,7 +136,6 @@ export default function OutboundWebhooksPage() {
   }
 
   async function remove(sub: WebhookSubscriptionRead) {
-    if (!confirm(`Delete webhook "${sub.name}"?`)) return
     try {
       await outboundWebhookService.remove(sub.id)
       await refresh()
@@ -303,7 +308,7 @@ export default function OutboundWebhooksPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => remove(sub)}
+                      onClick={() => setConfirmingDelete(sub.id)}
                       className="text-[var(--status-failed)] hover:underline"
                       aria-label={`Delete ${sub.name}`}
                     >
@@ -313,6 +318,18 @@ export default function OutboundWebhooksPage() {
                 )}
               </span>
             </div>
+
+            {canEdit && confirmingDelete === sub.id && (
+              <div className="px-3 pb-2">
+                <InlineConfirm
+                  message={<>Delete webhook &quot;<strong>{sub.name}</strong>&quot;?</>}
+                  confirmLabel="Delete"
+                  tone="danger"
+                  onConfirm={() => { setConfirmingDelete(null); void remove(sub) }}
+                  onCancel={() => setConfirmingDelete(null)}
+                />
+              </div>
+            )}
 
             {sub.last_error && (
               <div className="px-3 pb-2 text-[11px] text-[var(--status-broken)]">
