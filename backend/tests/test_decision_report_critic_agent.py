@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -159,10 +159,17 @@ async def test_published_report_emits_release_webhook_with_exact_evidence(
     )
     emit = AsyncMock(return_value=1)
     monkeypatch.setattr(release_decision_webhook, "emit_release_decided", emit)
+    # W09 NTF-01: _persist also enqueues the "Quality gate failed" task; no
+    # test dials a broker (tests/test_quality_gate_notifications.py binds it).
+    from app.worker import tasks
+
+    enqueue = MagicMock()
+    monkeypatch.setattr(tasks.notify_release_decision_no_go, "apply_async", enqueue)
 
     agent = DecisionReportCriticAgent.__new__(DecisionReportCriticAgent)
     await agent._persist(_state(), {"verification": {"status": "passed"}}, "# report")
 
+    enqueue.assert_called_once_with(args=["run-1", "pipeline-1", evidence_hash], queue="default")
     emit.assert_awaited_once_with(
         "run-1",
         trigger=release_decision_webhook.TRIGGER_AGENT,

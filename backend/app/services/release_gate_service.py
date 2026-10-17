@@ -41,6 +41,7 @@ from app.services import release_defect_service as defect_svc
 from app.services import release_gate_decision_service as decisions
 from app.services import release_gate_reasons
 from app.services import release_rollup_service as rollup_svc
+from app.services.notification import gate_notifications
 
 #: Blocking reasons embedded in a release list / detail item (W05 REL-01). The
 #: card shows three and the count; the rest live on the release's gate panel.
@@ -101,6 +102,11 @@ async def evaluate_release(
 
     decision = None
     if record:
+        # W09 NTF-01: the verdict recorded immediately before this one, read only
+        # when recording, so "Quality gate failed" is staged on a transition INTO
+        # NO_GO and never on a repeat (or on a preview, record=False).
+        previous = await decisions.current_decision(db, release_id)
+        previous_verdict = getattr(previous, "verdict", None)
         decision = await decisions.record_decision(
             db,
             release_id,
@@ -116,6 +122,11 @@ async def evaluate_release(
             blocking_reasons=blocking,
             created_by_id=created_by_id,
         )
+        if release is not None and gate_notifications.is_transition_into_no_go(previous_verdict, verdict):
+            # SAVEPOINT + swallow inside: a notification fault never fails the gate.
+            await gate_notifications.stage_gate_no_go(
+                db, release_id=release_id, decision=decision, previous_verdict=previous_verdict,
+            )
 
     return {
         "release_id": str(release_id),
