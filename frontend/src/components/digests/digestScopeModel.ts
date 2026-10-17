@@ -201,7 +201,9 @@ export function viewScopeText(view: Pick<SavedView, 'filters'>, releases: readon
   const names = ids.map(id => byId.get(id)).filter((n): n is string => typeof n === 'string')
   const unknown = ids.length - names.length
   let rel = names.length ? `Releases: ${names.join(', ')}` : ids.length ? 'Releases:' : 'Any release'
-  if (unknown > 0) rel += ` ${names.length ? '+' : ''}${unknown} not in this project`
+  // "2026.10, plus 2 not in this project": the known names first, then how many
+  // ids no longer resolve here (a bare "+2" read as if all were missing).
+  if (unknown > 0) rel += `${names.length ? ', plus ' : ' '}${unknown} not in this project`
   const suites = strings(f.suites)
   const parts = [rel, suites.length ? `Suites: ${suites.join(', ')}` : 'Any suite']
   const win = windowOf(f.window)

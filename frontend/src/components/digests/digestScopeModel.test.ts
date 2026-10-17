@@ -178,7 +178,7 @@ describe('the listed views', () => {
     )
     expect(viewScopeText({ filters: { kind: 'report_view', window: 1 } }, releases)).toBe('Any release · Any suite · Last 1 day')
     expect(viewScopeText({ filters: { kind: 'report_view', release_ids: ['r1', 'gone'], window: 30 } }, releases)).toBe(
-      'Releases: 2026.10 +1 not in this project · Any suite · Last 30 days',
+      'Releases: 2026.10, plus 1 not in this project · Any suite · Last 30 days',
     )
     expect(viewScopeText({ filters: { kind: 'report_view', release_ids: ['gone', 'gone2'] } }, releases)).toBe(
       'Releases: 2 not in this project · Any suite',

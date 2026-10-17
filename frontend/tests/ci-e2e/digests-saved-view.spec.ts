@@ -57,7 +57,7 @@ test('Saved Views: report views and legacy rows, never a layout; New view saves 
   await expect(regressions).toContainText('Checkout regressions')
   await expect(regressions).toContainText('Shared')
   // The two release ids that are not this project's are counted, never shown raw.
-  await expect(regressions).toContainText('Saved on Trends · Releases: 2026.11 +2 not in this project · Suites: checkout · Last 7 days')
+  await expect(regressions).toContainText('Saved on Trends · Releases: 2026.11, plus 2 not in this project · Suites: checkout · Last 7 days')
   await expect(viewRow(page, VIEW_IDS.legacy)).toContainText('No filters — edit to add some')
   await expect(viewRow(page, VIEW_IDS.layout), 'a widget layout is not a digest view').toHaveCount(0)
   await expect(page.getByText(LAYOUT_VIEW.name)).toHaveCount(0)

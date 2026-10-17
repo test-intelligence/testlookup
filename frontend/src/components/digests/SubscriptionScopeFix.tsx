@@ -82,7 +82,7 @@ export default function SubscriptionScopeFix({
       {problemText && (
         <span
           data-scope-problem={scope.problem ?? ''}
-          className={`inline-block rounded px-2 py-0.5 text-xs font-medium border ${
+          className={`mr-2 inline-block rounded px-2 py-0.5 text-xs font-medium border ${
             kind === 'delivery'
               ? 'border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)] text-[var(--status-broken)]'
               : 'border-[var(--color-border)] bg-[var(--status-skipped-bg)]/40 text-[var(--status-skipped)]'
