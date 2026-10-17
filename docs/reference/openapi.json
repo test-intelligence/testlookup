@@ -9955,6 +9955,16 @@
             "title": "Release Decisions",
             "type": "array"
           },
+          "scope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DigestScopeInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "top_blockers": {
             "default": [],
             "items": {
@@ -9983,6 +9993,82 @@
           "generated_at"
         ],
         "title": "DigestContentResponse",
+        "type": "object"
+      },
+      "DigestScopeInfo": {
+        "description": "What a digest was filtered by (W09 NTF-04); ``digest_scope_service.scope_info``.",
+        "properties": {
+          "dropped_release_count": {
+            "default": 0,
+            "title": "Dropped Release Count",
+            "type": "integer"
+          },
+          "release_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Release Ids",
+            "type": "array"
+          },
+          "release_names": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Release Names",
+            "type": "array"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "suites": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Suites",
+            "type": "array"
+          },
+          "view_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "View Id"
+          },
+          "view_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "View Name"
+          },
+          "window_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window Days"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "title": "DigestScopeInfo",
         "type": "object"
       },
       "DigestSide": {
@@ -10307,9 +10393,42 @@
             ],
             "title": "Saved View Id"
           },
+          "saved_view_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Saved View Name"
+          },
           "schedule": {
             "title": "Schedule",
             "type": "string"
+          },
+          "scope_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope Label"
+          },
+          "scope_problem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope Problem"
           },
           "scope_type": {
             "anyOf": [
@@ -13295,6 +13414,16 @@
             ],
             "title": "Flaky Likely Cause Code"
           },
+          "flaky_score": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FlakyScoreBrief"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "flaky_since": {
             "anyOf": [
               {
@@ -13915,6 +14044,94 @@
           "updated_at"
         ],
         "title": "FlakyQuarantineRead",
+        "type": "object"
+      },
+      "FlakyScoreBrief": {
+        "description": "The four-signal score of a Detected row; plain ``str`` vocabularies (W09 FLK-03).",
+        "properties": {
+          "components": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/FlakyScoreComponent"
+            },
+            "title": "Components",
+            "type": "array"
+          },
+          "computed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Computed At"
+          },
+          "confidence": {
+            "default": "none",
+            "title": "Confidence",
+            "type": "string"
+          },
+          "min_observations": {
+            "default": 5,
+            "title": "Min Observations",
+            "type": "integer"
+          },
+          "observations": {
+            "default": 0,
+            "title": "Observations",
+            "type": "integer"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "window_days": {
+            "default": 30,
+            "title": "Window Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "FlakyScoreBrief",
+        "type": "object"
+      },
+      "FlakyScoreComponent": {
+        "description": "One of the four signals of the nightly flakiness score (W09 FLK-03).",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "number"
+          },
+          "weight": {
+            "title": "Weight",
+            "type": "number"
+          }
+        },
+        "required": [
+          "name",
+          "value",
+          "weight"
+        ],
+        "title": "FlakyScoreComponent",
         "type": "object"
       },
       "FrontendError": {
@@ -20189,6 +20406,17 @@
             "title": "Is Read",
             "type": "boolean"
           },
+          "link": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Link"
+          },
           "sent_at": {
             "anyOf": [
               {
@@ -23336,6 +23564,11 @@
             "title": "Is Default",
             "type": "boolean"
           },
+          "max_active_quarantined": {
+            "default": 8,
+            "title": "Max Active Quarantined",
+            "type": "integer"
+          },
           "project_id": {
             "format": "uuid",
             "title": "Project Id",
@@ -23387,6 +23620,13 @@
             "maximum": 1000.0,
             "minimum": 1.0,
             "title": "Detection Min Runs",
+            "type": "integer"
+          },
+          "max_active_quarantined": {
+            "default": 8,
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Max Active Quarantined",
             "type": "integer"
           },
           "promote_after_passes": {
@@ -50325,7 +50565,7 @@
     },
     "/api/v1/digests/preview": {
       "get": {
-        "description": "Preview digest content without sending.\n\nScope is resolved for the **provided** ``project_id``. The previous check\nran only when ``project_id`` was absent — i.e. only when there was nothing\nto guard — so naming any project id returned that project's digest to any\nauthenticated caller (name, run count, pass rate, regressions).",
+        "description": "Preview digest content without sending.\n\nScope is resolved for the **provided** ``project_id``. The previous check\nran only when ``project_id`` was absent — i.e. only when there was nothing\nto guard — so naming any project id returned that project's digest to any\nauthenticated caller (name, run count, pass rate, regressions).\n\n``saved_view_id`` (W09 NTF-04) previews the digest a subscription bound to\nthat view would receive. The view is checked for THIS caller in THIS\nproject with the subscription rule: another project's view, a teammate's\nprivate view and a layout row all answer the same 422.",
         "operationId": "preview_digest_api_v1_digests_preview_get",
         "parameters": [
           {
@@ -50353,6 +50593,23 @@
               "default": "weekly",
               "title": "Period",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "saved_view_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Saved View Id"
             }
           },
           {
@@ -55179,7 +55436,7 @@
         ]
       },
       "put": {
-        "description": "Create or replace the project's transition-notification policy.\nQA_LEAD+.",
+        "description": "Create or replace the project's transition-notification policy.\nQA_LEAD+.\n\nW09 NTF-02: records ``notification_policy.updated`` (outcome mode, the same\ntransaction as the upsert) when a field changed or the PUT created the\nproject's row; a PUT that changes nothing on an existing row records nothing.",
         "operationId": "update_transition_policy_api_v1_notifications_projects__project_id__transition_policy_put",
         "parameters": [
           {
@@ -62452,7 +62709,7 @@
         ]
       },
       "put": {
-        "description": "Create or replace the project's quarantine lifecycle policy.\nQA_LEAD+ — flaky policy ownership is a QA Lead decision.",
+        "description": "Create or replace the project's quarantine lifecycle policy.\nQA_LEAD+ — flaky policy ownership is a QA Lead decision.\n\nW09 FLK-02: records ``quarantine_policy.updated`` on this session\n(committed with the policy) when a field changed or the PUT created the\nproject's row; a PUT that changes nothing on an existing row records\nnothing. ``before`` is the stored row, or the effective defaults.",
         "operationId": "update_quarantine_lifecycle_policy_api_v1_projects__project_id__quarantine_policy_put",
         "parameters": [
           {
