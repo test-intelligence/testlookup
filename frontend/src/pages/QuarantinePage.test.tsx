@@ -31,6 +31,11 @@ vi.mock('@/hooks/useFlakyQuarantine', () => ({
   }),
 }))
 
+// W09 FLK-02: the Quarantined view reads the policy for its cap warning.
+vi.mock('@/hooks/useQuarantinePolicy', () => ({
+  useQuarantinePolicy: () => ({ policy: null, error: undefined, isLoading: false, mutate: vi.fn() }),
+}))
+
 vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => ({ isAdmin: true, isQaLead: true, canWrite: true }),
 }))
@@ -90,12 +95,14 @@ describe('QuarantinePage — saying that the release filter does not apply', () 
     expect(screen.queryByText('All releases')).toBeNull()
   })
 
-  it('keeps the experimental badge it already had', async () => {
-    // The badge was added into the header's `actions` slot, which already held
-    // one. Wrapping them wrongly would drop the original silently.
+  it('carries no Experimental badge any more (W09 FLK-01: quarantine graduated)', async () => {
+    // The header's `actions` slot held the Experimental badge beside this one;
+    // removing it must not drop the release badge with it.
     useReleaseStore.setState({ activeReleaseId: 'rel-1', scopedProjectId: 'proj-1' })
     renderPage()
 
-    expect(await screen.findByText(/experimental/i)).toBeInTheDocument()
+    expect(await screen.findByText('All releases')).toBeInTheDocument()
+    expect(screen.queryByText(/experimental/i)).toBeNull()
+    expect(document.querySelector('[title^="This feature is experimental"]')).toBeNull()
   })
 })

@@ -3,6 +3,10 @@
  * quarantine decision's notes are typed into an inline form under the row,
  * never a browser prompt; Cancel records nothing; Promote out stays one click;
  * every decision refreshes the list AND the counts beside it.
+ *
+ * W09 FLK-02: the Quarantined view shows each live quarantine's `SLA due`
+ * (the stale one keeps its "stale — N days over SLA"), and warns past the
+ * policy's cap; only that view reads the policy.
  */
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
@@ -11,13 +15,23 @@ import type { FlakyQuarantineRead } from '@/services/flakyQuarantineService'
 
 const hooks = vi.hoisted(() => ({
   requests: [] as unknown[],
+  stats: undefined as unknown,
+  policy: null as unknown,
+  policyCalls: [] as Array<[unknown, unknown]>,
   refresh: vi.fn(() => Promise.resolve()),
   refreshStats: vi.fn(() => Promise.resolve()),
 }))
 
 vi.mock('@/hooks/useFlakyQuarantine', () => ({
   useQuarantineList: () => ({ requests: hooks.requests, isLoading: false, isError: false, refresh: hooks.refresh }),
-  useQuarantineStats: () => ({ stats: undefined, isLoading: false, isError: false, refresh: hooks.refreshStats }),
+  useQuarantineStats: () => ({ stats: hooks.stats, isLoading: false, isError: false, refresh: hooks.refreshStats }),
+}))
+
+vi.mock('@/hooks/useQuarantinePolicy', () => ({
+  useQuarantinePolicy: (projectId: unknown, enabled: unknown) => {
+    hooks.policyCalls.push([projectId, enabled])
+    return { policy: enabled ? hooks.policy : null, error: undefined, isLoading: false, mutate: vi.fn() }
+  },
 }))
 
 vi.mock('@/hooks/usePermissions', () => ({
@@ -69,6 +83,9 @@ const prompt = vi.fn()
 beforeEach(() => {
   vi.clearAllMocks()
   vi.stubGlobal('prompt', prompt)
+  hooks.stats = undefined
+  hooks.policy = null
+  hooks.policyCalls = []
 })
 
 afterEach(() => {
@@ -139,5 +156,70 @@ describe('quarantine decisions record their notes inline', () => {
     expect(screen.getByText('No pending quarantine proposals.')).toBeInTheDocument()
     expect(screen.queryByText(/flip rate >= 20%/)).toBeNull()
     expect(screen.getByRole('button', { name: 'How flaky tests are detected and quarantined' })).toBeInTheDocument()
+  })
+})
+
+const DAY = 86_400_000
+const STATS = (quarantined: number) => ({
+  detected: 0, proposed: 0, approved: 0, quarantined, recheck_scheduled: 0, re_quarantined: 0,
+  released: 0, rejected: 0, expired: 0, total_live: quarantined,
+})
+const POLICY = {
+  project_id: 'p1', sla_days: 14, auto_create_defect: false, auto_promote: false, promote_after_passes: 20,
+  detection_flip_rate_threshold: 0.2, detection_min_runs: 10, max_active_quarantined: 8, is_default: false,
+}
+
+describe('the Quarantined view: SLA due and the cap (W09 FLK-02)', () => {
+  it('a live quarantine shows when its SLA is due; a stale one keeps "over SLA" and no due date', () => {
+    const due = new Date(Date.now() + 7 * DAY)
+    hooks.requests = [
+      row('due', 'QUARANTINED', { stale_at: due.toISOString(), sla_days: 7 }),
+      row('stale', 'QUARANTINED', { stale: true, stale_at: new Date(Date.now() - 6 * DAY).toISOString(), sla_days: 14 }),
+      row('none', 'QUARANTINED', { stale_at: null }),
+    ]
+    renderBody('active')
+    const rowOf = (id: string) => document.querySelector(`[data-quarantine-id="${id}"]`) as HTMLElement
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    const expected = `SLA due ${due.getUTCDate()} ${months[due.getUTCMonth()]}`
+    expect(within(rowOf('due')).getByText(new RegExp(`^${expected}`))).toHaveAttribute('title', 'SLA: 7 days')
+    expect(rowOf('stale')).toHaveTextContent('stale — 6d over SLA')
+    expect(rowOf('stale')).not.toHaveTextContent('SLA due')
+    expect(rowOf('none')).not.toHaveTextContent('SLA due')
+  })
+
+  it('the proposals view shows no SLA due date and never reads the policy', () => {
+    hooks.requests = [row('a', 'PROPOSED', { stale_at: new Date(Date.now() + 7 * DAY).toISOString() })]
+    hooks.stats = STATS(12)
+    hooks.policy = POLICY
+    renderBody('proposals')
+    expect(screen.queryByText(/SLA due/)).toBeNull()
+    expect(document.querySelector('[data-quarantine-over-cap]')).toBeNull()
+    expect(hooks.policyCalls.every(([, enabled]) => enabled === false)).toBe(true)
+  })
+
+  it('warns past the cap from the stats count, above the list', () => {
+    hooks.requests = [row('b', 'QUARANTINED')]
+    hooks.stats = STATS(12)
+    hooks.policy = POLICY
+    renderBody('active')
+    const line = document.querySelector('[data-quarantine-over-cap]') as HTMLElement
+    expect(line).toHaveTextContent(/^12 tests are quarantined; this project's policy warns past 8\.$/)
+    expect(line.compareDocumentPosition(screen.getByTestId('quarantine-row')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(hooks.policyCalls).toContainEqual(['p1', true])
+  })
+
+  it.each([
+    ['within the cap', STATS(8), POLICY],
+    ['a cap of 0', STATS(12), { ...POLICY, max_active_quarantined: 0 }],
+    ['no counts yet', undefined, POLICY],
+    ['a malformed policy', STATS(12), { max_active_quarantined: '1' }],
+    ['no policy', STATS(12), null],
+  ])('no warning: %s', (_label, stats, policy) => {
+    hooks.requests = [row('b', 'QUARANTINED')]
+    hooks.stats = stats
+    hooks.policy = policy
+    renderBody('active')
+    expect(document.querySelector('[data-quarantine-over-cap]')).toBeNull()
+    expect(screen.getByTestId('quarantine-row')).toBeInTheDocument()
   })
 })

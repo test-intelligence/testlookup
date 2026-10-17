@@ -45,6 +45,7 @@ from app.models.schemas import (
 )
 from app.core.analytics_errors import analytics_error_contract
 from app.services import flaky_quarantine_service as svc
+from app.services.activity.service import ActorRef, record as record_activity
 from app.services.analytics_meta import build_meta
 from app.services.analytics_scope import AnalyticsScope, ScopePolicy, analytics_scope
 
@@ -359,6 +360,35 @@ async def get_quarantine_manifest(
 
 # ── Quarantine lifecycle policy (US-5.4 / US-5.5 / US-5.6) ─────────────────
 
+#: The policy's fields in the order the activity row names them, with the
+#: label each takes in "Quarantine policy changed: {changed}" (W09 FLK-02).
+_POLICY_FIELD_LABELS: tuple[tuple[str, str], ...] = (
+    ("sla_days", "SLA days"),
+    ("auto_create_defect", "auto-file defect"),
+    ("auto_promote", "auto-release"),
+    ("promote_after_passes", "release after passes"),
+    ("detection_flip_rate_threshold", "detection threshold"),
+    ("detection_min_runs", "detection minimum runs"),
+    ("max_active_quarantined", "max active quarantined"),
+)
+#: ``changed`` for a first save that stored exactly the defaults.
+_POLICY_DEFAULTS_SAVED = "saved the defaults as this project's policy"
+
+
+def _policy_values(policy) -> dict:
+    """The seven policy fields of a stored row or of the effective defaults,
+    as plain values (copied, so the upsert mutating the ORM row cannot change
+    the "before" side)."""
+    return {
+        "sla_days": int(policy.sla_days),
+        "auto_create_defect": bool(policy.auto_create_defect),
+        "auto_promote": bool(policy.auto_promote),
+        "promote_after_passes": int(policy.promote_after_passes),
+        "detection_flip_rate_threshold": float(policy.detection_flip_rate_threshold),
+        "detection_min_runs": int(policy.detection_min_runs),
+        "max_active_quarantined": int(policy.max_active_quarantined),
+    }
+
 
 @manifest_router.get(
     "/{project_id}/quarantine/policy",
@@ -382,6 +412,7 @@ async def get_quarantine_lifecycle_policy(
             promote_after_passes=row.promote_after_passes,
             detection_flip_rate_threshold=row.detection_flip_rate_threshold,
             detection_min_runs=row.detection_min_runs,
+            max_active_quarantined=row.max_active_quarantined,
             is_default=False,
         )
     policy = await svc.get_lifecycle_policy(db, project_id)
@@ -393,6 +424,7 @@ async def get_quarantine_lifecycle_policy(
         promote_after_passes=policy.promote_after_passes,
         detection_flip_rate_threshold=policy.detection_flip_rate_threshold,
         detection_min_runs=policy.detection_min_runs,
+        max_active_quarantined=policy.max_active_quarantined,
         is_default=True,
     )
 
@@ -409,7 +441,16 @@ async def update_quarantine_lifecycle_policy(
     _: User = Depends(require_project_access()),
 ):
     """Create or replace the project's quarantine lifecycle policy.
-    QA_LEAD+ — flaky policy ownership is a QA Lead decision."""
+    QA_LEAD+ — flaky policy ownership is a QA Lead decision.
+
+    W09 FLK-02: records ``quarantine_policy.updated`` on this session
+    (committed with the policy) when a field changed or the PUT created the
+    project's row; a PUT that changes nothing on an existing row records
+    nothing. ``before`` is the stored row, or the effective defaults."""
+    existing = await svc.get_lifecycle_policy_row(db, project_id)
+    before = _policy_values(
+        existing if existing is not None else await svc.get_lifecycle_policy(db, project_id)
+    )
     row = await svc.upsert_lifecycle_policy(
         db,
         project_id,
@@ -419,7 +460,27 @@ async def update_quarantine_lifecycle_policy(
         promote_after_passes=payload.promote_after_passes,
         detection_flip_rate_threshold=payload.detection_flip_rate_threshold,
         detection_min_runs=payload.detection_min_runs,
+        max_active_quarantined=payload.max_active_quarantined,
     )
+    after = _policy_values(row)
+    changed_fields = [name for name, _label in _POLICY_FIELD_LABELS if before[name] != after[name]]
+    if changed_fields or existing is None:
+        changed = (
+            ", ".join(label for name, label in _POLICY_FIELD_LABELS if name in changed_fields)
+            or _POLICY_DEFAULTS_SAVED
+        )
+        await record_activity(
+            db,
+            project_id=project_id,
+            event_type="quarantine_policy.updated",
+            actor=ActorRef.from_user(current_user),
+            entity_id=project_id,
+            entity_label="Quarantine policy",
+            context={"changed": changed},
+            before={name: before[name] for name in changed_fields} if changed_fields else None,
+            after={name: after[name] for name in changed_fields} if changed_fields else None,
+            changed_fields=changed_fields,
+        )
     await db.commit()
     await db.refresh(row)
     return QuarantineLifecyclePolicyResponse(
@@ -430,6 +491,7 @@ async def update_quarantine_lifecycle_policy(
         promote_after_passes=row.promote_after_passes,
         detection_flip_rate_threshold=row.detection_flip_rate_threshold,
         detection_min_runs=row.detection_min_runs,
+        max_active_quarantined=row.max_active_quarantined,
         is_default=False,
     )
 

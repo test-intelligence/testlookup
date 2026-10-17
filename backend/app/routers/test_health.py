@@ -21,6 +21,7 @@ from app.core.deps import (
 from app.db.postgres import get_db
 from app.models.postgres import Project, TestRun, User, UserRole
 from app.models.schemas import FlakyCoachResponse, TestHealthResponse
+from app.services import flaky_score_brief
 from app.services.test_health_coach_service import (
     get_flaky_coach,
     get_run_test_health,
@@ -85,9 +86,13 @@ async def get_project_flaky_coach(
             detail="Project not found.",
         )
     release = await resolve_release_query_scope(db, release_id, current_user)
-    return await get_flaky_coach(
+    response = await get_flaky_coach(
         project_id, db, days=days, limit=limit, release_id=release
     )
+    # W09 FLK-03: each listed test's four-signal score, looked up for THIS
+    # project's fingerprints only (after the release filter: the page's rows,
+    # never the top-200). A failed join leaves `flaky_score` null, never a 500.
+    return await flaky_score_brief.attach_flaky_scores(db, project_id, response)
 
 
 @router.post("/projects/{project_id}/flaky-coach/refresh")

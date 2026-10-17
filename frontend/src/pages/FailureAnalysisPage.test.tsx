@@ -1003,7 +1003,7 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
       expect(mute).toBeDisabled()
       expect(mute).toHaveAttribute(
         'title',
-        'Quarantine is off for this project: an admin turns on the flaky_auto_quarantine flag in Settings › Feature flags.',
+        'Quarantine is off for this project: the flaky_auto_quarantine flag in Settings › Feature flags is switched off or limited to other projects.',
       )
     } finally {
       flags.quarantineOn = true
