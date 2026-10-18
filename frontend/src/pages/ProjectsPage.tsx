@@ -1,10 +1,24 @@
-import { useState, useEffect, useCallback } from 'react'
-import { Edit3, FlaskConical, Plus, Trash2, X } from 'lucide-react'
+/**
+ * /projects: the project cards.
+ *
+ * W27b PAN-05: the forms render IN THE PAGE (no modal, no native confirm):
+ * New Project opens under the page header, a card's Edit opens `Edit Project`
+ * as a full-width row of the cards grid right after that card, one project
+ * form at a time; a card's Archive asks in that same full-width row (contract
+ * D-20's fallback: the card is too narrow for the strip's buttons with 40 px to
+ * spare). The card body's click, which selects the project, is never an
+ * ancestor of either.
+ */
+import { Fragment, useState, useEffect, useCallback } from 'react'
+import { Edit3, FlaskConical, Plus, Trash2 } from 'lucide-react'
 import PageHeader from '@/components/ui/PageHeader'
+import InlineConfirm from '@/components/ui/inPage/InlineConfirm'
+import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
+import { useInlineSlot, type InlineSlot } from '@/components/ui/inPage/useInlineSlot'
+import { useSlotCloser } from '@/hooks/useSlotCloser'
 import { projectsService } from '@/services/projectsService'
 import { useProjectStore } from '@/store/projectStore'
 import { usePermissions } from '@/hooks/usePermissions'
-import { useModalFocus } from '@/hooks/useModalFocus'
 import type { Project, ProjectUpdate } from '@/types/projects'
 import { fromNow } from '@/utils/formatters'
 import toast from 'react-hot-toast'
@@ -33,17 +47,17 @@ function fmtDate(iso: string | null | undefined) {
   return iso.slice(0, 10)
 }
 
+type ProjectForm = 'new' | `edit:${string}`
+
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([])
-  const [showModal, setShowModal] = useState(false)
-  const [editProject, setEditProject] = useState<Project | null>(null)
+  // W27b: one project form at a time (New Project under the header, or one card's Edit after its card).
+  const slot = useInlineSlot<ProjectForm>()
+  const closeForm = useSlotCloser(slot)
+  // A card's Archive question, inside that card (one at a time; it sends nothing until its own button).
+  const [confirmingArchive, setConfirmingArchive] = useState<string | null>(null)
   const [form, setForm] = useState<NewProjectForm>(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
-  const createDialogRef = useModalFocus({
-    open: showModal,
-    canClose: !saving,
-    onClose: () => setShowModal(false),
-  })
   const setActiveProject = useProjectStore(s => s.setActiveProject)
   const refreshProjects = useProjectStore(s => s.refreshProjects)
   const { isAdmin, isQaLead } = usePermissions()
@@ -72,7 +86,7 @@ export default function ProjectsPage() {
       if (form.ocp_namespace) payload.ocp_namespace = form.ocp_namespace
       const created = await projectsService.create(payload)
       toast.success('Project created')
-      setShowModal(false)
+      closeForm('new')
       setForm(EMPTY_FORM)
       // Refresh the shared store so the TopBar dropdown updates immediately,
       // then make the new project the active selection.
@@ -86,7 +100,6 @@ export default function ProjectsPage() {
   }
 
   const handleDelete = async (p: Project) => {
-    if (!confirm(`Archive project "${p.name}"? It will be hidden but not deleted.`)) return
     try {
       await projectsService.delete(p.id)
       toast.success('Project archived')
@@ -102,15 +115,74 @@ export default function ProjectsPage() {
         helpTopic={HELP_TOPIC}
         actions={canEdit ? (
           <button className="btn-primary flex items-center gap-2 text-sm"
-            onClick={() => { setForm(EMPTY_FORM); setShowModal(true) }}>
+            onClick={() => {
+              // In the page the button stays reachable while the form is open: never wipe what is typed there.
+              if (slot.openKey === 'new') return
+              setForm(EMPTY_FORM)
+              slot.open('new')
+            }}>
             <Plus className="h-4 w-4" /> New Project
           </button>
         ) : undefined}
       />
 
+      {/* W27b: New Project, in the page right under the header (it was a modal dialog). */}
+      {slot.openKey === 'new' && (
+        <InlineFormSection
+          title="New Project"
+          titleId="new-project-title"
+          closeLabel="Close new project dialog"
+          onClose={() => closeForm('new')}
+          canClose={!saving}
+          slot={slot}
+          onSubmit={handleSubmit}
+          footer={
+            <>
+              <button type="button" className="btn-secondary" onClick={() => closeForm('new')}>Cancel</button>
+              <button type="submit" className="btn-primary" disabled={saving}>
+                {saving ? 'Creating…' : 'Create Project'}
+              </button>
+            </>
+          }
+        >
+          <div className="max-w-2xl space-y-4">
+            <div>
+              <label htmlFor="np-name" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Project Name *</label>
+              <input id="np-name" type="text" className="input" placeholder="e.g. Payment Gateway API"
+                value={form.name} onChange={e => handleNameChange(e.target.value)} required autoFocus />
+            </div>
+            <div>
+              <label htmlFor="np-slug" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Slug *</label>
+              <input id="np-slug" type="text" className="input font-mono text-sm" placeholder="e.g. payment-gateway-api"
+                value={form.slug} onChange={e => setForm(f => ({ ...f, slug: slugify(e.target.value) }))} required />
+            </div>
+            <div>
+              <label htmlFor="np-desc" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Description</label>
+              <textarea id="np-desc" className="input resize-none" rows={2} placeholder="Optional"
+                value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="np-jira" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Jira Project Key</label>
+                <input id="np-jira" type="text" className="input font-mono text-sm" placeholder="e.g. PAY"
+                  value={form.jira_project_key} onChange={e => setForm(f => ({ ...f, jira_project_key: e.target.value.toUpperCase() }))} />
+              </div>
+              <div>
+                <label htmlFor="np-ocp" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">OCP Namespace</label>
+                <input id="np-ocp" type="text" className="input text-sm" placeholder="e.g. qa-testing"
+                  value={form.ocp_namespace} onChange={e => setForm(f => ({ ...f, ocp_namespace: e.target.value }))} />
+              </div>
+            </div>
+          </div>
+        </InlineFormSection>
+      )}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-        {projects.map(p => (
-          <div key={p.id} className="card hover:border-[var(--color-border-light)] transition-colors group relative">
+        {projects.map(p => {
+          const editKey: ProjectForm = `edit:${p.id}`
+          return (
+          <Fragment key={p.id}>
+          <div className="card hover:border-[var(--color-border-light)] transition-colors group relative">
             <div className="cursor-pointer" onClick={() => setActiveProject(p)}>
               <div className="flex items-start gap-3">
                 <div className="p-2.5 bg-white/10 rounded-xl">
@@ -139,18 +211,45 @@ export default function ProjectsPage() {
             </div>
             {canEdit && (
               <div className="absolute top-3 right-3 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button onClick={(e) => { e.stopPropagation(); setEditProject(p) }}
+                <button onClick={(e) => { e.stopPropagation(); slot.open(editKey) }}
                   className="p-1.5 bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-hover)] rounded text-[var(--color-text)] hover:text-[var(--color-text-secondary)] transition-colors" title="Edit">
                   <Edit3 className="h-3.5 w-3.5" />
                 </button>
-                <button onClick={(e) => { e.stopPropagation(); handleDelete(p) }}
+                <button onClick={(e) => { e.stopPropagation(); setConfirmingArchive(p.id) }}
                   className="p-1.5 bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-hover)] rounded text-[var(--status-failed)] hover:text-[var(--status-failed)] transition-colors" title="Archive">
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
               </div>
             )}
           </div>
-        ))}
+          {/* W27b: a full-width row of the grid right after the card holds what its controls open: the Archive
+              question and Edit Project. (Contract D-20's fallback: inside the ≈ 199 px card, Cancel + Archive left
+              21 px of one-line slack at 1280 on Windows fonts, under the 40 px rule; CI's fonts are wider.) Neither
+              is inside the select-on-click card body. */}
+          {(confirmingArchive === p.id || slot.openKey === editKey) && (
+            <div data-in-page-row="" className="col-span-full space-y-3">
+              {confirmingArchive === p.id && (
+                <InlineConfirm
+                  message={<>Archive project &quot;<strong>{p.name}</strong>&quot;? It will be hidden but not deleted.</>}
+                  confirmLabel="Archive"
+                  tone="danger"
+                  onConfirm={() => { setConfirmingArchive(null); void handleDelete(p) }}
+                  onCancel={() => setConfirmingArchive(null)}
+                />
+              )}
+              {slot.openKey === editKey && (
+                <EditProjectModal
+                  project={p}
+                  slot={slot}
+                  onClose={() => closeForm(editKey)}
+                  onSaved={() => { closeForm(editKey); load() }}
+                />
+              )}
+            </div>
+          )}
+          </Fragment>
+          )
+        })}
 
         {projects.length === 0 && (
           <div className="col-span-full flex flex-col items-center py-16 text-[var(--color-text-muted)]">
@@ -161,64 +260,13 @@ export default function ProjectsPage() {
         )}
       </div>
 
-      {/* Create Project Modal */}
-      {showModal && (
-        <div ref={createDialogRef} role="dialog" aria-modal="true" aria-labelledby="new-project-title" className="fixed inset-0 bg-[var(--color-bg)]/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-2xl w-full max-w-md shadow-2xl">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
-              <h2 id="new-project-title" className="font-semibold text-[var(--color-text)]">New Project</h2>
-              <button type="button" aria-label="Close new project dialog" onClick={() => setShowModal(false)} className="btn-ghost p-1"><X className="h-4 w-4" /></button>
-            </div>
-            <form onSubmit={handleSubmit} className="p-6 space-y-4">
-              <div>
-                <label htmlFor="np-name" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Project Name *</label>
-                <input id="np-name" type="text" className="input" placeholder="e.g. Payment Gateway API"
-                  value={form.name} onChange={e => handleNameChange(e.target.value)} required autoFocus />
-              </div>
-              <div>
-                <label htmlFor="np-slug" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Slug *</label>
-                <input id="np-slug" type="text" className="input font-mono text-sm" placeholder="e.g. payment-gateway-api"
-                  value={form.slug} onChange={e => setForm(f => ({ ...f, slug: slugify(e.target.value) }))} required />
-              </div>
-              <div>
-                <label htmlFor="np-desc" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Description</label>
-                <textarea id="np-desc" className="input resize-none" rows={2} placeholder="Optional"
-                  value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label htmlFor="np-jira" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Jira Project Key</label>
-                  <input id="np-jira" type="text" className="input font-mono text-sm" placeholder="e.g. PAY"
-                    value={form.jira_project_key} onChange={e => setForm(f => ({ ...f, jira_project_key: e.target.value.toUpperCase() }))} />
-                </div>
-                <div>
-                  <label htmlFor="np-ocp" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">OCP Namespace</label>
-                  <input id="np-ocp" type="text" className="input text-sm" placeholder="e.g. qa-testing"
-                    value={form.ocp_namespace} onChange={e => setForm(f => ({ ...f, ocp_namespace: e.target.value }))} />
-                </div>
-              </div>
-              <div className="flex gap-3 pt-2">
-                <button type="button" className="btn-secondary flex-1" onClick={() => setShowModal(false)}>Cancel</button>
-                <button type="submit" className="btn-primary flex-1" disabled={saving}>
-                  {saving ? 'Creating…' : 'Create Project'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Edit Project Modal */}
-      {editProject && (
-        <EditProjectModal project={editProject} onClose={() => setEditProject(null)} onSaved={() => { setEditProject(null); load() }} />
-      )}
     </div>
   )
 }
 
-// ── Edit Project Modal ──────────────────────────────────────────────────────
+// ── Edit Project (in the page, after its card) ──────────────────────────────────────────────────────
 
-function EditProjectModal({ project, onClose, onSaved }: { project: Project; onClose: () => void; onSaved: () => void }) {
+function EditProjectModal({ project, onClose, onSaved, slot }: { project: Project; onClose: () => void; onSaved: () => void; slot?: InlineSlot }) {
   const [name, setName] = useState(project.name)
   const [description, setDescription] = useState(project.description ?? '')
   const [jiraKey, setJiraKey] = useState(project.jira_project_key ?? '')
@@ -229,7 +277,6 @@ function EditProjectModal({ project, onClose, onSaved }: { project: Project; onC
   const [endDate, setEndDate] = useState(fmtDate(project.end_date))
   const [tagsInput, setTagsInput] = useState((project.tags ?? []).join(', '))
   const [saving, setSaving] = useState(false)
-  const dialogRef = useModalFocus({ onClose, canClose: !saving })
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
@@ -267,13 +314,24 @@ function EditProjectModal({ project, onClose, onSaved }: { project: Project; onC
   }
 
   return (
-    <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="edit-project-title" className="fixed inset-0 bg-[var(--color-bg)]/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
-          <h2 id="edit-project-title" className="font-semibold text-[var(--color-text)]">Edit Project</h2>
-          <button type="button" aria-label="Close edit project dialog" onClick={onClose} className="btn-ghost p-1"><X className="h-4 w-4" /></button>
-        </div>
-        <form onSubmit={handleSave} className="p-6 space-y-4">
+    <InlineFormSection
+      title="Edit Project"
+      titleId="edit-project-title"
+      closeLabel="Close edit project dialog"
+      onClose={onClose}
+      canClose={!saving}
+      slot={slot}
+      onSubmit={handleSave}
+      footer={
+        <>
+          <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn-primary" disabled={saving}>
+            {saving ? 'Saving…' : 'Save Changes'}
+          </button>
+        </>
+      }
+    >
+        <div className="max-w-2xl space-y-4">
           <div>
             <label htmlFor="ep-name" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Project Name *</label>
             <input id="ep-name" type="text" className="input" value={name} onChange={e => setName(e.target.value)} required />
@@ -331,15 +389,7 @@ function EditProjectModal({ project, onClose, onSaved }: { project: Project; onC
               </div>
             </div>
           </div>
-
-          <div className="flex gap-3 pt-2">
-            <button type="button" className="btn-secondary flex-1" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn-primary flex-1" disabled={saving}>
-              {saving ? 'Saving…' : 'Save Changes'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        </div>
+    </InlineFormSection>
   )
 }

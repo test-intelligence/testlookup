@@ -22,10 +22,19 @@ spec:
         app: testlookup-frontend
         app.kubernetes.io/component: frontend
     spec:
+      # Drain before stop (2026-10-17: a page open during a deploy got a 504).
+      # A deleted pod keeps receiving requests until the ingress drops it from
+      # its endpoints; the preStop sleep keeps nginx serving through that lag,
+      # and the grace period leaves the in-flight requests time to finish.
+      terminationGracePeriodSeconds: 45
       containers:
         - name: frontend
           image: testlookup/frontend:0.0.1
           imagePullPolicy: IfNotPresent
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 10"]
           ports:
             - containerPort: 80
               name: http

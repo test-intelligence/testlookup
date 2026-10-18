@@ -2,7 +2,7 @@
  * FK0 M0b: the rows panel, rendered for real (SidePanel, router links, the
  * page announcer, SWR under an isolated cache) with only `chartGet` replaced.
  */
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import axe from 'axe-core'
 import { MemoryRouter } from 'react-router-dom'
 import { SWRConfig } from 'swr'
@@ -272,5 +272,57 @@ describe('RowsPanel', () => {
     await waitFor(() => expect(state()).toBe('ready'))
     fireEvent.click(screen.getByRole('button', { name: 'Close executions' }))
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  // W27b PAN-05b: the panel is a read-only section of the page, where its host renders it (after the chart's
+  // frame), never an edge panel: no SidePanel, nothing modal, no portal, no padding reserved on <body>.
+  it('W27b: renders IN PLACE as an aside named "Executions in …", focus on its X; Escape with focus inside closes it', async () => {
+    chartGet.mockResolvedValue({ data: page([item(1)]), requestId: null })
+    const onClose = vi.fn()
+    const opener = document.createElement('button')
+    document.body.appendChild(opener)
+    opener.focus()
+    const view = render(
+      <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
+        <MemoryRouter>
+          <ChartAnnouncerProvider>
+            <div data-testid="host-section">
+              <div data-testid="frame" />
+              <RowsPanel {...BASE} onClose={onClose} />
+            </div>
+          </ChartAnnouncerProvider>
+        </MemoryRouter>
+      </SWRConfig>,
+    )
+    await waitFor(() => expect(state()).toBe('ready'))
+    const panel = screen.getByRole('complementary', { name: 'Executions in payments, failed' })
+    expect(screen.getByTestId('frame').nextElementSibling).toBe(panel)
+    expect(panel).toHaveAttribute('data-rows-panel')
+    expect(panel).toHaveAttribute('data-in-page', 'form')
+    expect(document.querySelector('[data-side-panel]')).toBeNull()
+    expect(document.querySelector('[aria-modal]')).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.body.getAttribute('style')).toBeNull()
+    expect(within(panel).getByRole('region', { name: 'Executions table' })).toBeInTheDocument()
+
+    const close = within(panel).getByRole('button', { name: 'Close executions' })
+    expect(close).toHaveFocus()
+    fireEvent.keyDown(within(panel).getByRole('region', { name: 'Executions table' }), { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
+    // The host closes it (selectors → []): focus goes back to the mark that opened it.
+    view.rerender(
+      <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
+        <MemoryRouter>
+          <ChartAnnouncerProvider>
+            <div data-testid="host-section">
+              <div data-testid="frame" />
+              <RowsPanel {...BASE} selectors={[]} onClose={onClose} />
+            </div>
+          </ChartAnnouncerProvider>
+        </MemoryRouter>
+      </SWRConfig>,
+    )
+    expect(screen.queryByRole('complementary')).toBeNull()
+    expect(opener).toHaveFocus()
   })
 })

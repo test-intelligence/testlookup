@@ -1621,6 +1621,11 @@ export default function CoveragePage() {
                 suites={suites.filter(isUntaggedRow)}
                 fixTagging={isQaEngineer ? { disabled: isAllProjects || !activeProjectId, onOpen: () => setFixTaggingOpen(true) } : undefined}
               />
+              {/* W27b: Fix tagging opens IN THE PAGE, right after its callout, in the same column;
+                  it reads the untagged tests and the suites only now. */}
+              {fixTaggingOpen && activeProjectId && !isAllProjects && (
+                <FixTaggingPanel projectId={activeProjectId} days={days} onClose={() => setFixTaggingOpen(false)} />
+              )}
             </div>
             <div className="flex flex-col gap-3.5 min-w-0">
               <CadenceHeatmap trend={trend} days={days} />
@@ -1650,10 +1655,6 @@ export default function CoveragePage() {
             </div>
           </div>
         </>
-      )}
-
-      {fixTaggingOpen && activeProjectId && !isAllProjects && (
-        <FixTaggingPanel projectId={activeProjectId} days={days} onClose={() => setFixTaggingOpen(false)} />
       )}
 
       {/* Below lg the two-column layout is cramped: say so rather than hide it. */}

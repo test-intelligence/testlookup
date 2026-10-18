@@ -8,32 +8,24 @@
  *     wraps to the first (focus never walks out behind the backdrop);
  *   - Escape closes it and focus goes back to the trigger.
  *
- * What is still a modal: the correct reference implementation
- * (TransitionReasonDialog, on the shared hook; W27b), the shared SidePanel
- * in modal mode (VIZ-109), and a NON-modal SidePanel on a phone-width screen,
- * where it renders modal. The six W27a forms that used to be driven here
- * (CorrectClassificationModal, DefectPromotionModal, CreateJiraIssueModal,
- * DefectIntakeModal, ProposeQuarantineModal, UploadReportModal) open in the
- * page now: their contract — focus in, no trap, Escape closes, focus back —
- * is inPageKeyboardContract.test.tsx (W27 PAN-01).
+ * What is still a modal: the shared SidePanel in modal mode (VIZ-109), and a
+ * NON-modal SidePanel on a phone-width screen, where it renders modal (the
+ * primitive lives on for the Help drawer and the dev primitives page). The
+ * forms that used to be driven here — the six of W27a, then
+ * TransitionReasonDialog (W27b) — open in the page now: their contract —
+ * focus in, no trap, Escape closes, focus back — is
+ * inPageKeyboardContract.test.tsx (W27 PAN-01, W27b PAN-05).
  */
 import { fireEvent, render, screen } from '@testing-library/react'
 import { useState, type ReactElement } from 'react'
 import { SWRConfig } from 'swr'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import TransitionReasonDialog from './testManagement/TransitionReasonDialog'
 import SidePanel from './ui/SidePanel'
 
 type Render = (onClose: () => void) => ReactElement
 
 const MODALS: Array<[string, Render]> = [
-  ['TransitionReasonDialog', (onClose) => (
-    <TransitionReasonDialog
-      title="Archive" description="Archive this case." confirmLabel="Archive"
-      onCancel={onClose} onConfirm={vi.fn()}
-    />
-  )],
   // VIZ-109: the shared side panel in its modal shape.
   ['SidePanel (modal)', (onClose) => (
     <SidePanel open modal title="Run details" onClose={onClose}>

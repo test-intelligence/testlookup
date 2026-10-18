@@ -38,7 +38,7 @@ The assistant can look up, for the selected project only: the recent runs, a run
 
 ## Suggested actions
 
-An answer may end with up to three suggested actions, such as **Propose quarantine: <test>** or **Create Jira issue: <test>**. They are built from what the lookups found, not from the model's wording. Clicking one opens the normal dialog, filled in. **Nothing is changed until you submit that dialog yourself**, with the permissions your role already has.
+An answer may end with up to three suggested actions, such as **Propose quarantine: <test>** or **Create Jira issue: <test>**. They are built from what the lookups found, not from the model's wording. Clicking one opens the usual form inside that answer, filled in (one at a time per answer). **Nothing is changed until you submit that form yourself**, with the permissions your role already has.
 
 ## When an answer fails
 

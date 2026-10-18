@@ -150,7 +150,13 @@ describe('DefectApprovals', () => {
     renderQueue()
     await screen.findByTestId('defect-approval-row')
     fireEvent.click(screen.getByTestId('defect-reject'))
-    const dialog = screen.getByRole('dialog', { name: 'Reject this defect?' })
+    const dialog = screen.getByRole('region', { name: 'Reject this defect?' })
+    // W27b PAN-05: the next item of the list, right after that defect's row, not a modal over the page.
+    expect(document.querySelector('[aria-modal]')).toBeNull()
+    const formItem = dialog.closest('li') as HTMLElement
+    expect(formItem).toHaveAttribute('data-in-page-row', '')
+    expect(formItem.previousElementSibling).toBe(screen.getByTestId('defect-approval-row'))
+    expect(formItem).not.toHaveAttribute('data-testid')
     expect(within(dialog).getByText('It is closed as Invalid and stops counting toward the release gate.')).toBeInTheDocument()
     const confirm = within(dialog).getByRole('button', { name: 'Reject' })
     expect(confirm).toBeDisabled()
@@ -163,7 +169,7 @@ describe('DefectApprovals', () => {
     })
     expect(service.reviewDefect).toHaveBeenCalledWith('d-1', { action: 'reject', reason: 'Not a product bug' })
     expect(toast.success).toHaveBeenCalledWith('Rejected — closed as Invalid')
-    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Reject this defect?' })).toBeNull()
     expect(screen.queryByTestId('defect-approval-row')).toBeNull()
   })
 

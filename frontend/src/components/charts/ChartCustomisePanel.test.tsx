@@ -63,6 +63,32 @@ describe('ChartCustomisePanel', () => {
     expect(onClose).toHaveBeenCalled()
   })
 
+  // W27b PAN-05b: a section of the page where its host renders it, never a fixed full-height edge panel.
+  it('W27b: renders IN PLACE (no fixed edge panel), its fields in a wrapping row; focus moves in, Escape closes', () => {
+    const onClose = vi.fn()
+    render(
+      <div data-testid="host">
+        <div data-testid="frame" />
+        <ChartCustomisePanel chartTitle="Pass rate by suite" spec={seriesCustomiseSpec(DEFAULT_SERIES_CONFIG)} onField={vi.fn()} onReset={vi.fn()} onClose={onClose} />
+      </div>,
+    )
+    const aside = panel()
+    expect(screen.getByTestId('frame').nextElementSibling).toBe(aside)
+    expect(aside).toHaveAttribute('data-chart-customise-panel')
+    expect(aside).toHaveAccessibleName('Customise Pass rate by suite')
+    expect(within(aside).getByRole('heading', { name: 'Customise' })).toBeInTheDocument()
+    for (const el of [aside, ...aside.querySelectorAll('*')]) {
+      expect(String(el.getAttribute('class') ?? '')).not.toMatch(/(^|\s)(fixed|h-screen|h-\[calc\(100vh)/)
+    }
+    expect(document.querySelector('[role="dialog"], [aria-modal]')).toBeNull()
+    const grid = (aside.querySelector('[data-customise="title"]') as HTMLElement).closest('.grid') as HTMLElement
+    expect(grid.className).toContain('sm:grid-cols-[repeat(auto-fill,minmax(180px,1fr))]')
+    expect(grid.querySelectorAll('[data-customise]')).toHaveLength(7)
+    expect(within(aside).getByLabelText('Title')).toHaveFocus()
+    fireEvent.keyDown(within(aside).getByLabelText('Metric'), { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
   it('renders a hostile chart title and field label as text', () => {
     const spec: CustomiseSpec = { fields: [{ id: 'title', label: '<b>x</b>', kind: 'text', value: '<img src=x>' }], unavailable: [], isDefault: true }
     render(<ChartCustomisePanel chartTitle="<img src=x onerror=alert(1)>" spec={spec} onField={vi.fn()} onReset={vi.fn()} onClose={vi.fn()} />)

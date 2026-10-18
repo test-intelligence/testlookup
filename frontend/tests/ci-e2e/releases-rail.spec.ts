@@ -67,7 +67,7 @@ test('Recent activity is the ledger’s release events, and a row opens the even
   await rows.nth(0).click()
   await expect(page).toHaveURL(/\/activity\?category=release&event=ev-rel-1$/)
   await expect(page.getByRole('heading', { level: 1, name: 'Activity' })).toBeVisible()
-  await expect(page.getByRole('dialog')).toContainText('Release 2026.11 was activated')
+  await expect(opened(page, 'Release 2026.11 was activated')).toContainText('Release 2026.11 was activated')
   await networkQuiet(page, api)
   expect(requestsTo(api, `/api/v1/projects/${PROJECT_ID}/activity/ev-rel-1`)).toHaveLength(1)
   assertHermetic(api, errors)

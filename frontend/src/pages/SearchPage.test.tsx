@@ -4,6 +4,8 @@ import {
 } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import toast from 'react-hot-toast'
+
 import SearchPage from './SearchPage'
 import { expectTemplateHeader } from '@/test/expectTemplateHeader'
 import type { GlobalSearchResponse, GlobalSearchResult, IndexStatus } from '@/types/search'
@@ -573,6 +575,75 @@ describe('SearchPage', () => {
     await screen.findByText(/^84$/, { exact: false })
     // Runs chip stays on 39 (the project total), not 0.
     expect(screen.getByText(/^39$/, { exact: false })).toBeInTheDocument()
+  })
+
+  /**
+   * W27b PAN-05 (Y3): Clear history asks inside the Recent searches card, right
+   * under its header, never with the browser's prompt. The first click clears
+   * nothing; the strip's Clear is the only control that does; Cancel and Escape
+   * keep every recent; clearing is local (no request).
+   */
+  describe('Clear history asks in the recent searches card', () => {
+    const RECENTS = [
+      { id: 'r1', query: 'checkout flaky', mode: 'keyword', scope: 'all', resultCount: 4, ts: Date.now() },
+      { id: 'r2', query: 'login timeout', mode: 'keyword', scope: 'all', resultCount: 2, ts: Date.now() },
+    ]
+    const strip = () => document.querySelector('[data-inline-confirm]') as HTMLElement | null
+    beforeEach(() => vi.mocked(toast.success).mockClear())
+
+    async function openRecents() {
+      localStorage.setItem('tl.search.recent', JSON.stringify(RECENTS))
+      renderAt('/search')
+      await screen.findByRole('button', { name: /checkout flaky/i })
+      // Load-time reads settle before the count below.
+      await waitFor(() => expect(mockGlobalSearch).toHaveBeenCalled())
+    }
+
+    it('asks under the card header; the strip\'s Clear clears, once, locally', async () => {
+      const confirmSpy = vi.spyOn(window, 'confirm')
+      await openRecents()
+      const searches = mockGlobalSearch.mock.calls.length
+
+      fireEvent.click(screen.getByRole('button', { name: 'Clear history' }))
+      const asked = strip() as HTMLElement
+      expect(asked).not.toBeNull()
+      expect(asked.querySelector('p')?.textContent).toBe("Clear all 2 recent searches? This can't be undone.")
+      // Inside the Recent searches card, after its header row and before the first recent.
+      const header = screen.getByRole('heading', { name: 'Recent searches' }).parentElement as HTMLElement
+      const card = header.parentElement as HTMLElement
+      expect(card.contains(asked)).toBe(true)
+      expect(header.compareDocumentPosition(asked) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      const firstRecent = screen.getByRole('button', { name: /checkout flaky/i })
+      expect(asked.compareDocumentPosition(firstRecent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      // The first click cleared nothing.
+      expect(JSON.parse(localStorage.getItem('tl.search.recent') ?? '[]')).toHaveLength(2)
+      expect(toast.success).not.toHaveBeenCalled()
+
+      fireEvent.click(within(asked).getByRole('button', { name: 'Clear' }))
+      expect(strip()).toBeNull()
+      expect(localStorage.getItem('tl.search.recent')).toBe('[]')
+      expect(toast.success).toHaveBeenCalledTimes(1)
+      expect(toast.success).toHaveBeenCalledWith('Recent searches cleared')
+      expect(screen.getByText('Your queries will appear here.')).toBeInTheDocument()
+      expect(mockGlobalSearch.mock.calls.length, 'clearing sends nothing').toBe(searches)
+      expect(confirmSpy).not.toHaveBeenCalled()
+      confirmSpy.mockRestore()
+    })
+
+    it('Cancel and Escape keep every recent', async () => {
+      await openRecents()
+      fireEvent.click(screen.getByRole('button', { name: 'Clear history' }))
+      fireEvent.click(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }))
+      expect(strip()).toBeNull()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Clear history' }))
+      fireEvent.keyDown(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }), { key: 'Escape' })
+      expect(strip()).toBeNull()
+
+      expect(JSON.parse(localStorage.getItem('tl.search.recent') ?? '[]')).toHaveLength(2)
+      expect(screen.getByRole('button', { name: /login timeout/i })).toBeInTheDocument()
+      expect(toast.success).not.toHaveBeenCalled()
+    })
   })
 })
 

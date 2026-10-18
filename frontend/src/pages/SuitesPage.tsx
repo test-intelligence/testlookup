@@ -1,10 +1,19 @@
-import { useState } from 'react'
+/**
+ * `/suites`: the project's test suites. New suite opens IN THE PAGE (W27b
+ * PAN-05), under the page header; a suite's Delete asks in a strip in a
+ * full-width row right under that suite's row (it was the browser's native
+ * confirmation prompt).
+ */
+import { Fragment, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { ChevronRight, FolderTree, Plus, Star, Trash2, X } from 'lucide-react'
+import { ChevronRight, FolderTree, Plus, Star, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { InlineConfirm } from '@/components/ui/inPage/InlineConfirm'
+import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
+import { InlineRowSection } from '@/components/ui/inPage/InlineRowSection'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { usePermissions } from '@/hooks/usePermissions'
@@ -153,16 +162,10 @@ function CreateSuiteModal({
     }
   }
 
+  // In the page (W27b PAN-05), right under the page header; its X is labelled `Close`.
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="new-suite-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="w-full max-w-md rounded-lg bg-[var(--color-bg)] p-6 ring-1 ring-[var(--color-border)]">
-        <div className="flex items-center justify-between">
-          <h2 id="new-suite-title" className="text-lg font-semibold text-[var(--color-text)]">New Test Suite</h2>
-          <button onClick={onClose} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-        <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+    <InlineFormSection title="New Test Suite" titleId="new-suite-title" onClose={onClose}>
+        <form onSubmit={handleSubmit} className="max-w-md space-y-4">
           {showProjectPicker && (
             // All-Projects mode: the page-level scope doesn't pin a
             // single project, so the user must choose one for this
@@ -234,8 +237,7 @@ function CreateSuiteModal({
             </button>
           </div>
         </form>
-      </div>
-    </div>
+    </InlineFormSection>
   )
 }
 
@@ -261,6 +263,8 @@ export default function SuitesPage() {
   // project (`useSuiteAggregates`): All-Projects shows the catalog columns only.
   const aggregates = useSuiteAggregates(!isAllProjects)
   const [showCreate, setShowCreate] = useState(false)
+  // The suite whose Delete is being asked about (the strip under its row).
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null)
   // Create is allowed when the user has the role AND either a specific
   // project is active OR they have at least one accessible project to
   // pick from in All-Projects mode. The second condition saves a
@@ -286,9 +290,7 @@ export default function SuitesPage() {
       toast.error('The default suite cannot be deleted')
       return
     }
-    if (!window.confirm(`Delete suite "${suite.name}"? Test cases must already be moved out.`)) {
-      return
-    }
+    // Asked by the strip under the suite's row; only its Delete calls this.
     try {
       await suitesService.remove(suite.id)
       toast.success(`Suite "${suite.name}" deleted`)
@@ -336,6 +338,17 @@ export default function SuitesPage() {
         }
       />
 
+      {showCreate && (
+        <CreateSuiteModal
+          // Single-project mode pre-pins the project; All-Projects mode
+          // passes ``null`` so the form's picker drives the choice.
+          defaultProjectId={!isAllProjects && project ? project.id : null}
+          projectOptions={accessibleProjects}
+          onClose={() => setShowCreate(false)}
+          onCreated={() => refreshSuites()}
+        />
+      )}
+
       {items.length === 0 ? (
         <EmptyState
           title="No suites yet"
@@ -364,8 +377,8 @@ export default function SuitesPage() {
               </thead>
               <tbody className="divide-y divide-[var(--color-border)]">
                 {items.map((s) => (
+                  <Fragment key={s.id}>
                   <tr
-                    key={s.id}
                     className="cursor-pointer transition hover:bg-[var(--color-bg-secondary)]"
                     onClick={() => navigate(`/suites/${s.id}`)}
                   >
@@ -407,7 +420,7 @@ export default function SuitesPage() {
                         )}
                         {canDelete && !s.is_default && (
                           <button
-                            onClick={() => handleDelete(s)}
+                            onClick={() => setConfirmingDelete(s.id)}
                             className="rounded p-1 text-[var(--color-text-muted)] hover:bg-[var(--status-failed-bg)]/10 hover:text-[var(--status-failed)]"
                             title="Delete"
                           >
@@ -418,6 +431,18 @@ export default function SuitesPage() {
                       </div>
                     </td>
                   </tr>
+                  {confirmingDelete === s.id && (
+                    <InlineRowSection colSpan={showRunColumns ? 9 : 4}>
+                      <InlineConfirm
+                        message={<>Delete suite &quot;<strong>{s.name}</strong>&quot;? Test cases must already be moved out.</>}
+                        confirmLabel="Delete"
+                        tone="danger"
+                        onConfirm={() => { setConfirmingDelete(null); void handleDelete(s) }}
+                        onCancel={() => setConfirmingDelete(null)}
+                      />
+                    </InlineRowSection>
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
@@ -435,17 +460,6 @@ export default function SuitesPage() {
             </p>
           ) : null}
         </div>
-      )}
-
-      {showCreate && (
-        <CreateSuiteModal
-          // Single-project mode pre-pins the project; All-Projects mode
-          // passes ``null`` so the modal's picker drives the choice.
-          defaultProjectId={!isAllProjects && project ? project.id : null}
-          projectOptions={accessibleProjects}
-          onClose={() => setShowCreate(false)}
-          onCreated={() => refreshSuites()}
-        />
       )}
     </div>
   )

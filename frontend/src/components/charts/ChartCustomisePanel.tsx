@@ -1,7 +1,12 @@
 /**
- * VIZ-604 — "Customise": a SIDE PANEL (not a modal), so the chart it changes
- * stays in view and redraws as each setting changes. "Reset to default"
- * restores the chart as shipped.
+ * VIZ-604 — "Customise": not a modal, so the chart it changes stays in view
+ * and redraws as each setting changes. "Reset to default" restores the chart
+ * as shipped.
+ *
+ * W27b PAN-05b: a section IN THE PAGE (an `InlineFormSection as="aside"`,
+ * named `Customise <chart>`), which its host renders under Explore's header or
+ * right after the Trends chart's frame; its fields sit in a wrapping row so the
+ * chart above stays in view. Nothing is sent by the form itself.
  *
  * TRND-10: the panel is generic. A chart hands it a `CustomiseSpec` — its
  * fields (text or select, each with its `data-customise` id), the options it
@@ -15,7 +20,7 @@
  * were for the suite series.
  */
 import { useId } from 'react'
-import { X } from 'lucide-react'
+import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
 import type { CustomiseField, CustomiseSpec } from './chartCustomiseModel'
 
 export interface ChartCustomisePanelProps {
@@ -73,47 +78,41 @@ export default function ChartCustomisePanel({ chartTitle, spec, onField, onReset
   const unavailable = Array.isArray(spec.unavailable) ? spec.unavailable : []
 
   return (
-    <aside
-      aria-label={`Customise ${chartTitle}`}
-      data-chart-customise-panel=""
-      className="fixed right-0 top-16 z-40 flex h-[calc(100vh-4rem)] w-80 flex-col gap-4 overflow-y-auto border-l border-[var(--color-border)] bg-[var(--color-bg-card)] p-4 shadow-xl"
+    <InlineFormSection
+      as="aside"
+      title="Customise"
+      ariaLabel={`Customise ${chartTitle}`}
+      description={<p className="m-0 text-xs text-[var(--color-text-secondary)] break-words">{chartTitle}</p>}
+      onClose={onClose}
+      closeLabel="Close customise panel"
+      dataAttributes={{ 'data-chart-customise-panel': '' }}
+      className="mt-3 min-w-0"
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <h2 className="text-sm font-semibold text-[var(--color-text)]">Customise</h2>
-          <p className="text-xs text-[var(--color-text-secondary)] break-words">{chartTitle}</p>
+      <div className="flex flex-col gap-4">
+        <div className="grid gap-3 sm:grid-cols-[repeat(auto-fill,minmax(180px,1fr))]">
+          {fields.map((field) => (
+            <Field key={field.id} field={field} inputId={`${base}-${field.id}`} onField={onField} />
+          ))}
         </div>
+
+        <ul data-customise-reasons="" className="flex flex-col gap-1 text-xs text-[var(--color-text-secondary)]">
+          {unavailable.map((option) => (
+            <li key={`${option.control}-${option.label}`}>
+              <span className="font-semibold">{option.label}</span>: {option.reason}
+            </li>
+          ))}
+        </ul>
+
         <button
           type="button"
-          onClick={onClose}
-          aria-label="Close customise panel"
-          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]"
+          data-customise="reset"
+          disabled={spec.isDefault}
+          onClick={onReset}
+          className="self-start rounded-md border border-[var(--color-border)] px-3 py-1.5 text-sm font-medium text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50"
         >
-          <X aria-hidden="true" className="h-4 w-4" />
+          Reset to default
         </button>
       </div>
-
-      {fields.map((field) => (
-        <Field key={field.id} field={field} inputId={`${base}-${field.id}`} onField={onField} />
-      ))}
-
-      <ul data-customise-reasons="" className="flex flex-col gap-1 text-xs text-[var(--color-text-secondary)]">
-        {unavailable.map((option) => (
-          <li key={`${option.control}-${option.label}`}>
-            <span className="font-semibold">{option.label}</span>: {option.reason}
-          </li>
-        ))}
-      </ul>
-
-      <button
-        type="button"
-        data-customise="reset"
-        disabled={spec.isDefault}
-        onClick={onReset}
-        className="self-start rounded-md border border-[var(--color-border)] px-3 py-1.5 text-sm font-medium text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50"
-      >
-        Reset to default
-      </button>
-    </aside>
+    </InlineFormSection>
   )
 }

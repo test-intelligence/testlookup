@@ -1,5 +1,16 @@
+/**
+ * /users: users and roles, and who has access to each project.
+ *
+ * W27b PAN-06: the forms render IN THE PAGE (no modal): Add User and Invite
+ * User open one at a time right under the Users tab toolbar, a row's Edit user
+ * opens under that row (a full-width table row). Add User's temporary password
+ * and Invite User's link are one-time secrets: shown once in their section,
+ * which while it shows one can only be left through its own Done / Close (no
+ * X, Escape swallowed), and which marks its slot dirty so opening the other
+ * form there asks first. Project access (`ProjectMembersTab`) the same way.
+ */
 import { Navigate, useLocation } from 'react-router-dom'
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useState } from 'react'
 import { Edit3, Plus, Shield, UserCheck, UserPlus, UserX } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useUsers, refreshUsers } from '@/hooks/useUserManagement'
@@ -12,6 +23,10 @@ import PageHeader from '@/components/ui/PageHeader'
 import Tabs, { type TabItem } from '@/components/ui/Tabs'
 import { useTabParam } from '@/components/ui/useTabParam'
 import { helpTopicParam } from '@/components/help/helpTopics'
+import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
+import InlineRowSection from '@/components/ui/inPage/InlineRowSection'
+import { useInlineSlot, type InlineSlot } from '@/components/ui/inPage/useInlineSlot'
+import { useSlotCloser } from '@/hooks/useSlotCloser'
 import { ProjectMembersTab } from './ProjectMembersTab'
 import { copyTextToClipboard } from '@/utils/clipboard'
 import type { Project } from '@/types/projects'
@@ -59,6 +74,18 @@ async function syncSelfIfEdited(editedUserId: string): Promise<void> {
   }
 }
 
+/**
+ * While a one-time secret is shown, its section's slot stays dirty (W27b): opening the other form in that
+ * place asks first instead of dropping the secret. The secret itself lives only in the section's state. A
+ * layout effect: the slot is dirty before the browser can deliver the next click.
+ */
+function useSecretHoldsSlot(slot: InlineSlot | undefined, holding: boolean) {
+  const setDirty = slot?.setDirty
+  useLayoutEffect(() => {
+    if (holding) setDirty?.(true)
+  }, [holding, setDirty])
+}
+
 
 const HELP_TOPIC = helpTopicParam('/users')
 
@@ -103,12 +130,21 @@ export default function UserManagementPage() {
 
 // ── Users Tab ─────────────────────────────────────────────────
 
+/** The two forms under the Users tab toolbar (one at a time) and a row's Edit user (one per table). */
+type ToolbarForm = 'add' | 'invite'
+type RowForm = `edit:${string}`
+
 function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmin: boolean }) {
-  const [showInviteModal, setShowInviteModal] = useState(false)
-  const [showAddUserModal, setShowAddUserModal] = useState(false)
-  const [editUser, setEditUser] = useState<UserItem | null>(null)
+  // W27b: one open form under the toolbar (Add User / Invite User), one under a table row (Edit user).
+  const toolbarSlot = useInlineSlot<ToolbarForm>()
+  const closeToolbar = useSlotCloser(toolbarSlot)
+  const rowSlot = useInlineSlot<RowForm>()
+  const closeRow = useSlotCloser(rowSlot)
   const [filterRole, setFilterRole] = useState<UserRole | ''>('')
   const [filterActive, setFilterActive] = useState<'all' | 'active' | 'inactive'>('all')
+  // A filter change re-reads the list (the table waits behind the spinner), so the user under edit leaves
+  // the table: the row form closes first, after the discard question when it has typed input.
+  const changeFilter = (apply: () => void) => rowSlot.guard(() => { rowSlot.close(); apply() })
 
   // Filters go to the SERVER. They used to be applied client-side over
   // whatever the one unpaginated request happened to return -- the API
@@ -155,7 +191,11 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
     }
   }
 
-  if (isLoading) return <div className="flex justify-center py-12"><LoadingSpinner /></div>
+  // Today's loading state while nothing is open. With a form open the tab stays and only the table waits:
+  // a re-read never unmounts a typed form or a one-time secret.
+  if (isLoading && toolbarSlot.openKey === null && rowSlot.openKey === null) {
+    return <div className="flex justify-center py-12"><LoadingSpinner /></div>
+  }
 
   return (
     <div className="space-y-4">
@@ -165,7 +205,10 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
           <select
             aria-label="Filter by role"
             value={filterRole}
-            onChange={(e) => setFilterRole(e.target.value as UserRole | '')}
+            onChange={(e) => {
+              const value = e.target.value as UserRole | ''
+              changeFilter(() => setFilterRole(value))
+            }}
             className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-1.5"
           >
             <option value="">All roles</option>
@@ -174,7 +217,10 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
           <select
             aria-label="Filter by status"
             value={filterActive}
-            onChange={(e) => setFilterActive(e.target.value as 'all' | 'active' | 'inactive')}
+            onChange={(e) => {
+              const value = e.target.value as 'all' | 'active' | 'inactive'
+              changeFilter(() => setFilterActive(value))
+            }}
             className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-1.5"
           >
             <option value="all">All status</option>
@@ -185,14 +231,14 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
         {isAdmin && (
           <div className="flex gap-2">
             <button
-              onClick={() => setShowAddUserModal(true)}
+              onClick={() => toolbarSlot.open('add')}
               className="flex items-center gap-1.5 bg-[var(--status-passed-bg)] hover:bg-[var(--status-passed-bg)] text-[var(--color-text)] text-sm px-3 py-1.5 rounded transition-colors"
             >
               <UserPlus className="h-4 w-4" /> Add User
             </button>
             {canManageUsers && (
               <button
-                onClick={() => setShowInviteModal(true)}
+                onClick={() => toolbarSlot.open('invite')}
                 className="flex items-center gap-1.5 bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] text-sm px-3 py-1.5 rounded transition-colors"
               >
                 <Plus className="h-4 w-4" /> Invite User
@@ -201,6 +247,10 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
           </div>
         )}
       </div>
+
+      {/* W27b: Add User / Invite User open here, under the toolbar, one at a time. */}
+      {toolbarSlot.openKey === 'add' && <AddUserModal slot={toolbarSlot} onClose={() => closeToolbar('add')} />}
+      {toolbarSlot.openKey === 'invite' && <InviteUserModal slot={toolbarSlot} onClose={() => closeToolbar('invite')} />}
 
       {/* A capped list must say so. Silently rendering the first page as if
           it were the whole table is what made the role filter answer 2 when
@@ -216,6 +266,9 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
       )}
 
       {/* Table */}
+      {isLoading ? (
+        <div className="flex justify-center py-12"><LoadingSpinner /></div>
+      ) : (
       <div className="bg-[var(--color-bg-secondary)] rounded-lg border border-[var(--color-border)] overflow-hidden">
         <table className="w-full text-sm">
           <thead>
@@ -227,8 +280,11 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
             </tr>
           </thead>
           <tbody className="divide-y divide-[var(--color-border)]">
-            {filtered.map((user) => (
-              <tr key={user.id} className="hover:bg-[var(--color-bg-hover)]/30 transition-colors">
+            {filtered.map((user) => {
+              const editKey: RowForm = `edit:${user.id}`
+              return (
+              <Fragment key={user.id}>
+              <tr className="hover:bg-[var(--color-bg-hover)]/30 transition-colors">
                 <td className="px-4 py-3">
                   <div className="font-medium text-[var(--color-text)]">{user.full_name || user.username}</div>
                   <div className="text-xs text-[var(--color-text-muted)]">{user.email}</div>
@@ -261,7 +317,7 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => setEditUser(user)}
+                        onClick={() => rowSlot.open(editKey)}
                         className="text-[var(--color-text)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-secondary)]/30 p-1 rounded transition-colors"
                         title="Edit user"
                       >
@@ -281,7 +337,15 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
                   </td>
                 )}
               </tr>
-            ))}
+              {/* W27b: Edit user opens under its row (admin only, so the table has its 4 columns). */}
+              {rowSlot.openKey === editKey && (
+                <InlineRowSection colSpan={4}>
+                  <EditUserModal user={user} slot={rowSlot} onClose={() => closeRow(editKey)} />
+                </InlineRowSection>
+              )}
+              </Fragment>
+              )
+            })}
             {filtered.length === 0 && (
               <tr>
                 <td colSpan={4} className="px-4 py-8 text-center text-[var(--color-text-muted)]">No users found</td>
@@ -290,17 +354,14 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
           </tbody>
         </table>
       </div>
-
-      {showInviteModal && <InviteUserModal onClose={() => setShowInviteModal(false)} />}
-      {showAddUserModal && <AddUserModal onClose={() => setShowAddUserModal(false)} />}
-      {editUser && <EditUserModal user={editUser} onClose={() => setEditUser(null)} />}
+      )}
     </div>
   )
 }
 
-// ── Edit User Modal ──────────────────────────────────────────
+// ── Edit User (in the page, under its row) ───────────────────
 
-function EditUserModal({ user, onClose }: { user: UserItem; onClose: () => void }) {
+function EditUserModal({ user, onClose, slot }: { user: UserItem; onClose: () => void; slot?: InlineSlot }) {
   const [email, setEmail] = useState(user.email)
   const [username, setUsername] = useState(user.username)
   const [fullName, setFullName] = useState(user.full_name ?? '')
@@ -387,11 +448,30 @@ function EditUserModal({ user, onClose }: { user: UserItem; onClose: () => void 
   const unassignedProjects = projects.filter(p => !assignedProjects.some(a => a.project_id === p.id))
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="edit-user-title" className="fixed inset-0 bg-[var(--color-bg)]/60 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg w-full max-w-lg p-6 space-y-5 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <h2 id="edit-user-title" className="text-lg font-semibold text-[var(--color-text)]">Edit User</h2>
-
-        <form onSubmit={handleSave} className="space-y-4">
+    <InlineFormSection
+      title="Edit User"
+      titleId="edit-user-title"
+      onClose={onClose}
+      canClose={!saving}
+      showClose={false}
+      slot={slot}
+      onSubmit={handleSave}
+      footer={
+        <>
+          <button type="button" onClick={onClose} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-4 py-2">
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={saving}
+            className="bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] text-sm px-4 py-2 rounded transition-colors"
+          >
+            {saving ? 'Saving…' : 'Save Changes'}
+          </button>
+        </>
+      }
+    >
+        <div className="max-w-2xl space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label htmlFor="user-field-0" className="block text-sm text-[var(--color-text-muted)] mb-1">Email</label>
@@ -502,28 +582,14 @@ function EditUserModal({ user, onClose }: { user: UserItem; onClose: () => void 
               </div>
             )}
           </div>
-
-          <div className="flex justify-end gap-2 pt-2">
-            <button type="button" onClick={onClose} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-4 py-2">
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] text-sm px-4 py-2 rounded transition-colors"
-            >
-              {saving ? 'Saving…' : 'Save Changes'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        </div>
+    </InlineFormSection>
   )
 }
 
-// ── Add User Modal (admin direct create) ──────────────────────
+// ── Add User (admin direct create; in the page, under the toolbar) ──
 
-function AddUserModal({ onClose }: { onClose: () => void }) {
+function AddUserModal({ onClose, slot }: { onClose: () => void; slot?: InlineSlot }) {
   const [email, setEmail] = useState('')
   const [username, setUsername] = useState('')
   const [fullName, setFullName] = useState('')
@@ -540,6 +606,10 @@ function AddUserModal({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     projectsService.list().then(setProjects).catch(() => {})
   }, [])
+
+  // The temporary password is shown once, here: while it is, the slot stays dirty, so opening Invite User
+  // in its place asks first instead of dropping it.
+  useSecretHoldsSlot(slot, result !== null)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -572,9 +642,16 @@ function AddUserModal({ onClose }: { onClose: () => void }) {
   const unassignedProjects = projects.filter(p => !assignedProjects.includes(p.id))
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="add-user-title" className="fixed inset-0 bg-[var(--color-bg)]/60 flex items-center justify-center z-50">
-      <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg w-full max-w-lg p-6 space-y-4">
-        <h2 id="add-user-title" className="text-lg font-semibold text-[var(--color-text)]">Add User</h2>
+    <InlineFormSection
+      title="Add User"
+      titleId="add-user-title"
+      onClose={onClose}
+      // While the password is shown its only exit is Done (as in the modal: no X, Escape swallowed).
+      canClose={result === null && !loading}
+      showClose={false}
+      slot={slot}
+    >
+      <div className="max-w-2xl">
         {result ? (
           <div className="space-y-4">
             <p className="text-sm text-[var(--color-text-secondary)]">
@@ -692,17 +769,20 @@ function AddUserModal({ onClose }: { onClose: () => void }) {
           </form>
         )}
       </div>
-    </div>
+    </InlineFormSection>
   )
 }
 
-// ── Invite Modal ──────────────────────────────────────────────
+// ── Invite User (in the page, under the toolbar) ─────────────
 
-function InviteUserModal({ onClose }: { onClose: () => void }) {
+function InviteUserModal({ onClose, slot }: { onClose: () => void; slot?: InlineSlot }) {
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<UserRole>('QA_ENGINEER')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<{ invitation_link: string } | null>(null)
+
+  // The invitation link is shown once, here: while it is, opening Add User in its place asks first.
+  useSecretHoldsSlot(slot, result !== null)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -720,9 +800,16 @@ function InviteUserModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="invite-user-title" className="fixed inset-0 bg-[var(--color-bg)]/60 flex items-center justify-center z-50">
-      <div className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg w-full max-w-md p-6 space-y-4">
-        <h2 id="invite-user-title" className="text-lg font-semibold text-[var(--color-text)]">Invite User</h2>
+    <InlineFormSection
+      title="Invite User"
+      titleId="invite-user-title"
+      onClose={onClose}
+      // While the link is shown its only exit is Close (as in the modal: no X, Escape swallowed).
+      canClose={result === null && !loading}
+      showClose={false}
+      slot={slot}
+    >
+      <div className="max-w-2xl">
         {result ? (() => {
           const inviteUrl = buildInvitationUrl(result.invitation_link)
           return (
@@ -773,6 +860,6 @@ function InviteUserModal({ onClose }: { onClose: () => void }) {
           </form>
         )}
       </div>
-    </div>
+    </InlineFormSection>
   )
 }

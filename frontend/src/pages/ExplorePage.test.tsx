@@ -400,6 +400,19 @@ describe('ExplorePage (VIZ-505)', () => {
     expect(panel.textContent).toContain('Rates cannot be stacked')
   })
 
+  it('W27b: Customise opens IN THE PAGE right under the header, above the controls and the grid; its X closes it', async () => {
+    renderPage()
+    await waitFor(() => expect(panelCalls()).toHaveLength(5))
+    fireEvent.click(screen.getByRole('button', { name: 'Customise' }))
+    const panel = await screen.findByRole('complementary', { name: /Customise/ })
+    expect(document.querySelector('[data-page-header]')?.nextElementSibling).toBe(panel)
+    expect(document.querySelector('[aria-modal], [role="dialog"]')).toBeNull()
+    expect(panel.compareDocumentPosition(document.querySelector('[data-explore-grid]') as HTMLElement) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    fireEvent.click(within(panel).getByRole('button', { name: 'Close customise panel' }))
+    expect(screen.queryByRole('complementary', { name: /Customise/ })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Customise' })).toHaveAttribute('aria-pressed', 'false')
+  })
+
   it('TRND-10: a title is a heading over the grid, and a saved view stores the title and the lines per panel', async () => {
     renderPage('/explore?metric=pass_rate&series=branch&facet=release&top=5')
     fireEvent.click(screen.getByRole('button', { name: 'Customise' }))

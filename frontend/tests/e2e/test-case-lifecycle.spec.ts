@@ -1,6 +1,7 @@
 import { expect, Page, test } from '@playwright/test';
 import { mockJson, seedActiveProject } from './apiMock';
 import { performRealLogin } from './realLoginHelper';
+import { opened } from '../lib/inPage';
 
 const PROJECT = { id: '00000000-0000-4000-8000-0000000000e2', name: 'E2E Project' };
 const BASE_CASE = {
@@ -65,7 +66,7 @@ async function openLifecycle(page: Page) {
 }
 
 async function submitReason(page: Page, action: string, reason: string, confirmLabel = action) {
-  const dialog = page.getByRole('dialog', { name: action });
+  const dialog = opened(page, action);
   const confirm = dialog.getByRole('button', { name: confirmLabel });
   await expect(confirm).toBeDisabled();
   await dialog.getByRole('textbox').fill(`  ${reason}  `);

@@ -229,7 +229,15 @@ describe('CanonicalDetailPage', () => {
 
     renderAt('canon-linked')
     fireEvent.click(screen.getByRole('button', { name: 'Unlink managed case' }))
-    const dialog = screen.getByRole('dialog', { name: 'Unlink managed case' })
+    const dialog = screen.getByRole('region', { name: 'Unlink managed case' })
+    // W27b PAN-05: in the page, right after the page header, not a modal over it.
+    expect(document.querySelector('[aria-modal]')).toBeNull()
+    const header = document.querySelector('[data-page-header]') as HTMLElement
+    expect(header.compareDocumentPosition(dialog) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(header.contains(dialog)).toBe(false)
+    // …and above the rest of the page (not at its end, where the modal was mounted).
+    const runHistory = screen.getByRole('heading', { name: /^Run history/ })
+    expect(dialog.compareDocumentPosition(runHistory) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     const confirm = within(dialog).getByRole('button', { name: 'Unlink' })
     expect(confirm).toBeDisabled()
     fireEvent.change(within(dialog).getByRole('textbox', { name: /Reason/ }), {
@@ -303,9 +311,9 @@ describe('CanonicalDetailPage', () => {
     fireEvent.change(screen.getByRole('textbox', { name: /Reason/ }), {
       target: { value: 'Incorrect mapping' },
     })
-    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Unlink' }))
+    fireEvent.click(within(screen.getByRole('region', { name: 'Unlink managed case' })).getByRole('button', { name: 'Unlink' }))
 
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Unlink managed case' })).not.toBeInTheDocument())
     expect(screen.queryByRole('button', { name: 'Unlink managed case' })).not.toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('managed link was removed')
     expect(suitesService.unlinkManagedCase).toHaveBeenCalledTimes(1)

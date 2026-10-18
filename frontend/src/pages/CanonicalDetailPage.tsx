@@ -215,6 +215,20 @@ export default function CanonicalDetailPage() {
         }
       />
 
+      {/* Unlink's reason opens in the page, right under the header (W27b PAN-05). */}
+      {showUnlink && (
+        <div className="mb-4">
+          <TransitionReasonDialog
+            title="Unlink managed case"
+            description="Explain why this canonical automation identity was linked to the wrong managed case. Both records will be preserved."
+            confirmLabel="Unlink"
+            busy={unlinking}
+            onCancel={() => setShowUnlink(false)}
+            onConfirm={unlinkManagedCase}
+          />
+        </div>
+      )}
+
       {unlinkRefreshWarning && (
         <p role="status" className="mb-4 rounded-md border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)] p-2 text-sm text-[var(--status-broken)]">
           {unlinkRefreshWarning}
@@ -334,17 +348,6 @@ export default function CanonicalDetailPage() {
           </p>
         )}
       </section>
-
-      {showUnlink && (
-        <TransitionReasonDialog
-          title="Unlink managed case"
-          description="Explain why this canonical automation identity was linked to the wrong managed case. Both records will be preserved."
-          confirmLabel="Unlink"
-          busy={unlinking}
-          onCancel={() => setShowUnlink(false)}
-          onConfirm={unlinkManagedCase}
-        />
-      )}
     </>
   )
 }

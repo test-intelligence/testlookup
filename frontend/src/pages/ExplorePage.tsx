@@ -246,7 +246,7 @@ function Explorer(): ReactElement {
         subtitle={EXPLORER_SUBTITLE}
         actions={
           <>
-            {/* TRND-10: the kit's side panel (a title, lines per panel, the guard rails); no project needed. */}
+            {/* TRND-10: the kit's customise section (a title, lines per panel, the guard rails); no project needed. */}
             <button
               type="button"
               data-chart-customise=""
@@ -270,6 +270,17 @@ function Explorer(): ReactElement {
           </>
         }
       />
+      {/* W27b: Customise opens IN THE PAGE, right under the header and above the panel grid,
+          which stays in view and redraws on every change. */}
+      {customising ? (
+        <ChartCustomisePanel
+          chartTitle={config.title?.trim() || EXPLORER_TITLE}
+          spec={exploreCustomiseSpec(config)}
+          onField={(id, value) => setConfig(applyExploreField(config, id, value))}
+          onReset={() => setConfig(resetExploreCustomise(config))}
+          onClose={() => setCustomising(false)}
+        />
+      ) : null}
       <ExploreControls config={config} ctx={ctx} onChange={setConfig} />
       <p data-explore-summary="" className="text-sm text-[var(--color-text-secondary)]">
         {summary}
@@ -290,15 +301,6 @@ function Explorer(): ReactElement {
         </h2>
       ) : null}
       {body}
-      {customising ? (
-        <ChartCustomisePanel
-          chartTitle={config.title?.trim() || EXPLORER_TITLE}
-          spec={exploreCustomiseSpec(config)}
-          onField={(id, value) => setConfig(applyExploreField(config, id, value))}
-          onReset={() => setConfig(resetExploreCustomise(config))}
-          onClose={() => setCustomising(false)}
-        />
-      ) : null}
     </PageShell>
   )
 }

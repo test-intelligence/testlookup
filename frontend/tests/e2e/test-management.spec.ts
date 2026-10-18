@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { mockJson, seedActiveProject } from './apiMock';
 import { performRealLogin } from './realLoginHelper';
+import { opened } from '../lib/inPage';
 
 const PROJECT = { id: '00000000-0000-4000-8000-0000000000e2', name: 'E2E Project' };
 
@@ -20,6 +21,6 @@ test.describe('Test Management', () => {
     await expect(page.getByRole('heading', { name: 'Test Case Management' })).toBeVisible({ timeout: 10000 });
     await expect(page.getByRole('button', { name: /New Test Case/i })).toHaveCount(2);
     await page.getByRole('button', { name: 'New test case from catalog toolbar' }).click();
-    await expect(page.getByRole('dialog', { name: 'New Test Case' })).toBeVisible();
+    await expect(opened(page, 'New Test Case')).toBeVisible();
   });
 });

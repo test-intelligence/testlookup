@@ -23,7 +23,7 @@
  * under an isolated SWRConfig so seeding/revalidation behaviour is covered.
  */
 import { createElement } from 'react'
-import { act, render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { act, render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SWRConfig } from 'swr'
 
@@ -697,5 +697,59 @@ describe('RetentionPage', () => {
     expect((screen.getByText('AI history versions').closest('tr') as HTMLElement).textContent).toBe(
       'AI history versionsnot measured',
     )
+  })
+
+  /**
+   * W27b PAN-06 (R1): the typed confirmation opens in the page, inside the
+   * Danger zone right under the Manual purge row and above the last-purge
+   * summary — never a modal. It keeps its typed field; Escape closes it (focus
+   * back on Purge now) except while the purge is being queued.
+   */
+  it('purge: the typed form opens inside the Danger zone, under Manual purge, above the last purge', async () => {
+    mockGet.mockResolvedValue(
+      basePolicy({ enabled: true, last_purge: { at: '2026-07-30T02:00:00Z', mode: 'scheduled', counts: {} } }),
+    )
+    await renderPage()
+    await waitFor(() => expect(screen.getByText('Purge now')).toBeTruthy())
+    const trigger = screen.getByText('Purge now').closest('button') as HTMLButtonElement
+    trigger.focus()
+    fireEvent.click(trigger)
+
+    const form = screen.getByRole('region', { name: 'Purge old data now' })
+    const zone = document.querySelector('section[aria-labelledby="retention-danger-heading"]') as HTMLElement
+    expect(zone.contains(form)).toBe(true)
+    expect(trigger.compareDocumentPosition(form) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(form.compareDocumentPosition(screen.getByText(/Last purge:/)) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(document.querySelector('[aria-modal]')).toBeNull()
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.activeElement).toBe(screen.getByPlaceholderText('Checkout'))
+
+    fireEvent.keyDown(screen.getByPlaceholderText('Checkout'), { key: 'Escape' })
+    expect(screen.queryByRole('region', { name: 'Purge old data now' })).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+    expect(mockPurge).not.toHaveBeenCalled()
+  })
+
+  it('purge: while the purge is being queued, Escape is swallowed and the X is disabled', async () => {
+    let answer: () => void = () => undefined
+    mockPurge.mockReturnValue(new Promise<void>((resolve) => { answer = () => resolve() }))
+    mockGet.mockResolvedValue(basePolicy({ enabled: true }))
+    await renderPage()
+    await waitFor(() => expect(screen.getByText('Purge now')).toBeTruthy())
+    fireEvent.click(screen.getByText('Purge now'))
+    const form = screen.getByRole('region', { name: 'Purge old data now' })
+    fireEvent.change(screen.getByPlaceholderText('Checkout'), { target: { value: 'Checkout' } })
+    fireEvent.click(screen.getByText('Queue purge').closest('button') as HTMLButtonElement)
+    await waitFor(() => expect(mockPurge).toHaveBeenCalledTimes(1))
+
+    fireEvent.keyDown(form, { key: 'Escape' })
+    expect(screen.getByRole('region', { name: 'Purge old data now' })).toBe(form)
+    expect(within(form).getByRole('button', { name: 'Close' })).toBeDisabled()
+
+    await act(async () => { answer() })
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Purge old data now' })).toBeNull())
+    expect(mockPurge).toHaveBeenCalledTimes(1)
+    expect(mockPurge).toHaveBeenCalledWith('proj-1', 'Checkout')
+    expect(mockToastSuccess).toHaveBeenCalledWith('Purge queued — check back for the audit record')
   })
 })

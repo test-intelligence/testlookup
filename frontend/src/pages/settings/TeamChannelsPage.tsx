@@ -11,13 +11,19 @@
  * Teams are the `team_name`s of the project's ownership rules, plus any team
  * that already has a channel (a rule can be deleted after its team got one).
  * Everything is per project: the page needs one project, as Ownership does.
+ *
+ * W27b PAN-06: a team's Remove asks in a full-width row right under that team's
+ * row (`InlineRowSection` + `InlineConfirm`), never with the browser's prompt.
+ * That row carries `data-in-page-row`, never `data-team-row`.
  */
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { Link } from 'react-router-dom'
 import ScopedLink from '@/components/ui/ScopedLink'
 import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
+import InlineConfirm from '@/components/ui/inPage/InlineConfirm'
+import InlineRowSection from '@/components/ui/inPage/InlineRowSection'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import { type TeamChannel, deleteTeamChannel, upsertTeamChannel } from '@/services/ownershipService'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
@@ -63,6 +69,8 @@ export default function TeamChannelsPage() {
 
   // Edit buffers, keyed by team name; a team with none shows what is stored.
   const [channelEdits, setChannelEdits] = useState<Record<string, ChannelEdit>>({})
+  // The team whose Remove is being asked about, in the row under it.
+  const [confirmingRemove, setConfirmingRemove] = useState<string | null>(null)
 
   const teamNames = Array.from(
     new Set([...rules.map(r => r.team_name), ...channels.map(c => c.team_name)]),
@@ -103,7 +111,7 @@ export default function TeamChannelsPage() {
   }
 
   const handleRemoveChannel = async (team: string) => {
-    if (!projectId || !confirm(`Remove the notification channel for ${team}?`)) return
+    if (!projectId) return
     try {
       await deleteTeamChannel(projectId, team)
       toast.success('Team channel removed')
@@ -184,55 +192,68 @@ export default function TeamChannelsPage() {
                 const edit = editFor(team)
                 const routing = routingOf(existing)
                 return (
-                  <tr key={team} data-team-row={team}>
-                    <td className="px-4 py-2.5 align-middle">
-                      <div className="truncate text-[var(--color-text)]" title={team}>{team}</div>
-                      <div className={`text-[11px] ${routing.className}`}>{routing.label}</div>
-                    </td>
-                    <td className="px-4 py-2.5 align-middle">
-                      <select
-                        aria-label={`Channel type for ${team}`}
-                        value={edit.channel_type}
-                        onChange={e => setChannelEdits(prev => ({
-                          ...prev,
-                          [team]: { ...edit, channel_type: e.target.value as ChannelType },
-                        }))}
-                        className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] rounded px-2 py-1.5 text-xs"
-                      >
-                        {CHANNEL_TYPES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-                      </select>
-                    </td>
-                    <td className="px-4 py-2.5 align-middle">
-                      <input
-                        aria-label={`Webhook URL or email for ${team}`}
-                        value={edit.target}
-                        onChange={e => setChannelEdits(prev => ({
-                          ...prev,
-                          [team]: { ...edit, target: e.target.value },
-                        }))}
-                        placeholder={edit.channel_type === 'email' ? 'team@example.com' : 'https://hooks…'}
-                        className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] rounded px-3 py-1.5 text-xs font-mono"
-                      />
-                    </td>
-                    <td className="px-4 py-2.5 align-middle">
-                      <div className="flex gap-1.5">
-                        <button
-                          onClick={() => handleSaveChannel(team)}
-                          className="px-2 py-0.5 rounded text-xs bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)] hover:bg-[var(--status-passed-bg)]/40"
+                  <Fragment key={team}>
+                    <tr data-team-row={team}>
+                      <td className="px-4 py-2.5 align-middle">
+                        <div className="truncate text-[var(--color-text)]" title={team}>{team}</div>
+                        <div className={`text-[11px] ${routing.className}`}>{routing.label}</div>
+                      </td>
+                      <td className="px-4 py-2.5 align-middle">
+                        <select
+                          aria-label={`Channel type for ${team}`}
+                          value={edit.channel_type}
+                          onChange={e => setChannelEdits(prev => ({
+                            ...prev,
+                            [team]: { ...edit, channel_type: e.target.value as ChannelType },
+                          }))}
+                          className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] rounded px-2 py-1.5 text-xs"
                         >
-                          Save
-                        </button>
-                        {existing && (
+                          {CHANNEL_TYPES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+                        </select>
+                      </td>
+                      <td className="px-4 py-2.5 align-middle">
+                        <input
+                          aria-label={`Webhook URL or email for ${team}`}
+                          value={edit.target}
+                          onChange={e => setChannelEdits(prev => ({
+                            ...prev,
+                            [team]: { ...edit, target: e.target.value },
+                          }))}
+                          placeholder={edit.channel_type === 'email' ? 'team@example.com' : 'https://hooks…'}
+                          className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] rounded px-3 py-1.5 text-xs font-mono"
+                        />
+                      </td>
+                      <td className="px-4 py-2.5 align-middle">
+                        <div className="flex gap-1.5">
                           <button
-                            onClick={() => handleRemoveChannel(team)}
-                            className="px-2 py-0.5 rounded text-xs bg-[var(--status-failed-bg)]/30 text-[var(--status-failed)] hover:bg-[var(--status-failed-bg)]/40"
+                            onClick={() => handleSaveChannel(team)}
+                            className="px-2 py-0.5 rounded text-xs bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)] hover:bg-[var(--status-passed-bg)]/40"
                           >
-                            Remove
+                            Save
                           </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
+                          {existing && (
+                            <button
+                              onClick={() => setConfirmingRemove(team)}
+                              className="px-2 py-0.5 rounded text-xs bg-[var(--status-failed-bg)]/30 text-[var(--status-failed)] hover:bg-[var(--status-failed-bg)]/40"
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                    {existing && confirmingRemove === team && (
+                      <InlineRowSection colSpan={4}>
+                        <InlineConfirm
+                          message={<>Remove the notification channel for <strong>{team}</strong>?</>}
+                          confirmLabel="Remove"
+                          tone="danger"
+                          onConfirm={() => { setConfirmingRemove(null); void handleRemoveChannel(team) }}
+                          onCancel={() => setConfirmingRemove(null)}
+                        />
+                      </InlineRowSection>
+                    )}
+                  </Fragment>
                 )
               })
             )}

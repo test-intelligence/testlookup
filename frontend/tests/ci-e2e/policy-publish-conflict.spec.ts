@@ -12,6 +12,7 @@
  * Harness: `tests/lib/rollout.ts` (fail closed, pinned clock).
  */
 import { expect, test, type Page } from '@playwright/test'
+import { answerConfirm } from '../lib/inPage'
 import { assertHermetic, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
 import { respond, type ApiHandlers } from '../lib/production-pages'
 import { isoAgo, LAYOUT, PROJECT_ID, USER } from '../visual/production/fixtures'
@@ -80,17 +81,13 @@ test('a publish that lost the race: one toast with the server sentence, then the
   })
   await networkQuiet(page, api)
   expect(requestsTo(api, LIST), 'the editor does not read the list').toEqual([])
-  const dialogs: string[] = []
-  page.on('dialog', (dialog) => {
-    dialogs.push(dialog.message())
-    void dialog.accept()
+  const asked = await answerConfirm(page, page.getByRole('button', { name: 'Publish', exact: true }), 'accept', {
+    confirmLabel: 'Publish',
   })
-
-  await page.getByRole('button', { name: 'Publish', exact: true }).click()
 
   await expect(page.getByText(RACE)).toHaveCount(1)
   await expect(page.getByText(/status code 409/)).toHaveCount(0)
-  expect(dialogs).toEqual(['Publish this policy? It will become active and the previous version will be deactivated.'])
+  expect(asked.message).toEqual('Publish this policy? It will become active and the previous version will be deactivated.')
 
   // The list, read again after the refusal: one Active badge, the winner's; the loser is still a Draft.
   await expect(page).toHaveURL(/\/policies$/)
@@ -116,8 +113,7 @@ test('the same draft published twice: "Policy is already published", once', asyn
     ready: editorReady,
     user: ADMIN,
   })
-  page.on('dialog', (dialog) => void dialog.accept())
-  await page.getByRole('button', { name: 'Publish', exact: true }).click()
+  await answerConfirm(page, page.getByRole('button', { name: 'Publish', exact: true }), 'accept', { confirmLabel: 'Publish' })
   await expect(page.getByText('Policy is already published')).toHaveCount(1)
   await expect(page.getByRole('heading', { name: 'Release Gate Policies', level: 1 })).toBeVisible()
   await networkQuiet(page, api)

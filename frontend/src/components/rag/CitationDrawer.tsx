@@ -1,4 +1,15 @@
-import { FileText, X } from 'lucide-react'
+/**
+ * A generated case's citations: the knowledge-source passages the case was
+ * grounded on, with each source's link.
+ *
+ * It renders IN THE PAGE (W27b PAN-05), right after the case card whose
+ * Citations button opened it: a read-only `InlineFormSection as="aside"` named
+ * by its heading `Citations (<n>)`, X `Close`, Escape inside it closes it. It
+ * was a fixed edge panel over the page. Every name and passage renders as
+ * text; a source link is shown only for an http(s) URL.
+ */
+import { FileText } from 'lucide-react'
+import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
 import type { Citation } from '@/types/rag-generation'
 
 interface Props {
@@ -21,16 +32,13 @@ export default function CitationDrawer({ citations, caseIndex, onClose }: Props)
   const caseCitations = citations.filter(c => c.case_index === caseIndex)
 
   return (
-    <div className="fixed inset-y-0 right-0 w-96 bg-[var(--color-bg-card)] border-l border-[var(--color-border)] shadow-2xl z-50 flex flex-col">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
-        <h3 className="text-sm font-semibold text-[var(--color-text)]">
-          Citations ({caseCitations.length})
-        </h3>
-        <button onClick={onClose} className="p-1 rounded hover:bg-[var(--color-bg-secondary)]">
-          <X className="h-4 w-4 text-[var(--color-text-muted)]" />
-        </button>
-      </div>
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+    <InlineFormSection
+      as="aside"
+      title={`Citations (${caseCitations.length})`}
+      headingLevel={3}
+      onClose={onClose}
+    >
+      <div className="space-y-3">
         {caseCitations.length === 0 ? (
           <p className="text-sm text-[var(--color-text-muted)]">No citations for this case.</p>
         ) : (
@@ -68,6 +76,6 @@ export default function CitationDrawer({ citations, caseIndex, onClose }: Props)
           })
         )}
       </div>
-    </div>
+    </InlineFormSection>
   )
 }

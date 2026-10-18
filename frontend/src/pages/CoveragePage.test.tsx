@@ -1456,6 +1456,23 @@ describe('CoveragePage W08: last run, History, Fix tagging', () => {
     )
   })
 
+  it('W27b: Fix tagging opens IN THE PAGE right after the untagged callout, in its column; its X closes it', async () => {
+    const suites: Suite[] = [{ suite_name: 'Payments', unique_tests: 6, passed: 40, failed: 10, skipped: 0, pass_rate: 80 }, UNTAGGED]
+    await renderAt('/coverage', suites, cadence(1), 'QA_ENGINEER')
+    const callout = screen.getByRole('region', { name: 'Untagged executions' })
+    fireEvent.click(within(callout).getByRole('button', { name: 'Fix tagging' }))
+    const panel = screen.getByRole('complementary', { name: 'Fix tagging' })
+    expect(callout.nextElementSibling).toBe(panel)
+    expect(panel.parentElement).toBe(callout.parentElement)
+    expect(panel).toHaveAttribute('data-fix-tagging-panel')
+    expect(document.querySelector('[aria-modal], [role="dialog"]')).toBeNull()
+    for (const el of [panel, ...panel.querySelectorAll('*')]) {
+      expect(String(el.getAttribute('class') ?? '')).not.toMatch(/(^|\s)(fixed|h-screen|h-\[calc\(100vh)/)
+    }
+    fireEvent.click(within(panel).getByRole('button', { name: 'Close the fix tagging panel' }))
+    expect(screen.queryByRole('complementary', { name: 'Fix tagging' })).toBeNull()
+  })
+
   it('in All Projects Fix tagging is disabled and says why', async () => {
     const { useProjectStore } = await import('@/store/projectStore')
     const mocked = useProjectStore as unknown as ReturnType<typeof vi.fn>

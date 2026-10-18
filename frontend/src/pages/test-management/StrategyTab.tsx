@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { BarChart2, CheckCircle2, ChevronRight, ChevronUp, Clock, Download, FileText, Sparkles } from 'lucide-react'
 import toast from 'react-hot-toast'
 import EmptyState from '@/components/ui/EmptyState'
@@ -10,6 +10,9 @@ import { PRIORITY_COLORS, fmtDate } from './format'
 import { ModalWrap, StatusPill } from './tmUi'
 
 // ─── Tab: Strategy (under More ▾ since UX redesign P4) ───────────────────────
+//
+// Generate Strategy opens in the page (W27b PAN-05), under the tab's header
+// row, through `ModalWrap`'s in-page section.
 
 interface GenerateStrategyModalProps { projectId: string; onClose: () => void }
 
@@ -17,6 +20,14 @@ function GenerateStrategyModal({ projectId, onClose }: GenerateStrategyModalProp
   const [context, setContext] = useState('')
   const [strategyName, setStrategyName] = useState('')
   const [loading, setLoading] = useState(false)
+  // The context field takes focus when the form opens, as it did in the modal
+  // (its autoFocus). The in-page section moves focus to its FIRST field (the
+  // optional name) when it mounts, and again when React StrictMode re-runs its
+  // effects; this runs after that.
+  const contextRef = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    contextRef.current?.focus()
+  }, [])
 
   const handleGenerate = async () => {
     if (!context.trim()) { toast.error('Project context is required'); return }
@@ -48,6 +59,7 @@ function GenerateStrategyModal({ projectId, onClose }: GenerateStrategyModalProp
         <div>
           <label htmlFor="tm-field-17" className="block text-xs text-[var(--color-text-muted)] mb-1">Project Context *</label>
           <textarea id="tm-field-17"
+            ref={contextRef}
             className="input w-full h-40 resize-none"
             value={context}
             onChange={e => setContext(e.target.value)}
@@ -155,6 +167,14 @@ export default function StrategyTab({ projectId }: StrategyTabProps) {
               <Sparkles className="h-4 w-4" /> Generate Strategy
             </button>
           </div>
+        )}
+
+        {/* In the page (W27b PAN-05): under the header row, above the strategy. Every close re-reads. */}
+        {showGenerate && projectId && (
+          <GenerateStrategyModal
+            projectId={projectId}
+            onClose={() => { setShowGenerate(false); mutate() }}
+          />
         )}
 
         {isLoading ? (
@@ -333,13 +353,6 @@ export default function StrategyTab({ projectId }: StrategyTabProps) {
           </div>
         )}
       </div>
-
-      {showGenerate && projectId && (
-        <GenerateStrategyModal
-          projectId={projectId}
-          onClose={() => { setShowGenerate(false); mutate() }}
-        />
-      )}
     </>
   )
 }

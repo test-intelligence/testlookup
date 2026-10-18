@@ -13,6 +13,7 @@
  * Harness: `tests/lib/rollout.ts` (fail closed, pinned clock). Fixtures: `fixtures-pages.ts` (`inboxHandlers`).
  */
 import { expect, test, type Page } from '@playwright/test'
+import { opened } from '../lib/inPage'
 import { assertHermetic, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
 import {
   inboxHandlers,
@@ -85,7 +86,7 @@ test('Reject needs a reason: disabled while blank, then sent trimmed; the defect
   const writes: InboxWrite[] = []
   const { api, errors } = await openRollout(page, SOURCE_URL, { handlers: inboxHandlers(writes), ready })
   await defectRow(page).getByTestId('defect-reject').click()
-  const dialog = page.getByRole('dialog', { name: 'Reject this defect?' })
+  const dialog = opened(page, 'Reject this defect?')
   await expect(dialog).toContainText('It is closed as Invalid and stops counting toward the release gate.')
   const reason = dialog.getByLabel(/^Reason \(recorded in the activity log\)/)
   const confirm = dialog.getByRole('button', { name: 'Reject', exact: true })

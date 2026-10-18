@@ -24,13 +24,18 @@
  * password login and an OPTIONAL config never removed it, so prompting there
  * would be friction that trains people to click through the prompt that does
  * matter.
+ *
+ * W27b PAN-06 (S1-S3): every question is asked in the page (`InlineConfirm`),
+ * never with the browser's prompt: a configuration's inside its card under the
+ * action row, a SCIM token's right under its row. The native `confirm` is a
+ * sentinel here that must never be called.
  */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import SSOSettingsPage from './SSOSettingsPage'
 import { expectTemplateHeader } from '@/test/expectTemplateHeader'
-import type { SSOConfig } from '../../services/ssoService'
+import { revokeSCIMToken, type SSOConfig } from '../../services/ssoService'
 
 const mockUpdateSSOConfig = vi.fn()
 const mockDeleteSSOConfig = vi.fn()
@@ -97,9 +102,16 @@ function renderWith(configs: SSOConfig[]) {
 }
 
 const toggleButton = (label: RegExp) => screen.getByRole('button', { name: label })
+/** The in-page question (W27b), or null. */
+const strip = () => document.querySelector('[data-inline-confirm]') as HTMLElement | null
+const question = () => (strip() as HTMLElement).querySelector('p')?.textContent
+const ENFORCEMENT_SENTENCE =
+  'Activate SSO enforcement? Password login will stop working for everyone except admins using the fallback. ' +
+  'They must sign in through the identity provider.'
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // A sentinel: the page asks in the page now, so the native prompt is never called.
   vi.stubGlobal('confirm', vi.fn(() => true))
   permissions.isAdmin = true
   tabError = null
@@ -135,16 +147,33 @@ describe('activating SSO enforcement is confirmed', () => {
 
     fireEvent.click(toggleButton(/activate/i))
 
-    expect(confirm).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(confirm).mock.calls[0][0]).toMatch(/password login will stop working/i)
+    // Asked in the card, under its action row; nothing sent yet.
+    expect(mockUpdateSSOConfig).not.toHaveBeenCalled()
+    expect(question()).toMatch(/password login will stop working/i)
+    expect(question()).toBe(ENFORCEMENT_SENTENCE)
+    const card = screen.getByRole('heading', { level: 3, name: 'Corp Okta' }).closest('.space-y-2') as HTMLElement
+    expect(card.contains(strip())).toBe(true)
+    const actions = within(card).getByRole('button', { name: 'Test Connection' }).parentElement as HTMLElement
+    expect(actions.nextElementSibling).toBe(strip())
+
+    fireEvent.click(within(strip() as HTMLElement).getByRole('button', { name: 'Activate' }))
+    expect(strip()).toBeNull()
     await waitFor(() => expect(mockUpdateSSOConfig).toHaveBeenCalledWith('cfg-1', { is_active: true }))
+    expect(mockUpdateSSOConfig).toHaveBeenCalledTimes(1)
+    expect(confirm).not.toHaveBeenCalled()
   })
 
   it('does not activate when the confirmation is declined', () => {
-    vi.stubGlobal('confirm', vi.fn(() => false))
     renderWith([config({ enforcement_mode: 'SSO_REQUIRED', is_active: false })])
 
     fireEvent.click(toggleButton(/activate/i))
+    fireEvent.click(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }))
+    expect(strip()).toBeNull()
+
+    // Escape in the strip is Cancel too.
+    fireEvent.click(toggleButton(/activate/i))
+    fireEvent.keyDown(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }), { key: 'Escape' })
+    expect(strip()).toBeNull()
 
     expect(mockUpdateSSOConfig).not.toHaveBeenCalled()
   })
@@ -158,6 +187,7 @@ describe('the confirmation stays scoped to the action that can lock people out',
 
     fireEvent.click(toggleButton(/activate/i))
 
+    expect(strip()).toBeNull()
     expect(confirm).not.toHaveBeenCalled()
     await waitFor(() => expect(mockUpdateSSOConfig).toHaveBeenCalledWith('cfg-1', { is_active: true }))
   })
@@ -169,6 +199,7 @@ describe('the confirmation stays scoped to the action that can lock people out',
 
     fireEvent.click(toggleButton(/deactivate/i))
 
+    expect(strip()).toBeNull()
     expect(confirm).not.toHaveBeenCalled()
     await waitFor(() =>
       expect(mockUpdateSSOConfig).toHaveBeenCalledWith('cfg-1', { is_active: false }),
@@ -193,8 +224,13 @@ describe('the page reports what it did', () => {
 
     fireEvent.click(toggleButton(/^delete$/i))
 
-    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(mockDeleteSSOConfig).not.toHaveBeenCalled()
+    expect(question()).toBe('Are you sure you want to delete this SSO configuration?')
+    fireEvent.click(within(strip() as HTMLElement).getByRole('button', { name: 'Delete' }))
+    expect(strip()).toBeNull()
     await waitFor(() => expect(mockDeleteSSOConfig).toHaveBeenCalledWith('cfg-1'))
+    expect(mockDeleteSSOConfig).toHaveBeenCalledTimes(1)
+    expect(confirm).not.toHaveBeenCalled()
   })
 
   it('shows the certificate fingerprint truncated, never a full secret', () => {
@@ -214,5 +250,57 @@ describe('the settings page template (UX redesign P5)', () => {
     // The tabs and the config tab's heading are unchanged.
     expect(screen.getByRole('button', { name: 'SSO Configuration' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 2, name: 'SSO Configurations' })).toBeInTheDocument()
+  })
+})
+
+describe('the questions are asked in the page, one at a time (W27b S2, S3)', () => {
+  const TOKEN = {
+    id: 'tok-1', name: 'Okta provisioning', token_hint: 'scim_ab12…', is_active: true,
+    last_used_at: null, created_at: '2026-08-01T00:00:00Z',
+  }
+
+  it('a SCIM token\'s Revoke asks right under its row; the strip sends one DELETE', async () => {
+    tabData = { configs: [], scimTokens: [TOKEN], events: [], syncStatus: null }
+    render(<SSOSettingsPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'SCIM Tokens' }))
+    const tokenRow = screen.getByText('Okta provisioning').closest('.justify-between') as HTMLElement
+
+    fireEvent.click(within(tokenRow).getByRole('button', { name: 'Revoke' }))
+    expect(revokeSCIMToken).not.toHaveBeenCalled()
+    expect(question()).toBe('Revoke this SCIM token?')
+    expect(tokenRow.nextElementSibling).toBe((strip() as HTMLElement).closest('[data-in-page-row]'))
+
+    fireEvent.click(within(strip() as HTMLElement).getByRole('button', { name: 'Revoke' }))
+    expect(strip()).toBeNull()
+    await waitFor(() => expect(revokeSCIMToken).toHaveBeenCalledTimes(1))
+    expect(revokeSCIMToken).toHaveBeenCalledWith('tok-1')
+    await waitFor(() => expect(mockRefresh).toHaveBeenCalled())
+    expect(confirm).not.toHaveBeenCalled()
+  })
+
+  it('Escape is Cancel for a token too; another tab drops the question', () => {
+    tabData = { configs: [], scimTokens: [TOKEN], events: [], syncStatus: null }
+    render(<SSOSettingsPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'SCIM Tokens' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Revoke' }))
+    fireEvent.keyDown(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }), { key: 'Escape' })
+    expect(strip()).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Revoke' }))
+    fireEvent.click(screen.getByRole('button', { name: 'SSO Configuration' }))
+    fireEvent.click(screen.getByRole('button', { name: 'SCIM Tokens' }))
+    expect(strip()).toBeNull()
+    expect(revokeSCIMToken).not.toHaveBeenCalled()
+  })
+
+  it('one question per page: Delete after Activate replaces it, and nothing is sent', () => {
+    renderWith([config({ enforcement_mode: 'SSO_REQUIRED', is_active: false })])
+    fireEvent.click(toggleButton(/^activate$/i))
+    expect(question()).toBe(ENFORCEMENT_SENTENCE)
+    fireEvent.click(toggleButton(/^delete$/i))
+    expect(document.querySelectorAll('[data-inline-confirm]')).toHaveLength(1)
+    expect(question()).toBe('Are you sure you want to delete this SSO configuration?')
+    expect(mockUpdateSSOConfig).not.toHaveBeenCalled()
+    expect(mockDeleteSSOConfig).not.toHaveBeenCalled()
   })
 })

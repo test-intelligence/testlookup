@@ -14,7 +14,8 @@
  *   • Preview — dry-run POST that renders the cutoff timestamps and the
  *     purge-candidate counts (computed now; the nightly job may differ).
  *   • Danger zone — "Purge now" behind a typed-project-name confirmation
- *     modal (GitHub repo-delete UX, mirrors ProjectDataPage). Disabled while
+ *     (GitHub repo-delete UX, mirrors ProjectDataPage), opened in the page
+ *     right under the Manual purge row (W27b PAN-06: no modal). Disabled while
  *     the saved policy is disabled — the backend 409s in that state anyway.
  *
  * The in-component ADMIN gate is a forcing function against autopilot
@@ -29,7 +30,6 @@ import {
   Save,
   ScanSearch,
   Trash2,
-  X,
 } from 'lucide-react'
 import { isAxiosError } from 'axios'
 import toast from 'react-hot-toast'
@@ -39,6 +39,7 @@ import StoragePanel from '@/components/retention/StoragePanel'
 import CriteriaDeletionPanel from '@/components/retention/CriteriaDeletionPanel'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
+import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
 import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { usePermissions } from '@/hooks/usePermissions'
@@ -255,7 +256,12 @@ interface PurgeModalProps {
   onQueued: () => void
 }
 
-/** Typed-project-name confirmation before queueing a purge (mirrors ProjectDataPage). */
+/**
+ * Typed-project-name confirmation before queueing a purge (mirrors ProjectDataPage). It renders in the
+ * page, inside the Danger zone right under the Manual purge row (W27b): a form section with its typed
+ * field (never a one-click strip), focus on the field when it opens, Escape / Cancel / X close it (not
+ * while the purge is being queued), focus back on Purge now.
+ */
 function PurgeConfirmModal({ projectId, projectName, onClose, onQueued }: PurgeModalProps) {
   const [typed, setTyped] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -277,50 +283,19 @@ function PurgeConfirmModal({ projectId, projectName, onClose, onQueued }: PurgeM
   }
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="purge-data-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-      <div className="w-full max-w-lg rounded-lg border border-[var(--status-failed-bd)]/50 bg-[var(--color-bg)] p-6 shadow-2xl">
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="h-5 w-5 text-[var(--status-failed)]" />
-            <h2 id="purge-data-title" className="text-lg font-semibold text-[var(--color-text)]">Purge old data now</h2>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={submitting}
-            aria-label="Close"
-            className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-50"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        <p className="mt-3 text-sm text-[var(--color-text-secondary)]">
-          Queues an immediate purge using the saved retention windows. Everything older than the
-          cutoffs — runs, test cases, raw events, artifacts, and expired audit rows — is deleted
-          permanently. Use “Preview purge” first to see what would go.
-        </p>
-
-        <div className="mt-4">
-          <label htmlFor="purge-confirm-input" className="block text-xs text-[var(--color-text-muted)]">
-            Type{' '}
-            <code className="rounded bg-[var(--color-bg-secondary)] px-1 py-0.5 font-mono text-[var(--color-text)]">
-              {projectName}
-            </code>{' '}
-            to confirm.
-          </label>
-          <input
-            id="purge-confirm-input"
-            autoFocus
-            value={typed}
-            onChange={(e) => setTyped(e.target.value)}
-            disabled={submitting}
-            placeholder={projectName}
-            className="mt-1 w-full rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm text-[var(--color-text)]"
-          />
-        </div>
-
-        <div className="mt-5 flex justify-end gap-2">
+    <InlineFormSection
+      title={
+        <span className="inline-flex items-center gap-2">
+          <AlertTriangle aria-hidden="true" className="h-5 w-5 text-[var(--status-failed)]" />
+          Purge old data now
+        </span>
+      }
+      titleId="purge-data-title"
+      onClose={onClose}
+      canClose={!submitting}
+      busy={submitting}
+      footer={
+        <>
           <button
             type="button"
             onClick={onClose}
@@ -346,9 +321,34 @@ function PurgeConfirmModal({ projectId, projectName, onClose, onQueued }: PurgeM
               </>
             )}
           </button>
-        </div>
+        </>
+      }
+    >
+      <p className="text-sm text-[var(--color-text-secondary)]">
+        Queues an immediate purge using the saved retention windows. Everything older than the
+        cutoffs — runs, test cases, raw events, artifacts, and expired audit rows — is deleted
+        permanently. Use “Preview purge” first to see what would go.
+      </p>
+
+      <div className="mt-4">
+        <label htmlFor="purge-confirm-input" className="block text-xs text-[var(--color-text-muted)]">
+          Type{' '}
+          <code className="rounded bg-[var(--color-bg-secondary)] px-1 py-0.5 font-mono text-[var(--color-text)]">
+            {projectName}
+          </code>{' '}
+          to confirm.
+        </label>
+        <input
+          id="purge-confirm-input"
+          autoFocus
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          disabled={submitting}
+          placeholder={projectName}
+          className="mt-1 w-full max-w-md rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm text-[var(--color-text)]"
+        />
       </div>
-    </div>
+    </InlineFormSection>
   )
 }
 
@@ -827,6 +827,18 @@ export default function RetentionPage() {
           </button>
         </div>
 
+        {purgeOpen && activeProjectId && (
+          <PurgeConfirmModal
+            projectId={activeProjectId}
+            projectName={projectName}
+            onClose={() => setPurgeOpen(false)}
+            onQueued={() => {
+              setPurgeOpen(false)
+              toast.success('Purge queued — check back for the audit record')
+            }}
+          />
+        )}
+
         {policy.last_purge && (
           <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3 text-xs">
             <p className="text-[var(--color-text-muted)]">
@@ -848,18 +860,6 @@ export default function RetentionPage() {
           </div>
         )}
       </section>
-
-      {purgeOpen && activeProjectId && (
-        <PurgeConfirmModal
-          projectId={activeProjectId}
-          projectName={projectName}
-          onClose={() => setPurgeOpen(false)}
-          onQueued={() => {
-            setPurgeOpen(false)
-            toast.success('Purge queued — check back for the audit record')
-          }}
-        />
-      )}
     </div>
   )
 }

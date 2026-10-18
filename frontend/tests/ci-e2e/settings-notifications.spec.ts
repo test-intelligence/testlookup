@@ -20,6 +20,7 @@
  * Harness: `tests/lib/rollout.ts` (fail closed, pinned clock).
  */
 import { expect, test, type Page } from '@playwright/test'
+import { answerConfirm } from '../lib/inPage'
 import type { ApiHandlers } from '../lib/production-pages'
 import { respond } from '../lib/production-pages'
 import { MAIN, SHELL_BASE, expectInventory, networkQuiet, observed, openRollout, requestsTo } from '../lib/rollout'
@@ -268,9 +269,8 @@ test('/settings/team-channels: in the sub-nav after Ownership; Save and Remove r
   await expect(payments).toContainText('Routed to its channel')
 
   // Remove Identity's channel (confirm accepted): the DELETE goes out and the row falls back.
-  page.once('dialog', (dialog) => void dialog.accept())
   const identity = table.locator('[data-team-row="Identity"]')
-  await identity.getByRole('button', { name: 'Remove' }).click()
+  await answerConfirm(page, identity.getByRole('button', { name: 'Remove' }), 'accept', { confirmLabel: 'Remove' })
   await expect(identity).toContainText('Not routed')
   expect(api.seen.filter((line) => line.startsWith('DELETE '))).toEqual([`DELETE /api/v1/projects/${P}/ownership/team-channels/Identity`])
   expect(api.unhandled).toEqual([])

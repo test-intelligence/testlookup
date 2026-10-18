@@ -5,16 +5,24 @@
  * named as the settings sub-nav names it, with its help topic; the rules are
  * its primary content.
  */
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 
 import OwnershipEditorPage from './OwnershipEditorPage'
 
-const service = vi.hoisted(() => ({ listTeamChannels: vi.fn() }))
+const service = vi.hoisted(() => ({
+  listTeamChannels: vi.fn(),
+  deleteOwnershipRule: vi.fn(),
+  importCodeowners: vi.fn(),
+  refreshRules: vi.fn(),
+  refreshCoverage: vi.fn(),
+}))
 vi.mock('@/services/ownershipService', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/services/ownershipService')>()),
   listTeamChannels: service.listTeamChannels,
+  deleteOwnershipRule: service.deleteOwnershipRule,
+  importCodeowners: service.importCodeowners,
 }))
 vi.mock('@/hooks/useOwnershipRules', () => ({
   useOwnershipRules: () => ({
@@ -24,12 +32,17 @@ vi.mock('@/hooks/useOwnershipRules', () => ({
         team_name: 'Identity', team_contact: null, priority: 5, is_active: true, created_by: null,
         created_at: '2026-10-01T00:00:00Z', updated_at: null,
       },
+      {
+        id: 'r2', project_id: 'proj-1', match_type: 'suite_name', match_pattern: 'pay-*', service_name: 'pay-service',
+        team_name: 'Payments', team_contact: null, priority: 4, is_active: true, created_by: null,
+        created_at: '2026-10-01T00:00:00Z', updated_at: null,
+      },
     ],
     isLoading: false,
     isError: false,
-    refresh: vi.fn(),
+    refresh: service.refreshRules,
   }),
-  useCodeownersCoverage: () => ({ coverage: null, refresh: vi.fn() }),
+  useCodeownersCoverage: () => ({ coverage: null, refresh: service.refreshCoverage }),
 }))
 // FAIL-08: the Java source roots section sits between the rules and the Team
 // channels line; it reads its own list, empty here.
@@ -102,5 +115,58 @@ describe('OwnershipEditorPage after P5', () => {
     // The picker prompt (ProjectRequiredEmptyState), as every single-project page shows.
     expect(screen.getByText('Select a project')).toBeInTheDocument()
     expect(screen.getByText(/one project at a time/)).toBeInTheDocument()
+  })
+})
+
+// ── W27b PAN-05: the rule's Delete and Import CODEOWNERS are in the page ───
+
+const ruleRow = (pattern: string) => screen.getByText(pattern).closest('div.grid-cols-7') as HTMLElement
+
+describe('OwnershipEditorPage in the page (W27b)', () => {
+  it('a rule\'s Delete asks in a strip right under that row; the trigger sends nothing, the strip\'s Delete sends once; no native confirm', async () => {
+    project.id = 'proj-1'
+    const confirmSpy = vi.spyOn(window, 'confirm')
+    service.deleteOwnershipRule.mockReset()
+    service.deleteOwnershipRule.mockResolvedValue(undefined)
+    service.refreshRules.mockClear()
+    service.refreshCoverage.mockClear()
+    renderPage()
+
+    fireEvent.click(within(ruleRow('pay-*')).getByRole('button', { name: 'Delete' }))
+    expect(service.deleteOwnershipRule, 'the trigger sends nothing').not.toHaveBeenCalled()
+    const strip = document.querySelector('[data-inline-confirm]') as HTMLElement
+    const holder = strip.closest('[data-in-page-row]') as HTMLElement
+    expect(ruleRow('pay-*').nextElementSibling, 'the strip is right under the rule\'s row').toBe(holder)
+    expect(holder.classList.contains('grid-cols-7'), 'the strip is outside the row grid').toBe(false)
+    expect(strip.querySelector('p')?.textContent).toBe('Delete this ownership rule?')
+
+    fireEvent.click(within(strip).getByRole('button', { name: 'Cancel' }))
+    expect(document.querySelector('[data-inline-confirm]')).toBeNull()
+    expect(service.deleteOwnershipRule).not.toHaveBeenCalled()
+
+    fireEvent.click(within(ruleRow('pay-*')).getByRole('button', { name: 'Delete' }))
+    fireEvent.click(document.querySelector('[data-inline-confirm-action]') as HTMLElement)
+    await waitFor(() => expect(service.deleteOwnershipRule).toHaveBeenCalledTimes(1))
+    expect(service.deleteOwnershipRule).toHaveBeenCalledWith('proj-1', 'r2')
+    // The rules AND the coverage badge are re-read (pairedInvalidation's pair).
+    await waitFor(() => expect(service.refreshCoverage).toHaveBeenCalledTimes(1))
+    expect(service.refreshRules).toHaveBeenCalledTimes(1)
+    expect(confirmSpy).not.toHaveBeenCalled()
+    confirmSpy.mockRestore()
+  })
+
+  it('Import CODEOWNERS opens right under the page header, named by its heading, with no X (no dialog)', () => {
+    project.id = 'proj-1'
+    const { container } = renderPage()
+    fireEvent.click(screen.getByRole('button', { name: 'Import CODEOWNERS' }))
+    const section = screen.getByRole('region', { name: 'Import CODEOWNERS' })
+    expect(container.querySelector('[data-page-header]')?.nextElementSibling).toBe(section)
+    expect(section.querySelector('h2')).toHaveAttribute('id', 'import-codeowners-title')
+    expect(within(section).getByRole('radiogroup', { name: 'Import source' })).toBeInTheDocument()
+    expect(within(section).queryByRole('button', { name: 'Close' })).toBeNull()
+    expect(within(section).getByRole('textbox'), 'focus moves to the text field').toHaveFocus()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    fireEvent.click(within(section).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('region', { name: 'Import CODEOWNERS' })).toBeNull()
   })
 })

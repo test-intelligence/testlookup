@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { CheckCircle2, GitBranch, Save, TestTube, Trash2, XCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import ExperimentalBadge from '@/components/ui/ExperimentalBadge'
+import InlineConfirm from '@/components/ui/inPage/InlineConfirm'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState'
@@ -35,6 +36,9 @@ const HELP_TOPIC = helpTopicParam('/settings/github')
  *
  * The page is project-scoped — when viewing in All Projects mode,
  * prompts the user to pick a specific project.
+ *
+ * W27b PAN-06: Remove asks in the page, inside the Repository card under its
+ * action row (`InlineConfirm`), never with the browser's prompt.
  */
 export default function GitHubIntegrationPage() {
   const { canAccessManagement: canEdit } = usePermissions()
@@ -54,6 +58,8 @@ export default function GitHubIntegrationPage() {
   const [patDraft, setPatDraft] = useState<string>('')
   const [testing, setTesting] = useState(false)
   const [lastTest, setLastTest] = useState<GitHubConnectionTestResponse | null>(null)
+  // Remove asks in the Repository card first (W27b).
+  const [confirmingRemove, setConfirmingRemove] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -134,7 +140,6 @@ export default function GitHubIntegrationPage() {
 
   async function remove() {
     if (!activeProjectId || isAllProjects) return
-    if (!confirm('Delete GitHub integration for this project?')) return
     try {
       await githubIntegrationService.remove(activeProjectId)
       setExisting(null)
@@ -321,13 +326,23 @@ export default function GitHubIntegrationPage() {
             {existing && (
               <button
                 type="button"
-                onClick={remove}
+                onClick={() => setConfirmingRemove(true)}
                 className="ml-auto text-xs text-[var(--status-failed)] hover:underline flex items-center gap-1"
               >
                 <Trash2 className="h-3 w-3" /> Remove
               </button>
             )}
           </div>
+        )}
+
+        {canEdit && existing && confirmingRemove && (
+          <InlineConfirm
+            message="Delete GitHub integration for this project?"
+            confirmLabel="Delete"
+            tone="danger"
+            onConfirm={() => { setConfirmingRemove(false); void remove() }}
+            onCancel={() => setConfirmingRemove(false)}
+          />
         )}
       </section>
 

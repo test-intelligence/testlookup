@@ -394,6 +394,28 @@ describe('ValueMetricsPage', () => {
     expect(screen.queryByText('Auto-triage leg')).toBeNull()
   })
 
+  it('W27b: the methodology opens IN THE PAGE right under the hero, read once and cached on the next open', async () => {
+    await renderPage()
+    expect(mockGetMethodology).not.toHaveBeenCalled()
+
+    fireEvent.click(await screen.findByText('How is this calculated?'))
+    const section = await screen.findByRole('region', { name: 'How hours saved is calculated' })
+    expect(document.querySelector('[data-value-hero]')?.nextElementSibling).toBe(section)
+    expect(document.querySelector('[aria-modal]')).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(within(section).getByRole('heading', { name: 'How is this calculated?' })).toBeInTheDocument()
+    expect(await within(section).findByText('Auto-triage leg')).toBeInTheDocument()
+    // The text Close button, no X.
+    expect(within(section).getAllByRole('button').map((b) => b.textContent)).toEqual(['Close'])
+    expect(mockGetMethodology).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(within(section).getByRole('button', { name: 'Close' }))
+    expect(screen.queryByRole('region', { name: 'How hours saved is calculated' })).toBeNull()
+    // The hero's figure reopens it from the cache: the legs are there at once.
+    fireEvent.click(screen.getByTitle('How is this calculated?'))
+    expect(screen.getByRole('region', { name: 'How hours saved is calculated' })).toHaveTextContent('Auto-triage leg')
+  })
+
   it('passes the ascending monthly series to the chart verbatim', async () => {
     await renderPage()
 

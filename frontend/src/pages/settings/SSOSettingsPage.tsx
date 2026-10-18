@@ -1,4 +1,15 @@
-import { useState } from 'react';
+/**
+ * SSO & Identity Management (admin): SAML configurations, SCIM tokens,
+ * identity events and sync status.
+ *
+ * W27b PAN-06: the three questions (activating an enforced configuration,
+ * deleting a configuration, revoking a SCIM token) are asked in the page
+ * (`InlineConfirm`), never with the browser's prompt: a configuration's inside
+ * its card under the action row, a token's right under its row. One question
+ * at a time; the strip's own button is the only sender; errors still go to the
+ * page banner.
+ */
+import { Fragment, useState } from 'react';
 import {
   type SCIMTokenCreated,
   type SSOConfig,
@@ -15,10 +26,35 @@ import { type SSOTab, useSSOTabData } from '../../hooks/useSSOTabData';
 import { formatCompactDateTime } from '@/utils/formatters'
 import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
+import InlineConfirm from '@/components/ui/inPage/InlineConfirm'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import { usePermissions } from '@/hooks/usePermissions'
 
 const HELP_TOPIC = helpTopicParam('/settings/sso')
+
+/** The question asked in the page, and about what. */
+type Confirming = { id: string; action: 'activate' | 'delete' | 'revoke' }
+
+const ACTIVATE_ENFORCED_SENTENCE =
+  'Activate SSO enforcement? Password login will stop working for ' +
+  'everyone except admins using the fallback. They must sign in ' +
+  'through the identity provider.'
+
+/**
+ * Activating an SSO_REQUIRED config stops password login for every non-admin
+ * in the workspace on their next attempt (auth.py returns 403 "SSO is required
+ * for this account"). Every other consequential action on this page already
+ * confirms — deleting a config, revoking a SCIM token — and MfaPolicyPage
+ * confirms before enabling require_mfa for the same reason. This was the one
+ * lockout-capable action that did not.
+ *
+ * Scoped deliberately: only ACTIVATING, and only in SSO_REQUIRED mode.
+ * Deactivating restores password login, and an OPTIONAL config leaves it
+ * available, so neither needs a question. A question on every toggle would be
+ * friction that trains people to click through it.
+ */
+const activationLocksPeopleOut = (config: SSOConfig) =>
+  !config.is_active && config.enforcement_mode === 'SSO_REQUIRED'
 
 export default function SSOSettingsPage() {
   const { isAdmin } = usePermissions();
@@ -35,6 +71,7 @@ export default function SSOSettingsPage() {
   const [testResult, setTestResult] = useState<SSOTestResult | null>(null);
   const [newToken, setNewToken] = useState<SCIMTokenCreated | null>(null);
   const [tokenName, setTokenName] = useState('');
+  const [confirming, setConfirming] = useState<Confirming | null>(null);
 
 
   const handleCreateConfig = async (e: React.FormEvent) => {
@@ -53,29 +90,9 @@ export default function SSOSettingsPage() {
     }
   };
 
+  // Sends the toggle. Activating an enforced configuration asks first, in its
+  // card (`activationLocksPeopleOut`); that strip's Activate calls this.
   const handleToggleActive = async (config: SSOConfig) => {
-    // Activating an SSO_REQUIRED config stops password login for every
-    // non-admin in the workspace on their next attempt (auth.py returns 403
-    // "SSO is required for this account"). Every other consequential action on
-    // this page already confirms — deleting a config, revoking a SCIM token —
-    // and MfaPolicyPage confirms before enabling require_mfa for the same
-    // reason. This was the one lockout-capable action that did not.
-    //
-    // Scoped deliberately: only ACTIVATING, and only in SSO_REQUIRED mode.
-    // Deactivating restores password login, and an OPTIONAL config leaves it
-    // available, so neither needs a prompt. A confirm on every toggle would be
-    // friction that trains people to click through it.
-    if (
-      !config.is_active &&
-      config.enforcement_mode === 'SSO_REQUIRED' &&
-      !confirm(
-        'Activate SSO enforcement? Password login will stop working for ' +
-          'everyone except admins using the fallback. They must sign in ' +
-          'through the identity provider.',
-      )
-    ) {
-      return;
-    }
     try {
       await updateSSOConfig(config.id, { is_active: !config.is_active });
       refresh();
@@ -94,7 +111,6 @@ export default function SSOSettingsPage() {
   };
 
   const handleDeleteConfig = async (configId: string) => {
-    if (!confirm('Are you sure you want to delete this SSO configuration?')) return;
     try {
       await deleteSSOConfig(configId);
       refresh();
@@ -116,7 +132,6 @@ export default function SSOSettingsPage() {
   };
 
   const handleRevokeToken = async (tokenId: string) => {
-    if (!confirm('Revoke this SCIM token?')) return;
     try {
       await revokeSCIMToken(tokenId);
       refresh();
@@ -158,7 +173,7 @@ export default function SSOSettingsPage() {
         {tabs.map(t => (
           <button
             key={t.key}
-            onClick={() => setTab(t.key)}
+            onClick={() => { setTab(t.key); setConfirming(null); }}
             className={`px-4 py-2 text-sm font-medium rounded-t-lg ${
               tab === t.key
                 ? 'bg-[var(--color-bg-secondary)] text-[var(--color-text)] border-b-2 border-[var(--color-border)]'
@@ -310,16 +325,43 @@ export default function SSOSettingsPage() {
                     </div>
                   </div>
                   <div className="flex gap-2 pt-2">
-                    <button onClick={() => handleToggleActive(config)} className="px-3 py-1 text-xs bg-[var(--color-bg-card)] rounded hover:bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)]">
+                    <button
+                      onClick={() => {
+                        if (activationLocksPeopleOut(config)) {
+                          setConfirming({ id: config.id, action: 'activate' });
+                        } else {
+                          setConfirming(null);
+                          void handleToggleActive(config);
+                        }
+                      }}
+                      className="px-3 py-1 text-xs bg-[var(--color-bg-card)] rounded hover:bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)]"
+                    >
                       {config.is_active ? 'Deactivate' : 'Activate'}
                     </button>
                     <button onClick={() => handleTestConnection(config.id)} className="px-3 py-1 text-xs bg-[var(--color-bg-hover)] rounded hover:bg-white text-[var(--color-text-secondary)]">
                       Test Connection
                     </button>
-                    <button onClick={() => handleDeleteConfig(config.id)} className="px-3 py-1 text-xs bg-[var(--status-failed-bg)]/50 rounded hover:bg-[var(--status-failed-bg)] text-[var(--status-failed)]">
+                    <button onClick={() => setConfirming({ id: config.id, action: 'delete' })} className="px-3 py-1 text-xs bg-[var(--status-failed-bg)]/50 rounded hover:bg-[var(--status-failed-bg)] text-[var(--status-failed)]">
                       Delete
                     </button>
                   </div>
+                  {confirming?.id === config.id && confirming.action === 'activate' && activationLocksPeopleOut(config) && (
+                    <InlineConfirm
+                      message={ACTIVATE_ENFORCED_SENTENCE}
+                      confirmLabel="Activate"
+                      onConfirm={() => { setConfirming(null); void handleToggleActive(config); }}
+                      onCancel={() => setConfirming(null)}
+                    />
+                  )}
+                  {confirming?.id === config.id && confirming.action === 'delete' && (
+                    <InlineConfirm
+                      message="Are you sure you want to delete this SSO configuration?"
+                      confirmLabel="Delete"
+                      tone="danger"
+                      onConfirm={() => { setConfirming(null); void handleDeleteConfig(config.id); }}
+                      onCancel={() => setConfirming(null)}
+                    />
+                  )}
                   {config.last_test_at && (
                     <p className="text-xs text-[var(--color-text-muted)]">
                       Last test: {formatCompactDateTime(config.last_test_at)} —{' '}
@@ -371,25 +413,38 @@ export default function SSOSettingsPage() {
 
               <div className="space-y-2">
                 {scimTokens.map(token => (
-                  <div key={token.id} className="bg-[var(--color-bg-secondary)] rounded-lg p-3 flex justify-between items-center">
-                    <div>
-                      <span className="text-[var(--color-text)] text-sm font-medium">{token.name}</span>
-                      <span className="text-[var(--color-text-muted)] text-xs ml-2">{token.token_hint}</span>
-                      {token.last_used_at && (
-                        <span className="text-[var(--color-text-muted)] text-xs ml-2">Last used: {formatCompactDateTime(token.last_used_at)}</span>
-                      )}
+                  <Fragment key={token.id}>
+                    <div className="bg-[var(--color-bg-secondary)] rounded-lg p-3 flex justify-between items-center">
+                      <div>
+                        <span className="text-[var(--color-text)] text-sm font-medium">{token.name}</span>
+                        <span className="text-[var(--color-text-muted)] text-xs ml-2">{token.token_hint}</span>
+                        {token.last_used_at && (
+                          <span className="text-[var(--color-text-muted)] text-xs ml-2">Last used: {formatCompactDateTime(token.last_used_at)}</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={`px-2 py-0.5 rounded text-xs ${token.is_active ? 'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]' : 'bg-[var(--status-failed-bg)]/40 text-[var(--status-failed)]'}`}>
+                          {token.is_active ? 'Active' : 'Revoked'}
+                        </span>
+                        {token.is_active && (
+                          <button onClick={() => setConfirming({ id: token.id, action: 'revoke' })} className="px-2 py-1 text-xs bg-[var(--status-failed-bg)]/50 rounded hover:bg-[var(--status-failed-bg)] text-[var(--status-failed)]">
+                            Revoke
+                          </button>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className={`px-2 py-0.5 rounded text-xs ${token.is_active ? 'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]' : 'bg-[var(--status-failed-bg)]/40 text-[var(--status-failed)]'}`}>
-                        {token.is_active ? 'Active' : 'Revoked'}
-                      </span>
-                      {token.is_active && (
-                        <button onClick={() => handleRevokeToken(token.id)} className="px-2 py-1 text-xs bg-[var(--status-failed-bg)]/50 rounded hover:bg-[var(--status-failed-bg)] text-[var(--status-failed)]">
-                          Revoke
-                        </button>
-                      )}
-                    </div>
-                  </div>
+                    {confirming?.id === token.id && confirming.action === 'revoke' && token.is_active && (
+                      <div data-in-page-row="">
+                        <InlineConfirm
+                          message="Revoke this SCIM token?"
+                          confirmLabel="Revoke"
+                          tone="danger"
+                          onConfirm={() => { setConfirming(null); void handleRevokeToken(token.id); }}
+                          onCancel={() => setConfirming(null)}
+                        />
+                      </div>
+                    )}
+                  </Fragment>
                 ))}
               </div>
             </div>

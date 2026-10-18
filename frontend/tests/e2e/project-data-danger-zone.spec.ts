@@ -1,6 +1,7 @@
 import { test, expect, Page } from '@playwright/test';
 import { performRealLogin } from './realLoginHelper';
 import { mockJson, seedActiveProject } from './apiMock';
+import { opened } from '../lib/inPage';
 
 /**
  * Project Data danger zone (/settings/project-data) — ADMIN-only destructive
@@ -47,7 +48,7 @@ test.describe('Project Data — danger zone', () => {
 
     await trigger.click();
 
-    const modal = page.locator('div.fixed.inset-0');
+    const modal = opened(page, 'Delete test runs').filter({ has: page.locator('#project-data-confirm-title') });
     await expect(modal.locator('#reset-confirm-input')).toBeVisible({ timeout: 8000 });
 
     const confirm = modal.getByRole('button', { name: /delete test runs/i });
@@ -82,7 +83,7 @@ test.describe('Project Data — danger zone', () => {
     expect(trigger, 'the danger-zone control is missing or disabled').not.toBeNull();
 
     await trigger.click();
-    const modal = page.locator('div.fixed.inset-0');
+    const modal = opened(page, 'Delete test runs').filter({ has: page.locator('#project-data-confirm-title') });
     await modal.locator('#reset-confirm-input').fill(PROJECT.name);
     await modal.getByRole('button', { name: /delete test runs/i }).click();
 

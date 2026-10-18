@@ -144,7 +144,7 @@ export default function TestAIVersionsPopover({
     <div
       data-test-ai-popover=""
       data-run-id={runId ?? ''}
-      role="dialog"
+      role="region"
       aria-label={`AI analysis versions for ${runLabel}`}
       className="space-y-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-card)] p-3 text-xs shadow-lg"
     >

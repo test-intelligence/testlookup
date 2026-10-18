@@ -105,7 +105,7 @@ fails if a *second* deleter appears.
 | `frontend.tabs-primitive-only` † | a hand-rolled `role="tablist"` outside `components/ui/Tabs.tsx` (tests exempt) | Use `Tabs` from `@/components/ui/Tabs` — `useTabParam` for a page's own tabs (`?tab=`), local state for a component's. There were 19 hand-rolled bars when the redesign began |
 | `frontend.clipboard-util` | raw `navigator.clipboard` | Use `copyTextToClipboard` from `@/utils/clipboard` (HTTP homelabs lack the secure-context API) |
 | `frontend.modal-dialog-role` † | a `fixed inset-0` modal overlay with no `role="dialog"` | Add `role="dialog" aria-modal="true"` and name it with `aria-labelledby` pointing at the modal heading's `id` — a static `aria-label` goes stale when the title is dynamic. A full-screen overlay that genuinely is not a dialog opts out with a `not-a-dialog` comment |
-| `frontend.no-page-modals` | a page modal (`role="dialog"` / `aria-modal`), a `<SidePanel>`, or a native `confirm()` under `frontend/src/pages` / `components`, outside the OR-03 allow-list | Open it in the page: `MasterDetail` + `DetailPane`, `InlineFormSection` (in an `InlineRowSection` under a row), `InlineConfirm` (`components/ui/inPage/`). An overlay of an OR-03 class gets an allow-list entry with its reason |
+| `frontend.no-page-modals` | a page modal (`role="dialog"` / `aria-modal`), a `<SidePanel>`, a `fixed` full-height edge panel, or a native `confirm()` under `frontend/src/pages` / `components`, outside the OR-03 allow-list | Open it in the page: `MasterDetail` + `DetailPane`, `InlineFormSection` (in an `InlineRowSection` under a row), `InlineConfirm` (`components/ui/inPage/`). An overlay of an OR-03 class gets an allow-list entry with its reason |
 | `frontend.refresh-intervals-from-config` † | a hand-picked SWR `refreshInterval` | `import { REFRESH_INTERVALS } from '@/config/refreshIntervals'` and take a tier — `REALTIME` / `ACTIVE` / `POLLING` / `BACKGROUND` (`0` = disabled is fine) |
 | `frontend.ai-output-hedging` † | AI output rendered as a verdict — a bare `Root cause:`, `Root Cause Summary`, "the cause is …", "is caused by" | Hedge the copy ("Suggested root cause", "likely caused by") and render the conclusion through `components/ai/AISuggestion` so it carries the badge, basis and provenance (US-15.1). Pipeline **stage** names like "Root Cause Analysis" are already allowed |
 | `frontend.ingest-formats-match-backend` † | the upload dropdown (`reportUploadService.ts::SUPPORTED_FORMATS`) advertising a format `/ingest/file` rejects, the backend accepting a parser the UI never offers, or either registry becoming unparseable by the guard | Add or remove the format on **both** sides of the language boundary — the `SUPPORTED_FORMATS` array (value + label) and the `ReportFormat` union in `reportUploadService.ts`, and `_SUPPORTED_FORMATS` in `routers/ingest.py` (a new backend parser also needs `_detect_format` wired). If a refactor changes a registry's source shape, update the guard parser in the same change; otherwise CI fails instead of silently disabling parity enforcement |
@@ -122,9 +122,12 @@ replacing a form someone typed into asks first, inline. Only a detail rides the
 URL, through `useDetailParam`: one key per page, the id checked by `isUuid` /
 `isDetailToken` before any request; opening pushes a history entry so Back
 closes it, switching replaces, closing pops (`/test-management` replaces
-throughout). A form or a confirmation never rides the URL. A genuine overlay of
-an OR-03 class (a popover anchored to its control, an app-wide drawer, a chart's
-full screen) is allow-listed with its reason in `_NO_PAGE_MODALS_ALLOWED`.
+throughout). A form or a confirmation never rides the URL. A one-time secret is
+shown once in the section that created it, never in a toast, a URL or storage. A
+typed confirmation is an `InlineFormSection` with its field, never an
+`InlineConfirm`. A genuine overlay of an OR-03 class (a popover anchored to its
+control, an app-wide drawer, a chart's full screen) is allow-listed with its
+reason in `_NO_PAGE_MODALS_ALLOWED`.
 
 ### Database
 

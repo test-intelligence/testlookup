@@ -78,6 +78,36 @@ describe('FixTaggingPanel', () => {
     expect(await screen.findByText('test_1')).toBeInTheDocument()
   })
 
+  // W27b PAN-05b: a section of the page (the host places it after the callout), never a fixed edge panel.
+  it('W27b: renders IN PLACE (no fixed full-height panel); focus moves to the target suite; Escape inside closes it', async () => {
+    pages.getUntaggedTests.mockResolvedValue(page([item(1)]))
+    act(() => useAuthStore.setState({ user: { id: 'u-1', role: 'QA_ENGINEER' } as never }))
+    const onClose = vi.fn()
+    render(
+      <MemoryRouter>
+        <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0, shouldRetryOnError: false }}>
+          <div data-testid="column">
+            <section aria-label="Untagged executions" />
+            <FixTaggingPanel projectId="proj-1" days={30} onClose={onClose} />
+          </div>
+        </SWRConfig>
+      </MemoryRouter>,
+    )
+    const panel = screen.getByRole('complementary', { name: 'Fix tagging' })
+    expect(screen.getByRole('region', { name: 'Untagged executions' }).nextElementSibling).toBe(panel)
+    expect(panel).toHaveAttribute('data-fix-tagging-panel')
+    for (const el of [panel, ...panel.querySelectorAll('*')]) {
+      expect(String(el.getAttribute('class') ?? '')).not.toMatch(/(^|\s)(fixed|h-screen|h-\[calc\(100vh)/)
+    }
+    expect(within(panel).getByRole('heading', { name: 'Fix tagging' })).toBeInTheDocument()
+    expect(within(panel).getByRole('combobox')).toHaveFocus()
+    await screen.findByText('test_1')
+    fireEvent.keyDown(within(panel).getByRole('combobox'), { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
+    fireEvent.click(within(panel).getByRole('button', { name: 'Close the fix tagging panel' }))
+    expect(onClose).toHaveBeenCalledTimes(2)
+  })
+
   it('a viewer reads the list: no checkboxes, no target, no move', async () => {
     pages.getUntaggedTests.mockResolvedValue(page([item(1)]))
     renderPanel('VIEWER')

@@ -1,10 +1,15 @@
+import type { ReactNode } from 'react'
 import { useState } from 'react'
-import { DollarSign, Save, ShieldAlert } from 'lucide-react'
+import { AlertTriangle, DollarSign, RefreshCw, Save, ShieldAlert } from 'lucide-react'
 import toast from 'react-hot-toast'
 import ExperimentalBadge from '@/components/ui/ExperimentalBadge'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import DataUnavailable from '@/components/ui/DataUnavailable'
+import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
+import InlineRowSection from '@/components/ui/inPage/InlineRowSection'
+import { useInlineSlot, type InlineSlot } from '@/components/ui/inPage/useInlineSlot'
+import { useSlotCloser } from '@/hooks/useSlotCloser'
 import { useBillingOverview, useProjectQuota } from '@/hooks/useLlmBudget'
 import {
   llmBudgetService,
@@ -37,11 +42,21 @@ const HELP_TOPIC = helpTopicParam('/settings/billing')
  * it, Charge = overage × rate and a linear month-end projection; the table
  * shows them (`—` where the server computed nothing: no enabled quota, or no
  * included allowance). Display only — the hard cap is what limits spend.
+ *
+ * W27b PAN-06: a project row's Edit (admin) / View (QA lead) opens the budget
+ * form IN THE PAGE, in a full-width row under that project's row (it was a
+ * modal dialog). W27b F-6: a quota read that fails with anything but a 404
+ * shows its error with Retry and NO Save (the form's defaults would have
+ * overwritten the real quota); a 404 is "no quota yet" and shows the defaults,
+ * as before; a saved quota is written back into its read's cache, so the next
+ * open never starts from the pre-save values.
  */
 export default function BillingPage() {
   const { isAdmin } = usePermissions()
   const { overview, error, isLoading, isError, refresh } = useBillingOverview()
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
+  // W27b: one budget form open in the table, under its project's row (the key is the project id).
+  const editorSlot = useInlineSlot<string>()
+  const closeEditor = useSlotCloser(editorSlot)
 
   if (isLoading) return <LoadingSpinner size="lg" />
   if (isError || !overview) {
@@ -128,25 +143,27 @@ export default function BillingPage() {
                 key={row.project_id}
                 row={row}
                 elapsed={elapsed}
-                onEdit={() => setSelectedProjectId(row.project_id)}
+                onEdit={() => editorSlot.open(row.project_id)}
                 canEdit={isAdmin}
+                below={
+                  editorSlot.openKey === row.project_id ? (
+                    <QuotaEditor
+                      projectId={row.project_id}
+                      slot={editorSlot}
+                      onClose={() => closeEditor(row.project_id)}
+                      onSaved={async () => {
+                        await refresh()
+                        closeEditor(row.project_id)
+                      }}
+                      canEdit={isAdmin}
+                    />
+                  ) : null
+                }
               />
             ))}
           </tbody>
         </table>
       </div>
-
-      {selectedProjectId && (
-        <QuotaEditor
-          projectId={selectedProjectId}
-          onClose={() => setSelectedProjectId(null)}
-          onSaved={async () => {
-            await refresh()
-            setSelectedProjectId(null)
-          }}
-          canEdit={isAdmin}
-        />
-      )}
     </div>
   )
 }
@@ -221,13 +238,17 @@ function ProjectRow({
   elapsed,
   onEdit,
   canEdit,
+  below,
 }: {
   row: BillingOverviewProject
   elapsed: string | null
   onEdit: () => void
   canEdit: boolean
+  /** W27b: the row's budget form, in a full-width row under it (no `data-billing-*` on that row). */
+  below?: ReactNode
 }) {
   return (
+    <>
     <tr data-billing-project={row.project_id} className="border-t border-[var(--color-border)]">
       <td className="px-2 py-2 text-[var(--color-text)]">{row.project_name}</td>
       <td data-billing-spend="" className="px-2 py-2 text-right font-mono text-[var(--color-text)]">
@@ -276,6 +297,8 @@ function ProjectRow({
         </button>
       </td>
     </tr>
+    {below && <InlineRowSection colSpan={10}>{below}</InlineRowSection>}
+    </>
   )
 }
 
@@ -301,7 +324,7 @@ function formatPeriodEnd(iso: string): string {
   return formatDayIso(shiftDayIso(iso.slice(0, 10), -1))
 }
 
-// ── Quota editor modal ─────────────────────────────────────────────────────
+// ── Quota editor (in the page, under its project's row) ─────────────────────────────────────────────────────
 
 const CAP_ACTION_OPTIONS: Array<{ value: QuotaCapAction; label: string; desc: string }> = [
   {
@@ -331,13 +354,15 @@ function QuotaEditor({
   onClose,
   onSaved,
   canEdit,
+  slot,
 }: {
   projectId: string
   onClose: () => void
   onSaved: () => Promise<void>
   canEdit: boolean
+  slot?: InlineSlot
 }) {
-  const { quota, isLoading } = useProjectQuota(projectId)
+  const { quota, isLoading, isError, refresh } = useProjectQuota(projectId)
   const [form, setForm] = useState<LlmQuotaWrite>({
     enabled: true,
     period_type: 'MONTHLY',
@@ -349,7 +374,9 @@ function QuotaEditor({
   })
   const [hydrated, setHydrated] = useState(false)
 
-  // Hydrate form once the quota loads — or leave defaults if no quota exists.
+  // Hydrate form once the quota loads — or leave defaults if no quota exists (a 404, which the hook reads as
+  // null). A read that FAILED (isError) is not "no quota": the form stays unhydrated, so it shows the error
+  // with Retry and no Save; Save would have overwritten the real quota with these defaults (W27b F-6).
   if (!hydrated && !isLoading && quota) {
     setForm({
       enabled: quota.enabled,
@@ -361,13 +388,17 @@ function QuotaEditor({
       at_cap_action: quota.at_cap_action,
     })
     setHydrated(true)
-  } else if (!hydrated && !isLoading && !quota) {
+  } else if (!hydrated && !isLoading && !quota && !isError) {
     setHydrated(true)
   }
+  const readFailed = !hydrated && !isLoading && isError
 
   async function save() {
     try {
-      await llmBudgetService.putQuota(projectId, form)
+      const saved = await llmBudgetService.putQuota(projectId, form)
+      // The saved quota IS what the read would answer now: write it into the read's cache (no request), so
+      // a reopen starts from it and never hydrates from the pre-save values (W27b F-6).
+      if (saved) void refresh(saved, { revalidate: false })
       toast.success('Quota saved')
       await onSaved()
     } catch (err) {
@@ -376,20 +407,49 @@ function QuotaEditor({
   }
 
   return (
-    <div
-      role="dialog"
-      aria-label="Edit LLM cost budget"
-      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-      onClick={onClose}
+    <InlineFormSection
+      title="LLM cost budget"
+      ariaLabel="Edit LLM cost budget"
+      headingLevel={3}
+      onClose={onClose}
+      showClose={false}
+      slot={slot}
+      footer={
+        <>
+          <button type="button" onClick={onClose} className="btn-secondary text-xs">
+            Close
+          </button>
+          {canEdit && hydrated && (
+            <button
+              type="button"
+              onClick={save}
+              className="btn-primary text-xs flex items-center gap-1.5"
+            >
+              <Save className="h-3 w-3" /> Save
+            </button>
+          )}
+        </>
+      }
     >
-      <div
-        className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-lg w-[560px] max-w-[95vw] p-5 space-y-4"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 className="text-sm font-semibold text-[var(--color-text)]">LLM cost budget</h3>
-
+      <div className="max-w-2xl space-y-4">
         {isLoading ? (
           <LoadingSpinner />
+        ) : readFailed ? (
+          // W27b F-6: never the defaults over a failed read. No field and no Save until a read succeeds.
+          <div role="alert" data-billing-quota-error="" className="flex flex-wrap items-center gap-3 rounded border border-[var(--status-broken-bd)]/40 bg-[var(--status-broken-bg)]/10 px-3 py-2 text-xs text-[var(--status-broken)]">
+            <AlertTriangle className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
+            <span className="min-w-0 flex-1">
+              The budget for this project could not be read, so it cannot be shown or changed. Nothing was saved.
+            </span>
+            <button
+              type="button"
+              onClick={() => void refresh()}
+              className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] px-2.5 py-1 text-xs font-medium text-[var(--color-text-secondary)]"
+            >
+              <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+              Retry
+            </button>
+          </div>
         ) : (
           <>
             <div className="grid grid-cols-2 gap-3">
@@ -465,25 +525,10 @@ function QuotaEditor({
                 </label>
               ))}
             </fieldset>
-
-            <div className="flex justify-end gap-2 pt-2">
-              <button type="button" onClick={onClose} className="btn-secondary text-xs">
-                Close
-              </button>
-              {canEdit && (
-                <button
-                  type="button"
-                  onClick={save}
-                  className="btn-primary text-xs flex items-center gap-1.5"
-                >
-                  <Save className="h-3 w-3" /> Save
-                </button>
-              )}
-            </div>
           </>
         )}
       </div>
-    </div>
+    </InlineFormSection>
   )
 }
 

@@ -10,17 +10,24 @@
  *             catalog/RAG/policy/baseline table. Returns the project
  *             to a green-field state.
  *
- * Two-step confirmation: clicking a button opens a modal that requires
- * typing the project name verbatim before the Delete button enables.
+ * Two-step confirmation: clicking a button opens a typed confirmation that
+ * requires typing the project name verbatim before the Delete button enables.
  * Matches the GitHub repo-delete UX. The backend re-validates the typed
  * name; the frontend gate is a forcing function against autopilot
  * clicks, not a security check.
+ *
+ * W27b PAN-06: the typed confirmation renders IN THE PAGE, inside the Danger
+ * zone right under the row whose button opened it (it was a modal dialog),
+ * one at a time; it keeps its field, its exact-match rule and `aria-disabled`.
  */
-import { useMemo, useState } from 'react'
-import { AlertTriangle, Loader2, ShieldAlert, Trash2, X } from 'lucide-react'
+import { Fragment, useMemo, useState } from 'react'
+import { AlertTriangle, Loader2, ShieldAlert, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
+import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
+import { useInlineSlot, type InlineSlot } from '@/components/ui/inPage/useInlineSlot'
+import { useSlotCloser } from '@/hooks/useSlotCloser'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { usePermissions } from '@/hooks/usePermissions'
 import {
@@ -91,9 +98,11 @@ interface ConfirmModalProps {
   projectName: string
   onClose: () => void
   onSuccess: (resp: ProjectResetResponse) => void
+  /** W27b: the Danger zone's slot (one typed confirmation at a time; typing marks it dirty). */
+  slot?: InlineSlot
 }
 
-function ResetConfirmModal({ spec, projectId, projectName, onClose, onSuccess }: ConfirmModalProps) {
+function ResetConfirmModal({ spec, projectId, projectName, onClose, onSuccess, slot }: ConfirmModalProps) {
   const [typed, setTyped] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const matches = typed === projectName
@@ -118,25 +127,49 @@ function ResetConfirmModal({ spec, projectId, projectName, onClose, onSuccess }:
   }
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="project-data-confirm-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-      <div className="w-full max-w-lg rounded-lg border border-[var(--status-failed-bd)]/50 bg-[var(--color-bg)] p-6 shadow-2xl">
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="h-5 w-5 text-[var(--status-failed)]" />
-            <h2 id="project-data-confirm-title" className="text-lg font-semibold text-[var(--color-text)]">{spec.title}</h2>
-          </div>
+    <InlineFormSection
+      title={
+        <span className="inline-flex items-center gap-2">
+          <AlertTriangle className="h-5 w-5 text-[var(--status-failed)]" aria-hidden="true" />
+          {spec.title}
+        </span>
+      }
+      titleId="project-data-confirm-title"
+      onClose={onClose}
+      canClose={!submitting}
+      slot={slot}
+      footer={
+        <>
           <button
             type="button"
             onClick={onClose}
             disabled={submitting}
-            aria-label="Close"
-            className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-50"
+            className="rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-1.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50"
           >
-            <X className="h-5 w-5" />
+            Cancel
           </button>
-        </div>
-
-        <p className="mt-3 text-sm text-[var(--color-text-secondary)]">{spec.blurb}</p>
+          <button
+            type="button"
+            onClick={handleConfirm}
+            disabled={!matches || submitting}
+            aria-disabled={!matches || submitting}
+            className="inline-flex items-center gap-1.5 rounded bg-[var(--status-failed-bg)] px-3 py-1.5 text-sm font-medium text-white hover:bg-[var(--status-failed-bg)] disabled:cursor-not-allowed disabled:bg-[var(--status-failed-bg)]/40 disabled:text-[var(--status-failed)]/60"
+          >
+            {submitting ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Deleting…
+              </>
+            ) : (
+              <>
+                <Trash2 className="h-3.5 w-3.5" /> {spec.buttonLabel}
+              </>
+            )}
+          </button>
+        </>
+      }
+    >
+      <div className="max-w-2xl">
+        <p className="text-sm text-[var(--color-text-secondary)]">{spec.blurb}</p>
 
         <div className="mt-4 rounded border border-[var(--status-failed-bd)]/40 bg-[var(--status-failed-bg)]/10 p-3 text-xs">
           <p className="font-semibold text-[var(--status-failed)]">This will permanently delete:</p>
@@ -164,39 +197,11 @@ function ResetConfirmModal({ spec, projectId, projectName, onClose, onSuccess }:
             onChange={(e) => setTyped(e.target.value)}
             disabled={submitting}
             placeholder={projectName}
-            className="mt-1 w-full rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm text-[var(--color-text)]"
+            className="mt-1 w-full max-w-md rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm text-[var(--color-text)]"
           />
         </div>
-
-        <div className="mt-5 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={submitting}
-            className="rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-1.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleConfirm}
-            disabled={!matches || submitting}
-            aria-disabled={!matches || submitting}
-            className="inline-flex items-center gap-1.5 rounded bg-[var(--status-failed-bg)] px-3 py-1.5 text-sm font-medium text-white hover:bg-[var(--status-failed-bg)] disabled:cursor-not-allowed disabled:bg-[var(--status-failed-bg)]/40 disabled:text-[var(--status-failed)]/60"
-          >
-            {submitting ? (
-              <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Deleting…
-              </>
-            ) : (
-              <>
-                <Trash2 className="h-3.5 w-3.5" /> {spec.buttonLabel}
-              </>
-            )}
-          </button>
-        </div>
       </div>
-    </div>
+    </InlineFormSection>
   )
 }
 
@@ -206,7 +211,9 @@ export default function ProjectDataPage() {
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
   const { isAdmin } = usePermissions()
 
-  const [activeSpec, setActiveSpec] = useState<ModeSpec | null>(null)
+  // W27b: one typed confirmation open in the Danger zone, under its row (the key is the mode).
+  const slot = useInlineSlot<ProjectResetMode>()
+  const closeConfirm = useSlotCloser(slot)
   const [lastResult, setLastResult] = useState<ProjectResetResponse | null>(null)
 
   const projectName = project?.name ?? ''
@@ -289,39 +296,44 @@ export default function ProjectDataPage() {
 
         <div className="divide-y divide-[var(--color-border)] rounded border border-[var(--status-failed-bd)]/30">
           {MODE_SPECS.map((spec) => (
-            <div key={spec.mode} className="flex items-start justify-between gap-4 p-4">
+            <Fragment key={spec.mode}>
+            <div className="flex items-start justify-between gap-4 p-4">
               <div className="min-w-0">
                 <h3 className="text-sm font-medium text-[var(--color-text)]">{spec.title}</h3>
                 <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">{spec.blurb}</p>
               </div>
               <button
                 type="button"
-                onClick={() => setActiveSpec(spec)}
+                onClick={() => slot.open(spec.mode)}
                 disabled={!canReset}
                 className="inline-flex flex-shrink-0 items-center gap-1.5 rounded border border-[var(--status-failed-bd)]/60 bg-[var(--status-failed-bg)]/30 px-3 py-1.5 text-xs font-medium text-[var(--status-failed)] hover:bg-[var(--status-failed-bg)]/60 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <Trash2 className="h-3.5 w-3.5" /> {spec.buttonLabel}
               </button>
             </div>
+            {/* W27b: the typed confirmation, right under the row whose button opened it. */}
+            {slot.openKey === spec.mode && project && !isAllProjects && (
+              <div data-in-page-row="" className="p-4">
+                <ResetConfirmModal
+                  spec={spec}
+                  projectId={projectId}
+                  projectName={projectName}
+                  slot={slot}
+                  onClose={() => closeConfirm(spec.mode)}
+                  onSuccess={(resp) => {
+                    setLastResult(resp)
+                    closeConfirm(spec.mode)
+                    toast.success(
+                      `Reset complete: ${Object.values(resp.deleted).reduce((a, b) => a + b, 0)} rows deleted`,
+                    )
+                  }}
+                />
+              </div>
+            )}
+            </Fragment>
           ))}
         </div>
       </section>
-
-      {activeSpec && project && !isAllProjects && (
-        <ResetConfirmModal
-          spec={activeSpec}
-          projectId={projectId}
-          projectName={projectName}
-          onClose={() => setActiveSpec(null)}
-          onSuccess={(resp) => {
-            setLastResult(resp)
-            setActiveSpec(null)
-            toast.success(
-              `Reset complete: ${Object.values(resp.deleted).reduce((a, b) => a + b, 0)} rows deleted`,
-            )
-          }}
-        />
-      )}
     </div>
   )
 }

@@ -170,7 +170,7 @@ describe('TestCasesTab request failures and retries', () => {
     renderTab()
 
     fireEvent.click(screen.getByRole('button', { name: 'Deprecate Checkout preserves cart' }))
-    const dialog = screen.getByRole('dialog', { name: 'Deprecate test case' })
+    const dialog = screen.getByRole('region', { name: 'Deprecate test case' })
     fireEvent.change(within(dialog).getByRole('textbox'), {
       target: { value: 'Superseded by checkout v2' },
     })

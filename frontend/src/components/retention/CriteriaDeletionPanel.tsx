@@ -10,12 +10,18 @@
  * So this component never sends criteria to execute — only the `job_id` it
  * was handed. Changing any field after a preview discards it, because the
  * numbers on screen would otherwise describe a set that is no longer the one
- * that would run.
+ * that would run — and the typed confirmation with it.
+ *
+ * W27b PAN-06: the typed confirmation opens in the page, inside the preview
+ * box right under its Delete button (no modal); the page around it stays
+ * usable, so editing a criterion or previewing again closes it (the set it
+ * would delete is no longer the one on screen).
  */
 import { useState } from 'react'
-import { AlertTriangle, Loader2, Search, Trash2, X } from 'lucide-react'
+import { AlertTriangle, Loader2, Search, Trash2 } from 'lucide-react'
 import { isAxiosError } from 'axios'
 import toast from 'react-hot-toast'
+import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
 import { criteriaDeletionService } from '@/services/retentionService'
 import { RUN_STATUSES, type DeletionPreview, type RunStatus } from '@/types/retention'
 import {
@@ -63,6 +69,8 @@ export default function CriteriaDeletionPanel({ projectId, projectName, onExecut
 
   async function handlePreview() {
     if (empty || previewing) return
+    // A new preview freezes a new set: the open confirmation described the old one.
+    setConfirmOpen(false)
     setPreviewing(true)
     try {
       setPreview(await criteriaDeletionService.preview(projectId, criteria))
@@ -294,22 +302,22 @@ export default function CriteriaDeletionPanel({ projectId, projectName, onExecut
             <Trash2 className="h-3.5 w-3.5" /> Delete {preview.run_count} run
             {preview.run_count === 1 ? '' : 's'}
           </button>
-        </div>
-      )}
 
-      {confirmOpen && preview && (
-        <ExecuteConfirmModal
-          projectId={projectId}
-          projectName={projectName}
-          preview={preview}
-          onClose={() => setConfirmOpen(false)}
-          onExecuted={() => {
-            setConfirmOpen(false)
-            // The frozen set has been consumed — a second execute would 409.
-            setPreview(null)
-            onExecuted?.()
-          }}
-        />
+          {confirmOpen && (
+            <ExecuteConfirmModal
+              projectId={projectId}
+              projectName={projectName}
+              preview={preview}
+              onClose={() => setConfirmOpen(false)}
+              onExecuted={() => {
+                setConfirmOpen(false)
+                // The frozen set has been consumed — a second execute would 409.
+                setPreview(null)
+                onExecuted?.()
+              }}
+            />
+          )}
+        </div>
       )}
     </section>
   )
@@ -350,63 +358,20 @@ function ExecuteConfirmModal({
   }
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="criteria-delete-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4"
-    >
-      <div className="w-full max-w-lg rounded-lg border border-[var(--status-failed-bd)]/50 bg-[var(--color-bg)] p-6 shadow-2xl">
-        <div className="flex items-start justify-between">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="h-5 w-5 text-[var(--status-failed)]" />
-            <h2
-              id="criteria-delete-title"
-              className="text-lg font-semibold text-[var(--color-text)]"
-            >
-              Delete {preview.run_count} run{preview.run_count === 1 ? '' : 's'}
-            </h2>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={submitting}
-            aria-label="Close"
-            className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-50"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        <p className="mt-3 text-sm text-[var(--color-text-secondary)]">
-          This deletes the {preview.run_count} run{preview.run_count === 1 ? '' : 's'} shown in the
-          preview across every store — results, raw events, artifacts and analysis. It cannot be
-          undone. Only the set that was previewed will go; nothing is re-selected at delete time.
-        </p>
-
-        <div className="mt-4">
-          <label
-            htmlFor="criteria-delete-confirm"
-            className="block text-xs text-[var(--color-text-muted)]"
-          >
-            Type{' '}
-            <code className="rounded bg-[var(--color-bg-secondary)] px-1 py-0.5 font-mono text-[var(--color-text)]">
-              {projectName}
-            </code>{' '}
-            to confirm.
-          </label>
-          <input
-            id="criteria-delete-confirm"
-            autoFocus
-            value={typed}
-            onChange={(e) => setTyped(e.target.value)}
-            disabled={submitting}
-            placeholder={projectName}
-            className="mt-1 w-full rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm text-[var(--color-text)]"
-          />
-        </div>
-
-        <div className="mt-5 flex justify-end gap-2">
+    <InlineFormSection
+      title={
+        <span className="inline-flex items-center gap-2">
+          <AlertTriangle aria-hidden="true" className="h-5 w-5 text-[var(--status-failed)]" />
+          Delete {preview.run_count} run{preview.run_count === 1 ? '' : 's'}
+        </span>
+      }
+      titleId="criteria-delete-title"
+      onClose={onClose}
+      canClose={!submitting}
+      busy={submitting}
+      className="text-sm"
+      footer={
+        <>
           <button
             type="button"
             onClick={onClose}
@@ -432,8 +397,36 @@ function ExecuteConfirmModal({
               </>
             )}
           </button>
-        </div>
+        </>
+      }
+    >
+      <p className="text-sm text-[var(--color-text-secondary)]">
+        This deletes the {preview.run_count} run{preview.run_count === 1 ? '' : 's'} shown in the
+        preview across every store — results, raw events, artifacts and analysis. It cannot be
+        undone. Only the set that was previewed will go; nothing is re-selected at delete time.
+      </p>
+
+      <div className="mt-4">
+        <label
+          htmlFor="criteria-delete-confirm"
+          className="block text-xs text-[var(--color-text-muted)]"
+        >
+          Type{' '}
+          <code className="rounded bg-[var(--color-bg-secondary)] px-1 py-0.5 font-mono text-[var(--color-text)]">
+            {projectName}
+          </code>{' '}
+          to confirm.
+        </label>
+        <input
+          id="criteria-delete-confirm"
+          autoFocus
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          disabled={submitting}
+          placeholder={projectName}
+          className="mt-1 w-full max-w-md rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm text-[var(--color-text)]"
+        />
       </div>
-    </div>
+    </InlineFormSection>
   )
 }

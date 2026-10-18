@@ -135,7 +135,7 @@ describe('UserManagementPage — two-column Add User form', () => {
   it('pairs email | username and full name | role', () => {
     renderAt('/users')
     fireEvent.click(screen.getByRole('button', { name: /add user/i }))
-    const dialog = screen.getByRole('dialog', { name: 'Add User' })
+    const dialog = screen.getByRole('region', { name: 'Add User' })
     const fields = dialog.querySelector('[data-add-user-fields]') as HTMLElement
     expect(fields.className).toContain('grid-cols-2')
     for (const label of ['Email address', 'Username', 'Full name (optional)', 'Role']) {

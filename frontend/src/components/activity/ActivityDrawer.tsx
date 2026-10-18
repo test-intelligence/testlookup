@@ -1,8 +1,8 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { X } from 'lucide-react'
 import toast from 'react-hot-toast'
 
+import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
 import { useActivityEvent } from '@/hooks/useActivityFeed'
 import { copyTextToClipboard } from '@/utils/clipboard'
 import { formatCompactDateTime } from '@/utils/formatters'
@@ -11,47 +11,32 @@ interface Props {
   projectId: string
   eventId: string | null
   onClose: () => void
+  /**
+   * The `?event=` value failed the page's id check (W27b): the detail says
+   * "That is not a valid event link." and reads nothing, so a crafted value
+   * (`../../x`) never reaches a request path.
+   */
+  rejected?: boolean
 }
 
 /**
- * Detail panel for one activity event.
+ * The detail of one activity event, rendered IN THE PAGE (W27b PAN-05b):
+ * ActivityPage places it right under the feed row it belongs to, or right
+ * above the feed for a deep link to an event the feed has not loaded.
  *
- * `aria-labelledby` points at the live heading id rather than a static
- * `aria-label`: the title is dynamic, and a fixed label goes stale the moment
- * the drawer shows a different event. The `frontend.modal-dialog-role` gate
- * checks the role is present; the naming is on us.
+ * A read-only `<aside>` named by its live heading (the event's summary,
+ * `Activity event` while it loads): a fixed label would go stale the moment
+ * the detail shows another event. No backdrop, no trap: focus moves to its X
+ * when it opens, Escape with focus inside closes it, and focus goes back to
+ * the row that opened it (`InlineFormSection` / `useInPageFocus`).
  */
-export default function ActivityDrawer({ projectId, eventId, onClose }: Props) {
-  const { event, error, isLoading } = useActivityEvent(projectId, eventId)
+export default function ActivityDrawer({ projectId, eventId, onClose, rejected = false }: Props) {
+  const { event, error, isLoading } = useActivityEvent(projectId, rejected ? null : eventId)
   const errorStatus = (error as { response?: { status?: number } } | undefined)
     ?.response?.status
-  const headingId = useId()
-  const closeRef = useRef<HTMLButtonElement>(null)
   const [showRaw, setShowRaw] = useState(false)
 
-  useEffect(() => {
-    if (!eventId) return
-    // Remember what had focus so it can be restored on close. Without this,
-    // Esc dropped focus onto <body> and a keyboard reader lost their place in
-    // the feed entirely - they had to Tab from the top of the page to get back
-    // to the row they were reading.
-    const opener = document.activeElement as HTMLElement | null
-
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', onKey)
-    closeRef.current?.focus()
-
-    return () => {
-      document.removeEventListener('keydown', onKey)
-      // Only if the opener is still in the document - the row may have been
-      // replaced by a refresh while the drawer was open.
-      if (opener && document.contains(opener)) opener.focus()
-    }
-  }, [eventId, onClose])
-
-  if (!eventId) return null
+  if (!eventId && !rejected) return null
 
   const changed = event?.diff?.changed_fields ?? []
   const before = (event?.diff?.before ?? {}) as Record<string, unknown>
@@ -65,179 +50,155 @@ export default function ActivityDrawer({ projectId, eventId, onClose }: Props) {
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex justify-end bg-black/40"
-      role="presentation"
-      onClick={onClose}
+    <InlineFormSection
+      as="aside"
+      title={event?.summary ?? 'Activity event'}
+      description={event?.event_type}
+      onClose={onClose}
+      closeLabel="Close activity details"
+      dataAttributes={{ 'data-activity-detail': '' }}
+      className="min-w-0"
     >
-      <aside
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={headingId}
-        className="h-full w-full max-w-lg overflow-y-auto bg-[var(--color-bg-card)] border-l border-[var(--color-border)] shadow-xl"
-        onClick={e => e.stopPropagation()}
-      >
-        <header className="sticky top-0 flex items-start gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg-card)] px-5 py-4">
-          <div className="min-w-0 flex-1">
-            <h2
-              id={headingId}
-              className="text-[15px] font-semibold text-[var(--color-text)]"
-            >
-              {event?.summary ?? 'Activity event'}
-            </h2>
-            <p className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
-              {event?.event_type}
-            </p>
-          </div>
-          <button
-            ref={closeRef}
-            type="button"
-            onClick={onClose}
-            aria-label="Close activity details"
-            className="rounded p-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </header>
+      <div className="min-w-0 space-y-5 text-[13px]">
+        {rejected && (
+          <p className="text-[var(--status-failed)]">That is not a valid event link.</p>
+        )}
+        {isLoading && (
+          <p className="text-[var(--color-text-muted)]">Loading details…</p>
+        )}
 
-        <div className="space-y-5 px-5 py-4 text-[13px]">
-          {isLoading && (
-            <p className="text-[var(--color-text-muted)]">Loading details…</p>
-          )}
+        {error && (
+          <p className="text-[var(--status-failed)]">
+            {/* Say which failure it was. A single "may belong to a project
+                you do not have access to" was shown for a malformed id
+                (422), a deleted/absent event (404) AND a real permission
+                error - so the one case where it was true was indistinguishable
+                from the two where it was a guess. */}
+            {errorStatus === 404
+              ? 'This event no longer exists. It may have been removed by the retention purge.'
+              : errorStatus === 422
+                ? 'That is not a valid event link.'
+                : errorStatus === 403
+                  ? "You do not have access to this project's activity."
+                  : 'This event could not be loaded. Try again shortly.'}
+          </p>
+        )}
 
-          {error && (
-            <p className="text-[var(--status-failed)]">
-              {/* Say which failure it was. A single "may belong to a project
-                  you do not have access to" was shown for a malformed id
-                  (422), a deleted/absent event (404) AND a real permission
-                  error - so the one case where it was true was indistinguishable
-                  from the two where it was a guess. */}
-              {errorStatus === 404
-                ? 'This event no longer exists. It may have been removed by the retention purge.'
-                : errorStatus === 422
-                  ? 'That is not a valid event link.'
-                  : errorStatus === 403
-                    ? 'You do not have access to this project&apos;s activity.'
-                    : 'This event could not be loaded. Try again shortly.'}
-            </p>
-          )}
-
-          {event && (
-            <>
-              <dl className="grid grid-cols-[110px_1fr] gap-x-3 gap-y-2">
-                <dt className="text-[var(--color-text-muted)]">When</dt>
-                <dd className="text-[var(--color-text)]">
-                  {formatCompactDateTime(event.occurred_at)}
-                </dd>
-                <dt className="text-[var(--color-text-muted)]">Who</dt>
-                <dd className="text-[var(--color-text)]">
-                  {event.actor.name || 'Unknown'}{' '}
-                  <span className="text-[var(--color-text-muted)]">
-                    ({event.actor.type.replace('_', ' ')}
-                    {event.actor.ref ? ` · ${event.actor.ref}` : ''})
-                  </span>
-                </dd>
-                <dt className="text-[var(--color-text-muted)]">What</dt>
-                <dd className="text-[var(--color-text)]">
-                  {event.entity.href ? (
-                    <Link
-                      to={event.entity.href}
-                      className="text-[var(--color-accent)] hover:underline"
-                    >
-                      {event.entity.label || event.entity.id}
-                    </Link>
-                  ) : (
-                    (event.entity.label || event.entity.id)
-                  )}
-                </dd>
-              </dl>
-
-              {/* Changed fields first — that is what a reader came for. */}
-              {changed.length > 0 && (
-                <section>
-                  <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
-                    Changed
-                  </h3>
-                  <ul className="space-y-1">
-                    {changed.map(field => (
-                      <li
-                        key={field}
-                        className="grid grid-cols-[1fr_auto_1fr] items-baseline gap-2 rounded bg-[var(--color-bg-secondary)]/50 px-2 py-1"
-                      >
-                        <span className="truncate text-[var(--color-text-muted)]">
-                          {field}
-                        </span>
-                        <span className="text-[var(--color-text-muted)]">→</span>
-                        <span className="truncate text-[var(--color-text)]">
-                          {formatValue(after[field]) ?? '—'}
-                        </span>
-                        {before[field] !== undefined && (
-                          <span className="col-span-3 text-[11px] text-[var(--color-text-muted)]">
-                            was {formatValue(before[field]) ?? '—'}
-                          </span>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              )}
-
-              {event.context && Object.keys(event.context).length > 0 && (
-                <section>
-                  <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
-                    Details
-                  </h3>
-                  <dl className="grid grid-cols-[130px_1fr] gap-x-3 gap-y-1">
-                    {Object.entries(event.context).map(([key, value]) => (
-                      <div key={key} className="contents">
-                        <dt className="truncate text-[var(--color-text-muted)]">
-                          {key.replace(/_/g, ' ')}
-                        </dt>
-                        <dd className="break-words text-[var(--color-text)]">
-                          {formatValue(value) ?? '—'}
-                        </dd>
-                      </div>
-                    ))}
-                  </dl>
-                </section>
-              )}
-
-              {event.source && (
-                <p className="text-[11px] text-[var(--color-text-muted)]">
-                  Compliance record: {event.source.table}
-                  {event.source.id ? ` · ${event.source.id}` : ''}
-                </p>
-              )}
-
-              {event.has_diff && (
-                <div>
-                  <button
-                    type="button"
-                    onClick={() => setShowRaw(v => !v)}
-                    className="text-[11px] text-[var(--color-accent)] hover:underline"
+        {event && (
+          <>
+            <dl className="grid grid-cols-[110px_1fr] gap-x-3 gap-y-2">
+              <dt className="text-[var(--color-text-muted)]">When</dt>
+              <dd className="min-w-0 break-words text-[var(--color-text)]">
+                {formatCompactDateTime(event.occurred_at)}
+              </dd>
+              <dt className="text-[var(--color-text-muted)]">Who</dt>
+              <dd className="min-w-0 break-words text-[var(--color-text)]">
+                {event.actor.name || 'Unknown'}{' '}
+                <span className="text-[var(--color-text-muted)]">
+                  ({event.actor.type.replace('_', ' ')}
+                  {event.actor.ref ? ` · ${event.actor.ref}` : ''})
+                </span>
+              </dd>
+              <dt className="text-[var(--color-text-muted)]">What</dt>
+              <dd className="min-w-0 break-words text-[var(--color-text)]">
+                {event.entity.href ? (
+                  <Link
+                    to={event.entity.href}
+                    className="text-[var(--color-accent)] hover:underline"
                   >
-                    {showRaw ? 'Hide raw payload' : 'Show raw payload'}
-                  </button>
-                  {showRaw && (
-                    <pre className="mt-2 max-h-64 overflow-auto rounded bg-[var(--color-bg-secondary)] p-3 text-[11px] text-[var(--color-text-secondary)]">
-                      {JSON.stringify(event.diff, null, 2)}
-                    </pre>
-                  )}
-                </div>
-              )}
+                    {event.entity.label || event.entity.id}
+                  </Link>
+                ) : (
+                  (event.entity.label || event.entity.id)
+                )}
+              </dd>
+            </dl>
 
-              <button
-                type="button"
-                onClick={copyPermalink}
-                className="rounded border border-[var(--color-border)] px-3 py-1.5 text-[12px] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]"
-              >
-                Copy link to this event
-              </button>
-            </>
-          )}
-        </div>
-      </aside>
-    </div>
+            {/* Changed fields first — that is what a reader came for. */}
+            {changed.length > 0 && (
+              <section>
+                <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+                  Changed
+                </h3>
+                <ul className="space-y-1">
+                  {changed.map(field => (
+                    <li
+                      key={field}
+                      className="grid grid-cols-[1fr_auto_1fr] items-baseline gap-2 rounded bg-[var(--color-bg-secondary)]/50 px-2 py-1"
+                    >
+                      <span className="min-w-0 truncate text-[var(--color-text-muted)]">
+                        {field}
+                      </span>
+                      <span className="text-[var(--color-text-muted)]">→</span>
+                      <span className="min-w-0 truncate text-[var(--color-text)]">
+                        {formatValue(after[field]) ?? '—'}
+                      </span>
+                      {before[field] !== undefined && (
+                        <span className="col-span-3 text-[11px] text-[var(--color-text-muted)]">
+                          was {formatValue(before[field]) ?? '—'}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {event.context && Object.keys(event.context).length > 0 && (
+              <section>
+                <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+                  Details
+                </h3>
+                <dl className="grid grid-cols-[130px_1fr] gap-x-3 gap-y-1">
+                  {Object.entries(event.context).map(([key, value]) => (
+                    <div key={key} className="contents">
+                      <dt className="truncate text-[var(--color-text-muted)]">
+                        {key.replace(/_/g, ' ')}
+                      </dt>
+                      <dd className="break-words text-[var(--color-text)]">
+                        {formatValue(value) ?? '—'}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+            )}
+
+            {event.source && (
+              <p className="text-[11px] text-[var(--color-text-muted)]">
+                Compliance record: {event.source.table}
+                {event.source.id ? ` · ${event.source.id}` : ''}
+              </p>
+            )}
+
+            {event.has_diff && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowRaw(v => !v)}
+                  className="text-[11px] text-[var(--color-accent)] hover:underline"
+                >
+                  {showRaw ? 'Hide raw payload' : 'Show raw payload'}
+                </button>
+                {showRaw && (
+                  <pre className="mt-2 max-h-64 overflow-auto rounded bg-[var(--color-bg-secondary)] p-3 text-[11px] text-[var(--color-text-secondary)]">
+                    {JSON.stringify(event.diff, null, 2)}
+                  </pre>
+                )}
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={copyPermalink}
+              className="rounded border border-[var(--color-border)] px-3 py-1.5 text-[12px] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]"
+            >
+              Copy link to this event
+            </button>
+          </>
+        )}
+      </div>
+    </InlineFormSection>
   )
 }
 

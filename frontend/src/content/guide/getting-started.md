@@ -53,7 +53,7 @@ There are three routes in. Pick one. Sending results needs the `QA_ENGINEER` rol
 
 ### Option A — upload a file (fastest to try)
 
-Open **Runs** and click **Upload report**, then drop a report your suite already produces (JUnit XML, TestNG, Allure, Cypress, Playwright, pytest, Robot, Cucumber, NUnit, TRX, xUnit, or a zipped archive, up to 50 MB). TestLookup detects the format from the content. In **All Projects**, the dialog asks which project the run belongs to. See [Getting results in](/docs/ingestion#upload-a-report-from-the-app).
+Open **Runs** and click **Upload report**, then drop a report your suite already produces (JUnit XML, TestNG, Allure, Cypress, Playwright, pytest, Robot, Cucumber, NUnit, TRX, xUnit, or a zipped archive, up to 50 MB). TestLookup detects the format from the content. The upload form opens under the page header; in **All Projects**, it asks which project the run belongs to. See [Getting results in](/docs/ingestion#upload-a-report-from-the-app).
 
 Upload is on for a new install. If there is no **Upload report** button, an administrator has turned it off (the `manual_upload` feature flag); use option B or C, or ask them to turn it back on.
 

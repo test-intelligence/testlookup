@@ -4447,7 +4447,7 @@ _NPM_KIND_BY_MESSAGE = {message: kind for kind, message in qg._NPM_MESSAGES.item
 
 
 def _npm_repo(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, allowed=None) -> None:
-    """A tmp repo with its OWN allow-list (the real one names 13 files that a
+    """A tmp repo with its OWN allow-list (the real one names 12 files that a
     tmp repo does not have, each of which would be a missing-file violation)."""
     _redirect_repo_root(monkeypatch, tmp_path)
     monkeypatch.setattr(qg, "_NO_PAGE_MODALS_ALLOWED", allowed or {})
@@ -4643,3 +4643,243 @@ def test_no_page_modals_is_a_ratchet_registered_after_modal_dialog_role() -> Non
     names = [g.name for g in qg.GUARDS]
     assert names.index("frontend.no-page-modals") == names.index("frontend.modal-dialog-role") + 1
     assert qg.GUARD_BY_NAME["frontend.no-page-modals"].baseline_path.exists()
+
+
+# ── frontend.no-page-modals: the `edge-panel` kind (W27b PAN-07) ─────────────
+#
+# A `fixed` full-height panel that is not a dialog: CitationDrawer,
+# ChartCustomisePanel and FixTaggingPanel had no role, no aria-modal and no
+# SidePanel, so the three older kinds could not see them. Counted per string
+# literal of the comment-blanked code that holds a `fixed` token AND a
+# full-height token (each optionally variant-prefixed), once per element.
+
+
+def test_no_page_modals_counts_a_fixed_inset_y_edge_panel(monkeypatch, tmp_path) -> None:
+    """CitationDrawer's shape: a <div> pinned to the right edge, full height."""
+    _npm_repo(monkeypatch, tmp_path)
+    _write(tmp_path / "frontend" / "src" / "components" / "Drawer.tsx", """
+        export function Drawer() {
+          return (
+            <div className="fixed inset-y-0 right-0 w-96 bg-white shadow-2xl z-50">x</div>
+          )
+        }
+    """)
+    assert _npm_sites(qg._frontend_no_page_modals()) == [("frontend/src/components/Drawer.tsx", 3, "edge-panel")]
+    assert qg.run_guard(qg.GUARD_BY_NAME["frontend.no-page-modals"], update_baseline=False) is False
+
+
+def test_no_page_modals_counts_a_fixed_calc_height_edge_panel(monkeypatch, tmp_path) -> None:
+    """ChartCustomisePanel / FixTaggingPanel's shape: under the top bar, the
+    height a calc() of the viewport, attributes one per line."""
+    _npm_repo(monkeypatch, tmp_path)
+    _write(tmp_path / "frontend" / "src" / "pages" / "Customise.tsx", """
+        export function Customise() {
+          return (
+            <aside
+              aria-label="Customise"
+              className="fixed right-0 top-16 h-[calc(100vh-4rem)] w-80 overflow-y-auto"
+            >x</aside>
+          )
+        }
+    """)
+    assert _npm_sites(qg._frontend_no_page_modals()) == [("frontend/src/pages/Customise.tsx", 5, "edge-panel")]
+
+
+@pytest.mark.parametrize("height", [
+    "inset-y-0", "h-screen", "h-dvh", "h-[100vh]", "h-[100dvh]",
+    "h-[calc(100vh-4rem)]", "h-[calc(100dvh-56px)]",
+])
+def test_no_page_modals_every_full_height_token_counts_with_fixed(monkeypatch, tmp_path, height) -> None:
+    _npm_repo(monkeypatch, tmp_path)
+    _write(tmp_path / "frontend" / "src" / "components" / "Edge.tsx", f"""
+        export const Edge = () => <div className="z-40 {height} fixed left-0">x</div>
+    """)
+    assert _npm_sites(qg._frontend_no_page_modals()) == [("frontend/src/components/Edge.tsx", 1, "edge-panel")]
+
+
+def test_no_page_modals_counts_variant_prefixed_tokens_in_a_const(monkeypatch, tmp_path) -> None:
+    """The mobile drawer's shape: both tokens behind a variant prefix, in a
+    const outside any JSX (a literal, wherever it is written)."""
+    _npm_repo(monkeypatch, tmp_path)
+    _write(tmp_path / "frontend" / "src" / "components" / "Nav.tsx", """
+        const DRAWER = 'max-lg:fixed max-lg:inset-y-0 max-lg:left-0'
+        export const RAIL = "lg:fixed lg:h-screen"
+    """)
+    assert _npm_sites(qg._frontend_no_page_modals()) == [
+        ("frontend/src/components/Nav.tsx", 1, "edge-panel"),
+        ("frontend/src/components/Nav.tsx", 2, "edge-panel"),
+    ]
+
+
+def test_no_page_modals_a_fixed_toast_a_capped_popover_or_a_sticky_rail_is_not_an_edge_panel(monkeypatch, tmp_path) -> None:
+    """Only `fixed` + a full-height token: a fixed toast has no height, a
+    max-h / min-h cap is not full height, sticky / flex / absolute are not
+    fixed, and a token that merely ends in "fixed" is not `fixed`."""
+    _npm_repo(monkeypatch, tmp_path)
+    _write(tmp_path / "frontend" / "src" / "pages" / "Calm.tsx", """
+        export function Calm() {
+          return (
+            <>
+              <div className="fixed bottom-4 left-4">toast</div>
+              <div className="fixed z-[60] max-h-[70vh] overflow-auto">menu</div>
+              <div className="fixed right-0 max-h-screen">capped</div>
+              <div className="fixed top-0 max-h-[100vh]">capped</div>
+              <div className="fixed top-0 min-h-screen">min</div>
+              <aside className="sticky top-0 h-screen">rail</aside>
+              <main className="flex h-screen">page</main>
+              <div className="min-h-screen">page</div>
+              <div className="absolute inset-y-0 right-0">overlay in a box</div>
+              <div className="unfixed inset-y-0">not fixed</div>
+            </>
+          )
+        }
+    """)
+    assert qg._frontend_no_page_modals() == []
+
+
+def test_no_page_modals_a_fixed_inset_0_backdrop_is_the_dialog_kind_only(monkeypatch, tmp_path) -> None:
+    """`fixed inset-0` is a modal backdrop: frontend.modal-dialog-role requires
+    the dialog role on it or on the panel inside it, so it is counted once, as
+    a dialog, never as an edge panel."""
+    _npm_repo(monkeypatch, tmp_path)
+    _write(tmp_path / "frontend" / "src" / "pages" / "Modal.tsx", """
+        export function Modal() {
+          return (
+            <>
+              <div role="dialog" aria-modal="true" className="fixed inset-0 bg-black/40">a</div>
+              <div role="presentation" className="fixed inset-0 bg-black/40">
+                <div role="dialog" aria-modal="true" aria-labelledby="t">b</div>
+              </div>
+            </>
+          )
+        }
+    """)
+    assert _npm_sites(qg._frontend_no_page_modals()) == [
+        ("frontend/src/pages/Modal.tsx", 4, "dialog"),
+        ("frontend/src/pages/Modal.tsx", 6, "dialog"),
+    ]
+
+
+def test_no_page_modals_a_dialog_edge_panel_is_one_site(monkeypatch, tmp_path) -> None:
+    """Once per element: a full-height dialog is ONE site (dialog), whichever
+    attribute comes first."""
+    _npm_repo(monkeypatch, tmp_path)
+    _write(tmp_path / "frontend" / "src" / "components" / "Sheet.tsx", """
+        export function Sheet() {
+          return (
+            <>
+              <aside role="dialog" aria-modal="true" className="fixed inset-y-0 right-0">a</aside>
+              <aside
+                className="fixed inset-y-0 left-0"
+                role="dialog"
+                aria-modal="true"
+              >b</aside>
+            </>
+          )
+        }
+    """)
+    assert _npm_sites(qg._frontend_no_page_modals()) == [
+        ("frontend/src/components/Sheet.tsx", 4, "dialog"),
+        ("frontend/src/components/Sheet.tsx", 7, "dialog"),
+    ]
+
+
+def test_no_page_modals_ignores_edge_panel_tokens_inside_comments(monkeypatch, tmp_path) -> None:
+    _npm_repo(monkeypatch, tmp_path)
+    _write(tmp_path / "frontend" / "src" / "components" / "Was.tsx", """
+        /**
+         * It used to render className="fixed inset-y-0 right-0".
+         */
+        // className="fixed right-0 top-16 h-[calc(100vh-4rem)]"
+        export function Was() {
+          return (
+            <div>
+              {/* className="fixed inset-y-0" */}
+              {/*
+                 const DRAWER = 'max-lg:fixed max-lg:h-screen'
+              */}
+            </div>
+          )
+        }
+    """)
+    assert qg._frontend_no_page_modals() == []
+
+
+def test_no_page_modals_counts_a_template_literal_and_a_clsx_argument(monkeypatch, tmp_path) -> None:
+    """SidePanel's frame is a template literal; a clsx() argument is a plain
+    literal inside an expression. Each literal is one site."""
+    _npm_repo(monkeypatch, tmp_path)
+    _write(tmp_path / "frontend" / "src" / "components" / "Frames.tsx", """
+        export function Frames({ side, open }: { side: string; open: boolean }) {
+          return (
+            <>
+              <aside className={`fixed inset-y-0 z-40 ${side}`}>a</aside>
+              <aside className={clsx('flex flex-col', open && 'fixed left-0 h-dvh')}>b</aside>
+            </>
+          )
+        }
+    """)
+    assert _npm_sites(qg._frontend_no_page_modals()) == [
+        ("frontend/src/components/Frames.tsx", 4, "edge-panel"),
+        ("frontend/src/components/Frames.tsx", 5, "edge-panel"),
+    ]
+
+
+def test_no_page_modals_allow_list_tolerates_edge_panel_per_file_and_per_kind(monkeypatch, tmp_path) -> None:
+    """Sidebar.tsx tolerates its drawer (dialog + edge-panel) but not a
+    confirm(); a file allow-listed for 'dialog' only still reports its edge
+    panel."""
+    drawer = "frontend/src/components/layout/Sidebar.tsx"
+    popover = "frontend/src/components/ui/Pop.tsx"
+    _npm_repo(monkeypatch, tmp_path, {
+        drawer: (frozenset({"dialog", "edge-panel"}), "OR-03: the mobile sidebar drawer (app-wide)"),
+        popover: (frozenset({"dialog"}), "OR-03: a popover anchored to its control"),
+    })
+    _write(tmp_path / drawer, """
+        const DRAWER_OPEN = 'max-lg:fixed max-lg:inset-y-0 max-lg:left-0'
+        export function Sidebar({ open, go }: { open: boolean; go: () => void }) {
+          return (
+            <aside role={open ? 'dialog' : undefined} aria-modal={open ? true : undefined} className={open ? DRAWER_OPEN : ''}>
+              <button onClick={() => { if (confirm('Leave?')) go() }}>Leave</button>
+            </aside>
+          )
+        }
+    """)
+    _write(tmp_path / popover, """
+        export function Pop() {
+          return <div role="dialog" aria-label="p"><div className="fixed inset-y-0 right-0">x</div></div>
+        }
+    """)
+    assert _npm_sites(qg._frontend_no_page_modals()) == [
+        (drawer, 5, "confirm"),
+        (popover, 2, "edge-panel"),
+    ]
+
+
+def test_no_page_modals_allow_list_after_w27b(monkeypatch, tmp_path) -> None:
+    """TestAIVersionsPopover is an in-flow block of the AI strip, not a popover
+    anchored to its chip (contract W27b §0.4): its role is region and its entry
+    is gone. The two app-wide frames tolerate the new kind; every tolerated
+    kind is a real one (a typo would silently tolerate nothing)."""
+    allowed = qg._NO_PAGE_MODALS_ALLOWED
+    popover = "frontend/src/components/ai/TestAIVersionsPopover.tsx"
+    assert popover not in allowed
+    assert len(allowed) == 12
+    assert allowed["frontend/src/components/ui/SidePanel.tsx"][0] == {"dialog", "edge-panel"}
+    assert allowed["frontend/src/components/layout/Sidebar.tsx"][0] == {"dialog", "edge-panel"}
+    for rel, (kinds, reason) in allowed.items():
+        assert kinds and kinds <= set(qg._NPM_MESSAGES), rel
+        assert reason.strip(), rel
+    real = (qg.REPO_ROOT / popover).read_text(encoding="utf-8")
+    assert 'role="region"' in real
+    assert qg._npm_sites(real) == []
+
+    _npm_repo(monkeypatch, tmp_path)
+    _write(tmp_path / popover, """
+        export function TestAIVersionsPopover({ label }: { label: string }) {
+          return (
+            <div data-test-ai-popover="" role="region" aria-label={`AI analysis versions for ${label}`}>x</div>
+          )
+        }
+    """)
+    assert qg._frontend_no_page_modals() == []

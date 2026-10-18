@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react'
 import useSWR from 'swr'
 import { useDataFreshness } from '@/hooks/useDataFreshness'
 import { useNow } from '@/hooks/useNow'
@@ -21,8 +21,12 @@ import StatusBanner, { type BannerState } from '@/components/ui/StatusBanner'
 import { useTabParam } from '@/components/ui/useTabParam'
 import { DetailPane } from '@/components/ui/inPage/DetailPane'
 import { isDetailToken } from '@/components/ui/inPage/ids'
+import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
+import { InlineRowSection } from '@/components/ui/inPage/InlineRowSection'
 import { MasterDetail } from '@/components/ui/inPage/MasterDetail'
 import { useDetailParam } from '@/components/ui/inPage/useDetailParam'
+import { useInlineSlot, type InlineSlot } from '@/components/ui/inPage/useInlineSlot'
+import { useSlotCloser } from '@/hooks/useSlotCloser'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import EvidenceGapLists from '@/components/testManagement/EvidenceGapLists'
 import LifecyclePanel from '@/components/testManagement/LifecyclePanel'
@@ -97,13 +101,17 @@ const PLAN_STATUS_COLORS: Record<string, string> = {
   archived:    'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)]',
 }
 
-// ─── Sub-components (Modals) ──────────────────────────────────────────────────
+// ─── Sub-components (the forms) ───────────────────────────────────────────────
+//
+// W27b PAN-05: every form of this page renders IN THE PAGE, where its action
+// lives (`ModalWrap` and the two forms below are in-page sections; the reason
+// form opens under its case row), never a modal over it.
 
-// ── Create Test Case Modal ────────────────────────────────────────────────────
+// ── Create Test Case form ─────────────────────────────────────────────────────
 
-interface CreateCaseModalProps { projectId: string; onClose: () => void; onCreated: () => void }
+interface CreateCaseModalProps { projectId: string; onClose: () => void; onCreated: () => void; slot?: InlineSlot }
 
-function CreateCaseModal({ projectId, onClose, onCreated }: CreateCaseModalProps) {
+function CreateCaseModal({ projectId, onClose, onCreated, slot }: CreateCaseModalProps) {
   const [title, setTitle] = useState('')
   const [testType, setTestType] = useState('functional')
   const [priority, setPriority] = useState('medium')
@@ -166,7 +174,7 @@ function CreateCaseModal({ projectId, onClose, onCreated }: CreateCaseModalProps
   }
 
   return (
-    <ModalWrap onClose={onClose} title="New Test Case" width="max-w-3xl">
+    <ModalWrap onClose={onClose} title="New Test Case" width="max-w-3xl" slot={slot}>
       <div className="space-y-4">
         <div>
           <label htmlFor="tm-field-0" className="block text-xs text-[var(--color-text-muted)] mb-1">Title *</label>
@@ -884,12 +892,18 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
   const [search, setSearch] = useState('')
   const [suiteFilter, setSuiteFilter] = useState('')
   const [savedView, setSavedView] = useState<string | null>(null)
-  const [showCreate, setShowCreate] = useState(false)
-  const [showAiGen, setShowAiGen] = useState(false)
+  // W27b PAN-05: New test case and AI Generate open one at a time, in the
+  // page, between the alerts and the cases row (the tab's form slot: a form
+  // with typed input asks before the other replaces it).
+  const topSlot = useInlineSlot<'create' | 'ai'>()
+  const closeTop = useSlotCloser(topSlot)
   const [showInsights, setShowInsights] = useState(false)
   const [selectedCase, setSelectedCase] = useState<ManagedTestCase | null>(null)
+  // The reason form opens under its case's row. The table's slot carries the
+  // typed-input question; the case is the one the trash button was clicked on.
+  const rowSlot = useInlineSlot()
   const [pendingDeprecation, setPendingDeprecation] = useState<ManagedTestCase | null>(null)
-  const [deprecating, setDeprecating] = useState(false)
+  const [deprecating, setDeprecating] = useState<string | null>(null)
 
   // One interaction for every row: the case panel, in place, so the list keeps
   // its search, filters and page. Automation rows used to leave the page for
@@ -1077,31 +1091,52 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
 
   function handleDeprecate(caseItem: ManagedTestCase, e: React.MouseEvent) {
     e.stopPropagation()
-    setPendingDeprecation(caseItem)
+    if (pendingDeprecation?.id === caseItem.id) return
+    // Another row's form with a typed reason asks first (the slot's question, in that form).
+    rowSlot.guard(() => setPendingDeprecation(caseItem))
   }
 
-  async function confirmDeprecation(reason: string) {
-    if (!pendingDeprecation) return
-    setDeprecating(true)
+  async function confirmDeprecation(target: ManagedTestCase, reason: string) {
+    setDeprecating(target.id)
     try {
       if (lifecycleV2) {
-        const updated = await testManagementService.transitionCase(pendingDeprecation.id, {
+        const updated = await testManagementService.transitionCase(target.id, {
           action: 'deprecate',
           reason,
-          expected_version: pendingDeprecation.version,
+          expected_version: target.version,
         })
         setSelectedCase((current) => current?.id === updated.id ? updated : current)
       } else {
-        await testManagementService.deleteCase(pendingDeprecation.id, reason)
+        await testManagementService.deleteCase(target.id, reason)
       }
-      setPendingDeprecation(null)
+      // A late answer closes only its own form (another row's may have replaced it).
+      setPendingDeprecation((current) => (current?.id === target.id ? null : current))
       handleRefresh()
       toast.success(lifecycleV2 ? 'Test case deprecated' : 'Test case deleted')
     } catch {
       toast.error(lifecycleV2 ? 'Failed to deprecate test case' : 'Failed to delete test case')
     } finally {
-      setDeprecating(false)
+      setDeprecating((current) => (current === target.id ? null : current))
     }
+  }
+
+  // The reason form under its row: the whole width of the cases table (5 columns, 4 beside an open case).
+  const deprecationRow = (tc: ManagedTestCase): ReactNode => {
+    if (pendingDeprecation?.id !== tc.id) return null
+    const target = pendingDeprecation
+    return (
+      <InlineRowSection colSpan={activeCase ? 4 : 5}>
+        <TransitionReasonDialog
+          title={lifecycleV2 ? 'Deprecate test case' : 'Delete test case'}
+          description={`${lifecycleV2 ? 'Deprecate' : 'Delete'} ${target.title}. The case and its version history will be preserved.`}
+          confirmLabel={lifecycleV2 ? 'Deprecate' : 'Delete'}
+          busy={deprecating === target.id}
+          slot={rowSlot}
+          onCancel={() => setPendingDeprecation(null)}
+          onConfirm={(reason) => confirmDeprecation(target, reason)}
+        />
+      </InlineRowSection>
+    )
   }
 
   // ── Library health model (synthesised) ─────────────────────────────
@@ -1241,6 +1276,41 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
         </p>
       )}
 
+      {/* The former right rail (UX redesign P4 item 7), opened from the
+          banner's "Insights": a read-only section right here, under the
+          banner (W27b PAN-05), closed by default. Its "Generate test cases"
+          card is the AI Generate form's sources now (a description, or
+          documents). */}
+      <InsightsPanel open={showInsights} onClose={() => setShowInsights(false)}>
+        <LibraryHealthCard
+          healthScore={healthScore}
+          healthTag={healthTag}
+          healthTone={healthTone}
+          totalCases={authoredTotal}
+          reviewCount={reviewCount}
+          staleCount={staleCount}
+          deprecatedInActive={deprecatedInActive}
+          oldestReviewDays={oldestReviewDays}
+          activeCount={activeCount}
+          automatedPct={automatedPct}
+          avgAgeDays={avgAgeDays}
+          olderThan180Pct={olderThan180Pct}
+          statBasis={statBasis}
+          refreshedAt={refreshedAt}
+        />
+        <ReviewQueueCard
+          rows={reviewQueue.slice(0, 5)}
+          onPick={openCase}
+        />
+        <StrategyGapsCard gaps={strategyGaps} />
+        <RecentActivityCard events={auditEvents} />
+        {/* Automation split of the authored catalog */}
+        <AutomationCoverageCard
+          auto={coverageAuto}
+          manual={coverageManual}
+        />
+      </InsightsPanel>
+
       {/* Filter bar */}
       <CasesFilterBar
         searchInputRef={searchInputRef}
@@ -1287,6 +1357,24 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
         >
           {caseRefreshWarning}
         </p>
+      )}
+
+      {/* New test case / AI Generate (the list toolbar and the empty state):
+          in the page, full width, above the cases row; one at a time. */}
+      {topSlot.openKey === 'create' && projectId && (
+        <CreateCaseModal
+          projectId={projectId}
+          slot={topSlot}
+          onClose={() => closeTop('create')}
+          onCreated={handleRefresh}
+        />
+      )}
+      {topSlot.openKey === 'ai' && projectId && (
+        <AIGenerateModal
+          projectId={projectId}
+          slot={topSlot}
+          onClose={() => closeTop('ai')}
+        />
       )}
 
       {/* The cases table, the page's primary content, at full width (the
@@ -1340,7 +1428,7 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
                 </button>                {projectId && (
                   <>
                     <button
-                      onClick={() => setShowAiGen(true)}
+                      onClick={() => topSlot.open('ai')}
                       aria-label="AI Generate"
                       title="AI Generate"
                       className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] rounded-md border transition-colors"
@@ -1350,7 +1438,7 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
                     </button>
                     <button
                       aria-label="New test case from catalog toolbar"
-                      onClick={() => setShowCreate(true)}
+                      onClick={() => topSlot.open('create')}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-md transition-colors"
                       style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
                     >
@@ -1370,8 +1458,8 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
             ) : cases.length === 0 ? (
               <EmptyStateBlock
                 projectId={projectId}
-                onCreate={() => setShowCreate(true)}
-                onAiGenerate={() => setShowAiGen(true)}
+                onCreate={() => topSlot.open('create')}
+                onAiGenerate={() => topSlot.open('ai')}
                 onReset={() => { setSearch(''); setStatus(''); setTestType(''); setPriority(''); setSuiteFilter(''); setSavedView(null); setPage(1) }}
               />
             ) : (
@@ -1383,6 +1471,7 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
                 lifecycleV2={lifecycleV2}
                 selectedId={activeCase?.id ?? null}
                 compact={Boolean(activeCase)}
+                belowRow={deprecationRow}
               />
             )}
 
@@ -1399,63 +1488,6 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
       />
 
       <EvidenceGapLists projectId={projectId} />
-
-      {/* The former right rail (UX redesign P4 item 7), opened from the
-          banner's "Insights". Its "Generate test cases" card is the AI
-          Generate modal's sources now (a description, or documents). */}
-      <InsightsPanel open={showInsights} onClose={() => setShowInsights(false)}>
-        <LibraryHealthCard
-          healthScore={healthScore}
-          healthTag={healthTag}
-          healthTone={healthTone}
-          totalCases={authoredTotal}
-          reviewCount={reviewCount}
-          staleCount={staleCount}
-          deprecatedInActive={deprecatedInActive}
-          oldestReviewDays={oldestReviewDays}
-          activeCount={activeCount}
-          automatedPct={automatedPct}
-          avgAgeDays={avgAgeDays}
-          olderThan180Pct={olderThan180Pct}
-          statBasis={statBasis}
-          refreshedAt={refreshedAt}
-        />
-        <ReviewQueueCard
-          rows={reviewQueue.slice(0, 5)}
-          onPick={openCase}
-        />
-        <StrategyGapsCard gaps={strategyGaps} />
-        <RecentActivityCard events={auditEvents} />
-        {/* Automation split of the authored catalog */}
-        <AutomationCoverageCard
-          auto={coverageAuto}
-          manual={coverageManual}
-        />
-      </InsightsPanel>
-
-      {showCreate && projectId && (
-        <CreateCaseModal
-          projectId={projectId}
-          onClose={() => setShowCreate(false)}
-          onCreated={handleRefresh}
-        />
-      )}
-      {showAiGen && projectId && (
-        <AIGenerateModal
-          projectId={projectId}
-          onClose={() => setShowAiGen(false)}
-        />
-      )}
-      {pendingDeprecation && (
-        <TransitionReasonDialog
-          title={lifecycleV2 ? 'Deprecate test case' : 'Delete test case'}
-          description={`${lifecycleV2 ? 'Deprecate' : 'Delete'} ${pendingDeprecation.title}. The case and its version history will be preserved.`}
-          confirmLabel={lifecycleV2 ? 'Deprecate' : 'Delete'}
-          busy={deprecating}
-          onCancel={() => setPendingDeprecation(null)}
-          onConfirm={confirmDeprecation}
-        />
-      )}
     </div>
   )
 }
@@ -1678,7 +1710,7 @@ function SelectChip({
 // ── Cases table body + footer ─────────────────────────────────────────
 // Exported for isolated column-structure tests (same precedent as OwnerCell).
 export function CasesTableBody({
-  cases, onRowClick, onDeprecate, onPromoted, lifecycleV2, selectedId = null, compact = false,
+  cases, onRowClick, onDeprecate, onPromoted, lifecycleV2, selectedId = null, compact = false, belowRow,
 }: {
   cases: ManagedTestCase[]
   onRowClick: (c: ManagedTestCase) => void
@@ -1689,6 +1721,8 @@ export function CasesTableBody({
   selectedId?: string | null
   /** Beside the case panel the list is narrower: Owner gives its width to the title (the panel shows it). */
   compact?: boolean
+  /** W27b PAN-05: the `<tr>` rendered right after a case's row (its reason form, an `InlineRowSection`), or nothing. */
+  belowRow?: (tc: ManagedTestCase) => ReactNode
 }) {
   return (
     <div className="overflow-x-auto">
@@ -1717,6 +1751,7 @@ export function CasesTableBody({
               lifecycleV2={lifecycleV2}
               selected={tc.id === selectedId}
               compact={compact}
+              belowRow={belowRow}
             />
           ))}
         </tbody>
@@ -1766,6 +1801,7 @@ function CaseRow({
   lifecycleV2,
   selected = false,
   compact = false,
+  belowRow,
 }: {
   tc: ManagedTestCase
   onRowClick: (c: ManagedTestCase) => void
@@ -1774,6 +1810,7 @@ function CaseRow({
   lifecycleV2: boolean
   selected?: boolean
   compact?: boolean
+  belowRow?: (tc: ManagedTestCase) => ReactNode
 }) {
   const deprecateAllowed = lifecycleV2 ? tc.allowed_actions?.includes('deprecate') === true : true
   // Only emit the type/suite/tags tail when there is something in it — otherwise
@@ -1782,6 +1819,7 @@ function CaseRow({
     (tc.test_type ?? '').trim() || tc.suite_name || (tc.tags && tc.tags.length > 0),
   )
   return (
+    <>
     <tr
       data-case-row={tc.id}
       data-selected={selected ? 'true' : undefined}
@@ -1870,6 +1908,8 @@ function CaseRow({
         )}
       </td>
     </tr>
+    {belowRow?.(tc)}
+    </>
   )
 }
 
@@ -2224,30 +2264,16 @@ function LinkSuiteModal({ planId, projectId, onClose, onLinked }: LinkSuiteModal
     }
   }
 
+  // In the page (W27b PAN-05), between the plan's button row and its items; no X (it had none).
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="tm-link-suite-title" className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60" onClick={onClose}>
-      <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-xl p-6 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
-        <h2 id="tm-link-suite-title" className="text-base font-semibold text-[var(--color-text)] mb-1">Link Test Suite to Plan</h2>
-        <p className="text-xs text-[var(--color-text-muted)] mb-4">Add all managed test cases from a suite to this test plan.</p>
-        {loadingSuites ? (
-          <div className="flex justify-center py-4"><LoadingSpinner size="md" /></div>
-        ) : (
-          <div className="space-y-3">
-            <select
-              value={selectedSuite}
-              onChange={e => setSelectedSuite(e.target.value)}
-              className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border-light)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-border)]"
-            >
-              <option value="">— Select a suite —</option>
-              {suites.map(s => (
-                <option key={s.suite_name} value={s.suite_name}>
-                  {s.suite_name} ({s.test_count} cases)
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-        <div className="flex gap-3 justify-end mt-5">
+    <InlineFormSection
+      title="Link Test Suite to Plan"
+      titleId="tm-link-suite-title"
+      description="Add all managed test cases from a suite to this test plan."
+      onClose={onClose}
+      showClose={false}
+      footer={(
+        <>
           <button onClick={onClose} className="px-4 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
           <button
             onClick={handleLink}
@@ -2257,9 +2283,28 @@ function LinkSuiteModal({ planId, projectId, onClose, onLinked }: LinkSuiteModal
             {linking ? <LoadingSpinner size="sm" /> : <Layers className="h-4 w-4" />}
             {linking ? 'Linking…' : 'Link Suite'}
           </button>
+        </>
+      )}
+    >
+      {loadingSuites ? (
+        <div className="flex justify-center py-4"><LoadingSpinner size="md" /></div>
+      ) : (
+        <div className="max-w-md space-y-3">
+          <select
+            value={selectedSuite}
+            onChange={e => setSelectedSuite(e.target.value)}
+            className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border-light)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-border)]"
+          >
+            <option value="">— Select a suite —</option>
+            {suites.map(s => (
+              <option key={s.suite_name} value={s.suite_name}>
+                {s.suite_name} ({s.test_count} cases)
+              </option>
+            ))}
+          </select>
         </div>
-      </div>
-    </div>
+      )}
+    </InlineFormSection>
   )
 }
 
@@ -2341,6 +2386,15 @@ function TestPlansTab({ projectId }: TestPlansTabProps) {
               <Plus className="h-4 w-4" /> New Plan
             </button>
           </div>
+        )}
+
+        {/* New Plan (the toolbar and the empty state): in the page, under the toolbar row (W27b PAN-05). */}
+        {showCreate && projectId && (
+          <CreatePlanModal
+            projectId={projectId}
+            onClose={() => setShowCreate(false)}
+            onCreated={mutate}
+          />
         )}
 
         {isLoading ? (
@@ -2450,14 +2504,6 @@ function TestPlansTab({ projectId }: TestPlansTabProps) {
           </div>
         )}
       </div>
-
-      {showCreate && projectId && (
-        <CreatePlanModal
-          projectId={projectId}
-          onClose={() => setShowCreate(false)}
-          onCreated={mutate}
-        />
-      )}
     </>
   )
 }
@@ -2789,24 +2835,28 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
     </div>
   )
 
+  // "Add test suite" opens in the page (W27b PAN-05), right under the header
+  // row, in either state of the tab: one form, defined once.
+  const addSuiteForm = showAddSuite && projectId ? (
+    <AddTestSuiteModal
+      projectId={projectId}
+      ownerCandidates={ownerCandidates}
+      existingNames={new Set(suites.map(s => s.suite_name))}
+      onClose={() => setShowAddSuite(false)}
+      onCreate={handleCreateSuite}
+    />
+  ) : null
+
   if (suites.length === 0) {
     return (
       <>
         {suitesHeader}
+        {addSuiteForm}
         <EmptyState
           icon={<Layers className="h-10 w-10" />}
           title="No test suites found"
           description={projectId ? 'Test suites appear here when automation runs ingest test results grouped by suite, or when manual test cases are assigned a suite name.' : 'No test suites found across all projects'}
         />
-        {showAddSuite && projectId && (
-          <AddTestSuiteModal
-            projectId={projectId}
-            ownerCandidates={ownerCandidates}
-            existingNames={new Set(suites.map(s => s.suite_name))}
-            onClose={() => setShowAddSuite(false)}
-            onCreate={handleCreateSuite}
-          />
-        )}
       </>
     )
   }
@@ -2814,15 +2864,7 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
   return (
     <>
       {suitesHeader}
-      {showAddSuite && projectId && (
-        <AddTestSuiteModal
-          projectId={projectId}
-          ownerCandidates={ownerCandidates}
-          existingNames={new Set(suites.map(s => s.suite_name))}
-          onClose={() => setShowAddSuite(false)}
-          onCreate={handleCreateSuite}
-        />
-      )}
+      {addSuiteForm}
     <div className="space-y-3">
       {suites.map(suite => {
         const review = reviewForSuite(suite)
@@ -3245,20 +3287,39 @@ function AddTestSuiteModal({
     }
   }
 
+  // In the page (W27b PAN-05), right under the Suites tab's header row; no X (it had none).
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="tm-add-suite-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg)]/60"
-      onClick={onClose}
+    <InlineFormSection
+      title="Add test suite"
+      titleId="tm-add-suite-title"
+      description="Author a new suite definition. The suite name must be unique within the project."
+      onClose={onClose}
+      canClose={!saving}
+      showClose={false}
+      className="mb-3"
+      footer={(
+        <>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="px-4 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!canSubmit}
+            className="px-4 py-2 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] rounded-lg font-medium flex items-center gap-2"
+          >
+            {saving ? <LoadingSpinner size="sm" /> : <Plus className="h-4 w-4" />}
+            {saving ? 'Creating…' : 'Create suite'}
+          </button>
+        </>
+      )}
     >
-      <div
-        className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-xl p-6 w-full max-w-lg shadow-2xl"
-        onClick={e => e.stopPropagation()}
-      >
-        <h2 id="tm-add-suite-title" className="text-base font-semibold text-[var(--color-text)] mb-1">Add test suite</h2>
-        <p className="text-xs text-[var(--color-text-muted)] mb-4">
-          Author a new suite definition. The suite name must be unique within the project.
-        </p>
-        <div className="space-y-3">
+        <div className="max-w-lg space-y-3">
           <div>
             <label htmlFor="tm-field-18" className="block text-xs text-[var(--color-text-muted)] mb-1">
               Suite name <span className="text-[var(--status-failed)]">*</span>
@@ -3327,28 +3388,7 @@ function AddTestSuiteModal({
             />
           </div>
         </div>
-
-        <div className="flex gap-3 justify-end mt-5">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={saving}
-            className="px-4 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-50"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={!canSubmit}
-            className="px-4 py-2 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] rounded-lg font-medium flex items-center gap-2"
-          >
-            {saving ? <LoadingSpinner size="sm" /> : <Plus className="h-4 w-4" />}
-            {saving ? 'Creating…' : 'Create suite'}
-          </button>
-        </div>
-      </div>
-    </div>
+    </InlineFormSection>
   )
 }
 

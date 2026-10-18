@@ -12,6 +12,7 @@
  * Harness: `tests/lib/rollout.ts` (fail closed, pinned clock). Fixtures: `fixtures-agents-billing-flags.ts`.
  */
 import { expect, test, type Page } from '@playwright/test'
+import { opened } from '../lib/inPage'
 import { assertHermetic, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
 import { ADMIN, flagsHandlers, PROJECT_ID } from '../visual/production/fixtures-agents-billing-flags'
 import { USER } from '../visual/production/fixtures'
@@ -63,7 +64,7 @@ test('defect_commander for one project: ON globally, then the project listed und
   await expect(toggle(page, 'defect_commander')).toHaveText('ON')
 
   await flagRow(page, 'defect_commander').getByRole('button', { name: 'Edit' }).click()
-  const dialog = page.getByRole('dialog', { name: 'Edit defect_commander' })
+  const dialog = opened(page, 'Edit defect_commander')
   await dialog.getByLabel(/Enabled projects/).fill(JSON.stringify([PROJECT_ID]))
   await dialog.getByRole('button', { name: 'Save' }).click()
   await expect(dialog).toHaveCount(0)

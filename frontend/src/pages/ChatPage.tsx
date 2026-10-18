@@ -7,14 +7,18 @@
  * if they were answers. Now: the question shows at once, the assistant says
  * what it is looking up, the answer streams in, Stop and Retry work, and each
  * answer links the builds and tests it names.
+ *
+ * W27b PAN-05: a conversation's delete asks right under that conversation in
+ * the list (`InlineConfirm`), not with the browser's prompt.
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Bot, MessageSquare, Plus, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import DataUnavailable from '@/components/ui/DataUnavailable'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import InlineConfirm from '@/components/ui/inPage/InlineConfirm'
 import ChatComposer, { type ChatComposerHandle } from '@/components/chat/ChatComposer'
 import ChatWelcome from '@/components/chat/ChatWelcome'
 import { starterPrompts } from '@/components/chat/chatContent'
@@ -71,6 +75,8 @@ export default function ChatPage() {
   const [input, setInput] = useState(() => (searchParams.get('prompt') ?? '').slice(0, 4000))
   const composer = useRef<ChatComposerHandle>(null)
   const endRef = useRef<HTMLDivElement>(null)
+  // The conversation whose delete is being asked about, right under it in the list.
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null)
 
   // `&project=<id>` names the project the prompt is about. "Ask AI about this
   // run" on an E-Commerce run, with Checkout Service active, asked Checkout
@@ -125,7 +131,6 @@ export default function ChatPage() {
   }
 
   const handleDelete = async (id: string) => {
-    if (!window.confirm('Delete this conversation?')) return
     try {
       await chat.removeSession(id)
     } catch {
@@ -161,13 +166,25 @@ export default function ChatPage() {
             <p className="text-xs text-[var(--color-text-muted)] text-center mt-4">No conversations in this project yet</p>
           ) : (
             chat.sessions.map((s) => (
-              <SessionItem
-                key={s.id}
-                session={s}
-                active={chat.sessionId === s.id}
-                onSelect={() => chat.selectSession(s.id)}
-                onDelete={() => void handleDelete(s.id)}
-              />
+              <Fragment key={s.id}>
+                <SessionItem
+                  session={s}
+                  active={chat.sessionId === s.id}
+                  onSelect={() => chat.selectSession(s.id)}
+                  onDelete={() => setConfirmingDelete(s.id)}
+                />
+                {confirmingDelete === s.id && (
+                  <div data-in-page-row="">
+                    <InlineConfirm
+                      message="Delete this conversation?"
+                      confirmLabel="Delete"
+                      tone="danger"
+                      onConfirm={() => { setConfirmingDelete(null); void handleDelete(s.id) }}
+                      onCancel={() => setConfirmingDelete(null)}
+                    />
+                  </div>
+                )}
+              </Fragment>
             ))
           )}
         </div>

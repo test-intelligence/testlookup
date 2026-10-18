@@ -10,8 +10,12 @@
  * save refused for an off-sum weight set says why without opening anything.
  * At >= 1280 px the simulator is a sticky right column: try the policy
  * against a run while editing it, without scrolling to the bottom and back.
+ *
+ * W27b PAN-05: Publish and Deactivate ask in the page (`InlineConfirm`), not
+ * with the browser's prompt: Publish right under the page header, Deactivate
+ * right under its policy card. The strip's own button is the only sender.
  */
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { useProjectStore } from '@/store/projectStore';
 import { useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
@@ -19,6 +23,7 @@ import { clsx } from 'clsx';
 import { ArrowLeft, Plus } from 'lucide-react';
 import PageHeader from '@/components/ui/PageHeader';
 import Disclosure from '@/components/ui/Disclosure';
+import InlineConfirm from '@/components/ui/inPage/InlineConfirm';
 import { helpTopicParam } from '@/components/help/helpTopics';
 import {
   type PolicyDocument,
@@ -214,6 +219,10 @@ export default function PolicyEditorPage() {
   // A draft is editable by an ADMIN only (every write route is ADMIN).
   const editable = isDraft && isAdmin;
   const [saving, setSaving] = useState(false);
+  // The two questions asked in the page: Publish (the editor) and Deactivate
+  // (one policy card of the list at a time).
+  const [confirmingPublish, setConfirmingPublish] = useState(false);
+  const [confirmingDeactivate, setConfirmingDeactivate] = useState<string | null>(null);
   // Tracks which policy id the editable form fields below were seeded from, so
   // the "adjust state during render" seeding (below) runs once per loaded
   // policy instead of from a set-state-in-effect.
@@ -292,7 +301,6 @@ export default function PolicyEditorPage() {
 
   const handlePublish = async () => {
     if (!policyId) return;
-    if (!confirm('Publish this policy? It will become active and the previous version will be deactivated.')) return;
     try {
       await publishPolicy(policyId);
       toast.success('Policy published and activated');
@@ -312,7 +320,6 @@ export default function PolicyEditorPage() {
   };
 
   const handleDeactivate = async (id: string) => {
-    if (!confirm('Deactivate this policy?')) return;
     try {
       await deactivatePolicy(id);
       toast.success('Policy deactivated');
@@ -386,35 +393,48 @@ export default function PolicyEditorPage() {
         ) : (
           <div data-primary="" className="space-y-2">
             {policies.map(p => (
-              <div key={p.id} className="card flex justify-between items-center">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[var(--color-text)] font-medium">{p.name}</span>
-                    <span className="text-[var(--color-text-muted)] text-xs">v{p.version}</span>
-                    <span className={clsx('px-2 py-0.5 rounded text-xs', {
-                      'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]': p.is_active,
-                      'bg-[var(--status-skipped-bg)]/40 text-[var(--status-skipped)]': p.is_draft && !p.is_active,
-                      'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)]': !p.is_draft && !p.is_active,
-                    })}>
-                      {p.is_active ? 'Active' : p.is_draft ? 'Draft' : 'Inactive'}
-                    </span>
+              <Fragment key={p.id}>
+                <div className="card flex justify-between items-center">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[var(--color-text)] font-medium">{p.name}</span>
+                      <span className="text-[var(--color-text-muted)] text-xs">v{p.version}</span>
+                      <span className={clsx('px-2 py-0.5 rounded text-xs', {
+                        'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]': p.is_active,
+                        'bg-[var(--status-skipped-bg)]/40 text-[var(--status-skipped)]': p.is_draft && !p.is_active,
+                        'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)]': !p.is_draft && !p.is_active,
+                      })}>
+                        {p.is_active ? 'Active' : p.is_draft ? 'Draft' : 'Inactive'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-[var(--color-text-muted)] mt-1">
+                      {p.project_id ? `Project: ${projectLabel(p.project_id)}` : 'System Default'}
+                      {' · '}Created: {new Date(p.created_at).toLocaleDateString()}
+                    </p>
                   </div>
-                  <p className="text-xs text-[var(--color-text-muted)] mt-1">
-                    {p.project_id ? `Project: ${projectLabel(p.project_id)}` : 'System Default'}
-                    {' · '}Created: {new Date(p.created_at).toLocaleDateString()}
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={() => navigate(`/policies/${p.id}`)} className="px-3 py-1 text-xs bg-[var(--color-bg-secondary)] rounded hover:bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)]">
-                    {p.is_draft && isAdmin ? 'Edit' : 'View'}
-                  </button>
-                  {p.is_active && isAdmin && (
-                    <button onClick={() => handleDeactivate(p.id)} className="px-3 py-1 text-xs bg-[var(--status-failed-bg)]/50 rounded hover:bg-[var(--status-failed-bg)] text-[var(--status-failed)]">
-                      Deactivate
+                  <div className="flex gap-2">
+                    <button onClick={() => navigate(`/policies/${p.id}`)} className="px-3 py-1 text-xs bg-[var(--color-bg-secondary)] rounded hover:bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)]">
+                      {p.is_draft && isAdmin ? 'Edit' : 'View'}
                     </button>
-                  )}
+                    {p.is_active && isAdmin && (
+                      <button onClick={() => setConfirmingDeactivate(p.id)} className="px-3 py-1 text-xs bg-[var(--status-failed-bg)]/50 rounded hover:bg-[var(--status-failed-bg)] text-[var(--status-failed)]">
+                        Deactivate
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
+                {confirmingDeactivate === p.id && p.is_active && isAdmin && (
+                  <div data-in-page-row="">
+                    <InlineConfirm
+                      message="Deactivate this policy?"
+                      confirmLabel="Deactivate"
+                      tone="danger"
+                      onConfirm={() => { setConfirmingDeactivate(null); void handleDeactivate(p.id); }}
+                      onCancel={() => setConfirmingDeactivate(null)}
+                    />
+                  </div>
+                )}
+              </Fragment>
             ))}
           </div>
         )}
@@ -449,13 +469,22 @@ export default function PolicyEditorPage() {
               {saving ? 'Saving...' : 'Save Draft'}
             </button>
             {!isNew && (
-              <button onClick={handlePublish} className="px-4 py-2 bg-[var(--status-passed-bg)] text-[var(--color-text)] rounded-lg hover:bg-[var(--status-passed-bg)] text-sm">
+              <button onClick={() => setConfirmingPublish(true)} className="px-4 py-2 bg-[var(--status-passed-bg)] text-[var(--color-text)] rounded-lg hover:bg-[var(--status-passed-bg)] text-sm">
                 Publish
               </button>
             )}
           </>
         ) : undefined}
       />
+
+      {confirmingPublish && editable && !isNew && (
+        <InlineConfirm
+          message="Publish this policy? It will become active and the previous version will be deactivated."
+          confirmLabel="Publish"
+          onConfirm={() => { setConfirmingPublish(false); void handlePublish(); }}
+          onCancel={() => setConfirmingPublish(false)}
+        />
+      )}
 
       {displayError && <div className="bg-[var(--status-failed-bg)]/30 border border-[var(--status-failed-bd)] rounded-lg p-3 text-[var(--status-failed)] text-sm">{displayError}</div>}
 

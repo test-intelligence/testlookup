@@ -160,6 +160,92 @@ describe('SavedViewsMenu', () => {
     await waitFor(() => expect(service.updateSavedView).toHaveBeenCalledWith('v1', { is_default: true }))
   })
 
+  // W27b PAN-07: a view's Delete asks in a strip right under its row, inside the popover; the strip's Delete is
+  // the only thing that sends; the native prompt is gone.
+  describe('W27b: Delete asks in the popover, under the view', () => {
+    const openMenu = async () => {
+      service.listSavedViews.mockResolvedValue([
+        view({}),
+        view({ id: 'v2', name: '<img src=x onerror=alert(1)>' }),
+        view({ id: 'theirs', name: 'Their view', user_id: 'them', is_shared: true }),
+      ])
+      renderMenu()
+      fireEvent.click(screen.getByRole('button', { name: /Views/ }))
+      await screen.findByText('Payments release watch')
+    }
+    const row = (id: string) => document.querySelector(`li[data-saved-view="${id}"]`) as HTMLElement
+    const strip = () => document.querySelector('[data-inline-confirm]') as HTMLElement | null
+
+    it('Delete opens the strip right under that row; nothing is sent; Cancel closes it; the popover stays', async () => {
+      const confirmSpy = vi.spyOn(window, 'confirm')
+      await openMenu()
+      const trash = within(row('v1')).getByTitle('Delete this view')
+      trash.focus()
+      fireEvent.click(trash)
+      expect(strip()).not.toBeNull()
+      expect(row('v1').nextElementSibling).toBe(strip()?.closest('li'))
+      expect(strip()?.closest('li')).toHaveAttribute('data-in-page-row')
+      expect(strip()?.closest('li')).not.toHaveAttribute('data-saved-view')
+      expect(strip()).toHaveAttribute('role', 'group')
+      expect((strip() as HTMLElement).querySelector('p')?.textContent).toBe('Delete the view "Payments release watch"?')
+      expect(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' })).toHaveFocus()
+      expect(service.deleteSavedView).not.toHaveBeenCalled()
+      expect(document.querySelectorAll('li[data-saved-view]')).toHaveLength(3)
+
+      fireEvent.click(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }))
+      expect(strip()).toBeNull()
+      expect(trash).toHaveFocus()
+      expect(screen.getByRole('dialog', { name: 'Saved views' })).toBeInTheDocument()
+      expect(service.deleteSavedView).not.toHaveBeenCalled()
+      expect(confirmSpy).not.toHaveBeenCalled()
+      confirmSpy.mockRestore()
+    })
+
+    it('the strip\'s Delete sends deleteSavedView(id) once, re-reads the views, and the popover stays open', async () => {
+      const confirmSpy = vi.spyOn(window, 'confirm')
+      service.deleteSavedView.mockResolvedValue(undefined)
+      await openMenu()
+      const reads = service.listSavedViews.mock.calls.length
+      fireEvent.click(within(row('v1')).getByTitle('Delete this view'))
+      fireEvent.click((strip() as HTMLElement).querySelector('[data-inline-confirm-action]') as HTMLElement)
+      expect(strip()).toBeNull()
+      await waitFor(() => expect(service.deleteSavedView).toHaveBeenCalledTimes(1))
+      expect(service.deleteSavedView).toHaveBeenCalledWith('v1')
+      await waitFor(() => expect(service.listSavedViews.mock.calls.length).toBeGreaterThan(reads))
+      const toast = (await import('react-hot-toast')).default
+      await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Deleted "Payments release watch"'))
+      expect(screen.getByRole('dialog', { name: 'Saved views' })).toBeInTheDocument()
+      expect(confirmSpy).not.toHaveBeenCalled()
+      confirmSpy.mockRestore()
+    })
+
+    it('Escape in the strip cancels the strip only: the popover stays open; one strip at a time; a name is text', async () => {
+      await openMenu()
+      fireEvent.click(within(row('v1')).getByTitle('Delete this view'))
+      fireEvent.keyDown(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }), { key: 'Escape' })
+      expect(strip()).toBeNull()
+      expect(screen.getByRole('dialog', { name: 'Saved views' })).toBeInTheDocument()
+
+      fireEvent.click(within(row('v1')).getByTitle('Delete this view'))
+      fireEvent.click(within(row('v2')).getByTitle('Delete this view'))
+      expect(document.querySelectorAll('[data-inline-confirm]')).toHaveLength(1)
+      expect(row('v2').nextElementSibling).toBe(strip()?.closest('li'))
+      expect((strip() as HTMLElement).querySelector('img')).toBeNull()
+      expect((strip() as HTMLElement).querySelector('strong')?.textContent).toBe('<img src=x onerror=alert(1)>')
+      expect(service.deleteSavedView).not.toHaveBeenCalled()
+    })
+
+    it('closing the popover drops the question: reopened, no strip', async () => {
+      await openMenu()
+      fireEvent.click(within(row('v1')).getByTitle('Delete this view'))
+      fireEvent.click(screen.getByRole('button', { name: /Views/ }))
+      expect(screen.queryByRole('dialog', { name: 'Saved views' })).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: /Views/ }))
+      await screen.findByText('Payments release watch')
+      expect(strip()).toBeNull()
+    })
+  })
+
   it('opens my default once per tab, and never over a link that describes the page', async () => {
     service.listSavedViews.mockResolvedValue([view({ is_default: true })])
     const onApply = renderMenu()

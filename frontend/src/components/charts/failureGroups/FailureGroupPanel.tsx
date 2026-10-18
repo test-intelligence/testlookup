@@ -1,15 +1,17 @@
 /**
- * One failure group's details (VIZ-504), in the kit's `SidePanel`: the first
+ * One failure group's details (VIZ-504): the first
  * line as the server saw it most often, the counts, the trend, the category
  * mix, the tests it hits most and the signature that groups it. "View rows"
  * hands the group to the shared rows panel (the executions behind it, selected
  * by the same SQL signature: BE4's `bucket_error_signature`).
  *
- * Non-modal (SidePanel's default): the plot and the table stay usable beside
- * it; Escape closes it and focus goes back to what opened it. Every string is
- * React text.
+ * W27b PAN-05b: a read-only section IN THE PAGE (an `InlineFormSection
+ * as="aside"`, `Failure group #<rank>`), which `FailureGroupsSection` renders
+ * right after its frame: the plot and the table stay usable above it; Escape
+ * with focus inside closes it and focus goes back to what opened it. Every
+ * string is React text.
  */
-import SidePanel from '@/components/ui/SidePanel'
+import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
 import { formatNumber } from '@/utils/formatters'
 import Sparkline from '../Sparkline'
 import { WRAP_ANYWHERE } from './plot.model'
@@ -48,10 +50,12 @@ export default function FailureGroupPanel({ group, trendGrain, onClose, onViewRo
     ['Category', categoryLabel(group.dominantCategory)],
   ]
   return (
-    <SidePanel
-      open
+    <InlineFormSection
+      as="aside"
       onClose={onClose}
       title={panelTitle(group)}
+      closeLabel="Close panel"
+      className="mt-3 min-w-0"
       footer={
         onViewRows ? (
           <button type="button" className={BUTTON} data-group-view-rows="" onClick={() => onViewRows(group)}>
@@ -121,6 +125,6 @@ export default function FailureGroupPanel({ group, trendGrain, onClose, onViewRo
           </code>
         </section>
       </div>
-    </SidePanel>
+    </InlineFormSection>
   )
 }

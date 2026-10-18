@@ -352,3 +352,99 @@ describe('SuitesPage — run columns (P4)', () => {
     expect(hrefs.filter((href) => href.includes('/coverage/suite'))).toEqual([])
   })
 })
+
+// ── W27b PAN-05: New suite and a suite's Delete in the page ─────────────────
+
+describe('SuitesPage — in the page (W27b)', () => {
+  const SUITES: TestSuiteListResponse = {
+    items: [
+      makeSuite({ id: 's-legacy', name: 'Legacy portal', test_case_count: 0 }),
+      makeSuite({ id: 's-all', name: 'All Tests', is_default: true, test_case_count: 9 }),
+    ],
+    total: 2,
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseSuites.mockReset()
+    mockUseSuiteAggregates.mockReset()
+    mockUseSuiteAggregates.mockReturnValue(aggregates())
+    mockStoreState.activeProject = { id: 'p1', name: 'GoogleSearch' }
+    mockStoreState.activeProjectId = 'p1'
+    mockStoreState.projects = [{ id: 'p1', name: 'GoogleSearch' }]
+  })
+
+  const suiteRow = (name: string) => screen.getByText(name).closest('tr') as HTMLTableRowElement
+
+  it('New suite opens under the page header, above the list, its name focused; its X is labelled Close', () => {
+    renderPage({ data: SUITES, isLoading: false, error: undefined })
+    fireEvent.click(screen.getByRole('button', { name: /New suite/i }))
+
+    const form = screen.getByRole('region', { name: 'New Test Suite' })
+    const header = document.querySelector('[data-page-header]') as HTMLElement
+    const list = document.querySelector('[data-primary]') as HTMLElement
+    expect(header.compareDocumentPosition(form) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(form.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.querySelector('[aria-modal]')).toBeNull()
+    expect(within(form).getByLabelText('Name')).toHaveFocus()
+
+    fireEvent.click(within(form).getByRole('button', { name: 'Close' }))
+    expect(screen.queryByRole('region', { name: 'New Test Suite' })).toBeNull()
+  })
+
+  it("a suite's Delete asks in a strip in a full-width row under it; Cancel sends nothing; Delete sends the DELETE once", async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm')
+    const { suitesService } = await import('@/services/suitesService')
+    const { refreshSuites } = await import('@/hooks/useSuites')
+    const toast = (await import('react-hot-toast')).default
+    ;(suitesService.remove as ReturnType<typeof vi.fn>).mockResolvedValue(undefined)
+    renderPage({ data: SUITES, isLoading: false, error: undefined })
+
+    const row = suiteRow('Legacy portal')
+    fireEvent.click(within(row).getByTitle('Delete'))
+    const strip = document.querySelector('[data-inline-confirm]') as HTMLElement
+    expect(strip).not.toBeNull()
+    expect(strip.textContent?.replace(/\s+/g, ' ')).toContain('Delete suite "Legacy portal"? Test cases must already be moved out.')
+    const stripRow = row.nextElementSibling as HTMLTableRowElement
+    expect(stripRow).toHaveAttribute('data-in-page-row', '')
+    expect(stripRow.cells).toHaveLength(1)
+    expect(stripRow.cells[0]).toHaveAttribute('colspan', '9')
+    expect(stripRow).toContainElement(strip)
+    expect(suitesService.remove).not.toHaveBeenCalled()
+
+    fireEvent.click(within(strip).getByRole('button', { name: 'Cancel' }))
+    expect(document.querySelector('[data-inline-confirm]')).toBeNull()
+    expect(suitesService.remove).not.toHaveBeenCalled()
+
+    fireEvent.click(within(suiteRow('Legacy portal')).getByTitle('Delete'))
+    fireEvent.click(within(document.querySelector('[data-inline-confirm]') as HTMLElement).getByRole('button', { name: 'Delete' }))
+    await waitFor(() => expect(suitesService.remove).toHaveBeenCalledWith('s-legacy'))
+    expect(suitesService.remove).toHaveBeenCalledTimes(1)
+    expect(document.querySelector('[data-inline-confirm]')).toBeNull()
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Suite "Legacy portal" deleted'))
+    expect(refreshSuites).toHaveBeenCalled()
+    expect(confirmSpy).not.toHaveBeenCalled()
+  })
+
+  it('All Projects: the strip row spans the 4 columns of the catalog view', () => {
+    mockStoreState.activeProject = null
+    mockStoreState.activeProjectId = 'all'
+    renderPage({ data: SUITES, isLoading: false, error: undefined })
+    const row = suiteRow('Legacy portal')
+    fireEvent.click(within(row).getByTitle('Delete'))
+    expect((row.nextElementSibling as HTMLTableRowElement).cells[0]).toHaveAttribute('colspan', '4')
+  })
+
+  it('a name is text in the strip, never markup', () => {
+    renderPage({
+      data: { items: [makeSuite({ id: 's-x', name: '<img src=x onerror=alert(1)>' })], total: 1 },
+      isLoading: false,
+      error: undefined,
+    })
+    fireEvent.click(within(suiteRow('<img src=x onerror=alert(1)>')).getByTitle('Delete'))
+    const strip = document.querySelector('[data-inline-confirm]') as HTMLElement
+    expect(within(strip).getByText('<img src=x onerror=alert(1)>').tagName).toBe('STRONG')
+    expect(document.querySelector('img')).toBeNull()
+  })
+})

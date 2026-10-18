@@ -24,11 +24,14 @@
  */
 import { Suspense, useEffect, useMemo, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
-import { Activity, ArrowLeft, ArrowRightLeft, CheckCircle2, Clock, Layers, X, XCircle } from 'lucide-react'
+import { Activity, ArrowLeft, ArrowRightLeft, CheckCircle2, Clock, Layers, XCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
+import { InlineRowSection } from '@/components/ui/inPage/InlineRowSection'
+import { useInlineSlot, type InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import KpiStrip from '@/components/ui/KpiStrip'
 import MetricCard from '@/components/ui/MetricCard'
 import Tabs, { type TabItem } from '@/components/ui/Tabs'
@@ -107,9 +110,11 @@ interface MoveModalProps {
   candidates: TestSuite[]
   onClose: () => void
   onMoved: () => void
+  /** The tests table's form slot (shared with the bulk Move). */
+  slot?: InlineSlot
 }
 
-function MoveModal({ canonical, currentSuiteId, candidates, onClose, onMoved }: MoveModalProps) {
+function MoveModal({ canonical, currentSuiteId, candidates, onClose, onMoved, slot }: MoveModalProps) {
   const targets = candidates.filter((s) => s.id !== currentSuiteId)
   const [targetId, setTargetId] = useState(targets[0]?.id ?? '')
   const [saving, setSaving] = useState(false)
@@ -134,20 +139,21 @@ function MoveModal({ canonical, currentSuiteId, candidates, onClose, onMoved }: 
     }
   }
 
+  // In the page (W27b PAN-05), under the test's row; its X is labelled `Close`.
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="move-test-case-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="w-full max-w-md rounded-lg bg-[var(--color-bg)] p-6 ring-1 ring-[var(--color-border)]">
-        <div className="flex items-center justify-between">
-          <h2 id="move-test-case-title" className="text-lg font-semibold text-[var(--color-text)]">Move test case</h2>
-          <button onClick={onClose} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-        <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+    <InlineFormSection
+      title="Move test case"
+      titleId="move-test-case-title"
+      onClose={onClose}
+      slot={slot}
+      description={(
+        <span className="text-xs">
           {canonical.class_name ? `${canonical.class_name} :: ` : ''}
           {canonical.test_name}
-        </p>
-        <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+        </span>
+      )}
+    >
+        <form onSubmit={handleSubmit} className="max-w-md space-y-4">
           <div>
             <label htmlFor="suitecase-field-0" className="text-sm text-[var(--color-text-muted)]">Target suite</label>
             <select id="suitecase-field-0"
@@ -185,8 +191,7 @@ function MoveModal({ canonical, currentSuiteId, candidates, onClose, onMoved }: 
             </button>
           </div>
         </form>
-      </div>
-    </div>
+    </InlineFormSection>
   )
 }
 
@@ -197,6 +202,8 @@ interface BulkMoveModalProps {
   candidates: TestSuite[]
   onClose: () => void
   onMoved: (movedCount: number, missingIds: string[]) => void
+  /** The tests table's form slot (shared with a row's Move). */
+  slot?: InlineSlot
 }
 
 function BulkMoveModal({
@@ -206,6 +213,7 @@ function BulkMoveModal({
   candidates,
   onClose,
   onMoved,
+  slot,
 }: BulkMoveModalProps) {
   const targets = candidates.filter((s) => s.id !== currentSuiteId)
   const [targetId, setTargetId] = useState(targets[0]?.id ?? '')
@@ -242,21 +250,16 @@ function BulkMoveModal({
     }
   }
 
+  // In the page (W27b PAN-05), right above the tests table; its X is labelled `Close`.
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="move-test-cases-bulk-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="w-full max-w-md rounded-lg bg-[var(--color-bg)] p-6 ring-1 ring-[var(--color-border)]">
-        <div className="flex items-center justify-between">
-          <h2 id="move-test-cases-bulk-title" className="text-lg font-semibold text-[var(--color-text)]">
-            Move {selectedCount} test case{selectedCount === 1 ? '' : 's'}
-          </h2>
-          <button onClick={onClose} className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-        <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-          All selected cases will be moved to the target suite within the same project.
-        </p>
-        <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+    <InlineFormSection
+      title={`Move ${selectedCount} test case${selectedCount === 1 ? '' : 's'}`}
+      titleId="move-test-cases-bulk-title"
+      onClose={onClose}
+      slot={slot}
+      description={<span className="text-xs">All selected cases will be moved to the target suite within the same project.</span>}
+    >
+        <form onSubmit={handleSubmit} className="max-w-md space-y-4">
           <div>
             <label htmlFor="suitecase-field-1" className="text-sm text-[var(--color-text-muted)]">Target suite</label>
             <select id="suitecase-field-1"
@@ -294,8 +297,7 @@ function BulkMoveModal({
             </button>
           </div>
         </form>
-      </div>
-    </div>
+    </InlineFormSection>
   )
 }
 
@@ -361,6 +363,10 @@ export default function SuiteCasesPage() {
   // lookups in the row render.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkOpen, setBulkOpen] = useState(false)
+  // W27b PAN-05: a row's Move opens under its row, the bulk Move right above
+  // the tests table; one of them at a time (the table's slot asks before a
+  // changed target is replaced).
+  const moveSlot = useInlineSlot()
 
   const siblingSuites = useMemo(() => {
     if (!suite || !allSuites?.items) return []
@@ -396,12 +402,15 @@ export default function SuiteCasesPage() {
       else next.add(id)
       return next
     })
+    // Nothing selected, nothing to move: the bulk form goes with the bar.
+    if (selectedIds.size === 1 && selectedIds.has(id)) setBulkOpen(false)
   }
 
   function toggleAll() {
     const allSelected = cases.length > 0 && cases.every((c) => selectedIds.has(c.id))
     if (allSelected) {
       setSelectedIds(new Set())
+      setBulkOpen(false)
     } else {
       setSelectedIds(new Set(cases.map((c) => c.id)))
     }
@@ -409,6 +418,23 @@ export default function SuiteCasesPage() {
 
   function clearSelection() {
     setSelectedIds(new Set())
+    setBulkOpen(false)
+  }
+
+  function openMove(canonical: CanonicalTestCase) {
+    if (moveTarget?.id === canonical.id) return
+    moveSlot.guard(() => {
+      setBulkOpen(false)
+      setMoveTarget(canonical)
+    })
+  }
+
+  function openBulkMove() {
+    if (bulkOpen) return
+    moveSlot.guard(() => {
+      setMoveTarget(null)
+      setBulkOpen(true)
+    })
   }
 
   const tabs: TabItem<SuiteTab>[] = [
@@ -517,6 +543,26 @@ export default function SuiteCasesPage() {
             />
           ) : (
             <div className="space-y-2">
+              {/* The bulk Move, right above the tests table (the bar stays where it is). */}
+              {canEdit && bulkOpen && selectedIds.size > 0 && (
+                <BulkMoveModal
+                  selectedCount={selectedIds.size}
+                  selectedIds={Array.from(selectedIds)}
+                  currentSuiteId={suite.id}
+                  candidates={siblingSuites}
+                  slot={moveSlot}
+                  onClose={() => setBulkOpen(false)}
+                  onMoved={() => {
+                    // Cases that resolved are gone from this suite now; missing
+                    // ids never resolved on the server either. Clear the whole
+                    // selection — re-selecting from the refreshed list is one
+                    // click. Keeping stale ids in selection state is the
+                    // worse-of-two-evils.
+                    clearSelection()
+                    refreshSuites()
+                  }}
+                />
+              )}
               <SuiteTestsTable
                 cases={cases}
                 stats={stats}
@@ -525,7 +571,19 @@ export default function SuiteCasesPage() {
                 selectedIds={selectedIds}
                 onToggleOne={toggleOne}
                 onToggleAll={toggleAll}
-                onMove={setMoveTarget}
+                onMove={openMove}
+                belowRow={(c) => moveTarget?.id === c.id ? (
+                  <InlineRowSection colSpan={canEdit ? 9 : 8}>
+                    <MoveModal
+                      canonical={moveTarget}
+                      currentSuiteId={suite.id}
+                      candidates={siblingSuites}
+                      slot={moveSlot}
+                      onClose={() => setMoveTarget((current) => (current?.id === c.id ? null : current))}
+                      onMoved={() => refreshSuites()}
+                    />
+                  </InlineRowSection>
+                ) : null}
               />
               {/* The run columns are the window's analytics: say when they
                   could not be read, or cover only part of the catalog. */}
@@ -583,7 +641,7 @@ export default function SuiteCasesPage() {
             </span>
             <button
               type="button"
-              onClick={() => setBulkOpen(true)}
+              onClick={openBulkMove}
               disabled={selectedIds.size > BULK_LINK_MAX}
               className="inline-flex items-center gap-1 rounded bg-[var(--color-accent)] px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
             >
@@ -598,35 +656,6 @@ export default function SuiteCasesPage() {
             </button>
           </div>
         </div>
-      )}
-
-      {moveTarget && (
-        <MoveModal
-          canonical={moveTarget}
-          currentSuiteId={suite.id}
-          candidates={siblingSuites}
-          onClose={() => setMoveTarget(null)}
-          onMoved={() => refreshSuites()}
-        />
-      )}
-
-      {bulkOpen && (
-        <BulkMoveModal
-          selectedCount={selectedIds.size}
-          selectedIds={Array.from(selectedIds)}
-          currentSuiteId={suite.id}
-          candidates={siblingSuites}
-          onClose={() => setBulkOpen(false)}
-          onMoved={() => {
-            // Cases that resolved are gone from this suite now; missing
-            // ids never resolved on the server either. Clear the whole
-            // selection — re-selecting from the refreshed list is one
-            // click. Keeping stale ids in selection state is the
-            // worse-of-two-evils.
-            clearSelection()
-            refreshSuites()
-          }}
-        />
       )}
     </div>
   )

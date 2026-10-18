@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { Fragment, useState, type ReactNode } from 'react'
 import { ChevronDown, ChevronRight, Clock, Link2Off } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { useInlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import { usePermissions } from '@/hooks/usePermissions'
 import { ORPHANED_PAGE_SIZE, useOrphanedCanonicalCases } from '@/hooks/useSuites'
 import { useTestCaseEvidenceGaps } from '@/hooks/useTestManagement'
@@ -39,9 +40,14 @@ export default function EvidenceGapLists({ projectId }: EvidenceGapListsProps) {
   const [orphanPage, setOrphanPage] = useState(1)
   const orphaned = useOrphanedCanonicalCases(orphanPage, ORPHANED_PAGE_SIZE)
   const [open, setOpen] = useState<Set<ListKey>>(() => new Set())
+  // W27b PAN-05: the retirement reason opens IN THE PAGE, as the list item
+  // right after its orphan; the list's slot asks before a typed reason is
+  // replaced by another orphan's form.
+  const retirementSlot = useInlineSlot()
   const [retiring, setRetiring] = useState<CanonicalTestCase | null>(null)
-  const [savingRetirement, setSavingRetirement] = useState(false)
-  const [retirementError, setRetirementError] = useState<string | null>(null)
+  const [savingRetirement, setSavingRetirement] = useState<string | null>(null)
+  // The refusal of the open form's last attempt, shown while that form is open.
+  const [retirementError, setRetirementError] = useState<{ id: string; message: string } | null>(null)
   const [retirementRefreshWarning, setRetirementRefreshWarning] = useState<string | null>(null)
   const [confirmedRetirementIds, setConfirmedRetirementIds] = useState<Set<string>>(() => new Set())
 
@@ -64,24 +70,25 @@ export default function EvidenceGapLists({ projectId }: EvidenceGapListsProps) {
     })
   }
 
-  async function confirmRetirement(reason: string) {
-    if (!retiring) return
-    setSavingRetirement(true)
+  async function confirmRetirement(target: CanonicalTestCase, reason: string) {
+    setSavingRetirement(target.id)
     setRetirementError(null)
     try {
-      await suitesService.confirmRetirement(retiring.id, reason)
+      await suitesService.confirmRetirement(target.id, reason)
     } catch (retirementFailure) {
-      const message = retirementErrorMessage(retirementFailure)
-      setRetirementError(message)
-      toast.error(message)
-      setSavingRetirement(false)
+      // The refusal is said once in the page (the alert) and once in a toast: the
+      // shared Axios interceptor's. A second, identical toast from here was
+      // noise (W27b G-E finding 2).
+      setRetirementError({ id: target.id, message: retirementErrorMessage(retirementFailure) })
+      setSavingRetirement((current) => (current === target.id ? null : current))
       return
     }
 
-    const retiredId = retiring.id
+    const retiredId = target.id
     setConfirmedRetirementIds((current) => new Set(current).add(retiredId))
-    setRetiring(null)
-    setSavingRetirement(false)
+    // A late answer closes only its own form (another orphan's may have replaced it).
+    setRetiring((current) => (current?.id === retiredId ? null : current))
+    setSavingRetirement((current) => (current === retiredId ? null : current))
     toast.success('Automation retirement confirmed')
     try {
       await orphaned.mutate()
@@ -97,6 +104,51 @@ export default function EvidenceGapLists({ projectId }: EvidenceGapListsProps) {
     } catch {
       setRetirementRefreshWarning('The retirement proof list is still stale. Confirmed rows remain hidden locally.')
     }
+  }
+
+  function closeRetirement() {
+    setRetiring(null)
+    setRetirementError(null)
+  }
+
+  // Collapsing the card or paging away takes the open reason form with it,
+  // asking first when a reason was typed.
+  function withoutRetirementForm(action: () => void) {
+    if (!retiring) {
+      action()
+      return
+    }
+    retirementSlot.guard(() => {
+      closeRetirement()
+      action()
+    })
+  }
+
+  function openRetirement(item: CanonicalTestCase) {
+    if (retiring?.id === item.id) return
+    retirementSlot.guard(() => {
+      setRetirementError(null)
+      setRetiring(item)
+    })
+  }
+
+  // The reason form, as the list item right after its orphan (inside the card).
+  const retirementItem = (item: CanonicalTestCase): ReactNode => {
+    if (!retiring || retiring.id !== item.id) return null
+    const target = retiring
+    return (
+      <li data-in-page-row="" className="list-none">
+        <TransitionReasonDialog
+          title="Confirm automation retirement"
+          description={`Confirm that ${target.test_name} was intentionally removed. The canonical and managed records will be preserved.`}
+          confirmLabel="Confirm retirement"
+          busy={savingRetirement === target.id}
+          slot={retirementSlot}
+          onCancel={closeRetirement}
+          onConfirm={(reason) => confirmRetirement(target, reason)}
+        />
+      </li>
+    )
   }
 
   return (
@@ -129,7 +181,7 @@ export default function EvidenceGapLists({ projectId }: EvidenceGapListsProps) {
       />
       <OrphanedListCard
         open={open.has('orphaned')}
-        onToggle={() => toggle('orphaned')}
+        onToggle={() => withoutRetirementForm(() => toggle('orphaned'))}
         items={orphanedItems}
         total={orphanedTotal}
         loading={orphaned.isLoading}
@@ -138,16 +190,14 @@ export default function EvidenceGapLists({ projectId }: EvidenceGapListsProps) {
         canConfirmRetirement={isQaLead}
         page={orphanPage}
         pageSize={ORPHANED_PAGE_SIZE}
-        onPage={setOrphanPage}
-        onConfirm={(item) => {
-          setRetirementError(null)
-          setRetiring(item)
-        }}
+        onPage={(next) => withoutRetirementForm(() => setOrphanPage(next))}
+        onConfirm={openRetirement}
+        belowItem={retirementItem}
       />
 
-      {retirementError && (
+      {retirementError && retirementError.id === retiring?.id && (
         <p role="alert" className="lg:col-span-3 rounded-md border border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)] p-2 text-sm text-[var(--status-failed)]">
-          {retirementError}
+          {retirementError.message}
         </p>
       )}
 
@@ -158,20 +208,6 @@ export default function EvidenceGapLists({ projectId }: EvidenceGapListsProps) {
             Retry proof list
           </button>
         </div>
-      )}
-
-      {retiring && (
-        <TransitionReasonDialog
-          title="Confirm automation retirement"
-          description={`Confirm that ${retiring.test_name} was intentionally removed. The canonical and managed records will be preserved.`}
-          confirmLabel="Confirm retirement"
-          busy={savingRetirement}
-          onCancel={() => {
-            setRetiring(null)
-            setRetirementError(null)
-          }}
-          onConfirm={confirmRetirement}
-        />
       )}
     </section>
   )
@@ -263,9 +299,11 @@ interface OrphanedListCardProps {
   page?: number
   pageSize?: number
   onPage?: (page: number) => void
+  /** W27b PAN-05: what follows an orphan's item in the list (its reason form, an `<li data-in-page-row>`), or nothing. */
+  belowItem?: (item: CanonicalTestCase) => ReactNode
 }
 
-function OrphanedListCard({ open, onToggle, items, total, loading, error, onRetry, canConfirmRetirement, onConfirm, page, pageSize, onPage }: OrphanedListCardProps) {
+function OrphanedListCard({ open, onToggle, items, total, loading, error, onRetry, canConfirmRetirement, onConfirm, page, pageSize, onPage, belowItem }: OrphanedListCardProps) {
   return (
     <article className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-card)]">
       <button type="button" aria-expanded={open} aria-controls="evidence-list-orphaned" onClick={onToggle} className="flex w-full items-start justify-between gap-3 p-4 text-left">
@@ -290,17 +328,20 @@ function OrphanedListCard({ open, onToggle, items, total, loading, error, onRetr
           ) : (
             <ul className="space-y-2">
               {items.map((item) => (
-                <li key={item.id} className="flex items-center justify-between gap-2 rounded-md bg-[var(--color-bg-secondary)] p-2">
-                  <span className="min-w-0">
-                    <span className="block truncate text-xs font-medium text-[var(--color-text)]">{item.test_name}</span>
-                    <span className="block text-[11px] text-[var(--color-text-muted)]">Observed {formatObservedAt(item.deleted_observed_at)}</span>
-                  </span>
-                  {canConfirmRetirement && (
-                    <button type="button" className="btn-secondary flex-shrink-0 text-xs" onClick={() => onConfirm(item)}>
-                      Confirm retirement
-                    </button>
-                  )}
-                </li>
+                <Fragment key={item.id}>
+                  <li className="flex items-center justify-between gap-2 rounded-md bg-[var(--color-bg-secondary)] p-2">
+                    <span className="min-w-0">
+                      <span className="block truncate text-xs font-medium text-[var(--color-text)]">{item.test_name}</span>
+                      <span className="block text-[11px] text-[var(--color-text-muted)]">Observed {formatObservedAt(item.deleted_observed_at)}</span>
+                    </span>
+                    {canConfirmRetirement && (
+                      <button type="button" className="btn-secondary flex-shrink-0 text-xs" onClick={() => onConfirm(item)}>
+                        Confirm retirement
+                      </button>
+                    )}
+                  </li>
+                  {belowItem?.(item)}
+                </Fragment>
               ))}
             </ul>
           )}

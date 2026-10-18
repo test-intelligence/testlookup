@@ -423,9 +423,12 @@ export async function expectSectionDrawn(page: Page, id: string, title: string |
   await expectDrawn(sectionFrame(page, id, title), id)
 }
 
-/** The open rows panels (`RowsPanel` in a `SidePanel`). */
+/**
+ * The open rows panels: `RowsPanel` in a `SidePanel` (`[data-side-panel]`) or, after W27b, in an in-page section
+ * (`[data-in-page]`, an `InlineFormSection`).
+ */
 export const rowsPanels = (page: Page): Locator =>
-  page.locator('[data-side-panel]').filter({ has: page.getByRole('heading', { name: /^Executions in / }) })
+  page.locator('[data-side-panel], [data-in-page]').filter({ has: page.getByRole('heading', { name: /^Executions in / }) })
 
 /**
  * Exactly one rows panel is open (several hosts share the page's one `rows`

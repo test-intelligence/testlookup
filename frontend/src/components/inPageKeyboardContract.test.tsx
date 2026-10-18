@@ -17,6 +17,12 @@
  * Where focus lands changed for one of them: Correct classification focuses
  * its Comment field (the primitive picks the first FIELD; the category choices
  * are buttons), where the modal focused the first category.
+ *
+ * Then the W27b containers (PAN-05..07): TransitionReasonDialog (the last
+ * entry of the trap contract, its seven hosts), the test library's form frame
+ * (`ModalWrap`, behind New test case / New test plan / AI Generate / Generate
+ * strategy), AI Generate itself, the Insights section and a generated case's
+ * citations. The read-only sections have no field: focus lands on their X.
  */
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { useState, type ReactElement } from 'react'
@@ -59,16 +65,58 @@ vi.mock('@/hooks/useDefectPromotion', () => ({
     promote: vi.fn(), isPromoting: false, promotionResult: null, promotionError: null, reset: vi.fn(),
   }),
 }))
+// W27b: the reads the other groups' containers make when they open, answered in-process
+// (src/test/networkGuard.ts fails any real request). None of the W27a entries uses these modules.
+const ACTIVITY_EVENT = vi.hoisted(() => ({
+  id: 'ev-1',
+  summary: 'Release 2026.11 was activated',
+  event_type: 'release.activated',
+  occurred_at: '2026-10-10T10:00:00Z',
+  actor: { name: 'Priya', type: 'user', ref: null },
+  entity: { href: null, label: '2026.11', id: 'rel-1' },
+  diff: { changed_fields: ['status'], before: { status: 'planned' }, after: { status: 'active' } },
+  has_diff: true,
+  context: {},
+  source: null,
+}))
+vi.mock('@/hooks/useActivityFeed', () => ({
+  useActivityEvent: () => ({ event: ACTIVITY_EVENT, error: undefined, isLoading: false }),
+}))
+vi.mock('@/hooks/useEmailAvailability', () => ({
+  useEmailAvailability: () => ({ availability: { available: true, code: null, reason: null }, isLoading: false, error: null }),
+}))
+vi.mock('@/hooks/useUserManagement', () => ({
+  useProjectMembers: () => ({ data: [], isLoading: false, error: undefined }),
+}))
+vi.mock('@/hooks/useSuites', () => ({ useSuites: () => ({ data: { items: [], total: 0 } }) }))
+vi.mock('@/services/coverageHistoryService', () => ({
+  UNTAGGED_PAGE_SIZE: 50,
+  // The untagged list stays loading: the section's own controls are what this contract drives.
+  coverageHistoryService: { getUntaggedTests: () => new Promise(() => {}), getCoverageHistory: () => new Promise(() => {}) },
+}))
 
 import CorrectClassificationModal from './ai/CorrectClassificationModal'
 import DefectPromotionModal from './ai/DefectPromotionModal'
 import CreateJiraIssueModal from './defects/CreateJiraIssueModal'
 import DefectIntakeModal from './defects/DefectIntakeModal'
 import ProposeQuarantineModal from './quarantine/ProposeQuarantineModal'
+import CitationDrawer from './rag/CitationDrawer'
 import UploadReportModal from './runs/UploadReportModal'
+import TransitionReasonDialog from './testManagement/TransitionReasonDialog'
 import { DetailPane } from './ui/inPage/DetailPane'
 import { InlineConfirm } from './ui/inPage/InlineConfirm'
 import { InlineFormSection } from './ui/inPage/InlineFormSection'
+import AIGenerateModal from '@/pages/test-management/AIGenerateModal'
+import InsightsPanel from '@/pages/test-management/InsightsPanel'
+import { ModalWrap } from '@/pages/test-management/tmUi'
+import ActivityDrawer from './activity/ActivityDrawer'
+import ChartCustomisePanel from './charts/ChartCustomisePanel'
+import FailureGroupPanel from './charts/failureGroups/FailureGroupPanel'
+import FixTaggingPanel from './coverage/FixTaggingPanel'
+import EmailReportDialog from './trends/EmailReportDialog'
+import PinNoteDialog from './trends/PinNoteDialog'
+import { CreatedKeyModal } from '@/pages/settings/ApiKeysPage'
+import { MemoryRouter } from 'react-router-dom'
 
 type Render = (onClose: () => void) => ReactElement
 
@@ -163,6 +211,138 @@ const CONVERTED: Array<[string, Container]> = [
     ),
     // The never-shown file input is aria-hidden; the first field is Format.
     focus: (root) => within(root).getByLabelText('Format'),
+  }],
+]
+
+// W27b: the test library's containers (G-A), then the other groups' as they land.
+const W27B: Array<[string, Container]> = [
+  ['TransitionReasonDialog', {
+    render: (onClose) => (
+      <TransitionReasonDialog
+        title="Archive" description="Archive this case." confirmLabel="Archive"
+        onCancel={onClose} onConfirm={vi.fn()}
+      />
+    ),
+    focus: (root) => within(root).getByRole('textbox', { name: /^Reason/ }),
+  }],
+  ['ModalWrap (the test library form frame)', {
+    render: (onClose) => (
+      <ModalWrap title="New Test Plan" onClose={onClose}>
+        <label htmlFor="kc-plan-name">Plan Name *</label>
+        <input id="kc-plan-name" />
+        <button type="button" onClick={onClose}>Cancel</button>
+      </ModalWrap>
+    ),
+    focus: (root) => within(root).getByLabelText('Plan Name *'),
+  }],
+  ['AIGenerateModal', {
+    render: (onClose) => <AIGenerateModal projectId="p-1" onClose={onClose} />,
+    focus: (root) => within(root).getByRole('textbox', { name: 'What to generate test cases for' }),
+  }],
+  ['InsightsPanel', {
+    render: (onClose) => (
+      <InsightsPanel open onClose={onClose}>
+        <button type="button">Sign in with SSO</button>
+      </InsightsPanel>
+    ),
+    // A read-only section: no field, so its first control, the X.
+    focus: (root) => within(root).getByRole('button', { name: 'Close panel' }),
+  }],
+  ['CitationDrawer', {
+    render: (onClose) => (
+      <CitationDrawer
+        caseIndex={0}
+        onClose={onClose}
+        citations={[{
+          case_index: 0, vector_id: 'v-1', source_id: 's-1', source_title: 'Checkout requirements',
+          section_heading: 'Cart', chunk_text_preview: 'The cart survives a reload.', relevance_score: 0.9,
+          canonical_url: 'https://wiki.example.test/checkout',
+        }]}
+      />
+    ),
+    focus: (root) => within(root).getByRole('button', { name: 'Close' }),
+  }],
+  // G-B (PAN-05b)
+  ['PinNoteDialog', {
+    render: (onClose) => (
+      <PinNoteDialog range={{ from: '2026-10-10', to: '2026-10-12' }} suite={null} onClose={onClose} />
+    ),
+    // Its note field keeps autoFocus (the first field would be the From date).
+    focus: (root) => within(root).getByRole('textbox'),
+  }],
+  ['EmailReportDialog', {
+    render: (onClose) => (
+      <MemoryRouter>
+        <EmailReportDialog
+          projectId="p-1" days={14} suiteFilter={null} release={null} suiteLabel={null}
+          onClose={onClose}
+        />
+      </MemoryRouter>
+    ),
+    focus: (root) => root.querySelector<HTMLElement>('[data-email-address]') as HTMLElement,
+  }],
+  ['ActivityDrawer', {
+    render: (onClose) => <ActivityDrawer projectId="p-1" eventId="ev-1" onClose={onClose} />,
+    // A read-only detail: no field, so its first control, the X.
+    focus: (root) => within(root).getByRole('button', { name: 'Close activity details' }),
+  }],
+  ['FailureGroupPanel', {
+    render: (onClose) => (
+      <FailureGroupPanel
+        trendGrain={null}
+        onClose={onClose}
+        onViewRows={vi.fn()}
+        group={{
+          id: 'sig-1', rank: 1, label: 'AssertionError: expected 200', failureCount: 12, affectedTests: 3,
+          affectedRuns: 4, distinctRawLines: 1, firstSeen: '2026-10-01T00:00:00Z', lastSeen: '2026-10-10T00:00:00Z',
+          share: 0.4, categories: [], dominantCategory: null, trend: [], topTests: [],
+        }}
+      />
+    ),
+    focus: (root) => within(root).getByRole('button', { name: 'Close panel' }),
+  }],
+  ['ChartCustomisePanel', {
+    render: (onClose) => (
+      <ChartCustomisePanel
+        chartTitle="Pass rate by suite"
+        spec={{
+          fields: [
+            { id: 'title', label: 'Title', kind: 'text', value: '' },
+            { id: 'top', label: 'Lines per panel', kind: 'select', value: '5', options: [{ value: '3', label: '3' }, { value: '5', label: '5' }] },
+          ],
+          unavailable: [],
+          isDefault: false,
+        }}
+        onField={vi.fn()}
+        onReset={vi.fn()}
+        onClose={onClose}
+      />
+    ),
+    focus: (root) => within(root).getByLabelText('Title'),
+  }],
+  ['FixTaggingPanel', {
+    render: (onClose) => (
+      <MemoryRouter>
+        <FixTaggingPanel projectId="p-1" days={30} onClose={onClose} />
+      </MemoryRouter>
+    ),
+    // No role in the auth store here, so no move controls: the first control is the X.
+    focus: (root) => within(root).getByRole('button', { name: 'Close the fix tagging panel' }),
+  }],
+  // G-C (PAN-06a): the one-time key, shown once in the page.
+  ['CreatedKeyModal', {
+    render: (onClose) => (
+      <CreatedKeyModal
+        created={{
+          id: 'k-1', name: 'CI key', key_hint: 'tlk_…9f', scopes: ['stream:write'], project_id: 'p-1', is_active: true,
+          expires_at: null, last_used_at: null, created_at: '2026-10-10T00:00:00Z', raw_key: 'tlk_fixture_not_a_secret',
+        }}
+        baseUrl="https://example.test"
+        projectLabel="Project A"
+        onClose={onClose}
+      />
+    ),
+    focus: (root) => within(root).getByRole('button', { name: 'Close' }),
   }],
 ]
 
@@ -300,5 +480,9 @@ describe.each(PRIMITIVES)('%s in-page keyboard contract', (_name, container) => 
 })
 
 describe.each(CONVERTED)('%s in-page keyboard contract', (_name, container) => {
+  inPageContract(container)
+})
+
+describe.each(W27B)('%s in-page keyboard contract', (_name, container) => {
   inPageContract(container)
 })

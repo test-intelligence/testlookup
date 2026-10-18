@@ -214,6 +214,29 @@ describe('TrendsCatalogue (VIZ-408, Trends)', () => {
     expect(window.localStorage.getItem(KEY)).toBeNull()
   })
 
+  // W27b PAN-05b: each chart's Customise opens inside its own section, right after its frame (the Suite pass
+  // rates column beside it is never covered any more: the fixed panel used to sit over it).
+  it('W27b: the series\' and Compare\'s Customise open inside their own section, right after the chart frame', async () => {
+    responses.failures = { meta: META, series: suiteSeries(['checkout', 'search']) }
+    renderCatalogue({ days: 14 })
+    await waitFor(() => expect(metricCalls('pass_rate')).toHaveLength(1))
+    const series = section('trends-multi-series') as HTMLElement
+    fireEvent.click(within(series).getByRole('button', { name: 'Customise' }))
+    let panel = screen.getByRole('complementary', { name: /^Customise / })
+    expect(panel.parentElement).toBe(series)
+    expect(series.lastElementChild).toBe(panel)
+    expect(panel.previousElementSibling).toBe(series.firstElementChild)
+    expect(document.querySelector('[aria-modal]')).toBeNull()
+
+    await waitFor(() => expect(compareCalls().length).toBeGreaterThan(0))
+    const compare = section('trends-compare') as HTMLElement
+    fireEvent.click(within(compare).getByRole('button', { name: 'Customise' }))
+    panel = screen.getByRole('complementary', { name: 'Customise Compare' })
+    expect(panel.parentElement).toBe(compare)
+    expect(compare.lastElementChild).toBe(panel)
+    expect(series.querySelector('[data-chart-customise-panel]')).toBeNull()
+  })
+
   it('TRND-10: Compare has its own Customise (one panel open at a time); its Metric changes the request; the toolbar lost its selects', async () => {
     window.localStorage.removeItem('testlookup.chartConfig.trends.compare')
     responses.failures = { meta: META, series: suiteSeries(['checkout', 'search', 'billing']) }

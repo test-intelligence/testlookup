@@ -15,12 +15,18 @@
  *
  * The rows come from the SWR entry the page's widget layout already reads
  * (`savedViewsKey`), so a page with both asks once.
+ *
+ * W27b PAN-07: a view's Delete asks IN THE POPOVER, in a strip right under that
+ * view's row (`Delete the view "<name>"?` [Cancel] [Delete]); only the strip's
+ * Delete sends the request, and the popover stays open as it did through the
+ * native prompt. Escape in the strip cancels the strip only.
  */
-import { useEffect, useId, useRef, useState, type FormEvent, type MouseEvent } from 'react'
+import { Fragment, useEffect, useId, useRef, useState, type FormEvent, type MouseEvent } from 'react'
 import useSWR from 'swr'
 import toast from 'react-hot-toast'
 import { Bookmark, Share2, Star, Trash2 } from 'lucide-react'
 import { HeaderPopover } from '@/components/ui/HeaderPopover'
+import { InlineConfirm } from '@/components/ui/inPage/InlineConfirm'
 import {
   createSavedView,
   deleteSavedView,
@@ -112,6 +118,12 @@ export default function SavedViewsMenu({
   const [shared, setShared] = useState(false)
   const [makeDefault, setMakeDefault] = useState(false)
   const [busy, setBusy] = useState(false)
+  // The view whose Delete is asking (one strip at a time); nothing is sent until its Delete.
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null)
+  const closePopover = () => {
+    setOpen(false)
+    setConfirmingDelete(null)
+  }
 
   // The layout hook's entry (`savedViewsKey`). Not revalidated when this menu
   // mounts over rows already read: the page's layout asked for them moments
@@ -175,7 +187,7 @@ export default function SavedViewsMenu({
   function openView(view: SavedView) {
     const scope = readReportView(view, current.windowDays)
     onApply(scope, view)
-    setOpen(false)
+    closePopover()
     toast.success(scope.releaseNote ? `Opened "${view.name}". ${scope.releaseNote}` : `Opened "${view.name}"`)
   }
 
@@ -187,7 +199,10 @@ export default function SavedViewsMenu({
         data-saved-views-trigger=""
         aria-haspopup="dialog"
         aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => {
+          setOpen((o) => !o)
+          setConfirmingDelete(null)
+        }}
         {...(variant === 'ghost'
           ? {
               className: GHOST_BUTTON,
@@ -200,7 +215,7 @@ export default function SavedViewsMenu({
         <Bookmark aria-hidden="true" className={variant === 'ghost' ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
         {VIEWS_BUTTON_TEXT}
       </button>
-      <HeaderPopover anchorRef={triggerRef} open={open} onClose={() => setOpen(false)} width={360} role="dialog" ariaLabel="Saved views">
+      <HeaderPopover anchorRef={triggerRef} open={open} onClose={closePopover} width={360} role="dialog" ariaLabel="Saved views">
         <div data-saved-views-panel="" className="flex flex-col gap-3 p-3 text-sm text-[var(--color-text)]">
           <section aria-label="Saved views for this page">
             <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-secondary)]">Saved views</h3>
@@ -215,64 +230,77 @@ export default function SavedViewsMenu({
                 {views.map((view) => {
                   const mine = view.user_id === userId
                   return (
-                    <li key={view.id} data-saved-view={view.id} className="flex items-center gap-1 rounded px-1 hover:bg-[var(--color-bg-hover)]">
-                      <button
-                        type="button"
-                        data-saved-view-open=""
-                        onClick={() => openView(view)}
-                        className="min-w-0 flex-1 truncate py-1 text-left font-medium"
-                        title={view.description ?? view.name}
-                      >
-                        {view.is_default && mine ? <Star aria-label="Default" className="mr-1 inline h-3.5 w-3.5 fill-current text-[var(--status-broken)]" /> : null}
-                        {view.name}
-                        {!mine ? <span className="ml-1 text-xs font-normal text-[var(--color-text-secondary)]">(shared)</span> : null}
-                      </button>
-                      {mine ? (
-                        <>
-                          <button
-                            type="button"
-                            data-saved-view-default=""
-                            aria-pressed={view.is_default}
-                            title={view.is_default ? 'Default view for this page' : 'Open this view by default on this page'}
-                            disabled={busy || view.is_default}
-                            onClick={() => void run(() => updateSavedView(view.id, { is_default: true }), `"${view.name}" is your default view`)}
-                            className={ICON_BUTTON}
-                          >
-                            <Star aria-hidden="true" className={`h-4 w-4 ${view.is_default ? 'fill-current' : ''}`} />
-                          </button>
-                          <button
-                            type="button"
-                            data-saved-view-share=""
-                            aria-pressed={view.is_shared}
-                            title={view.is_shared ? 'Shared with this project: click to make it private' : 'Share with everyone in this project'}
-                            disabled={busy}
-                            onClick={() =>
-                              void run(
-                                () => updateSavedView(view.id, { is_shared: !view.is_shared }),
-                                view.is_shared ? `"${view.name}" is private` : `"${view.name}" is shared with the project`,
-                              )
-                            }
-                            className={`${ICON_BUTTON} ${view.is_shared ? 'text-[var(--color-accent-ink)]' : ''}`}
-                          >
-                            <Share2 aria-hidden="true" className="h-4 w-4" />
-                          </button>
-                          <button
-                            type="button"
-                            data-saved-view-delete=""
-                            title="Delete this view"
-                            disabled={busy}
-                            onClick={() => {
-                              if (window.confirm(`Delete the view "${view.name}"?`)) {
-                                void run(() => deleteSavedView(view.id), `Deleted "${view.name}"`)
+                    <Fragment key={view.id}>
+                      <li data-saved-view={view.id} className="flex items-center gap-1 rounded px-1 hover:bg-[var(--color-bg-hover)]">
+                        <button
+                          type="button"
+                          data-saved-view-open=""
+                          onClick={() => openView(view)}
+                          className="min-w-0 flex-1 truncate py-1 text-left font-medium"
+                          title={view.description ?? view.name}
+                        >
+                          {view.is_default && mine ? <Star aria-label="Default" className="mr-1 inline h-3.5 w-3.5 fill-current text-[var(--status-broken)]" /> : null}
+                          {view.name}
+                          {!mine ? <span className="ml-1 text-xs font-normal text-[var(--color-text-secondary)]">(shared)</span> : null}
+                        </button>
+                        {mine ? (
+                          <>
+                            <button
+                              type="button"
+                              data-saved-view-default=""
+                              aria-pressed={view.is_default}
+                              title={view.is_default ? 'Default view for this page' : 'Open this view by default on this page'}
+                              disabled={busy || view.is_default}
+                              onClick={() => void run(() => updateSavedView(view.id, { is_default: true }), `"${view.name}" is your default view`)}
+                              className={ICON_BUTTON}
+                            >
+                              <Star aria-hidden="true" className={`h-4 w-4 ${view.is_default ? 'fill-current' : ''}`} />
+                            </button>
+                            <button
+                              type="button"
+                              data-saved-view-share=""
+                              aria-pressed={view.is_shared}
+                              title={view.is_shared ? 'Shared with this project: click to make it private' : 'Share with everyone in this project'}
+                              disabled={busy}
+                              onClick={() =>
+                                void run(
+                                  () => updateSavedView(view.id, { is_shared: !view.is_shared }),
+                                  view.is_shared ? `"${view.name}" is private` : `"${view.name}" is shared with the project`,
+                                )
                               }
+                              className={`${ICON_BUTTON} ${view.is_shared ? 'text-[var(--color-accent-ink)]' : ''}`}
+                            >
+                              <Share2 aria-hidden="true" className="h-4 w-4" />
+                            </button>
+                            <button
+                              type="button"
+                              data-saved-view-delete=""
+                              title="Delete this view"
+                              disabled={busy}
+                              onClick={() => setConfirmingDelete(view.id)}
+                              className={ICON_BUTTON}
+                            >
+                              <Trash2 aria-hidden="true" className="h-4 w-4" />
+                            </button>
+                          </>
+                        ) : null}
+                      </li>
+                      {mine && confirmingDelete === view.id ? (
+                        <li data-in-page-row="" className="px-1">
+                          <InlineConfirm
+                            message={<>Delete the view &quot;<strong className="break-words">{view.name}</strong>&quot;?</>}
+                            confirmLabel="Delete"
+                            tone="danger"
+                            busy={busy}
+                            onConfirm={() => {
+                              setConfirmingDelete(null)
+                              void run(() => deleteSavedView(view.id), `Deleted "${view.name}"`)
                             }}
-                            className={ICON_BUTTON}
-                          >
-                            <Trash2 aria-hidden="true" className="h-4 w-4" />
-                          </button>
-                        </>
+                            onCancel={() => setConfirmingDelete(null)}
+                          />
+                        </li>
                       ) : null}
-                    </li>
+                    </Fragment>
                   )
                 })}
               </ul>

@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { useState } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
 import { groupFeatureFlags, MUTATING_FLAG_KEYS } from '@/config/featureFlagGroups'
@@ -13,6 +14,11 @@ import {
 } from '@/services/featureFlagService'
 import { usePermissions } from '@/hooks/usePermissions'
 import { helpTopicParam } from '@/components/help/helpTopics'
+import InlineConfirm from '@/components/ui/inPage/InlineConfirm'
+import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
+import InlineRowSection from '@/components/ui/inPage/InlineRowSection'
+import { useInlineSlot, type InlineSlot } from '@/components/ui/inPage/useInlineSlot'
+import { useSlotCloser } from '@/hooks/useSlotCloser'
 
 const HELP_TOPIC = helpTopicParam('/settings/feature-flags')
 
@@ -24,6 +30,10 @@ const HELP_TOPIC = helpTopicParam('/settings/feature-flags')
  *
  * Every change produces a ``settings_audit_log`` row on the backend so
  * enterprise customers can reconstruct flag history.
+ *
+ * W27b PAN-06: no modal and no native confirm. A flag row's Edit opens
+ * `Edit <key>` in a full-width row under that flag's row, inside its group;
+ * Delete flag asks in that same row place.
  */
 export default function FeatureFlagsPage() {
   const { isAdmin } = usePermissions()
@@ -37,7 +47,11 @@ export default function FeatureFlagsPage() {
     enabled_global: false,
     rollout_percent: 100,
   })
-  const [editing, setEditing] = useState<FeatureFlag | null>(null)
+  // W27b: one flag form open in the table, under its flag's row (the key is the flag key), and one Delete
+  // question at a time (nothing is sent until its own button).
+  const editSlot = useInlineSlot<string>()
+  const closeEdit = useSlotCloser(editSlot)
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null)
 
   if (!isAdmin) {
     return (
@@ -76,7 +90,6 @@ export default function FeatureFlagsPage() {
   }
 
   async function deleteFlag(flag: FeatureFlag) {
-    if (!confirm(`Delete feature flag "${flag.key}"? This cannot be undone.`)) return
     try {
       await featureFlagService.remove(flag.key)
       await refresh()
@@ -90,8 +103,38 @@ export default function FeatureFlagsPage() {
   const rowActions = {
     onToggle: (flag: FeatureFlag) => void toggleGlobal(flag),
     onRollout: (flag: FeatureFlag, percent: number) => void updateRollout(flag, percent),
-    onEdit: (flag: FeatureFlag) => setEditing(flag),
-    onDelete: (flag: FeatureFlag) => void deleteFlag(flag),
+    onEdit: (flag: FeatureFlag) => editSlot.open(flag.key),
+    onDelete: (flag: FeatureFlag) => setConfirmingDelete(flag.key),
+  }
+  /** What opens under a flag's row: its Delete question and / or its Edit form. */
+  const belowRow = (flag: FeatureFlag): ReactNode => {
+    const asking = confirmingDelete === flag.key
+    const editing = editSlot.openKey === flag.key
+    if (!asking && !editing) return null
+    return (
+      <div className="space-y-3">
+        {asking && (
+          <InlineConfirm
+            message={<>Delete feature flag &quot;<strong>{flag.key}</strong>&quot;? This cannot be undone.</>}
+            confirmLabel="Delete"
+            tone="danger"
+            onConfirm={() => { setConfirmingDelete(null); void deleteFlag(flag) }}
+            onCancel={() => setConfirmingDelete(null)}
+          />
+        )}
+        {editing && (
+          <EditFlagModal
+            flag={flag}
+            slot={editSlot}
+            onClose={() => closeEdit(flag.key)}
+            onSaved={async () => {
+              await refresh()
+              closeEdit(flag.key)
+            }}
+          />
+        )}
+      </div>
+    )
   }
 
   async function createFlag() {
@@ -227,49 +270,46 @@ export default function FeatureFlagsPage() {
                 </th>
               </tr>
               {members.map((flag) => (
-                <FlagRow key={flag.id} flag={flag} {...rowActions} />
+                <FlagRow key={flag.id} flag={flag} {...rowActions} below={belowRow(flag)} />
               ))}
             </tbody>
           ))}
           {grouped.ungrouped.length > 0 && (
             <tbody>
               {grouped.ungrouped.map((flag) => (
-                <FlagRow key={flag.id} flag={flag} {...rowActions} />
+                <FlagRow key={flag.id} flag={flag} {...rowActions} below={belowRow(flag)} />
               ))}
             </tbody>
           )}
         </table>
       </div>
 
-      {editing && (
-        <EditFlagModal
-          flag={editing}
-          onClose={() => setEditing(null)}
-          onSaved={async () => {
-            await refresh()
-            setEditing(null)
-          }}
-        />
-      )}
     </div>
   )
 }
 
-/** One flag as one table row (`data-flag-key`); the ON/OFF button is named "Toggle {key}". */
+/**
+ * One flag as one table row (`data-flag-key`); the ON/OFF button is named "Toggle {key}". What opens for it
+ * (W27b: its Edit form, its Delete question) is a full-width row right after it, in the same `<tbody>`, with
+ * no `data-flag-key`.
+ */
 function FlagRow({
   flag,
   onToggle,
   onRollout,
   onEdit,
   onDelete,
+  below,
 }: {
   flag: FeatureFlag
   onToggle: (flag: FeatureFlag) => void
   onRollout: (flag: FeatureFlag, percent: number) => void
   onEdit: (flag: FeatureFlag) => void
   onDelete: (flag: FeatureFlag) => void
+  below?: ReactNode
 }) {
   return (
+    <>
     <tr data-flag-key={flag.key} className="border-t border-[var(--color-border)]">
       <td className="px-3 py-2 font-mono text-xs text-[var(--color-text)]">
         <span className="inline-flex items-center gap-1.5">
@@ -342,17 +382,22 @@ function FlagRow({
         </button>
       </td>
     </tr>
+    {below && <InlineRowSection colSpan={6}>{below}</InlineRowSection>}
+    </>
   )
 }
 
+/** `Edit <key>`, in the page under its flag's row (W27b; it was a modal dialog). */
 function EditFlagModal({
   flag,
   onClose,
   onSaved,
+  slot,
 }: {
   flag: FeatureFlag
   onClose: () => void
   onSaved: () => Promise<void>
+  slot?: InlineSlot
 }) {
   const [projectsJson, setProjectsJson] = useState(
     JSON.stringify(flag.enabled_projects ?? [], null, 2),
@@ -386,19 +431,25 @@ function EditFlagModal({
   }
 
   return (
-    <div
-      role="dialog"
-      aria-label={`Edit ${flag.key}`}
-      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-      onClick={onClose}
+    <InlineFormSection
+      title={<>Edit flag: <span className="font-mono">{flag.key}</span></>}
+      ariaLabel={`Edit ${flag.key}`}
+      headingLevel={3}
+      onClose={onClose}
+      showClose={false}
+      slot={slot}
+      footer={
+        <>
+          <button type="button" onClick={onClose} className="btn-secondary text-xs">
+            Cancel
+          </button>
+          <button type="button" onClick={save} className="btn-primary text-xs">
+            Save
+          </button>
+        </>
+      }
     >
-      <div
-        className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-lg w-[520px] max-w-[95vw] p-5 space-y-3"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h3 className="text-sm font-semibold text-[var(--color-text)]">
-          Edit flag: <span className="font-mono">{flag.key}</span>
-        </h3>
+      <div className="max-w-2xl space-y-3">
         <label className="text-xs block">
           <span className="text-[var(--color-text-muted)]">Description</span>
           <textarea
@@ -432,15 +483,7 @@ function EditFlagModal({
             className="mt-1 w-full px-2 py-1.5 text-xs font-mono bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded"
           />
         </label>
-        <div className="flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="btn-secondary text-xs">
-            Cancel
-          </button>
-          <button type="button" onClick={save} className="btn-primary text-xs">
-            Save
-          </button>
-        </div>
       </div>
-    </div>
+    </InlineFormSection>
   )
 }
