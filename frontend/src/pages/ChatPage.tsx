@@ -10,6 +10,10 @@
  *
  * W27b PAN-05: a conversation's delete asks right under that conversation in
  * the list (`InlineConfirm`), not with the browser's prompt.
+ *
+ * W28 CHAT-01: once a conversation is open the starter questions stay
+ * available as a row of chips above the question box (`ChatSuggestions`);
+ * the welcome screen is unchanged.
  */
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -21,6 +25,8 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import InlineConfirm from '@/components/ui/inPage/InlineConfirm'
 import ChatComposer, { type ChatComposerHandle } from '@/components/chat/ChatComposer'
 import ChatWelcome from '@/components/chat/ChatWelcome'
+import ChatSuggestions from '@/components/chat/ChatSuggestions'
+import { readHideSuggestions, writeHideSuggestions } from '@/components/chat/chatSuggestionsPreference'
 import { starterPrompts } from '@/components/chat/chatContent'
 import { PendingAnswer, SavedAnswer, UserMessage } from '@/components/chat/ChatMessageView'
 import { pendingQuestionVisible, useChatConversation, useRunSummaries } from '@/hooks/useChat'
@@ -77,6 +83,8 @@ export default function ChatPage() {
   const endRef = useRef<HTMLDivElement>(null)
   // The conversation whose delete is being asked about, right under it in the list.
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null)
+  // W28 CHAT-01: the suggested questions above the box during a conversation; "Hide" is remembered in this browser.
+  const [hideSuggestions, setHideSuggestions] = useState(readHideSuggestions)
 
   // `&project=<id>` names the project the prompt is about. "Ask AI about this
   // run" on an E-Commerce run, with Checkout Service active, asked Checkout
@@ -250,6 +258,17 @@ export default function ChatPage() {
             </div>
           ) : (
             <div className="max-w-3xl mx-auto w-full">
+              {conversationOpen && (
+                // A chip asks its question through the same send as the box, and leaves the reader's draft alone.
+                <ChatSuggestions
+                  prompts={prompts}
+                  onAsk={(p) => void chat.send(p)}
+                  disabled={chat.busy}
+                  hidden={hideSuggestions}
+                  onHide={() => { setHideSuggestions(true); writeHideSuggestions(true) }}
+                  onShow={() => { setHideSuggestions(false); writeHideSuggestions(false) }}
+                />
+              )}
               <ChatComposer
                 ref={composer}
                 value={input}

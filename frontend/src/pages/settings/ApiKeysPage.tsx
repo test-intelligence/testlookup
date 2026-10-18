@@ -227,8 +227,8 @@ testlookup.launch=Smoke suite
 from testlookup_reporter import LiveStream
 
 async def main():
-    # All config below can also live in testlookup.properties — see the
-    # "testlookup.properties" tab on this dialog.
+    # All config below can also live in testlookup.properties
+    # (the file shown above on this page).
     async with LiveStream(
         base_url="${baseUrl}",
         api_key="${created.raw_key}",

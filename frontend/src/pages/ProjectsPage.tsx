@@ -276,6 +276,8 @@ function EditProjectModal({ project, onClose, onSaved, slot }: { project: Projec
   const [startDate, setStartDate] = useState(fmtDate(project.start_date))
   const [endDate, setEndDate] = useState(fmtDate(project.end_date))
   const [tagsInput, setTagsInput] = useState((project.tags ?? []).join(', '))
+  // W28 TCM-02: the project's "Require review before Active" setting (an older server sends nothing: off).
+  const [requireCaseReview, setRequireCaseReview] = useState(project.require_case_review ?? false)
   const [saving, setSaving] = useState(false)
 
   async function handleSave(e: React.FormEvent) {
@@ -295,6 +297,8 @@ function EditProjectModal({ project, onClose, onSaved, slot }: { project: Projec
       const newTags = tagsInput.split(',').map(t => t.trim()).filter(Boolean)
       const oldTags = project.tags ?? []
       if (JSON.stringify(newTags) !== JSON.stringify(oldTags)) updates.tags = newTags
+      // Sent only when it changed, so an untouched form's PUT stays exactly the fields the reader edited.
+      if (requireCaseReview !== (project.require_case_review ?? false)) updates.require_case_review = requireCaseReview
 
       if (Object.keys(updates).length === 0) {
         toast('No changes to save')
@@ -362,6 +366,20 @@ function EditProjectModal({ project, onClose, onSaved, slot }: { project: Projec
             <label htmlFor="ep-tags" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Tags (comma-separated)</label>
             <input id="ep-tags" type="text" className="input" value={tagsInput} onChange={e => setTagsInput(e.target.value)}
               placeholder="e.g. backend, payments, critical" />
+          </div>
+
+          <div>
+            {/* Inline flow, not a flex row: the label wraps under itself at any width. */}
+            <div className="text-sm">
+              <input id="ep-require-review" type="checkbox" className="mr-2 align-middle" checked={requireCaseReview}
+                onChange={e => setRequireCaseReview(e.target.checked)} aria-describedby="ep-require-review-help" />
+              <label htmlFor="ep-require-review" className="align-middle text-[var(--color-text)]">
+                Require review before a test case becomes Active
+              </label>
+            </div>
+            <p id="ep-require-review-help" className="text-xs text-[var(--color-text-faint)] mt-1">
+              When on, a test case needs an approved review before it can be made Active. A QA lead or administrator can approve their own case with a reason.
+            </p>
           </div>
 
           <div className="border-t border-[var(--color-border)] pt-4">

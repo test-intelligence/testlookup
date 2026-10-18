@@ -227,3 +227,59 @@ describe('ProjectsPage in the page (W27b)', () => {
     expect(storeState.setActiveProject, 'archiving never selects the card').not.toHaveBeenCalled()
   })
 })
+
+// ── W28 TCM-02: Edit Project's "Require review before a test case becomes Active" ──
+
+describe('Edit Project review setting (W28)', () => {
+  const REVIEWED = { ...OTHER, require_case_review: true }
+
+  afterEach(() => {
+    storeState.refreshProjects.mockImplementation(async () => [])
+    vi.mocked(projectsService.update).mockClear()
+  })
+
+  async function openEdit(projects: unknown[], name: string) {
+    storeState.refreshProjects.mockImplementation(async () => projects as never[])
+    render(<ProjectsPage />)
+    await screen.findByText(name)
+    const card = screen.getByText(name, { selector: 'p' }).closest('.card') as HTMLElement
+    fireEvent.click(within(card).getByTitle('Edit'))
+    return screen.getByRole('region', { name: 'Edit Project' })
+  }
+
+  it('is prefilled from the project, sits after Tags and before Integrations, and is left out of an untouched PUT', async () => {
+    const section = await openEdit([LEGACY, REVIEWED], REVIEWED.name)
+    const box = within(section).getByLabelText('Require review before a test case becomes Active') as HTMLInputElement
+    expect(box.type).toBe('checkbox')
+    expect(box.id).toBe('ep-require-review')
+    expect(box).toBeChecked()
+    expect(within(section).getByText(
+      'When on, a test case needs an approved review before it can be made Active. A QA lead or administrator can approve their own case with a reason.',
+    )).toBeInTheDocument()
+    const order = Array.from(section.querySelectorAll('#ep-tags, #ep-require-review, #ep-jira')).map((el) => el.id)
+    expect(order).toEqual(['ep-tags', 'ep-require-review', 'ep-jira'])
+
+    fireEvent.change(within(section).getByLabelText('Description'), { target: { value: 'Payments' } })
+    fireEvent.click(within(section).getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() => expect(projectsService.update).toHaveBeenCalledTimes(1))
+    expect(projectsService.update).toHaveBeenCalledWith(REVIEWED.id, { description: 'Payments' })
+  })
+
+  it('a project without the field reads unticked; ticking it sends exactly require_case_review: true', async () => {
+    const section = await openEdit([LEGACY, OTHER], LEGACY.name)
+    const box = within(section).getByLabelText('Require review before a test case becomes Active')
+    expect(box).not.toBeChecked()
+    fireEvent.click(box)
+    fireEvent.click(within(section).getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() => expect(projectsService.update).toHaveBeenCalledTimes(1))
+    expect(projectsService.update).toHaveBeenCalledWith(LEGACY.id, { require_case_review: true })
+  })
+
+  it('unticking a reviewed project sends require_case_review: false (a false is applied by the PUT)', async () => {
+    const section = await openEdit([LEGACY, REVIEWED], REVIEWED.name)
+    fireEvent.click(within(section).getByLabelText('Require review before a test case becomes Active'))
+    fireEvent.click(within(section).getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() => expect(projectsService.update).toHaveBeenCalledTimes(1))
+    expect(projectsService.update).toHaveBeenCalledWith(REVIEWED.id, { require_case_review: false })
+  })
+})
