@@ -4,7 +4,7 @@ The decisions a QA lead or administrator makes about the test catalogue: the aut
 
 ## Authored test-case lifecycle
 
-Authored cases follow one server-enforced state machine:
+Authored cases follow one server-enforced state machine. The governed table (a project that requires review):
 
 ```text
 draft → review_requested → under_review → approved → active
@@ -15,16 +15,27 @@ draft | rejected | approved | active | needs_update → deprecated → archived
 deprecated | archived → draft (reinstate)
 ```
 
-The API reports the actions available to the signed-in user, and the **Lifecycle** tab shows only those. The rules:
+**Require review before Active** is a per-project setting (`projects.require_case_review`; **Projects → Edit**, `QA_LEAD` or higher; the `PUT /api/v1/projects/{id}` field `require_case_review`, and its `project.updated` activity entry names it). It is **off** for every project by default, existing projects included, so an upgrade changes how existing projects behave until a QA lead turns it on:
 
-- Claiming a review and deciding it (approve, reject, request changes) need `QA_ENGINEER` or higher, and only the reviewer who claimed it can decide. An author cannot approve their own case.
-- **Deprecate**, **Reinstate** and **Archive** need `QA_LEAD` or higher and a recorded reason; **Flag stale** needs a reason too. Decisions need review notes.
-- Editing an approved or active definition invalidates the old approval and moves the case to `needs_update`.
-- Every save and transition creates an immutable version snapshot and an audit entry with the transition, reason, actor and effective policy.
-- `approved` cases remain selectable by existing test-plan workflows; new workflows should activate approved cases before execution.
-- AI review is advisory evidence: it creates its own completed AI-review record and never counts as a human review.
+- **Off**: the table above plus `activate` from `draft` and `needs_update`, and `revise` from `active`. A case moves straight between Draft and Active; `request_review` stays available and optional.
+- **On**: the table above exactly. In addition, a `QA_LEAD` or `ADMIN` who wrote the case may approve it themselves with a reason (`approve` from `review_requested`, the claim folded into the same version, or from `under_review` when they hold the claim; the reason, or the review notes, is required). A `QA_ENGINEER` never approves their own case. The audit row's policy snapshot records `review_required` and `self_approval`.
 
-The lifecycle is controlled by the **`test_case_lifecycle_v2`** feature flag, which ships **on**. With it off for a project, the direct transition API is not exposed (it answers `404`), the **Lifecycle** tab disappears, and the older request-review / review-action / **Delete** paths remain (Delete deprecates the case). Those older paths enforce the same row-locked policy.
+The API reports the actions available to the signed-in user (`allowed_actions` on each case, and the subset that needs a reason for that user in `reason_required_actions`; each `…/allowed-transitions` item carries `requires_reason`), the project's setting (`review_required` on each case), and the **Details** toolbar and the **Lifecycle** tab show only those. The rules:
+
+- Every write to a test case, its comments, its review or its AI notes needs `TESTER` or higher, checked by the server before any work: create, edit, comment, request review, the transition route, the legacy review action, AI generation and AI review. A `VIEWER` gets `403 Requires at least TESTER role` and reads everything. The legacy `DELETE` (deprecate) needs `QA_ENGINEER` at the route and the lifecycle's own rule below.
+- Claiming a review and deciding it (approve, reject, request changes) need `QA_ENGINEER` or higher, and only the reviewer who claimed it can decide. An author cannot approve their own case, except a lead's self-approval above.
+- **Deprecate**, **Reinstate** and **Archive** need `QA_LEAD` or higher and a recorded reason, as before; **Flag stale** needs a reason too. Decisions need review notes.
+- **Editing never changes the status.** A save (`PATCH /api/v1/test-management/cases/{id}` with the `expected_version` the editor read, and only the changed fields) bumps the version and snapshots it in every state except deprecated and archived (`409`). A stale `expected_version` answers `409` with `{current_version, expected_version, message}`; the page re-reads the case and its history and shows the reader who changed what, and never retries by itself.
+- With review on, an edit that changes `steps`, `expected_result` or `preconditions` of an `approved` or `active` case sets `edited_since_approval_version` (the case answers `edited_after_approval: true`) and adds `request_review` from `approved` and `active`. Approving the case, or moving it out of approved / active, clears the marker; metadata edits never set it; with review off it is never set.
+- Masked parameter values (`masked: true`, or mode `masked` / `hidden`) read `null` in every `/cases` and `/history` answer. A `PATCH` that sends a masked row with `value: null` keeps the stored value; a typed value replaces it.
+- Every save and transition creates an immutable version snapshot and an audit entry with the transition, reason, actor and effective policy. Versions written from this release on record their `source` (`person`, `ai` or `api`, from the credential that made the change; `null` = not recorded before the upgrade, except an AI-generated case's first version) and the owner (`assignee_id`); the history answers each version's `changed_by_name` and the plan executions recorded against it (`executions`).
+- `POST /api/v1/test-management/cases/{id}/restore` `{ version, expected_version }` (`TESTER`) saves an older version's content and classification as a new version (`change_type: restored`); status, owner and fingerprint are never restored. Restoring the current version is `422`; identical content writes nothing; a stale `expected_version` is the same `409` as an edit. It records `test_case.restored` in the activity log.
+- `POST /api/v1/test-management/cases/bulk` (`TESTER`; the body's `project_id` is checked first) applies one action (`transition`, `set_owner`, `set_priority`, `add_tags`, `remove_tags`, `move_to_suite`) to up to 200 case ids of that project, each in its own savepoint with its own version and audit row. It answers `200` with a result per id (`changed`, `unchanged`, `skipped` with a reason, `not_found`, the last also for another project's id) and records one `test_case.bulk_changed` activity entry when anything changed. A retire move (`deprecate`, `archive`, `reinstate`) below `QA_LEAD` refuses the whole request (`403`); a stale `expected_versions` entry skips that case, never overwrites it.
+- New test plans pick Active cases: **AI Create Plan** takes `approved` and `active` cases, and **Link Suite** links those by default (the others only when asked, deprecated and archived never). A plan item records the case version its latest execution ran against (`executed_case_version`; `null` for executions recorded before the upgrade), and the plan's items answer the case's current `case_version`.
+- Deprecated and archived cases leave the duplicate review queue and its `open_count` (read-time: reinstating brings a pair back), both evidence-gap lists, and the **Suites** tab's manual counts. Listings (a suite's cases) keep them.
+- AI review is advisory evidence: it creates its own completed AI-review record and never counts as a human review. AI-generated cases arrive as `draft` with `ai_generated` set; the **AI drafts** view lists them.
+
+The lifecycle is controlled by the **`test_case_lifecycle_v2`** feature flag, which ships **on**. With it off for a project, the direct transition API is not exposed (it answers `404`, and so does a bulk `transition`), the **Lifecycle** tab and the status moves disappear, and the older request-review / review-action / **Delete** paths remain (Delete deprecates the case). Those older paths enforce the same row-locked policy with review required.
 
 ## Ownership: who gets the failure?
 

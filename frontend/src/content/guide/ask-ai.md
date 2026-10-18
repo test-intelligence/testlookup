@@ -21,6 +21,8 @@ You also need one project selected. In **All Projects** the page asks you to sel
 2. Pick one of the starter questions under **Try asking** (what failed, what changed, flaky tests, release readiness, a standup summary), click **Ask about this run** next to a recent run, or type your own question and press Enter (Shift+Enter for a new line).
 3. Watch the answer arrive. The assistant first says what it is looking up (for example "Reading this project's latest runs…"), then writes the answer as it goes. **Stop** ends it early.
 
+During a conversation the same suggested questions stay above the question box as a row of chips (**What failed**, **What changed**, **Flaky tests**, **Release**, **Standup summary**). Click one to ask it; whatever you have typed in the box stays there. The chips wait while an answer is being written. **Hide suggestions** hides the row, and this browser remembers it; **Show suggestions** brings it back.
+
 From a run's page, **⋯ → Ask AI about this run** opens Ask AI on that run's project with the question "What failed in this build, and why? Are any of these failures new since the previous build?" already typed. Press Enter to send it, or edit it first.
 
 Questions are limited to 4,000 characters.

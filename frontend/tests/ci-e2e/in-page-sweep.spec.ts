@@ -241,13 +241,14 @@ const ROUTES: SweepRoute[] = [
     ready: tmReady,
     actions: [
       form('Insights', (p) => p.getByRole('button', { name: /^Insights/ }), 'Insights', button('Close panel')),
-      form('New test case', (p) => p.getByRole('button', { name: 'New test case from catalog toolbar' }), 'New Test Case'),
-      form('AI Generate', (p) => p.getByRole('button', { name: 'AI Generate', exact: true }).first(), 'AI Generate Test Cases', button('Close')),
-      form(
+      only(ENGINEER_UP, form('New test case', (p) => p.getByRole('button', { name: 'New test case from catalog toolbar' }), 'New Test Case')),
+      only(ENGINEER_UP, form('AI Generate', (p) => p.getByRole('button', { name: 'AI Generate', exact: true }).first(), 'AI Generate Test Cases', button('Close'))),
+      // W28 AMENDMENT: a row's Delete / Deprecate retires the case, which stays QA_LEAD or above.
+      only(LEAD_UP, form(
         'a row\'s Delete',
         (p) => p.locator(`[data-primary] tr[data-case-row="${tmCaseId(1)}"]`).getByRole('button', { name: new RegExp(`^(Delete|Deprecate) ${escapeRe(tmCaseTitle(1))}$`) }),
         /^(Delete|Deprecate) test case$/,
-      ),
+      )),
     ],
   },
   {

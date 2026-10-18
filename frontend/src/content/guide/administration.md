@@ -55,7 +55,7 @@ A key carries the permissions of the user who created it, narrowed by its scopes
 
 ### Projects
 
-**Projects** (`/projects`, `QA_LEAD` and above): **New Project** asks for a name, a slug (fixed after creation), and optionally a description, Jira project key and OpenShift namespace. The creator becomes a member, and the project gets a default QA-lead account that failures fall back to. Edit a project for its dates, tags, Jira key, Splunk index, OpenShift namespace and Jenkins job pattern.
+**Projects** (`/projects`, `QA_LEAD` and above): **New Project** asks for a name, a slug (fixed after creation), and optionally a description, Jira project key and OpenShift namespace. The creator becomes a member, and the project gets a default QA-lead account that failures fall back to. Edit a project for its dates, tags, Jira key, Splunk index, OpenShift namespace and Jenkins job pattern, and for **Require review before a test case becomes Active**: when it is on, a test case needs an approved review before it can be made Active (a QA lead or administrator can approve their own case with a reason). It is off by default for every project, so cases move straight between Draft and Active; see [Test management](/docs/test-management#authored-test-cases-and-reviews).
 
 **Archive** hides a project without deleting it, and revokes its credentials. **Archiving is a soft delete** — rows remain but the project disappears from listings and its runs stop appearing in run lists. There is no un-archive in the app.
 
@@ -68,9 +68,9 @@ Five roles, each including those below it:
 | Role | Can |
 |---|---|
 | `VIEWER` | Read dashboards and reports |
-| `TESTER` | Read runs and failures |
+| `TESTER` | Read runs and failures; write, edit and comment on test cases and change their status (not deprecate, archive or reinstate) |
 | `QA_ENGINEER` | Send results, own API keys, triage, correct classifications, file defects, manage suites and test cases |
-| `QA_LEAD` | Everything above, plus releases, ownership, quarantine and AI-report decisions, overrides, and most settings pages |
+| `QA_LEAD` | Everything above, plus releases, ownership, quarantine and AI-report decisions, overrides, deprecating, archiving and reinstating test cases, and most settings pages |
 | `ADMIN` | Everything, including user roles, SSO, feature flags and the administrator-only settings |
 
 Users see only projects they are a member of. Project membership, not role alone, decides visibility.
