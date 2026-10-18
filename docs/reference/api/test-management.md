@@ -153,7 +153,7 @@ List Test Cases
 
 
 
-Source: [backend/app/routers/test_management_cases.py:153](../../../backend/app/routers/test_management_cases.py#L153).
+Source: [backend/app/routers/test_management_cases.py:216](../../../backend/app/routers/test_management_cases.py#L216).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -400,14 +400,14 @@ Create Test Case
 
 
 
-Source: [backend/app/routers/test_management_cases.py:284](../../../backend/app/routers/test_management_cases.py#L284).
+Source: [backend/app/routers/test_management_cases.py:363](../../../backend/app/routers/test_management_cases.py#L363).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-payload: ManagedTestCaseCreate, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+payload: ManagedTestCaseCreate, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.TESTER))
 ```
 
 ### Declared wire contract
@@ -481,7 +481,7 @@ Ai Coverage Analysis
 
 
 
-Source: [backend/app/routers/test_management_ai.py:75](../../../backend/app/routers/test_management_ai.py#L75).
+Source: [backend/app/routers/test_management_ai.py:80](../../../backend/app/routers/test_management_ai.py#L80).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -562,14 +562,14 @@ Ai Generate Cases
 
 
 
-Source: [backend/app/routers/test_management_ai.py:31](../../../backend/app/routers/test_management_ai.py#L31).
+Source: [backend/app/routers/test_management_ai.py:36](../../../backend/app/routers/test_management_ai.py#L36).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-payload: AIGenerateTestCasesRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+payload: AIGenerateTestCasesRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.TESTER))
 ```
 
 ### Declared wire contract
@@ -643,14 +643,14 @@ Ai Generate Cases Async
 
 
 
-Source: [backend/app/routers/test_management_ai.py:45](../../../backend/app/routers/test_management_ai.py#L45).
+Source: [backend/app/routers/test_management_ai.py:50](../../../backend/app/routers/test_management_ai.py#L50).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-payload: AIGenerateTestCasesRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+payload: AIGenerateTestCasesRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.TESTER))
 ```
 
 ### Declared wire contract
@@ -724,7 +724,7 @@ Get Ai Task Status
 
 
 
-Source: [backend/app/routers/test_management_ai.py:56](../../../backend/app/routers/test_management_ai.py#L56).
+Source: [backend/app/routers/test_management_ai.py:61](../../../backend/app/routers/test_management_ai.py#L61).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -798,13 +798,99 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 }
 ```
 
+## POST `/api/v1/test-management/cases/bulk`
+
+Bulk Edit Test Cases
+
+Change the status, owner, priority, tags or suite of selected cases of ONE project.
+
+The body's ``project_id`` is authorised FIRST (403 before anything is
+loaded); ``case_ids`` are then loaded only within that project, so another
+project's id is ``not_found`` in the per-case results, like an unknown one.
+One 200 answers per case; a refused case never fails the request.
+
+Source: [backend/app/routers/test_management_editing.py:41](../../../backend/app/routers/test_management_editing.py#L41).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+payload: TestCaseBulkRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.TESTER))
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "bulk_edit_test_cases_api_v1_test_management_cases_bulk_post",
+  "parameters": [
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "requestBody": {
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "#/components/schemas/TestCaseBulkRequest"
+        }
+      }
+    },
+    "required": true
+  },
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/TestCaseBulkResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## GET `/api/v1/test-management/cases/evidence-gaps`
 
 Get Test Case Evidence Gaps
 
 
 
-Source: [backend/app/routers/test_management_cases.py:297](../../../backend/app/routers/test_management_cases.py#L297).
+Source: [backend/app/routers/test_management_cases.py:376](../../../backend/app/routers/test_management_cases.py#L376).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1084,14 +1170,14 @@ Deprecate Test Case
 
 
 
-Source: [backend/app/routers/test_management_cases.py:356](../../../backend/app/routers/test_management_cases.py#L356).
+Source: [backend/app/routers/test_management_cases.py:435](../../../backend/app/routers/test_management_cases.py#L435).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-case_id: uuid.UUID, payload: Optional[TestCaseDeprecateRequest]=Body(None), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user), _case=Depends(require_case_access)
+case_id: uuid.UUID, payload: Optional[TestCaseDeprecateRequest]=Body(None), db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.QA_ENGINEER)), _case=Depends(require_case_access)
 ```
 
 ### Declared wire contract
@@ -1175,7 +1261,7 @@ Get Test Case
 
 
 
-Source: [backend/app/routers/test_management_cases.py:328](../../../backend/app/routers/test_management_cases.py#L328).
+Source: [backend/app/routers/test_management_cases.py:407](../../../backend/app/routers/test_management_cases.py#L407).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`.
 
@@ -1256,14 +1342,14 @@ Update Test Case
 
 
 
-Source: [backend/app/routers/test_management_cases.py:341](../../../backend/app/routers/test_management_cases.py#L341).
+Source: [backend/app/routers/test_management_cases.py:420](../../../backend/app/routers/test_management_cases.py#L420).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-case_id: uuid.UUID, payload: ManagedTestCaseUpdate, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user), _case=Depends(require_case_access)
+case_id: uuid.UUID, payload: ManagedTestCaseUpdate, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.TESTER)), _case=Depends(require_case_access)
 ```
 
 ### Declared wire contract
@@ -1347,14 +1433,14 @@ Ai Review Case
 
 
 
-Source: [backend/app/routers/test_management_ai.py:64](../../../backend/app/routers/test_management_ai.py#L64).
+Source: [backend/app/routers/test_management_ai.py:69](../../../backend/app/routers/test_management_ai.py#L69).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-case_id: uuid.UUID, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+case_id: uuid.UUID, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.TESTER))
 ```
 
 ### Declared wire contract
@@ -1428,7 +1514,7 @@ Get Allowed Transitions
 
 
 
-Source: [backend/app/routers/test_management_cases.py:420](../../../backend/app/routers/test_management_cases.py#L420).
+Source: [backend/app/routers/test_management_cases.py:507](../../../backend/app/routers/test_management_cases.py#L507).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`.
 
@@ -1513,7 +1599,7 @@ List Comments
 
 
 
-Source: [backend/app/routers/test_management_cases.py:460](../../../backend/app/routers/test_management_cases.py#L460).
+Source: [backend/app/routers/test_management_cases.py:551](../../../backend/app/routers/test_management_cases.py#L551).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`.
 
@@ -1598,14 +1684,14 @@ Add Comment
 
 
 
-Source: [backend/app/routers/test_management_cases.py:471](../../../backend/app/routers/test_management_cases.py#L471).
+Source: [backend/app/routers/test_management_cases.py:562](../../../backend/app/routers/test_management_cases.py#L562).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-case_id: uuid.UUID, payload: TestCaseCommentCreate, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user), _case=Depends(require_case_access)
+case_id: uuid.UUID, payload: TestCaseCommentCreate, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.TESTER)), _case=Depends(require_case_access)
 ```
 
 ### Declared wire contract
@@ -1689,7 +1775,7 @@ Get Test Case History
 
 
 
-Source: [backend/app/routers/test_management_cases.py:371](../../../backend/app/routers/test_management_cases.py#L371).
+Source: [backend/app/routers/test_management_cases.py:450](../../../backend/app/routers/test_management_cases.py#L450).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`.
 
@@ -1774,14 +1860,14 @@ Request Review
 
 
 
-Source: [backend/app/routers/test_management_cases.py:382](../../../backend/app/routers/test_management_cases.py#L382).
+Source: [backend/app/routers/test_management_cases.py:465](../../../backend/app/routers/test_management_cases.py#L465).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access_for_review_target`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access_for_review_target`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-case_id: uuid.UUID, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user), _case=Depends(require_case_access_for_review_target)
+case_id: uuid.UUID, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.TESTER)), _case=Depends(require_case_access_for_review_target)
 ```
 
 ### Declared wire contract
@@ -1849,20 +1935,114 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 }
 ```
 
+## POST `/api/v1/test-management/cases/{case_id}/restore`
+
+Restore Test Case Version
+
+Save an older version's content as a new version; status and owner are kept.
+
+Answers the case unchanged (same version) when that version's content is
+already the current one.
+
+Source: [backend/app/routers/test_management_editing.py:72](../../../backend/app/routers/test_management_editing.py#L72).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`, `require_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+case_id: uuid.UUID, payload: TestCaseRestoreRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.TESTER)), _case: ManagedTestCase=Depends(require_case_access)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "restore_test_case_version_api_v1_test_management_cases__case_id__restore_post",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "case_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Case Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "requestBody": {
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "#/components/schemas/TestCaseRestoreRequest"
+        }
+      }
+    },
+    "required": true
+  },
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/ManagedTestCaseResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## POST `/api/v1/test-management/cases/{case_id}/review-action`
 
 Review Action
 
 
 
-Source: [backend/app/routers/test_management_cases.py:434](../../../backend/app/routers/test_management_cases.py#L434).
+Source: [backend/app/routers/test_management_cases.py:525](../../../backend/app/routers/test_management_cases.py#L525).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-case_id: uuid.UUID, payload: ReviewActionRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user), _case=Depends(require_case_access)
+case_id: uuid.UUID, payload: ReviewActionRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.TESTER)), _case=Depends(require_case_access)
 ```
 
 ### Declared wire contract
@@ -1946,7 +2126,7 @@ Get Reviews
 
 
 
-Source: [backend/app/routers/test_management_cases.py:449](../../../backend/app/routers/test_management_cases.py#L449).
+Source: [backend/app/routers/test_management_cases.py:540](../../../backend/app/routers/test_management_cases.py#L540).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`.
 
@@ -2031,14 +2211,14 @@ Transition Test Case
 
 
 
-Source: [backend/app/routers/test_management_cases.py:396](../../../backend/app/routers/test_management_cases.py#L396).
+Source: [backend/app/routers/test_management_cases.py:479](../../../backend/app/routers/test_management_cases.py#L479).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-case_id: uuid.UUID, payload: TestCaseTransitionRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user), _case: ManagedTestCase=Depends(require_case_access)
+case_id: uuid.UUID, payload: TestCaseTransitionRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.TESTER)), _case: ManagedTestCase=Depends(require_case_access)
 ```
 
 ### Declared wire contract
@@ -2330,7 +2510,7 @@ Ai Create Plan
 
 
 
-Source: [backend/app/routers/test_management_plans.py:163](../../../backend/app/routers/test_management_plans.py#L163).
+Source: [backend/app/routers/test_management_plans.py:175](../../../backend/app/routers/test_management_plans.py#L175).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -2417,7 +2597,7 @@ Ai Create Plan Async
 
 
 
-Source: [backend/app/routers/test_management_plans.py:213](../../../backend/app/routers/test_management_plans.py#L213).
+Source: [backend/app/routers/test_management_plans.py:225](../../../backend/app/routers/test_management_plans.py#L225).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -2947,7 +3127,7 @@ Add Plan Item
 
 
 
-Source: [backend/app/routers/test_management_plans.py:114](../../../backend/app/routers/test_management_plans.py#L114).
+Source: [backend/app/routers/test_management_plans.py:126](../../../backend/app/routers/test_management_plans.py#L126).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_plan_access`.
 
@@ -3038,7 +3218,7 @@ Remove Plan Item
 
 
 
-Source: [backend/app/routers/test_management_plans.py:128](../../../backend/app/routers/test_management_plans.py#L128).
+Source: [backend/app/routers/test_management_plans.py:140](../../../backend/app/routers/test_management_plans.py#L140).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_plan_access`.
 
@@ -3122,7 +3302,7 @@ Record Execution
 
 
 
-Source: [backend/app/routers/test_management_plans.py:140](../../../backend/app/routers/test_management_plans.py#L140).
+Source: [backend/app/routers/test_management_plans.py:152](../../../backend/app/routers/test_management_plans.py#L152).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_plan_access`.
 
@@ -4559,7 +4739,7 @@ Suite-match semantics: per-row ``tc.suite_name`` OR run-level
 the Java class as the per-row name but ``testlookup.suite`` at the
 run level still surfaces the case under the run-level suite.
 
-Source: [backend/app/routers/test_management_exports.py:1225](../../../backend/app/routers/test_management_exports.py#L1225).
+Source: [backend/app/routers/test_management_exports.py:1226](../../../backend/app/routers/test_management_exports.py#L1226).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -4704,7 +4884,7 @@ Get Suite Changes
 
 Return suite membership change events, optionally filtered by run.
 
-Source: [backend/app/routers/test_management_exports.py:1469](../../../backend/app/routers/test_management_exports.py#L1469).
+Source: [backend/app/routers/test_management_exports.py:1474](../../../backend/app/routers/test_management_exports.py#L1474).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -4837,7 +5017,7 @@ Get Suite Deleted
 
 Return deleted/needs_review members from the <suite>-deleted bucket.
 
-Source: [backend/app/routers/test_management_exports.py:1516](../../../backend/app/routers/test_management_exports.py#L1516).
+Source: [backend/app/routers/test_management_exports.py:1521](../../../backend/app/routers/test_management_exports.py#L1521).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -4941,7 +5121,7 @@ Get Suite Membership
 
 Return current suite membership records from the traceability model.
 
-Source: [backend/app/routers/test_management_exports.py:1419](../../../backend/app/routers/test_management_exports.py#L1419).
+Source: [backend/app/routers/test_management_exports.py:1424](../../../backend/app/routers/test_management_exports.py#L1424).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -5066,7 +5246,7 @@ Per-day trend points for one suite over the time window.
 suite is the path segment; a ``suite_name`` query parameter cannot widen
 or narrow it and is reported in ``meta.ignored_filters``.
 
-Source: [backend/app/routers/test_management_exports.py:1132](../../../backend/app/routers/test_management_exports.py#L1132).
+Source: [backend/app/routers/test_management_exports.py:1133](../../../backend/app/routers/test_management_exports.py#L1133).
 
 Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 

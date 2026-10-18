@@ -530,6 +530,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/test-management/cases/ai-generate` | Ai Generate Cases | [Test Management](api/test-management.md) |
 | POST | `/api/v1/test-management/cases/ai-generate/async` | Ai Generate Cases Async | [Test Management](api/test-management.md) |
 | GET | `/api/v1/test-management/cases/ai-task/{task_id}` | Get Ai Task Status | [Test Management](api/test-management.md) |
+| POST | `/api/v1/test-management/cases/bulk` | Bulk Edit Test Cases | [Test Management](api/test-management.md) |
 | GET | `/api/v1/test-management/cases/evidence-gaps` | Get Test Case Evidence Gaps | [Test Management](api/test-management.md) |
 | GET | `/api/v1/test-management/cases/export/excel` | Export Test Cases Excel | [Test Management](api/test-management.md) |
 | GET | `/api/v1/test-management/cases/needs-review` | Cases Needing Review | [RAG Generation](api/rag-generation.md) |
@@ -547,6 +548,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/test-management/cases/{case_id}/dismiss-stale` | Dismiss Stale | [RAG Generation](api/rag-generation.md) |
 | GET | `/api/v1/test-management/cases/{case_id}/history` | Get Test Case History | [Test Management](api/test-management.md) |
 | POST | `/api/v1/test-management/cases/{case_id}/request-review` | Request Review | [Test Management](api/test-management.md) |
+| POST | `/api/v1/test-management/cases/{case_id}/restore` | Restore Test Case Version | [Test Management](api/test-management.md) |
 | POST | `/api/v1/test-management/cases/{case_id}/review-action` | Review Action | [Test Management](api/test-management.md) |
 | GET | `/api/v1/test-management/cases/{case_id}/reviews` | Get Reviews | [Test Management](api/test-management.md) |
 | POST | `/api/v1/test-management/cases/{case_id}/transition` | Transition Test Case | [Test Management](api/test-management.md) |
@@ -615,4 +617,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **606 HTTP operations**, **510 paths**, **86 domain pages**.
+Total: **608 HTTP operations**, **512 paths**, **86 domain pages**.

@@ -52,6 +52,34 @@ locally by default.
 
 ### Added
 
+- **Edit a test case and change its status in the page** (owner request
+  2026-10-17, wave W28, TCM-01 to TCM-05). On `/test-management` a case's
+  Details tab has **Edit**: every field in one in-page form, saved as one new
+  version with who saved it and how (person, AI or API). If someone else saved
+  first, the form says who changed what and offers **Reload theirs** or **Keep
+  editing**; nothing is overwritten silently. A toolbar shows the status moves
+  the reader may make, labelled by outcome (**Make active**, **Request review**,
+  **Back to draft** …). A per-project setting, **Require review before a test
+  case becomes Active** (Edit Project, off by default), decides whether a case
+  goes Draft → Active directly or through today's review; with review on, a QA
+  lead or admin may approve their own case with a reason, and a step, expected
+  result or precondition edit of an approved case is marked "edited after
+  approval". Select cases with the row checkboxes (or Ctrl+E / ⌘E) to change
+  status, owner, priority, tags or suite in bulk, with a result per case. The
+  History tab shows before → after for every version (steps step by step) and
+  can **Compare with current** and **Restore this version** (content only; the
+  status stays). A plan item shows the case version it ran (`v3 · case now
+  v5`) and that version's steps. New routes: `POST
+  /api/v1/test-management/cases/bulk`, `POST
+  /api/v1/test-management/cases/{id}/restore`. Not built, on purpose: custom
+  fields, a workflow designer, requirements management, Jira sync of cases,
+  shared step libraries.
+
+- **The chat keeps its suggested questions** (owner request 2026-10-17, wave
+  W28, CHAT-01). During a conversation the starter prompts stay as a row of
+  chips above the message box; a chip asks its question without clearing what
+  you typed. **Hide suggestions** is remembered in this browser.
+
 - **No page opens a popup any more** (wave W27b, PAN-05 to PAN-07, finishing
   the owner's in-page request). The test library (new case, plans, AI
   generate, strategy, suites, approvals, insights, citations, every reason
@@ -330,6 +358,27 @@ locally by default.
 
 ### Changed
 
+- **What W28 changes on an existing install.** Migration 0222 adds five
+  columns and no table. Every project starts with review OFF, so a Draft case
+  can be made Active directly until a QA lead turns **Require review** on for
+  that project. Editing a case no longer moves an approved or active case to
+  Needs update. A VIEWER can no longer create, edit, comment on, request a
+  review of, AI-generate or AI-review test cases through the API (403
+  `Requires at least TESTER role`; a TESTER can); deleting a case needs
+  QA_ENGINEER. Deprecate, Archive and Reinstate stay QA_LEAD or above. Masked
+  parameter values are masked in the `/cases` and `/history` answers, and a
+  PATCH that does not resend one keeps it. Link Suite links only approved and
+  active cases unless "Include cases that are not Active" is ticked; deprecated
+  and archived cases leave the duplicate queue, the evidence gaps and the
+  Suites tab's count (they are still listed). A lead approving their own case
+  with notes now succeeds (it was 403). The API-key snippet's comment and the
+  Insights automation split (now adds to 100) are corrected.
+
+- **CI runs the browser journeys in parallel** (CI-01). The hermetic journeys
+  run as four sharded jobs and the chart visual regression as two, instead of
+  one after the other in the docs job (85 + 40 minutes on one runner); each
+  job stops after 60 minutes.
+
 - **What W09 changes on an existing install.** `flaky_auto_quarantine` turns
   ON where nobody ever set it (migration 0219; a row an admin changed keeps
   its value, and the downgrade reverts only the row it flipped); nothing is
@@ -492,6 +541,10 @@ locally by default.
   changed nothing.
 
 ### Fixed
+
+- Editing a test case so that its suite or owner changed failed with a 500 on
+  PostgreSQL (the audit row stored a raw UUID in a JSON column); the audit
+  values are now JSON-safe and carry no masked parameter value (W28).
 
 - **A deploy no longer answers 504 for a few seconds.** The API and frontend
   pods now keep serving for 10 s after they are told to stop (until the
