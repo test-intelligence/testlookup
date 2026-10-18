@@ -509,6 +509,14 @@ class ProjectResponse(TimestampMixin):
 
     model_config = ConfigDict(from_attributes=True)
 
+    @field_validator("require_case_review", mode="before")
+    @classmethod
+    def _unflushed_review_setting_is_off(cls, value: Any) -> Any:
+        # The column is NOT NULL DEFAULT false, but its ORM default applies only
+        # at INSERT: a Project answered before its flush (a hand-built row, a
+        # session double) still carries None. That is the default, so: off.
+        return False if value is None else value
+
 
 class DeleteRunRequest(BaseModel):
     """Payload for ``DELETE /api/v1/runs/{run_id}``.

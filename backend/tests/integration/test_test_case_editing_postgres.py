@@ -74,6 +74,13 @@ async def pg_engine():
         yield engine
     finally:
         await engine.dispose()
+        # The routes' post-commit gauge refresh (emit_staged_test_management_metrics)
+        # reads through the app's own cached engine, built on THIS test's loop:
+        # dispose it here, or a later module's loop inherits connections bound to
+        # a closed one ("Event loop is closed" in its fixture set-up).
+        from app.db.postgres import dispose_engine_for_loop
+
+        await dispose_engine_for_loop()
 
 
 def _user(token: str, name: str, role: UserRole) -> User:
