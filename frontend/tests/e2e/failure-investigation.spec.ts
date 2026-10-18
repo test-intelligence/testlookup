@@ -1,6 +1,7 @@
 import { test, expect, Page } from '@playwright/test';
 import { performRealLogin } from './realLoginHelper';
 import { mockJson, seedActiveProject } from './apiMock';
+import { opened, openedByHeading } from '../lib/inPage';
 
 /**
  * Failure-investigation workflow (Tier-2): the real mutations behind triaging a
@@ -55,7 +56,7 @@ test.describe('Failure investigation — defect intake', () => {
       .toBeVisible({ timeout: 10000 });
     await newDefectBtn.click();
 
-    const dialog = page.getByRole('dialog', { name: /new defect/i });
+    const dialog = opened(page, 'New defect');
     await expect(dialog, 'the intake modal did not open for a seeded project')
       .toBeVisible({ timeout: 8000 });
 
@@ -141,7 +142,7 @@ test.describe('Failure investigation — reassignment', () => {
     await reassignBtn.click();
 
     // Modal loads its options; the sole QA engineer is pre-selected.
-    const dialog = page.getByRole('dialog');
+    const dialog = openedByHeading(page, 'Reassign failure');
     await expect(dialog.getByText(/QA Engineer One/)).toBeVisible({ timeout: 8000 });
 
     const submit = dialog.getByRole('button', { name: 'Reassign', exact: true });

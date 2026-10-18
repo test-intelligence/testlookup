@@ -1230,3 +1230,56 @@ export function webhooksInPageWorld() {
   ]
   return { handlers, writes, rows }
 }
+
+// ── Phase 2 (the in-page shape specs, the crawl, the visual regions) ───────
+// Added after phase 1 was committed: nothing above changes (the characterization specs read it).
+
+/** An event older than the loaded feed (a deep link from the Releases rail): its detail is read, it is in no row. */
+export const ACTIVITY_OLD_EVENT = {
+  ...ACTIVITY_EVENTS[1],
+  id: 'ev-old-9',
+  summary: 'Release 2026.08 was archived',
+  event_type: 'release.archived',
+  category: 'release',
+  occurred_at: isoAgo(40),
+}
+
+/** `/settings/team-channels`: two teams (Identity routed to Slack, Payments not), and the channel's DELETE. */
+export function teamChannelsWorld() {
+  const writes: RecordedWrite[] = []
+  const channel = (team: string) => ({
+    id: `ch-${team}`,
+    project_id: PROJECT_ID,
+    team_name: team,
+    channel_type: 'slack',
+    target: `https://hooks.slack.example.test/${team.toLowerCase()}`,
+    is_active: true,
+    created_at: '2026-09-01T00:00:00Z',
+    updated_at: null,
+  })
+  const channels = new Map([['Identity', channel('Identity')]])
+  const handlers: ApiHandlers = [
+    [new RegExp(`^/api/v1/projects/${PROJECT_ID}/ownership/team-channels/[^/]+$`), (request) => {
+      recordIn(writes, request)
+      channels.delete(decodeURIComponent(request.path.split('/').pop() ?? ''))
+      return respond(204)
+    }, 'DELETE'],
+    [`/api/v1/projects/${PROJECT_ID}/ownership/team-channels`, () => [...channels.values()]],
+    [`/api/v1/projects/${PROJECT_ID}/ownership/rules`, () => [
+      ownershipRuleRow('88888888-8888-4888-8888-0000000002b1', 'suite', 'payments*', 'Payments', 1),
+      ownershipRuleRow('88888888-8888-4888-8888-0000000002b2', 'suite', 'auth*', 'Identity', 2),
+    ]],
+    ...LAYOUT,
+  ]
+  return { handlers, writes }
+}
+
+/** `activityInPageWorld()` plus the detail of `ACTIVITY_OLD_EVENT` (not in the feed). */
+export function activityDeepLinkWorld() {
+  const base = activityInPageWorld()
+  const handlers: ApiHandlers = [
+    [`/api/v1/projects/${PROJECT_ID}/activity/${ACTIVITY_OLD_EVENT.id}`, () => ({ ...ACTIVITY_OLD_EVENT, diff: null })],
+    ...base.handlers,
+  ]
+  return { handlers }
+}

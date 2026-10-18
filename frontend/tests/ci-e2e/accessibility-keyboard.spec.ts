@@ -1,5 +1,6 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
+import { opened } from '../lib/inPage'
 
 const PROJECT_ID = '00000000-0000-4000-8000-000000000101'
 const REVIEW_ID = '00000000-0000-4000-8000-000000000201'
@@ -114,29 +115,36 @@ test.describe('hermetic keyboard and landmark journeys', () => {
     await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible()
   })
 
-  test('traps focus in the project dialog and restores the invoking control', async ({ page }) => {
+  // W27b PAN-05 (§2.3): New Project is a section of the page, not a dialog. Focus moves in on Project Name; Tab is NOT
+  // trapped (from the last control it leaves the section, as anywhere in the page); Escape inside closes it and focus
+  // returns to New Project.
+  test('the in-page New Project form takes focus without trapping Tab and restores the invoking control', async ({ page }) => {
     await page.goto('/projects')
     const newProject = page.getByRole('button', { name: 'New Project' })
     await newProject.focus()
     await newProject.press('Enter')
 
-    const dialog = page.getByRole('dialog', { name: 'New Project' })
-    await expect(dialog).toBeVisible()
-    await expect(page.getByLabel('Project Name *')).toBeFocused()
+    const section = opened(page, 'New Project')
+    await expect(section).toBeVisible()
+    await expect(page.locator('[aria-modal="true"]'), 'no modal').toHaveCount(0)
+    await expect(page.getByRole('dialog'), 'no dialog').toHaveCount(0)
+    const name = page.getByLabel('Project Name *')
+    await expect(name).toBeFocused()
 
-    const focusable = dialog.locator(
+    const focusable = section.locator(
       'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]):not([type="hidden"]),select:not([disabled]),[tabindex]:not([tabindex="-1"])',
     )
-    const first = focusable.first()
-    const last = focusable.last()
-    await first.focus()
-    await page.keyboard.press('Shift+Tab')
-    await expect(last).toBeFocused()
+    const inside = () => section.evaluate((el) => el.contains(document.activeElement))
+    await focusable.last().focus()
     await page.keyboard.press('Tab')
-    await expect(first).toBeFocused()
+    expect(await inside(), 'Tab from the last control leaves the section (not trapped)').toBe(false)
+    await focusable.first().focus()
+    await page.keyboard.press('Shift+Tab')
+    expect(await inside(), 'Shift+Tab from the first control leaves it too').toBe(false)
 
+    await name.focus()
     await page.keyboard.press('Escape')
-    await expect(dialog).toHaveCount(0)
+    await expect(section).toHaveCount(0)
     await expect(newProject).toBeFocused()
   })
 

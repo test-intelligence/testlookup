@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { performRealLogin } from './realLoginHelper';
 import { mockJson, seedActiveProject } from './apiMock';
+import { answerConfirm } from '../lib/inPage';
 
 /**
  * API Keys management (/settings/api-keys) — deep, mocked CRUD coverage.
@@ -140,13 +141,11 @@ test.describe('API Keys — management', () => {
     ).toBeVisible({ timeout: 10000 });
 
     // First, dismiss the confirm() → no delete.
-    page.once('dialog', (d) => d.dismiss());
-    await revoke.click();
+    await answerConfirm(page, revoke, 'dismiss');
     expect(deleteCalled).toBe(false);
 
     // Then accept it → DELETE fires + success toast.
-    page.once('dialog', (d) => d.accept());
-    await revoke.click();
+    await answerConfirm(page, revoke, 'accept', { confirmLabel: 'Revoke' });
     await expect(page.getByText('API key revoked')).toBeVisible({ timeout: 8000 });
     expect(deleteCalled).toBe(true);
   });

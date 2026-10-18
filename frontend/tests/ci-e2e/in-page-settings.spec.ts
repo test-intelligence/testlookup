@@ -548,7 +548,8 @@ for (const width of [1280, 1440]) {
       const del = page.getByRole('button', { name: `Delete ${WEBHOOK.name}` })
       await expect(del).toBeVisible()
       await networkQuiet(page, api)
-      const hookCard = del.locator('xpath=ancestor::*[contains(concat(" ", @class, " "), " card ")][1]')
+      // The webhook's card: the list item of the `space-y-2` list that holds its header row (a bordered `div`).
+      const hookCard = page.locator('div.space-y-2 > div').filter({ has: del })
       await expectStrip(page, '/settings/webhooks delete', width, del, `Delete webhook "${WEBHOOK.name}"?`,
         async (s) => { await expect(hookCard.locator(s), 'inside the webhook card').toHaveCount(1) }, hookCard)
       expect(hooks.writes).toEqual([])

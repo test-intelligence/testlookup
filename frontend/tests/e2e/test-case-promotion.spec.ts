@@ -1,6 +1,7 @@
 import { expect, Page, test } from '@playwright/test';
 import { mockJson, seedActiveProject } from './apiMock';
 import { performRealLogin } from './realLoginHelper';
+import { opened } from '../lib/inPage';
 
 const PROJECT = { id: '00000000-0000-4000-8000-0000000000e2', name: 'E2E Project' };
 const AUTOMATION_CASE = {
@@ -160,7 +161,7 @@ test.describe('Automation promotion', () => {
     await page.goto('/canonical-test-cases/canonical-1');
 
     await page.getByRole('button', { name: 'Unlink managed case' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Unlink managed case' });
+    const dialog = opened(page, 'Unlink managed case');
     const confirm = dialog.getByRole('button', { name: 'Unlink' });
     await expect(confirm).toBeDisabled();
     await dialog.getByRole('textbox').fill('Incorrect automation mapping');
@@ -189,7 +190,7 @@ test.describe('Automation promotion', () => {
 
     await page.getByRole('button', { name: /Unconfirmed automation retirements/ }).click();
     await page.getByRole('button', { name: 'Confirm retirement' }).click();
-    const dialog = page.getByRole('dialog', { name: 'Confirm automation retirement' });
+    const dialog = opened(page, 'Confirm automation retirement');
     const confirm = dialog.getByRole('button', { name: 'Confirm retirement' });
     await expect(confirm).toBeDisabled();
     await dialog.getByRole('textbox').fill('Removed intentionally from the source suite');

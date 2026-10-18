@@ -21,7 +21,7 @@ In **Test cases → More → Knowledge** (or **AI Generate → From documents**;
 
 1. Pick the knowledge source(s) to ground on (the source picker).
 2. Generate — the AI retrieves the most relevant chunks and drafts cases from them.
-3. Each draft arrives with **citations**: the exact source passages behind it, viewable in the citation drawer. A case that can't cite its source isn't produced.
+3. Each draft arrives with **citations**: the exact source passages behind it, shown right under that case when you click its **Citations** (another case's **Citations** replaces them). A case that can't cite its source isn't produced.
 
 ## Reviewing before they enter the catalog
 

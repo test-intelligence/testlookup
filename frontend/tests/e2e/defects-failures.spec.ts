@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { performRealLogin } from './realLoginHelper';
 import { seedActiveProject } from './apiMock';
+import { opened } from '../lib/inPage';
 
 test.describe('Defects and Failure Analysis', () => {
 
@@ -54,11 +55,11 @@ test.describe('Defect Intake modal', () => {
     await newDefectBtn.click();
 
     // In All-Projects mode the click toasts and does NOT open the modal.
-    const dialog = page.getByRole('dialog', { name: /new defect/i });
-    const opened = await dialog.waitFor({ state: 'visible', timeout: 4000 })
+    const dialog = opened(page, 'New defect');
+    const didOpen = await dialog.waitFor({ state: 'visible', timeout: 4000 })
       .then(() => true)
       .catch(() => false);
-    if (!opened) {
+    if (!didOpen) {
       // Verify the toast hint reached the user and bail.
       const toast = page.locator('text=/pick a single project/i').first();
       await expect(toast).toBeVisible({ timeout: 4000 });
@@ -76,7 +77,7 @@ test.describe('Defect Intake modal', () => {
     await expect(newDefectBtn, 'the New defect CTA did not render for a seeded project')
       .toBeVisible({ timeout: 10000 });
     await newDefectBtn.click();
-    const dialog = page.getByRole('dialog', { name: /new defect/i });
+    const dialog = opened(page, 'New defect');
     await expect(dialog, 'the intake modal did not open for a seeded project')
       .toBeVisible({ timeout: 8000 });
 
@@ -98,7 +99,7 @@ test.describe('Defect Intake modal', () => {
     await expect(newDefectBtn, 'the New defect CTA did not render for a seeded project')
       .toBeVisible({ timeout: 10000 });
     await newDefectBtn.click();
-    const dialog = page.getByRole('dialog', { name: /new defect/i });
+    const dialog = opened(page, 'New defect');
     await expect(dialog, 'the intake modal did not open for a seeded project')
       .toBeVisible({ timeout: 8000 });
 
@@ -115,7 +116,7 @@ test.describe('Defect Intake modal', () => {
     await expect(newDefectBtn, 'the New defect CTA did not render for a seeded project')
       .toBeVisible({ timeout: 10000 });
     await newDefectBtn.click();
-    const dialog = page.getByRole('dialog', { name: /new defect/i });
+    const dialog = opened(page, 'New defect');
     await expect(dialog, 'the intake modal did not open for a seeded project')
       .toBeVisible({ timeout: 8000 });
     await page.keyboard.press('Escape');

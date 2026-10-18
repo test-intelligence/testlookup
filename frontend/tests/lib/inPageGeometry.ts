@@ -112,6 +112,21 @@ export async function precedes(a: Locator, b: Locator): Promise<boolean> {
   }, handle)
 }
 
+/**
+ * W27b: `b` is the next thing after `a` in the page's flow: the element right after `a` (climbing out of the wrappers
+ * `a` is the last child of) is `b` or wraps it. "Right after the cadence card", "right above the tests table".
+ */
+export async function followedBy(a: Locator, b: Locator): Promise<boolean> {
+  const second = await b.elementHandle()
+  return a.evaluate((first, target) => {
+    if (!target) return false
+    let el: Element | null = first
+    while (el && !el.nextElementSibling) el = el.parentElement
+    const next = el?.nextElementSibling ?? null
+    return !!next && (next === target || next.contains(target as Node))
+  }, second)
+}
+
 /** Print one `INPAGE` line (read by the orchestrator from CI's log). */
 export function inPageLine(what: string, width: number, numbers: Record<string, unknown>) {
   const line = `INPAGE ${what} @${width} ${JSON.stringify(numbers)}`
