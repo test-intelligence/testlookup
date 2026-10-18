@@ -116,6 +116,7 @@ import FixTaggingPanel from './coverage/FixTaggingPanel'
 import EmailReportDialog from './trends/EmailReportDialog'
 import PinNoteDialog from './trends/PinNoteDialog'
 import { CreatedKeyModal } from '@/pages/settings/ApiKeysPage'
+import CaseEditForm from '@/pages/test-management/CaseEditForm'
 import { MemoryRouter } from 'react-router-dom'
 
 type Render = (onClose: () => void) => ReactElement
@@ -343,6 +344,23 @@ const W27B: Array<[string, Container]> = [
       />
     ),
     focus: (root) => within(root).getByRole('button', { name: 'Close' }),
+  }],
+  // W28 G-C (TCM-01): the test-case edit form, in the case pane's Details tab.
+  ['CaseEditForm', {
+    render: (onClose) => (
+      <CaseEditForm
+        caseItem={{
+          id: 'case-1', project_id: 'p-1', title: 'Sign in with SSO', test_type: 'functional', priority: 'high',
+          severity: 'major', test_suite_id: null, status: 'draft', version: 1, is_automated: false,
+          automation_status: 'not_automated', ai_generated: false, created_at: '2026-10-01T00:00:00Z',
+          updated_at: '2026-10-01T00:00:00Z', steps: [{ step_number: 1, action: 'Open the login page' }],
+        }}
+        suiteOptions={['Login']}
+        onCancel={onClose}
+        onSaved={vi.fn()}
+      />
+    ),
+    focus: (root) => within(root).getByRole('textbox', { name: 'Title' }),
   }],
 ]
 

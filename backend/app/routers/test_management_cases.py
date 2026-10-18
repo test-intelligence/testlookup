@@ -6,15 +6,15 @@ from fastapi import APIRouter, Body, Depends, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user
+from app.core.deps import get_current_active_user, require_role
 from app.db.postgres import get_db
 from app.models.postgres import (
     ManagedTestCase,
     TestCaseComment,
     TestCaseLifecycleState,
     TestCaseReview,
-    TestCaseVersion,
     User,
+    UserRole,
 )
 from app.models.schemas import (
     AllowedTransitionResponse,
@@ -28,6 +28,7 @@ from app.models.schemas import (
     TestCaseReviewResponse,
     TestCaseDeprecateRequest,
     EvidenceGapListResponse,
+    TestCaseParameterSchema,
     TestCaseTransitionRequest,
     TestCaseVersionResponse,
 )
@@ -49,15 +50,31 @@ from app.services.test_management_service import (
     update_managed_test_case,
 )
 from app.services.test_case_lifecycle_service import (
+    RUNNABLE_STATES,
     lifecycle_actions_for,
+    reason_required_actions_for,
     require_lifecycle_v2_enabled,
     transition,
     transition_availability_for,
+)
+from app.services.test_case_parameters import mask_parameters
+from app.services.test_case_review_policy import (
+    project_requires_case_review,
+    review_required_by_project,
 )
 from app.services.test_management_metrics_service import emit_staged_test_management_metrics
 from app.services.test_suite_service import list_test_case_evidence_gaps
 
 router = APIRouter()
+
+# W28 (TCM-01, the API role gap): every route that writes a test case, its
+# review, its comments or its AI notes takes its floor AS A PARAMETER
+# (``current_user: User = Depends(require_role(...))``), so the decorator lines
+# and their activity-coverage baseline keys stay byte-identical. Reads stay
+# open to every project member. Below QA_LEAD ``require_role`` never refuses a
+# project-bound key, so no ``allow_project_key`` opt-in is involved. TESTER
+# creates, edits, comments and requests a review; QA_ENGINEER deprecates
+# through DELETE (the lifecycle itself still requires QA_LEAD to deprecate).
 
 
 def _owner_id(test_case: ManagedTestCase) -> uuid.UUID | None:
@@ -135,14 +152,60 @@ async def _attach_latest_executions(
             resp.last_execution_status = str(getattr(run_status, "value", run_status))
 
 
-async def _case_response(
+def _validate_case(test_case: ManagedTestCase) -> ManagedTestCaseResponse:
+    """The ORM row as the response model, its masked parameter values removed.
+
+    The case answer used to return authored parameter values raw, masked ones
+    included, while the canonical detail masked them (W28 TCM-01, contract
+    §0.16). The row is never mutated: the mask is applied to a copy.
+    """
+    response = row(test_case, ManagedTestCaseResponse)
+    masked = mask_parameters(getattr(test_case, "parameters", None))
+    response.parameters = (
+        None
+        if masked is None
+        else [TestCaseParameterSchema.model_validate(item) for item in masked]
+    )
+    return response
+
+
+async def case_response(
     db: AsyncSession,
     test_case: ManagedTestCase,
     current_user: User,
     owner_names: dict[uuid.UUID, str] | None = None,
+    *,
+    review_required: bool | None = None,
 ) -> ManagedTestCaseResponse:
-    response = row(test_case, ManagedTestCaseResponse)
-    response.allowed_actions = await lifecycle_actions_for(db, test_case, current_user)
+    """One authored case as the API answers it (public: G-B's router uses it).
+
+    ``review_required`` None reads the project's setting (one primary-key
+    read); the list route passes it from one read for the whole page.
+    """
+    response = _validate_case(test_case)
+    if review_required is None:
+        review_required = await project_requires_case_review(db, test_case.project_id)
+    review_required = review_required is True
+    response.allowed_actions = await lifecycle_actions_for(
+        db, test_case, current_user, review_required=review_required
+    )
+    # Empty when lifecycle v2 is off for the project (no moves advertised).
+    allowed = set(response.allowed_actions)
+    response.reason_required_actions = [
+        action
+        for action in reason_required_actions_for(
+            test_case, current_user, review_required=review_required
+        )
+        if action in allowed
+    ]
+    response.review_required = review_required
+    marker = getattr(test_case, "edited_since_approval_version", None)
+    response.edited_since_approval_version = marker if isinstance(marker, int) else None
+    response.edited_after_approval = bool(
+        review_required
+        and test_case.status in RUNNABLE_STATES
+        and response.edited_since_approval_version is not None
+    )
     if owner_names is None:
         owner_names = await _owner_names(db, [test_case])
     owner_id = _owner_id(test_case)
@@ -223,7 +286,15 @@ async def list_test_cases(
             suite_name=suite_name,
         )
         names = await _owner_names(db, list(items))
-        responses = [await _case_response(db, item, current_user, names) for item in items]
+        # After the names: the integration suite scripts exactly one result.
+        reviews = await review_required_by_project(db, {item.project_id for item in items})
+        responses = [
+            await case_response(
+                db, item, current_user, names,
+                review_required=reviews.get(item.project_id, False),
+            )
+            for item in items
+        ]
         await _attach_latest_executions(db, list(zip(items, responses)))
         return {
             "items": responses,
@@ -262,8 +333,16 @@ async def list_test_cases(
         case_ids=automation_ids,
     )
     names = await _owner_names(db, managed_rows)
+    reviews = await review_required_by_project(db, {item.project_id for item in managed_rows})
     managed_responses = [
-        (item, await _case_response(db, item, current_user, names)) for item in managed_rows
+        (
+            item,
+            await case_response(
+                db, item, current_user, names,
+                review_required=reviews.get(item.project_id, False),
+            ),
+        )
+        for item in managed_rows
     ]
     await _attach_latest_executions(db, managed_responses)
     by_identity = {
@@ -285,13 +364,13 @@ async def list_test_cases(
 async def create_test_case(
     payload: ManagedTestCaseCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_role(UserRole.TESTER)),
 ):
     test_case = await create_managed_test_case(db, payload, current_user)
     await db.commit()
     await emit_staged_test_management_metrics(db)
     await db.refresh(test_case)
-    return await _case_response(db, test_case, current_user)
+    return await case_response(db, test_case, current_user)
 
 
 @router.get("/cases/evidence-gaps", response_model=EvidenceGapListResponse)
@@ -333,7 +412,7 @@ async def get_test_case(
     _case=Depends(require_case_access),
 ):
     test_case = await get_test_case_or_404(db, case_id)
-    response = await _case_response(db, test_case, current_user)
+    response = await case_response(db, test_case, current_user)
     await _attach_latest_executions(db, [(test_case, response)])
     return response
 
@@ -343,14 +422,14 @@ async def update_test_case(
     case_id: uuid.UUID,
     payload: ManagedTestCaseUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_role(UserRole.TESTER)),
     _case=Depends(require_case_access),
 ):
     test_case = await update_managed_test_case(db, case_id, payload, current_user)
     await db.commit()
     await emit_staged_test_management_metrics(db)
     await db.refresh(test_case)
-    return await _case_response(db, test_case, current_user)
+    return await case_response(db, test_case, current_user)
 
 
 @router.delete("/cases/{case_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -358,7 +437,7 @@ async def deprecate_test_case(
     case_id: uuid.UUID,
     payload: Optional[TestCaseDeprecateRequest] = Body(None),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
     _case=Depends(require_case_access),
 ):
     await deprecate_managed_test_case(
@@ -375,15 +454,19 @@ async def get_test_case_history(
     current_user: User = Depends(get_current_active_user),
     _case=Depends(require_case_access),
 ):
-    result = await db.execute(select(TestCaseVersion).where(TestCaseVersion.test_case_id == case_id).order_by(TestCaseVersion.version.desc()).limit(100))
-    return [row(version, TestCaseVersionResponse) for version in result.scalars().all()]
+    # W28 TCM-04 / TCM-05: newest first, at most 100 versions, each with who
+    # saved it (name), its source, its owner, masked parameters and the plan
+    # executions recorded against it (services/test_case_editing_service.py).
+    from app.services.test_case_editing_service import case_history  # noqa: PLC0415
+
+    return await case_history(db, _case)
 
 
 @router.post("/cases/{case_id}/request-review", response_model=TestCaseReviewResponse)
 async def request_review(
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_role(UserRole.TESTER)),
     _case=Depends(require_case_access_for_review_target),
 ):
     review = await request_test_case_review(db, case_id, current_user)
@@ -398,10 +481,11 @@ async def transition_test_case(
     case_id: uuid.UUID,
     payload: TestCaseTransitionRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_role(UserRole.TESTER)),
     _case: ManagedTestCase = Depends(require_case_access),
 ):
     await require_lifecycle_v2_enabled(db, _case, current_user)
+    review_required = await project_requires_case_review(db, _case.project_id)
     result = await transition(
         db,
         case_id,
@@ -410,11 +494,14 @@ async def transition_test_case(
         reason=payload.reason,
         notes=payload.notes,
         expected_version=payload.expected_version,
+        review_required=review_required,
     )
     await db.commit()
     await emit_staged_test_management_metrics(db)
     await db.refresh(result.case)
-    return await _case_response(db, result.case, current_user)
+    return await case_response(
+        db, result.case, current_user, review_required=review_required
+    )
 
 
 @router.get(
@@ -428,7 +515,11 @@ async def get_allowed_transitions(
     _case: ManagedTestCase = Depends(require_case_access),
 ):
     await require_lifecycle_v2_enabled(db, _case, current_user)
-    return transition_availability_for(_case, current_user)
+    return transition_availability_for(
+        _case,
+        current_user,
+        review_required=await project_requires_case_review(db, _case.project_id),
+    )
 
 
 @router.post("/cases/{case_id}/review-action", response_model=ManagedTestCaseResponse)
@@ -436,14 +527,14 @@ async def review_action(
     case_id: uuid.UUID,
     payload: ReviewActionRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_role(UserRole.TESTER)),
     _case=Depends(require_case_access),
 ):
     test_case = await apply_review_action(db, case_id, payload, current_user)
     await db.commit()
     await emit_staged_test_management_metrics(db)
     await db.refresh(test_case)
-    return await _case_response(db, test_case, current_user)
+    return await case_response(db, test_case, current_user)
 
 
 @router.get("/cases/{case_id}/reviews", response_model=list[TestCaseReviewResponse])
@@ -473,7 +564,7 @@ async def add_comment(
     case_id: uuid.UUID,
     payload: TestCaseCommentCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_role(UserRole.TESTER)),
     _case=Depends(require_case_access),
 ):
     comment = await add_test_case_comment(db, case_id, payload, current_user)

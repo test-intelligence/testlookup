@@ -3,6 +3,12 @@ import toast from 'react-hot-toast'
 
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useAllowedTestCaseTransitions } from '@/hooks/useTestManagement'
+import {
+  ACTION_LABELS,
+  REASON_ACTIONS,
+  REVIEW_NOTES_ACTIONS,
+  transitionErrorMessage,
+} from '@/pages/test-management/caseStatusModel'
 import { testManagementService } from '@/services/testManagementService'
 import type {
   AllowedTestCaseTransition,
@@ -10,52 +16,6 @@ import type {
   TestCaseTransitionAction,
 } from '@/types/test-management'
 import TransitionReasonDialog from './TransitionReasonDialog'
-
-const ACTION_LABELS: Record<TestCaseTransitionAction, string> = {
-  request_review: 'Request review',
-  claim_review: 'Claim review',
-  withdraw_review: 'Withdraw review',
-  unclaim: 'Unclaim review',
-  approve: 'Approve',
-  reject: 'Reject',
-  request_changes: 'Request changes',
-  activate: 'Activate',
-  flag_stale: 'Flag stale',
-  revise: 'Revise',
-  deprecate: 'Deprecate',
-  reinstate: 'Reinstate',
-  archive: 'Archive',
-}
-
-const REASON_ACTIONS = new Set<TestCaseTransitionAction>([
-  'deprecate',
-  'reinstate',
-  'archive',
-  'flag_stale',
-])
-
-const REVIEW_NOTES_ACTIONS = new Set<TestCaseTransitionAction>([
-  'approve',
-  'reject',
-  'request_changes',
-])
-
-function transitionErrorMessage(error: unknown): string {
-  const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
-  if (typeof detail === 'string' && detail.trim()) return detail
-  if (detail && typeof detail === 'object') {
-    const value = detail as {
-      current_state?: string
-      attempted_action?: string
-      message?: string
-    }
-    if (value.message) return value.message
-    if (value.current_state && value.attempted_action) {
-      return `${ACTION_LABELS[value.attempted_action as TestCaseTransitionAction] ?? value.attempted_action} is no longer allowed from ${value.current_state.replace(/_/g, ' ')}.`
-    }
-  }
-  return 'The lifecycle action could not be completed.'
-}
 
 interface LifecyclePanelProps {
   caseItem: ManagedTestCase

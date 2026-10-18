@@ -13,7 +13,7 @@ List a project's duplicate-candidate review queue (paginated, filterable).
 ``status`` defaults to ``open`` so the review queue shows actionable pairs;
 pass ``status=`` (empty) is not supported — use an explicit value to widen.
 
-Source: [backend/app/routers/duplicates.py:82](../../../backend/app/routers/duplicates.py#L82).
+Source: [backend/app/routers/duplicates.py:106](../../../backend/app/routers/duplicates.py#L106).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -158,7 +158,7 @@ The service stages candidate rows + lazily backfills ``dup_fingerprint``;
 this router owns the commit. ``semantic_used`` returned by the service is an
 extra key the response model ignores.
 
-Source: [backend/app/routers/duplicates.py:160](../../../backend/app/routers/duplicates.py#L160).
+Source: [backend/app/routers/duplicates.py:186](../../../backend/app/routers/duplicates.py#L186).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -254,7 +254,7 @@ Dismiss a candidate pair (status → ``dismissed`` + suppression record).
 The suppression row keeps the pair from resurfacing on the next detection
 run. STAGE in the service; commit here.
 
-Source: [backend/app/routers/duplicates.py:193](../../../backend/app/routers/duplicates.py#L193).
+Source: [backend/app/routers/duplicates.py:219](../../../backend/app/routers/duplicates.py#L219).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -356,7 +356,7 @@ losing case. Never deletes a case or redirects a fingerprint.
 authoritative — a mismatch is a 400). ``keep_case_id`` must be one of the
 pair's two cases (service raises → 400).
 
-Source: [backend/app/routers/duplicates.py:228](../../../backend/app/routers/duplicates.py#L228).
+Source: [backend/app/routers/duplicates.py:254](../../../backend/app/routers/duplicates.py#L254).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 

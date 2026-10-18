@@ -4969,6 +4969,11 @@
               }
             ],
             "title": "Blocked Reason"
+          },
+          "requires_reason": {
+            "default": false,
+            "title": "Requires Reason",
+            "type": "boolean"
           }
         },
         "required": [
@@ -18939,6 +18944,22 @@
             ],
             "title": "Description"
           },
+          "edited_after_approval": {
+            "default": false,
+            "title": "Edited After Approval",
+            "type": "boolean"
+          },
+          "edited_since_approval_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edited Since Approval Version"
+          },
           "estimated_duration_minutes": {
             "anyOf": [
               {
@@ -19107,6 +19128,18 @@
             "title": "Project Id",
             "type": "string"
           },
+          "reason_required_actions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reason Required Actions",
+            "type": "array"
+          },
+          "review_required": {
+            "default": false,
+            "title": "Review Required",
+            "type": "boolean"
+          },
           "reviewer_id": {
             "anyOf": [
               {
@@ -19241,6 +19274,18 @@
       },
       "ManagedTestCaseUpdate": {
         "properties": {
+          "assignee_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Id"
+          },
           "automation_status": {
             "anyOf": [
               {
@@ -23189,6 +23234,11 @@
             ],
             "title": "Ocp Namespace"
           },
+          "require_case_review": {
+            "default": false,
+            "title": "Require Case Review",
+            "type": "boolean"
+          },
           "retention_status": {
             "anyOf": [
               {
@@ -23426,6 +23476,17 @@
               }
             ],
             "title": "Ocp Namespace"
+          },
+          "require_case_review": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Require Case Review"
           },
           "splunk_index": {
             "anyOf": [
@@ -32623,6 +32684,220 @@
         "title": "TestAttachmentResponse",
         "type": "object"
       },
+      "TestCaseBulkItemResult": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "id",
+          "outcome"
+        ],
+        "title": "TestCaseBulkItemResult",
+        "type": "object"
+      },
+      "TestCaseBulkRequest": {
+        "properties": {
+          "action": {
+            "maxLength": 30,
+            "title": "Action",
+            "type": "string"
+          },
+          "assignee_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Id"
+          },
+          "case_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Case Ids",
+            "type": "array"
+          },
+          "expected_versions": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "propertyNames": {
+              "format": "uuid"
+            },
+            "title": "Expected Versions",
+            "type": "object"
+          },
+          "priority": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Priority"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "suite_name": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suite Name"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 20,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          },
+          "transition": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transition"
+          }
+        },
+        "required": [
+          "project_id",
+          "case_ids",
+          "action"
+        ],
+        "title": "TestCaseBulkRequest",
+        "type": "object"
+      },
+      "TestCaseBulkResponse": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "changed": {
+            "title": "Changed",
+            "type": "integer"
+          },
+          "not_found": {
+            "title": "Not Found",
+            "type": "integer"
+          },
+          "requested": {
+            "title": "Requested",
+            "type": "integer"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/TestCaseBulkItemResult"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "skipped": {
+            "title": "Skipped",
+            "type": "integer"
+          },
+          "unchanged": {
+            "title": "Unchanged",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "action",
+          "requested",
+          "changed",
+          "unchanged",
+          "skipped",
+          "not_found",
+          "results"
+        ],
+        "title": "TestCaseBulkResponse",
+        "type": "object"
+      },
       "TestCaseClassificationSection": {
         "description": "Classification fields supplied by the report or existing catalog.",
         "properties": {
@@ -33978,6 +34253,38 @@
         "title": "TestCaseProvenanceSection",
         "type": "object"
       },
+      "TestCaseRestoreRequest": {
+        "properties": {
+          "change_summary": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Summary"
+          },
+          "expected_version": {
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "expected_version"
+        ],
+        "title": "TestCaseRestoreRequest",
+        "type": "object"
+      },
       "TestCaseReviewResponse": {
         "properties": {
           "ai_quality_score": {
@@ -34337,8 +34644,63 @@
         "title": "TestCaseTransitionRequest",
         "type": "object"
       },
+      "TestCaseVersionExecution": {
+        "description": "A plan execution recorded against one case version (W28 TCM-05).",
+        "properties": {
+          "executed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executed At"
+          },
+          "execution_status": {
+            "title": "Execution Status",
+            "type": "string"
+          },
+          "item_id": {
+            "format": "uuid",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "plan_id": {
+            "format": "uuid",
+            "title": "Plan Id",
+            "type": "string"
+          },
+          "plan_name": {
+            "title": "Plan Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "plan_id",
+          "plan_name",
+          "item_id",
+          "execution_status"
+        ],
+        "title": "TestCaseVersionExecution",
+        "type": "object"
+      },
       "TestCaseVersionResponse": {
         "properties": {
+          "assignee_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Id"
+          },
           "automation_status": {
             "anyOf": [
               {
@@ -34376,6 +34738,17 @@
               }
             ],
             "title": "Changed By Id"
+          },
+          "changed_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Changed By Name"
           },
           "changed_fields": {
             "anyOf": [
@@ -34417,6 +34790,13 @@
               }
             ],
             "title": "Estimated Duration Minutes"
+          },
+          "executions": {
+            "items": {
+              "$ref": "#/components/schemas/TestCaseVersionExecution"
+            },
+            "title": "Executions",
+            "type": "array"
           },
           "expected_result": {
             "anyOf": [
@@ -34513,6 +34893,17 @@
               }
             ],
             "title": "Severity"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
           },
           "status": {
             "title": "Status",
@@ -35300,6 +35691,17 @@
             ],
             "title": "Actual Duration Minutes"
           },
+          "case_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Version"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -35328,6 +35730,17 @@
               }
             ],
             "title": "Executed By Id"
+          },
+          "executed_case_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executed Case Version"
           },
           "execution_notes": {
             "anyOf": [
@@ -78589,6 +79002,71 @@
         ]
       }
     },
+    "/api/v1/test-management/cases/bulk": {
+      "post": {
+        "description": "Change the status, owner, priority, tags or suite of selected cases of ONE project.\n\nThe body's ``project_id`` is authorised FIRST (403 before anything is\nloaded); ``case_ids`` are then loaded only within that project, so another\nproject's id is ``not_found`` in the per-case results, like an unknown one.\nOne 200 answers per case; a refused case never fails the request.",
+        "operationId": "bulk_edit_test_cases_api_v1_test_management_cases_bulk_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseBulkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseBulkResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Bulk Edit Test Cases",
+        "tags": [
+          "Test Management"
+        ]
+      }
+    },
     "/api/v1/test-management/cases/evidence-gaps": {
       "get": {
         "operationId": "get_test_case_evidence_gaps_api_v1_test_management_cases_evidence_gaps_get",
@@ -79842,6 +80320,81 @@
           }
         ],
         "summary": "Request Review",
+        "tags": [
+          "Test Management"
+        ]
+      }
+    },
+    "/api/v1/test-management/cases/{case_id}/restore": {
+      "post": {
+        "description": "Save an older version's content as a new version; status and owner are kept.\n\nAnswers the case unchanged (same version) when that version's content is\nalready the current one.",
+        "operationId": "restore_test_case_version_api_v1_test_management_cases__case_id__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestCaseRestoreRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagedTestCaseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Restore Test Case Version",
         "tags": [
           "Test Management"
         ]

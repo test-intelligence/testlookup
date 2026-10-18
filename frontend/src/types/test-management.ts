@@ -43,7 +43,22 @@ export interface AllowedTestCaseTransition {
   action: TestCaseTransitionAction
   allowed: boolean
   blocked_reason?: string | null
+  /** W28: the move needs a reason for this actor (a retire move, flag stale, a lead's self-approval). */
+  requires_reason?: boolean
 }
+
+/**
+ * W28 (TCM-01..05) vocabularies, mirroring the backend's single owners
+ * (`test_case_lifecycle_service.py`). A string outside VERSION_SOURCES renders
+ * as nothing; RUNNABLE_STATES is what Link Suite picks by default (the AI
+ * plan's pinned rule); a RETIRED_STATES case is never linked and cannot be
+ * edited; an edit of a DEFINITION_FIELDS value marks "edited after approval"
+ * when the project requires review.
+ */
+export const VERSION_SOURCES = ['person', 'ai', 'api'] as const
+export const RUNNABLE_STATES = ['approved', 'active'] as const
+export const RETIRED_STATES = ['deprecated', 'archived'] as const
+export const DEFINITION_FIELDS = ['steps', 'expected_result', 'preconditions'] as const
 
 export interface TestCaseTransitionRequest {
   action: TestCaseTransitionAction
@@ -60,7 +75,8 @@ export interface TestStep {
 
 export interface TestCaseParameter {
   name: string
-  value?: string
+  /** W28: a masked row (masked, or mode masked | hidden) reads null; a PATCH row sent with null keeps the stored value. */
+  value?: string | null
   mode?: string
   masked?: boolean
 }
@@ -148,6 +164,23 @@ export interface ManagedTestCase {
   last_execution_status?: string
   created_at: string
   updated_at: string
+  /** W28: the project's "Require review before Active" setting (absent = false). */
+  review_required?: boolean
+  /** W28: the subset of allowed_actions that needs a reason FOR THIS ACTOR (absent: fall back to REASON_ACTIONS). */
+  reason_required_actions?: TestCaseTransitionAction[]
+  /** W28: the version a definition edit marked "edited after approval" at (the raw marker). */
+  edited_since_approval_version?: number | null
+  /** W28: review required, approved / active, and the marker set. */
+  edited_after_approval?: boolean
+}
+
+/** W28 TCM-05: a plan execution recorded against one case version. */
+export interface TestCaseVersionExecution {
+  plan_id: string
+  plan_name: string
+  item_id: string
+  execution_status: string
+  executed_at?: string | null
 }
 
 export interface TestCaseVersion {
@@ -179,6 +212,14 @@ export interface TestCaseVersion {
   change_summary?: string
   change_type: string
   created_at: string
+  /** W28: the owner at this version. */
+  assignee_id?: string | null
+  /** W28: VERSION_SOURCES, or null = not recorded (before 0222). */
+  source?: string | null
+  /** W28: the user's full name, else username; null when the user is gone. */
+  changed_by_name?: string | null
+  /** W28 TCM-05: the plan executions recorded against this version. */
+  executions?: TestCaseVersionExecution[]
 }
 
 export interface TestCaseReview {
@@ -245,6 +286,75 @@ export interface TestPlanItem {
   execution_notes?: string
   actual_duration_minutes?: number
   created_at: string
+  /** W28 TCM-05: the case version the recorded execution ran against; null = not run, or run before 0222. */
+  executed_case_version?: number | null
+  /** W28 TCM-05: the case's current version (the list route's join); null on a create / execute answer. */
+  case_version?: number | null
+}
+
+// ── W28 editing (TCM-01, TCM-03, TCM-04) ────────────────────────────────────
+
+/** The PATCH body: expected_version + ONLY the changed fields. */
+export interface ManagedTestCaseUpdateBody {
+  expected_version: number
+  change_summary?: string
+  title?: string
+  description?: string | null
+  objective?: string | null
+  preconditions?: string | null
+  steps?: TestStep[]
+  parameters?: TestCaseParameter[] | null
+  expected_result?: string | null
+  test_data?: string | null
+  test_type?: string
+  priority?: string
+  severity?: string
+  feature_area?: string | null
+  suite_name?: string | null
+  tags?: string[]
+  estimated_duration_minutes?: number | null
+  is_automated?: boolean
+  automation_status?: string
+  assignee_id?: string | null
+}
+
+export type TestCaseBulkAction = 'transition' | 'set_owner' | 'set_priority' | 'add_tags' | 'remove_tags' | 'move_to_suite'
+
+export interface TestCaseBulkRequest {
+  project_id: string
+  case_ids: string[]
+  expected_versions?: Record<string, number>
+  action: TestCaseBulkAction
+  transition?: TestCaseTransitionAction
+  reason?: string
+  assignee_id?: string | null
+  priority?: string
+  tags?: string[]
+  suite_name?: string
+}
+
+export interface TestCaseBulkItemResult {
+  id: string
+  outcome: 'changed' | 'unchanged' | 'skipped' | 'not_found' | string
+  reason?: string | null
+  version?: number | null
+  status?: string | null
+}
+
+export interface TestCaseBulkResponse {
+  action: string
+  requested: number
+  changed: number
+  unchanged: number
+  skipped: number
+  not_found: number
+  results: TestCaseBulkItemResult[]
+}
+
+export interface TestCaseRestoreRequest {
+  version: number
+  expected_version: number
+  change_summary?: string
 }
 
 export interface RiskItem {

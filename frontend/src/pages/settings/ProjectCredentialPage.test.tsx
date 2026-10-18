@@ -170,3 +170,17 @@ describe('CreatedKeyModal keyboard contract (in the page)', () => {
     expect(trigger).toHaveFocus()
   })
 })
+
+// W28 §2.7 (a): since W27b the generated key is an in-page section whose testlookup.properties block sits ABOVE the
+// Python snippet (no tab, no dialog), so the snippet's comment points there.
+describe('CreatedKeyModal Python snippet comment (W28)', () => {
+  it('points at the properties file shown above on this page, not at a dialog tab', () => {
+    render(<CreatedKeyModal created={created} baseUrl="https://example.test" projectLabel="Project A" onClose={() => {}} />)
+    const python = screen.getAllByText(/from testlookup_reporter import LiveStream/, { selector: 'pre' })
+    expect(python).toHaveLength(1)
+    const snippet = python[0].textContent ?? ''
+    expect(snippet).toContain('# All config below can also live in testlookup.properties\n')
+    expect(snippet).toContain('# (the file shown above on this page).')
+    expect(snippet).not.toContain('tab on this dialog')
+  })
+})

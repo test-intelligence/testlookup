@@ -1,11 +1,17 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useAuditLog, useTestCases } from '@/hooks/useTestManagement'
 import { testManagementService } from '@/services/testManagementService'
+import { useAuthStore } from '@/store/authStore'
 import type { ManagedTestCase, PaginatedResponse } from '@/types/test-management'
 import { TestCasesTab } from './TestManagementPage'
+
+// W28: the row's Deprecate is QA_LEAD+ (signed out, usePermissions reads VIEWER).
+// TestManagementPage.roles.test.tsx pins every role's controls.
+beforeEach(() => { useAuthStore.setState({ user: { id: 'u-lead', role: 'QA_LEAD' } as never }) })
+afterEach(() => { useAuthStore.setState({ user: null }) })
 
 vi.mock('@/hooks/useTestManagement', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/hooks/useTestManagement')>(),

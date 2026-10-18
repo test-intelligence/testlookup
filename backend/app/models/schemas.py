@@ -477,6 +477,9 @@ class ProjectUpdate(BaseModel):
     tags: Optional[List[str]] = None
     manager_user_id: Optional[uuid.UUID] = None  # migration 0076 — program manager
     default_qa_lead_user_id: Optional[uuid.UUID] = None  # migration 0079 — default suite owner
+    # W28 TCM-02 (migration 0222): a test case needs an approved review before
+    # Active. exclude_none in the PUT applies a False (routers/projects.py).
+    require_case_review: Optional[bool] = None
 
 
 class ProjectResponse(TimestampMixin):
@@ -495,6 +498,7 @@ class ProjectResponse(TimestampMixin):
     is_active: bool
     manager_user_id: Optional[uuid.UUID] = None  # migration 0076
     default_qa_lead_user_id: Optional[uuid.UUID] = None  # migration 0079
+    require_case_review: bool = False  # migration 0222 (W28 TCM-02)
     # S1 — retention posture, resolved in the SAME query as the project list
     # (LEFT JOIN, never a per-project lookup). Three states, deliberately
     # distinct: "unconfigured" (no policy row has ever existed) is the case
@@ -504,6 +508,14 @@ class ProjectResponse(TimestampMixin):
     retention_status: Optional[Literal["enabled", "disabled", "unconfigured"]] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("require_case_review", mode="before")
+    @classmethod
+    def _unflushed_review_setting_is_off(cls, value: Any) -> Any:
+        # The column is NOT NULL DEFAULT false, but its ORM default applies only
+        # at INSERT: a Project answered before its flush (a hand-built row, a
+        # session double) still carries None. That is the default, so: off.
+        return False if value is None else value
 
 
 class DeleteRunRequest(BaseModel):
@@ -3099,6 +3111,10 @@ class ManagedTestCaseUpdate(BaseModel):
     is_automated: Optional[bool] = None
     automation_status: Optional[str] = None
     change_summary: Optional[str] = Field(None, max_length=500)
+    # W28 TCM-01: the Owner, validated like create's (an active member of the
+    # case's project, or an admin). Omitted = keep; an explicit null = unassign
+    # (exclude_unset tells them apart).
+    assignee_id: Optional[uuid.UUID] = None
 
 
 class ManagedTestCaseResponse(BaseModel):
@@ -3164,6 +3180,13 @@ class ManagedTestCaseResponse(BaseModel):
     last_execution_status: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+    # W28 (TCM-01 / TCM-02). Automation rows (dicts) get the defaults.
+    # ``parameters`` above: a masked row (masked true, or mode masked|hidden)
+    # reads value = None (services/test_case_parameters.mask_parameters).
+    review_required: bool = False                       # the project's require_case_review
+    reason_required_actions: List[str] = Field(default_factory=list)   # the subset of allowed_actions that needs a reason FOR THIS ACTOR
+    edited_since_approval_version: Optional[int] = None # the raw marker (migration 0222)
+    edited_after_approval: bool = False                 # review_required and status in (approved, active) and the marker is set
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -3174,6 +3197,15 @@ class ManagedTestCaseListResponse(BaseModel):
     page: int
     size: int
     pages: int
+
+
+class TestCaseVersionExecution(BaseModel):
+    """A plan execution recorded against one case version (W28 TCM-05)."""
+    plan_id: uuid.UUID
+    plan_name: str
+    item_id: uuid.UUID
+    execution_status: str
+    executed_at: Optional[datetime] = None
 
 
 class TestCaseVersionResponse(BaseModel):
@@ -3205,6 +3237,11 @@ class TestCaseVersionResponse(BaseModel):
     change_type: str
     changed_fields: Optional[List[str]] = None
     created_at: datetime
+    # W28 TCM-04 (migration 0222); ``parameters`` above are masked as on the case.
+    assignee_id: Optional[uuid.UUID] = None
+    source: Optional[str] = None            # VERSION_SOURCES, or None = not recorded (before 0222)
+    changed_by_name: Optional[str] = None   # the user's full_name, else username; None when the user is gone
+    executions: List[TestCaseVersionExecution] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -3261,6 +3298,7 @@ class AllowedTransitionResponse(BaseModel):
     action: str
     allowed: bool
     blocked_reason: Optional[str] = None
+    requires_reason: bool = False  # W28: REASON_REQUIRED_ACTIONS, and a lead's self-approval
 
 
 class TestCaseCommentCreate(BaseModel):
@@ -3361,8 +3399,52 @@ class TestPlanItemResponse(BaseModel):
     execution_notes: Optional[str] = None
     actual_duration_minutes: Optional[int] = None
     created_at: datetime
+    # W28 TCM-05 (migration 0222)
+    executed_case_version: Optional[int] = None   # the case version the recorded execution ran against; None = not run, or run before 0222
+    case_version: Optional[int] = None            # the case's current version (the list route's join); None on a create / execute answer is allowed
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ── W28: bulk edit (TCM-03) and restore (TCM-04) ──────────────────────────────
+# Enum-like fields are plain ``str``; each vocabulary is a module constant in
+# services/test_case_editing_service.py and judged there with one fixed 422.
+
+class TestCaseBulkRequest(BaseModel):
+    project_id: uuid.UUID
+    case_ids: List[uuid.UUID] = Field(..., min_length=1, max_length=200)   # BULK_MAX_IDS; duplicates collapse, order kept
+    expected_versions: Dict[uuid.UUID, int] = Field(default_factory=dict)  # per case; a case missing here is not version-checked
+    action: str = Field(..., max_length=30)            # BULK_ACTIONS
+    transition: Optional[str] = Field(None, max_length=30)   # BULK_TRANSITIONS, when action == "transition"
+    reason: Optional[str] = Field(None, max_length=500)      # required for flag_stale / deprecate / archive / reinstate
+    assignee_id: Optional[uuid.UUID] = None            # set_owner; None = unassign
+    priority: Optional[str] = Field(None, max_length=20)     # set_priority: PRIORITIES
+    tags: Optional[List[str]] = Field(None, max_length=20)   # add_tags / remove_tags: each trimmed, 1..100 chars, deduped
+    suite_name: Optional[str] = Field(None, max_length=500)  # move_to_suite: trimmed, non-empty
+
+
+class TestCaseBulkItemResult(BaseModel):
+    id: uuid.UUID
+    outcome: str                            # BULK_OUTCOMES
+    reason: Optional[str] = None            # why skipped (one sentence)
+    version: Optional[int] = None           # the case's version after the request
+    status: Optional[str] = None            # its status after the request
+
+
+class TestCaseBulkResponse(BaseModel):
+    action: str
+    requested: int
+    changed: int
+    unchanged: int
+    skipped: int
+    not_found: int
+    results: List[TestCaseBulkItemResult]   # one per requested id (after de-duplication), in request order
+
+
+class TestCaseRestoreRequest(BaseModel):
+    version: int = Field(..., ge=1)
+    expected_version: int = Field(..., ge=1)
+    change_summary: Optional[str] = Field(None, max_length=500)
 
 
 class ExecuteTestPlanItemRequest(BaseModel):

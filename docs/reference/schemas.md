@@ -5257,6 +5257,11 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Blocked Reason"
+    },
+    "requires_reason": {
+      "default": false,
+      "title": "Requires Reason",
+      "type": "boolean"
     }
   },
   "required": [
@@ -20247,6 +20252,22 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Description"
     },
+    "edited_after_approval": {
+      "default": false,
+      "title": "Edited After Approval",
+      "type": "boolean"
+    },
+    "edited_since_approval_version": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Edited Since Approval Version"
+    },
     "estimated_duration_minutes": {
       "anyOf": [
         {
@@ -20415,6 +20436,18 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Project Id",
       "type": "string"
     },
+    "reason_required_actions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Reason Required Actions",
+      "type": "array"
+    },
+    "review_required": {
+      "default": false,
+      "title": "Review Required",
+      "type": "boolean"
+    },
     "reviewer_id": {
       "anyOf": [
         {
@@ -20554,6 +20587,18 @@ These are the full generated JSON Schema definitions, including required fields,
 ```json
 {
   "properties": {
+    "assignee_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Assignee Id"
+    },
     "automation_status": {
       "anyOf": [
         {
@@ -24837,6 +24882,11 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Ocp Namespace"
     },
+    "require_case_review": {
+      "default": false,
+      "title": "Require Case Review",
+      "type": "boolean"
+    },
     "retention_status": {
       "anyOf": [
         {
@@ -25084,6 +25134,17 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Ocp Namespace"
+    },
+    "require_case_review": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Require Case Review"
     },
     "splunk_index": {
       "anyOf": [
@@ -34993,6 +35054,235 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## TestCaseBulkItemResult
+
+```json
+{
+  "properties": {
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "outcome": {
+      "title": "Outcome",
+      "type": "string"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    },
+    "status": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Status"
+    },
+    "version": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Version"
+    }
+  },
+  "required": [
+    "id",
+    "outcome"
+  ],
+  "title": "TestCaseBulkItemResult",
+  "type": "object"
+}
+```
+
+## TestCaseBulkRequest
+
+```json
+{
+  "properties": {
+    "action": {
+      "maxLength": 30,
+      "title": "Action",
+      "type": "string"
+    },
+    "assignee_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Assignee Id"
+    },
+    "case_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "maxItems": 200,
+      "minItems": 1,
+      "title": "Case Ids",
+      "type": "array"
+    },
+    "expected_versions": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "propertyNames": {
+        "format": "uuid"
+      },
+      "title": "Expected Versions",
+      "type": "object"
+    },
+    "priority": {
+      "anyOf": [
+        {
+          "maxLength": 20,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Priority"
+    },
+    "project_id": {
+      "format": "uuid",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    },
+    "suite_name": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Suite Name"
+    },
+    "tags": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Tags"
+    },
+    "transition": {
+      "anyOf": [
+        {
+          "maxLength": 30,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Transition"
+    }
+  },
+  "required": [
+    "project_id",
+    "case_ids",
+    "action"
+  ],
+  "title": "TestCaseBulkRequest",
+  "type": "object"
+}
+```
+
+## TestCaseBulkResponse
+
+```json
+{
+  "properties": {
+    "action": {
+      "title": "Action",
+      "type": "string"
+    },
+    "changed": {
+      "title": "Changed",
+      "type": "integer"
+    },
+    "not_found": {
+      "title": "Not Found",
+      "type": "integer"
+    },
+    "requested": {
+      "title": "Requested",
+      "type": "integer"
+    },
+    "results": {
+      "items": {
+        "$ref": "#/components/schemas/TestCaseBulkItemResult"
+      },
+      "title": "Results",
+      "type": "array"
+    },
+    "skipped": {
+      "title": "Skipped",
+      "type": "integer"
+    },
+    "unchanged": {
+      "title": "Unchanged",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "action",
+    "requested",
+    "changed",
+    "unchanged",
+    "skipped",
+    "not_found",
+    "results"
+  ],
+  "title": "TestCaseBulkResponse",
+  "type": "object"
+}
+```
+
 ## TestCaseClassificationSection
 
 ```json
@@ -36423,6 +36713,43 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## TestCaseRestoreRequest
+
+```json
+{
+  "properties": {
+    "change_summary": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Change Summary"
+    },
+    "expected_version": {
+      "minimum": 1.0,
+      "title": "Expected Version",
+      "type": "integer"
+    },
+    "version": {
+      "minimum": 1.0,
+      "title": "Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "version",
+    "expected_version"
+  ],
+  "title": "TestCaseRestoreRequest",
+  "type": "object"
+}
+```
+
 ## TestCaseReviewResponse
 
 ```json
@@ -36802,11 +37129,71 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## TestCaseVersionExecution
+
+```json
+{
+  "description": "A plan execution recorded against one case version (W28 TCM-05).",
+  "properties": {
+    "executed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Executed At"
+    },
+    "execution_status": {
+      "title": "Execution Status",
+      "type": "string"
+    },
+    "item_id": {
+      "format": "uuid",
+      "title": "Item Id",
+      "type": "string"
+    },
+    "plan_id": {
+      "format": "uuid",
+      "title": "Plan Id",
+      "type": "string"
+    },
+    "plan_name": {
+      "title": "Plan Name",
+      "type": "string"
+    }
+  },
+  "required": [
+    "plan_id",
+    "plan_name",
+    "item_id",
+    "execution_status"
+  ],
+  "title": "TestCaseVersionExecution",
+  "type": "object"
+}
+```
+
 ## TestCaseVersionResponse
 
 ```json
 {
   "properties": {
+    "assignee_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Assignee Id"
+    },
     "automation_status": {
       "anyOf": [
         {
@@ -36844,6 +37231,17 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Changed By Id"
+    },
+    "changed_by_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Changed By Name"
     },
     "changed_fields": {
       "anyOf": [
@@ -36885,6 +37283,13 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Estimated Duration Minutes"
+    },
+    "executions": {
+      "items": {
+        "$ref": "#/components/schemas/TestCaseVersionExecution"
+      },
+      "title": "Executions",
+      "type": "array"
     },
     "expected_result": {
       "anyOf": [
@@ -36981,6 +37386,17 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Severity"
+    },
+    "source": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Source"
     },
     "status": {
       "title": "Status",
@@ -37828,6 +38244,17 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Actual Duration Minutes"
     },
+    "case_version": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Case Version"
+    },
     "created_at": {
       "format": "date-time",
       "title": "Created At",
@@ -37856,6 +38283,17 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Executed By Id"
+    },
+    "executed_case_version": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Executed Case Version"
     },
     "execution_notes": {
       "anyOf": [

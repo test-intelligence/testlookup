@@ -44,11 +44,17 @@ from app.routers.test_management_shared import apply_model_updates, get_or_404, 
 from app.services.test_management_audit_service import audit_event
 from app.services.test_management_metrics_service import stage_test_management_counter
 from app.services.test_case_lifecycle_service import (
+    DEFINITION_FIELDS,
+    RETIRED_STATES,
+    RUNNABLE_STATES,
     LifecycleAction,
     auto_claim_and_decide,
     stage_test_case_snapshot,
     transition,
+    version_source,
 )
+from app.services.test_case_parameters import mask_parameters, merge_masked_parameters
+from app.services.test_case_review_policy import project_requires_case_review
 
 logger = structlog.get_logger(__name__)
 
@@ -466,6 +472,47 @@ async def _require_assignable(
     )
 
 
+async def require_assignable(
+    db: AsyncSession, project_id: uuid.UUID, user_id: uuid.UUID
+) -> None:
+    """Public alias of :func:`_require_assignable` (W28: the bulk Owner action)."""
+    await _require_assignable(db, project_id, user_id)
+
+
+def _json_normalized(value: object) -> object:
+    """A value as JSON would store it, so a re-sent equal value compares equal."""
+    import json  # noqa: PLC0415
+
+    try:
+        return json.loads(json.dumps(value, sort_keys=True, default=str))
+    except (TypeError, ValueError):
+        return value
+
+
+def _audit_values(update_data: dict) -> dict:
+    """The edit's ``new_values`` as the audit row can store them.
+
+    JSON-safe (a UUID / datetime as text: the column is JSON, and the suite id
+    or the new owner id would fail the flush) and with masked parameter values
+    removed (a secret never lands in the audit trail).
+    """
+    safe: dict = {}
+    for key, value in update_data.items():
+        if key == "parameters":
+            value = mask_parameters(value)
+        safe[key] = _json_normalized(value)
+    return safe
+
+
+def _definition_changed(test_case: ManagedTestCase, update_data: dict) -> bool:
+    """Whether the edit really changes steps, the expected result or preconditions."""
+    return any(
+        field in update_data
+        and _json_normalized(update_data[field]) != _json_normalized(getattr(test_case, field, None))
+        for field in DEFINITION_FIELDS
+    )
+
+
 async def create_managed_test_case(
     db: AsyncSession,
     payload: ManagedTestCaseCreate,
@@ -520,6 +567,7 @@ async def create_managed_test_case(
         db,
         test_case,
         actor_id=current_user.id,
+        source=version_source(current_user),
         change_summary="Initial creation",
         change_type="created",
         changed_fields=[
@@ -542,9 +590,21 @@ async def update_managed_test_case(
     case_id: uuid.UUID,
     payload: ManagedTestCaseUpdate,
     current_user: User,
+    *,
+    change_type: str = "updated",
 ) -> ManagedTestCase:
+    """Stage one edit of an authored case: a new version, never a new status.
+
+    W28 TCM-01 (owner decision OR-04): an edit bumps the version and snapshots
+    the case in every non-retired state; it no longer moves an approved /
+    active case to Needs update. With the project requiring review, a real
+    change of steps / expected result / preconditions on an approved or active
+    case sets ``edited_since_approval_version`` (the lifecycle clears it).
+    ``change_type`` names the version (``updated``; ``bulk_updated`` and
+    ``restored`` for the bulk and restore services).
+    """
     test_case = await get_test_case_or_404(db, case_id, for_update=True)
-    if test_case.status in ("deprecated", "archived"):
+    if test_case.status in RETIRED_STATES:
         raise HTTPException(status_code=409, detail=f"Cannot edit a {test_case.status} test case")
     if test_case.version != payload.expected_version:
         raise HTTPException(
@@ -564,6 +624,17 @@ async def update_managed_test_case(
     if not update_data:
         return test_case
 
+    # The Owner: validated like create's, and only when one is named (an
+    # explicit null unassigns; an omitted field reads nothing).
+    if update_data.get("assignee_id") is not None:
+        await _require_assignable(db, test_case.project_id, update_data["assignee_id"])
+    # A masked row sent back with ``value: null`` keeps its stored secret: the
+    # edit form never received it (services/test_case_parameters.py).
+    if isinstance(update_data.get("parameters"), list):
+        update_data["parameters"] = merge_masked_parameters(
+            getattr(test_case, "parameters", None), update_data["parameters"]
+        )
+
     # Migration 0087 — keep ``test_suite_id`` in lockstep with ``suite_name``
     # changes. When the caller renames the suite (or clears it), we
     # resolve-or-create the new suite under the case's own project; never
@@ -581,34 +652,30 @@ async def update_managed_test_case(
             )
             update_data["test_suite_id"] = suite.id
 
+    definition_changed = _definition_changed(test_case, update_data)
     apply_model_updates(test_case, update_data)
     changed_fields = sorted(update_data)
-    if old["status"] in ("approved", "active"):
-        # The policy's default is require-rereview.  Running this through the
-        # state machine preserves the one-writer invariant and snapshots the
-        # edited content together with its approval invalidation.
-        await transition(
-            db,
-            test_case.id,
-            LifecycleAction.FLAG_STALE,
-            current_user,
-            reason="edited_after_approval",
-            notes=payload.change_summary,
-            changed_fields=changed_fields,
-        )
-    else:
-        test_case.version += 1
-        stage_test_case_snapshot(
-            db,
-            test_case,
-            actor_id=current_user.id,
-            change_summary=payload.change_summary or f"Updated to v{test_case.version}",
-            change_type="updated",
-            changed_fields=changed_fields,
-        )
+    # Editing never changes the status (W28 TCM-01): no FLAG_STALE any more.
+    test_case.version += 1
+    if (
+        old["status"] in RUNNABLE_STATES
+        and definition_changed
+        and getattr(test_case, "edited_since_approval_version", None) is None
+        and await project_requires_case_review(db, test_case.project_id)
+    ):
+        test_case.edited_since_approval_version = test_case.version
+    stage_test_case_snapshot(
+        db,
+        test_case,
+        actor_id=current_user.id,
+        source=version_source(current_user),
+        change_summary=payload.change_summary or f"Updated to v{test_case.version}",
+        change_type=change_type,
+        changed_fields=changed_fields,
+    )
     await audit_event(
         db, "test_case", test_case.id, test_case.project_id, "updated", current_user,
-        old_values=old, new_values=update_data,
+        old_values=old, new_values=_audit_values(update_data),
     )
     return test_case
 
@@ -909,6 +976,19 @@ async def record_test_plan_execution(
     item.executed_at = executed_at
     item.execution_notes = execution_notes
     item.actual_duration_minutes = actual_duration_minutes
+    # W28 TCM-05: the case version this execution ran against (one row per
+    # plan and case, so a re-execution records the version current then).
+    # Not part of the audit values below, which stay as they were.
+    case_version = (
+        await db.execute(
+            select(ManagedTestCase.version).where(ManagedTestCase.id == item.test_case_id)
+        )
+    ).scalar_one_or_none()
+    item.executed_case_version = (
+        case_version
+        if isinstance(case_version, int) and not isinstance(case_version, bool)
+        else None
+    )
     await recompute_plan_counts(db, plan)
     await audit_event(
         db,

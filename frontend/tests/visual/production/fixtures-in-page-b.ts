@@ -328,7 +328,7 @@ export function testLibraryWorld(options: TestLibraryOptions = {}) {
       const name = decodeURIComponent(request.path.split('/')[5])
       const rows = name === 'Checkout' ? CHECKOUT_SUITE_CASES : []
       return {
-        items: rows.map((r) => ({ ...r, suite_name: name, status: 'active', duration_ms: null, class_name: null, package_name: null, created_at: isoAgo(9) })),
+        items: rows.map((r) => ({ ...r, suite_name: name, status: 'active', lifecycle_status: r.source === 'manual' ? 'active' : undefined, duration_ms: null, class_name: null, package_name: null, created_at: isoAgo(9) })),
         total: rows.length,
         page: 1,
         pages: 1,

@@ -17,6 +17,8 @@ interface TestCaseListFilterValues {
   ownerFilter: string
   suiteFilter: string
   includeAutomation: boolean
+  /** W28 TCM-02: the "AI drafts" saved view (the list route's existing `ai_generated` filter). */
+  aiGenerated?: boolean
 }
 
 export function buildTestCaseListParams(filters: TestCaseListFilterValues): Record<string, unknown> {
@@ -28,6 +30,7 @@ export function buildTestCaseListParams(filters: TestCaseListFilterValues): Reco
   if (filters.ownerFilter) params.assignee_id = filters.ownerFilter
   if (filters.suiteFilter) params.suite_name = filters.suiteFilter
   if (filters.includeAutomation) params.include_automation = true
+  if (filters.aiGenerated) params.ai_generated = true
   if (filters.status === 'archived') params.include_archived = true
   return params
 }

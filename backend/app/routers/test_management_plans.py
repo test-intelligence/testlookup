@@ -107,8 +107,20 @@ async def list_plan_items(
     _plan=Depends(require_plan_access),
 ):
     await get_plan_or_404(db, plan_id)
-    result = await db.execute(select(TestPlanItem).where(TestPlanItem.plan_id == plan_id).order_by(TestPlanItem.order_index))
-    return [row(item, TestPlanItemResponse) for item in result.scalars().all()]
+    # W28 TCM-05: each item with its case's CURRENT version (one outer join),
+    # beside the version its recorded execution ran against.
+    result = await db.execute(
+        select(TestPlanItem, ManagedTestCase.version)
+        .outerjoin(ManagedTestCase, ManagedTestCase.id == TestPlanItem.test_case_id)
+        .where(TestPlanItem.plan_id == plan_id)
+        .order_by(TestPlanItem.order_index)
+    )
+    items: list[TestPlanItemResponse] = []
+    for item, case_version in result.all():
+        response = row(item, TestPlanItemResponse)
+        response.case_version = case_version if isinstance(case_version, int) else None
+        items.append(response)
+    return items
 
 
 @router.post("/plans/{plan_id}/items", response_model=TestPlanItemResponse, status_code=status.HTTP_201_CREATED)

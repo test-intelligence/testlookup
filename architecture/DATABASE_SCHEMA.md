@@ -591,6 +591,7 @@ erDiagram
         UUID id PK
         UUID test_case_id FK
         UUID changed_by_id FK
+        UUID assignee_id FK
         String title
         String status
         DateTime created_at
@@ -1026,6 +1027,7 @@ Generated incrementally from `backend/app/models/postgres.py` — **112 of 140 d
 | `is_active` | `Boolean` |  | NN def |  |
 | `manager_user_id` | `UUID` | FK | IX | → `users.id` |
 | `default_qa_lead_user_id` | `UUID` | FK | IX | → `users.id` |
+| `require_case_review` | `Boolean` |  | NN def |  |
 | `created_at` | `DateTime` |  | NN def |  |
 | `updated_at` | `DateTime` |  | NN def |  |
 
@@ -2236,6 +2238,7 @@ _Constraints:_ UniqueConstraint(`project_id`, `snapshot_date`)
 | `tags` | `JSON` |  |  |  |
 | `status` | `String(30)` |  | NN IX def |  |
 | `version` | `Integer` |  | NN def |  |
+| `edited_since_approval_version` | `Integer` |  |  |  |
 | `author_id` | `UUID` | FK |  | → `users.id` |
 | `assignee_id` | `UUID` | FK |  | → `users.id` |
 | `reviewer_id` | `UUID` | FK |  | → `users.id` |
@@ -2277,6 +2280,8 @@ _Constraints:_ Index(`ix_mtc_project_status`, `project_id`, `status`); Index(`ix
 | `changed_by_id` | `UUID` | FK |  | → `users.id` |
 | `change_summary` | `String(500)` |  |  |  |
 | `change_type` | `String(30)` |  | NN def |  |
+| `source` | `String(16)` |  |  |  |
+| `assignee_id` | `UUID` | FK |  | → `users.id` |
 | `created_at` | `DateTime` |  | NN def |  |
 
 _Constraints:_ Index(`ix_tcv_test_case`, `test_case_id`)
@@ -2392,6 +2397,7 @@ _Constraints:_ Index(`ix_tp_project`, `project_id`); Index(`ix_tp_status`, `stat
 | `executed_at` | `DateTime` |  |  |  |
 | `execution_notes` | `Text` |  |  |  |
 | `actual_duration_minutes` | `Integer` |  |  |  |
+| `executed_case_version` | `Integer` |  |  |  |
 | `test_case_result_id` | `UUID` | FK |  | → `test_cases.id` |
 | `created_at` | `DateTime` |  | NN def |  |
 

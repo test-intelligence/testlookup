@@ -23,6 +23,8 @@ export interface Project {
    * with 400 otherwise).
    */
   default_qa_lead_user_id?: string | null
+  /** W28 TCM-02 (migration 0222): a test case needs an approved review before it can be made Active. Default off. */
+  require_case_review?: boolean
 }
 
 export interface ProjectUpdate {
@@ -37,4 +39,6 @@ export interface ProjectUpdate {
   tags?: string[]
   manager_user_id?: string
   default_qa_lead_user_id?: string
+  /** W28 TCM-02: sent only when it differs from the project's current value. */
+  require_case_review?: boolean
 }

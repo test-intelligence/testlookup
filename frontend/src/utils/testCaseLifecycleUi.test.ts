@@ -41,4 +41,15 @@ describe('test-case lifecycle filters', () => {
     expect(buildTestCaseListParams({ ...baseFilters, status: 'deprecated' })).not.toHaveProperty('include_archived')
     expect(buildTestCaseListParams(baseFilters)).not.toHaveProperty('include_archived')
   })
+
+  it('asks for AI-generated cases only for the AI drafts view (W28)', () => {
+    expect(buildTestCaseListParams({ ...baseFilters, status: 'draft', aiGenerated: true })).toEqual({
+      page: 1,
+      size: 25,
+      status: 'draft',
+      ai_generated: true,
+    })
+    expect(buildTestCaseListParams({ ...baseFilters, aiGenerated: false })).not.toHaveProperty('ai_generated')
+    expect(buildTestCaseListParams(baseFilters)).not.toHaveProperty('ai_generated')
+  })
 })

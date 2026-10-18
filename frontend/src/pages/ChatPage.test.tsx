@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ChatMessage } from '@/types/chat'
 import type { PendingTurn } from '@/hooks/useChat'
 
@@ -259,6 +259,108 @@ describe('ChatPage', () => {
       fireEvent.keyDown(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }), { key: 'Escape' })
       expect(strip()).toBeNull()
       expect(removeSession).not.toHaveBeenCalled()
+    })
+  })
+
+  /**
+   * W28 CHAT-01 (OR-05): during a conversation the starter questions stay available as chips right above the box;
+   * a chip asks like typing it and leaves the reader's draft alone; "Hide suggestions" is remembered in this browser,
+   * and a blocked storage never breaks the row. The welcome is unchanged (its cards are the suggestions there).
+   */
+  describe('suggested questions during a conversation', () => {
+    const openConversation = (over: Record<string, unknown> = {}) =>
+      conversation({ sessionId: 's-1', messages: [user('q-1', 'What failed?')], ...over })
+    const row = () => screen.queryByRole('group', { name: 'Suggested questions' })
+
+    beforeEach(() => window.localStorage.clear())
+    afterEach(() => {
+      vi.restoreAllMocks()
+      window.localStorage.clear()
+    })
+
+    it('shows no chip on the welcome, whose five cards are unchanged', () => {
+      renderPage()
+      expect(screen.getByTestId('chat-welcome')).toBeInTheDocument()
+      expect(screen.getAllByTestId('chat-starter')).toHaveLength(5)
+      expect(screen.queryAllByTestId('chat-suggestion')).toHaveLength(0)
+      expect(screen.queryByTestId('chat-suggestions-show')).toBeNull()
+      expect(row()).toBeNull()
+    })
+
+    it('after a question the row sits right above the question box, in its column', () => {
+      state.conversation = openConversation()
+      renderPage()
+      const chips = screen.getAllByTestId('chat-suggestion')
+      expect(chips).toHaveLength(5)
+      expect(chips[0]).toHaveAttribute('title', 'What failed in build 105, and why?')
+      expect(screen.queryAllByTestId('chat-starter')).toHaveLength(0)
+      const group = row() as HTMLElement
+      const box = screen.getByTestId('chat-input')
+      // Same max-w-3xl wrapper as the composer, before it.
+      expect(group.parentElement).toBe(box.closest('.max-w-3xl'))
+      expect(group.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      expect(screen.getByTestId('chat-transcript').contains(group)).toBe(false)
+    })
+
+    it('also shows while the first answer of a new conversation is written, with the chips disabled', () => {
+      state.conversation = conversation({ sessionId: null, busy: true, pending: pending({ status: 'Looking up build 105…' }) })
+      renderPage()
+      const chips = screen.getAllByTestId('chat-suggestion')
+      expect(chips).toHaveLength(5)
+      for (const chip of chips) expect(chip).toBeDisabled()
+    })
+
+    it("a chip asks its prompt through chat.send and keeps the reader's typed draft", async () => {
+      state.conversation = openConversation()
+      renderPage()
+      fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'draft text' } })
+      fireEvent.click(screen.getAllByTestId('chat-suggestion')[2])
+      expect(state.conversation.send).toHaveBeenCalledTimes(1)
+      expect(state.conversation.send).toHaveBeenCalledWith('Which tests are flaky right now, and are any of them quarantined?')
+      // After the send has resolved (the welcome's ask() clears the box only then).
+      await act(async () => { await Promise.resolve() })
+      expect(screen.getByTestId('chat-input')).toHaveValue('draft text')
+    })
+
+    it('Hide suggestions is remembered across a remount; Show brings the row back and is remembered too', () => {
+      state.conversation = openConversation()
+      const first = renderPage()
+      fireEvent.click(screen.getByTestId('chat-suggestions-hide'))
+      expect(row()).toBeNull()
+      expect(screen.getByTestId('chat-suggestions-show')).toBeInTheDocument()
+      expect(window.localStorage.getItem('tl.chat.hideSuggestions')).toBe('1')
+      first.unmount()
+
+      const second = renderPage()
+      expect(row()).toBeNull()
+      fireEvent.click(screen.getByTestId('chat-suggestions-show'))
+      expect(screen.getAllByTestId('chat-suggestion')).toHaveLength(5)
+      expect(window.localStorage.getItem('tl.chat.hideSuggestions')).toBe('0')
+      second.unmount()
+
+      renderPage()
+      expect(screen.getAllByTestId('chat-suggestion')).toHaveLength(5)
+    })
+
+    it('with localStorage throwing the row still renders, and Hide still hides it for the session', () => {
+      vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new DOMException('blocked', 'SecurityError') })
+      vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('blocked', 'SecurityError') })
+      state.conversation = openConversation()
+      renderPage()
+      expect(screen.getAllByTestId('chat-suggestion')).toHaveLength(5)
+      fireEvent.click(screen.getByTestId('chat-suggestions-hide'))
+      expect(row()).toBeNull()
+      expect(screen.getByTestId('chat-suggestions-show')).toBeInTheDocument()
+      fireEvent.click(screen.getByTestId('chat-suggestions-show'))
+      expect(screen.getAllByTestId('chat-suggestion')).toHaveLength(5)
+    })
+
+    it('shows no row when chat is unavailable (Rules mode)', () => {
+      state.mode = 'rules'
+      state.conversation = openConversation()
+      renderPage()
+      expect(screen.queryAllByTestId('chat-suggestion')).toHaveLength(0)
+      expect(screen.queryByTestId('chat-suggestions-show')).toBeNull()
     })
   })
 })

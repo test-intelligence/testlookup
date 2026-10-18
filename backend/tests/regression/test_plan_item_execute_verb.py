@@ -84,7 +84,12 @@ def execute_client(monkeypatch):
     monkeypatch.setattr(service, "recompute_plan_counts", AsyncMock())
     monkeypatch.setattr(service, "audit_event", AsyncMock())
 
-    db = SimpleNamespace(commit=AsyncMock(), refresh=AsyncMock())
+    # W28 TCM-05: the execution reads the case's current version through
+    # db.execute(...).scalar_one_or_none() and records it on the item.
+    case_version = SimpleNamespace(scalar_one_or_none=lambda: 3)
+    db = SimpleNamespace(
+        commit=AsyncMock(), refresh=AsyncMock(), execute=AsyncMock(return_value=case_version)
+    )
 
     async def _db():
         yield db
@@ -110,6 +115,7 @@ def test_a_patch_records_the_execution(execute_client):
     assert body["id"] == str(item.id)
     assert body["executed_by_id"] == str(actor.id)
     assert body["executed_at"] is not None
+    assert body["executed_case_version"] == 3
     db.commit.assert_awaited_once()
 
 

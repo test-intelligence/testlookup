@@ -994,6 +994,7 @@ async def list_test_suites(
             MAX(created_at) AS last_run_at
         FROM managed_test_cases
         WHERE suite_name IS NOT NULL AND suite_name != ''
+          AND status NOT IN ('deprecated', 'archived')
           {manual_where}
         GROUP BY suite_name
     """)
@@ -1395,6 +1396,10 @@ async def get_suite_test_cases(
             "execution_count": 1 if executed else 0,
             "last_execution_at": None,
             "source": "manual",
+            # W28 TCM-02: ``status`` above prefers the last execution's result,
+            # so Link Suite reads the lifecycle state here (approved / active
+            # are linked by default; deprecated / archived never).
+            "lifecycle_status": manual_tc.status,
         })
 
     # Sort combined by last_execution_at desc (falls back to created_at).
