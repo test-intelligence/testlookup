@@ -27,7 +27,7 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_active_user, require_project_access, require_role
@@ -42,6 +42,7 @@ from app.models.schemas import (
     DuplicateMergeRequest,
 )
 from app.services import duplicate_detection_service as dup_svc
+from app.services.test_case_lifecycle_service import RETIRED_STATES
 from app.services.test_management_metrics_service import emit_staged_test_management_metrics
 
 router = APIRouter(prefix="/api/v1/projects", tags=["Duplicate Detection"])
@@ -57,6 +58,23 @@ def _ref(case: Optional[ManagedTestCase], case_id: uuid.UUID) -> DuplicateCaseRe
         title=case.title,
         suite_name=case.suite_name,
         status=case.status,
+    )
+
+
+def _pair_has_retired_case():
+    """A pair one of whose cases is deprecated or archived (W28 TCM-02).
+
+    Read-time and reversible: the pair stays stored and comes back to the
+    queue when its case is reinstated. One correlated EXISTS on the primary
+    key (no OR across tables).
+    """
+    return exists(
+        select(ManagedTestCase.id).where(
+            ManagedTestCase.id.in_(
+                (DuplicateTestCaseCandidate.case_a_id, DuplicateTestCaseCandidate.case_b_id)
+            ),
+            ManagedTestCase.status.in_(RETIRED_STATES),
+        )
     )
 
 
@@ -101,7 +119,8 @@ async def list_duplicate_candidates(
     pass ``status=`` (empty) is not supported — use an explicit value to widen.
     """
     base = select(DuplicateTestCaseCandidate).where(
-        DuplicateTestCaseCandidate.project_id == project_id
+        DuplicateTestCaseCandidate.project_id == project_id,
+        ~_pair_has_retired_case(),
     )
     if band:
         base = base.where(DuplicateTestCaseCandidate.band == band)
@@ -121,6 +140,7 @@ async def list_duplicate_candidates(
             .where(
                 DuplicateTestCaseCandidate.project_id == project_id,
                 DuplicateTestCaseCandidate.status == "open",
+                ~_pair_has_retired_case(),
             )
         )
     ).scalar_one()

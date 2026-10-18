@@ -25,6 +25,7 @@ from app.services.test_case_lifecycle_service import (
     LifecycleAction,
     stage_test_case_snapshot,
     transition,
+    version_source,
 )
 
 logger = structlog.get_logger(__name__)
@@ -224,6 +225,7 @@ async def accept_case(
             change_type="updated",
             change_summary="Edited while accepting generated case",
             changed_fields=sorted(changed_fields),
+            source=version_source(user),
         )
     await audit_event(
         db, "test_case", case.id, case.project_id, GENERATION_ACCEPTED_ACTION, user

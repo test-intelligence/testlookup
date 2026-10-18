@@ -1349,6 +1349,8 @@ async def list_test_case_evidence_gaps(
     page: int = 1,
     size: int = 25,
 ) -> tuple[list[dict], int]:
+    from app.services.test_case_lifecycle_service import RETIRED_STATES
+
     if kind not in {"never_executed", "automation_vanished"}:
         raise HTTPException(status_code=422, detail="Unknown evidence gap kind")
     stmt = (
@@ -1357,6 +1359,9 @@ async def list_test_case_evidence_gaps(
             CanonicalTestCase,
             CanonicalTestCase.managed_test_case_id == ManagedTestCase.id,
         )
+        # A deprecated or archived case is retired on purpose: it is not a gap
+        # in the evidence (W28 TCM-02). Reinstated, it is listed again.
+        .where(ManagedTestCase.status.notin_(RETIRED_STATES))
     )
     if project_ids is not None:
         if not project_ids:

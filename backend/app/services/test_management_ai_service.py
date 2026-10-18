@@ -58,6 +58,7 @@ async def generate_ai_cases(
                 actor_id=current_user.id,
                 change_summary="AI generated",
                 change_type="created",
+                source="ai",
                 changed_fields=[
                     "title", "description", "objective", "preconditions",
                     "steps", "expected_result", "test_data", "test_type",

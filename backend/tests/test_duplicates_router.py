@@ -110,6 +110,26 @@ class _FakeSession:
         self.flushed = False
         self._count_calls = 0
 
+    def _case_rows(self):
+        return self._cases or [
+            row
+            for row in self._gettable.values()
+            if isinstance(row, ManagedTestCase)
+        ]
+
+    def _live(self, candidates, text):
+        """The case-status fixture: a statement carrying the retired-case EXISTS
+        leaves out a pair whose case is deprecated or archived."""
+        if "exists" not in text or "managed_test_cases.status" not in text:
+            return list(candidates)
+        retired = {
+            case.id for case in self._case_rows() if case.status in ("deprecated", "archived")
+        }
+        return [
+            c for c in candidates
+            if c.case_a_id not in retired and c.case_b_id not in retired
+        ]
+
     async def execute(self, stmt):
         text = str(stmt).lower()
         params = stmt.compile().params
@@ -125,16 +145,19 @@ class _FakeSession:
         }
         if "count(" in text:
             self._count_calls += 1
+            candidates = self._live(self._candidates, text)
             # First count() in list endpoint = filtered total; second = open_count.
             if self._count_calls == 1:
-                return _Result(scalar=len(self._candidates))
-            open_n = len([c for c in self._candidates if c.status == "open"])
+                return _Result(scalar=len(candidates))
+            open_n = len([c for c in candidates if c.status == "open"])
             return _Result(scalar=open_n)
-        if "managed_test_cases" in text:
-            rows = self._cases or [
+        # The queue's statements also name managed_test_cases (the retired-case
+        # EXISTS, W28), so the candidates branch is matched first.
+        if "from duplicate_test_case_candidates" in text:
+            rows = self._candidates or [
                 row
                 for row in self._gettable.values()
-                if isinstance(row, ManagedTestCase)
+                if isinstance(row, DuplicateTestCaseCandidate)
             ]
             rows = [
                 row
@@ -142,13 +165,10 @@ class _FakeSession:
                 if not project_ids or row.project_id in project_ids
             ]
             rows = [row for row in rows if not entity_ids or row.id in entity_ids]
+            rows = self._live(rows, text)
             return _Result(scalars=rows, scalar=rows[0] if rows else None)
-        if "duplicate_test_case_candidates" in text:
-            rows = self._candidates or [
-                row
-                for row in self._gettable.values()
-                if isinstance(row, DuplicateTestCaseCandidate)
-            ]
+        if "managed_test_cases" in text:
+            rows = self._case_rows()
             rows = [
                 row
                 for row in rows

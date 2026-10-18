@@ -474,6 +474,7 @@ async def _persist_cases(
             actor_id=user.id,
             change_type="created",
             change_summary="Created by grounded generation",
+            source="ai",
             changed_fields=[
                 "title", "description", "steps", "test_type", "priority",
                 "severity", "status",
