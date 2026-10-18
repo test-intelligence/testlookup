@@ -5,9 +5,9 @@ import uuid
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user, resolve_project_scope
+from app.core.deps import get_current_active_user, require_role, resolve_project_scope
 from app.db.postgres import get_db
-from app.models.postgres import User
+from app.models.postgres import User, UserRole
 from app.models.schemas import (
     AICoverageAnalysisRequest,
     AICoverageAnalysisResponse,
@@ -27,12 +27,17 @@ from app.services.test_management_ai_service import (
 
 router = APIRouter()
 
+# W28 (the API role gap): generating cases and the AI review write the case or
+# its record, so they take the TESTER floor as a parameter (the decorator
+# lines, and their activity-coverage baseline keys, are unchanged). The
+# coverage analysis and the task status only read.
+
 
 @router.post("/cases/ai-generate", response_model=AIGenerateTestCasesResponse)
 async def ai_generate_cases(
     payload: AIGenerateTestCasesRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_role(UserRole.TESTER)),
 ):
     # Tenant guard — caller must be a member of the target project before we
     # persist AI-generated cases into it (matches the /plans/ai-create pattern).
@@ -46,7 +51,7 @@ async def ai_generate_cases(
 async def ai_generate_cases_async(
     payload: AIGenerateTestCasesRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_role(UserRole.TESTER)),
 ):
     # Verify access before queueing — the worker runs without request context.
     await resolve_project_scope(db, current_user, str(payload.project_id))
@@ -65,7 +70,7 @@ async def get_ai_task_status(
 async def ai_review_case(
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_role(UserRole.TESTER)),
 ):
     result = await review_test_case_with_ai(db, case_id, current_user)
     await db.commit()

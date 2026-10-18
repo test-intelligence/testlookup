@@ -287,6 +287,11 @@ class Project(Base):
     allow_unreviewed_distribution: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default=text("false")
     )
+    # W28 TCM-02: a test case needs an approved review before Active; default off
+    # (migration 0222, owner decision OR-04).
+    require_case_review: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default=text("false")
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 
@@ -2893,6 +2898,12 @@ class ManagedTestCase(Base):
     archived_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+    # W28 TCM-01 "edited after approval" (migration 0222): the version saved by a
+    # steps / expected-result / preconditions edit while the project required
+    # review and the case was approved or active. NULL = not edited since its
+    # approval. Cleared by the lifecycle on an approval or when the case leaves
+    # Approved / Active; never set while review is off.
+    edited_since_approval_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     # Attribution
     author_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -2984,6 +2995,13 @@ class TestCaseVersion(Base):
     change_summary: Mapped[Optional[str]] = mapped_column(String(500))   # human label: "Updated steps 3-5"
     change_type: Mapped[str] = mapped_column(String(30), default="updated")  # created|updated|status_changed|approved|deprecated
     changed_fields: Mapped[Optional[list]] = mapped_column(JSON)
+    # W28 TCM-04 (migration 0222): the kind of writer that saved this version
+    # (person | ai | api; NULL = not recorded, before 0222) and the case's
+    # owner at this version.
+    source: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    assignee_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -3184,6 +3202,9 @@ class TestPlanItem(Base):
     executed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     execution_notes: Mapped[Optional[str]] = mapped_column(Text)
     actual_duration_minutes: Mapped[Optional[int]] = mapped_column(Integer)
+    # W28 TCM-05 (migration 0222): the case version the recorded (latest)
+    # execution ran against. NULL = not run, or run before 0222.
+    executed_case_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     # Optional link to an actual automated test run result
     test_case_result_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("test_cases.id", ondelete="SET NULL"), nullable=True)

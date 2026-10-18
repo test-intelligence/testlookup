@@ -92,6 +92,13 @@ ENTITY_TYPES: Final[tuple[str, ...]] = (
     "notification_policy",
     # W09 FLK-02: a project's quarantine lifecycle policy (one row per project).
     "quarantine_policy",
+    # W28 TCM-04: one authored test case (managed_test_cases.id). New, rather
+    # than ``test``: that type is shared with flaky.detected / test.newly_failing
+    # and links with ``?test=``, which /test-management does not read.
+    "test_case",
+    # W28 TCM-03: a project's test-case library as a whole (the entity id is
+    # the project's), for a bulk edit across many cases.
+    "test_library",
 )
 
 #: Where a row of each entity type lives in the SPA. Used to build
@@ -137,6 +144,9 @@ _ENTITY_ROUTES: Final[Mapping[str, str]] = {
     "notification_policy": "/settings/notifications",
     # W09 FLK-02: the Policy tab of /flaky.
     "quarantine_policy": "/flaky?tab=policy",
+    # W28: /test-management opens a case from ``?case=`` (the Cases tab).
+    "test_case": "/test-management?case={id}",
+    "test_library": "/test-management",
 }
 
 _EVENT_NAME_RE: Final[re.Pattern[str]] = re.compile(r"^[a-z_]+\.[a-z_]+$")
@@ -353,6 +363,13 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("test_plan.updated", "test_management", "test", "Test plan {entity_label} changed: {changed}"),
     _spec("test_plan.deleted", "test_management", "test", "Test plan {entity_label} was deleted"),
     _spec("suite.sync_deleted", "test_management", "suite", "{count} tests were removed from suite {entity_label}"),
+    # W28 TCM-03 / TCM-04: staged by services/test_case_editing_service.py on
+    # the request session (outcome: a rolled-back request leaves no row).
+    # ``bulk_changed`` once per POST /cases/bulk with at least one changed case
+    # (context: count, change, skipped, not_found); ``restored`` when a restore
+    # saved a new version (context: from_version, to_version).
+    _spec("test_case.bulk_changed", "test_management", "test_library", "Bulk edit of {count} test cases: {change}"),
+    _spec("test_case.restored", "test_management", "test_case", "Test case {entity_label} restored from v{from_version}"),
     # ── integration ─────────────────────────────────────────────────────────
     _spec("api_key.created", "integration", "api_key", "API key {entity_label} was created"),
     _spec("api_key.revoked", "integration", "api_key", "API key {entity_label} was revoked"),
