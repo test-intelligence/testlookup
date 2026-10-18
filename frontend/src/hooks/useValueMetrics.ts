@@ -52,7 +52,10 @@ export function useValueMethodology(enabled: boolean) {
   const { data, error, isLoading } = useSWR<ValueMethodology>(
     enabled ? ['value-metrics-methodology'] : null,
     () => valueMetricsService.getMethodology(),
-    { revalidateOnFocus: false },
+    // The methodology is fixed per deployment: read it once. The key turns off
+    // while the section is closed, and without revalidateIfStale: false a
+    // reopen more than SWR's 2 s dedupe window later read it again.
+    { revalidateOnFocus: false, revalidateIfStale: false },
   )
   return {
     methodology: data,
