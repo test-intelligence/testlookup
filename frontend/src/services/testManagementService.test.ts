@@ -59,11 +59,8 @@ describe('testManagementService request contracts', () => {
     const draft = { title: 'Checkout' }
     testManagementService.createCase(draft)
     testManagementService.getCase('case-1')
-    testManagementService.updateCase('case-1', {
-      expected_version: 4,
-      title: 'Checkout v2',
-      change_summary: 'clarify',
-    })
+    // W28: the case PATCH moved to testCaseEditingService.updateCase (in-page errors,
+    // suppressToast); its contract is pinned in testCaseEditingService.test.ts.
     testManagementService.getCaseHistory('case-1')
     testManagementService.getCaseReviews('case-1')
     testManagementService.getCaseComments('case-1')
@@ -73,11 +70,8 @@ describe('testManagementService request contracts', () => {
 
     expect(postData).toHaveBeenNthCalledWith(1, '/api/v1/test-management/cases', draft)
     expect(getData).toHaveBeenNthCalledWith(1, '/api/v1/test-management/cases/case-1')
-    expect(patchData).toHaveBeenCalledWith('/api/v1/test-management/cases/case-1', {
-      expected_version: 4,
-      title: 'Checkout v2',
-      change_summary: 'clarify',
-    })
+    expect(patchData).not.toHaveBeenCalled()
+    expect('updateCase' in testManagementService).toBe(false)
     expect(getData).toHaveBeenNthCalledWith(2, '/api/v1/test-management/cases/case-1/history')
     expect(getData).toHaveBeenNthCalledWith(3, '/api/v1/test-management/cases/case-1/reviews')
     expect(getData).toHaveBeenNthCalledWith(4, '/api/v1/test-management/cases/case-1/comments')

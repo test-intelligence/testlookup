@@ -59,9 +59,6 @@ export const testManagementService = {
   getCase: (id: string): Promise<ManagedTestCase> =>
     getData(`/api/v1/test-management/cases/${id}`),
 
-  updateCase: (id: string, data: Partial<ManagedTestCase> & { expected_version: number; change_summary?: string }): Promise<ManagedTestCase> =>
-    patchData(`/api/v1/test-management/cases/${id}`, data),
-
   deleteCase: (id: string, reason?: string): Promise<void> =>
     deleteData<void, { reason: string } | undefined>(
       `/api/v1/test-management/cases/${id}`,
@@ -295,6 +292,9 @@ export const testManagementService = {
       execution_count?: number
       last_execution_at?: string | null
       source?: 'automation' | 'manual'
+      /** W28: a manual row's authored lifecycle state (automation rows carry none). Link Suite links
+       *  RUNNABLE_STATES by default; a row without it counts as not Active. */
+      lifecycle_status?: string | null
     }>
     total: number
     page: number

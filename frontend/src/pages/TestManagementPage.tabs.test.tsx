@@ -20,8 +20,14 @@ import { SWRConfig } from 'swr'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { testManagementService } from '@/services/testManagementService'
+import { useAuthStore } from '@/store/authStore'
 import type { ManagedTestCase } from '@/types/test-management'
 import TestManagementPage from './TestManagementPage'
+
+// W28: AI Generate and New test case are TESTER+ (signed out, usePermissions reads VIEWER).
+// TestManagementPage.roles.test.tsx pins every role's controls.
+beforeEach(() => { useAuthStore.setState({ user: { id: 'u-lead', role: 'QA_LEAD' } as never }) })
+afterEach(() => { useAuthStore.setState({ user: null }) })
 
 vi.mock('@/store/projectStore', () => {
   const state = { activeProjectId: 'project-1', activeProject: { id: 'project-1', name: 'Project One' } }

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react'
+import { Fragment, useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react'
 import useSWR from 'swr'
 import { useDataFreshness } from '@/hooks/useDataFreshness'
 import { useNow } from '@/hooks/useNow'
@@ -9,7 +9,7 @@ import {
   User, CheckCircle2, AlertCircle,
   RotateCcw, MessageSquare, History, Shield, FileText,
   ChevronUp, Trash2, BookOpen,
-  Download, FileSpreadsheet, Layers,
+  Download, FileSpreadsheet, Layers, Pencil,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
@@ -36,6 +36,9 @@ import { useTableSort } from '@/hooks/useTableSort'
 import { useFeatureEnabled } from '@/hooks/useFeatureFlags'
 import { api } from '@/services/api'
 import { useProjectStore } from '@/store/projectStore'
+import { useAuthStore } from '@/store/authStore'
+import { appMutate } from '@/utils/swrCacheMutate'
+import { testCaseEditingService } from '@/services/testCaseEditingService'
 import {
   useTestCases, useTestPlans, useAuditLog,
   useTestCaseHistory, useTestCaseReviews, useTestCaseComments,
@@ -66,18 +69,27 @@ import InsightsPanel, {
 } from '@/pages/test-management/InsightsPanel'
 import StrategyTab from '@/pages/test-management/StrategyTab'
 import TestCasesTabBar from '@/pages/test-management/TestCasesTabBar'
+// W28 (TCM-01..05): G-C's edit form and Status moves; G-D's bulk bar, history panel and plan item version.
+import CaseEditForm from '@/pages/test-management/CaseEditForm'
+import CaseStatusControl from '@/pages/test-management/CaseStatusControl'
+import BulkActionBar from '@/pages/test-management/BulkActionBar'
+import { isSelectable, pruneSelection } from '@/pages/test-management/bulkActionModel'
+import CaseHistoryPanel from '@/pages/test-management/CaseHistoryPanel'
+import { PlanItemVersionCell, PlanItemVersionSteps } from '@/pages/test-management/PlanItemVersion'
 import { STATUS_COLORS, PRIORITY_COLORS, fmtDate, fmtDateTime } from '@/pages/test-management/format'
 import { ModalWrap, QualityScore, StatusPill } from '@/pages/test-management/tmUi'
 import { TM_TAB_IDS, tabAlias, type TmTab } from '@/pages/test-management/tabs'
-import type {
-  AIReviewResult,
-  ManagedTestCase,
-  TestCaseComment,
-  TestCaseReview,
-  TestCaseVersion,
-  TestPlan,
-  TestPlanItem,
-  TestStep,
+import {
+  RETIRED_STATES,
+  RUNNABLE_STATES,
+  type AIReviewResult,
+  type ManagedTestCase,
+  type TestCaseBulkResponse,
+  type TestCaseComment,
+  type TestCaseReview,
+  type TestPlan,
+  type TestPlanItem,
+  type TestStep,
 } from '@/types/test-management'
 import {
   buildTestCaseListParams,
@@ -328,7 +340,28 @@ function LatestResultBlock({ caseItem }: { caseItem: ManagedTestCase }) {
   )
 }
 
+/** W28 TCM-01: the Details toolbar's Edit (pencil + Edit); a retired case says how to edit it. */
+function EditCaseButton({ retired, onEdit }: { retired: boolean; onEdit: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onEdit}
+      disabled={retired}
+      title={retired ? 'Reinstate it to edit it' : undefined}
+      className="btn-secondary text-xs inline-flex items-center gap-1 flex-shrink-0 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      <Pencil aria-hidden="true" className="h-3.5 w-3.5" />
+      Edit
+    </button>
+  )
+}
+
 type DetailTab = 'details' | 'lifecycle' | 'history' | 'reviews' | 'comments' | 'ai_review'
+
+/** W28: the case pane's one open form: the edit form, or a Status move's reason. */
+type CasePaneSlotKey = 'edit' | 'reason'
+
+const isRetired = (status: string) => (RETIRED_STATES as readonly string[]).includes(status)
 
 interface CaseDetailPanelProps {
   caseItem: ManagedTestCase
@@ -336,6 +369,12 @@ interface CaseDetailPanelProps {
   onRefresh: () => void
   onCaseChanged: (updated: ManagedTestCase) => void
   lifecycleV2: boolean
+  /** W28: the selected project (null = All Projects, read-only). */
+  projectId: string | null
+  /** W28: the pane's slot (owned by the Cases tab): typed input asks before the pane closes, steps or switches. */
+  slot: InlineSlot<CasePaneSlotKey>
+  /** W28: the page's suite names (the edit form's Suite suggestions). */
+  suiteOptions: string[]
   /** Where the case sits in the visible page of the list ("3 of 25"); absent when it is not on it. */
   position?: { index: number; total: number }
   /** Step through the list without leaving the panel; absent at either end. */
@@ -355,7 +394,7 @@ interface CaseDetailPanelProps {
  * previous / next step through the page, and Expand gives it the full width.
  */
 function CaseDetailPanel({
-  caseItem, onClose, onRefresh, onCaseChanged, lifecycleV2,
+  caseItem, onClose, onRefresh, onCaseChanged, lifecycleV2, projectId, slot, suiteOptions,
   position, onPrev, onNext, expanded, onToggleExpand,
 }: CaseDetailPanelProps) {
   const [activeTab, setActiveTab] = useState<DetailTab>('details')
@@ -368,7 +407,31 @@ function CaseDetailPanel({
   // comments and AI review all need one, so its panel is Details + Promote.
   const isAutomation = caseItem.source === 'automation'
 
-  const { data: history, isLoading: histLoading } = useTestCaseHistory(activeTab === 'history' ? caseItem.id : undefined)
+  // W28 (OR-04): the UI hides what the role cannot do; the server is the authority.
+  // Writing a case (edit, Status moves, comments, AI review, request review) is TESTER+
+  // in one project; All Projects is read-only. Deprecate / Archive / Reinstate stay
+  // QA_LEAD+ (the contract's AMENDMENT).
+  const { hasRole } = usePermissions()
+  const currentUserId = useAuthStore((s) => s.user?.id ?? null)
+  const isTesterUp = hasRole('TESTER')
+  const canWrite = isTesterUp && Boolean(projectId)
+  const canRetire = hasRole('QA_LEAD')
+  const retired = isRetired(caseItem.status)
+  const canEdit = canWrite && !isAutomation
+  const showMoves = lifecycleV2 && canWrite && !isAutomation
+  const editing = activeTab === 'details' && canEdit && !retired && slot.openKey === 'edit'
+  const editedAfterApproval = caseItem.review_required === true && caseItem.edited_after_approval === true
+
+  // A tab switch inside the pane asks first while its form has typed input, and takes the form away.
+  const selectTab = (tab: DetailTab) => {
+    if (tab === activeTab) return
+    slot.guard(() => {
+      slot.close()
+      setActiveTab(tab)
+    })
+  }
+
+  const { data: history, isLoading: histLoading, mutate: mutateHistory } = useTestCaseHistory(activeTab === 'history' ? caseItem.id : undefined)
   const { data: reviews, isLoading: revLoading, mutate: mutateReviews } = useTestCaseReviews(activeTab === 'reviews' ? caseItem.id : undefined)
   const { data: comments, isLoading: commLoading, mutate: mutateComments } = useTestCaseComments(
     activeTab === 'comments' ? caseItem.id : undefined
@@ -449,6 +512,9 @@ function CaseDetailPanel({
           {caseItem.ai_generated && (
             <span className="text-xs text-[var(--color-purple)] flex items-center gap-0.5"><Sparkles className="h-3 w-3" /> AI</span>
           )}
+          {editedAfterApproval && (
+            <span data-edited-after-approval-mark="" className="text-xs text-[var(--color-text-muted)]">edited after approval</span>
+          )}
         </>
       }
       onClose={onClose}
@@ -469,6 +535,7 @@ function CaseDetailPanel({
       nextLabel="Next case"
       escape="none"
       manageFocus={false}
+      slot={slot}
       bodyLayout="host"
       testIds={{ actions: 'tm-case-panel-actions', position: 'tm-case-position' }}
       dataAttributes={{ 'data-case-panel': '', 'data-expanded': expanded ? 'true' : 'false' }}
@@ -478,7 +545,7 @@ function CaseDetailPanel({
           {DETAIL_TABS.map(t => (
             <button
               key={t.id}
-              onClick={() => setActiveTab(t.id)}
+              onClick={() => selectTab(t.id)}
               className={clsx(
                 'flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-t border-b-2 transition-colors whitespace-nowrap',
                 activeTab === t.id
@@ -493,9 +560,42 @@ function CaseDetailPanel({
 
         {/* Tab content */}
         <div className="flex-1 overflow-y-auto p-6">
-          {/* Details tab */}
-          {activeTab === 'details' && (
+          {/* Details tab: W28 the edit form opens HERE, in place of the read-only details (the toolbar hides). */}
+          {editing && (
+            <CaseEditForm
+              caseItem={caseItem}
+              suiteOptions={suiteOptions}
+              slot={slot}
+              onCancel={() => slot.close()}
+              onSaved={(updated) => {
+                slot.close()
+                onCaseChanged(updated)
+                onRefresh()
+                void appMutate(['tm-case-history', updated.id])
+              }}
+            />
+          )}
+          {activeTab === 'details' && !editing && (
             <div className="space-y-4">
+              {/* W28 TCM-01 / TCM-02: the Status moves on the left, Edit on the right. */}
+              {showMoves ? (
+                <CaseStatusControl
+                  caseItem={caseItem}
+                  currentUserId={currentUserId}
+                  slot={slot}
+                  canRetire={canRetire}
+                  onChanged={(updated) => {
+                    onCaseChanged(updated)
+                    onRefresh()
+                    void mutateReviews()
+                  }}
+                  edit={canEdit ? <EditCaseButton retired={retired} onEdit={() => slot.open('edit')} /> : undefined}
+                />
+              ) : canEdit ? (
+                <div role="group" aria-label="Case actions" data-case-toolbar="" className="flex flex-wrap items-start justify-end gap-2">
+                  <EditCaseButton retired={retired} onEdit={() => slot.open('edit')} />
+                </div>
+              ) : null}
               <LatestResultBlock caseItem={caseItem} />
               {isAutomation && (
                 <div
@@ -594,7 +694,7 @@ function CaseDetailPanel({
                   </div>
                 </div>
               )}
-              {!isAutomation && !lifecycleV2 && caseItem.status !== 'review_requested' && caseItem.status !== 'under_review' && (
+              {canWrite && !isAutomation && !lifecycleV2 && caseItem.status !== 'review_requested' && caseItem.status !== 'under_review' && (
                 <div className="pt-2">
                   <button
                     type="button"
@@ -627,29 +727,23 @@ function CaseDetailPanel({
             )
           )}
 
-          {/* History tab */}
+          {/* History tab (W28 TCM-04): what changed per version, compare with current, restore. */}
           {activeTab === 'history' && (
-            histLoading ? <div className="flex justify-center py-12"><LoadingSpinner /></div> :
-            !history || history.length === 0 ? (
-              <EmptyState icon={<History className="h-8 w-8" />} title="No history yet" description="Changes to this test case will appear here" />
-            ) : (
-              <div className="space-y-3">
-                {(history as TestCaseVersion[]).map(v => (
-                  <div key={v.id} className="bg-[var(--color-bg-secondary)] rounded-lg p-4">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-medium text-[var(--color-text)]">v{v.version} — {v.change_type.replace(/_/g, ' ')}</span>
-                      <span className="text-xs text-[var(--color-text-muted)]">{fmtDateTime(v.created_at)}</span>
-                    </div>
-                    {v.change_summary && <p className="text-xs text-[var(--color-text-muted)]">{v.change_summary}</p>}
-                    {v.changed_fields && v.changed_fields.length > 0 && (
-                      <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
-                        Changed: {v.changed_fields.join(', ')}
-                      </p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )
+            <CaseHistoryPanel
+              caseItem={caseItem}
+              versions={history}
+              isLoading={histLoading}
+              canRestore={canEdit && !retired}
+              onRestored={(updated) => {
+                onCaseChanged(updated)
+                onRefresh()
+                void mutateHistory()
+              }}
+              onStale={() => {
+                void testCaseEditingService.getCaseFresh(caseItem.id).then(onCaseChanged, () => undefined)
+                void mutateHistory()
+              }}
+            />
           )}
 
           {/* Reviews tab */}
@@ -702,20 +796,26 @@ function CaseDetailPanel({
                 </div>
                )
               }
-              <div className="border-t border-[var(--color-border)] pt-3">
-                <textarea
-                  className="input w-full h-20 resize-none text-sm"
-                  value={comment}
-                  onChange={e => setComment(e.target.value)}
-                  placeholder="Add a comment…"
-                />
-                <div className="flex justify-end mt-2">
-                  <button onClick={handleAddComment} disabled={addingComment || !comment.trim()} className="btn-primary text-sm flex items-center gap-2">
-                    {addingComment && <LoadingSpinner size="sm" />}
-                    Post Comment
-                  </button>
+              {canWrite ? (
+                <div className="border-t border-[var(--color-border)] pt-3">
+                  <textarea
+                    className="input w-full h-20 resize-none text-sm"
+                    value={comment}
+                    onChange={e => setComment(e.target.value)}
+                    placeholder="Add a comment…"
+                  />
+                  <div className="flex justify-end mt-2">
+                    <button onClick={handleAddComment} disabled={addingComment || !comment.trim()} className="btn-primary text-sm flex items-center gap-2">
+                      {addingComment && <LoadingSpinner size="sm" />}
+                      Post Comment
+                    </button>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <p data-comments-read-only="" className="border-t border-[var(--color-border)] pt-3 m-0 text-xs text-[var(--color-text-muted)]">
+                  {isTesterUp ? 'Choose a project to add a comment.' : 'Viewers can read comments.'}
+                </p>
+              )}
             </div>
           )}
 
@@ -724,10 +824,16 @@ function CaseDetailPanel({
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <p className="text-sm text-[var(--color-text-secondary)]">Run AI analysis to score this test case and get improvement suggestions.</p>
-                <button onClick={handleAiReview} disabled={runningAiReview} className="btn-primary flex items-center gap-2 text-sm flex-shrink-0">
-                  {runningAiReview ? <LoadingSpinner size="sm" /> : <Sparkles className="h-4 w-4" />}
-                  {runningAiReview ? 'Reviewing…' : 'Run AI Review'}
-                </button>
+                {canWrite ? (
+                  <button onClick={handleAiReview} disabled={runningAiReview} className="btn-primary flex items-center gap-2 text-sm flex-shrink-0">
+                    {runningAiReview ? <LoadingSpinner size="sm" /> : <Sparkles className="h-4 w-4" />}
+                    {runningAiReview ? 'Reviewing…' : 'Run AI Review'}
+                  </button>
+                ) : (
+                  <p data-ai-review-read-only="" className="m-0 text-xs text-[var(--color-text-muted)] flex-shrink-0">
+                    {isTesterUp ? 'Choose a project to run an AI review.' : 'AI review needs the Tester role or above.'}
+                  </p>
+                )}
               </div>
               {aiResult && (
                 <div className="space-y-3">
@@ -905,6 +1011,16 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
   const [pendingDeprecation, setPendingDeprecation] = useState<ManagedTestCase | null>(null)
   const [deprecating, setDeprecating] = useState<string | null>(null)
 
+  // W28 (OR-04): creating, editing, the Status moves and bulk edits are TESTER+ in one
+  // project (All Projects is read-only); a row's Deprecate / Delete is QA_LEAD+ (the
+  // contract's AMENDMENT: the retire moves stay with QA leads and administrators).
+  const { hasRole } = usePermissions()
+  const canWrite = Boolean(projectId) && hasRole('TESTER')
+  const canRetire = hasRole('QA_LEAD')
+  // The case pane's one open form (the edit form, or a Status move's reason): closing the pane,
+  // stepping to another case, a click on another row or a tab switch asks while it has typed input.
+  const paneSlot = useInlineSlot<CasePaneSlotKey>()
+
   // One interaction for every row: the case panel, in place, so the list keeps
   // its search, filters and page. Automation rows used to leave the page for
   // one run's result (or a toast); the panel links there instead.
@@ -925,7 +1041,7 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
     setSelectedCase(null)
     setCaseExpanded(false)
     closeCaseParam()
-  }, [closeCaseParam])
+  }, [closeCaseParam, setCaseExpanded])
   useEffect(() => {
     if (rejectedCaseParam !== null) closeCaseParam()
   }, [rejectedCaseParam, closeCaseParam])
@@ -969,8 +1085,10 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
       ownerFilter: '',
       suiteFilter,
       includeAutomation,
+      // W28: the AI drafts view (draft + ai_generated, a list filter the API already has).
+      aiGenerated: savedView === 'ai_drafts',
     })
-  }, [page, status, testType, priority, search, suiteFilter, includeAutomation])
+  }, [page, status, testType, priority, search, suiteFilter, includeAutomation, savedView])
 
   const {
     data,
@@ -1041,10 +1159,26 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
   }, [needsCaseFetch, caseParam, closeCaseParam])
 
   // A click on the open case's own row folds the panel; any other row swaps it in.
+  // W28: through the pane's slot, so a typed edit form asks first; the form goes with the case.
   const toggleCase = useCallback((caseItem: ManagedTestCase) => {
-    if (activeCase?.id === caseItem.id) closeCase()
-    else openCase(caseItem)
-  }, [activeCase?.id, closeCase, openCase])
+    paneSlot.guard(() => {
+      paneSlot.close()
+      if (activeCase?.id === caseItem.id) closeCase()
+      else openCase(caseItem)
+    })
+  }, [activeCase?.id, closeCase, openCase, paneSlot])
+  // Leaving the open case from the pane itself (Close, Previous / Next): DetailPane runs these
+  // through the same slot's guard; each takes the pane's form away with the case.
+  const leaveCase = useCallback((action: () => void) => () => {
+    paneSlot.close()
+    action()
+  }, [paneSlot])
+  const pickCase = useCallback((caseItem: ManagedTestCase) => {
+    paneSlot.guard(() => {
+      paneSlot.close()
+      openCase(caseItem)
+    })
+  }, [openCase, paneSlot])
 
   // "3 of 25" and previous / next, within the page the list shows.
   const activeIndex = activeCase ? cases.findIndex((c) => c.id === activeCase.id) : -1
@@ -1060,11 +1194,14 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
       const target = e.target as HTMLElement | null
       if (target?.closest?.('input, textarea, select, [contenteditable="true"]')) return
       if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
-      closeCase()
+      paneSlot.guard(() => {
+        paneSlot.close()
+        closeCase()
+      })
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [activeCase, closeCase])
+  }, [activeCase, closeCase, paneSlot])
 
   // Stepping through cases keeps the matching row in view in the list.
   useEffect(() => {
@@ -1194,6 +1331,8 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
   const SAVED_VIEWS: { id: SavedViewId; label: string }[] = [
     { id: 'my_drafts',   label: 'My drafts' },
     { id: 'p0_p1',       label: "My team's P0/P1" },
+    // W28 TCM-02: generated cases arrive as AI drafts; accepting them is Make active (one or many).
+    { id: 'ai_drafts',   label: 'AI drafts' },
   ]
   const applySavedView = (id: SavedViewId) => {
     setSavedView(id)
@@ -1201,6 +1340,63 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
     // Re-write filter state from the view definition.
     if (id === 'my_drafts')   { setStatus('draft');    setPriority(''); setTestType(''); setSuiteFilter('') }
     if (id === 'p0_p1')       { setStatus('');         setPriority('critical'); setTestType(''); setSuiteFilter('') }
+    if (id === 'ai_drafts')   { setStatus('draft');    setPriority(''); setTestType(''); setSuiteFilter('') }
+  }
+
+  // ── W28 TCM-03: the bulk selection ──────────────────────────────────
+  // Per page and local: cleared whenever the page, a filter, the search, the
+  // saved view, Automation tests or the project changes (what you see is what
+  // you edit; no "all N matching" selection). The scope key does it without an
+  // effect: a selection made under another scope reads as empty.
+  const selectionScope = JSON.stringify([projectId, page, status, testType, priority, search, suiteFilter, savedView, includeAutomation])
+  const [bulk, setBulk] = useState<{ scope: string; ids: string[]; open: boolean }>({ scope: selectionScope, ids: [], open: false })
+  const bulkState = canWrite && bulk.scope === selectionScope ? bulk : { scope: selectionScope, ids: [] as string[], open: false }
+  const selectableOnPage = cases.filter((tc) => isSelectable(tc, canWrite))
+  const selectedCases = cases.filter((tc) => bulkState.ids.includes(tc.id))
+  const setSelection = (ids: string[], open = bulkState.open) => setBulk({ scope: selectionScope, ids, open })
+  const toggleSelected = (tc: ManagedTestCase) =>
+    setSelection(bulkState.ids.includes(tc.id) ? bulkState.ids.filter((id) => id !== tc.id) : [...bulkState.ids, tc.id])
+  const pageSelectionState: 'none' | 'some' | 'all' =
+    selectedCases.length === 0 ? 'none' : selectedCases.length >= selectableOnPage.length ? 'all' : 'some'
+  const togglePageSelection = () =>
+    setSelection(pageSelectionState === 'all' ? [] : selectableOnPage.map((tc) => tc.id))
+  const bulkActionRef = useRef<HTMLSelectElement>(null)
+  const [bulkFocusRequest, setBulkFocusRequest] = useState(0)
+  const showBulkBar = canWrite && Boolean(projectId) && (selectedCases.length > 0 || bulkState.open)
+
+  // ⌘E (Mac) / Ctrl+E (elsewhere) opens the bulk bar and focuses its Action select — the
+  // footer has promised it since the redesign. Only on this tab, only where bulk works, and
+  // never while typing in a field (a ticked checkbox is not typing); elsewhere the browser keeps it.
+  useEffect(() => {
+    if (!canWrite) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'e' && e.key !== 'E') return
+      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey || e.defaultPrevented) return
+      const target = e.target as HTMLElement | null
+      if (target?.closest?.('input:not([type="checkbox"]):not([type="radio"]), textarea, select, [contenteditable="true"]')) return
+      e.preventDefault()
+      setBulk((current) => ({
+        scope: selectionScope,
+        ids: current.scope === selectionScope ? current.ids : [],
+        open: true,
+      }))
+      setBulkFocusRequest((n) => n + 1)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [canWrite, selectionScope])
+  useEffect(() => {
+    if (bulkFocusRequest > 0) bulkActionRef.current?.focus()
+  }, [bulkFocusRequest])
+
+  const handleBulkApplied = (result: TestCaseBulkResponse) => {
+    handleRefresh()
+    // The bar stays (it shows what happened); the selection keeps only what was not changed.
+    setSelection(pruneSelection(bulkState.ids, result), true)
+    // The open case was changed: the pane re-reads it from the refreshed page.
+    if (activeCase && result.results.some((r) => r.id === activeCase.id && r.outcome === 'changed')) {
+      setSelectedCase(null)
+    }
   }
 
   // ── Automation split ────────────────────────────────────────────────
@@ -1223,6 +1419,7 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
     const s = (c.suite_name ?? '').trim() || 'unknown'
     suiteCounts.set(s, (suiteCounts.get(s) ?? 0) + 1)
   }
+  const suiteOptions = Array.from(suiteCounts.keys()).filter(s => s !== 'unknown').sort()
   const strategyGaps: StrategyGap[] = []
   if (deprecatedInActive > 0) {
     strategyGaps.push({ severity: 'critical', title: 'Deprecated cases in active suites', sub: 'still referenced by run plans', pill: `${deprecatedInActive} active` })
@@ -1300,7 +1497,7 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
         />
         <ReviewQueueCard
           rows={reviewQueue.slice(0, 5)}
-          onPick={openCase}
+          onPick={pickCase}
         />
         <StrategyGapsCard gaps={strategyGaps} />
         <RecentActivityCard events={auditEvents} />
@@ -1324,7 +1521,7 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
         onPriorityChange={(v) => { setPriority(v); setPage(1); setSavedView(null) }}
         suiteFilter={suiteFilter}
         onSuiteChange={(v) => { setSuiteFilter(v); setPage(1); setSavedView(null) }}
-        suiteOptions={Array.from(suiteCounts.keys()).filter(s => s !== 'unknown').sort()}
+        suiteOptions={suiteOptions}
         includeAutomation={includeAutomation}
         onToggleAutomation={(v) => { setIncludeAutomation(v); setPage(1) }}
       />
@@ -1357,6 +1554,24 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
         >
           {caseRefreshWarning}
         </p>
+      )}
+
+      {/* W28 TCM-03: the bulk bar, between the alerts and the cases row (above the
+          create / AI forms that share this area), whenever a case is selected or
+          ⌘E / Ctrl+E opened it. */}
+      {showBulkBar && projectId && (
+        <BulkActionBar
+          projectId={projectId}
+          selected={selectedCases}
+          pageSelectableCount={selectableOnPage.length}
+          lifecycleV2={lifecycleV2}
+          canRetire={canRetire}
+          suiteOptions={suiteOptions}
+          onSelectPage={() => setSelection(selectableOnPage.map((tc) => tc.id))}
+          onClear={() => setSelection([], false)}
+          onApplied={handleBulkApplied}
+          actionRef={bulkActionRef}
+        />
       )}
 
       {/* New test case / AI Generate (the list toolbar and the empty state):
@@ -1393,13 +1608,16 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
           <CaseDetailPanel
             key={activeCase.id}
             caseItem={activeCase}
-            onClose={closeCase}
+            onClose={leaveCase(closeCase)}
             onRefresh={handleRefresh}
             onCaseChanged={setSelectedCase}
             lifecycleV2={lifecycleV2}
+            projectId={projectId}
+            slot={paneSlot}
+            suiteOptions={suiteOptions}
             position={casePosition}
-            onPrev={prevCase ? () => openCase(prevCase) : undefined}
-            onNext={nextCase ? () => openCase(nextCase) : undefined}
+            onPrev={prevCase ? leaveCase(() => openCase(prevCase)) : undefined}
+            onNext={nextCase ? leaveCase(() => openCase(nextCase)) : undefined}
             expanded={caseExpanded}
             onToggleExpand={() => setCaseExpanded((v) => !v)}
           />
@@ -1425,7 +1643,7 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
                 >
                   {/* Beside the case panel the list header is narrower: icons, the names in tooltips. */}
                   <FileSpreadsheet className="h-3.5 w-3.5" />{!activeCase && ' Export'}
-                </button>                {projectId && (
+                </button>                {canWrite && (
                   <>
                     <button
                       onClick={() => topSlot.open('ai')}
@@ -1457,7 +1675,7 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
               <div className="flex items-center justify-center py-12"><LoadingSpinner size="lg" /></div>
             ) : cases.length === 0 ? (
               <EmptyStateBlock
-                projectId={projectId}
+                canCreate={canWrite}
                 onCreate={() => topSlot.open('create')}
                 onAiGenerate={() => topSlot.open('ai')}
                 onReset={() => { setSearch(''); setStatus(''); setTestType(''); setPriority(''); setSuiteFilter(''); setSavedView(null); setPage(1) }}
@@ -1472,6 +1690,14 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
                 selectedId={activeCase?.id ?? null}
                 compact={Boolean(activeCase)}
                 belowRow={deprecationRow}
+                canDeprecate={canRetire}
+                selection={canWrite ? {
+                  isSelected: (id) => bulkState.ids.includes(id),
+                  canSelect: (tc) => isSelectable(tc, canWrite),
+                  onToggle: toggleSelected,
+                  pageState: pageSelectionState,
+                  onTogglePage: togglePageSelection,
+                } : undefined}
               />
             )}
 
@@ -1482,6 +1708,7 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
                 pages={data.pages}
                 page={data.page}
                 onPage={setPage}
+                bulkHint={canWrite ? (isMacPlatform() ? '⌘E bulk edit' : 'Ctrl+E bulk edit') : null}
               />
             )}
         </>}
@@ -1493,7 +1720,13 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
 }
 
 // ── Filter bar ──────────────────────────────────────────────────────────
-type SavedViewId = 'my_drafts' | 'p0_p1'
+type SavedViewId = 'my_drafts' | 'p0_p1' | 'ai_drafts'
+
+/** The footer's bulk-edit hint names the platform's key (⌘ on a Mac, Ctrl elsewhere). */
+function isMacPlatform(): boolean {
+  if (typeof navigator === 'undefined') return false
+  return /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)
+}
 
 interface CasesFilterBarProps {
   searchInputRef: React.RefObject<HTMLInputElement | null>
@@ -1708,9 +1941,42 @@ function SelectChip({
 }
 
 // ── Cases table body + footer ─────────────────────────────────────────
+
+/** W28 TCM-03: the bulk selection's hooks into the table (absent: no checkboxes, the table as before). */
+export interface CasesTableSelection {
+  isSelected: (id: string) => boolean
+  /** Authored rows the viewer may edit (automation rows get no checkbox). */
+  canSelect: (tc: ManagedTestCase) => boolean
+  onToggle: (tc: ManagedTestCase) => void
+  /** The header checkbox: checked when every selectable row of the page is, indeterminate for some. */
+  pageState: 'none' | 'some' | 'all'
+  onTogglePage: () => void
+}
+
+const SELECT_BOX = 'h-3.5 w-3.5 flex-shrink-0 cursor-pointer accent-[var(--color-accent)]'
+
+/** The page checkbox, inside the Test case header (never a sixth column). */
+function PageSelectBox({ state, onToggle }: { state: 'none' | 'some' | 'all'; onToggle: () => void }) {
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = state === 'some'
+  }, [state])
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      aria-label="Select all on this page"
+      checked={state === 'all'}
+      onChange={onToggle}
+      className={SELECT_BOX}
+    />
+  )
+}
+
 // Exported for isolated column-structure tests (same precedent as OwnerCell).
 export function CasesTableBody({
   cases, onRowClick, onDeprecate, onPromoted, lifecycleV2, selectedId = null, compact = false, belowRow,
+  canDeprecate = true, selection,
 }: {
   cases: ManagedTestCase[]
   onRowClick: (c: ManagedTestCase) => void
@@ -1723,6 +1989,10 @@ export function CasesTableBody({
   compact?: boolean
   /** W27b PAN-05: the `<tr>` rendered right after a case's row (its reason form, an `InlineRowSection`), or nothing. */
   belowRow?: (tc: ManagedTestCase) => ReactNode
+  /** W28: false below QA lead: the row's Deprecate / Delete is not offered (its cell stays). Default true. */
+  canDeprecate?: boolean
+  /** W28 TCM-03: the bulk selection; absent, no checkboxes. */
+  selection?: CasesTableSelection
 }) {
   return (
     <div className="overflow-x-auto">
@@ -1733,7 +2003,13 @@ export function CasesTableBody({
                 ride the meta line under the title. Seven fixed widths (660px)
                 plus Title's minWidth:280 demanded ~940px, so Title collapsed to
                 a few characters and Last run + actions scrolled out of view. */}
-            <Th label="Test case" flex />
+            <Th
+              label="Test case"
+              flex
+              leading={selection && cases.some(selection.canSelect)
+                ? <PageSelectBox state={selection.pageState} onToggle={selection.onTogglePage} />
+                : undefined}
+            />
             <Th label="Status"     width={100} />
             {!compact && <Th label="Owner" width={122} />}
             <Th label="Last run"   width={110} align="right" />
@@ -1752,6 +2028,10 @@ export function CasesTableBody({
               selected={tc.id === selectedId}
               compact={compact}
               belowRow={belowRow}
+              canDeprecate={canDeprecate}
+              selection={selection && selection.canSelect(tc)
+                ? { checked: selection.isSelected(tc.id), onToggle: () => selection.onToggle(tc) }
+                : undefined}
             />
           ))}
         </tbody>
@@ -1760,7 +2040,7 @@ export function CasesTableBody({
   )
 }
 
-function Th({ label, width, align, flex }: {
+function Th({ label, width, align, flex, leading }: {
   label: string
   width?: number
   align?: 'right'
@@ -1772,6 +2052,8 @@ function Th({ label, width, align, flex }: {
    * trailing columns out of the scroll wrapper.
    */
   flex?: boolean
+  /** W28: a control before the label, inside the same header cell (the page checkbox). */
+  leading?: ReactNode
 }) {
   return (
     <th
@@ -1788,7 +2070,8 @@ function Th({ label, width, align, flex }: {
         whiteSpace: 'nowrap',
       }}
     >
-      {label}
+      {/* A block flex row, not an inline one: an inline box around the checkbox grew the header's line box (+4 px). */}
+      {leading ? <div className="flex items-center gap-2">{leading}{label}</div> : label}
     </th>
   )
 }
@@ -1802,6 +2085,8 @@ function CaseRow({
   selected = false,
   compact = false,
   belowRow,
+  canDeprecate = true,
+  selection,
 }: {
   tc: ManagedTestCase
   onRowClick: (c: ManagedTestCase) => void
@@ -1811,8 +2096,12 @@ function CaseRow({
   selected?: boolean
   compact?: boolean
   belowRow?: (tc: ManagedTestCase) => ReactNode
+  canDeprecate?: boolean
+  /** W28: this row's checkbox (inside the Test case cell, before the title). */
+  selection?: { checked: boolean; onToggle: () => void }
 }) {
   const deprecateAllowed = lifecycleV2 ? tc.allowed_actions?.includes('deprecate') === true : true
+  const editedAfterApproval = tc.review_required === true && tc.edited_after_approval === true
   // Only emit the type/suite/tags tail when there is something in it — otherwise
   // the leading separator renders as an orphaned '·'.
   const hasTail = Boolean(
@@ -1836,6 +2125,17 @@ function CaseRow({
     >
       <td style={{ padding: '9px 12px', width: '100%', maxWidth: 0 }}>
         <div className="flex items-center gap-2 min-w-0">
+          {selection && (
+            <input
+              type="checkbox"
+              aria-label={`Select ${tc.title}`}
+              checked={selection.checked}
+              onChange={selection.onToggle}
+              // Ticking a case never opens it.
+              onClick={(event) => event.stopPropagation()}
+              className={SELECT_BOX}
+            />
+          )}
           <span className="text-[12.5px] font-medium text-[var(--color-text)] truncate" title={tc.title}>{tc.title}</span>
           {tc.ai_generated && <Sparkles className="h-3 w-3 text-[var(--status-flaky)] flex-shrink-0" aria-label="AI generated" />}
           {tc.source === 'automation' && (
@@ -1865,6 +2165,11 @@ function CaseRow({
             />
             {tc.is_automated ? 'Automated' : 'Manual'}
           </span>
+          {editedAfterApproval && (
+            <span className="flex-shrink-0" data-edited-after-approval-mark="">
+              <span aria-hidden>· </span>edited after approval
+            </span>
+          )}
           {hasTail && (
             <span className="truncate">
               <span aria-hidden>· </span>
@@ -1894,7 +2199,7 @@ function CaseRow({
             compact
             onPromoted={onPromoted}
           />
-        ) : (
+        ) : canDeprecate && (
           <button
             type="button"
             onClick={(event) => onDeprecate(tc, event)}
@@ -2048,22 +2353,32 @@ function LastRunCell({ status, at }: { status: string | undefined; at: string | 
   return <span className="text-[11.5px] text-[var(--color-text-muted)]">{ageLabel} ago</span>
 }
 
-function CasesTableFooter({ shown, total, pages, page, onPage }: { shown: number; total: number; pages: number; page: number; onPage: (p: number) => void }) {
+function CasesTableFooter({ shown, total, pages, page, onPage, bulkHint = null }: {
+  shown: number
+  total: number
+  pages: number
+  page: number
+  onPage: (p: number) => void
+  /** W28: '⌘E bulk edit' / 'Ctrl+E bulk edit' where bulk works; null elsewhere. The ↑/↓ and ↵ hints had no
+   *  handler (a placeholder shipped as fact) and are gone. */
+  bulkHint?: string | null
+}) {
   return (
     <div
       className="flex items-center justify-between gap-3 px-4 py-2.5 text-[11.5px] text-[var(--color-text-muted)]"
       style={{ borderTop: '1px solid var(--color-border)' }}
     >
-      <span>{shown} of {total} · ↑/↓ navigate · ↵ open · ⌘E bulk edit</span>
+      <span data-cases-footer-count="">{shown} of {total}{bulkHint ? ` · ${bulkHint}` : ''}</span>
       <Pagination page={page} pages={pages} total={total} onChange={onPage} />
     </div>
   )
 }
 
 function EmptyStateBlock({
-  projectId, onCreate, onAiGenerate, onReset,
+  canCreate, onCreate, onAiGenerate, onReset,
 }: {
-  projectId: string | null
+  /** W28: TESTER+ in one project (it was: a project is selected). */
+  canCreate: boolean
   onCreate: () => void
   onAiGenerate: () => void
   onReset: () => void
@@ -2081,7 +2396,7 @@ function EmptyStateBlock({
         >
           Reset filters
         </button>
-        {projectId && (
+        {canCreate && (
           <>
             <button
               onClick={onAiGenerate}
@@ -2112,6 +2427,8 @@ function PlanItemsView({ planId, onMutate, projectId = null }: PlanItemsViewProp
   const { data: items, isLoading, mutate } = usePlanItems(planId)
   const [executing, setExecuting] = useState<string | null>(null)
   const [showLinkSuite, setShowLinkSuite] = useState(false)
+  // W28 TCM-05: one item's old steps open at a time, in a row under it.
+  const [openVersion, setOpenVersion] = useState<string | null>(null)
 
   const handleExecute = async (itemId: string, execStatus: string) => {
     setExecuting(itemId)
@@ -2165,18 +2482,28 @@ function PlanItemsView({ planId, onMutate, projectId = null }: PlanItemsViewProp
             <th className="th text-left">#</th>
             <th className="th text-left">Test Case</th>
             <th className="th text-left">Status</th>
+            {/* W28 TCM-05: the case version the recorded execution ran against (after Status: its cell stays index 2). */}
+            <th className="th text-left whitespace-nowrap">Ran against</th>
             <th className="th text-right">Actions</th>
           </tr>
         </thead>
         <tbody>
           {(items as TestPlanItem[]).map((item, idx) => (
-            <tr key={item.id} className="table-row">
+            <Fragment key={item.id}>
+            <tr className="table-row">
               <td className="td text-[var(--color-text-muted)]">{idx + 1}</td>
               <td className="td text-[var(--color-text-secondary)]">{item.test_case_id.slice(0, 8)}…</td>
               <td className="td">
                 <span className={clsx('text-xs font-medium capitalize', EXEC_COLORS[item.execution_status] ?? 'text-[var(--color-text-muted)]')}>
                   {item.execution_status.replace(/_/g, ' ')}
                 </span>
+              </td>
+              <td className="td whitespace-nowrap">
+                <PlanItemVersionCell
+                  item={item}
+                  open={openVersion === item.id}
+                  onToggle={() => setOpenVersion((current) => (current === item.id ? null : item.id))}
+                />
               </td>
               <td className="td text-right">
                 <div className="flex items-center justify-end gap-1">
@@ -2198,6 +2525,12 @@ function PlanItemsView({ planId, onMutate, projectId = null }: PlanItemsViewProp
                 </div>
               </td>
             </tr>
+            {openVersion === item.id && (
+              <InlineRowSection colSpan={5} dataAttributes={{ 'data-plan-item-version-row': item.id }}>
+                <PlanItemVersionSteps item={item} />
+              </InlineRowSection>
+            )}
+            </Fragment>
           ))}
         </tbody>
       </table>
@@ -2221,6 +2554,8 @@ function LinkSuiteModal({ planId, projectId, onClose, onLinked }: LinkSuiteModal
   const [selectedSuite, setSelectedSuite] = useState('')
   const [linking, setLinking] = useState(false)
   const [loadingSuites, setLoadingSuites] = useState(true)
+  // W28 TCM-02: plans pick Active cases (approved + active, the AI plan's rule) by default.
+  const [includeNotActive, setIncludeNotActive] = useState(false)
 
   useEffect(() => {
     testManagementService.listSuites(projectId)
@@ -2246,8 +2581,23 @@ function LinkSuiteModal({ planId, projectId, onClose, onLinked }: LinkSuiteModal
         toast.error('No managed test cases found in this suite to link')
         return
       }
+      // W28 TCM-02: Active (approved / active) cases by default; the box adds the other
+      // non-retired ones; a deprecated / archived case is never linked; a row that does
+      // not say its lifecycle state counts as not Active.
+      const stateOf = (c: { lifecycle_status?: string | null }) => c.lifecycle_status ?? ''
+      const retired = (c: { lifecycle_status?: string | null }) => (RETIRED_STATES as readonly string[]).includes(stateOf(c))
+      const runnable = (c: { lifecycle_status?: string | null }) => (RUNNABLE_STATES as readonly string[]).includes(stateOf(c))
+      const notActive = managedCases.filter(c => !retired(c) && !runnable(c))
+      const toLink = managedCases.filter(c => !retired(c) && (includeNotActive || runnable(c)))
+      const leftOut = includeNotActive ? 0 : notActive.length
+      if (toLink.length === 0) {
+        toast.error(leftOut > 0
+          ? `No Active test cases in "${selectedSuite}". Tick "Include cases that are not Active" to link the others.`
+          : 'No managed test cases found in this suite to link')
+        return
+      }
       let added = 0
-      for (const tc of managedCases) {
+      for (const tc of toLink) {
         try {
           await testManagementService.addPlanItem(planId, { test_case_id: tc.id })
           added++
@@ -2255,7 +2605,7 @@ function LinkSuiteModal({ planId, projectId, onClose, onLinked }: LinkSuiteModal
           // skip duplicates
         }
       }
-      toast.success(`Linked ${added} test case${added !== 1 ? 's' : ''} from "${selectedSuite}"`)
+      toast.success(`Linked ${added} test case${added !== 1 ? 's' : ''} from "${selectedSuite}"${leftOut > 0 ? ` · ${leftOut} not Active left out` : ''}`)
       onLinked()
     } catch {
       toast.error('Failed to link suite')
@@ -2269,7 +2619,7 @@ function LinkSuiteModal({ planId, projectId, onClose, onLinked }: LinkSuiteModal
     <InlineFormSection
       title="Link Test Suite to Plan"
       titleId="tm-link-suite-title"
-      description="Add all managed test cases from a suite to this test plan."
+      description="Add a suite's Active managed test cases to this test plan (the others when you tick the box)."
       onClose={onClose}
       showClose={false}
       footer={(
@@ -2302,6 +2652,15 @@ function LinkSuiteModal({ planId, projectId, onClose, onLinked }: LinkSuiteModal
               </option>
             ))}
           </select>
+          <label className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
+            <input
+              type="checkbox"
+              checked={includeNotActive}
+              onChange={(e) => setIncludeNotActive(e.target.checked)}
+              className="accent-[var(--color-accent)]"
+            />
+            Include cases that are not Active
+          </label>
         </div>
       )}
     </InlineFormSection>

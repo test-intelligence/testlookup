@@ -141,6 +141,10 @@ export function LibraryHealthCard(p: LibraryHealth) {
 export function AutomationCoverageCard({ auto, manual }: { auto: number; manual: number }) {
   const total = auto + manual
   const pct = (n: number) => (total > 0 ? Math.round((n / total) * 100) : 0)
+  // W28 §2.7 (b): each half rounded on its own could add to 99 or 101
+  // ("Automated · 38% / Manual · 63%"); the manual share is the rest of 100.
+  const autoPct = pct(auto)
+  const manualPct = total > 0 ? 100 - autoPct : 0
   return (
     <CasesCardShell title="Automation coverage">
       <div className="px-4 py-3.5">
@@ -171,8 +175,8 @@ export function AutomationCoverageCard({ auto, manual }: { auto: number; manual:
               )}
             </div>
             <div className="flex flex-wrap gap-3 mt-2 text-[11px] text-[var(--color-text-muted)]">
-              <Legend color="color-mix(in srgb, var(--status-passed) 55%, transparent)" label={`Automated · ${pct(auto)}%`} />
-              <Legend color="color-mix(in srgb, var(--color-accent) 50%, transparent)" label={`Manual · ${pct(manual)}%`} />
+              <Legend color="color-mix(in srgb, var(--status-passed) 55%, transparent)" label={`Automated · ${autoPct}%`} />
+              <Legend color="color-mix(in srgb, var(--color-accent) 50%, transparent)" label={`Manual · ${manualPct}%`} />
             </div>
           </>
         )}

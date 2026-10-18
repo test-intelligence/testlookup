@@ -21,8 +21,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useAuditLog, useTestCases } from '@/hooks/useTestManagement'
 import { testManagementService } from '@/services/testManagementService'
+import { useAuthStore } from '@/store/authStore'
 import type { ManagedTestCase, PaginatedResponse } from '@/types/test-management'
 import { TestCasesTab } from './TestManagementPage'
+
+// W28: New test case and AI Generate are TESTER+, a row's Deprecate / Delete QA_LEAD+
+// (signed out, usePermissions reads VIEWER). TestManagementPage.roles.test.tsx pins every role.
+beforeEach(() => { useAuthStore.setState({ user: { id: 'u-lead', role: 'QA_LEAD' } as never }) })
+afterEach(() => { useAuthStore.setState({ user: null }) })
 
 vi.mock('@/hooks/useTestManagement', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/hooks/useTestManagement')>(),
