@@ -52,6 +52,23 @@ locally by default.
 
 ### Added
 
+- **No page opens a popup any more** (wave W27b, PAN-05 to PAN-07, finishing
+  the owner's in-page request). The test library (new case, plans, AI
+  generate, strategy, suites, approvals, insights, citations, every reason
+  prompt), trends notes and email, the activity event detail (`?event=`, Back
+  closes it), the value-metrics methodology, the report catalogue panels,
+  Customise and Fix tagging, projects, ownership, users, project access, API
+  keys, billing, feature flags, project data and every settings page now open
+  their forms and details where the action is, and every browser `confirm()`
+  became a strip in the page with the same sentence. A generated API key or a
+  reset password is shown once in the page, never in a notification. The
+  `frontend.no-page-modals` ratchet is at **0** outside its reviewed
+  allow-list (menus, popovers, the mobile sidebar, the Help drawer, a chart's
+  full-screen view) and now also sees fixed full-height side panels; a crawl
+  of 49 routes for every role checks that nothing opens an overlay. Every
+  converted flow was pinned first by a characterization spec on the old
+  dialogs, which passes unedited.
+
 - **Details and forms open in the page, not over it** (owner request
   2026-10-16, wave W27a, PAN-01 to PAN-04). On `/releases` a release now
   opens beside the cards (the right rail folds while it is open) instead of
@@ -475,6 +492,23 @@ locally by default.
   changed nothing.
 
 ### Fixed
+
+- **A deploy no longer answers 504 for a few seconds.** The API and frontend
+  pods now keep serving for 10 s after they are told to stop (until the
+  ingress has dropped them) and get 45 s to finish their requests; before,
+  a request routed to a stopping pod failed (reported on `/chat`).
+- **Billing could overwrite a quota with defaults.** A failed quota read
+  (anything but "no quota yet") showed the editor with default values, and
+  Save wrote them over the real quota; it now shows the error with Retry and
+  no Save, and a save refreshes the cached quota.
+- **Add User's temporary password and Invite User's link were never shown**
+  (the list refresh unmounted the form holding them), and the reset QA-lead
+  password, promised "displayed once", was only copied to the clipboard: all
+  three are now shown once in the page.
+- Also found in W27b: a refused test-case retirement showed two identical
+  toasts; after switching activity events, closing returned focus to the
+  first one opened; the activity 403 message showed a literal `&apos;`; the
+  value-metrics methodology was read again on a reopen.
 
 - **Found while moving the dialogs into the page** (W27a). Deleting a
   release from its own page left its card on `/releases` until the 30 s
