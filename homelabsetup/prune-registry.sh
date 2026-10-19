@@ -125,8 +125,11 @@ echo "deleted $deleted_total manifest(s)"
 
 if [ "$GC" = true ] && [ "$deleted_total" -gt 0 ]; then
   # No --delete-untagged: other apps' images are referenced by digest only.
+  # One `sh -c` string, not a separate /etc/... argument: Git Bash rewrites an
+  # argument starting with / into a Windows path before the native kubectl
+  # sees it, and the 2026-10-19 deploy's collection failed that way.
   if "$KUBECTL" -n "$REGISTRY_NAMESPACE" exec deploy/registry -- \
-       registry garbage-collect /etc/docker/registry/config.yml >/dev/null 2>&1; then
+       sh -c "registry garbage-collect /etc/docker/registry/config.yml" >/dev/null 2>&1; then
     echo "registry garbage collection done"
   else
     echo "registry garbage collection failed (run: $KUBECTL -n $REGISTRY_NAMESPACE exec deploy/registry -- registry garbage-collect /etc/docker/registry/config.yml)" >&2

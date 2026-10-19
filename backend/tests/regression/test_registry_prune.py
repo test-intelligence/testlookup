@@ -193,6 +193,10 @@ def test_garbage_collection_never_deletes_untagged_manifests():
     gc_lines = [line for line in code_lines if "garbage-collect" in line]
     assert gc_lines, "the garbage-collect call is gone"
     assert not any("--delete-untagged" in line for line in code_lines)
+    # Git Bash rewrites an argument starting with / (2026-10-19: the deploy's
+    # collection failed on "C:/Program Files/Git/etc/docker/..."): the call is one
+    # sh -c string.
+    assert any('sh -c "registry garbage-collect /etc/docker/registry/config.yml"' in line for line in gc_lines)
 
 
 # ── The deploy script's wiring ──────────────────────────────────────────────
