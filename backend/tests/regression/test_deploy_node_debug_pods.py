@@ -64,8 +64,26 @@ def test_the_helper_returns_the_commands_exit_code_and_deletes_its_own_pod():
 
 def test_the_mirror_precheck_uses_the_helper_and_no_label_cleanup_remains():
     text = _script()
-    assert re.search(r'node_debug_run "\$node" chroot /host grep -qF "\$REGISTRY"', text)
+    assert re.search(
+        r'node_debug_run "\$node" sh -c \\\s*\n\s*"chroot /host grep -qF \'\$REGISTRY\' /etc/rancher/k3s/registries\.yaml"',
+        text,
+    ), "the precheck runs as one sh -c string"
     code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
     assert "created-by=kubectl-debug" not in code, "the label cleanup never matched a debug pod"
     # A check that could not run is a warning, not a missing mirror.
     assert re.search(r"125\)\s+warn ", text)
+
+
+def test_no_node_debug_run_argument_starts_with_a_slash():
+    """Git Bash rewrites an argument that starts with `/` into a Windows path
+    before the native kubectl sees it: `chroot /host ...` became
+    `chroot "C:/Program Files/Git/host" ...` and the precheck reported every
+    node missing (2026-10-19). Every call passes its command as words that do
+    not start with `/` (a single `sh -c` string)."""
+    text = _script()
+    calls = re.findall(r'node_debug_run "\$node"((?:[^\n]*\\\n)*[^\n]*)', text)
+    assert calls, "no node_debug_run call found"
+    for args in calls:
+        words = re.findall(r'"[^"]*"|\'[^\']*\'|\S+', args.replace("\\\n", " "))
+        bad = [w for w in words if w.strip("\"'").startswith("/") and w not in ("||",)]
+        assert not bad, f"node_debug_run argument(s) starting with '/': {bad}"

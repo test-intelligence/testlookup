@@ -1006,9 +1006,16 @@ else
     # entry for ${REGISTRY} — so we catch both "file missing" and "file
     # present but wrong port" in one check. node_debug_run returns the
     # grep's own exit code (125 = the check itself could not run).
+    #
+    # The command is ONE `sh -c` string, never separate `/host` / `/etc/...`
+    # arguments: Git Bash on Windows rewrites an argument that starts with `/`
+    # into a Windows path before the native kubectl sees it ("C:/Program
+    # Files/Git/host"), so chroot failed on every node and the check reported
+    # all three "missing" (2026-10-19). An argument that does not start with
+    # `/` is passed through unchanged, on Linux and Windows alike.
     mirror_rc=0
-    node_debug_run "$node" chroot /host grep -qF "$REGISTRY" \
-      /etc/rancher/k3s/registries.yaml || mirror_rc=$?
+    node_debug_run "$node" sh -c \
+      "chroot /host grep -qF '$REGISTRY' /etc/rancher/k3s/registries.yaml" || mirror_rc=$?
     case "$mirror_rc" in
       0)   ;;
       125) warn "Could not run the mirror check on $node; skipping it for that node." ;;
