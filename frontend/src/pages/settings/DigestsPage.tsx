@@ -147,7 +147,7 @@ export default function DigestsPage() {
 
   const loading = tab === 'subscriptions' ? subsLoading : tab === 'saved-views' ? viewsLoading : false;
   const error =
-    (tab === 'subscriptions' && subsError) || (tab === 'saved-views' && viewsError) ? 'Failed to load data' : null;
+    (tab === 'subscriptions' && subsError) || (tab === 'saved-views' && viewsError) ? 'Could not load data' : null;
 
   // A choice that no longer exists (another project, a deleted view) is no choice.
   const releaseId = releaseList.some(r => r.id === newSubReleaseId) ? newSubReleaseId : '';
@@ -229,7 +229,7 @@ export default function DigestsPage() {
 
       {error && <div className="bg-[var(--status-failed-bg)]/30 border border-[var(--status-failed-bd)] rounded-lg p-3 text-[var(--status-failed)] text-sm">{error}</div>}
 
-      {loading ? <div className="text-[var(--color-text-muted)] text-center py-8">Loading...</div> : (
+      {loading ? <div className="text-[var(--color-text-muted)] text-center py-8">Loading…</div> : (
         <>
           {/* Subscriptions tab */}
           {tab === 'subscriptions' && (
@@ -325,7 +325,7 @@ export default function DigestsPage() {
                   onClick={handleCreateSub}
                   disabled={needsRelease}
                   title={needsRelease ? (projectId ? 'Choose a release first' : PICK_PROJECT_FOR_RELEASE) : undefined}
-                  className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded hover:bg-[var(--color-bg-hover)] text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="btn-primary"
                 >
                   Subscribe
                 </button>
@@ -424,7 +424,7 @@ export default function DigestsPage() {
                   <button
                     type="button"
                     onClick={() => setEditingView('new')}
-                    className="shrink-0 px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded hover:bg-[var(--color-bg-hover)] text-sm"
+                    className="btn-primary shrink-0"
                   >
                     New view
                   </button>
@@ -506,7 +506,7 @@ export default function DigestsPage() {
                   </div>
                 )}
                 <button onClick={handlePreview} disabled={previewing}
-                  className="px-4 py-2 bg-[var(--status-flaky-bg)] text-[var(--color-text)] rounded hover:bg-[var(--status-flaky-bg)] text-sm disabled:opacity-50">
+                  className="btn-secondary disabled:opacity-50">
                   {previewing ? 'Generating...' : 'Generate Preview'}
                 </button>
               </div>

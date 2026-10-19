@@ -403,7 +403,7 @@ export default function LoginPage() {
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-[var(--color-btn-primary-text)] bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[var(--color-ring)] focus:ring-offset-[var(--color-bg)] transition-colors disabled:opacity-50"
+                  className="btn-primary w-full flex justify-center shadow-sm focus:ring-offset-[var(--color-bg)]"
                 >
                   {isSubmitting ? <LoadingSpinner size="sm" /> : (
                     <span className="flex items-center gap-2"><LogIn className="w-4 h-4" />Log In</span>
@@ -548,7 +548,7 @@ export default function LoginPage() {
               <button
                 type="submit"
                 disabled={isRegistering}
-                className="w-full flex justify-center items-center gap-2 py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-[var(--color-btn-primary-text)] bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[var(--color-ring)] focus:ring-offset-[var(--color-bg)] transition-colors disabled:opacity-50"
+                className="btn-primary w-full flex justify-center items-center gap-2 shadow-sm focus:ring-offset-[var(--color-bg)]"
               >
                 {isRegistering ? <LoadingSpinner size="sm" /> : (
                   <><UserPlus className="w-4 h-4" />Create Account</>

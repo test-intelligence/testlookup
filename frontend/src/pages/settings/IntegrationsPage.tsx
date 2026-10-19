@@ -69,7 +69,7 @@ export default function IntegrationsPage() {
           teams_enabled: cfg.teams_enabled,
         })
       })
-      .catch(() => toast.error('Failed to load integrations'))
+      .catch(() => toast.error('Could not load integrations'))
       .finally(() => setLoading(false))
   }, [])
 
@@ -192,7 +192,7 @@ export default function IntegrationsPage() {
         {isAdmin && (
           <div className="xl:col-span-2">
             <button type="submit" disabled={saving}
-              className="flex items-center gap-2 bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] text-sm px-5 py-2.5 rounded-lg transition-colors">
+              className="btn-primary flex items-center gap-2">
               <Save className="h-4 w-4" /> {saving ? 'Saving…' : 'Save Integrations'}
             </button>
           </div>

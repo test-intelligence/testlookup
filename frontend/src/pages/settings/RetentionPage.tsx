@@ -58,7 +58,7 @@ import {
   type RetentionPolicyWrite,
   type RetentionPreview,
 } from '@/types/retention'
-import { formatCompactDateTime } from '@/utils/formatters'
+import { formatCompactDateTime, formatNumber } from '@/utils/formatters'
 import { helpTopicParam } from '@/components/help/helpTopics'
 
 const HELP_TOPIC = helpTopicParam('/settings/retention')
@@ -179,7 +179,7 @@ function aiHistorySummary(saved: RetentionPolicy): string {
  */
 function formatPurgeCount(value: unknown): string {
   if (value == null) return 'not measured'
-  if (typeof value === 'number') return value.toLocaleString()
+  if (typeof value === 'number') return formatNumber(value)
   if (typeof value === 'object') {
     const entries = Object.entries(value as Record<string, unknown>)
     if (entries.length === 0) return 'none'
@@ -309,7 +309,7 @@ function PurgeConfirmModal({ projectId, projectName, onClose, onQueued }: PurgeM
             onClick={handleConfirm}
             disabled={!matches || submitting}
             aria-disabled={!matches || submitting}
-            className="inline-flex items-center gap-1.5 rounded bg-[var(--status-failed-bg)] px-3 py-1.5 text-sm font-medium text-white hover:bg-[var(--status-failed-bg)] disabled:cursor-not-allowed disabled:bg-[var(--status-failed-bg)]/40 disabled:text-[var(--status-failed)]/60"
+            className="btn-danger inline-flex items-center gap-1.5"
           >
             {submitting ? (
               <>
@@ -768,7 +768,7 @@ export default function RetentionPage() {
                           not measured
                         </span>
                       ) : (
-                        preview.candidates[key].toLocaleString()
+                        formatNumber(preview.candidates[key])
                       )}
                     </td>
                   </tr>
@@ -779,7 +779,7 @@ export default function RetentionPage() {
                       Mongo docs — <span className="font-mono">{collection}</span>
                     </td>
                     <td className="py-1 text-right font-mono text-[var(--color-text)]">
-                      {count.toLocaleString()}
+                      {formatNumber(count)}
                     </td>
                   </tr>
                 ))}

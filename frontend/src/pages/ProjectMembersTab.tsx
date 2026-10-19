@@ -17,6 +17,7 @@ import InlineRowSection from '@/components/ui/inPage/InlineRowSection'
 import { useInlineSlot, type InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import { useSlotCloser } from '@/hooks/useSlotCloser'
 import { copyTextToClipboard } from '@/utils/clipboard'
+import { formatDay } from '@/utils/formatters'
 import type { Project } from '@/types/projects'
 
 const ROLES: UserRole[] = ['VIEWER', 'TESTER', 'QA_ENGINEER', 'QA_LEAD', 'ADMIN']
@@ -62,7 +63,7 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
   } = useProjectMembers(selectedProjectId || null)
   const members = useMemo(() => membersData ?? [], [membersData])
   useEffect(() => {
-    if (membersError) toast.error('Failed to load project members')
+    if (membersError) toast.error('Could not load project members')
   }, [membersError])
 
   useEffect(() => {
@@ -199,7 +200,7 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
         {selectedProjectId && canManageUsers && (
           <button
             onClick={() => addSlot.open('add')}
-            className="flex items-center gap-1.5 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] px-3 py-2 rounded-lg font-medium"
+            className="btn-primary flex items-center gap-1.5"
           >
             <UserPlus className="h-4 w-4" /> Add Member
           </button>
@@ -270,7 +271,7 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
                       || !defaultQaLeadDraft
                       || defaultQaLeadDraft === (selectedProject?.default_qa_lead_user_id ?? '')
                     }
-                    className="flex items-center gap-1.5 text-xs bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] px-3 py-1.5 rounded-lg font-medium"
+                    className="btn-primary btn-sm flex items-center gap-1.5"
                   >
                     {savingDefault && <LoadingSpinner size="sm" />}
                     {savingDefault ? 'Saving…' : 'Save'}
@@ -394,7 +395,7 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
                     )}
                   </td>
                   <td className="px-4 py-3 text-[var(--color-text-muted)] text-xs">
-                    {new Date(m.created_at).toLocaleDateString()}
+                    {formatDay(m.created_at)}
                   </td>
                   {isAdmin && (
                     <td className="px-4 py-3 text-right">
@@ -478,7 +479,7 @@ function AddProjectMemberModal({ projectId, projectName, nonMembers, usersLoadin
           <button
             onClick={handleAdd}
             disabled={saving || !userId}
-            className="px-4 py-2 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] rounded-lg font-medium flex items-center gap-2"
+            className="btn-primary flex items-center gap-2"
           >
             {saving ? <LoadingSpinner size="sm" /> : <UserPlus className="h-4 w-4" />}
             {saving ? 'Adding…' : 'Add Member'}

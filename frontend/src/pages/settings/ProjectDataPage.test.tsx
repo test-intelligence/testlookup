@@ -140,6 +140,46 @@ describe('ProjectDataPage', () => {
     expect(await screen.findByText(/reset complete \(runs\)/i)).toBeInTheDocument()
     expect(screen.getByText(/test_runs/)).toBeInTheDocument()
   })
+
+  // W29a UIX-01 (L2): the typed confirmation's Delete is the shared .btn-danger
+  // (white on the 15 % failed tint was 1.26:1 on Lab), for both modes.
+  it.each([/delete test runs/i, /wipe project data/i])(
+    'the typed confirmation for %s ends in the shared destructive button',
+    (name) => {
+      renderPage()
+      fireEvent.click(screen.getByRole('button', { name }))
+      const confirmBtn = screen
+        .getAllByRole('button')
+        .filter((b) => b.getAttribute('aria-disabled') !== null)[0]
+      expect(confirmBtn).toBeDefined()
+      expect(confirmBtn.classList.contains('btn-danger')).toBe(true)
+      expect(confirmBtn.className).not.toMatch(/text-white|status-failed|rounded\b|px-3/)
+    },
+  )
+
+  // W29a UIX-10: the deleted counts use the fixed en-US number format, not the
+  // browser's locale (a German browser's toLocaleString would print "12.345").
+  it('prints a large deleted count with the en-US grouping, whatever the browser locale', async () => {
+    const localeSpy = vi
+      .spyOn(Number.prototype, 'toLocaleString')
+      .mockImplementation(function (this: number) {
+        return new Intl.NumberFormat('de-DE').format(this)
+      })
+    try {
+      mockReset.mockResolvedValue({ mode: 'runs', deleted: { test_runs: 12345 } })
+      renderPage()
+      fireEvent.click(screen.getByRole('button', { name: /delete test runs/i }))
+      fireEvent.change(screen.getByLabelText(/type .* to confirm/i), { target: { value: 'GoogleSearch' } })
+      fireEvent.click(
+        screen.getAllByRole('button', { name: /delete test runs/i }).filter((b) => b.getAttribute('aria-disabled') !== null)[0],
+      )
+      expect(await screen.findByText(/reset complete \(runs\)/i)).toBeInTheDocument()
+      expect(screen.getByText(/12,345 row/)).toBeInTheDocument()
+      expect(screen.queryByText(/12\.345/)).toBeNull()
+    } finally {
+      localeSpy.mockRestore()
+    }
+  })
 })
 
 describe('ProjectDataPage — the typed confirmation is in the page (W27b)', () => {

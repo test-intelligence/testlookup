@@ -15,7 +15,7 @@
  */
 import { AlertTriangle, Database, HardDrive, RefreshCw } from 'lucide-react'
 import { useDeletedProjectStorage, useProjectStorage } from '@/hooks/useStorage'
-import { formatBytes } from '@/utils/formatters'
+import { formatBytes, formatNumber } from '@/utils/formatters'
 import type { StoreFootprint } from '@/types/storage'
 import { STORE_LABELS } from './storeLabels'
 
@@ -45,7 +45,7 @@ function StoreValue({ store }: { store: StoreFootprint }) {
         className="text-[var(--color-text)]"
         title={store.estimate_basis ?? undefined}
       >
-        {store.items === null ? '—' : `${store.items.toLocaleString()} rows`}
+        {store.items === null ? '—' : `${formatNumber(store.items)} rows`}
       </span>
     )
   }

@@ -27,6 +27,7 @@ import {
   reportViewFilters,
   type SavedViewPage,
 } from '@/components/reports/savedViewsModel'
+import { formatDay } from '@/utils/formatters'
 
 // ── Schedules ─────────────────────────────────────────────────
 
@@ -138,7 +139,7 @@ export function subscriptionSummary(sub: DigestSubscription): string {
   if (sub.trigger_filter && sub.trigger_filter !== 'all') line += ` · ${sub.trigger_filter.replace('_', ' ')}`
   if (sub.report_attachment) line += ' · Report attached'
   line += ` · Delivered: ${sub.delivery_count} times`
-  if (sub.next_delivery_at) line += ` · Next: ${new Date(sub.next_delivery_at).toLocaleDateString()}`
+  if (sub.next_delivery_at) line += ` · Next: ${formatDay(sub.next_delivery_at)}`
   return line
 }
 

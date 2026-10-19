@@ -19,6 +19,7 @@ import {
   seedGoldenDatasets,
 } from '../../services/aiEvalService';
 import { helpTopicParam } from '@/components/help/helpTopics';
+import { formatDay } from '@/utils/formatters';
 
 const HELP_TOPIC = helpTopicParam('/settings/ai-eval');
 
@@ -141,7 +142,7 @@ export default function AIEvalDashboardPage() {
         ))}
       </div>
 
-      {loading ? <div className="text-[var(--color-text-muted)] text-center py-8">Loading...</div> : (
+      {loading ? <div className="text-[var(--color-text-muted)] text-center py-8">Loading…</div> : (
         <>
           {/* Dashboard Tab */}
           {tab === 'dashboard' && dashboard && (
@@ -409,7 +410,7 @@ export default function AIEvalDashboardPage() {
                           {run.accuracy != null && <span className="text-[var(--status-passed)]">Acc: {(run.accuracy * 100).toFixed(1)}%</span>}
                           {run.f1_score != null && <span className="text-[var(--color-text)]">F1: {(run.f1_score * 100).toFixed(1)}%</span>}
                           <span className="text-[var(--color-text-muted)]">{run.total_items} items</span>
-                          <span className="text-[var(--color-text-muted)]">{new Date(run.evaluated_at).toLocaleDateString()}</span>
+                          <span className="text-[var(--color-text-muted)]">{formatDay(run.evaluated_at)}</span>
                         </div>
                       </div>
                     ))}
@@ -450,7 +451,7 @@ export default function AIEvalDashboardPage() {
             <div className="space-y-4">
               <div className="flex gap-2">
                 <button onClick={handleGenerateDataset}
-                  className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded-lg hover:bg-[var(--color-bg-hover)] text-sm">
+                  className="btn-primary">
                   Generate from Feedback
                 </button>
                 <button onClick={handleSeedGolden}
@@ -464,7 +465,7 @@ export default function AIEvalDashboardPage() {
                 <div key={ds.id} className="bg-[var(--color-bg-secondary)] rounded-lg p-4 flex justify-between items-center">
                   <div>
                     <span className="text-[var(--color-text)] font-medium">{ds.name}</span>
-                    <p className="text-xs text-[var(--color-text-muted)] mt-1">{ds.task_type} · {ds.item_count} items · Created {new Date(ds.created_at).toLocaleDateString()}</p>
+                    <p className="text-xs text-[var(--color-text-muted)] mt-1">{ds.task_type} · {ds.item_count} items · Created {formatDay(ds.created_at)}</p>
                   </div>
                   <button onClick={() => handleRunEval(ds.id)}
                     className="px-3 py-1.5 bg-[var(--status-flaky-bg)] text-[var(--color-text)] rounded text-xs hover:bg-[var(--status-flaky-bg)]">

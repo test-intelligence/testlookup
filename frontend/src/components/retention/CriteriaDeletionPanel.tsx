@@ -127,7 +127,7 @@ export default function CriteriaDeletionPanel({ projectId, projectName, onExecut
                   onClick={() => toggleStatus(status)}
                   className={`rounded border px-2 py-1 text-xs ${
                     on
-                      ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/15 text-[var(--color-text)]'
+                      ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/15 text-[var(--color-text)]'
                       : 'border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)]'
                   }`}
                 >
@@ -385,7 +385,7 @@ function ExecuteConfirmModal({
             onClick={handleConfirm}
             disabled={!matches || submitting}
             aria-disabled={!matches || submitting}
-            className="inline-flex items-center gap-1.5 rounded bg-[var(--status-failed-bg)] px-3 py-1.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:bg-[var(--status-failed-bg)]/40 disabled:text-[var(--status-failed)]/60"
+            className="btn-danger inline-flex items-center gap-1.5"
           >
             {submitting ? (
               <>

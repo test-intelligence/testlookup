@@ -19,7 +19,7 @@ import { ALL_PROJECTS_ID } from '@/store/projectStore'
 import type { AgentRunEntry } from '@/types/investigator'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import FixAttemptsSection from '@/components/fixer/FixAttemptsSection'
-import { formatDateTime, formatDuration } from '@/utils/formatters'
+import { formatDateTime, formatDuration, formatNumber } from '@/utils/formatters'
 import PageHeader from '@/components/ui/PageHeader'
 import { helpTopicParam } from '@/components/help/helpTopics'
 
@@ -100,7 +100,7 @@ function LedgerRow({ entry }: { entry: AgentRunEntry }) {
         <td className="px-3 py-2.5 text-xs text-[var(--color-text-secondary)] max-w-[320px]">
           <span className="block truncate" title={entry.summary}>{entry.summary}</span>
         </td>
-        <td className="px-3 py-2.5 text-right text-xs tabular-nums text-[var(--color-text-secondary)]">{entry.tokens.toLocaleString()}</td>
+        <td className="px-3 py-2.5 text-right text-xs tabular-nums text-[var(--color-text-secondary)]">{formatNumber(entry.tokens)}</td>
         <td className="px-3 py-2.5 text-right text-xs tabular-nums font-mono text-[var(--color-text-secondary)]">${entry.cost_usd.toFixed(2)}</td>
         <td className="px-3 py-2.5 text-right text-xs tabular-nums text-[var(--color-text-secondary)]">{formatDuration(entry.duration_ms)}</td>
         <td className="px-3 py-2.5 text-right text-xs tabular-nums text-[var(--color-text-muted)] whitespace-nowrap">{formatDateTime(entry.created_at)}</td>

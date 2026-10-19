@@ -116,6 +116,69 @@ describe('TopBar', () => {
     mocked.projectStoreState.activeProject = null
     mocked.history.logs = mocked.DEFAULT_HISTORY
     mocked.authState.user.role = 'ADMIN'
+    ;(mocked.authState.user as { avatar_color: string | null }).avatar_color = null
+  })
+
+  // W29a UIX-01 (L3): the initials are the shared avatar map's ink on its
+  // tint. White initials were ~1.3:1 on a light theme's 15 % tint (blank).
+  describe('the avatar initials (W29a UIX-01)', () => {
+    function initials(): HTMLElement {
+      render(
+        <MemoryRouter>
+          <TopBar />
+        </MemoryRouter>,
+      )
+      return screen.getByText('TU')
+    }
+
+    it('no stored colour: the blue family, ink on its tint, never white', () => {
+      const el = initials()
+      expect(el.className).not.toMatch(/text-white/)
+      expect(el.style.background).toBe('var(--color-accent-muted)')
+      expect(el.style.color).toBe('var(--ui-info-ink)')
+    })
+
+    it.each([
+      ['red', 'var(--status-failed-bg)', 'var(--status-failed-ink)'],
+      ['amber', 'var(--status-broken-bg)', 'var(--status-broken-ink)'],
+      ['teal', 'var(--status-passed-bg)', 'var(--status-passed-ink)'],
+      ['violet', 'var(--status-flaky-bg)', 'var(--status-flaky-ink)'],
+      ['slate', 'var(--color-bg-hover)', 'var(--color-text)'],
+    ])('a stored %s avatar: %s behind %s initials', (key, bg, fg) => {
+      ;(mocked.authState.user as { avatar_color: string | null }).avatar_color = key
+      const el = initials()
+      expect(el.className).not.toMatch(/text-white/)
+      expect(el.style.background).toBe(bg)
+      expect(el.style.color).toBe(fg)
+    })
+  })
+
+  // W29a UIX-07: Sign out is a UI danger, not a test result.
+  it('Sign out is painted with the danger UI token', () => {
+    render(
+      <MemoryRouter>
+        <TopBar />
+      </MemoryRouter>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+    const signOut = screen.getByRole('menuitem', { name: /Sign out/ })
+    expect(signOut.className).toContain('text-[var(--ui-danger)]')
+    expect(signOut.className).not.toContain('--status-failed')
+  })
+
+  // W29a UIX-13: the unread count on its solid red bubble is the card colour,
+  // not white (white was 2.5–4.1:1 on the dark themes' solid failed fill).
+  it('the unread count reads --color-text-on-status on its bubble', () => {
+    render(
+      <MemoryRouter>
+        <TopBar />
+      </MemoryRouter>,
+    )
+    const bubble = screen.getByRole('button', { name: 'Notifications (3 unread)' }).querySelector('span')
+    expect(bubble).not.toBeNull()
+    expect(bubble?.textContent).toBe('3')
+    expect(bubble?.className).toContain('text-[var(--color-text-on-status)]')
+    expect(bubble?.className).not.toMatch(/text-white/)
   })
 
   it('navigates to search page on Enter', () => {

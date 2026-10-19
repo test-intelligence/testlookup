@@ -14,13 +14,7 @@ import HelpMenu from './HelpMenu'
 import { HeaderPopover } from '@/components/ui/HeaderPopover'
 import { formatCompactDateTime } from '@/utils/formatCompactDateTime'
 import { notificationHref } from './notificationHref'
-
-const AVATAR_BG: Record<string, string> = {
-  slate: 'bg-[var(--color-bg-hover)]', red: 'bg-[var(--status-failed-bg)]', orange: 'bg-[var(--status-broken-bg)]',
-  amber: 'bg-[var(--status-broken-bg)]', lime: 'bg-[var(--status-passed-bg)]', emerald: 'bg-[var(--status-passed-bg)]',
-  teal: 'bg-[var(--status-passed-bg)]', cyan: 'bg-[var(--color-accent-muted)]', blue: 'bg-[var(--color-accent-muted)]',
-  violet: 'bg-[var(--status-flaky-bg)]', fuchsia: 'bg-[var(--status-flaky-bg)]', pink: 'bg-[var(--status-flaky-bg)]',
-}
+import { avatarColor } from '@/components/ui/avatarColors'
 
 function getInitials(fullName: string | null | undefined, username: string): string {
   if (fullName?.trim()) {
@@ -58,7 +52,7 @@ function UserProfileDropdown() {
   const userName = useAuthStore(s => s.user?.full_name || s.user?.username || 'User')
   const userRole = useAuthStore(s => roleLabel(s.user?.role))
   const userEmail = useAuthStore(s => s.user?.email || '')
-  const avatarColor = useAuthStore(s => s.user?.avatar_color || 'blue')
+  const avatarKey = useAuthStore(s => s.user?.avatar_color || 'blue')
   const username = useAuthStore(s => s.user?.username || 'U')
   const fullName = useAuthStore(s => s.user?.full_name ?? null)
 
@@ -69,7 +63,9 @@ function UserProfileDropdown() {
   // inside the menu as outside clicks.
 
   const initials = getInitials(fullName, username)
-  const bgClass = AVATAR_BG[avatarColor] ?? AVATAR_BG['blue']
+  // The shared avatar map (W29a UIX-01): initials are the family's ink on its
+  // tint, never white (white on a light theme's tint was ~1.3:1, i.e. blank).
+  const avatar = avatarColor(avatarKey)
 
   return (
     <div className="relative border-l pl-4 h-full flex items-center max-lg:h-auto" style={{ borderColor: 'var(--color-border)' }}>
@@ -82,7 +78,10 @@ function UserProfileDropdown() {
         onClick={() => setOpen(v => !v)}
         className="flex items-center gap-3 h-full rounded-lg max-lg:h-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
       >
-        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0 ${bgClass}`}>
+        <div
+          className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs flex-shrink-0"
+          style={{ background: avatar.bg, color: avatar.fg }}
+        >
           {initials}
         </div>
         <div className="flex flex-col justify-center items-start max-lg:hidden">
@@ -125,7 +124,7 @@ function UserProfileDropdown() {
           <button
             role="menuitem"
             onClick={() => void (useAuthStore.getState().logoutServer?.() ?? useAuthStore.getState().logout())}
-            className="w-full text-left px-4 py-2 text-sm text-[var(--status-failed)] hover:bg-[var(--color-bg-hover)]/50 flex items-center gap-2 transition-colors mt-1"
+            className="w-full text-left px-4 py-2 text-sm text-[var(--ui-danger)] hover:bg-[var(--color-bg-hover)]/50 flex items-center gap-2 transition-colors mt-1"
           >
             <LogOut className="w-4 h-4" />
             Sign out
@@ -316,7 +315,7 @@ export default function TopBar({ navToggle = null }: { navToggle?: TopBarNavTogg
         >
           <Bell className="w-5 h-5" />
           {unreadCount > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-[var(--status-failed)] text-white text-[11px] font-bold rounded-full flex items-center justify-center px-1">
+            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-[var(--status-failed)] text-[var(--color-text-on-status)] text-[11px] font-bold rounded-full flex items-center justify-center px-1">
               {unreadCount > 99 ? '99+' : unreadCount}
             </span>
           )}

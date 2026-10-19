@@ -18,6 +18,7 @@ import { clsx } from 'clsx'
 import { useAgentConfigs, refreshAgentGovernance } from '@/hooks/useAgentGovernance'
 import { agentGovernanceService } from '@/services/agentGovernanceService'
 import { agentLabel, saveErrorLines } from '@/utils/agentConfig'
+import { formatCompactDateTime } from '@/utils/formatters'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import Tabs, { type TabItem } from '@/components/ui/Tabs'
 import type { AgentMode } from '@/types/investigator'
@@ -187,7 +188,7 @@ function AgentConfigForm({
           ) : (
             <>
               Version <span className="font-semibold tabular-nums">{view.config_version}</span>
-              {view.updated_at && <> · saved {new Date(view.updated_at).toLocaleString()}</>}
+              {view.updated_at && <> · saved {formatCompactDateTime(view.updated_at)}</>}
             </>
           )}
         </p>
@@ -376,8 +377,7 @@ function AgentConfigForm({
           type="button"
           onClick={onSave}
           disabled={!dirty || invalidFields.length > 0 || saving}
-          className="px-4 py-1.5 text-sm font-medium rounded-md transition-colors disabled:opacity-50"
-          style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
+          className="btn-primary"
         >
           {saving ? 'Saving…' : 'Save configuration'}
         </button>

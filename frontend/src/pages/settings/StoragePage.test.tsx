@@ -169,7 +169,7 @@ describe('a failed load is surfaced', () => {
 
     await waitFor(() =>
       expect(mockToastError).toHaveBeenCalledWith(
-        expect.stringMatching(/failed to load storage configuration/i),
+        expect.stringMatching(/could not load storage configuration/i),
       ),
     )
   })

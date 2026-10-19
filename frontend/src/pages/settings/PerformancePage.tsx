@@ -18,7 +18,7 @@ export default function PerformancePage() {
     { key: 'scenarios', label: 'Scale Scenarios' },
   ];
 
-  if (isLoading) return <div className="text-[var(--color-text-muted)] text-center py-8">Loading...</div>;
+  if (isLoading) return <div className="text-[var(--color-text-muted)] text-center py-8">Loading…</div>;
 
   return (
     <div className="space-y-4">

@@ -12,6 +12,7 @@ import { useOnboardingStatus } from '@/hooks/useOnboardingStatus'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
 import Disclosure from '@/components/ui/Disclosure'
 import { buildOnboardingWorkflow } from '@/components/workflow/workflowPresets'
+import { formatDay } from '@/utils/formatters'
 
 const STEP_ICONS: Record<string, React.ElementType> = {
   create_project: FlaskConical,
@@ -64,7 +65,7 @@ function StepCard({
         <p className="text-xs text-[var(--color-text-muted)] mt-0.5">{step.description}</p>
         {step.completed_at && (
           <p className="text-[10px] text-[var(--color-text-faint)] mt-1">
-            Completed {new Date(step.completed_at).toLocaleDateString()}
+            Completed {formatDay(step.completed_at)}
           </p>
         )}
       </div>
@@ -72,7 +73,7 @@ function StepCard({
         <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={() => navigate(STEP_LINKS[step.key] ?? '/overview')}
-            className="px-3 py-1.5 text-xs bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] rounded-lg font-medium transition-colors"
+            className="btn-primary btn-sm"
           >
             Set Up
           </button>

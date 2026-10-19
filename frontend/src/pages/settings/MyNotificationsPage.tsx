@@ -309,11 +309,13 @@ function ChannelCard({
             <span className="text-sm text-[var(--color-text-secondary)]">Enable {meta.label} notifications</span>
             <button
               onClick={() => setEnabled(v => !v)}
+              data-toggle-track=""
               className={`relative w-11 h-6 rounded-full transition-colors ${
                 enabled ? 'bg-[var(--color-btn-primary-bg)]' : 'bg-[var(--color-bg-hover)]'
               }`}
             >
               <span
+                // eslint-disable-next-line no-restricted-syntax -- a toggle knob: white on both track colours in every theme (the track carries the state)
                 className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${
                   enabled ? 'translate-x-5' : ''
                 }`}
@@ -359,7 +361,7 @@ function ChannelCard({
                 step={5}
                 value={threshold}
                 onChange={e => setThreshold(Number(e.target.value))}
-                className="w-full accent-neutral-400"
+                className="w-full accent-[var(--color-accent)]"
               />
               <div className="flex justify-between text-xs text-[var(--color-text-faint)] mt-1">
                 <span>Alert at any failure</span>

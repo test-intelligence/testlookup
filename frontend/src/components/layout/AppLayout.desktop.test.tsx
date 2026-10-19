@@ -10,7 +10,11 @@
  * above a multi-page section's pages (Trends · Coverage · Explorer on
  * `/trends`), and once more for P5: on a settings page the "Back to Settings"
  * bar is gone and the page sits in the settings layout (its grouped sub-nav,
- * loaded lazily: the case waits for it). Any other change at desktop width
+ * loaded lazily: the case waits for it), and once more for W29a's UI standard:
+ * the skip link is `.btn-primary` (UIX-08), the unread count on its solid red
+ * bubble reads `--color-text-on-status` instead of white (UIX-13), and the
+ * avatar initials are the shared avatar map's ink on its tint, set by `style`,
+ * never `text-white` (UIX-01). Any other change at desktop width
  * fails here. The drawer's own
  * styling lives ONLY in `max-lg:` utilities, which apply below 1024 px, so
  * they are removed before the comparison. `AppLayout.drawer.test.tsx` covers

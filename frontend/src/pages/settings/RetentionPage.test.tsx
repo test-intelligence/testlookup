@@ -469,6 +469,19 @@ describe('RetentionPage', () => {
     expect(screen.queryByText('Purge old data now')).toBeNull()
   })
 
+  // W29a UIX-01 (L2): the destructive button is the shared .btn-danger (solid
+  // red + white on the light themes; white on the 15 % tint was 1.26:1 on Lab).
+  it('purge: "Queue purge" is the shared destructive button, with no hand-written colours', async () => {
+    mockGet.mockResolvedValue(basePolicy({ enabled: true }))
+    await renderPage()
+    await waitFor(() => expect(screen.getByText('Purge now')).toBeTruthy())
+    fireEvent.click(screen.getByText('Purge now'))
+
+    const confirm = screen.getByText('Queue purge').closest('button') as HTMLButtonElement
+    expect(confirm.classList.contains('btn-danger')).toBe(true)
+    expect(confirm.className).not.toMatch(/text-white|status-failed|rounded\b|px-3/)
+  })
+
   it('renders an error state without the form when the GET fails', async () => {
     mockGet.mockRejectedValue(new Error('network down'))
     await renderPage()

@@ -45,7 +45,10 @@ export default function OtpAuthQr({
     <div className="flex flex-col gap-5 sm:flex-row sm:items-start">
       {/* QR */}
       <div className="flex flex-col items-center gap-2">
-        <div className="rounded-lg bg-white p-3">
+        <div
+          // eslint-disable-next-line no-restricted-syntax -- the QR code's quiet zone stays white in every theme: scanners need dark modules on white
+          className="rounded-lg bg-white p-3"
+        >
           <QRCodeSVG
             value={otpauthUri}
             size={168}

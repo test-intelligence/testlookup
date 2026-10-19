@@ -36,6 +36,7 @@ import {
   type ProjectResetResponse,
 } from '@/services/projectsService'
 import { helpTopicParam } from '@/components/help/helpTopics'
+import { formatNumber } from '@/utils/formatters'
 
 const HELP_TOPIC = helpTopicParam('/settings/project-data')
 
@@ -153,7 +154,7 @@ function ResetConfirmModal({ spec, projectId, projectName, onClose, onSuccess, s
             onClick={handleConfirm}
             disabled={!matches || submitting}
             aria-disabled={!matches || submitting}
-            className="inline-flex items-center gap-1.5 rounded bg-[var(--status-failed-bg)] px-3 py-1.5 text-sm font-medium text-white hover:bg-[var(--status-failed-bg)] disabled:cursor-not-allowed disabled:bg-[var(--status-failed-bg)]/40 disabled:text-[var(--status-failed)]/60"
+            className="btn-danger inline-flex items-center gap-1.5"
           >
             {submitting ? (
               <>
@@ -272,7 +273,7 @@ export default function ProjectDataPage() {
           <ul className="mt-2 ml-4 list-disc space-y-0.5 text-xs text-[var(--status-passed)]/90">
             {Object.entries(lastResult.deleted).map(([table, count]) => (
               <li key={table}>
-                <span className="font-mono">{table}</span>: {count.toLocaleString()} row
+                <span className="font-mono">{table}</span>: {formatNumber(count)} row
                 {count === 1 ? '' : 's'} deleted
               </li>
             ))}

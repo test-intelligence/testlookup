@@ -23,7 +23,7 @@ import {
   updateSSOConfig,
 } from '../../services/ssoService';
 import { type SSOTab, useSSOTabData } from '../../hooks/useSSOTabData';
-import { formatCompactDateTime } from '@/utils/formatters'
+import { formatCompactDateTime, formatDay } from '@/utils/formatters'
 import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import InlineConfirm from '@/components/ui/inPage/InlineConfirm'
@@ -202,7 +202,7 @@ export default function SSOSettingsPage() {
           <button onClick={() => void refresh()} className="ml-2 underline">Retry</button>
         </div>
       ) : loading ? (
-        <div className="text-[var(--color-text-muted)] text-center py-8">Loading...</div>
+        <div className="text-[var(--color-text-muted)] text-center py-8">Loading…</div>
       ) : (
         <>
           {/* SSO Configuration Tab */}
@@ -212,7 +212,7 @@ export default function SSOSettingsPage() {
                 <h2 className="text-lg font-semibold text-[var(--color-text)]">SSO Configurations</h2>
                 <button
                   onClick={() => setShowForm(!showForm)}
-                  className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded-lg hover:bg-[var(--color-bg-hover)] text-sm"
+                  className="btn-primary"
                 >
                   {showForm ? 'Cancel' : 'Add SSO Configuration'}
                 </button>
@@ -338,7 +338,7 @@ export default function SSOSettingsPage() {
                     >
                       {config.is_active ? 'Deactivate' : 'Activate'}
                     </button>
-                    <button onClick={() => handleTestConnection(config.id)} className="px-3 py-1 text-xs bg-[var(--color-bg-hover)] rounded hover:bg-white text-[var(--color-text-secondary)]">
+                    <button onClick={() => handleTestConnection(config.id)} className="px-3 py-1 text-xs bg-[var(--color-bg-hover)] rounded hover:text-[var(--color-text)] text-[var(--color-text-secondary)]">
                       Test Connection
                     </button>
                     <button onClick={() => setConfirming({ id: config.id, action: 'delete' })} className="px-3 py-1 text-xs bg-[var(--status-failed-bg)]/50 rounded hover:bg-[var(--status-failed-bg)] text-[var(--status-failed)]">
@@ -394,7 +394,7 @@ export default function SSOSettingsPage() {
                   onChange={e => setTokenName(e.target.value)}
                   className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm flex-1"
                 />
-                <button onClick={handleCreateToken} disabled={!tokenName.trim()} className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded hover:bg-[var(--color-bg-hover)] text-sm disabled:opacity-50">
+                <button onClick={handleCreateToken} disabled={!tokenName.trim()} className="btn-primary">
                   Generate Token
                 </button>
               </div>
@@ -489,13 +489,13 @@ export default function SSOSettingsPage() {
                 </div>
                 <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4 text-center">
                   <div className="text-2xl font-bold text-[var(--status-passed)]">
-                    {syncStatus.last_sso_login_at ? new Date(syncStatus.last_sso_login_at).toLocaleDateString() : 'Never'}
+                    {syncStatus.last_sso_login_at ? formatDay(syncStatus.last_sso_login_at) : 'Never'}
                   </div>
                   <div className="text-xs text-[var(--color-text-muted)] mt-1">Last SSO Login</div>
                 </div>
                 <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4 text-center">
                   <div className="text-2xl font-bold text-[var(--status-flaky)]">
-                    {syncStatus.last_scim_sync_at ? new Date(syncStatus.last_scim_sync_at).toLocaleDateString() : 'Never'}
+                    {syncStatus.last_scim_sync_at ? formatDay(syncStatus.last_scim_sync_at) : 'Never'}
                   </div>
                   <div className="text-xs text-[var(--color-text-muted)] mt-1">Last SCIM Sync</div>
                 </div>

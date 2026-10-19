@@ -123,7 +123,7 @@ export default function AuditDashboardPage() {
             <span className="text-xs text-[var(--color-text-muted)]">{total} events</span>
           </div>
 
-          {loading ? <div className="text-[var(--color-text-muted)] text-center py-8">Loading...</div> : (
+          {loading ? <div className="text-[var(--color-text-muted)] text-center py-8">Loading…</div> : (
             <div className="space-y-1">
               {events.length === 0 && <div className="text-center py-8 text-[var(--color-text-muted)]">No audit events found for this filter.</div>}
               {events.map((ev, i) => (
@@ -180,7 +180,7 @@ export default function AuditDashboardPage() {
               </div>
             </div>
           ) : (
-            <div className="text-[var(--color-text-muted)] text-center py-8">Loading...</div>
+            <div className="text-[var(--color-text-muted)] text-center py-8">Loading…</div>
           )}
         </div>
       )}

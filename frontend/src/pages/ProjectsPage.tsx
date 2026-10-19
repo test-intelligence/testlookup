@@ -185,7 +185,7 @@ export default function ProjectsPage() {
           <div className="card hover:border-[var(--color-border-light)] transition-colors group relative">
             <div className="cursor-pointer" onClick={() => setActiveProject(p)}>
               <div className="flex items-start gap-3">
-                <div className="p-2.5 bg-white/10 rounded-xl">
+                <div className="p-2.5 bg-[var(--color-bg-hover)] rounded-xl">
                   <FlaskConical className="h-5 w-5 text-[var(--color-text)]" />
                 </div>
                 <div className="min-w-0 flex-1">
@@ -201,7 +201,7 @@ export default function ProjectsPage() {
                   {p.tags && p.tags.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-2">
                       {p.tags.map(t => (
-                        <span key={t} className="text-[10px] px-1.5 py-0.5 bg-white/10 text-[var(--color-text)] rounded">{t}</span>
+                        <span key={t} className="text-[10px] px-1.5 py-0.5 bg-[var(--color-bg-hover)] text-[var(--color-text)] rounded">{t}</span>
                       ))}
                     </div>
                   )}

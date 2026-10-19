@@ -20,6 +20,7 @@ import {
 } from '@/services/llmBudgetService'
 import { usePermissions } from '@/hooks/usePermissions'
 import { formatDayIso, shiftDayIso } from '@/utils/calendarDay'
+import { formatNumber } from '@/utils/formatters'
 import { helpTopicParam } from '@/components/help/helpTopics'
 
 const HELP_TOPIC = helpTopicParam('/settings/billing')
@@ -88,7 +89,7 @@ export default function BillingPage() {
         />
         <SummaryTile
           label="LLM calls"
-          value={overview.total_llm_calls.toLocaleString()}
+          value={formatNumber(overview.total_llm_calls)}
         />
         <SummaryTile
           icon={<ShieldAlert className="h-4 w-4 text-[var(--status-broken)]" />}

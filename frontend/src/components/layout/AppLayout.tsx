@@ -74,7 +74,7 @@ export default function AppLayout() {
       <div className="flex h-screen overflow-hidden bg-[var(--color-bg)]">
         <a
           href="#main-content"
-          className="fixed left-4 top-4 z-[100] -translate-y-20 rounded-md bg-[var(--color-btn-primary-bg)] px-4 py-2 text-sm font-semibold text-[var(--color-btn-primary-text)] shadow-lg transition-transform focus:translate-y-0"
+          className="btn-primary fixed left-4 top-4 z-[100] -translate-y-20 shadow-lg transition-transform focus:translate-y-0"
           onClick={() => mainRef.current?.focus()}
         >
           Skip to main content
@@ -87,6 +87,7 @@ export default function AppLayout() {
             /* not-a-dialog: the drawer panel (Sidebar) carries role="dialog" and aria-modal. */
             data-shell-backdrop=""
             aria-hidden="true"
+            // eslint-disable-next-line no-restricted-syntax -- a scrim dims whatever theme is under it: black at 50 % in every theme
             className="fixed inset-0 z-[45] bg-black/50 lg:hidden"
             onClick={closeNav}
           />

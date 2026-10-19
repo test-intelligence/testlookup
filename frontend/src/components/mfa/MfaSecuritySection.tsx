@@ -17,6 +17,7 @@ import {
 } from '@/hooks/useMfaStatus'
 import type { MfaEnrollStartResponse } from '@/types/mfa'
 import { describeMfaError, type MfaErrorInfo } from '@/utils/mfaErrors'
+import { formatCompactDateTime } from '@/utils/formatters'
 import MfaCodeField, { type MfaFactorMode } from './MfaCodeField'
 import MfaEnrollPanel from './MfaEnrollPanel'
 import RecoveryCodesPanel from './RecoveryCodesPanel'
@@ -26,7 +27,7 @@ type Panel = 'none' | 'enroll' | 'regenerate' | 'disable'
 function formatEnrolledAt(iso: string | null): string | null {
   if (!iso) return null
   const d = new Date(iso)
-  return Number.isNaN(d.getTime()) ? null : d.toLocaleString()
+  return Number.isNaN(d.getTime()) ? null : formatCompactDateTime(d)
 }
 
 /**

@@ -31,7 +31,7 @@ export default function StoragePage() {
           minio_use_ssl: cfg.minio_use_ssl,
         })
       })
-      .catch(() => toast.error('Failed to load storage configuration'))
+      .catch(() => toast.error('Could not load storage configuration'))
       .finally(() => setLoading(false))
   }, [])
 
@@ -179,7 +179,7 @@ export default function StoragePage() {
 
         {isAdmin && (
           <button type="submit" disabled={saving}
-            className="flex items-center gap-2 bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] text-sm px-5 py-2.5 rounded-lg transition-colors">
+            className="btn-primary flex items-center gap-2">
             <Save className="h-4 w-4" /> {saving ? 'Saving…' : 'Save Configuration'}
           </button>
         )}

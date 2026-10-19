@@ -85,7 +85,7 @@ export default function OutboundWebhooksPage() {
         setSubs(list)
         setCatalog(cat.events)
       } catch (err) {
-        if (!cancelled) toast.error(`Failed to load webhooks: ${(err as Error).message}`)
+        if (!cancelled) toast.error(`Could not load webhooks: ${(err as Error).message}`)
       } finally {
         if (!cancelled) setLoading(false)
       }

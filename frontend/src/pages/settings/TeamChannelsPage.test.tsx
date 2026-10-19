@@ -207,8 +207,8 @@ describe('TeamChannelsPage', () => {
     renderPage()
     const alerts = screen.getAllByRole('alert').map((a) => a.textContent)
     expect(alerts).toEqual([
-      expect.stringContaining('Failed to load the ownership rules'),
-      'Failed to load team channels',
+      expect.stringContaining('Could not load the ownership rules'),
+      'Could not load team channels',
     ])
   })
 
