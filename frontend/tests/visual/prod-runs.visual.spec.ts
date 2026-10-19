@@ -29,14 +29,14 @@ import {
   cardByHeading,
   openProductionPage,
   PINNED,
-  THEMES,
+  THEMES_WITH_PAPER,
   visualRegion,
 } from '../lib/production-pages'
 import { NOW, PROJECT_ID, RUNS_PAGE, USER } from './production/fixtures'
 
 test.use(PINNED)
 
-for (const theme of THEMES) {
+for (const theme of THEMES_WITH_PAPER) {
   test(`runs regions — ${theme}`, async ({ page }) => {
     const { api, errors } = await openProductionPage(page, '/runs', {
       theme,

@@ -17,13 +17,13 @@
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { expect, test } from '@playwright/test'
-import { ancestorWithClass, assertHermetic, PINNED, THEMES, visualRegion, waitForCharts } from '../lib/production-pages'
+import { ancestorWithClass, assertHermetic, PINNED, THEMES_WITH_PAPER, visualRegion, waitForCharts } from '../lib/production-pages'
 import { expectDrawn, expectNoErrorFrame, openRollout, sectionFrame } from '../lib/rollout'
 import { OVERVIEW_ON } from './production/fixtures'
 
 test.use(PINNED)
 
-for (const theme of THEMES) {
+for (const theme of THEMES_WITH_PAPER) {
   test(`overview regions, catalogue on — ${theme}`, async ({ page }) => {
     const { api, errors } = await openRollout(page, '/overview', {
       theme,
@@ -35,7 +35,7 @@ for (const theme of THEMES) {
     await expect(kpis).toHaveAttribute('data-kpi-strip', '')
     await expect(kpis.locator('svg path')).not.toHaveCount(0)
     const verdict = page.getByRole('region', { name: 'Release readiness' }).locator('[data-status-banner]')
-    await expect(verdict.locator('[data-banner-pill]')).toHaveText('CONDITIONAL')
+    await expect(verdict.locator('[data-banner-pill]')).toHaveText('Conditional')
 
     const trend = sectionFrame(page, 'overview-trend', 'Pass rate trend')
     const donut = sectionFrame(page, 'overview-donut', 'Status breakdown')

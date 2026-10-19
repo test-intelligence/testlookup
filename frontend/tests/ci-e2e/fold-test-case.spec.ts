@@ -72,7 +72,7 @@ test('the error, the stack trace and the AI root cause are in the first viewport
   await expect(primary.getByText(ROOT_CAUSE)).toBeInViewport()
   // The chips above it, and none of the deleted duplicates (§5).
   const chips = page.locator('[data-test-case-chips]')
-  for (const text of ['Checkout', 'TotalSpec', 'FAILED', '4.2s', 'smoke', 'checkout']) {
+  for (const text of ['Checkout', 'TotalSpec', 'Failed', '4.2s', 'smoke', 'checkout']) {
     await expect(chips.getByText(text, { exact: true }).first()).toBeVisible()
   }
   await expect(page.getByText('TotalSpec.java', { exact: true })).toHaveCount(0)

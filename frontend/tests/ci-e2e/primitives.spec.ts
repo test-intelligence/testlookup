@@ -29,8 +29,8 @@ import {
 } from '../../src/pages/dev/primitivesFixtures'
 
 const ROUTE = '/__primitives'
-/** Every theme in `src/store/themeStore.ts`. */
-const THEME_IDS = ['signal', 'console', 'slate', 'ember', 'lab', 'midnight']
+/** Every theme in `src/store/themeStore.ts`, in picker order (pinned by `src/test/themeLists.test.ts`). */
+const THEME_IDS = ['signal', 'console', 'slate', 'ember', 'lab', 'paper', 'midnight']
 
 function watchErrors(page: Page): string[] {
   const errors: string[] = []

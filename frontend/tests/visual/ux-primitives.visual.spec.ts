@@ -3,14 +3,26 @@
  * gallery section per theme, from `/__ux-primitives` (fixed data, no backend),
  * plus the header's **⋯** menu open and a tab chosen through `?tab=`.
  *
- * Two themes, `signal` (dark, the default) and `lab` (light), as the chart
- * gallery does. Baselines are generated on CI (`visual-baselines.yml`), never
- * committed from a developer machine.
+ * Three themes: `signal` (dark, the default), `lab` (light) and `paper` (the
+ * soft light theme, W29a OR-06). The W29a sections `buttons`, `badges` and
+ * `states` are the reading surface of the UI standard (UIX-01/02/03/07/08/11).
+ * Baselines are generated on CI (`visual-baselines.yml`), never committed
+ * from a developer machine.
  */
 import { expect, test } from '@playwright/test'
 
-const THEMES = ['signal', 'lab'] as const
-const SECTIONS = ['page-header', 'route-tabs', 'status-banner', 'kpi-strip', 'window-picker', 'disclosure'] as const
+const THEMES = ['signal', 'lab', 'paper'] as const
+const SECTIONS = [
+  'page-header',
+  'route-tabs',
+  'status-banner',
+  'kpi-strip',
+  'window-picker',
+  'disclosure',
+  'buttons',
+  'badges',
+  'states',
+] as const
 
 test.use({ viewport: { width: 1280, height: 1600 } })
 

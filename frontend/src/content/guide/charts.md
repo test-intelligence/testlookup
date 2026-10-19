@@ -67,7 +67,7 @@ Every chart has an **Export** menu:
 | **SVG image** | A scalable drawing, for documents and slides: its text stays text (selectable, searchable), never a picture of the chart |
 | **CSV data** | The values behind the chart. Unmeasured points are empty cells, not zeros |
 
-**Light background** (in the same menu) makes the PNG and the SVG come out on the light theme's card colour and text colours, whatever theme you are using — for slides and print. It works for every 2D chart, the heatmaps, the coverage map, the scatter and the status flows included; the menu stays open while you switch it.
+**Light background** (in the same menu) makes the PNG and the SVG come out on the white card and the text colours of the **Lab** theme, whatever theme you are using (**Paper** included) — for slides and print. It works for every 2D chart, the heatmaps, the coverage map, the scatter and the status flows included; the menu stays open while you switch it.
 
 Each file records where it came from: the project, release, suite, window (in UTC), totals, when it was generated and the app version, plus the zoom when one is applied. File names follow `testlookup_<chart>_<project>_<date-time>Z`.
 

@@ -82,7 +82,7 @@ test('the verdict card starts within the fold budget at 1440 x 900, before the t
   // It is the verdict: the recommendation, the ring, the pass rate, the top
   // blockers and the Override control, all on the first screen.
   const verdict = page.locator('[data-primary]')
-  await expect(verdict).toContainText('NO GO')
+  await expect(verdict).toContainText('No-Go')
   await expect(verdict).toContainText('Pass rate: 44.4%')
   await expect(verdict.getByRole('meter', { name: 'Risk Score' })).toBeInViewport()
   await expect(verdict.getByRole('list', { name: 'Top blockers' }).getByRole('listitem')).toHaveCount(3)

@@ -227,18 +227,18 @@ test('Approve with conditions from the Analysis banner persists as the release g
   })
   const banner = page.getByRole('region', { name: 'Release verdict' })
   const actions = banner.getByRole('group', { name: 'Gate decision' })
-  await expect(actions.getByRole('button')).toHaveText(['Hold', 'Approve with conditions', 'Override → GO'])
+  await expect(actions.getByRole('button')).toHaveText(['Hold', 'Approve with conditions', 'Override → Go'])
   await expect(banner.locator('[data-verdict-override]')).toHaveCount(0)
 
   await actions.getByRole('button', { name: 'Approve with conditions' }).click()
-  await expect(banner.getByRole('button', { name: 'CONDITIONAL GO' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(banner.getByRole('button', { name: 'Conditional' })).toHaveAttribute('aria-pressed', 'true')
   await banner.getByRole('textbox', { name: 'Reason for override' }).fill(reason)
   const intelligenceReads = requestsTo(api, `/api/v1/runs/${RUN_ID}/intelligence`).length
   await banner.getByRole('button', { name: 'Apply Override' }).click()
 
   await expect(banner.locator('[data-status-banner]')).toHaveAttribute('data-status-banner', 'conditional')
-  await expect(banner).toContainText('Conditional Go (overridden)')
-  await expect(banner.locator('[data-verdict-override]')).toHaveText(`Overridden to Conditional Go by ${USER.username} · ${reason} · Sep 18, 11:40`)
+  await expect(banner).toContainText('Conditional (overridden)')
+  await expect(banner.locator('[data-verdict-override]')).toHaveText(`Overridden to Conditional by ${USER.username} · ${reason} · Sep 18, 11:40`)
   expect(posted).toEqual([{ override_recommendation: 'CONDITIONAL_GO', reason }])
   // The override drops the run's intelligence snapshot: the page re-read it.
   await expect.poll(() => requestsTo(api, `/api/v1/runs/${RUN_ID}/intelligence`).length).toBeGreaterThan(intelligenceReads)
@@ -246,7 +246,7 @@ test('Approve with conditions from the Analysis banner persists as the release g
   // The same override, on the release gate.
   await page.goto(`/release-gate/${RUN_ID}?tab=history`)
   await expect(page.getByRole('heading', { name: 'Override History (1)' })).toBeVisible()
-  await expect(page.locator('[data-primary]')).toContainText('CONDITIONAL GO')
+  await expect(page.locator('[data-primary]')).toContainText('Conditional')
   await expect(page.locator('[data-primary]')).toContainText(reason)
   await networkQuiet(page, api)
   expect(api.unhandled).toEqual([])

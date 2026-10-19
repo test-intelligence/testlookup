@@ -33,9 +33,20 @@ import { expect, type Locator, type Page, type Route } from '@playwright/test'
 /** The dev server of `playwright.ci.config.ts` (reused by the visual config). */
 const DEV_HOST = '127.0.0.1'
 
-export type Theme = 'signal' | 'lab'
-/** `signal` is the default dark theme; `lab` the only light one (store/themeStore.ts). */
+export type Theme = 'signal' | 'lab' | 'paper'
+/**
+ * `signal` is the default dark theme; `lab` and `paper` the two light ones
+ * (`LIGHT_THEMES` in store/themeStore.ts). Every production spec shoots
+ * `signal` and `lab`.
+ */
 export const THEMES: readonly Theme[] = ['signal', 'lab']
+/**
+ * W29a (UIX-01, OR-06): the representative specs that also shoot Paper
+ * (`prod-shell`, `prod-overview`, `prod-overview-on`, `prod-runs`,
+ * `prod-defects`, `prod-failures`, `prod-failures-on`, `prod-coverage-on`,
+ * `prod-release-gate`, `prod-settings`, `prod-run`, `prod-releases`).
+ */
+export const THEMES_WITH_PAPER: readonly Theme[] = ['signal', 'lab', 'paper']
 
 /**
  * The viewport: the gallery's 1280 px width (the layout breakpoint every

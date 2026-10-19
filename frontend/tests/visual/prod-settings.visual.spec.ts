@@ -9,7 +9,7 @@
  * its PNGs (`visual-baselines.yml`, Linux).
  */
 import { expect, test } from '@playwright/test'
-import { PINNED, THEMES, visualRegion } from '../lib/production-pages'
+import { PINNED, THEMES_WITH_PAPER, visualRegion } from '../lib/production-pages'
 import { networkQuiet, openRollout } from '../lib/rollout'
 import { LAYOUT } from './production/fixtures'
 
@@ -17,7 +17,7 @@ import { LAYOUT } from './production/fixtures'
 // a region must end inside the viewport.
 test.use({ ...PINNED, viewport: { width: 1280, height: 2400 } })
 
-for (const theme of THEMES) {
+for (const theme of THEMES_WITH_PAPER) {
   test(`the P5 settings layout and index — ${theme}`, async ({ page }) => {
     const { api, errors } = await openRollout(page, '/settings', {
       theme,

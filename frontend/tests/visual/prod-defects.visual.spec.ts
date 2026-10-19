@@ -21,7 +21,7 @@
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { expect, test, type Page } from '@playwright/test'
-import { assertHermetic, landmark, openProductionPage, PINNED, THEMES, visualRegion } from '../lib/production-pages'
+import { assertHermetic, landmark, openProductionPage, PINNED, THEMES_WITH_PAPER, visualRegion } from '../lib/production-pages'
 import { DEFECTS, NOW, PROJECT_ID, USER } from './production/fixtures'
 import { DEFECT_ID, defectsWorld, SCOPE_RELEASE } from './production/fixtures-defects'
 
@@ -29,7 +29,7 @@ test.use(PINNED)
 
 const ready = (p: Page) => landmark(p, 'Defect KPIs')
 
-for (const theme of THEMES) {
+for (const theme of THEMES_WITH_PAPER) {
   test(`defects regions — ${theme}`, async ({ page }) => {
     const { api, errors } = await openProductionPage(page, '/defects', {
       theme,

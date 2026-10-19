@@ -16,7 +16,7 @@
  * Lands WITH its PNGs (`visual-baselines.yml`, Linux only).
  */
 import { expect, test } from '@playwright/test'
-import { assertHermetic, landmark, PINNED_TALL, THEMES, visualRegion } from '../lib/production-pages'
+import { assertHermetic, landmark, PINNED_TALL, THEMES_WITH_PAPER, visualRegion } from '../lib/production-pages'
 import {
   bringNear,
   expectDrawn,
@@ -31,7 +31,7 @@ import { FAILURES_ON } from './production/fixtures'
 
 test.use({ ...PINNED_TALL, viewport: { width: 1280, height: 6000 } })
 
-for (const theme of THEMES) {
+for (const theme of THEMES_WITH_PAPER) {
   test(`failures regions, both flags — ${theme}`, async ({ page }) => {
     const ready = (p: typeof page) => landmark(p, 'Failure verdict')
     const { api, errors } = await openRollout(page, '/failures', { theme, handlers: FAILURES_ON, ready })
