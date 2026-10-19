@@ -219,7 +219,7 @@ test.describe('Release gate, everything on screen (1280 x 2400)', () => {
 
   for (const [name, options, expected] of [
     ['a NO_GO beside a release at 100%', { go: false, releaseRate: 100 }, { recommendation: /NO.GO/i, ring: '60' }],
-    ['a GO beside releases at 0%', { go: true, releaseRate: 0 }, { recommendation: /\bGO\b/, ring: '12' }],
+    ['a GO beside releases at 0%', { go: true, releaseRate: 0 }, { recommendation: /(?<![-\w])Go\b/, ring: '12' }],
   ] as const) {
     test(`verdict integrity: ${name}: the card and the ring are the same DOM before the Context group arrives and after it draws`, async ({
       page,
