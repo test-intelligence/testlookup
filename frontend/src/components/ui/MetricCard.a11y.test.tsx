@@ -19,13 +19,15 @@ import { BarChart3 } from 'lucide-react'
 import { beforeAll, describe, expect, it } from 'vitest'
 import MetricCard from './MetricCard'
 import { readSourceFile } from '@/test/readSourceFile'
+import { THEME_IDS } from '@/store/themeStore'
 
 let CSS = ''
 beforeAll(async () => {
   CSS = await readSourceFile('src/index.css')
 })
 
-const THEMES = ['signal', 'console', 'slate', 'ember', 'lab', 'midnight'] as const
+// Every theme of the registry (W29a: seven, Paper included).
+const THEMES = THEME_IDS
 
 /** `--token: #rrggbb` pairs declared in one `[data-theme="x"] { ... }` block. */
 function themeTokens(theme: string): Map<string, string> {
@@ -78,7 +80,7 @@ describe('MetricCard accessibility', () => {
   ]
 
   for (const [label, direction, positive] of cases) {
-    it(`title and trend text reach 4.5:1 on the card in all six themes (${label})`, () => {
+    it(`title and trend text reach 4.5:1 on the card in every theme (${label})`, () => {
       render(
         <MetricCard
           title="Pass Rate"

@@ -77,6 +77,7 @@ export default function MetricCard({
   const word = dir && dir !== 'none' ? DIRECTION_WORD[dir] : null
 
   const accentBg: Record<string, string> = {
+    // eslint-disable-next-line no-restricted-syntax -- the icon tile's dark-theme sheen; W29b UIX-09 retires it with the KPI tile (one re-shoot, not two)
     default: 'bg-white/5 text-[var(--color-text)]',
     green:   'bg-[var(--status-passed-bg)] text-[var(--status-passed)]',
     red:     'bg-[var(--status-failed-bg)] text-[var(--status-failed)]',

@@ -48,6 +48,7 @@ import {
   statusPatternId,
   useChartPatternPrefix,
   type LegendEntry,
+  type PatternDecal,
   type PatternSpec,
 } from './patterns'
 import { CHART_VARS, STATUS_ENCODING, type DecalKind } from './tokens'
@@ -63,21 +64,28 @@ import {
   type DonutPlotArea,
 } from './donutFit'
 
-/** How a non-status slice is drawn. Status slices always use their own encoding. */
+/**
+ * How a non-status slice is drawn. Status slices always use their own encoding.
+ * `decal` is any SVG pattern shape (`PatternDecal`, a superset of the canvas
+ * `DecalKind`), so a failure-category slice can draw the taxonomy's `vertical`
+ * and `grid` (W29a UIX-02).
+ */
 export interface SliceStyle {
   color: string
-  decal: DecalKind
+  decal: PatternDecal
 }
 
 /** Decals for category slices, so two slices never differ by colour alone. */
 const CATEGORY_DECALS: DecalKind[] = ['solid', 'diagonal', 'crosshatch', 'dashes', 'dots']
 
-function defaultStyleOf(_slice: DonutSlice, index: number): SliceStyle {
+/** The default style of a non-status slice: by its RANK (series colour and decal of its index). */
+export function defaultSliceStyle(_slice: DonutSlice, index: number): SliceStyle {
   return {
     color: CHART_VARS.series[index % CHART_VARS.series.length],
     decal: CATEGORY_DECALS[index % CATEGORY_DECALS.length],
   }
 }
+const defaultStyleOf = defaultSliceStyle
 
 export interface DonutPlotProps {
   model: DonutModel
@@ -432,6 +440,8 @@ export interface DonutChartProps {
   dimension?: string
   /** What the values are, for the summary. */
   axisLabel?: string
+  /** Colour and decal for a slice with no status (forwarded to `DonutPlot`; default: by rank). */
+  styleOf?: DonutPlotProps['styleOf']
   'data-testid'?: string
 }
 
@@ -451,6 +461,7 @@ export default function DonutChart({
   modelOf,
   dimension = 'Status',
   axisLabel = 'Executions',
+  styleOf,
   'data-testid': testId,
 }: DonutChartProps) {
   const series: ChartSeries | null = hasChartData(state) ? state.data.series : null
@@ -501,6 +512,7 @@ export default function DonutChart({
           animate={animate}
           centreCaption={centreCaption}
           valueLabel={axisLabel}
+          styleOf={styleOf}
         />
       ) : null}
     </ChartFrame>

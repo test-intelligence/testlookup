@@ -1,4 +1,5 @@
 import { formatDistanceToNow, format, isSameDay } from 'date-fns'
+import { formatCompactDateTime as compactDateTime } from './formatCompactDateTime'
 
 export const formatDate = (d: string | Date) => format(new Date(d), 'MMM dd, yyyy')
 export const formatDateTime = (d: string | Date) => format(new Date(d), 'MMM dd, HH:mm')
@@ -107,25 +108,73 @@ export const statusColor = (status: string): string => ({
   UNKNOWN: 'text-[var(--color-text-secondary)]',
 }[status?.toUpperCase()] ?? 'text-[var(--color-text-secondary)]')
 
-export const categoryColor = (cat: string): string => ({
-  PRODUCT_BUG:      'text-[var(--status-failed)]',
-  INFRASTRUCTURE:   'text-[var(--status-broken)]',
-  TEST_DATA:        'text-[var(--status-broken)]',
-  AUTOMATION_DEFECT:'text-[var(--status-flaky)]',
-  FLAKY:            'text-[var(--status-flaky)]',
-  UNKNOWN:          'text-[var(--color-text-secondary)]',
-}[cat?.toUpperCase()] ?? 'text-[var(--color-text-secondary)]')
+// (W29a UIX-02 deleted `categoryColor`: a failure category is a coloured MARK
+// beside neutral text — `FailureCategoryMark` / `failureCategoryColor` in
+// components/charts/failureTaxonomy — never coloured text.)
 
+/** A confidence score's colour: what it MEANS (good / doubtful / poor), on the UI tokens (same pixels). */
 export const confidenceColor = (score: number): string => {
-  if (score >= 80) return 'text-[var(--status-passed)]'
-  if (score >= 60) return 'text-[var(--status-broken)]'
-  return 'text-[var(--status-failed)]'
+  if (score >= 80) return 'text-[var(--ui-success)]'
+  if (score >= 60) return 'text-[var(--ui-warning)]'
+  return 'text-[var(--ui-danger)]'
 }
 
-// Its own module so the eager TopBar can use it without pulling every
-// formatter (and the date-fns functions only lazy pages need) onto the
-// critical path. Re-exported: callers keep importing it from here.
-export { formatCompactDateTime } from './formatCompactDateTime'
+// formatCompactDateTime lives in its own module so the eager TopBar can use it
+// without pulling every formatter (and the date-fns functions only lazy pages
+// need) onto the critical path. Re-exported here, widened to take an epoch
+// number too.
+
+/** The table stamp, `'Sep 2, 10:05'` (local time); `'—'` when missing or invalid. */
+export const formatCompactDateTime = (d?: string | number | Date | null): string =>
+  compactDateTime(typeof d === 'number' ? new Date(d) : d)
+
+// ── Dates (W29a UIX-10) ──────────────────────────────────────────────────────
+//
+// ONE date format for every page, in a FIXED locale (like DEFAULT_NUMBER_LOCALE
+// below): a screenshot, a CSV and a pasted link never change with the machine
+// that rendered them. Local time zone. Each formatter caches one
+// Intl.DateTimeFormat. Pages and components never call toLocale*String or
+// Intl.DateTimeFormat themselves (the ESLint `no-restricted-properties` rule).
+
+export const DATE_LOCALE = 'en-US'
+
+const dateFormatCache = new Map<string, Intl.DateTimeFormat>()
+
+function dateFormat(options: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
+  const key = JSON.stringify(options)
+  let formatter = dateFormatCache.get(key)
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(DATE_LOCALE, options)
+    dateFormatCache.set(key, formatter)
+  }
+  return formatter
+}
+
+/** A valid Date for `d`, or null (missing, empty, unparseable). */
+function toDate(d?: string | number | Date | null): Date | null {
+  if (d === null || d === undefined || d === '') return null
+  const date = d instanceof Date ? d : new Date(d)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+const dated = (options: Intl.DateTimeFormatOptions) =>
+  (d?: string | number | Date | null): string => {
+    const date = toDate(d)
+    return date ? dateFormat(options).format(date) : NO_VALUE
+  }
+
+/** `'Sep 2, 2026'`; `'—'` when missing or invalid. */
+export const formatDay = dated({ month: 'short', day: 'numeric', year: 'numeric' })
+
+/** `'Sep 2'`; `'—'` when missing or invalid. */
+export const formatMonthDay = dated({ month: 'short', day: 'numeric' })
+
+/** `'Wednesday'` (or `'Wed'` with `'short'`); `'—'` when missing or invalid. */
+export const formatWeekday = (d?: string | number | Date | null, width: 'long' | 'short' = 'long'): string =>
+  dated({ weekday: width })(d)
+
+/** `'10:05:33'` — 24 h, local time; `'—'` when missing or invalid. */
+export const formatClock = dated({ hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })
 
 /** The two ends of a Timing range, pre-formatted, plus whether it crossed a day. */
 export interface TimingRangeParts {

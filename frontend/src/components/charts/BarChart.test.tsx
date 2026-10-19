@@ -480,6 +480,76 @@ describe('BreakdownChart — the registry picks the chart type', () => {
   })
 })
 
+// W29a UIX-02: a FAILURE-CATEGORY breakdown draws each slice in its category's
+// colour from the one map (never by rank); any other dimension keeps rank colours.
+describe('BreakdownChart — failure categories follow the one taxonomy map', () => {
+  /** label prefix -> the colour and decal of the pattern its legend swatch (and slice) is filled with. */
+  function sliceLooks(container: HTMLElement): Record<string, { color: string | null; decal: string | null }> {
+    const out: Record<string, { color: string | null; decal: string | null }> = {}
+    for (const li of Array.from(container.querySelectorAll('[data-chart-legend] li'))) {
+      const fill = li.querySelector('[data-legend-swatch]')?.getAttribute('fill') ?? ''
+      const id = /^url\(#(.+)\)$/.exec(fill)?.[1] ?? ''
+      const pattern = container.querySelector(`pattern[id="${id}"]`)
+      const label = (li.querySelector('span')?.textContent ?? '').split(' ')[0]
+      out[label] = { color: pattern?.querySelector('rect')?.getAttribute('fill') ?? null, decal: pattern?.getAttribute('data-chart-pattern') ?? null }
+    }
+    return out
+  }
+
+  it('a rank swap keeps every slice its own colour; the decals are the taxonomy’s', () => {
+    const first = render(
+      <BreakdownChart
+        title="Failure categories"
+        state={ready(categorySeries([['ASSERTION', 30], ['TIMEOUT', 20], ['LOCATOR', 10]], 'failure_category'))}
+        animate={false}
+      />,
+    )
+    const before = sliceLooks(first.container)
+    first.unmount()
+    const second = render(
+      <BreakdownChart
+        title="Failure categories"
+        state={ready(categorySeries([['ASSERTION', 10], ['TIMEOUT', 20], ['LOCATOR', 30]], 'failure_category'))}
+        animate={false}
+      />,
+    )
+    const after = sliceLooks(second.container)
+    expect(Object.keys(before).sort()).toEqual(['ASSERTION', 'LOCATOR', 'TIMEOUT'])
+    expect(after).toEqual(before)
+    expect(before.ASSERTION).toEqual({ color: 'var(--chart-series-1)', decal: 'diagonal' })
+    expect(before.TIMEOUT).toEqual({ color: 'var(--chart-series-2)', decal: 'vertical' })
+    expect(before.LOCATOR).toEqual({ color: 'var(--chart-series-3)', decal: 'dashes' })
+  })
+
+  it('two slices of one category share the colour and differ by decal', () => {
+    const { container } = render(
+      <BreakdownChart
+        title="Failure categories"
+        state={ready(categorySeries([['TEST_CODE', 30], ['DATA', 20], ['ASSERTION', 10]], 'failure_category'))}
+        animate={false}
+      />,
+    )
+    const looks = sliceLooks(container)
+    expect(looks.TEST_CODE.color).toBe(looks.DATA.color)
+    expect(looks.TEST_CODE.decal).not.toBe(looks.DATA.decal)
+  })
+
+  it('a failure_cluster breakdown keeps the rank colours', () => {
+    const { container } = render(
+      <BreakdownChart
+        title="Failure clusters"
+        state={ready(categorySeries([['ASSERTION', 30], ['TIMEOUT', 20], ['LOCATOR', 10]], 'failure_cluster'))}
+        animate={false}
+      />,
+    )
+    const looks = sliceLooks(container)
+    // Rank order (largest first): series-1 solid, series-2 diagonal, series-3 crosshatch.
+    expect(looks.ASSERTION).toEqual({ color: 'var(--chart-series-1)', decal: 'solid' })
+    expect(looks.TIMEOUT).toEqual({ color: 'var(--chart-series-2)', decal: 'diagonal' })
+    expect(looks.LOCATOR).toEqual({ color: 'var(--chart-series-3)', decal: 'crosshatch' })
+  })
+})
+
 // Wave 2.6 R2-21: a caller's caption belongs INSIDE the frame, in its footer —
 // whichever chart the registry picked. The Gate's "Stored data…" caption sat
 // under the frame's border because BreakdownChart had no way to pass it in.

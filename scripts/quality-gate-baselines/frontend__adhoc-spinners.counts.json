@@ -1,0 +1,31 @@
+{
+  "_comment": "Per-file count ratchet (frontend.adhoc-spinners, W29a UIX-11): a file's count may not rise; a file absent here has 0. Generated on main's tree before the W29a sweeps; lower it with `python scripts/quality_gate.py --only frontend.adhoc-spinners --update-baseline` (reviewed in the PR).",
+  "counts": {
+    "frontend/src/components/ai/AIAnalysisPanel.tsx": 3,
+    "frontend/src/components/charts/ChartExportMenu.tsx": 1,
+    "frontend/src/components/investigator/InvestigatorCockpit.tsx": 3,
+    "frontend/src/components/mfa/MfaChallengePanel.tsx": 1,
+    "frontend/src/components/mfa/MfaEnrollPanel.tsx": 1,
+    "frontend/src/components/mfa/MfaSecuritySection.tsx": 3,
+    "frontend/src/components/rag/GenerationReviewPanel.tsx": 1,
+    "frontend/src/components/rag/KnowledgeSourcePicker.tsx": 1,
+    "frontend/src/components/retention/CriteriaDeletionPanel.tsx": 2,
+    "frontend/src/components/retention/RetentionActivationNudge.tsx": 2,
+    "frontend/src/components/runs/UploadReportModal.tsx": 2,
+    "frontend/src/components/settings/MLTrainingCard.tsx": 1,
+    "frontend/src/components/workflow/WorkflowTimeline.tsx": 1,
+    "frontend/src/pages/AgentStatusPage.tsx": 3,
+    "frontend/src/pages/FlakyCoachPage.tsx": 1,
+    "frontend/src/pages/FlakyTestsPage.tsx": 1,
+    "frontend/src/pages/RunIntelligencePage.tsx": 1,
+    "frontend/src/pages/WorkflowEditorPage.tsx": 1,
+    "frontend/src/pages/run/RunTestsTab.tsx": 1,
+    "frontend/src/pages/settings/ApiKeysPage.tsx": 2,
+    "frontend/src/pages/settings/MfaPolicyPage.tsx": 3,
+    "frontend/src/pages/settings/ProfilePage.tsx": 2,
+    "frontend/src/pages/settings/ProjectDataPage.tsx": 1,
+    "frontend/src/pages/settings/RetentionPage.tsx": 2,
+    "frontend/src/pages/settings/SeedDataPage.tsx": 5,
+    "frontend/src/pages/test-management/KnowledgeGenerationTab.tsx": 2
+  }
+}

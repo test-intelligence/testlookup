@@ -63,5 +63,5 @@ export function extractCompareErrorMessage(err: unknown): string {
     ?.response?.data?.detail
   if (typeof detail === 'string' && detail.trim()) return detail
   if (err instanceof Error && err.message) return err.message
-  return 'Failed to load compare'
+  return 'Could not load compare'
 }

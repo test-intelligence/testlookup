@@ -94,4 +94,15 @@ describe('InlineConfirm', () => {
     expect(screen.getByRole('button', { name: 'Make active' })).toHaveClass('btn-primary')
     expect(screen.getByRole('button', { name: 'Cancel' })).toHaveClass('btn-secondary')
   })
+
+  // W29a UIX-01 / UIX-07: the one destructive button (solid red + white on the
+  // light themes); the old tint pill with red text is gone.
+  it('a danger tone uses .btn-danger, never the tint pill', () => {
+    render(<InlineConfirm message="Delete it?" confirmLabel="Delete" tone="danger" onConfirm={vi.fn()} onCancel={vi.fn()} />)
+    const confirm = screen.getByRole('button', { name: 'Delete' })
+    expect(confirm).toHaveClass('btn-danger')
+    expect(confirm).not.toHaveClass('btn-primary')
+    expect(confirm.className).not.toMatch(/--status-failed|rounded-full/)
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveClass('btn-secondary')
+  })
 })

@@ -4,8 +4,12 @@
  * Every new primitive in its main states, from fixed data: PageHeader v2
  * (help **?**, **⋯** overflow, tabs slot, compact), Tabs with `?tab=`,
  * RouteTabs, Disclosure (closed and open), StatusBanner in every state,
- * KpiStrip of compact MetricCards, WindowPicker. It fetches nothing, so it runs
- * with no backend and no login, and it is the subject of
+ * KpiStrip of compact MetricCards, WindowPicker; and the W29a UI standard's
+ * reading surface (UIX-01/02/03/07/08/11): `buttons` (every `.btn-*`, md and
+ * sm), `badges` (result StatusBadges, DecisionChips, severity chips, a
+ * FailureCategoryMark per category, an avatar per tone) and `states` (the
+ * empty, warning, compact, unavailable and loading looks). It fetches nothing,
+ * so it runs with no backend and no login, and it is the subject of
  * `tests/visual/ux-primitives.visual.spec.ts`.
  *
  * `App.tsx` guards both the import and the route with `import.meta.env.DEV`,
@@ -14,8 +18,17 @@
  */
 import { useEffect, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { CheckCircle2 } from 'lucide-react'
+import { CheckCircle2, Inbox, Trash2 } from 'lucide-react'
+import FailureCategoryMark from '@/components/charts/FailureCategoryMark'
+import { FAILURE_CATEGORY_PATTERNS, type FailureCategoryKey } from '@/components/charts/failureTaxonomy'
+import { AVATAR_COLORS, type AvatarColorKey } from '@/components/ui/avatarColors'
+import DataUnavailable from '@/components/ui/DataUnavailable'
+import DecisionChip from '@/components/ui/DecisionChip'
 import Disclosure from '@/components/ui/Disclosure'
+import EmptyState from '@/components/ui/EmptyState'
+import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { SEVERITY_ORDER, SEVERITY_STYLE } from '@/components/ui/severity'
+import StatusBadge from '@/components/ui/StatusBadge'
 import KpiStrip from '@/components/ui/KpiStrip'
 import MetricCard from '@/components/ui/MetricCard'
 import PageHeader from '@/components/ui/PageHeader'
@@ -29,6 +42,31 @@ import { THEMES, type ThemeId } from '@/store/themeStore'
 const THEME_QUERY_PARAM = 'theme'
 const TAB_IDS = ['overview', 'failures', 'history'] as const
 const BANNER_STATES: BannerState[] = ['go', 'conditional', 'no_go', 'pending', 'ok', 'warn', 'fail']
+
+// W29a: the standard's primitives, from fixed data.
+const RESULT_STATUSES = ['PASSED', 'FAILED', 'BROKEN', 'SKIPPED', 'FLAKY'] as const
+const DECISIONS = ['GO', 'CONDITIONAL_GO', 'NO_GO'] as const
+const CATEGORY_WORDS: Readonly<Record<FailureCategoryKey, string>> = {
+  product_bug: 'Product bug',
+  infrastructure: 'Infrastructure',
+  test_data: 'Test data',
+  automation_defect: 'Automation defect',
+  flaky: 'Flaky',
+  unknown: 'Unknown',
+  other: 'Other',
+}
+/** One avatar per tone of the map: neutral, danger, warning, success, info, flaky. */
+const AVATAR_TONES: readonly { key: AvatarColorKey; initials: string }[] = [
+  { key: 'slate', initials: 'AS' },
+  { key: 'red', initials: 'RB' },
+  { key: 'orange', initials: 'OK' },
+  { key: 'teal', initials: 'TM' },
+  { key: 'blue', initials: 'BL' },
+  { key: 'violet', initials: 'VP' },
+]
+/** A fixed 503 for DataUnavailable (the shape an axios error carries). */
+const UNAVAILABLE_503 = { response: { status: 503 } }
+const noop = () => undefined
 
 function resolveTheme(requested: string | null): ThemeId | null {
   return THEMES.find((theme) => theme.id === requested)?.id ?? null
@@ -164,6 +202,117 @@ export default function UxPrimitivesPage() {
             <Disclosure title="Pipeline" summary="6 stages" defaultOpen>
               <p className="text-sm">Ingested → analysed → classified → summarised → triaged → published.</p>
             </Disclosure>
+          </div>
+        </Section>
+
+        <Section id="buttons" title="Buttons (8 px, one primary)">
+          <div className="flex flex-col gap-3">
+            <div data-button-size="md" className="flex flex-wrap items-center gap-2">
+              <button type="button" className="btn-primary">Save changes</button>
+              <button type="button" className="btn-secondary">Cancel</button>
+              <button type="button" className="btn-ghost">Details</button>
+              <button type="button" className="btn-danger inline-flex items-center gap-1.5">
+                <Trash2 className="h-4 w-4" aria-hidden />
+                Delete runs
+              </button>
+              <button type="button" className="btn-primary" disabled>
+                Disabled
+              </button>
+            </div>
+            <div data-button-size="sm" className="flex flex-wrap items-center gap-2">
+              <button type="button" className="btn-primary btn-sm">Save</button>
+              <button type="button" className="btn-secondary btn-sm">Cancel</button>
+              <button type="button" className="btn-ghost btn-sm">Details</button>
+              <button type="button" className="btn-danger btn-sm">Delete</button>
+            </div>
+          </div>
+        </Section>
+
+        <Section id="badges" title="Status, decisions, severity, categories, avatars">
+          <div className="flex flex-col gap-3 text-sm">
+            <div data-badge-row="status" className="flex flex-wrap items-center gap-2">
+              {RESULT_STATUSES.map((status) => (
+                <StatusBadge key={status} status={status} />
+              ))}
+            </div>
+            <div data-badge-row="decision" className="flex flex-wrap items-center gap-2">
+              {DECISIONS.map((decision) => (
+                <DecisionChip key={decision} decision={decision} />
+              ))}
+            </div>
+            <div data-badge-row="severity" className="flex flex-wrap items-center gap-2">
+              {SEVERITY_ORDER.map((level) => {
+                const style = SEVERITY_STYLE[level]
+                return (
+                  <span
+                    key={level}
+                    data-severity={level}
+                    className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-semibold"
+                    style={{ color: style.fg, background: style.bg, borderColor: style.bd }}
+                  >
+                    <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full" style={{ background: style.dot }} />
+                    {level}
+                  </span>
+                )
+              })}
+            </div>
+            <div data-badge-row="category" className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              {(Object.keys(FAILURE_CATEGORY_PATTERNS) as FailureCategoryKey[]).map((key) => (
+                <span key={key} data-category={key} className="inline-flex items-center gap-1.5 text-[var(--color-text-secondary)]">
+                  <FailureCategoryMark category={key} />
+                  {CATEGORY_WORDS[key]}
+                </span>
+              ))}
+            </div>
+            <div data-badge-row="avatar" className="flex flex-wrap items-center gap-2">
+              {AVATAR_TONES.map(({ key, initials }) => {
+                const colour = AVATAR_COLORS[key]
+                return (
+                  <span
+                    key={key}
+                    data-avatar={key}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold"
+                    style={{ background: colour.bg, color: colour.fg }}
+                  >
+                    {initials}
+                  </span>
+                )
+              })}
+            </div>
+          </div>
+        </Section>
+
+        <Section id="states" title="Loading, empty and error">
+          <div className="grid grid-cols-2 gap-4">
+            <div data-state="empty" className="rounded-md border border-[var(--color-border)]">
+              <EmptyState
+                icon={<Inbox className="h-8 w-8" aria-hidden />}
+                title="No runs in this window"
+                description="Widen the time window or clear the filters to see older runs."
+              />
+            </div>
+            <div data-state="warning" className="rounded-md border border-[var(--color-border)]">
+              <EmptyState
+                tone="warning"
+                icon={<Inbox className="h-8 w-8" aria-hidden />}
+                title="Results are partial"
+                description="Two of the five suites have not reported yet."
+              />
+            </div>
+            <div data-state="compact" className="rounded-md border border-[var(--color-border)] px-4">
+              <EmptyState
+                compact
+                title="No comments yet."
+                action={<button type="button" className="btn-secondary btn-sm" onClick={noop}>Add one</button>}
+              />
+            </div>
+            <div data-state="loading" className="flex items-center gap-2 rounded-md border border-[var(--color-border)] px-4 py-3 text-sm text-[var(--color-text-muted)]">
+              <LoadingSpinner size="sm" />
+              Loading…
+            </div>
+            <div data-state="unavailable" className="col-span-2 rounded-md border border-[var(--color-border)]">
+              <DataUnavailable error={UNAVAILABLE_503} onRetry={noop} testId="ux-primitives-unavailable" />
+            </div>
           </div>
         </Section>
       </div>

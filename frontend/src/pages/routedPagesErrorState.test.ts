@@ -459,7 +459,7 @@ describe('routed pages show a failed fetch (M21)', () => {
     ['a prop', 'const { error } = useRuns(1)\nreturn <ErrorBanner error={error} />'],
     ["JSX text with an apostrophe", "const { error } = useRuns(1)\nreturn <div><p>Don't panic</p>{error && <Alert />}</div>"],
     ['a further condition', 'const { error, isLoading } = useRuns(1)\nreturn <div>{error && !isLoading && (\n  <Alert />\n)}</div>'],
-    ['a derived error', "const { isError: failed } = useRuns(1)\nconst error = failed ? 'Failed to load' : null\nreturn <div>{error && <p>{error}</p>}</div>"],
+    ['a derived error', "const { isError: failed } = useRuns(1)\nconst error = failed ? 'Could not load' : null\nreturn <div>{error && <p>{error}</p>}</div>"],
     ['a merged error', 'const { error: loadError } = useRuns(1)\nconst [error, setError] = useState(null)\nconst shown = error ?? loadError\nreturn <div>{shown && (<p>{shown}</p>)}</div>'],
   ])("'own-error-ui' accepts %s", (_, source) => {
     expect(hasOwnErrorBranch(source)).toBe(true)

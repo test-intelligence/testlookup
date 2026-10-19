@@ -1,9 +1,14 @@
 import { format } from 'date-fns'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  DATE_LOCALE,
   dayTimeAgo,
+  formatClock,
   formatCompactDateTime,
+  formatDay,
+  formatMonthDay,
+  formatWeekday,
   formatDuration,
   formatRunWhen,
   formatTimingRange,
@@ -272,5 +277,49 @@ describe('isoTooltip', () => {
 
   it('reports an unfinished run instead of a fabricated end', () => {
     expect(isoTooltip('2026-08-28T14:32:05.000Z', null)).toContain('not finished')
+  })
+})
+
+// W29a UIX-10: one date format in a FIXED locale, local time (vitest pins the
+// zone to America/Chicago, so the instants below are built in local time).
+describe('the date formatters (fixed en-US, local time)', () => {
+  // Wednesday 2 September 2026, 10:05:33 local.
+  const instant = new Date(2026, 8, 2, 10, 5, 33)
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('format a Date, an ISO string and an epoch number alike', () => {
+    for (const d of [instant, instant.toISOString(), instant.getTime()]) {
+      expect(formatDay(d)).toBe('Sep 2, 2026')
+      expect(formatMonthDay(d)).toBe('Sep 2')
+      expect(formatWeekday(d)).toBe('Wednesday')
+      expect(formatWeekday(d, 'short')).toBe('Wed')
+      expect(formatClock(d)).toBe('10:05:33')
+      expect(formatCompactDateTime(d)).toBe('Sep 2, 10:05')
+    }
+  })
+
+  it('the clock is 24 h, midnight included', () => {
+    expect(formatClock(new Date(2026, 8, 2, 0, 5, 9))).toBe('00:05:09')
+    expect(formatClock(new Date(2026, 8, 2, 23, 59, 59))).toBe('23:59:59')
+  })
+
+  it("'—' for missing, empty and invalid input", () => {
+    for (const fmt of [formatDay, formatMonthDay, formatWeekday, formatClock, formatCompactDateTime]) {
+      for (const missing of [null, undefined, '', 'not a date']) {
+        expect(fmt(missing), `${fmt.name}(${String(missing)})`).toBe('—')
+      }
+    }
+  })
+
+  it('never depends on the browser locale', () => {
+    expect(DATE_LOCALE).toBe('en-US')
+    const before = [formatDay(instant), formatMonthDay(instant), formatWeekday(instant), formatClock(instant)]
+    vi.spyOn(navigator, 'language', 'get').mockReturnValue('de-DE')
+    vi.spyOn(navigator, 'languages', 'get').mockReturnValue(['de-DE'])
+    expect([formatDay(instant), formatMonthDay(instant), formatWeekday(instant), formatClock(instant)]).toEqual(before)
+    expect(before).toEqual(['Sep 2, 2026', 'Sep 2', 'Wednesday', '10:05:33'])
   })
 })

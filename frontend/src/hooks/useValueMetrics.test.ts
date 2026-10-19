@@ -97,6 +97,6 @@ describe('useValueMetrics', () => {
 
     await waitFor(() => expect(result.current.isError).toBe(true))
     expect(result.current.metrics).toBeUndefined()
-    expect(toast.error).toHaveBeenCalledWith('Failed to load value metrics')
+    expect(toast.error).toHaveBeenCalledWith('Could not load value metrics')
   })
 })

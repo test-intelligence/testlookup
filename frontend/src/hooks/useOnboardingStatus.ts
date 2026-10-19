@@ -18,8 +18,8 @@ import { onboardingService, type OnboardingStatus } from '@/services/onboardingS
  * `useState<OnboardingStatus | null>(null)` semantics. `mutate` lets the page
  * apply the server response from a skip-step mutation, exactly as the old
  * `setStatus(updated)` did. `shouldRetryOnError` is off so a failed load
- * surfaces immediately, toasting the same "Failed to load onboarding status"
- * the old `.catch` raised.
+ * surfaces immediately, toasting "Could not load onboarding status" (the one
+ * failed-read wording, W29a UIX-11) where the old `.catch` raised its toast.
  */
 export function useOnboardingStatus(projectId: string | null) {
   const { data, isLoading, mutate } = useSWR<OnboardingStatus>(
@@ -28,7 +28,7 @@ export function useOnboardingStatus(projectId: string | null) {
     {
       revalidateOnFocus: false,
       shouldRetryOnError: false,
-      onError: () => toast.error('Failed to load onboarding status'),
+      onError: () => toast.error('Could not load onboarding status'),
     },
   )
 

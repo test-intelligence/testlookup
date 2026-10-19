@@ -16,7 +16,7 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   Multi-theme system — six named themes, switched by `data-theme` on <html>.
+   Multi-theme system — seven named themes, switched by `data-theme` on <html>.
 
    RULE: a theme block defines every BASE token it wants to look different on
    (surfaces, text, accent, the five status hues, two graph hues, fonts,
@@ -148,6 +148,28 @@
     --app-bg-image:none;
   }
 
+  /* ── PAPER · soft light, low glare: off-white cards on a warm page, softened text, muted text >= 4.5:1 everywhere, blue accent (OR-06). ── */
+  [data-theme="paper"] {
+    --color-bg:#eae8e2; --color-bg-secondary:#eeece7; --color-bg-card:#f5f4f0;
+    --color-bg-input:#eeece7; --color-bg-hover:#e6e3dc;
+    --color-border:#dbd7ce; --color-border-light:#cac5ba;
+    --color-text:#26292e; --color-text-secondary:#45494f; --color-text-muted:#5f636a; --color-text-faint:#8b8e94;
+    --color-accent:#2f5fb3; --color-accent-ink:#2a56a5;
+    --color-btn-primary-bg:#2a56a5; --color-btn-primary-text:#ffffff;
+    --status-passed:#1b673e; --status-failed:#a8333d; --status-broken:#984c00; --status-skipped:#6a6010; --status-flaky:#5f40a2;
+    --color-purple:#5f40a2; --color-cyan:#0d6982;
+    --grid-dot:rgba(40,32,20,0.06);
+    --status-unknown:#5a5f68;
+    --chart-series-1:#a86c00; --chart-series-2:#3a8bb0; --chart-series-3:#008970; --chart-series-4:#737a12; --chart-series-5:#005d99; --chart-series-6:#c4471a; --chart-series-7:#b0648f; --chart-series-8:#4a5059;
+    --chart-seq-1:#1d9580; --chart-seq-2:#20838a; --chart-seq-3:#2a6d8b; --chart-seq-4:#3a4f8c; --chart-seq-5:#403f82; --chart-seq-6:#462271; --chart-seq-7:#420153;
+    --chart-div-1:#a85207; --chart-div-2:#d27a14; --chart-div-3:#e9a95a; --chart-div-4:#dbd7cf; --chart-div-5:#a9a2c8; --chart-div-6:#776aa3; --chart-div-7:#512584;
+    --chart-grid:#e2dfd8; --chart-axis:#595d64;
+    --font-display:system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --font-sans:system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --font-mono:ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+    --app-bg-image:none;
+  }
+
   /* ── MIDNIGHT · GitHub-derived dark, blue accent (green button retired) ── */
   [data-theme="midnight"] {
     --color-bg:#0d1117; --color-bg-secondary:#161b22; --color-bg-card:#151b23;
@@ -218,6 +240,31 @@
     --status-flaky-bg:   color-mix(in srgb, var(--status-flaky) 14%, transparent);
     --status-flaky-bd:   color-mix(in srgb, var(--status-flaky) 40%, transparent);
 
+    /* W29a UIX-03: status text ON its own tint (badges, chips, avatars). */
+    --status-passed-ink:  color-mix(in srgb, var(--status-passed) 75%, var(--color-text));
+    --status-failed-ink:  color-mix(in srgb, var(--status-failed) 75%, var(--color-text));
+    --status-broken-ink:  color-mix(in srgb, var(--status-broken) 75%, var(--color-text));
+    --status-skipped-ink: color-mix(in srgb, var(--status-skipped) 75%, var(--color-text));
+    --status-flaky-ink:   color-mix(in srgb, var(--status-flaky) 75%, var(--color-text));
+
+    /* W29a UIX-07: what a colour MEANS outside test results. Aliases, so no pixel moves. */
+    --ui-danger:  var(--status-failed);  --ui-danger-bg:  var(--status-failed-bg);  --ui-danger-bd:  var(--status-failed-bd);  --ui-danger-ink:  var(--status-failed-ink);
+    --ui-warning: var(--status-broken);  --ui-warning-bg: var(--status-broken-bg);  --ui-warning-bd: var(--status-broken-bd);  --ui-warning-ink: var(--status-broken-ink);
+    --ui-success: var(--status-passed);  --ui-success-bg: var(--status-passed-bg);  --ui-success-bd: var(--status-passed-bd);  --ui-success-ink: var(--status-passed-ink);
+    --ui-info:    var(--color-accent);
+    --ui-info-bg:  color-mix(in srgb, var(--color-accent) 15%, transparent);
+    --ui-info-bd:  color-mix(in srgb, var(--color-accent) 40%, transparent);
+    --ui-info-ink: color-mix(in srgb, var(--color-accent) 75%, var(--color-text));
+    --state-quarantined:    var(--status-flaky);
+    --state-quarantined-bd: var(--status-flaky-bd);
+    --color-text-on-status: var(--color-bg-card);   /* text ON a solid status fill (a count bubble, a stacked-bar segment) */
+
+    /* W29a UIX-01/07/08: the destructive button. Dark themes: the tint + white; the light themes override below. */
+    --color-btn-danger-bg:    var(--status-failed-bg);
+    --color-btn-danger-bd:    var(--status-failed-bd);
+    --color-btn-danger-text:  #ffffff;
+    --color-btn-danger-hover: color-mix(in srgb, var(--status-failed) 24%, transparent);
+
     /* Release gate (go=pass, conditional=broken/amber, no-go=fail) */
     --gate-go:          var(--status-passed);
     --gate-conditional: var(--status-broken);
@@ -240,20 +287,6 @@
     --gradient-stability:  var(--gradient-health);
     --gradient-confidence: var(--gradient-health);
     --pattern-mixed-day:   linear-gradient(180deg, var(--status-passed) 0% 80%, var(--status-failed) 80% 100%);
-
-    /* Failure-category palette (Assertion / Timeout / Network / Infra / Unknown) */
-    --cat-assertion: var(--status-failed);
-    --cat-timeout:   var(--status-broken);
-    --cat-network:   var(--color-cyan);
-    --cat-infra:     var(--color-purple);
-    --cat-unknown:   var(--color-text-muted);
-
-    /* Failure-kind triad (US-9.2): Product / Test code / Infrastructure /
-       Unknown — aliases over existing tokens, no new hues. */
-    --kind-product:   var(--status-failed);
-    --kind-test-code: var(--color-purple);
-    --kind-infra:     var(--status-broken);
-    --kind-unknown:   var(--color-text-muted);
 
     /* Compute-graph (/agents) surfaces + graph hues */
     --bg-3:          var(--color-bg-hover);
@@ -304,6 +337,7 @@
     --text-2xl:  24px;
     --text-3xl:  30px;
     --text-4xl:  36px;
+    --text-2xs:  11px;   /* W29a UIX-04a: the dense-table / chip size (was text-[11px]) */
 
     --leading-tight:   1.2;
     --leading-snug:    1.35;
@@ -337,6 +371,20 @@
     --shadow-md: 0 4px 12px rgba(0,0,0,0.35);
     --shadow-lg: 0 12px 32px rgba(0,0,0,0.45);
     --shadow-xl: 0 24px 60px rgba(0,0,0,0.55);
+  }
+
+  /* Light themes: a SOLID destructive button (white on the 15 % tint is 1.26:1 there). */
+  [data-theme="lab"], [data-theme="paper"] {
+    --color-btn-danger-bg:    var(--status-failed);
+    --color-btn-danger-bd:    var(--status-failed);
+    --color-btn-danger-hover: color-mix(in srgb, var(--status-failed) 86%, black);
+  }
+  /* Paper: soft, warm elevation (the :root shadows are tuned for dark surfaces). */
+  [data-theme="paper"] {
+    --shadow-sm:0 1px 2px rgba(48,40,28,0.06);
+    --shadow-md:0 4px 12px rgba(48,40,28,0.08);
+    --shadow-lg:0 12px 32px rgba(48,40,28,0.10);
+    --shadow-xl:0 24px 60px rgba(48,40,28,0.14);
   }
 
   * { box-sizing: border-box; }
@@ -376,14 +424,16 @@
     transition: background-color 0.2s ease, border-color 0.2s ease;
   }
 
+  /* W29a UIX-08: ONE button shape — every .btn-* is 8 px (rounded-md =
+     --radius-md); the md size keeps 13 px text and its padding (≈ 35 px tall),
+     .btn-sm (declared after the variants) is 28 px with 12 px text. */
   .btn-primary {
     background: var(--color-btn-primary-bg);
     color: var(--color-btn-primary-text);
-    /* Pill-shaped, semibold. */
-    @apply px-4 py-2 rounded-full font-semibold text-sm transition-colors
+    @apply px-4 py-2 rounded-md font-semibold text-sm transition-colors
            focus:outline-none focus:ring-2 focus:ring-offset-2
            disabled:opacity-50 disabled:cursor-not-allowed;
-    focus-ring-color: var(--color-ring);
+    --tw-ring-color: var(--color-ring);
   }
   .btn-primary:hover:not(:disabled) {
     background: var(--color-btn-primary-hover);
@@ -393,17 +443,33 @@
     background: var(--color-bg-secondary);
     color: var(--color-text);
     border: 1px solid var(--color-border);
-    @apply px-4 py-2 rounded-full font-semibold text-sm transition-colors;
+    @apply px-4 py-2 rounded-md font-semibold text-sm transition-colors;
   }
   .btn-secondary:hover { background: var(--color-bg-hover); }
 
   .btn-ghost {
     color: var(--color-text-muted);
-    @apply px-3 py-1.5 rounded-lg text-sm transition-colors;
+    @apply px-3 py-1.5 rounded-md text-sm transition-colors;
   }
   .btn-ghost:hover {
     color: var(--color-text);
     background: var(--color-accent-muted);
+  }
+
+  /* The destructive action (UIX-01 L2 / UIX-07): solid failed + white on the
+     light themes, the failed tint + white on the dark ones (index.css tokens). */
+  .btn-danger {
+    background: var(--color-btn-danger-bg);
+    color: var(--color-btn-danger-text);
+    border: 1px solid var(--color-btn-danger-bd);
+    @apply px-4 py-2 rounded-md font-semibold text-sm transition-colors
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-danger:hover:not(:disabled) { background: var(--color-btn-danger-hover); }
+
+  /* The small size, for any variant: same layer, declared after them, so it wins. */
+  .btn-sm {
+    @apply px-3 py-1.5 text-xs;
   }
 
   .input {
@@ -423,21 +489,23 @@
   /* Status badges consume the per-theme --status-* tokens (audit 1.2): raw
      emerald/red/amber/orange/purple palette classes bypassed the theme system
      and broke legibility on light themes. v4 @apply cannot expand custom
-     classes, so each badge repeats the .badge utilities. */
+     classes, so each badge repeats the .badge utilities. The TEXT reads the
+     -ink token (W29a UIX-03: the bare hue missed 4.5:1 on its own tint in 21 of
+     36 theme pairs); tint and border unchanged. */
   .badge-passed  { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
-                   color: var(--status-passed);  background: var(--status-passed-bg);
+                   color: var(--status-passed-ink);  background: var(--status-passed-bg);
                    border: 1px solid var(--status-passed-bd); }
   .badge-failed  { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
-                   color: var(--status-failed);  background: var(--status-failed-bg);
+                   color: var(--status-failed-ink);  background: var(--status-failed-bg);
                    border: 1px solid var(--status-failed-bd); }
   .badge-skipped { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
-                   color: var(--status-skipped); background: var(--status-skipped-bg);
+                   color: var(--status-skipped-ink); background: var(--status-skipped-bg);
                    border: 1px solid var(--status-skipped-bd); }
   .badge-broken  { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
-                   color: var(--status-broken);  background: var(--status-broken-bg);
+                   color: var(--status-broken-ink);  background: var(--status-broken-bg);
                    border: 1px solid var(--status-broken-bd); }
   .badge-flaky   { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
-                   color: var(--status-flaky);   background: var(--status-flaky-bg);
+                   color: var(--status-flaky-ink);   background: var(--status-flaky-bg);
                    border: 1px solid var(--status-flaky-bd); }
 
   .sidebar-link {
@@ -514,7 +582,7 @@
      wherever they are read through the tokens;
    - text contrast: muted and faint text become the theme's secondary text,
      at least 7:1 on the page, card, secondary and hover backgrounds in all
-     six themes (7.31:1 at the lowest, lab on hover;
+     seven themes (7.07:1 at the lowest, paper on hover;
      store/presentationStore.tokens.test.ts recomputes it). The muted and faint
      tokens themselves are 2.1-6.5:1 there;
    - the chart axis colour follows the same secondary text.
@@ -536,6 +604,7 @@
   --text-xs:   16px;
   --text-sm:   16px;
   --text-base: 16px;
+  --text-2xs:  16px;
 
   --color-text-muted: var(--color-text-secondary);
   --color-text-faint: var(--color-text-secondary);
@@ -552,6 +621,7 @@
   --text-xs:   12px;
   --text-sm:   13px;
   --text-base: 14px;
+  --text-2xs:  11px;
 }
 /* ── Presentation mode (VIZ-106) — END ── */
 

@@ -25,7 +25,7 @@ export function useValueMetrics(projectId: string | undefined, days = 30, months
     () => valueMetricsService.get(projectId, days, months),
     {
       revalidateOnFocus: false,
-      onError: () => toast.error('Failed to load value metrics'),
+      onError: () => toast.error('Could not load value metrics'),
     },
   )
 

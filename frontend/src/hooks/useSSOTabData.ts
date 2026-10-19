@@ -64,7 +64,7 @@ export function useSSOTabData(tab: SSOTab, enabled = true) {
   return {
     data: data ?? EMPTY,
     isLoading,
-    error: error instanceof Error ? error.message : error ? 'Failed to load data' : null,
+    error: error instanceof Error ? error.message : error ? 'Could not load data' : null,
     refresh: mutate,
   }
 }

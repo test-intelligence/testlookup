@@ -72,7 +72,9 @@ import {
   type StatusBar,
   type StatusBarModel,
 } from './BarChart.model'
-import DonutChart, { handOverWhenEmpty } from './DonutChart'
+import DonutChart, { defaultSliceStyle, handOverWhenEmpty, type SliceStyle } from './DonutChart'
+import { categorySliceStyles } from './failureTaxonomy'
+import type { DonutSlice } from './DonutChart.model'
 import { categoryDonutModel } from './DonutChart.model'
 import SwapLabel from './SwapLabel'
 import { useChartAnimation } from './motion'
@@ -1120,6 +1122,21 @@ export interface BreakdownChartProps extends Omit<BarChartProps, 'variant'> {
 /** The donut's slices for a CATEGORY breakdown (not the status vocabulary). */
 const categoryModelOf = (series: ChartSeries) => categoryDonutModel(barsFromSeries(series))
 
+/** The dimension whose values are failure categories: drawn from the ONE taxonomy map (W29a UIX-02). */
+const FAILURE_CATEGORY_DIMENSION = 'failure_category'
+
+/**
+ * A failure-category breakdown's slice styles: each slice the colour of its
+ * category (never of its rank), a second slice of one category told apart by
+ * its decal (`categorySliceStyles`). `null` for any other dimension (the gate's
+ * `failure_cluster` keeps rank colours).
+ */
+function failureCategoryStyleOf(series: ChartSeries | null): ((slice: DonutSlice, index: number) => SliceStyle) | null {
+  if (!series || series.kind !== 'series' || series.dimensions[0] !== FAILURE_CATEGORY_DIMENSION) return null
+  const styles = categorySliceStyles(categoryModelOf(series).slices.map((slice) => slice.key))
+  return (slice, index) => styles.get(slice.key) ?? defaultSliceStyle(slice, index)
+}
+
 /**
  * A categorical breakdown, drawn as whatever the REGISTRY says: a donut at or
  * under `MAX_PIE_CATEGORIES`, a ranked horizontal bar past it — and past it no
@@ -1140,6 +1157,7 @@ export function BreakdownChart({
     preferred,
   }
   const choice = chooseChart(request)
+  const styleOf = useMemo(() => failureCategoryStyleOf(series) ?? undefined, [series])
 
   return (
     <div data-chart-choice={choice.type} data-chart-offers-pie={offersPie(request) ? 'true' : 'false'}>
@@ -1159,6 +1177,7 @@ export function BreakdownChart({
           modelOf={categoryModelOf}
           dimension={props.dimension}
           axisLabel={props.valueAxisLabel}
+          styleOf={styleOf}
         />
       ) : (
         <BarChart {...props} variant="ranked" />

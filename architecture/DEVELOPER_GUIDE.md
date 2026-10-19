@@ -40,10 +40,10 @@ API endpoint, a pipeline agent, a UI page and a migration.
 
 ## 1. Quality gates — the invariant ratchets
 
-`make quality-gate` runs `scripts/quality_gate.py`, which enforces **56 guards**.
-19 are *ratchets*: pre-existing violations are baselined in
+`make quality-gate` runs `scripts/quality_gate.py`, which enforces **62 guards**.
+23 are *ratchets*: pre-existing violations are baselined in
 `scripts/quality-gate-baselines/` and the count can only shrink. New violations
-fail CI. The other 37 ship at zero with **no baseline file at all** — those are
+fail CI. The other 39 ship at zero with **no baseline file at all** — those are
 absolute rules, not ratchets, and are marked **†** in the tables below. Know
 these before you write code.
 
@@ -103,6 +103,12 @@ fails if a *second* deleter appears.
 | `frontend.page-header-only` † | a page-made `<h1>` in `frontend/src/pages/**` (`pages/dev/` and tests exempt) | Render `<PageHeader compact title=… helpTopic={helpTopicParam(path)} />` (`components/ui/PageHeader`): one title, the page's help link, at most one primary and one secondary action, the rest in ⋯. UX redesign P3-P6 put every routed page on it; a hand-made `<h1>` is how a page drifts back to its own spacing and loses its help link |
 | `frontend.nav-item-budget` † | more than 14 items in `navConfig.ts`'s `NAV_ITEMS` (the guard also fails when it cannot find or read the array) | Make the page a section tab, a ⋯ item or an Admin (settings) page. P1 took the sidebar from 31 items to 11 (13 for a QA lead or admin); a 15th is a design-spec decision, not a line |
 | `frontend.tabs-primitive-only` † | a hand-rolled `role="tablist"` outside `components/ui/Tabs.tsx` (tests exempt) | Use `Tabs` from `@/components/ui/Tabs` — `useTabParam` for a page's own tabs (`?tab=`), local state for a component's. There were 19 hand-rolled bars when the redesign began |
+| `frontend.type-scale` | a file's count of arbitrary `text-[Npx]` sizes plus numeric inline `fontSize` (outside `components/charts/**`) in `pages/` / `components/` rising above `frontend__type-scale.counts.json` (a per-file COUNT ratchet: editing a line never trips it, adding a size does) | Use the type scale (`text-2xs` 11 px, `text-xs` 12, `text-sm` 13, `text-base` 14, `text-md` 16 …); `python scripts/quality_gate.py --only frontend.type-scale --update-baseline` lowers the counts, reviewed in the PR |
+| `frontend.status-text-on-tint` | a file gaining lines that paint `text-[var(--status-X)]` on `bg-[var(--status-X-bg…)]` (status text on its own tint misses 4.5:1 in 21 of 36 theme pairs; count ratchet) | Paint the text with `var(--status-<s>-ink)`, or render `StatusBadge` / `DecisionChip` |
+| `frontend.status-hue-semantics` | a file gaining direct `var(--status-failed)` / `var(--status-broken)` reads in `frontend/src` (chart kit and `components/ui/statusVocabulary` / `severity` exempt; count ratchet) | A UI meaning reads `--ui-danger` / `--ui-warning` (+ `-bg` / `-bd` / `-ink`); a result or decision view reads `RESULT_STATUS_TOKEN` / `DECISION_TOKEN` from `components/ui/statusVocabulary` |
+| `frontend.adhoc-spinners` | a file gaining `animate-spin` in `pages/` / `components/` outside `components/ui` (count ratchet) | Use `LoadingSpinner` (`components/ui/LoadingSpinner`) or a skeleton |
+| `frontend.button-primitives` † | a `<button>` / `<a>` / `<Link>` painted with the primary fill, the accent fill + `text-white`, a status / ui tint + `text-white`, or such a `style` object (`role="switch"` / `data-toggle-track` tracks exempt) | `className="btn-primary"` (`btn-primary btn-sm` for a 12 px button, `btn-danger` for a destructive one); keep the layout classes, drop the hand-written padding, radius, colours, `hover:` and `disabled:` |
+| `frontend.load-error-wording` † | "Failed to load" in `frontend/src` code (comments exempt); "Something went wrong" outside the crash screen, the chunk error, MFA's retry line and the chart-export failure | Say "Could not load {thing}." — the wording of `chartMessages` and `utils/loadError` |
 | `frontend.clipboard-util` | raw `navigator.clipboard` | Use `copyTextToClipboard` from `@/utils/clipboard` (HTTP homelabs lack the secure-context API) |
 | `frontend.modal-dialog-role` † | a `fixed inset-0` modal overlay with no `role="dialog"` | Add `role="dialog" aria-modal="true"` and name it with `aria-labelledby` pointing at the modal heading's `id` — a static `aria-label` goes stale when the title is dynamic. A full-screen overlay that genuinely is not a dialog opts out with a `not-a-dialog` comment |
 | `frontend.no-page-modals` | a page modal (`role="dialog"` / `aria-modal`), a `<SidePanel>`, a `fixed` full-height edge panel, or a native `confirm()` under `frontend/src/pages` / `components`, outside the OR-03 allow-list | Open it in the page: `MasterDetail` + `DetailPane`, `InlineFormSection` (in an `InlineRowSection` under a row), `InlineConfirm` (`components/ui/inPage/`). An overlay of an OR-03 class gets an allow-list entry with its reason |
