@@ -104,6 +104,13 @@ describe('the lede says what the recorded verdict said, and when', () => {
       .toBe('2026.11 was No-Go 2h ago: 25 blocking items; pass rate 81.3% over 40 tests.')
   })
 
+  // W29a UIX-03: the one decision vocabulary — "Conditional", never "Conditional Go".
+  it('CONDITIONAL_GO reads "Conditional" and counts every blocking item', () => {
+    const cond = gate({ verdict: 'CONDITIONAL_GO', pass_rate: 90, blocking_reasons: ['a', 'b'], blocking_total: 3 })
+    expect(releaseLede(deriveRelease(release({ gate: cond })), NOW))
+      .toBe('2026.11 was Conditional 2h ago: 3 blocking items; pass rate 90.0% over 40 tests.')
+  })
+
   it('NOT_EVALUATED gives the server\'s reason', () => {
     const ne = gate({ verdict: 'NOT_EVALUATED', pass_rate: null, measured: false, insufficient_reason: '3 of 40 tests carry evidence; 5 required' })
     expect(releaseLede(deriveRelease(release({ gate: ne })), NOW))
@@ -143,6 +150,12 @@ describe('blocker counts are the server\'s totals', () => {
   it('a Conditional Go headline counts its items from blockerCount', () => {
     const c = deriveRelease(release({ name: 'Checkout', version: 'Checkout', gate: gate({ verdict: 'CONDITIONAL_GO', blocking_reasons: ['a', 'b'], blocking_total: 7 }) }))
     expect(releaseHeadline(c)).toBe('Checkout is on track — 7 items to clear')
+  })
+
+  // W29a UIX-10: the due day is the fixed-locale weekday (formatWeekday), whatever the browser's language.
+  it('names the due day in the fixed en-US weekday', () => {
+    const nogo = deriveRelease(release({ name: 'Checkout', version: 'Checkout', planned_date: '2026-10-16T12:00:00Z', gate: gate({ verdict: 'NO_GO', blocking_total: 1 }) }))
+    expect(releaseHeadline(nogo)).toBe('Checkout is blocked — was due Friday')
   })
 })
 

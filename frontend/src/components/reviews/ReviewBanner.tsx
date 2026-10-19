@@ -3,6 +3,7 @@ import { AlertTriangle, CheckCircle2, Info, XCircle } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import ScopedLink from '@/components/ui/ScopedLink'
 import type { ReviewEnvelopeFields, ReviewState } from '@/types/review'
+import { formatCompactDateTime } from '@/utils/formatters'
 
 const TONE: Record<ReviewState, { box: string; icon: string; Icon: LucideIcon; title: string }> = {
   pending_review: {
@@ -50,7 +51,7 @@ export default function ReviewBanner({
   if (!review || review.state === 'not_applicable') return null
   const tone = TONE[review.state]
   if (!tone) return null
-  const reviewedAt = review.reviewed_at ? new Date(review.reviewed_at).toLocaleString() : null
+  const reviewedAt = review.reviewed_at ? formatCompactDateTime(review.reviewed_at) : null
 
   return (
     <div

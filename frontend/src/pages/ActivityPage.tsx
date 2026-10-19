@@ -16,7 +16,7 @@ import { useActivityEventTypes, useActivityFeed } from '@/hooks/useActivityFeed'
 import { exportActivity } from '@/services/activityService'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
-import { formatCompactDateTime } from '@/utils/formatters'
+import { formatCompactDateTime, formatNumber } from '@/utils/formatters'
 
 /** The feed's windows: the shared set, 14d included (WIN-01), so a fortnight picked elsewhere is not shown as a week. */
 const WINDOW_OPTIONS = [1, 7, 14, 30, 90] as const
@@ -123,8 +123,8 @@ export default function ActivityPage() {
       })
       toast.success(
         truncated
-          ? `Exported the most recent ${rowCount.toLocaleString()} events. Narrow the window to get the rest.`
-          : `Exported ${rowCount.toLocaleString()} events`,
+          ? `Exported the most recent ${formatNumber(rowCount)} events. Narrow the window to get the rest.`
+          : `Exported ${formatNumber(rowCount)} events`,
       )
     } catch {
       toast.error('Export failed. You need the QA Lead role on this project.')
@@ -230,7 +230,7 @@ export default function ActivityPage() {
               onClick={() => setStoredDays(d)}
               className={
                 days === d
-                  ? 'rounded px-2.5 py-1 text-[12px] font-medium tabular-nums bg-[var(--color-accent)] text-white'
+                  ? 'rounded px-2.5 py-1 text-[12px] font-medium tabular-nums bg-[var(--color-accent-muted)] text-[var(--color-accent-ink)]'
                   : 'rounded px-2.5 py-1 text-[12px] font-medium tabular-nums text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]'
               }
             >
@@ -301,7 +301,7 @@ export default function ActivityPage() {
 
             <div className="flex items-center justify-between border-t border-[var(--color-border)] px-4 py-3">
               <p className="text-[11px] text-[var(--color-text-muted)]">
-                {events.length.toLocaleString()} event
+                {formatNumber(events.length)} event
                 {events.length === 1 ? '' : 's'}
                 {ledgerStartedAt &&
                   ` · ledger starts ${formatCompactDateTime(ledgerStartedAt)}`}

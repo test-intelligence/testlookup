@@ -26,6 +26,26 @@ describe('PhaseGateChip', () => {
     expect(chip).toHaveAttribute('data-verdict', verdict)
   })
 
+  // W29a UIX-03: the one decision vocabulary's word; conditional is the warning
+  // hue (broken), never skipped-gold; every decided chip's text is its ink.
+  it('CONDITIONAL_GO reads "Gate: Conditional" in the warning hue, never skipped-gold', () => {
+    render(<PhaseGateChip result={result('CONDITIONAL_GO')} />)
+    const chip = screen.getByTestId('phase-gate-chip')
+    expect(chip).toHaveTextContent('Gate: Conditional')
+    expect(chip.getAttribute('style') ?? '').not.toMatch(/--status-skipped/)
+    expect(chip.style.color).toBe('var(--status-broken-ink)')
+    expect(chip.style.borderColor).toBe('var(--status-broken-bd)')
+  })
+
+  it.each([
+    ['GO', 'var(--status-passed-ink)'],
+    ['NO_GO', 'var(--status-failed-ink)'],
+    ['NOT_EVALUATED', 'var(--color-text-muted)'],
+  ])('%s: the text is %s', (verdict, colour) => {
+    render(<PhaseGateChip result={result(verdict)} />)
+    expect(screen.getByTestId('phase-gate-chip').style.color).toBe(colour)
+  })
+
   it('the tooltip is the first blocking reason, else "Live preview — nothing is recorded"', () => {
     const { rerender } = render(<PhaseGateChip result={result('NO_GO', ['checkout::abc is FAILED', 'checkout::def is BROKEN'])} />)
     expect(screen.getByTestId('phase-gate-chip')).toHaveAttribute('title', 'checkout::abc is FAILED')

@@ -30,6 +30,7 @@ import {
   FileText,
   ShieldCheck,
 } from 'lucide-react'
+import { formatWeekday } from '@/utils/formatters'
 import type { DerivedRelease } from './types'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -101,7 +102,7 @@ export function ShippingThisWeek({ releases, onOpen }: { releases: DerivedReleas
     .map(r => {
       const d = new Date(r.dueAt)
       const rel = daysBetween(d, today)
-      const label = rel === 0 ? 'Today' : rel === 1 ? 'Tmr' : d.toLocaleDateString(undefined, { weekday: 'short' })
+      const label = rel === 0 ? 'Today' : rel === 1 ? 'Tmr' : formatWeekday(d, 'short')
       return { release: r, relDays: rel, label }
     })
     .filter(it => it.relDays >= 0 && it.relDays <= 7)
@@ -114,10 +115,11 @@ export function ShippingThisWeek({ releases, onOpen }: { releases: DerivedReleas
       ) : (
         <ul className="m-0 p-0 list-none divide-y divide-[var(--color-border)]">
           {items.map(({ release: r, label }) => {
+            // W29a UIX-03: the decision's own hue; conditional is the warning hue, never skipped-gold.
             const dot =
-              r.gate.decision === 'go' ? 'var(--status-passed)'
-              : r.gate.decision === 'conditional' ? 'var(--status-skipped)'
-              : r.gate.decision === 'no_go' ? 'var(--status-failed)'
+              r.gate.decision === 'go' ? 'var(--gate-go)'
+              : r.gate.decision === 'conditional' ? 'var(--gate-conditional)'
+              : r.gate.decision === 'no_go' ? 'var(--gate-no-go)'
               : 'var(--color-text-muted)'
             return (
               <li key={r.id} className="flex items-center gap-3 px-3.5 py-2.5">
@@ -203,10 +205,12 @@ export function AgingSignals({ releases, onOpen }: { releases: DerivedRelease[];
                 className={clsx(
                   'shrink-0 inline-flex items-center text-[10.5px] font-semibold tabular-nums px-1.5 py-0.5 rounded-full border',
                 )}
+                // W29a UIX-07: an aging release is a UI warning / danger, not a test result;
+                // the amber chip's tint and border are the warning hue (were skipped-gold).
                 style={{
-                  color: severity === 'red' ? 'var(--status-failed)' : 'var(--status-broken)',
-                  background: severity === 'red' ? 'color-mix(in srgb, var(--status-failed) 10%, transparent)' : 'color-mix(in srgb, var(--status-skipped) 10%, transparent)',
-                  borderColor: severity === 'red' ? 'color-mix(in srgb, var(--status-failed) 40%, transparent)' : 'color-mix(in srgb, var(--status-skipped) 40%, transparent)',
+                  color: severity === 'red' ? 'var(--ui-danger)' : 'var(--ui-warning)',
+                  background: severity === 'red' ? 'color-mix(in srgb, var(--ui-danger) 10%, transparent)' : 'color-mix(in srgb, var(--ui-warning) 10%, transparent)',
+                  borderColor: severity === 'red' ? 'color-mix(in srgb, var(--ui-danger) 40%, transparent)' : 'color-mix(in srgb, var(--ui-warning) 40%, transparent)',
                 }}
               >
                 {ageDays}d
@@ -348,9 +352,10 @@ export function CompliancePacks({
                 <li key={r.id} className="flex items-center gap-3 px-3.5 py-2">
                   <div
                     className="w-7 h-7 rounded-md flex items-center justify-center shrink-0"
+                    // W29a UIX-07: waiting for a pack is a UI warning (was skipped-gold).
                     style={{
-                      background: 'color-mix(in srgb, var(--status-skipped) 14%, transparent)',
-                      color: 'var(--status-skipped)',
+                      background: 'color-mix(in srgb, var(--ui-warning) 14%, transparent)',
+                      color: 'var(--ui-warning)',
                     }}
                   >
                     <Clock className="h-3.5 w-3.5" />

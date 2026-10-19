@@ -7,6 +7,8 @@
  * here: a release is "ready to ship" because its recorded verdict is GO.
  */
 import type { BannerFact } from '@/components/ui/StatusBanner'
+import { DECISION_LABEL } from '@/components/ui/statusVocabulary'
+import { formatWeekday } from '@/utils/formatters'
 import type { DerivedRelease } from './types'
 
 /** The release counts, each counted from the list. */
@@ -76,8 +78,7 @@ export function passRateText(passRate: number | null): string {
 /** The sentence about the release that ships next (the former verdict band's headline). */
 export function releaseHeadline(highlighted: DerivedRelease): string {
   const name = nameOf(highlighted)
-  const dueDate = highlighted.dueAt ? new Date(highlighted.dueAt) : null
-  const dueLabel = dueDate ? dueDate.toLocaleDateString(undefined, { weekday: 'long' }) : null
+  const dueLabel = highlighted.dueAt ? formatWeekday(highlighted.dueAt, 'long') : null
   const blockers = highlighted.blockerCount
   switch (highlighted.gate.decision) {
     case 'go':
@@ -107,11 +108,11 @@ export function releaseLede(highlighted: DerivedRelease, now: number = Date.now(
     case 'never_evaluated':
       return NEVER_EVALUATED_LEDE
     case 'go':
-      return `${name} was Go ${age}: pass rate ${rate} over ${plural(evidence, 'test')} in ${plural(gate.runCount ?? 0, 'run')}.`
+      return `${name} was ${DECISION_LABEL.go} ${age}: pass rate ${rate} over ${plural(evidence, 'test')} in ${plural(gate.runCount ?? 0, 'run')}.`
     case 'no_go':
-      return `${name} was No-Go ${age}: ${plural(gate.blockingTotal, 'blocking item')}; pass rate ${rate} over ${plural(evidence, 'test')}.`
+      return `${name} was ${DECISION_LABEL.no_go} ${age}: ${plural(gate.blockingTotal, 'blocking item')}; pass rate ${rate} over ${plural(evidence, 'test')}.`
     case 'conditional':
-      return `${name} was Conditional Go ${age}: ${plural(gate.blockingTotal, 'blocking item')}; pass rate ${rate} over ${plural(evidence, 'test')}.`
+      return `${name} was ${DECISION_LABEL.conditional} ${age}: ${plural(gate.blockingTotal, 'blocking item')}; pass rate ${rate} over ${plural(evidence, 'test')}.`
     case 'not_evaluated':
       return `${name} was not evaluated ${age}: ${gate.insufficientReason ?? 'not enough evidence'}`
     case 'cancelled':

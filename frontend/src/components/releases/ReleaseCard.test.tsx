@@ -112,6 +112,17 @@ describe('the verdict cluster', () => {
     expect((tile('Pass rate')?.children[1] as HTMLElement).style.color).toBe('var(--color-text)')
   })
 
+  // W29a UIX-03: conditional is the warning hue (--gate-conditional), never skipped-gold.
+  it('a Conditional verdict reads "Conditional" and its icon tile is the warning hue, never skipped-gold', () => {
+    renderCard({ release: release({ gate: gate({ verdict: 'CONDITIONAL_GO', pass_rate: 99 }) }) })
+    expect(screen.getByText('Conditional')).toHaveAttribute('data-gate-decision', 'conditional')
+    // The header holds the verdict cluster (icon tile + badge); the bar below draws the skipped RESULT.
+    const header = screen.getByRole('article').querySelector('header') as HTMLElement
+    const iconTile = header.querySelector('.w-8.h-8') as HTMLElement
+    expect(iconTile.style.color).toBe('var(--gate-conditional)')
+    expect(header.innerHTML).not.toMatch(/--status-skipped/)
+  })
+
   it('NOT_EVALUATED: the line under the badge is the server\'s reason; no measured pass rate is invented', () => {
     renderCard({
       release: release({
@@ -263,6 +274,19 @@ describe('the pass/fail bar follows the verdict status counts', () => {
   it('passed / failed / broken / skipped', () => {
     renderCard({ release: release({ gate: gate({ status_counts: { PASSED: 30, FAILED: 3, BROKEN: 2, SKIPPED: 1, UNKNOWN: 1 } }) }) })
     expect(document.querySelector('[data-pass-fail-bar]')).toHaveTextContent(/30 3 2 2 ?\/ 37/)
+  })
+
+  // W29a UIX-03: skipped is a RESULT, so it is the skipped hue (was a hard-coded grey).
+  it('the skipped segment and its dot are --status-skipped', () => {
+    renderCard({ release: release({ gate: gate({ status_counts: { PASSED: 30, FAILED: 3, BROKEN: 2, SKIPPED: 4 } }) }) })
+    const bar = document.querySelector('[data-pass-fail-bar]') as HTMLElement
+    const segments = Array.from(bar.querySelectorAll<HTMLElement>('[aria-hidden] > span'))
+    expect(segments.map((s) => s.style.background)).toEqual([
+      'var(--status-passed)', 'var(--status-failed)', 'var(--status-broken)', 'var(--status-skipped)',
+    ])
+    const dot = bar.querySelector<HTMLElement>('span[title="skipped"]')
+    expect(dot?.style.background).toBe('var(--status-skipped)')
+    expect(bar.innerHTML).not.toMatch(/#[0-9a-f]{3,8}\b/i)
   })
 
   it('no counts, no bar', () => {

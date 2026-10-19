@@ -10,6 +10,7 @@ import { useTestCaseEvidenceGaps } from '@/hooks/useTestManagement'
 import { onboardingService } from '@/services/onboardingService'
 import { suitesService } from '@/services/suitesService'
 import type { CanonicalTestCase } from '@/types/suites'
+import { formatCompactDateTime } from '@/utils/formatters'
 import type {
   TestCaseEvidenceGapItem,
   TestCaseEvidenceGapKind,
@@ -24,7 +25,7 @@ interface EvidenceGapListsProps {
 
 function formatObservedAt(value?: string | null) {
   if (!value) return 'Not observed'
-  return new Date(value).toLocaleString()
+  return formatCompactDateTime(value)
 }
 
 function retirementErrorMessage(error: unknown): string {

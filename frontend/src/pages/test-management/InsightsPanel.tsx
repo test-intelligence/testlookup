@@ -298,7 +298,7 @@ export function RecentActivityCard({ events }: { events: RecentEvent[] }) {
             const action = (e.action ?? e.event_type ?? 'updated').toLowerCase()
             const palette = /create|new/.test(action) ? { bg: 'color-mix(in srgb, var(--status-passed) 14%, transparent)',    fg: 'var(--status-passed)' }
               : /review|approve/.test(action)        ? { bg: 'color-mix(in srgb, var(--status-broken) 14%, transparent)',  fg: 'var(--status-broken)' }
-              : /deprecate|delete/.test(action)      ? { bg: 'rgba(120,113,108,0.16)', fg: '#a8a29e' }
+              : /deprecate|delete/.test(action)      ? { bg: 'color-mix(in srgb, var(--color-text-muted) 12%, transparent)', fg: 'var(--color-text-secondary)' }
               : /ai|generate/.test(action)           ? { bg: 'color-mix(in srgb, var(--status-flaky) 14%, transparent)', fg: 'var(--status-flaky)' }
               : { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-muted)' }
             return (

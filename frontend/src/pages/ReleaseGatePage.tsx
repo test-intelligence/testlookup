@@ -32,6 +32,8 @@ import RingGauge from '@/components/charts/RingGauge'
 import { bandsTone, formatGaugeNumber, type GaugeBands } from '@/components/charts/gaugeBar.model'
 import { GateContextPending } from '@/components/reports/catalogue/GateContextHeader'
 import { lazyWithRetry } from '@/utils/lazyWithRetry'
+import { formatCompactDateTime, formatDay } from '@/utils/formatters'
+import { DECISION_LABEL } from '@/components/ui/statusVocabulary'
 
 /**
  * The catalogue's "Context" group (VIZ-408), in its own chunk: it arrives
@@ -44,10 +46,11 @@ const HELP_TOPIC = helpTopicParam('/release-gate')
 
 type Recommendation = 'GO' | 'NO_GO' | 'CONDITIONAL_GO' | 'PENDING'
 
+// The decided words are the one vocabulary's (W29a UIX-03): Go / Conditional / No-Go.
 const REC_CONFIG: Record<Recommendation, { label: string; colour: string; bg: string; icon: React.ElementType }> = {
-  GO:              { label: 'GO',              colour: 'text-[var(--status-passed)]', bg: 'bg-[var(--status-passed-bg)]/20 border-[var(--status-passed-bd)]/30', icon: CheckCircle },
-  NO_GO:           { label: 'NO GO',           colour: 'text-[var(--status-failed)]',     bg: 'bg-[var(--status-failed-bg)]/20 border-[var(--status-failed-bd)]/30',         icon: XCircle     },
-  CONDITIONAL_GO:  { label: 'CONDITIONAL GO',  colour: 'text-[var(--status-broken)]',   bg: 'bg-[var(--status-broken-bg)]/20 border-[var(--status-broken-bd)]/30',     icon: AlertTriangle },
+  GO:              { label: DECISION_LABEL.go,          colour: 'text-[var(--status-passed)]', bg: 'bg-[var(--status-passed-bg)]/20 border-[var(--status-passed-bd)]/30', icon: CheckCircle },
+  NO_GO:           { label: DECISION_LABEL.no_go,       colour: 'text-[var(--status-failed)]',     bg: 'bg-[var(--status-failed-bg)]/20 border-[var(--status-failed-bd)]/30',         icon: XCircle     },
+  CONDITIONAL_GO:  { label: DECISION_LABEL.conditional, colour: 'text-[var(--status-broken)]',   bg: 'bg-[var(--status-broken-bg)]/20 border-[var(--status-broken-bd)]/30',     icon: AlertTriangle },
   // Used when the decision has no test evidence to grade — backend can still
   // return GO/NO_GO from policy defaults, but the UI shouldn't surface a
   // verdict against zero data.
@@ -107,7 +110,7 @@ function OverrideHistory({ entries }: { entries: OverrideAuditEntry[] }) {
           <div key={i} className="bg-[var(--color-bg-secondary)]/60 rounded-lg px-3 py-2 text-sm">
             <div className="flex items-center gap-2 mb-1">
               <span className="text-[var(--color-text-muted)] text-xs">
-                {new Date(entry.timestamp).toLocaleString()}
+                {formatCompactDateTime(entry.timestamp)}
               </span>
               <span className="text-[var(--color-text-muted)] text-xs">by {entry.actor_name ?? 'Unknown'}</span>
             </div>
@@ -204,7 +207,7 @@ export default function ReleaseGatePage() {
                     <td className="td text-[var(--color-text-secondary)] text-xs">{run.build_number ?? '—'}</td>
                     <td className="td text-[var(--color-text-muted)] text-xs">{run.project_name ?? run.project_id?.slice(0, 8) ?? '—'}</td>
                     <td className="td text-[var(--color-text-muted)] text-xs">
-                      {run.created_at ? new Date(run.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                      {run.created_at ? formatDay(run.created_at) : '—'}
                     </td>
                     <td className="td">
                       <span className={clsx(
@@ -637,7 +640,7 @@ export default function ReleaseGatePage() {
               section that throws is one error card, never the route's error
               page over the stored verdict (rule 6). Until the chunk arrives,
               its heading, note and height hold the place (R1-7). */}
-          <SectionErrorBoundary message="Failed to load charts">
+          <SectionErrorBoundary message="Could not load charts">
             <Suspense
               fallback={<GateContextPending build={decision.build_number ?? runId} clusters={decision.cluster_insights} />}
             >

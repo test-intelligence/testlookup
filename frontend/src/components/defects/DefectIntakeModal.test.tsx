@@ -92,3 +92,38 @@ describe('DefectIntakeModal — Affects release', () => {
     expect(onClose).not.toHaveBeenCalled()
   })
 })
+
+// W29a UIX-07: the four severities read the ONE severity palette: P0 danger,
+// P1 warning, P2 info, P3 neutral — the intake's P2 / P3 are no longer orange /
+// passed-green.
+describe('DefectIntakeModal — severity chips', () => {
+  const chip = (id: string) => document.querySelector(`[data-severity="${id}"]`) as HTMLElement
+  const chosen = (id: string) => {
+    fireEvent.click(chip(id))
+    return chip(id).getAttribute('style') ?? ''
+  }
+
+  it('opens on P1 in the warning tone with its ink', () => {
+    renderModal()
+    expect(chip('P1').style.color).toBe('var(--ui-warning-ink)')
+    expect(chip('P1').getAttribute('style')).not.toMatch(/--status-/)
+  })
+
+  it('P2 is the info tone and P3 the neutral; neither names a status hue', () => {
+    renderModal()
+    const p2 = chosen('P2')
+    expect(chip('P2').style.color).toBe('var(--ui-info-ink)')
+    expect(p2).not.toMatch(/--status-/)
+    const p3 = chosen('P3')
+    expect(chip('P3').style.color).toBe('var(--color-text-muted)')
+    expect(p3).not.toMatch(/--status-passed|--status-broken/)
+    // Only the chosen chip carries a tone; the others are the neutral class look.
+    expect(chip('P2').getAttribute('style') ?? '').toBe('')
+  })
+
+  it('P0 is the danger tone', () => {
+    renderModal()
+    chosen('P0')
+    expect(chip('P0').style.color).toBe('var(--ui-danger-ink)')
+  })
+})

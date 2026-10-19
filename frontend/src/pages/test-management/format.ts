@@ -3,6 +3,7 @@
  * folder share: the status / priority pill colours (per-theme tokens, never
  * raw palette classes) and the two date formats.
  */
+import { formatCompactDateTime, formatDay } from '@/utils/formatters'
 
 export const STATUS_COLORS: Record<string, string> = {
   draft:            'bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)] border border-[var(--color-border-light)]',
@@ -23,12 +24,12 @@ export const PRIORITY_COLORS: Record<string, string> = {
   low:      'bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] border border-[var(--color-border-light)]',
 }
 
+/** A day, "Sep 18, 2026" (the one date format, W29a UIX-10); "—" when there is none. */
 export function fmtDate(iso?: string) {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+  return formatDay(iso)
 }
 
+/** A day and time, "Sep 18, 11:50" (the table stamp, W29a UIX-10); "—" when there is none. */
 export function fmtDateTime(iso?: string) {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  return formatCompactDateTime(iso)
 }

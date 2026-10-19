@@ -27,6 +27,7 @@
 import { AlertCircle, AlertTriangle, CheckCircle2 } from 'lucide-react'
 import { useNow } from '@/hooks/useNow'
 import StatusBanner, { type BannerState } from '@/components/ui/StatusBanner'
+import { DECISION_LABEL } from '@/components/ui/statusVocabulary'
 import Disclosure from '@/components/ui/Disclosure'
 import KpiStrip from './KpiStrip'
 import { countReleases, NOTHING_IN_FLIGHT, releaseHeadline, releaseHealthFacts, releaseLede } from './health'
@@ -35,7 +36,7 @@ import type { DerivedBlocker, DerivedRelease, GateDecision } from './types'
 /** The banner's state per gate decision; the pill keeps the gate badge's words where the state's own would misname it. */
 const GATE_BANNER: Record<GateDecision, { state: BannerState; pill?: string }> = {
   go: { state: 'go' },
-  conditional: { state: 'conditional', pill: 'CONDITIONAL GO' },
+  conditional: { state: 'conditional', pill: DECISION_LABEL.conditional },
   no_go: { state: 'no_go' },
   not_evaluated: { state: 'pending', pill: 'NOT EVALUATED' },
   never_evaluated: { state: 'pending', pill: 'NOT EVALUATED' },

@@ -140,7 +140,7 @@ describe('ReleaseGatePage', () => {
       </MemoryRouter>,
     )
 
-    expect(screen.getAllByText(/CONDITIONAL GO/i).length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Conditional').length).toBeGreaterThan(0)
     // P2 item 3: the decision flow is a collapsed "How this was decided"
     // disclosure at the bottom of the page — below the verdict card (and its
     // Override control) and the tabs (P4 item 6) — and renders nothing until
@@ -280,7 +280,7 @@ describe('ReleaseGatePage', () => {
       </MemoryRouter>,
     )
 
-    expect(await screen.findByText(/NO GO/i)).toBeInTheDocument()
+    expect(await screen.findByText('No-Go')).toBeInTheDocument()
 
     mockProjectState.activeProjectId = 'proj-2'
     mockProjectState.activeProject = { id: 'proj-2', name: 'Project Two' }
@@ -724,7 +724,7 @@ describe('ReleaseGatePage — the catalogue Context group', () => {
     const on = verdictReading()
     expect(on).toEqual(off)
     expect(on.ring).toBe(String(risk))
-    expect(on.words).toContain(recommendation === 'GO' ? 'GO' : 'NO GO')
+    expect(on.words).toContain(recommendation === 'GO' ? 'Go' : 'No-Go')
   })
 
   it('the group is the same markup whatever the verdict: nothing in it is tinted by the decision', async () => {
@@ -759,8 +759,8 @@ describe('ReleaseGatePage — the catalogue Context group', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     try {
       await renderWith(flooredDecision({ cluster_insights: CLUSTERS, blocking_issues: ['Checkout down'] }), false)
-      expect(await screen.findByText('Failed to load charts')).toBeInTheDocument()
-      expect(card().textContent).toContain('NO GO')
+      expect(await screen.findByText('Could not load charts')).toBeInTheDocument()
+      expect(card().textContent).toContain('No-Go')
       expect(screen.getByRole('meter', { name: 'Risk Score' })).toHaveAttribute('aria-valuenow', '60')
       expect(within(card()).getByRole('button', { name: 'Override decision' })).toBeInTheDocument()
       expect(screen.getByRole('heading', { name: 'Linked Failure Clusters' })).toBeInTheDocument()
@@ -926,7 +926,7 @@ describe('ReleaseGatePage — verdict first (P4 item 6)', () => {
     await renderAt('/release-gate/run-1', flooredDecision({ blocking_issues: BLOCKERS }))
     expect(document.querySelectorAll('[data-primary]')).toHaveLength(1)
     expect(primary()).toHaveTextContent('Recommendation')
-    expect(primary()).toHaveTextContent('NO GO')
+    expect(primary()).toHaveTextContent('No-Go')
     expect(within(primary()).getByRole('meter', { name: 'Risk Score' })).toBeInTheDocument()
     expect(primary()).toHaveTextContent('Pass rate: 44.4%')
     const tablist = screen.getByRole('tablist', { name: 'Release gate sections' })
@@ -965,7 +965,7 @@ describe('ReleaseGatePage — verdict first (P4 item 6)', () => {
     await renderAt('/release-gate/run-1', flooredDecision(), refresh)
     fireEvent.click(within(primary()).getByRole('button', { name: 'Override decision' }))
     expect(within(primary()).getByRole('heading', { name: 'QA Lead Override' })).toBeInTheDocument()
-    fireEvent.click(within(primary()).getByRole('button', { name: 'GO' }))
+    fireEvent.click(within(primary()).getByRole('button', { name: 'Go' }))
     fireEvent.change(within(primary()).getByRole('textbox', { name: 'Reason for override' }), { target: { value: 'Known flake' } })
     fireEvent.click(within(primary()).getByRole('button', { name: 'Apply Override' }))
     await waitFor(() => expect(override).toHaveBeenCalledWith('run-1', 'GO', 'Known flake'))

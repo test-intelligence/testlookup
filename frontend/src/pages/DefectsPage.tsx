@@ -89,6 +89,7 @@ import { useReportViewsMenu } from '@/components/reports/useReportViewsMenu'
 import type { SavedView } from '@/services/savedViewsService'
 import { isSafeExternalUrl } from '@/utils/safeUrl'
 import { formatNumber } from '@/utils/formatters'
+import { SEVERITY_ORDER, SEVERITY_STYLE } from '@/components/ui/severity'
 import type {
   DefectEscapeRateResponse,
   DefectItem,
@@ -984,20 +985,18 @@ function DefectRowEl({
   const formKey = action ? `${row.id}:${action}` : null
   const isP0 = row.severity === 'P0'
   const filing = row.isUnlinked ? filingLabel(row) : null
-  const sevPalette: Record<Severity, { bg: string; bd: string; fg: string }> = {
-    P0: { bg: 'color-mix(in srgb, var(--status-failed) 15%, transparent)',     bd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)',     fg: 'var(--status-failed)' },
-    P1: { bg: 'color-mix(in srgb, var(--status-broken) 15%, transparent)',    bd: 'color-mix(in srgb, var(--status-broken) 30%, transparent)',    fg: 'var(--status-broken)' },
-    P2: { bg: 'color-mix(in srgb, var(--color-accent) 15%, transparent)',    bd: 'color-mix(in srgb, var(--color-accent) 30%, transparent)',    fg: 'var(--color-accent)' },
-    P3: { bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)',     fg: 'var(--color-text-muted)' },
-  }
-  const sev = sevPalette[row.severity]
-  const statusColor = row.statusKey === 'OPEN' ? 'var(--status-failed)'
-    : row.statusKey === 'IN_PROGRESS' ? 'var(--status-broken)'
-    : row.statusKey === 'RESOLVED' ? 'var(--status-passed)'
+  // The ONE severity palette (W29a UIX-07): the tint and border are this
+  // page's own (15 % / 30 %), the text its legible ink, the dot the hue.
+  const sev = SEVERITY_STYLE[row.severity]
+  // A defect's workflow state and its age are UI meanings (danger / warning /
+  // success), not test results: the --ui-* aliases (same pixels).
+  const statusColor = row.statusKey === 'OPEN' ? 'var(--ui-danger)'
+    : row.statusKey === 'IN_PROGRESS' ? 'var(--ui-warning)'
+    : row.statusKey === 'RESOLVED' ? 'var(--ui-success)'
     : 'var(--color-text-muted)'
-  const ageColor = row.ageTone === 'bad' ? 'var(--status-failed)'
-    : row.ageTone === 'warn' ? 'var(--status-broken)'
-    : row.ageTone === 'good' ? 'var(--status-passed)'
+  const ageColor = row.ageTone === 'bad' ? 'var(--ui-danger)'
+    : row.ageTone === 'warn' ? 'var(--ui-warning)'
+    : row.ageTone === 'good' ? 'var(--ui-success)'
     : 'var(--color-text)'
 
   // A row with a safe ticket URL: its Jira key is the "Open … in Jira" link
@@ -1046,8 +1045,9 @@ function DefectRowEl({
         <span
           className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-full text-[10.5px] font-semibold"
           style={{ background: sev.bg, border: `1px solid ${sev.bd}`, color: sev.fg }}
+          data-severity={row.severity}
         >
-          <i aria-hidden style={{ width: 5, height: 5, borderRadius: 999, background: 'currentColor' }} />
+          <i aria-hidden style={{ width: 5, height: 5, borderRadius: 999, background: sev.dot }} />
           {row.severity}
         </span>
       </td>
@@ -1288,20 +1288,17 @@ function ComponentBreakdown({ model }: { model: QueueModel }) {
             <div key={name} className="grid items-center gap-2.5" style={{ gridTemplateColumns: '90px 1fr 28px' }}>
               <span className="font-mono text-[11.5px] text-[var(--color-text-secondary)] truncate">{name}</span>
               <div className="flex h-3 rounded-sm overflow-hidden" style={{ background: 'var(--color-bg-secondary)', width: `${widthPct}%` }}>
-                {v.bySev.P0 > 0 && <span style={{ flex: v.bySev.P0, background: 'var(--status-failed)' }} />}
-                {v.bySev.P1 > 0 && <span style={{ flex: v.bySev.P1, background: 'var(--status-broken)' }} />}
-                {v.bySev.P2 > 0 && <span style={{ flex: v.bySev.P2, background: 'var(--color-accent)' }} />}
-                {v.bySev.P3 > 0 && <span style={{ flex: v.bySev.P3, background: 'var(--color-text-faint)' }} />}
+                {SEVERITY_ORDER.map((level) => v.bySev[level] > 0 && (
+                  <span key={level} data-severity-segment={level} style={{ flex: v.bySev[level], background: SEVERITY_STYLE[level].dot }} />
+                ))}
               </div>
               <span className="text-[11.5px] tabular-nums text-right text-[var(--color-text-secondary)]">{v.total}</span>
             </div>
           )
         })}
         <div className="flex items-center gap-3.5 mt-2.5 text-[10.5px] text-[var(--color-text-muted)] flex-wrap">
-          <Legend color="var(--status-failed)" label="P0" />
-          <Legend color="var(--status-broken)" label="P1" />
-          <Legend color="var(--color-accent)" label="P2" />
-          <Legend color="var(--color-text-faint)" label="P3" />
+          {/* The ONE severity palette's dots (W29a UIX-07), the same as the bars above. */}
+          {SEVERITY_ORDER.map((level) => <Legend key={level} color={SEVERITY_STYLE[level].dot} label={level} />)}
         </div>
       </div>
     </CardShell>

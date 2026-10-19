@@ -17,6 +17,7 @@ import { useReleaseBaseline, useReleaseGate } from '@/hooks/useReleaseGate'
 import { useReleases } from '@/hooks/useReleases'
 import type { ReleaseBaselineComparison, ReleaseGateDetail } from '@/types/releases'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { formatCompactDateTime } from '@/utils/formatters'
 import GateBadge from './GateBadge'
 import { mapVerdict } from './mapping'
 import { percent, signed } from './gateCopy'
@@ -150,7 +151,7 @@ export default function GatePanel({ releaseId, onEvaluate, evaluating = false }:
               title={gate?.decided_at ?? undefined}
               className="text-[11.5px] text-[var(--color-text-muted)]"
             >
-              Evaluated {decidedAt.toLocaleString()}
+              Evaluated {formatCompactDateTime(decidedAt)}
             </time>
           )}
         </div>

@@ -3,6 +3,7 @@
  * Tests and Runs tabs and the former `/coverage/suite` body, so a duration or
  * a run date reads the same in every tab).
  */
+import { formatDay } from '@/utils/formatters'
 
 /** An average duration: "—" when there is none (null, or 0: nothing timed). */
 export function formatSuiteDuration(ms: number | null | undefined): string {
@@ -12,8 +13,7 @@ export function formatSuiteDuration(ms: number | null | undefined): string {
   return `${(ms / 60_000).toFixed(1)}m`
 }
 
-/** A run's day, e.g. "Sep 18, 2026"; "—" when there is none. */
+/** A run's day, e.g. "Sep 18, 2026" (the one date format, W29a UIX-10); "—" when there is none. */
 export function formatSuiteDate(iso: string | null | undefined): string {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+  return formatDay(iso)
 }

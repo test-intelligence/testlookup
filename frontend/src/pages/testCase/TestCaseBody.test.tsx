@@ -94,7 +94,7 @@ describe('TestCaseBody — the answer first (P4)', () => {
     expect(follows(chips, primary())).toBe(true)
     expect(follows(primary(), tablist())).toBe(true)
     // The chips: suite, class, status, duration, tags.
-    for (const text of ['Checkout', 'TotalSpec', 'FAILED', '4.2s', 'smoke', 'checkout']) {
+    for (const text of ['Checkout', 'TotalSpec', 'Failed', '4.2s', 'smoke', 'checkout']) {
       expect(within(chips).getAllByText(text, { exact: true }).length, text).toBeGreaterThan(0)
     }
     // The answer: the error, the trace (under a plain title, not `<Class>.java`), the AI root cause.

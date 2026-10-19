@@ -18,12 +18,19 @@ import type {
   DefectIntakeSeverity,
 } from '@/types/analytics'
 import type { Release } from '@/types/releases'
+import { SEVERITY_STYLE, type SeverityStyle } from '@/components/ui/severity'
+import { formatDay } from '@/utils/formatters'
 
-const SEVERITIES: { id: DefectIntakeSeverity; label: string; tone: string }[] = [
-  { id: 'P0', label: 'P0 — Blocker', tone: 'text-[var(--status-failed)] border-[var(--status-failed-bd)]/60 bg-[var(--status-failed-bg)]/30' },
-  { id: 'P1', label: 'P1 — High',    tone: 'text-[var(--status-broken)] border-[var(--status-broken-bd)]/60 bg-[var(--status-broken-bg)]/30' },
-  { id: 'P2', label: 'P2 — Medium',  tone: 'text-[var(--status-broken)] border-[var(--status-broken-bd)]/60 bg-[var(--status-broken-bg)]/30' },
-  { id: 'P3', label: 'P3 — Low',     tone: 'text-[var(--status-passed)] border-[var(--status-passed-bd)]/60 bg-[var(--status-passed-bg)]/30' },
+/**
+ * The four severities, each chosen chip in the ONE severity palette (W29a
+ * UIX-07): P0 danger, P1 warning, P2 info, P3 neutral — a medium or low
+ * severity is never orange or passed-green. The long labels are this form's copy.
+ */
+const SEVERITIES: { id: DefectIntakeSeverity; label: string; tone: SeverityStyle }[] = [
+  { id: 'P0', label: 'P0 — Blocker', tone: SEVERITY_STYLE.P0 },
+  { id: 'P1', label: 'P1 — High',    tone: SEVERITY_STYLE.P1 },
+  { id: 'P2', label: 'P2 — Medium',  tone: SEVERITY_STYLE.P2 },
+  { id: 'P3', label: 'P3 — Low',     tone: SEVERITY_STYLE.P3 },
 ]
 
 const CATEGORIES: { id: DefectIntakeCategory; label: string }[] = [
@@ -42,7 +49,7 @@ function releaseOptionLabel(release: Release): string {
   const shipped = new Date(release.released_at)
   const date = Number.isNaN(shipped.getTime())
     ? release.released_at
-    : shipped.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+    : formatDay(shipped)
   return `${name} · shipped ${date}`
 }
 
@@ -152,7 +159,7 @@ export default function DefectIntakeModal({
           <button
             type="submit"
             disabled={!canSubmit}
-            className="inline-flex items-center gap-2 rounded-lg bg-[var(--color-accent)] px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+            className="btn-primary btn-sm inline-flex items-center gap-2"
           >
             {submitting && <LoadingSpinner size="sm" />}
             {submitting ? 'Creating…' : 'Create defect'}
@@ -188,12 +195,13 @@ export default function DefectIntakeModal({
                   key={s.id}
                   type="button"
                   onClick={() => setSeverity(s.id)}
+                  data-severity={s.id}
                   className={clsx(
                     'rounded-lg border px-2 py-2 text-xs font-medium transition-colors',
-                    severity === s.id
-                      ? s.tone
-                      : 'border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+                    severity !== s.id
+                      && 'border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
                   )}
+                  style={severity === s.id ? { color: s.tone.fg, background: s.tone.bg, borderColor: s.tone.bd } : undefined}
                 >
                   {s.label}
                 </button>

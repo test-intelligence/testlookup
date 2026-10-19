@@ -13,6 +13,7 @@ import { usePermissions } from '@/hooks/usePermissions'
 import { useProjectReviews } from '@/hooks/useReviews'
 import { reviewService } from '@/services/reviewService'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import { formatCompactDateTime } from '@/utils/formatters'
 import ChipFilter from './inbox/ChipFilter'
 import {
   REVIEW_REASON_CODES,
@@ -40,7 +41,7 @@ const STATE_TONE: Record<Review['state'], string> = {
   superseded: 'text-[var(--color-text-muted)]',
 }
 
-const formatWhen = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : '—')
+const formatWhen = (iso: string | null) => formatCompactDateTime(iso)
 
 /**
  * The active project's AI-report review queue (architecture E8.5, section

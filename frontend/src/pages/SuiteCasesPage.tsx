@@ -185,7 +185,7 @@ function MoveModal({ canonical, currentSuiteId, candidates, onClose, onMoved, sl
             <button
               type="submit"
               disabled={saving || !targetId}
-              className="rounded bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+              className="btn-primary"
             >
               {saving ? 'Moving…' : 'Move'}
             </button>
@@ -291,7 +291,7 @@ function BulkMoveModal({
             <button
               type="submit"
               disabled={saving || !targetId}
-              className="rounded bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+              className="btn-primary"
             >
               {saving ? 'Moving…' : `Move ${selectedCount}`}
             </button>
@@ -604,7 +604,7 @@ export default function SuiteCasesPage() {
           detailLoading ? (
             <LoadingSpinner />
           ) : detailError ? (
-            <EmptyState title="Failed to load the suite's runs" description="Check the console for errors or try again" />
+            <EmptyState title="Could not load the suite's runs" description="Check the console for errors or try again" />
           ) : recentRuns.length === 0 ? (
             <EmptyState title="No runs in this window" description={`No run of this suite in the last ${days} days.`} />
           ) : (
@@ -643,7 +643,7 @@ export default function SuiteCasesPage() {
               type="button"
               onClick={openBulkMove}
               disabled={selectedIds.size > BULK_LINK_MAX}
-              className="inline-flex items-center gap-1 rounded bg-[var(--color-accent)] px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
+              className="btn-primary btn-sm inline-flex items-center gap-1"
             >
               <ArrowRightLeft className="h-3 w-3" /> Move
             </button>

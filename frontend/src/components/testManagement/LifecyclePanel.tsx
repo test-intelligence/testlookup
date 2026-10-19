@@ -10,6 +10,7 @@ import {
   transitionErrorMessage,
 } from '@/pages/test-management/caseStatusModel'
 import { testManagementService } from '@/services/testManagementService'
+import { formatCompactDateTime } from '@/utils/formatters'
 import type {
   AllowedTestCaseTransition,
   ManagedTestCase,
@@ -100,7 +101,7 @@ export default function LifecyclePanel({ caseItem, onChanged }: LifecyclePanelPr
           </span>
           {caseItem.lifecycle_state_changed_at && (
             <span className="text-xs text-[var(--color-text-muted)]">
-              since {new Date(caseItem.lifecycle_state_changed_at).toLocaleString()}
+              since {formatCompactDateTime(caseItem.lifecycle_state_changed_at)}
             </span>
           )}
         </div>

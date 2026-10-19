@@ -520,7 +520,7 @@ export default function WorkflowEditorPage() {
                       Fork name
                       <input aria-label="Fork name" value={forkName} onChange={event => setForkName(event.target.value)} className="mt-1 w-full rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1.5 text-sm" />
                     </label>
-                    <button type="button" onClick={handleFork} disabled={busy !== null || !forkId.trim() || !forkName.trim()} className="self-end rounded bg-[var(--color-btn-primary-bg)] px-3 py-1.5 text-sm text-[var(--color-btn-primary-text)] disabled:opacity-50">
+                    <button type="button" onClick={handleFork} disabled={busy !== null || !forkId.trim() || !forkName.trim()} className="btn-primary self-end">
                       Create fork
                     </button>
                   </div>
@@ -562,7 +562,7 @@ export default function WorkflowEditorPage() {
                       type="button"
                       onClick={handleSave}
                       disabled={!canEdit || !dirty || busy !== null || !!parsed.error}
-                      className="inline-flex items-center gap-1.5 rounded bg-[var(--color-btn-primary-bg)] px-3 py-1.5 text-sm text-[var(--color-btn-primary-text)] disabled:opacity-50"
+                      className="btn-primary inline-flex items-center gap-1.5"
                     >
                       {busy === 'save' ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                       {selected.status === 'published' ? 'Save as new draft' : 'Save draft'}

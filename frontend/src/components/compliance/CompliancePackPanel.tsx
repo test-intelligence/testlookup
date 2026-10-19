@@ -6,6 +6,7 @@ import { useCompliancePacks } from '@/hooks/useCompliancePacks'
 import { refreshProjectCompliancePacks } from '@/hooks/useProjectCompliancePacks'
 import { compliancePackService, packSizeText } from '@/services/compliancePackService'
 import { usePermissions } from '@/hooks/usePermissions'
+import { formatCompactDateTime } from '@/utils/formatters'
 
 interface Props {
   releaseId: string
@@ -106,7 +107,7 @@ export default function CompliancePackPanel({ releaseId, releaseName }: Props) {
 
       {isLoading && <LoadingSpinner />}
       {isError && (
-        <p className="text-xs text-[var(--status-failed)]">Failed to load compliance pack history.</p>
+        <p className="text-xs text-[var(--status-failed)]">Could not load compliance pack history.</p>
       )}
 
       {!isLoading && !isError && packs.length === 0 && (
@@ -126,7 +127,7 @@ export default function CompliancePackPanel({ releaseId, releaseName }: Props) {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-[var(--color-text)]">
-                    {new Date(pack.generated_at).toLocaleString()}
+                    {formatCompactDateTime(pack.generated_at)}
                   </span>
                   <span className="text-[var(--color-text-faint)]">
                     {packSizeText(pack.bytes)} · {pack.file_count} files

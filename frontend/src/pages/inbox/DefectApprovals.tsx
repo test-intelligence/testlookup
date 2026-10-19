@@ -28,6 +28,7 @@ import { usePendingDefects } from '@/hooks/usePendingDefects'
 import { usePermissions } from '@/hooks/usePermissions'
 import { defectPromotionService } from '@/services/defectPromotionService'
 import type { DefectApprovalResponse, PendingDefect } from '@/types/defect-promotion'
+import { severityStyle } from '@/components/ui/severity'
 
 const JIRA_REASON_LABELS: Record<string, string> = {
   offline_mode: 'offline mode',
@@ -35,12 +36,12 @@ const JIRA_REASON_LABELS: Record<string, string> = {
   not_configured: 'Jira not configured',
 }
 
-const SEVERITY_TONE: Record<string, string> = {
-  CRITICAL: 'text-[var(--status-failed)] border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)]',
-  HIGH: 'text-[var(--status-broken)] border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)]',
-  MEDIUM: 'text-[var(--status-broken)] border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)]',
-  LOW: 'text-[var(--status-passed)] border-[var(--status-passed-bd)] bg-[var(--status-passed-bg)]',
-}
+/**
+ * A severity word's tone is the ONE severity palette's (W29a UIX-07):
+ * CRITICAL danger, HIGH warning, MEDIUM info, LOW neutral — never orange for
+ * a medium or passed-green for a low. A word that names no level keeps the
+ * neutral outline.
+ */
 const NEUTRAL_TONE = 'text-[var(--color-text-muted)] border-[var(--color-border)]'
 
 const blank = (value: string | null | undefined) => (value && value.trim() ? value : '—')
@@ -155,6 +156,7 @@ export default function DefectApprovals({ projectId }: { projectId: string }) {
         <ul className="divide-y divide-[var(--color-border)] rounded-md border border-[var(--color-border)]" aria-label="Defects awaiting approval">
           {rows.map((defect) => {
             const severity = (defect.severity ?? '').toUpperCase()
+            const tone = severityStyle(severity)
             const age = ageLabel(defect.created_at)
             const rowBusy = busy?.id === defect.defect_id
             return (
@@ -167,7 +169,8 @@ export default function DefectApprovals({ projectId }: { projectId: string }) {
                     </span>
                     {severity && (
                       <span
-                        className={`inline-flex flex-shrink-0 items-center rounded-full border px-1.5 py-0.5 text-[10.5px] font-semibold ${SEVERITY_TONE[severity] ?? NEUTRAL_TONE}`}
+                        className={`inline-flex flex-shrink-0 items-center rounded-full border px-1.5 py-0.5 text-[10.5px] font-semibold ${tone ? '' : NEUTRAL_TONE}`}
+                        style={tone ? { color: tone.fg, background: tone.bg, borderColor: tone.bd } : undefined}
                         data-defect-severity=""
                       >
                         {severity}
