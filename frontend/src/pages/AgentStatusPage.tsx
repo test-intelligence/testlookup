@@ -9,7 +9,7 @@ import ScopedLink from '@/components/ui/ScopedLink'
 import PageHeader from '@/components/ui/PageHeader'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import { helpTopicParam } from '@/components/help/helpTopics'
-import { formatRunWhen } from '@/utils/formatters'
+import { formatCompactDateTime, formatNumber, formatRunWhen } from '@/utils/formatters'
 import ExecutiveSummaryPanel from '@/components/ai/ExecutiveSummaryPanel'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useActiveLiveRuns, usePipelineStages, usePipelineTimeline, usePipelines, useRunSummary } from '@/hooks/useAgentRuns'
@@ -231,7 +231,7 @@ function StageCard({ stage, showLLMMetrics = true }: { stage: AgentStageResult; 
             <span className="text-[10px] bg-[var(--color-accent-muted)]/30 text-[var(--color-accent)] px-1.5 py-0.5 rounded"
               title={`Input: ${stage.input_tokens ?? 0} / Output: ${stage.output_tokens ?? 0}`}
             >
-              {stage.total_tokens.toLocaleString()} tok
+              {formatNumber(stage.total_tokens)} tok
             </span>
           )}
           {showLLMMetrics && stage.cost_usd != null && stage.cost_usd > 0 && (
@@ -276,7 +276,7 @@ function StageCard({ stage, showLLMMetrics = true }: { stage: AgentStageResult; 
               )}
               {showLLMMetrics && stage.total_tokens != null && stage.total_tokens > 0 && (
                 <div className="bg-[var(--color-bg-card)]/60 rounded p-2 text-center">
-                  <div className="text-sm font-bold text-[var(--color-accent)]">{stage.total_tokens.toLocaleString()}</div>
+                  <div className="text-sm font-bold text-[var(--color-accent)]">{formatNumber(stage.total_tokens)}</div>
                   <div className="text-[9px] text-[var(--color-text-muted)]">Tokens ({stage.input_tokens ?? 0}in/{stage.output_tokens ?? 0}out)</div>
                 </div>
               )}
@@ -436,7 +436,7 @@ function PipelineRow({
   const showStartNew =
     canAct && Boolean(pipeline.cancel_requested) && !isPipelineInProgress(pipeline.status) &&
     pipeline.workflow_type !== 'live' && !actions.offerNewRun
-  const started = pipeline.started_at ? new Date(pipeline.started_at).toLocaleString() : '—'
+  const started = pipeline.started_at ? formatCompactDateTime(pipeline.started_at) : '—'
   const duration =
     pipeline.started_at && pipeline.completed_at
       ? Math.round(
@@ -447,7 +447,7 @@ function PipelineRow({
     publicPipelineStatus(pipeline) === 'passed' &&
     pipeline.review_summary?.state === 'accepted' &&
     pipeline.review_summary?.settled_at
-      ? new Date(pipeline.review_summary.settled_at).toLocaleString()
+      ? formatCompactDateTime(pipeline.review_summary.settled_at)
       : null
 
   return (
@@ -708,7 +708,7 @@ function ObservabilityPanel({ timeline }: { timeline?: PipelineTimeline }) {
             <div className="text-[10px] text-[var(--color-text-muted)]">Cost / {formatMoney(obs.cost.budget_usd)}</div>
           </div>
           <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-card)]/60 p-2">
-            <div className="text-sm font-semibold text-[var(--color-accent)]">{obs.tokens.total.toLocaleString()}</div>
+            <div className="text-sm font-semibold text-[var(--color-accent)]">{formatNumber(obs.tokens.total)}</div>
             <div className="text-[10px] text-[var(--color-text-muted)]">{obs.tokens.llm_calls} LLM calls</div>
           </div>
           <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-card)]/60 p-2">

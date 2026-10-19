@@ -2,7 +2,7 @@
 
 exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /overview: elements, attributes and desktop classes are unchanged 1`] = `
 "<div class="flex h-screen overflow-hidden bg-[var(--color-bg)]">
-  <a class="fixed left-4 top-4 z-[100] -translate-y-20 rounded-md bg-[var(--color-btn-primary-bg)] px-4 py-2 text-sm font-semibold text-[var(--color-btn-primary-text)] shadow-lg transition-transform focus:translate-y-0" href="#main-content">
+  <a class="btn-primary fixed left-4 top-4 z-[100] -translate-y-20 shadow-lg transition-transform focus:translate-y-0" href="#main-content">
     "Skip to main content"
   <aside class="flex-shrink-0 border-r flex flex-col transition-[width] duration-150 w-56" data-sidebar="expanded" style="background: var(--color-bg-card); border-color: var(--color-border);">
     <div class="py-5 border-b flex items-center justify-center px-4" style="border-color: var(--color-border);">
@@ -167,11 +167,11 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /overvi
           <svg aria-hidden="true" class="lucide lucide-bell w-5 h-5" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
             <path d="M10.268 21a2 2 0 0 0 3.464 0">
             <path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326">
-          <span class="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-[var(--status-failed)] text-white text-[11px] font-bold rounded-full flex items-center justify-center px-1">
+          <span class="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-[var(--status-failed)] text-[var(--color-text-on-status)] text-[11px] font-bold rounded-full flex items-center justify-center px-1">
             "2"
       <div class="relative border-l pl-4 h-full flex items-center" style="border-color: var(--color-border);">
         <button aria-expanded="false" aria-haspopup="menu" aria-label="Account menu" class="flex items-center gap-3 h-full rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]" type="button">
-          <div class="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0 bg-[var(--color-accent-muted)]">
+          <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs flex-shrink-0" style="background: var(--color-accent-muted); color: var(--ui-info-ink);">
             "TU"
           <div class="flex flex-col justify-center items-start">
             <span class="text-sm font-medium text-[var(--color-text)] leading-none">
@@ -188,7 +188,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /overvi
 
 exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /settings/profile: elements, attributes and desktop classes are unchanged 1`] = `
 "<div class="flex h-screen overflow-hidden bg-[var(--color-bg)]">
-  <a class="fixed left-4 top-4 z-[100] -translate-y-20 rounded-md bg-[var(--color-btn-primary-bg)] px-4 py-2 text-sm font-semibold text-[var(--color-btn-primary-text)] shadow-lg transition-transform focus:translate-y-0" href="#main-content">
+  <a class="btn-primary fixed left-4 top-4 z-[100] -translate-y-20 shadow-lg transition-transform focus:translate-y-0" href="#main-content">
     "Skip to main content"
   <aside class="flex-shrink-0 border-r flex flex-col transition-[width] duration-150 w-56" data-sidebar="expanded" style="background: var(--color-bg-card); border-color: var(--color-border);">
     <div class="py-5 border-b flex items-center justify-center px-4" style="border-color: var(--color-border);">
@@ -353,11 +353,11 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /settin
           <svg aria-hidden="true" class="lucide lucide-bell w-5 h-5" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
             <path d="M10.268 21a2 2 0 0 0 3.464 0">
             <path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326">
-          <span class="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-[var(--status-failed)] text-white text-[11px] font-bold rounded-full flex items-center justify-center px-1">
+          <span class="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-[var(--status-failed)] text-[var(--color-text-on-status)] text-[11px] font-bold rounded-full flex items-center justify-center px-1">
             "2"
       <div class="relative border-l pl-4 h-full flex items-center" style="border-color: var(--color-border);">
         <button aria-expanded="false" aria-haspopup="menu" aria-label="Account menu" class="flex items-center gap-3 h-full rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]" type="button">
-          <div class="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0 bg-[var(--color-accent-muted)]">
+          <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs flex-shrink-0" style="background: var(--color-accent-muted); color: var(--ui-info-ink);">
             "TU"
           <div class="flex flex-col justify-center items-start">
             <span class="text-sm font-medium text-[var(--color-text)] leading-none">
@@ -510,7 +510,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /settin
 
 exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /trends: elements, attributes and desktop classes are unchanged 1`] = `
 "<div class="flex h-screen overflow-hidden bg-[var(--color-bg)]">
-  <a class="fixed left-4 top-4 z-[100] -translate-y-20 rounded-md bg-[var(--color-btn-primary-bg)] px-4 py-2 text-sm font-semibold text-[var(--color-btn-primary-text)] shadow-lg transition-transform focus:translate-y-0" href="#main-content">
+  <a class="btn-primary fixed left-4 top-4 z-[100] -translate-y-20 shadow-lg transition-transform focus:translate-y-0" href="#main-content">
     "Skip to main content"
   <aside class="flex-shrink-0 border-r flex flex-col transition-[width] duration-150 w-56" data-sidebar="expanded" style="background: var(--color-bg-card); border-color: var(--color-border);">
     <div class="py-5 border-b flex items-center justify-center px-4" style="border-color: var(--color-border);">
@@ -675,11 +675,11 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /trends
           <svg aria-hidden="true" class="lucide lucide-bell w-5 h-5" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
             <path d="M10.268 21a2 2 0 0 0 3.464 0">
             <path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326">
-          <span class="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-[var(--status-failed)] text-white text-[11px] font-bold rounded-full flex items-center justify-center px-1">
+          <span class="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-[var(--status-failed)] text-[var(--color-text-on-status)] text-[11px] font-bold rounded-full flex items-center justify-center px-1">
             "2"
       <div class="relative border-l pl-4 h-full flex items-center" style="border-color: var(--color-border);">
         <button aria-expanded="false" aria-haspopup="menu" aria-label="Account menu" class="flex items-center gap-3 h-full rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]" type="button">
-          <div class="w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0 bg-[var(--color-accent-muted)]">
+          <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs flex-shrink-0" style="background: var(--color-accent-muted); color: var(--ui-info-ink);">
             "TU"
           <div class="flex flex-col justify-center items-start">
             <span class="text-sm font-medium text-[var(--color-text)] leading-none">

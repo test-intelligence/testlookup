@@ -91,7 +91,7 @@ function MethodologyModal({ open, onClose }: { open: boolean; onClose: () => voi
       <div className="space-y-4">
         {isLoading && <div className="flex justify-center py-6"><LoadingSpinner /></div>}
         {isError && (
-          <p className="text-sm text-[var(--status-failed)]">Failed to load the methodology.</p>
+          <p className="text-sm text-[var(--status-failed)]">Could not load the methodology.</p>
         )}
 
         {methodology && (

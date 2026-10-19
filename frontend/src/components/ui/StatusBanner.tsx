@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { clsx } from 'clsx'
+import { DECISION_LABEL } from './statusVocabulary'
 
 export type BannerState = 'go' | 'conditional' | 'no_go' | 'pending' | 'ok' | 'warn' | 'fail'
 
@@ -9,16 +10,23 @@ export interface BannerFact {
   value: ReactNode
 }
 
-/** The pill's words and hue per state: the word carries the meaning, the hue repeats it. */
+/**
+ * The pill's words and hue per state: the word carries the meaning, the hue
+ * repeats it. Sentence case (W29a UIX-03); the three decisions read the one
+ * vocabulary (Go / Conditional / No-Go).
+ */
 export const BANNER_STATES: Record<BannerState, { word: string; hue: string }> = {
-  go: { word: 'GO', hue: 'var(--status-passed)' },
+  go: { word: DECISION_LABEL.go, hue: 'var(--status-passed)' },
   ok: { word: 'OK', hue: 'var(--status-passed)' },
-  conditional: { word: 'CONDITIONAL', hue: 'var(--status-broken)' },
-  warn: { word: 'WARNING', hue: 'var(--status-broken)' },
-  no_go: { word: 'NO-GO', hue: 'var(--status-failed)' },
-  fail: { word: 'FAILING', hue: 'var(--status-failed)' },
-  pending: { word: 'PENDING', hue: 'var(--color-text-muted)' },
+  conditional: { word: DECISION_LABEL.conditional, hue: 'var(--status-broken)' },
+  warn: { word: 'Warning', hue: 'var(--status-broken)' },
+  no_go: { word: DECISION_LABEL.no_go, hue: 'var(--status-failed)' },
+  fail: { word: 'Failing', hue: 'var(--status-failed)' },
+  pending: { word: 'Pending', hue: 'var(--color-text-muted)' },
 }
+
+/** The pill's text: the state's hue mixed toward the body text (the -ink rule), legible on its tint. */
+const bannerInk = (hue: string): string => `color-mix(in srgb, ${hue} 75%, var(--color-text))`
 
 const MAX_FACTS = 4
 
@@ -65,7 +73,7 @@ export default function StatusBanner({
       <span
         data-banner-pill=""
         className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11.5px] font-semibold tracking-wide"
-        style={{ color: hue, background: `color-mix(in srgb, ${hue} 14%, transparent)` }}
+        style={{ color: bannerInk(hue), background: `color-mix(in srgb, ${hue} 14%, transparent)` }}
       >
         <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full" style={{ background: hue }} />
         {word}

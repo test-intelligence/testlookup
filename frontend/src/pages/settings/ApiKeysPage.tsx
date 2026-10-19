@@ -18,6 +18,7 @@ import { usePermissions } from '@/hooks/usePermissions'
 import { useAuthStore } from '@/store/authStore'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { copyTextToClipboard } from '@/utils/clipboard'
+import { formatCompactDateTime } from '@/utils/formatters'
 import type { ApiKey, ApiKeyCreatedResponse } from '@/types/apiKey'
 import { streamIngestCommand } from './apiKeysCurl'
 
@@ -38,13 +39,9 @@ const STREAMING_API_KEYS_TITLE = 'Streaming API keys'
 const MY_API_KEYS_HREF = '/settings/my-api-keys'
 const HELP_TOPIC = helpTopicParam('/settings/api-keys')
 
+/** The table stamp ('Sep 18, 11:50', fixed en-US, W29a UIX-10); '—' when missing or invalid. */
 function formatDateTime(value: string | null): string {
-  if (!value) return '—'
-  try {
-    return new Date(value).toLocaleString()
-  } catch {
-    return value
-  }
+  return formatCompactDateTime(value)
 }
 
 function CopyButton({ value, label = 'Copy' }: { value: string; label?: string }) {
@@ -168,7 +165,7 @@ function GenerateKeyForm({
         <button
           type="submit"
           disabled={submitting || !name.trim()}
-          className="inline-flex items-center gap-1.5 rounded bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+          className="btn-primary inline-flex items-center gap-1.5"
         >
           {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Key className="h-3.5 w-3.5" />}
           {submitting ? 'Generating…' : 'Generate'}
@@ -258,7 +255,7 @@ asyncio.run(main())`,
         <button
           type="button"
           onClick={onClose}
-          className="rounded bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white"
+          className="btn-primary"
         >
           Done
         </button>
@@ -385,7 +382,7 @@ function ApiKeysPageContent({ isAdmin }: { isAdmin: boolean }) {
               type="button"
               onClick={() => slot.open('generate')}
               disabled={!projectId || slot.openKey === 'generate'}
-              className="inline-flex items-center gap-1.5 rounded bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+              className="btn-primary inline-flex items-center gap-1.5"
             >
               <Plus className="h-3.5 w-3.5" />
               Generate streaming key

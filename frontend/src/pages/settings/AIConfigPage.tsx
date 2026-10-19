@@ -350,7 +350,7 @@ export default function AIConfigPage() {
           rag_faithfulness_evaluator: cfg.rag_faithfulness_evaluator,
         })
       })
-      .catch(() => setError('Failed to load AI configuration'))
+      .catch(() => setError('Could not load AI configuration'))
       .finally(() => setLoading(false))
   }, [])
 
@@ -811,7 +811,7 @@ export default function AIConfigPage() {
 
         {isAdmin && (
           <button type="submit" disabled={saving}
-            className="flex items-center gap-2 bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] text-sm px-5 py-2.5 rounded-lg transition-colors">
+            className="btn-primary flex items-center gap-2">
             <Save className="h-4 w-4" /> {saving ? 'Saving…' : 'Save Configuration'}
           </button>
         )}

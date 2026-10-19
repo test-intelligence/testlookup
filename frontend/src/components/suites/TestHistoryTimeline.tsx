@@ -29,6 +29,7 @@
 import { useMemo } from 'react'
 
 import type { CanonicalRunHistoryItem } from '@/types/suites'
+import { formatCompactDateTime } from '@/utils/formatters'
 
 /** Outcome buckets the strip renders. Keep in sync with backend TestStatus. */
 const PASSED = new Set(['PASSED', 'passed'])
@@ -148,7 +149,7 @@ export function TestHistoryTimeline({ items }: TestHistoryTimelineProps) {
             retried
               ? `passed on attempt ${(item.retry_count ?? 0) + 1}`
               : null,
-            new Date(item.created_at).toLocaleString(),
+            formatCompactDateTime(item.created_at),
           ]
             .filter(Boolean)
             .join(' · ')

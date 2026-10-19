@@ -44,17 +44,17 @@ export interface SuiteDetailAdvancedSectionsProps {
 export default function SuiteDetailAdvancedSections({ days, suiteFilter, projectId }: SuiteDetailAdvancedSectionsProps): ReactElement {
   return (
     <div data-suite-advanced="" className="grid grid-cols-1 gap-4 min-w-0">
-      <SectionErrorBoundary message="Failed to load the test x run heatmap">
+      <SectionErrorBoundary message="Could not load the test x run heatmap">
         <Suspense fallback={<Placeholder minHeight={SUITE_HEATMAP_MIN_HEIGHT} />}>
           <HeatmapSection days={days} suiteFilter={suiteFilter} kinds={SUITE_HEATMAP_KINDS} />
         </Suspense>
       </SectionErrorBoundary>
-      <SectionErrorBoundary message="Failed to load the test scatter">
+      <SectionErrorBoundary message="Could not load the test scatter">
         <Suspense fallback={<Placeholder minHeight={SUITE_SCATTER_MIN_HEIGHT} />}>
           <ScatterSection days={days} suiteFilter={suiteFilter} placement="suite" />
         </Suspense>
       </SectionErrorBoundary>
-      <SectionErrorBoundary message="Failed to load the suite execution time">
+      <SectionErrorBoundary message="Could not load the suite execution time">
         <LazySection label="suite-execution" minHeight={SUITE_EXECUTION_MIN_HEIGHT}>
           <Suspense fallback={<Placeholder minHeight={SUITE_EXECUTION_MIN_HEIGHT} />}>
             <SuiteExecutionSection days={days} suiteName={suiteFilter[0] ?? ''} projectId={projectId} />

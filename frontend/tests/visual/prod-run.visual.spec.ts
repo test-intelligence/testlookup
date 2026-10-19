@@ -16,13 +16,13 @@
  * `production/fixtures-run.ts`.
  */
 import { expect, test } from '@playwright/test'
-import { assertHermetic, openProductionPage, PINNED, THEMES, visualRegion } from '../lib/production-pages'
+import { assertHermetic, openProductionPage, PINNED, THEMES_WITH_PAPER, visualRegion } from '../lib/production-pages'
 import { NOW, PROJECT_ID, RUN_ID, USER } from './production/fixtures'
 import { RUN_PAGE } from './production/fixtures-run'
 
 test.use(PINNED)
 
-for (const theme of THEMES) {
+for (const theme of THEMES_WITH_PAPER) {
   test(`run page regions — ${theme}`, async ({ page }) => {
     const { api, errors } = await openProductionPage(page, `/runs/${RUN_ID}`, {
       theme,

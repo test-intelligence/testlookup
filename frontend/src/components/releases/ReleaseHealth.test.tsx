@@ -109,10 +109,11 @@ describe('ReleaseHealthBanner — one line above the list', () => {
   })
 
   it('maps each gate decision to its banner state, keeping the gate badge words where the state would misname it', () => {
+    // W29a UIX-03: the decided pills read the one vocabulary (Go / Conditional / No-Go).
     const cases = [
-      ['go', 'go', 'GO'],
-      ['conditional', 'conditional', 'CONDITIONAL GO'],
-      ['no_go', 'no_go', 'NO-GO'],
+      ['go', 'go', 'Go'],
+      ['conditional', 'conditional', 'Conditional'],
+      ['no_go', 'no_go', 'No-Go'],
       ['not_evaluated', 'pending', 'NOT EVALUATED'],
       ['never_evaluated', 'pending', 'NOT EVALUATED'],
     ] as const

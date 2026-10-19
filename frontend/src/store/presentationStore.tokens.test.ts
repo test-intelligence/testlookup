@@ -1,6 +1,6 @@
 /**
  * VIZ-106 presentation mode, from `index.css` itself: "body text contrast is
- * at least 7:1" in all six themes, on the four backgrounds text sits on, and
+ * at least 7:1" in every theme, on the four backgrounds text sits on, and
  * the type scale grows to room sizes.
  *
  * The `[data-presentation="on"]` block is resolved the way a browser resolves
@@ -12,9 +12,11 @@
  */
 import { beforeAll, describe, expect, it } from 'vitest'
 import { readSourceFile } from '@/test/readSourceFile'
+import { LIGHT_THEMES, THEME_IDS, type ThemeId } from '@/store/themeStore'
 
-const THEMES = ['signal', 'console', 'slate', 'ember', 'lab', 'midnight'] as const
-type Theme = (typeof THEMES)[number]
+// Every theme of the registry (W29a: seven, Paper included).
+const THEMES = THEME_IDS
+type Theme = ThemeId
 type Rgb = [number, number, number]
 
 const BACKGROUNDS = ['--color-bg', '--color-bg-secondary', '--color-bg-card', '--color-bg-hover'] as const
@@ -45,7 +47,7 @@ function declarations(block: string): Map<string, string> {
 function themeHex(theme: Theme, name: string): string | undefined {
   const re = new RegExp(`${name}:\\s*(#[0-9a-fA-F]{6})\\b`)
   const own = re.exec(blockOf(`[data-theme="${theme}"] {`))?.[1]
-  const shared = theme === 'lab' ? undefined : re.exec(blockOf('[data-theme="signal"], [data-theme="console"]'))?.[1]
+  const shared = LIGHT_THEMES.has(theme) ? undefined : re.exec(blockOf('[data-theme="signal"], [data-theme="console"]'))?.[1]
   return own ?? shared
 }
 
@@ -145,7 +147,7 @@ describe('presentation mode: the type scale (VIZ-106)', () => {
     // Without this a legend inside the drawing was enlarged twice: 16px x 16/11 = 23px.
     const root = declarations(blockOf(':root {\n    --text-xs:'))
     const scaled = declarations(blockOf('[data-presentation="on"] [data-chart-presentation] {'))
-    for (const name of ['--text-xs', '--text-sm', '--text-base']) {
+    for (const name of ['--text-2xs', '--text-xs', '--text-sm', '--text-base']) {
       expect(scaled.get(name), name).toBe(root.get(name))
       // And on screen that is still at least the 16px floor.
       expect(px(scaled.get(name)) * (16 / 11), name).toBeGreaterThanOrEqual(16)
@@ -154,7 +156,7 @@ describe('presentation mode: the type scale (VIZ-106)', () => {
 
   it('labels read through the small tokens are at least 16px', () => {
     const block = declarations(blockOf(PRESENTATION_SELECTOR))
-    for (const name of ['--text-xs', '--text-sm', '--text-base']) {
+    for (const name of ['--text-2xs', '--text-xs', '--text-sm', '--text-base']) {
       expect(px(block.get(name)), name).toBeGreaterThanOrEqual(16)
     }
   })

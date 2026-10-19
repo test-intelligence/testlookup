@@ -213,6 +213,7 @@ export function SmtpConfigCard() {
                 }`}
               >
                 <span
+                  // eslint-disable-next-line no-restricted-syntax -- a toggle knob: white on both track colours in every theme (the track carries the state)
                   className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${
                     enabled ? 'translate-x-5' : ''
                   }`}
@@ -404,6 +405,7 @@ export function SmtpConfigCard() {
               </div>
               <button
                 type="button"
+                data-toggle-track=""
                 aria-label={implicitTls ? 'Use STARTTLS' : 'Use implicit TLS'}
                 onClick={() => setImplicitTls(v => !v)}
                 disabled={!canSave}
@@ -412,6 +414,7 @@ export function SmtpConfigCard() {
                 }`}
               >
                 <span
+                  // eslint-disable-next-line no-restricted-syntax -- a toggle knob: white on both track colours in every theme (the track carries the state)
                   className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${
                     implicitTls ? 'translate-x-5' : ''
                   }`}

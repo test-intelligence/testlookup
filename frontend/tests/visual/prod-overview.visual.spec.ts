@@ -23,7 +23,7 @@ import {
   assertHermetic,
   openProductionPage,
   PINNED,
-  THEMES,
+  THEMES_WITH_PAPER,
   visualRegion,
   waitForCharts,
 } from '../lib/production-pages'
@@ -32,7 +32,7 @@ import { NOW, OVERVIEW_ON, PROJECT_ID, USER } from './production/fixtures'
 
 test.use(PINNED)
 
-for (const theme of THEMES) {
+for (const theme of THEMES_WITH_PAPER) {
   test(`overview regions — ${theme}`, async ({ page }) => {
     const { api, errors } = await openProductionPage(page, '/overview', {
       theme,
@@ -51,7 +51,7 @@ for (const theme of THEMES) {
     await expect(kpis.getByText(/no trend line|no executions recorded/)).toHaveCount(0)
 
     const verdict = page.getByRole('region', { name: 'Release readiness' }).locator('[data-status-banner]')
-    await expect(verdict.locator('[data-banner-pill]')).toHaveText('CONDITIONAL')
+    await expect(verdict.locator('[data-banner-pill]')).toHaveText('Conditional')
 
     for (const [id, title] of [
       ['overview-trend', 'Pass rate trend'],

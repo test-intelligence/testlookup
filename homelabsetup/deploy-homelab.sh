@@ -31,6 +31,10 @@
 #   --skip-build     Skip Docker image builds (images already pushed)
 #   --skip-models    Skip Ollama model pull (already downloaded)
 #   --skip-dns       Skip DNS/hosts file reminder
+#   --skip-registry-prune  Keep every old TestLookup image in the registry
+#   --keep-builds=N  After a successful deploy, keep the newest N builds of each
+#                    TestLookup image in the registry (default 3); older ones
+#                    are pruned by homelabsetup/prune-registry.sh
 #   --teardown       Delete the entire deployment (keeps PVCs)
 #   --teardown-all   Delete namespace + all data (DESTRUCTIVE)
 #
@@ -100,6 +104,10 @@ KUBECTL_INSECURE_SKIP_TLS_VERIFY="${KUBECTL_INSECURE_SKIP_TLS_VERIFY:-false}"
 # failure mode that hit us 4 times in a row. Set to true to opt out
 # (e.g. when running against a non-K3s cluster).
 SKIP_MIRROR_CHECK=false
+# Registry pruning after a successful deploy (2026-10-18: ~570 builds per image,
+# 48.8 GB, had piled up because nothing ever removed an old build).
+SKIP_REGISTRY_PRUNE=false
+KEEP_BUILDS=3
 TEARDOWN=false
 TEARDOWN_ALL=false
 
@@ -110,6 +118,8 @@ for arg in "$@"; do
     --skip-models)       SKIP_MODELS=true ;;
     --skip-dns)          SKIP_DNS=true ;;
     --skip-mirror-check) SKIP_MIRROR_CHECK=true ;;
+    --skip-registry-prune) SKIP_REGISTRY_PRUNE=true ;;
+    --keep-builds=*)     KEEP_BUILDS="${arg#*=}" ;;
     --teardown)          TEARDOWN=true ;;
     --teardown-all)      TEARDOWN_ALL=true ;;
     *)                   echo -e "${RED}Unknown flag: $arg${NC}"; exit 1 ;;
@@ -124,6 +134,41 @@ header()  { echo -e "\n${CYAN}════════════════�
 
 check_command() {
   command -v "$1" >/dev/null 2>&1 || error "$1 is required but not installed."
+}
+
+# Run one command on a node through `kubectl debug node/<node>` (a privileged
+# pod with the node's filesystem at /host) and return THAT command's exit code;
+# 125 when the check itself could not run. Then delete the debug pod by name.
+#
+# Without -i, `kubectl debug` returns as soon as the pod is CREATED, with exit 0,
+# whatever the command does: the registry-mirror precheck passed on every node
+# for that reason alone, and its cleanup (`-l created-by=kubectl-debug`, a label
+# these pods do not carry) never matched — 735 dead node-debugger pods had piled
+# up by 2026-10-18. So: find the pod this call created, wait for it to finish,
+# read the container's exit code, delete exactly that pod.
+node_debug_run() {
+  local node=$1; shift
+  local before after pod phase code
+  before="$(kubectl -n default get pods -o name 2>/dev/null | sort)"
+  kubectl debug node/"$node" --image=busybox:1.36 --quiet --profile=sysadmin \
+    -- "$@" >/dev/null 2>&1 || return 125
+  after="$(kubectl -n default get pods -o name 2>/dev/null | sort)"
+  pod="$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after") \
+    | grep "^pod/node-debugger-${node}-" | head -1)"
+  [ -n "$pod" ] || return 125
+  phase=""
+  for _ in $(seq 1 60); do
+    phase="$(kubectl -n default get "$pod" -o jsonpath='{.status.phase}' 2>/dev/null)"
+    case "$phase" in Succeeded|Failed) break ;; esac
+    sleep 2
+  done
+  code="$(kubectl -n default get "$pod" \
+    -o jsonpath='{.status.containerStatuses[0].state.terminated.exitCode}' 2>/dev/null)"
+  kubectl -n default delete "$pod" --ignore-not-found=true --wait=false >/dev/null 2>&1 || true
+  case "$code" in
+    ''|*[!0-9]*) return 125 ;;
+  esac
+  return "$code"
 }
 
 cleanup_generated_build_inputs() {
@@ -957,22 +1002,19 @@ if [ -z "$node_names" ]; then
   mirror_check_skipped=true
 else
   for node in $node_names; do
-    # ``kubectl debug node/<n>`` spawns a privileged debug pod with the
-    # node's filesystem at /host. The grep returns 0 only when the
-    # registries.yaml contains a mirror entry for ${REGISTRY} — so we
-    # catch both "file missing" and "file present but wrong port" in one
-    # check. Output is suppressed; only the exit code matters.
-    if ! kubectl debug node/"$node" --image=busybox:1.36 \
-           --quiet --profile=sysadmin -- \
-           chroot /host grep -qF "$REGISTRY" \
-                /etc/rancher/k3s/registries.yaml >/dev/null 2>&1; then
-      mirror_missing_nodes+=("$node")
-    fi
+    # The grep returns 0 only when the registries.yaml contains a mirror
+    # entry for ${REGISTRY} — so we catch both "file missing" and "file
+    # present but wrong port" in one check. node_debug_run returns the
+    # grep's own exit code (125 = the check itself could not run).
+    mirror_rc=0
+    node_debug_run "$node" chroot /host grep -qF "$REGISTRY" \
+      /etc/rancher/k3s/registries.yaml || mirror_rc=$?
+    case "$mirror_rc" in
+      0)   ;;
+      125) warn "Could not run the mirror check on $node; skipping it for that node." ;;
+      *)   mirror_missing_nodes+=("$node") ;;
+    esac
   done
-  # Clean up the debug pods the check left behind. They auto-terminate
-  # after the chroot returns but the pod records linger until kubectl
-  # prunes them.
-  kubectl -n default delete pods -l created-by=kubectl-debug --ignore-not-found=true >/dev/null 2>&1 || true
 fi
 
 if [ "$mirror_check_skipped" = false ] && [ ${#mirror_missing_nodes[@]} -gt 0 ]; then
@@ -1497,6 +1539,25 @@ if [ "${DEPLOY_DEGRADED:-false}" = true ]; then
   # run as a success. Reporting 0 while the new image never started is how a
   # broken deploy went unnoticed on 2026-08-15.
   exit 1
+fi
+
+# ── Step 12: Prune old TestLookup images from the registry ─────────────────
+# Only after a deploy that reached this point healthy, and only when this run
+# pushed a build (a --skip-build re-run pushed nothing). Keeps the newest
+# KEEP_BUILDS builds (the one just deployed among them) so a rollback to the
+# previous builds stays possible; other apps' repositories are never touched.
+# A failure here only warns: pruning never turns a good deploy into a failure.
+if [ "$SKIP_BUILD" = false ] && [ "$SKIP_REGISTRY_PRUNE" = false ]; then
+  header "Step 12 — Prune old TestLookup images (keep ${KEEP_BUILDS} builds)"
+  prune_rc=0
+  bash "$REPO_ROOT/homelabsetup/prune-registry.sh" \
+    --registry="$REGISTRY" --keep="$KEEP_BUILDS" || prune_rc=$?
+  case "$prune_rc" in
+    0) log "Registry pruned." ;;
+    3) warn "The registry refuses deletes; old images were kept. Enable them with:"
+       warn "  kubectl -n registry set env deploy/registry REGISTRY_STORAGE_DELETE_ENABLED=true" ;;
+    *) warn "Registry prune did not complete (exit ${prune_rc}); the deploy itself is fine." ;;
+  esac
 fi
 
 header "Deployment Complete"

@@ -7,16 +7,21 @@
  * always present them with the "AI-classified" provenance copy, never
  * as ground truth.
  *
- * Colors reference existing palette tokens only (declared as --kind-*
- * aliases in index.css) — no new hex values.
+ * Colours come from the ONE failure-category map (W29a UIX-02,
+ * components/charts/failureTaxonomy.ts): product = the product-bug colour,
+ * test code = the test-data colour, infrastructure = the infrastructure
+ * colour, unknown = the muted neutral — so a kind badge, the Failures category
+ * card and the category donut agree. A kind colour is a MARK (dot, tint,
+ * border), never the colour of the kind's words.
  */
+import { failureKindColor } from '@/components/charts/failureTaxonomy'
 
 export type FailureKind = 'product' | 'test_code' | 'infrastructure' | 'unknown'
 
 export interface FailureKindDef {
   id: FailureKind
   label: string
-  /** CSS variable from the existing palette system. */
+  /** The kind's colour token, from the failure-category map (a mark colour, never text). */
   color: string
   /** One-line triage hint shown in tooltips. */
   desc: string
@@ -24,10 +29,10 @@ export interface FailureKindDef {
 
 /** Fixed presentation order — matches the backend's FAILURE_KINDS. */
 export const FAILURE_KIND_DEFS: FailureKindDef[] = [
-  { id: 'product',        label: 'Product',        color: 'var(--kind-product)',   desc: 'Regression in the system under test — route to a developer.' },
-  { id: 'test_code',      label: 'Test code',      color: 'var(--kind-test-code)', desc: 'Broken script, bad fixture, or flaky test — test-suite work.' },
-  { id: 'infrastructure', label: 'Infrastructure', color: 'var(--kind-infra)',     desc: 'Environment / network / runner failure — not a code problem.' },
-  { id: 'unknown',        label: 'Unknown',        color: 'var(--kind-unknown)',   desc: 'Classifier could not decide — needs manual review.' },
+  { id: 'product',        label: 'Product',        color: failureKindColor('product'),        desc: 'Regression in the system under test — route to a developer.' },
+  { id: 'test_code',      label: 'Test code',      color: failureKindColor('test_code'),      desc: 'Broken script, bad fixture, or flaky test — test-suite work.' },
+  { id: 'infrastructure', label: 'Infrastructure', color: failureKindColor('infrastructure'), desc: 'Environment / network / runner failure — not a code problem.' },
+  { id: 'unknown',        label: 'Unknown',        color: failureKindColor('unknown'),        desc: 'Classifier could not decide — needs manual review.' },
 ]
 
 export function kindDef(kind: string | null | undefined): FailureKindDef {

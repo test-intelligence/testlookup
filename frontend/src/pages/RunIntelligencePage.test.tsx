@@ -710,9 +710,9 @@ describe('RunIntelligencePage', () => {
       </MemoryRouter>,
     )
 
-    // Rendered label is "Conditional Go" (space, mixed case). Multiple
+    // Rendered label is "Conditional" (W29a: the one decision vocabulary). Multiple
     // surfaces may render it (verdict pill + meter label) — getAllByText.
-    expect(screen.getAllByText(/Conditional Go/i).length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Conditional').length).toBeGreaterThan(0)
   })
 
   it('renders GO banner when risk is low', async () => {
@@ -736,7 +736,7 @@ describe('RunIntelligencePage', () => {
       </MemoryRouter>,
     )
 
-    // Verdict label "Go" (plain) is shown (not "No-Go" or "Conditional Go").
+    // Verdict label "Go" (plain) is shown (not "No-Go" or "Conditional").
     const goText = screen.getAllByText(/^Go$/).filter(
       (node) => node.textContent?.trim() === 'Go',
     )
@@ -760,7 +760,7 @@ describe('RunIntelligencePage', () => {
     expect(screen.queryByRole('button', { name: /Undo decision/i })).toBeNull()
   })
 
-  it('renders no Hold control on a Conditional Go verdict either', async () => {
+  it('renders no Hold control on a Conditional verdict either', async () => {
     mockHooks({
       intelligence: {
         ...MOCK_INTELLIGENCE,
@@ -768,7 +768,7 @@ describe('RunIntelligencePage', () => {
       },
     })
     renderRunIntel()
-    expect((await screen.findAllByText(/Conditional Go/i)).length).toBeGreaterThan(0)
+    expect((await screen.findAllByText('Conditional')).length).toBeGreaterThan(0)
     expect(screen.queryByRole('button', { name: /Hold release/i })).toBeNull()
     expect(screen.queryByText(/Held by you/i)).toBeNull()
   })
@@ -1034,7 +1034,9 @@ describe('RunIntelligenceBody — the page template (P4)', () => {
     mockHooks({ intelligence: MOCK_INTELLIGENCE })
     renderBody()
     const verdict = screen.getByRole('region', { name: 'Release verdict' })
-    expect(within(verdict).getByText('No-Go')).toBeInTheDocument()
+    // The banner's pill and the gate in its title both say "No-Go" (W29a: one decision vocabulary).
+    expect(within(verdict).getAllByText('No-Go')).toHaveLength(2)
+    expect(verdict.querySelector('[data-banner-pill]')).toHaveTextContent('No-Go')
     expect(within(verdict).getByText('ship blocked')).toBeInTheDocument()
     const facts = Array.from(verdict.querySelectorAll('[data-banner-fact]')).map((f) => f.textContent)
     expect(facts).toEqual(['Risk 68/100', 'Blocking issues 1', 'AI confidence 88%'])
@@ -1063,7 +1065,7 @@ describe('RunIntelligenceBody — the page template (P4)', () => {
   it('keeps the host section when the analysis fails to load', () => {
     mockHooks({ isError: true })
     renderBody(<section aria-label="Host section">host</section>)
-    expect(screen.getByText('Failed to load Run Intelligence')).toBeInTheDocument()
+    expect(screen.getByText('Could not load Run Intelligence')).toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'Host section' })).toBeInTheDocument()
   })
 })
@@ -1224,17 +1226,17 @@ describe('RunIntelligenceBody — Hold / Approve with conditions / Override (GAT
     expect(screen.queryByRole('button', { name: 'Approve with conditions' })).toBeNull()
   })
 
-  it('Hold opens the shared form on NO GO and posts NO_GO with the reason, then re-reads the council and the analysis', async () => {
+  it('Hold opens the shared form on No-Go and posts NO_GO with the reason, then re-reads the council and the analysis', async () => {
     asRole('QA_LEAD')
     const { refreshCouncil, refreshIntelligence } = withCouncil(storedCouncil({ recommendation: 'GO' }))
     const override = vi.spyOn(releaseCouncilService, 'override').mockResolvedValue(storedCouncil())
     renderBody()
 
     const group = decisionGroup() as HTMLElement
-    expect(within(group).getAllByRole('button').map((b) => b.textContent)).toEqual(['Hold', 'Approve with conditions', 'Override → GO'])
+    expect(within(group).getAllByRole('button').map((b) => b.textContent)).toEqual(['Hold', 'Approve with conditions', 'Override → Go'])
     fireEvent.click(within(group).getByRole('button', { name: 'Hold' }))
     expect(screen.getByRole('heading', { name: 'QA Lead Override' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'NO GO' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'No-Go' })).toHaveAttribute('aria-pressed', 'true')
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Reason for override' }), { target: { value: '  perf soak pending  ' } })
     fireEvent.click(screen.getByRole('button', { name: 'Apply Override' }))
@@ -1246,12 +1248,12 @@ describe('RunIntelligenceBody — Hold / Approve with conditions / Override (GAT
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'QA Lead Override' })).toBeNull())
   })
 
-  it('Approve with conditions opens the form on CONDITIONAL GO', () => {
+  it('Approve with conditions opens the form on Conditional', () => {
     asRole('QA_LEAD')
     withCouncil(storedCouncil())
     renderBody()
     fireEvent.click(screen.getByRole('button', { name: 'Approve with conditions' }))
-    expect(screen.getByRole('button', { name: 'CONDITIONAL GO' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'Conditional' })).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('a refused override is said in the form, not lost', async () => {
@@ -1272,7 +1274,7 @@ describe('RunIntelligenceBody — Hold / Approve with conditions / Override (GAT
     withCouncil(storedCouncil({ synthesized: true, created_at: null }))
     const override = vi.spyOn(releaseCouncilService, 'override')
     renderBody()
-    for (const name of ['Hold', 'Approve with conditions', 'Override → GO']) {
+    for (const name of ['Hold', 'Approve with conditions', 'Override → Go']) {
       expect(screen.getByRole('button', { name })).toBeDisabled()
     }
     expect(screen.getByText(/Run deep investigation first: there is no stored release decision to override yet/)).toBeInTheDocument()
@@ -1296,9 +1298,9 @@ describe('RunIntelligenceBody — Hold / Approve with conditions / Override (GAT
     const { container } = renderBody()
     // The intelligence payload still says NO_GO; the stored override wins.
     expect(container.querySelector('[data-status-banner]')).toHaveAttribute('data-status-banner', 'conditional')
-    expect(screen.getByText('Conditional Go (overridden)')).toBeInTheDocument()
+    expect(screen.getByText('Conditional (overridden)')).toBeInTheDocument()
     const line = container.querySelector('[data-verdict-override]') as HTMLElement
-    expect(line).toHaveTextContent(/^Overridden to Conditional Go by priya · perf soak pending · Oct 2, \d\d:15$/)
+    expect(line).toHaveTextContent(/^Overridden to Conditional by priya · perf soak pending · Oct 2, \d\d:15$/)
   })
 })
 

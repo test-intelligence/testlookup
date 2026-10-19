@@ -303,9 +303,14 @@ class Guard:
     description: str
     check: Callable[[], list[Violation]]
     fix_hint: str = ""
+    # A COUNT ratchet (W29a): ``check`` already subtracts its per-file
+    # baseline, and ``update`` rewrites that baseline (<name>.counts.json).
+    update: Callable[[], None] | None = None
 
     @property
     def baseline_path(self) -> Path:
+        if self.update is not None:
+            return BASELINE_DIR / f"{self.name.replace('.', '__')}.counts.json"
         return BASELINE_DIR / f"{self.name.replace('.', '__')}.txt"
 
     def load_baseline(self) -> dict[str, str]:
@@ -2501,6 +2506,420 @@ def _frontend_tabs_primitive_only() -> list[Violation]:
             continue
         for ln, text in grep_lines(path, _TABLIST_RE):
             violations.append(Violation(path, ln, f"a hand-rolled tablist: {text.strip()[:80]}"))
+    return violations
+
+
+# ── W29a UI standard (UIX-03, UIX-04a, UIX-07, UIX-08, UIX-11) ───────────────
+#
+# Four COUNT ratchets and two absolute rules over the frontend's non-test
+# .ts / .tsx sources.
+#
+# A count ratchet counts its matches per FILE and fails a file whose count rose
+# above its baseline (a file absent from the baseline has 0); counts that fell
+# are printed as one note line and never fail. Its baseline is
+# scripts/quality-gate-baselines/<name, "." -> "__">.counts.json =
+# {"_comment": ..., "counts": {"frontend/src/...": n}} (sorted keys, LF, only
+# files with n > 0), rewritten by `--update-baseline --only <guard>`. Not a
+# fingerprint file on purpose: the gate keys a fingerprint on the matched LINE,
+# so every edit of a line that keeps an old size or hue would re-report it as
+# new (contract W29a §0.22). Editing a line never trips a count; adding a match
+# does.
+
+_UI_PAGES_COMPONENTS = ("frontend/src/pages", "frontend/src/components")
+_UI_ALL_SRC = ("frontend/src",)
+_UI_CHART_KIT = "frontend/src/components/charts/"
+_COUNTS_SUFFIX = ".counts.json"
+
+
+def _ui_is_test_source(rel: str) -> bool:
+    """Tests, specs, mocks and the vitest support folder are not product code."""
+    name = rel.rsplit("/", 1)[-1]
+    return (
+        ".test." in name or ".spec." in name
+        or rel.startswith("frontend/src/test/")
+        or "/__tests__/" in rel or "/__mocks__/" in rel
+    )
+
+
+def _ui_sources(roots: tuple[str, ...]) -> list[tuple[str, Path]]:
+    """``(relpath, path)`` of every non-test .ts / .tsx under ``roots``, sorted."""
+    found: dict[str, Path] = {}
+    for root in roots:
+        for path in iter_files(REPO_ROOT / root, (".ts", ".tsx")):
+            rel = path.relative_to(REPO_ROOT).as_posix()
+            if not _ui_is_test_source(rel):
+                found[rel] = path
+    return sorted(found.items())
+
+
+def _ui_read(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError):
+        return ""
+
+
+def _counts_baseline_path(name: str) -> Path:
+    return BASELINE_DIR / f"{name.replace('.', '__')}{_COUNTS_SUFFIX}"
+
+
+def _load_counts(name: str) -> dict[str, int]:
+    path = _counts_baseline_path(name)
+    if not path.exists():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    counts = data.get("counts", {}) if isinstance(data, dict) else {}
+    return {str(rel): int(n) for rel, n in counts.items()}
+
+
+def _save_counts(name: str, counts: dict[str, int], comment: str) -> None:
+    body = {"_comment": comment, "counts": {rel: n for rel, n in sorted(counts.items()) if n > 0}}
+    BASELINE_DIR.mkdir(parents=True, exist_ok=True)
+    # newline="": byte-identical on Windows and Linux (.gitattributes pins LF).
+    with _counts_baseline_path(name).open("w", encoding="utf-8", newline="") as fh:
+        fh.write(json.dumps(body, indent=2, sort_keys=True) + chr(10))
+
+
+@dataclass(frozen=True)
+class _CountRatchet:
+    name: str
+    what: str      # "<n> <what> (baseline <b>)"
+    fix: str
+    comment: str   # the JSON file's _comment
+    count: Callable[[], dict[str, int]]
+
+
+def _count_ratchet_check(spec: _CountRatchet) -> list[Violation]:
+    counts = spec.count()
+    baseline = _load_counts(spec.name)
+    violations = [
+        Violation(REPO_ROOT / rel, 0, f"{n} {spec.what} (baseline {baseline.get(rel, 0)}) — {spec.fix}")
+        for rel, n in sorted(counts.items())
+        if n > baseline.get(rel, 0)
+    ]
+    fell = {rel: b - counts.get(rel, 0) for rel, b in baseline.items() if counts.get(rel, 0) < b}
+    if fell:
+        print(f"    {DIM}note: {spec.name}: {sum(fell.values())} fewer in {len(fell)} "
+              f"file{'s' if len(fell) != 1 else ''} than the baseline — lower it with "
+              f"`python scripts/quality_gate.py --only {spec.name} --update-baseline`{RESET}")
+    return violations
+
+
+def _count_ratchet_update(spec: _CountRatchet) -> None:
+    _save_counts(spec.name, spec.count(), spec.comment)
+
+
+# frontend.type-scale (UIX-04a): an arbitrary Tailwind size, and a numeric
+# inline fontSize outside the chart kit (whose fonts are W29b's UIX-05).
+_TYPE_SCALE_CLASS_RE = re.compile(r"(?<![\w-])text-\[\d+(?:\.\d+)?(?:px|rem|em)\]")
+_TYPE_SCALE_INLINE_RE = re.compile(r"""fontSize\s*:\s*['"]?\d""")
+
+
+def _type_scale_counts() -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for rel, path in _ui_sources(_UI_PAGES_COMPONENTS):
+        text = _ui_read(path)
+        n = len(_TYPE_SCALE_CLASS_RE.findall(text))
+        if not rel.startswith(_UI_CHART_KIT):
+            n += len(_TYPE_SCALE_INLINE_RE.findall(text))
+        if n:
+            counts[rel] = n
+    return counts
+
+
+# frontend.status-text-on-tint (UIX-03): one LINE that paints a status hue as
+# text on that same status's tint (21 of the 36 theme x status pairs miss 4.5:1);
+# the text belongs on --status-<s>-ink.
+_STATUS_TEXT_RE = re.compile(r"text-\[var\(--status-([a-z]+)\)\]")
+_STATUS_TINT_RE = re.compile(r"bg-\[var\(--status-([a-z]+)-bg")
+
+
+def _status_text_on_tint_counts() -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for rel, path in _ui_sources(_UI_PAGES_COMPONENTS):
+        n = 0
+        for line in _ui_read(path).splitlines():
+            hues = set(_STATUS_TEXT_RE.findall(line))
+            if hues and hues & set(_STATUS_TINT_RE.findall(line)):
+                n += 1
+        if n:
+            counts[rel] = n
+    return counts
+
+
+# frontend.status-hue-semantics (UIX-07): a direct read of the failed / broken
+# RESULT hues. A UI meaning (danger, warning) goes through --ui-*, a result view
+# through RESULT_STATUS_TOKEN / DECISION_TOKEN (the vocabulary files).
+_STATUS_HUE_RE = re.compile(r"var\(--status-(?:failed|broken)\)")
+_STATUS_HUE_OWNERS = frozenset({
+    "frontend/src/components/ui/statusVocabulary.ts",
+    "frontend/src/components/ui/severity.ts",
+})
+
+
+def _status_hue_semantics_counts() -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for rel, path in _ui_sources(_UI_ALL_SRC):
+        if rel.startswith(_UI_CHART_KIT) or rel in _STATUS_HUE_OWNERS:
+            continue
+        n = len(_STATUS_HUE_RE.findall(_ui_read(path)))
+        if n:
+            counts[rel] = n
+    return counts
+
+
+# frontend.adhoc-spinners (UIX-11): a hand-made `animate-spin` outside the
+# primitives in components/ui (LoadingSpinner and friends).
+_ADHOC_SPIN_RE = re.compile(r"(?<![\w-])animate-spin(?![\w-])")
+_UI_PRIMITIVES = "frontend/src/components/ui/"
+
+
+def _adhoc_spinner_counts() -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for rel, path in _ui_sources(_UI_PAGES_COMPONENTS):
+        if rel.startswith(_UI_PRIMITIVES):
+            continue
+        n = len(_ADHOC_SPIN_RE.findall(_ui_read(path)))
+        if n:
+            counts[rel] = n
+    return counts
+
+
+_COUNTS_COMMENT = (
+    "Per-file count ratchet ({guard}, W29a {story}): a file's count may not rise; a file "
+    "absent here has 0. Generated on main's tree before the W29a sweeps; lower it with "
+    "`python scripts/quality_gate.py --only {guard} --update-baseline` (reviewed in the PR)."
+)
+
+_TYPE_SCALE = _CountRatchet(
+    name="frontend.type-scale",
+    what="arbitrary font sizes (text-[Npx] / numeric inline fontSize)",
+    fix="use the type scale: text-2xs (11) / text-xs (12) / text-sm (13) / text-base (14) / text-md (16) …",
+    comment=_COUNTS_COMMENT.format(guard="frontend.type-scale", story="UIX-04a"),
+    count=_type_scale_counts,
+)
+_STATUS_TEXT_ON_TINT = _CountRatchet(
+    name="frontend.status-text-on-tint",
+    what="lines with status text on its own tint",
+    fix="paint the text with var(--status-<s>-ink) (>= 4.68:1 on its tint in every theme), or use StatusBadge",
+    comment=_COUNTS_COMMENT.format(guard="frontend.status-text-on-tint", story="UIX-03"),
+    count=_status_text_on_tint_counts,
+)
+_STATUS_HUE_SEMANTICS = _CountRatchet(
+    name="frontend.status-hue-semantics",
+    what="direct var(--status-failed|broken) reads",
+    fix="a UI meaning reads --ui-danger / --ui-warning; a result view reads RESULT_STATUS_TOKEN / DECISION_TOKEN "
+        "(components/ui/statusVocabulary)",
+    comment=_COUNTS_COMMENT.format(guard="frontend.status-hue-semantics", story="UIX-07"),
+    count=_status_hue_semantics_counts,
+)
+_ADHOC_SPINNERS = _CountRatchet(
+    name="frontend.adhoc-spinners",
+    what="ad-hoc animate-spin spinners",
+    fix="use LoadingSpinner (components/ui/LoadingSpinner) or a skeleton",
+    comment=_COUNTS_COMMENT.format(guard="frontend.adhoc-spinners", story="UIX-11"),
+    count=_adhoc_spinner_counts,
+)
+
+
+# ── JSX opening-tag reader (frontend.button-primitives) ──────────────────────
+#
+# A tag's attributes may span lines and hold expressions with `>` (arrows),
+# braces, strings and template literals; the reader skips every one of them, so
+# the tag ends at the `>` that really closes it. Comments are blanked first
+# (_npm_blank_comments: tempered, newlines kept).
+
+def _js_skip_string(code: str, i: int) -> int:
+    """``code[i]`` is ' or ": the index past its closing quote (a newline ends
+    an unterminated one, so damage stays on its line)."""
+    quote, i, n = code[i], i + 1, len(code)
+    while i < n:
+        c = code[i]
+        if c == "\\":
+            i += 2
+            continue
+        if c == quote or c == "\n":
+            return i + 1
+        i += 1
+    return n
+
+
+def _js_skip_template(code: str, i: int) -> int:
+    """``code[i]`` is a backtick: the index past the closing one (``${…}`` read
+    as expressions)."""
+    i, n = i + 1, len(code)
+    while i < n:
+        c = code[i]
+        if c == "\\":
+            i += 2
+            continue
+        if c == "`":
+            return i + 1
+        if c == "$" and code.startswith("${", i):
+            i = _js_skip_expression(code, i + 2)
+            continue
+        i += 1
+    return n
+
+
+def _js_skip_expression(code: str, i: int) -> int:
+    """From just inside a ``{``: the index past its matching ``}``."""
+    depth, n = 0, len(code)
+    while i < n:
+        c = code[i]
+        if c in "\"'":
+            i = _js_skip_string(code, i)
+            continue
+        if c == "`":
+            i = _js_skip_template(code, i)
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            if depth == 0:
+                return i + 1
+            depth -= 1
+        i += 1
+    return n
+
+
+def _jsx_open_tag(code: str, start: int) -> str:
+    """The opening tag that starts at ``code[start] == '<'``, up to and
+    including its closing ``>``."""
+    i, n = start + 1, len(code)
+    while i < n:
+        c = code[i]
+        if c in "\"'":
+            close = code.find(c, i + 1)
+            i = n if close < 0 else close + 1
+            continue
+        if c == "{":
+            i = _js_skip_expression(code, i + 1)
+            continue
+        if c == ">":
+            return code[start:i + 1]
+        i += 1
+    return code[start:]
+
+
+# frontend.button-primitives (UIX-08): every primary-coloured button is
+# .btn-primary (a destructive one .btn-danger). ABSOLUTE: no baseline file.
+_BUTTON_TAG_RE = re.compile(r"<(?:button|a|Link)(?=[\s>/])")
+_BUTTON_FILL_RULES: tuple[tuple[re.Pattern[str], Optional[re.Pattern[str]], str], ...] = (
+    (re.compile(r"(?<![\w-])bg-\[var\(--color-btn-primary-bg\)\]"), None,
+     "an ad-hoc primary fill (bg-[var(--color-btn-primary-bg)])"),
+    (re.compile(r"(?<![\w-])bg-\[var\(--color-accent\)\](?!/)"),
+     re.compile(r"(?<![\w-])text-white(?![\w/-])"),
+     "an accent fill with text-white"),
+    (re.compile(r"(?<![\w-])bg-\[var\(--(?:status|ui)-[a-z]+-bg\)\]"),
+     re.compile(r"(?<![\w-])text-white(?![\w/-])"),
+     "white text on a status / ui tint"),
+    (re.compile(r"""\bbackground(?:Color)?\s*:\s*['"`]var\(--color-(?:btn-primary-bg|accent)\)['"`]"""),
+     re.compile(r"""(?<![\w-])color\s*:\s*['"`](?:white|#fff(?:fff)?)['"`]""", re.IGNORECASE),
+     "a primary fill in a style object with white text"),
+)
+_BUTTON_EXEMPT_RE = re.compile(r"""\srole=(?:"switch"|'switch'|\{\s*['"]switch['"]\s*\})|\sdata-toggle-track(?=[\s=/>])""")
+
+
+def _button_primitive_sites(text: str) -> list[tuple[int, str]]:
+    """``(offset, reason)`` of every non-primitive primary-coloured button tag."""
+    code = _npm_blank_comments(text)
+    sites: list[tuple[int, str]] = []
+    for m in _BUTTON_TAG_RE.finditer(code):
+        tag = _jsx_open_tag(code, m.start())
+        if _BUTTON_EXEMPT_RE.search(tag):
+            continue
+        for fill, partner, reason in _BUTTON_FILL_RULES:
+            if fill.search(tag) and (partner is None or partner.search(tag)):
+                sites.append((m.start(), reason))
+                break
+    return sites
+
+
+def _frontend_button_primitives() -> list[Violation]:
+    """UIX-08: one button shape and one primary blue. A <button>, <a> or <Link>
+    painted with the primary fill, the accent fill + text-white, a status / ui
+    tint + text-white, or a style object of either fill with white text is the
+    .btn-primary / .btn-danger primitive's job. Toggle tracks (role="switch",
+    data-toggle-track) are not buttons for this rule; a <span> / <div>
+    decoration (a count bubble, a checkbox, an avatar) is not read."""
+    violations: list[Violation] = []
+    for rel, path in _ui_sources(_UI_PAGES_COMPONENTS):
+        if not rel.endswith(".tsx"):
+            continue
+        text = _ui_read(path)
+        for offset, reason in _button_primitive_sites(text):
+            violations.append(Violation(
+                path, text.count("\n", 0, offset) + 1,
+                f"{reason} on a button — use .btn-primary (.btn-sm for a 12 px button) or .btn-danger",
+            ))
+    return violations
+
+
+# frontend.load-error-wording (UIX-11): one phrasing for a failed read,
+# "Could not load {thing}." ABSOLUTE: no baseline file. Comments are blanked by
+# a string-aware scanner (a `//` inside a string is not a comment; a `{/*` is
+# never matched lazily across real code, the W27 finding at _NPM_JSX_COMMENT_RE).
+_LOAD_ERROR_RE = re.compile(r"Failed to load")
+_WENT_WRONG_RE = re.compile(r"Something went wrong")
+_WENT_WRONG_OWNERS = frozenset({
+    "frontend/src/components/ErrorBoundary.tsx",          # the crash screen
+    "frontend/src/App.tsx",                                # the app's chunk error
+    "frontend/src/utils/mfaErrors.ts",                     # MFA's retry line
+    "frontend/src/components/charts/ChartExportMenu.tsx",  # an export failure
+})
+
+
+def _ts_blank_comments(text: str) -> str:
+    """Every // and /* */ comment outside a string → spaces (newlines kept)."""
+    out = list(text)
+    i, n = 0, len(text)
+
+    def _blank(a: int, b: int) -> None:
+        for k in range(a, b):
+            if out[k] != "\n":
+                out[k] = " "
+
+    while i < n:
+        c = text[i]
+        if c == "/" and text.startswith("//", i):
+            end = text.find("\n", i)
+            end = n if end < 0 else end
+            _blank(i, end)
+            i = end
+            continue
+        if c == "/" and text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            end = n if end < 0 else end + 2
+            _blank(i, end)
+            i = end
+            continue
+        if c in "\"'":
+            i = _js_skip_string(text, i)
+            continue
+        if c == "`":
+            i = _js_skip_template(text, i)
+            continue
+        i += 1
+    return "".join(out)
+
+
+def _frontend_load_error_wording() -> list[Violation]:
+    """UIX-11: a failed read says "Could not load {thing}." (the shared
+    describers' wording: chartMessages, loadError). "Failed to load" is never
+    rendered; "Something went wrong" is the crash screen's, the chunk error's,
+    MFA's retry line's and the export failure's only. Comments are exempt."""
+    violations: list[Violation] = []
+    for rel, path in _ui_sources(_UI_ALL_SRC):
+        code = _ts_blank_comments(_ui_read(path))
+        for lineno, line in enumerate(code.splitlines(), start=1):
+            if _LOAD_ERROR_RE.search(line):
+                violations.append(Violation(
+                    path, lineno, '"Failed to load …" — say "Could not load {thing}."'))
+            if rel not in _WENT_WRONG_OWNERS and _WENT_WRONG_RE.search(line):
+                violations.append(Violation(
+                    path, lineno,
+                    '"Something went wrong" is the crash screen\'s — a failed read says "Could not load {thing}."'))
     return violations
 
 
@@ -6734,6 +7153,78 @@ GUARDS: list[Guard] = [
         fix_hint="Use `Tabs` from components/ui/Tabs (with `useTabParam` for a page's own tabs).",
     ),
     Guard(
+        name="frontend.type-scale",
+        description=(
+            "Count ratchet (UIX-04a): a file's arbitrary text-[Npx] sizes plus numeric inline "
+            "fontSize (outside the chart kit) in pages/ and components/ may not rise."
+        ),
+        check=lambda: _count_ratchet_check(_TYPE_SCALE),
+        fix_hint=(
+            "Use the type scale (text-2xs 11 px, text-xs 12, text-sm 13, text-base 14, text-md 16, "
+            "text-lg …). A file only ever goes down; the baseline is lowered with --update-baseline."
+        ),
+        update=lambda: _count_ratchet_update(_TYPE_SCALE),
+    ),
+    Guard(
+        name="frontend.status-text-on-tint",
+        description=(
+            "Count ratchet (UIX-03): lines painting text-[var(--status-X)] on bg-[var(--status-X-bg…)] "
+            "(status text on its own tint, under 4.5:1 in 21 of 36 theme pairs) may not rise."
+        ),
+        check=lambda: _count_ratchet_check(_STATUS_TEXT_ON_TINT),
+        fix_hint=(
+            "Paint the text with var(--status-<s>-ink) (or render StatusBadge / DecisionChip, which "
+            "already do); a line moved to the ink lowers the count."
+        ),
+        update=lambda: _count_ratchet_update(_STATUS_TEXT_ON_TINT),
+    ),
+    Guard(
+        name="frontend.status-hue-semantics",
+        description=(
+            "Count ratchet (UIX-07): direct var(--status-failed) / var(--status-broken) reads in "
+            "frontend/src (outside the chart kit and the vocabulary files) may not rise."
+        ),
+        check=lambda: _count_ratchet_check(_STATUS_HUE_SEMANTICS),
+        fix_hint=(
+            "A UI meaning reads --ui-danger / --ui-warning (+ -bg / -bd / -ink); a result or decision "
+            "view reads RESULT_STATUS_TOKEN / DECISION_TOKEN from components/ui/statusVocabulary."
+        ),
+        update=lambda: _count_ratchet_update(_STATUS_HUE_SEMANTICS),
+    ),
+    Guard(
+        name="frontend.adhoc-spinners",
+        description=(
+            "Count ratchet (UIX-11): hand-made animate-spin spinners in pages/ and components/ "
+            "(outside components/ui) may not rise."
+        ),
+        check=lambda: _count_ratchet_check(_ADHOC_SPINNERS),
+        fix_hint="Use LoadingSpinner (components/ui/LoadingSpinner) or a skeleton.",
+        update=lambda: _count_ratchet_update(_ADHOC_SPINNERS),
+    ),
+    Guard(
+        name="frontend.button-primitives",
+        description=(
+            "UIX-08: no <button> / <a> / <Link> painted with the primary fill, the accent fill + "
+            "text-white, a status / ui tint + text-white, or such a style object — the .btn-* "
+            "primitives own buttons (toggle tracks exempt)."
+        ),
+        check=_frontend_button_primitives,
+        fix_hint=(
+            "className=\"btn-primary\" (\"btn-primary btn-sm\" for a 12 px button; \"btn-danger\" for a "
+            "destructive one); keep the layout classes, drop the hand-written padding, radius, colours, "
+            "hover: and disabled:. A toggle track carries role=\"switch\" or data-toggle-track."
+        ),
+    ),
+    Guard(
+        name="frontend.load-error-wording",
+        description=(
+            "UIX-11: no \"Failed to load\" in frontend/src code (comments exempt); \"Something went "
+            "wrong\" only on the crash screen, the chunk error, MFA's retry line and the export failure."
+        ),
+        check=_frontend_load_error_wording,
+        fix_hint="Say \"Could not load {thing}.\" (the wording of chartMessages and utils/loadError).",
+    ),
+    Guard(
         name="backend.project-scope-guard-placement",
         description="Access checks must not sit inside an `if not project_id` branch.",
         check=_backend_project_scope_guard_placement,
@@ -7181,7 +7672,31 @@ GUARD_BY_NAME = {g.name: g for g in GUARDS}
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 
+def _run_count_guard(guard: Guard, update_baseline: bool) -> bool:
+    """A count ratchet: its check compares per-file counts with its own JSON
+    baseline, so there are no fingerprints to subtract here."""
+    if update_baseline:
+        assert guard.update is not None
+        guard.update()
+        print(f"{BLUE}== {guard.name}{RESET}: wrote per-file counts to "
+              f"{guard.baseline_path.relative_to(REPO_ROOT).as_posix()}")
+        return True
+    new = guard.check()
+    if not new:
+        print(f"{GREEN}OK{RESET}  {guard.name} {DIM}({guard.description}){RESET}")
+        return True
+    print(f"{RED}FAIL{RESET} {guard.name} -- {len(new)} file"
+          f"{'s' if len(new) != 1 else ''} above the baseline count:")
+    for v in new:
+        print(f"    {v.format()}")
+    if guard.fix_hint:
+        print(f"  {DIM}fix: {guard.fix_hint}{RESET}")
+    return False
+
+
 def run_guard(guard: Guard, update_baseline: bool) -> bool:
+    if guard.update is not None:
+        return _run_count_guard(guard, update_baseline)
     baseline = guard.load_baseline()
     raw = assign_occurrences(guard.check())
     keys = {v.key for v in raw}

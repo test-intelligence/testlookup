@@ -1655,7 +1655,7 @@ function CatalogueTab({
 }) {
   return (
     <div data-catalogue-scope={scope} className="min-w-0 [&>[data-trends-catalogue]]:mt-0">
-      <SectionErrorBoundary message="Failed to load charts">
+      <SectionErrorBoundary message="Could not load charts">
         <Suspense fallback={null}>
           {/* P2: the catalogue's "Filter page by this" writes a suite mark to the page's select. */}
           <PageSuiteTargetContext.Provider value={suiteTarget}>

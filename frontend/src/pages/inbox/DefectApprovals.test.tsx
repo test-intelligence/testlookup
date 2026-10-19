@@ -75,6 +75,30 @@ describe('DefectApprovals', () => {
     expect(within(row).getByRole('link', { name: 'Open run' })).toHaveAttribute('href', '/runs/run-1?tab=analysis')
   })
 
+  // W29a UIX-07: the severity chip reads the ONE severity palette; LOW is the
+  // neutral tone (it was passed-green), MEDIUM the info tone (it was orange).
+  it('tones each severity chip from SEVERITY_STYLE: LOW neutral, MEDIUM info, HIGH warning, CRITICAL danger', async () => {
+    service.listPendingDefects.mockResolvedValue(list([
+      pending('d-low', { severity: 'LOW' }),
+      pending('d-med', { severity: 'medium' }),
+      pending('d-high', { severity: 'HIGH' }),
+      pending('d-crit', { severity: 'CRITICAL' }),
+      pending('d-odd', { severity: 'URGENT' }),
+    ]))
+    renderQueue()
+    const rows = await screen.findAllByTestId('defect-approval-row')
+    const chip = (i: number) => rows[i].querySelector('[data-defect-severity]') as HTMLElement
+    expect(chip(0).style.color).toBe('var(--color-text-muted)')
+    expect(chip(0).getAttribute('style')).not.toMatch(/--status-passed/)
+    expect(chip(1).style.color).toBe('var(--ui-info-ink)')
+    expect(chip(2).style.color).toBe('var(--ui-warning-ink)')
+    expect(chip(3).style.color).toBe('var(--ui-danger-ink)')
+    // A word that names no level: the neutral outline, no tone of its own.
+    expect(chip(4)).toHaveTextContent('URGENT')
+    expect(chip(4).getAttribute('style') ?? '').toBe('')
+    expect(chip(4)).toHaveClass('text-[var(--color-text-muted)]')
+  })
+
   it('says what approving does without a Jira project, and dashes blank fields', async () => {
     service.listPendingDefects.mockResolvedValue(list([
       pending('d-1', { jira_project_key: null, component: null, owner_team: '  ', run_id: null }),

@@ -66,7 +66,7 @@ export default function FeatureFlagsPage() {
   }
 
   if (isLoading) return <LoadingSpinner size="lg" />
-  if (isError) return <EmptyState title="Failed to load feature flags" />
+  if (isError) return <EmptyState title="Could not load feature flags" />
 
   async function toggleGlobal(flag: FeatureFlag) {
     try {

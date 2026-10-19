@@ -46,6 +46,7 @@ import { usePolicies, usePolicy } from '@/hooks/usePolicyEditor';
 import { usePermissions } from '@/hooks/usePermissions';
 import { extractErrorMessage } from '@/services/apiErrors';
 import { appMutate } from '@/utils/swrCacheMutate';
+import { formatDay } from '@/utils/formatters';
 
 /** `usePolicies`' SWR key (`hooks/usePolicyEditor.ts`), revalidated after a refused publish. */
 const POLICIES_LIST_KEY = 'release-gate-policies';
@@ -263,7 +264,7 @@ export default function PolicyEditorPage() {
   // Surface load failures the way the old single-shot try/catch did.
   const loading = listMode ? policiesLoading : policyLoading;
   const displayError =
-    (listMode && policiesError && 'Failed to load policies') ||
+    (listMode && policiesError && 'Could not load policies') ||
     (!isNew && policyError && 'Policy not found') ||
     null;
 
@@ -375,7 +376,7 @@ export default function PolicyEditorPage() {
               onClick={() => navigate('/policies/new')}
               disabled={!isAdmin}
               title={isAdmin ? undefined : ADMIN_REQUIRED}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded-md hover:bg-[var(--color-btn-primary-hover)] text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+              className="btn-primary inline-flex items-center gap-1.5"
             >
               <Plus className="h-4 w-4" /> New Policy
             </button>
@@ -385,7 +386,7 @@ export default function PolicyEditorPage() {
         {displayError && <div className="bg-[var(--status-failed-bg)]/30 border border-[var(--status-failed-bd)] rounded-lg p-3 text-[var(--status-failed)] text-sm">{displayError}</div>}
 
         {loading ? (
-          <div className="text-[var(--color-text-muted)] text-center py-8">Loading...</div>
+          <div className="text-[var(--color-text-muted)] text-center py-8">Loading…</div>
         ) : policies.length === 0 ? (
           <div className="text-center py-12 text-[var(--color-text-muted)]">
             No policies configured. Create one to customize release gate thresholds per project.
@@ -409,7 +410,7 @@ export default function PolicyEditorPage() {
                     </div>
                     <p className="text-xs text-[var(--color-text-muted)] mt-1">
                       {p.project_id ? `Project: ${projectLabel(p.project_id)}` : 'System Default'}
-                      {' · '}Created: {new Date(p.created_at).toLocaleDateString()}
+                      {' · '}Created: {formatDay(p.created_at)}
                     </p>
                   </div>
                   <div className="flex gap-2">
@@ -444,7 +445,7 @@ export default function PolicyEditorPage() {
 
   // ── Editor mode ───────────────────────────────────────────────────────────
 
-  if (loading) return <div className="text-[var(--color-text-muted)] text-center py-8">Loading...</div>;
+  if (loading) return <div className="text-[var(--color-text-muted)] text-center py-8">Loading…</div>;
 
   const bands = doc.pass_rate_bands ?? DEFAULT_PASS_RATE_BANDS;
   const bandsValid = bands.orange_min < bands.yellow_min && bands.yellow_min < bands.green_min;
@@ -465,7 +466,7 @@ export default function PolicyEditorPage() {
         overflow={[{ label: 'Back to policies', href: '/policies', icon: <ArrowLeft className="h-4 w-4" /> }]}
         actions={editable ? (
           <>
-            <button onClick={handleSave} disabled={saving} className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded-lg hover:bg-[var(--color-btn-primary-hover)] text-sm disabled:opacity-50">
+            <button onClick={handleSave} disabled={saving} className="btn-primary">
               {saving ? 'Saving...' : 'Save Draft'}
             </button>
             {!isNew && (

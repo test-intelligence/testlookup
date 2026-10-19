@@ -25,6 +25,7 @@ import type { SummaryReport, SummaryReportMode } from '@/types/summaryReport'
 import { DEFAULT_TIME_WINDOW_DAYS, useTimeWindowStore } from '@/store/timeWindowStore'
 import { useReleaseStore } from '@/store/releaseStore'
 import type { EnvelopeMeta } from '@/lib/viz/contracts'
+import { formatCompactDateTime } from '@/utils/formatters'
 
 const mockGet = vi.fn()
 const mockDownloadPdf = vi.fn()
@@ -394,6 +395,28 @@ describe('SummaryReportPage', () => {
     expect(screen.getByText('auth-api')).toBeInTheDocument()
     // Top failing row:
     expect(screen.getByText('test_pay')).toBeInTheDocument()
+  })
+
+  // W29a UIX-03: a RESULT's skipped count is the skipped hue (it was broken-orange) and the broken
+  // count the broken hue (it was failed-red); the stamps are the one fixed-locale format (UIX-10).
+  it('paints the per-suite Skip column with the skipped hue and Broken with the broken hue', async () => {
+    mockGet.mockResolvedValue(makeReport())
+    renderPage()
+    const region = await screen.findByRole('region', { name: 'Per-suite breakdown table' })
+    const headers = within(region).getAllByRole('columnheader').map((th) => th.textContent ?? '')
+    const skipAt = headers.indexOf('Skip')
+    const brokenAt = headers.indexOf('Broken')
+    expect(skipAt).toBeGreaterThan(0)
+    expect(brokenAt).toBeGreaterThan(0)
+    const row = within(region).getByRole('link', { name: 'checkout-api' }).closest('tr') as HTMLElement
+    const cells = within(row).getAllByRole('cell')
+    expect(cells[skipAt]).toHaveTextContent('3')
+    expect(cells[skipAt].className).toContain('text-[var(--status-skipped)]')
+    expect(cells[skipAt].className).not.toContain('--status-broken')
+    expect(cells[brokenAt]).toHaveTextContent('2')
+    expect(cells[brokenAt].className).toContain('text-[var(--status-broken)]')
+    expect(cells[brokenAt].className).not.toContain('--status-failed')
+    expect(cells[cells.length - 1]).toHaveTextContent(formatCompactDateTime('2026-05-15T00:00:00+00:00'))
   })
 
   it('renders each suite name as a link to /coverage/suite?name=...&days=...', async () => {
@@ -825,11 +848,11 @@ describe('SummaryReportPage — the page template (P3)', () => {
     await screen.findByText('Total tests')
     const header = document.querySelector('[data-page-header]') as HTMLElement
     expect(within(header).getByText(
-      `Runs in window: 4 · Avg / day: 0.57 · Avg duration: 12.3s · Latest run: ${new Date('2026-05-15T00:00:00+00:00').toLocaleString()}`,
+      `Runs in window: 4 · Avg / day: 0.57 · Avg duration: 12.3s · Latest run: ${formatCompactDateTime('2026-05-15T00:00:00+00:00')}`,
     )).toBeInTheDocument()
     // And when the report was generated, at the toolbar's end.
     const toolbar = document.querySelector('[data-summary-toolbar]') as HTMLElement
-    expect(toolbar).toHaveTextContent(`Generated ${new Date('2026-05-16T00:00:00+00:00').toLocaleString()}`)
+    expect(toolbar).toHaveTextContent(`Generated ${formatCompactDateTime('2026-05-16T00:00:00+00:00')}`)
   })
 
   it('states the average duration as a duration, as the Dashboard does ("8m 32s", not "512,400 ms")', async () => {

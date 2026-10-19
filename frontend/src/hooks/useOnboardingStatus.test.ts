@@ -73,7 +73,7 @@ describe('useOnboardingStatus', () => {
     const { useOnboardingStatus } = await import('./useOnboardingStatus')
     const { result } = renderHook(() => useOnboardingStatus('p1'), { wrapper })
 
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to load onboarding status'))
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Could not load onboarding status'))
     expect(result.current.status).toBeNull()
     expect(result.current.isLoading).toBe(false)
   })

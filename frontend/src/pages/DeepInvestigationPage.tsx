@@ -42,6 +42,7 @@ import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import AISuggestion from '@/components/ai/AISuggestion'
 import EmptyState from '@/components/ui/EmptyState'
+import { SEVERITY_STYLE, severityLevel } from '@/components/ui/severity'
 import InvestigatorCockpit from '@/components/investigator/InvestigatorCockpit'
 import GaugeBar from '@/components/charts/GaugeBar'
 import type { GaugeBands } from '@/components/charts/gaugeBar.model'
@@ -265,10 +266,7 @@ function PrimaryBtn({
       title={title}
       disabled={disabled}
       data-testid={testId}
-      className="inline-flex items-center gap-1.5 font-medium rounded-md transition-colors disabled:opacity-50 px-3 py-1.5 text-[13px]"
-      style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
-      onMouseEnter={(e) => !disabled && (e.currentTarget.style.background = 'var(--color-btn-primary-hover)')}
-      onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--color-btn-primary-bg)')}
+      className="btn-primary inline-flex items-center gap-1.5"
     >
       {children}
     </button>
@@ -1225,15 +1223,12 @@ function ProposedClustersCard({
 }
 
 function ClusterRow({ cluster }: { cluster: ProposedCluster }) {
-  const sevPalette: Record<NonNullable<ProposedCluster['severity']>, { bg: string; bd: string; fg: string }> = {
-    P0: { bg: 'color-mix(in srgb, var(--status-failed) 18%, transparent)',   bd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)',   fg: 'var(--status-failed)' },
-    P1: { bg: 'color-mix(in srgb, var(--status-broken) 18%, transparent)',  bd: 'color-mix(in srgb, var(--status-broken) 30%, transparent)',  fg: 'var(--status-broken)' },
-    P2: { bg: 'color-mix(in srgb, var(--color-accent) 18%, transparent)',  bd: 'color-mix(in srgb, var(--color-accent) 30%, transparent)',  fg: 'var(--color-accent)' },
-    P3: { bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)', fg: 'var(--color-text-muted)' },
-  }
-  // An unscored cluster earns no severity band: neutral chrome, "unscored".
-  const sev = cluster.severity
-    ? sevPalette[cluster.severity]
+  // W29a UIX-07: the one severity map (P0 danger, P1 warning, P2 info, P3
+  // neutral; the tint, border and legible ink). An unscored cluster earns no
+  // severity band: neutral chrome, "unscored".
+  const level = severityLevel(cluster.severity)
+  const sev = level
+    ? SEVERITY_STYLE[level]
     : { bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)', fg: 'var(--color-text-muted)' }
   return (
     <div

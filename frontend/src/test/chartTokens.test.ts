@@ -9,7 +9,7 @@
  * WCAG 1.4.11: a graphical mark needs 3:1 against what it sits on — the card.
  */
 import { beforeAll, describe, expect, it } from 'vitest'
-import { THEMES } from '@/store/themeStore'
+import { LIGHT_THEMES, THEME_IDS } from '@/store/themeStore'
 import { readSourceFile } from './readSourceFile'
 
 const SERIES = Array.from({ length: 8 }, (_, i) => `chart-series-${i + 1}`)
@@ -81,11 +81,9 @@ beforeAll(async () => {
   tokens = themeTokens(await readSourceFile('src/index.css'))
 })
 
-const THEME_IDS = THEMES.map((t) => t.id)
-
 describe('chart tokens in index.css', () => {
-  it('parses all six themes (a parser that finds nothing must fail, not pass)', () => {
-    expect(THEME_IDS).toHaveLength(6)
+  it('parses all seven themes (a parser that finds nothing must fail, not pass)', () => {
+    expect(THEME_IDS).toHaveLength(7)
     expect([...tokens.keys()].sort()).toEqual([...THEME_IDS].sort())
   })
 
@@ -197,10 +195,21 @@ describe('chart tokens in index.css', () => {
   })
 
   it('shares one categorical palette across the five dark themes', () => {
-    const dark = THEME_IDS.filter((id) => id !== 'lab')
+    const dark = THEME_IDS.filter((id) => !LIGHT_THEMES.has(id))
     for (const name of [...SERIES, ...SEQ, 'chart-axis', 'status-unknown']) {
       expect(new Set(dark.map((id) => tokens.get(id)?.get(name))).size, name).toBe(1)
     }
+  })
+
+  // W29a UIX-01 / OR-06: Paper, "soft light · low glare", is the owner's five colours.
+  it("Paper's five key colours are OR-06's", () => {
+    const paper = tokens.get('paper')
+    expect(paper?.get('color-bg')).toBe('#eae8e2')
+    expect(paper?.get('color-bg-card')).toBe('#f5f4f0')
+    expect(paper?.get('color-text')).toBe('#26292e')
+    expect(paper?.get('color-text-muted')).toBe('#5f636a')
+    expect(paper?.get('color-accent')).toBe('#2f5fb3')
+    expect(LIGHT_THEMES.has('paper')).toBe(true)
   })
 
   it('keeps the existing status hues unchanged (VIZ-102 adds unknown, it does not repaint)', () => {

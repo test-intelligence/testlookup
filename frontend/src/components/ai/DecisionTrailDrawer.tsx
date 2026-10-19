@@ -17,6 +17,7 @@ import EmptyState from '@/components/ui/EmptyState'
 import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
 import type { InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import { useDecisionTrail } from '@/hooks/useDecisionTrail'
+import { formatNumber } from '@/utils/formatters'
 import type {
   DecisionLogEntry,
   PerTestRouting,
@@ -325,7 +326,7 @@ function TrailHeader({
       </div>
       <div className="grid grid-cols-3 gap-2">
         <MiniStat label="Cost" value={`$${data.total_cost_usd.toFixed(4)}`} />
-        <MiniStat label="Tokens" value={data.total_tokens.toLocaleString()} />
+        <MiniStat label="Tokens" value={formatNumber(data.total_tokens)} />
         <MiniStat
           label="Fallbacks"
           value={data.fallback_count.toString()}

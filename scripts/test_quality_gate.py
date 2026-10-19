@@ -4883,3 +4883,304 @@ def test_no_page_modals_allow_list_after_w27b(monkeypatch, tmp_path) -> None:
         }
     """)
     assert qg._frontend_no_page_modals() == []
+
+
+# ── W29a UI standard: four count ratchets + two absolute rules ───────────────
+#
+# A count ratchet counts matches per FILE against <name>.counts.json (not a
+# fingerprint file: editing a line never trips it, adding a match does); a fall
+# is a note, never a failure. button-primitives and load-error-wording are
+# absolute rules (no baseline file).
+
+
+def _ui_repo(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    return tmp_path / "frontend" / "src"
+
+
+def _ui_counts(name: str) -> dict:
+    import json
+    return json.loads(qg._counts_baseline_path(name).read_text(encoding="utf-8"))
+
+
+_W29A_COUNT_GUARDS = (
+    "frontend.type-scale", "frontend.status-text-on-tint",
+    "frontend.status-hue-semantics", "frontend.adhoc-spinners",
+)
+
+
+def test_type_scale_counts_sizes_and_inline_font_sizes(monkeypatch, tmp_path) -> None:
+    src = _ui_repo(monkeypatch, tmp_path)
+    _write(src / "pages" / "Sizes.tsx", """
+        export const A = () => <p className="text-[10.5px] md:text-[11px] text-[var(--color-text)] text-xs text-2xs">x</p>
+        export const B = () => <p style={{ fontSize: 12 }}>y</p>
+        export const C = () => <p style={{ fontSize: '9px', lineHeight: 1 }}>z</p>
+        export const D = () => <p style={{ fontSize: 'var(--text-xs)' }}>w</p>
+    """)
+    _write(src / "components" / "charts" / "Axis.tsx", """
+        export const tick = { fontSize: 11 }
+        export const T = () => <text className="text-[12px]">t</text>
+    """)
+    _write(src / "pages" / "Sizes.test.tsx", "const t = 'text-[9px]'\n")
+    _write(src / "utils" / "outside.ts", "export const u = 'text-[9px]'\n")
+    assert qg._type_scale_counts() == {
+        "frontend/src/pages/Sizes.tsx": 4,                     # 10.5px, 11px, fontSize 12, fontSize '9px'
+        "frontend/src/components/charts/Axis.tsx": 1,          # its class counts; its inline fontSize is W29b's
+    }
+
+
+def test_type_scale_a_rise_fails_naming_the_file_and_both_numbers(monkeypatch, tmp_path, capsys) -> None:
+    src = _ui_repo(monkeypatch, tmp_path)
+    page = src / "pages" / "Grow.tsx"
+    _write(page, "export const A = () => <p className=\"text-[11px]\">x</p>\n")
+    guard = qg.GUARD_BY_NAME["frontend.type-scale"]
+    assert qg.run_guard(guard, update_baseline=True) is True
+    assert _ui_counts("frontend.type-scale")["counts"] == {"frontend/src/pages/Grow.tsx": 1}
+
+    _write(page, "export const A = () => <p className=\"text-[11px] text-[13px]\">x</p>\n")
+    violations = guard.check()
+    assert [(v.relpath, v.line) for v in violations] == [("frontend/src/pages/Grow.tsx", 0)]
+    assert violations[0].message.startswith("2 arbitrary font sizes")
+    assert "(baseline 1)" in violations[0].message
+    capsys.readouterr()
+    assert qg.run_guard(guard, update_baseline=False) is False
+    assert "frontend/src/pages/Grow.tsx:0: 2 arbitrary font sizes" in capsys.readouterr().out
+
+
+def test_type_scale_a_fall_passes_with_a_note_and_update_baseline_lowers_it(monkeypatch, tmp_path, capsys) -> None:
+    src = _ui_repo(monkeypatch, tmp_path)
+    page = src / "components" / "Shrink.tsx"
+    _write(page, "export const A = () => <p className=\"text-[11px] text-[13px]\">x</p>\n")
+    guard = qg.GUARD_BY_NAME["frontend.type-scale"]
+    qg.run_guard(guard, update_baseline=True)
+    _write(page, "export const A = () => <p className=\"text-2xs text-sm\">x</p>\n")
+    capsys.readouterr()
+    assert qg.run_guard(guard, update_baseline=False) is True
+    out = capsys.readouterr().out
+    assert "note: frontend.type-scale: 2 fewer in 1 file" in out
+    assert "OK" in out
+    qg.run_guard(guard, update_baseline=True)
+    assert _ui_counts("frontend.type-scale")["counts"] == {}     # only files with n > 0
+
+
+def test_type_scale_a_new_file_starts_at_zero(monkeypatch, tmp_path) -> None:
+    src = _ui_repo(monkeypatch, tmp_path)
+    _write(src / "pages" / "Old.tsx", "export const A = () => <p className=\"text-[11px]\">x</p>\n")
+    guard = qg.GUARD_BY_NAME["frontend.type-scale"]
+    qg.run_guard(guard, update_baseline=True)
+    _write(src / "pages" / "New.tsx", "export const B = () => <p className=\"text-[12px]\">y</p>\n")
+    violations = guard.check()
+    assert [(v.relpath, v.message.split(" — ")[0]) for v in violations] == [
+        ("frontend/src/pages/New.tsx", "1 arbitrary font sizes (text-[Npx] / numeric inline fontSize) (baseline 0)"),
+    ]
+
+
+def test_update_baseline_writes_the_count_json_shape(monkeypatch, tmp_path) -> None:
+    """Sorted keys, LF only, a trailing newline, a _comment, only n > 0 — and a
+    .counts.json, never a *.txt (test_committed_baselines_are_all_fingerprints
+    reads every *.txt as fingerprints)."""
+    src = _ui_repo(monkeypatch, tmp_path)
+    _write(src / "pages" / "Z.tsx", "const z = 'animate-spin animate-spin'\n")
+    _write(src / "pages" / "A.tsx", "const a = 'animate-spin'\n")
+    _write(src / "components" / "ui" / "LoadingSpinner.tsx", "const s = 'animate-spin'\n")
+    guard = qg.GUARD_BY_NAME["frontend.adhoc-spinners"]
+    assert guard.baseline_path.name == "frontend__adhoc-spinners.counts.json"
+    qg.run_guard(guard, update_baseline=True)
+    raw = guard.baseline_path.read_bytes()
+    assert b"\r" not in raw and raw.endswith(b"}\n")
+    data = _ui_counts("frontend.adhoc-spinners")
+    assert list(data) == ["_comment", "counts"]
+    assert "frontend.adhoc-spinners" in data["_comment"]
+    assert list(data["counts"].items()) == [("frontend/src/pages/A.tsx", 1), ("frontend/src/pages/Z.tsx", 2)]
+    assert not list(qg.BASELINE_DIR.glob("*.txt"))
+
+
+def test_adhoc_spinners_count_and_fail_on_a_rise(monkeypatch, tmp_path) -> None:
+    src = _ui_repo(monkeypatch, tmp_path)
+    page = src / "pages" / "Spin.tsx"
+    _write(page, "export const A = () => <svg className=\"animate-spin w-3\" />\n")
+    _write(src / "components" / "ui" / "Spinner.tsx", "export const S = () => <i className=\"animate-spin\" />\n")
+    guard = qg.GUARD_BY_NAME["frontend.adhoc-spinners"]
+    assert qg._adhoc_spinner_counts() == {"frontend/src/pages/Spin.tsx": 1}
+    qg.run_guard(guard, update_baseline=True)
+    assert guard.check() == []
+    _write(page, "export const A = () => <><svg className=\"animate-spin\" /><i className=\"animate-spin\" /></>\n")
+    assert [v.relpath for v in guard.check()] == ["frontend/src/pages/Spin.tsx"]
+
+
+def test_status_text_on_tint_counts_a_line_of_one_status_only(monkeypatch, tmp_path) -> None:
+    src = _ui_repo(monkeypatch, tmp_path)
+    _write(src / "components" / "Chip.tsx", """
+        const a = 'text-[var(--status-failed)] bg-[var(--status-failed-bg)]'
+        const b = 'bg-[var(--status-broken-bg-soft)] px-2 text-[var(--status-broken)] text-[var(--status-broken)]'
+        const c = 'text-[var(--status-failed-ink)] bg-[var(--status-failed-bg)]'
+        const d = 'text-[var(--status-passed)] bg-[var(--status-failed-bg)]'
+        const e = 'text-[var(--status-skipped)]'
+    """)
+    # a and b count (once per line); c is the fix; d mixes two statuses; e has no tint.
+    assert qg._status_text_on_tint_counts() == {"frontend/src/components/Chip.tsx": 2}
+
+
+def test_status_text_on_tint_fails_a_new_pair_and_passes_a_move_to_the_ink(monkeypatch, tmp_path) -> None:
+    src = _ui_repo(monkeypatch, tmp_path)
+    page = src / "pages" / "Badge.tsx"
+    _write(page, "const a = 'text-[var(--status-failed)] bg-[var(--status-failed-bg)]'\n")
+    guard = qg.GUARD_BY_NAME["frontend.status-text-on-tint"]
+    qg.run_guard(guard, update_baseline=True)
+    _write(page, "const a = 'text-[var(--status-failed-ink)] bg-[var(--status-failed-bg)]'\n")
+    assert guard.check() == []
+    _write(page, (
+        "const a = 'text-[var(--status-failed)] bg-[var(--status-failed-bg)]'\n"
+        "const b = 'text-[var(--status-passed)] bg-[var(--status-passed-bg)]'\n"
+    ))
+    assert [v.message.split(" — ")[0] for v in guard.check()] == [
+        "2 lines with status text on its own tint (baseline 1)",
+    ]
+
+
+def test_status_hue_semantics_counts_failed_and_broken_outside_the_kit_and_vocabulary(monkeypatch, tmp_path) -> None:
+    src = _ui_repo(monkeypatch, tmp_path)
+    _write(src / "pages" / "Danger.tsx", """
+        const a = 'text-[var(--status-failed)] border-[var(--status-broken)]'
+        const b = { color: 'var(--status-failed)' }
+        const c = 'var(--status-failed-bg) var(--status-passed) var(--ui-danger) var(--status-skipped)'
+    """)
+    _write(src / "hooks" / "useHue.ts", "export const h = 'var(--status-broken)'\n")
+    _write(src / "components" / "charts" / "tokens.ts", "export const k = 'var(--status-failed)'\n")
+    _write(src / "components" / "ui" / "statusVocabulary.ts", "export const v = 'var(--status-failed)'\n")
+    _write(src / "components" / "ui" / "severity.ts", "export const s = 'var(--status-broken)'\n")
+    _write(src / "pages" / "Danger.test.tsx", "const t = 'var(--status-failed)'\n")
+    _write(src / "index.css", "  --ui-danger: var(--status-failed);\n")
+    assert qg._status_hue_semantics_counts() == {
+        "frontend/src/hooks/useHue.ts": 1,
+        "frontend/src/pages/Danger.tsx": 3,
+    }
+    guard = qg.GUARD_BY_NAME["frontend.status-hue-semantics"]
+    qg.run_guard(guard, update_baseline=True)
+    _write(src / "pages" / "New.tsx", "const n = 'bg-[var(--status-failed)]'\n")
+    assert [v.relpath for v in guard.check()] == ["frontend/src/pages/New.tsx"]
+
+
+def test_committed_baselines_of_the_w29a_count_guards_are_count_json() -> None:
+    """Runs against the REAL baselines: each count guard has its JSON (the A0
+    tree's counts), and none of them is a *.txt fingerprint file."""
+    for name in _W29A_COUNT_GUARDS:
+        guard = qg.GUARD_BY_NAME[name]
+        assert guard.update is not None, name
+        assert guard.baseline_path.suffixes[-2:] == [".counts", ".json"], name
+        assert guard.baseline_path.exists(), name
+        data = _ui_counts(name)
+        assert data["counts"] and all(n > 0 for n in data["counts"].values()), name
+        assert list(data["counts"]) == sorted(data["counts"]), name
+    for name in ("frontend.button-primitives", "frontend.load-error-wording"):
+        guard = qg.GUARD_BY_NAME[name]
+        assert guard.update is None and not guard.baseline_path.exists(), name
+
+
+def test_button_primitives_flags_ad_hoc_primary_buttons(monkeypatch, tmp_path) -> None:
+    src = _ui_repo(monkeypatch, tmp_path)
+    _write(src / "pages" / "Buttons.tsx", """
+        export function Buttons({ busy }: { busy: boolean }) {
+          return (
+            <div>
+              <button className="px-3 py-1.5 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded">Save</button>
+              <Link
+                to="/x"
+                className={`inline-flex ${busy ? 'opacity-50' : ''} bg-[var(--color-accent)] text-white`}
+              >Open</Link>
+              <button
+                onClick={() => busy && go()}
+                className="bg-[var(--status-failed-bg)] text-white rounded"
+              >Delete</button>
+              <button
+                onClick={() => {}}
+                style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
+              >Run</button>
+            </div>
+          )
+        }
+    """)
+    violations = qg._frontend_button_primitives()
+    assert [(v.relpath, v.line) for v in violations] == [
+        ("frontend/src/pages/Buttons.tsx", 4),
+        ("frontend/src/pages/Buttons.tsx", 5),
+        ("frontend/src/pages/Buttons.tsx", 9),
+        ("frontend/src/pages/Buttons.tsx", 13),
+    ]
+    assert [v.message.split(" on a button")[0] for v in violations] == [
+        "an ad-hoc primary fill (bg-[var(--color-btn-primary-bg)])",
+        "an accent fill with text-white",
+        "white text on a status / ui tint",
+        "a primary fill in a style object with white text",
+    ]
+    assert qg.run_guard(qg.GUARD_BY_NAME["frontend.button-primitives"], update_baseline=False) is False
+
+
+def test_button_primitives_passes_tracks_decorations_primitives_and_comments(monkeypatch, tmp_path) -> None:
+    src = _ui_repo(monkeypatch, tmp_path)
+    _write(src / "components" / "Fine.tsx", """
+        export function Fine({ on }: { on: boolean }) {
+          return (
+            <div>
+              <button role="switch" aria-checked={on} className={on ? 'bg-[var(--color-btn-primary-bg)]' : 'bg-[var(--color-bg-hover)]'} />
+              <button data-toggle-track="" className={`w-11 ${on ? 'bg-[var(--color-btn-primary-bg)]' : ''}`} />
+              <span className="bg-[var(--color-btn-primary-bg)] text-white rounded-full">3</span>
+              <button className="btn-primary btn-sm">Save</button>
+              <a href="/x" className="hover:bg-[var(--color-accent)]/10 text-[var(--color-accent)]">Link</a>
+              <button className="bg-[var(--color-accent)]/15 text-white">Tinted</button>
+              {/* <button className="bg-[var(--color-btn-primary-bg)]">old</button> */}
+            </div>
+          )
+        }
+    """)
+    _write(src / "pages" / "Fine.test.tsx", "const t = <button className=\"bg-[var(--color-btn-primary-bg)]\" />\n")
+    assert qg._frontend_button_primitives() == []
+
+
+def test_button_primitives_reads_a_tag_whose_expression_holds_an_arrow(monkeypatch, tmp_path) -> None:
+    """The `>` of `=>` inside an attribute expression does not end the tag, so
+    a fill written after it is still read; the tag after a closed one is its own."""
+    src = _ui_repo(monkeypatch, tmp_path)
+    _write(src / "pages" / "Arrow.tsx", """
+        export const A = ({ f }: { f: (n: number) => boolean }) => (
+          <>
+            <button onClick={() => f(1 > 0 ? 1 : 2)} title={`a > b ${'}'}`} className="bg-[var(--color-btn-primary-bg)]">x</button>
+            <button className="btn-secondary">y</button>
+          </>
+        )
+    """)
+    assert [v.line for v in qg._frontend_button_primitives()] == [3]
+
+
+def test_load_error_wording_flags_failed_to_load_and_something_went_wrong(monkeypatch, tmp_path) -> None:
+    src = _ui_repo(monkeypatch, tmp_path)
+    _write(src / "pages" / "Runs.tsx", """
+        export function Runs({ err }: { err: boolean }) {
+          if (err) toast.error('Failed to load runs')
+          return <p>Something went wrong</p>
+        }
+    """)
+    violations = qg._frontend_load_error_wording()
+    assert [(v.relpath, v.line) for v in violations] == [
+        ("frontend/src/pages/Runs.tsx", 2),
+        ("frontend/src/pages/Runs.tsx", 3),
+    ]
+    assert "Could not load" in violations[0].message
+    assert "crash screen" in violations[1].message
+    assert qg.run_guard(qg.GUARD_BY_NAME["frontend.load-error-wording"], update_baseline=False) is False
+
+
+def test_load_error_wording_passes_the_owners_comments_and_tests(monkeypatch, tmp_path) -> None:
+    src = _ui_repo(monkeypatch, tmp_path)
+    _write(src / "components" / "ErrorBoundary.tsx", "export const E = () => <h1>Something went wrong</h1>\n")
+    _write(src / "utils" / "mfaErrors.ts", "export const m = 'Something went wrong. Please try again.'\n")
+    _write(src / "pages" / "Quiet.tsx", """
+        // Failed to load used to be the wording here.
+        /* Something went wrong
+           Failed to load */
+        export const url = 'https://example.test/a//b'  // Failed to load (a trailing comment)
+        export const Q = () => <div>{/* Failed to load */}Could not load runs.</div>
+        export const lower = 'The chart failed to load.'
+    """)
+    _write(src / "pages" / "Quiet.test.tsx", "expect('Failed to load runs').toBeTruthy()\n")
+    assert qg._frontend_load_error_wording() == []

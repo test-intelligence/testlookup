@@ -15,7 +15,7 @@ const state = vi.hoisted(() => ({ compare: undefined as unknown, sectionProps: [
 vi.mock('@/hooks/useRunCompare', () => ({
   useRunCompare: () => ({ compare: state.compare, isLoading: false, isError: false, error: undefined }),
   useLatestSuiteCompare: () => ({ compare: undefined, isLoading: false, isError: false, error: undefined }),
-  extractCompareErrorMessage: () => 'Failed to load compare',
+  extractCompareErrorMessage: () => 'Could not load compare',
 }))
 vi.mock('@/hooks/useRuns', () => ({ useRuns: () => ({ data: { items: [] }, isLoading: false }) }))
 // FAIL-06: the run pickers' reads (the deep link's two labels, the suite summary).

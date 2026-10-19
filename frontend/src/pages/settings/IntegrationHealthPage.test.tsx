@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
+import { SWRConfig } from 'swr'
 
 import IntegrationHealthPage from './IntegrationHealthPage'
 import { expectTemplateHeader } from '@/test/expectTemplateHeader'
@@ -62,5 +63,53 @@ describe('IntegrationHealthPage — the settings page template (UX redesign P5)'
     render(<IntegrationHealthPage />)
     expectTemplateHeader('Integration Health', '/settings/integration-health')
     expect(screen.getByRole('button', { name: /probe all now/i }).closest('[data-page-header]')).not.toBeNull()
+  })
+})
+
+// W29a UIX-07 / UIX-08: a probe's health is a UI meaning, not a test result.
+describe('IntegrationHealthPage — the health colours say what they mean (W29a)', () => {
+  const status = (provider: string, s: string) => ({
+    provider, status: s, last_checked_at: null, message: null, response_ms: null,
+    consecutive_failures: 0, last_success_at: null,
+  })
+
+  async function renderWith(statuses: ReturnType<typeof status>[]) {
+    const { getAllStatus, getHealthTrends, getProviderHistory } = await import('@/services/integrationHealthService')
+    ;(getAllStatus as ReturnType<typeof vi.fn>).mockResolvedValue(statuses)
+    ;(getHealthTrends as ReturnType<typeof vi.fn>).mockResolvedValue([])
+    ;(getProviderHistory as ReturnType<typeof vi.fn>).mockResolvedValue([])
+    render(
+      <SWRConfig value={{ provider: () => new Map() }}>
+        <IntegrationHealthPage />
+      </SWRConfig>,
+    )
+    await screen.findByText('degraded')
+  }
+
+  it('degraded is the warning hue (never skipped-gold); down and auth_error are danger; healthy is success', async () => {
+    await renderWith([
+      status('jira', 'healthy'),
+      status('splunk', 'degraded'),
+      status('slack', 'down'),
+      status('github', 'auth_error'),
+      status('smtp', 'timeout'),
+    ])
+    const chip = (word: string) => screen.getByText(word)
+    expect(chip('degraded').className).toContain('text-[var(--ui-warning-ink)]')
+    expect(chip('degraded').className).toContain('bg-[var(--ui-warning-bg)]')
+    expect(chip('degraded').className).not.toContain('--status-skipped')
+    expect(chip('timeout').className).toContain('--ui-warning')
+    expect(chip('down').className).toContain('text-[var(--ui-danger-ink)]')
+    expect(chip('auth_error').className).toContain('text-[var(--ui-danger-ink)]')
+    expect(chip('healthy').className).toContain('text-[var(--ui-success-ink)]')
+    for (const word of ['healthy', 'degraded', 'down', 'auth_error', 'timeout']) {
+      expect(chip(word).className).not.toMatch(/--status-/)
+    }
+  })
+
+  it('Probe All Now is the shared primary button', async () => {
+    await renderWith([status('splunk', 'degraded')])
+    const probe = screen.getByRole('button', { name: /probe all now/i })
+    expect(probe.className).toBe('btn-primary')
   })
 })

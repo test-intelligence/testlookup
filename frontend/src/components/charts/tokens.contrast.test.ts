@@ -1,6 +1,6 @@
 /**
  * WCAG 2.2 SC 1.4.11 (non-text contrast, at least 3:1) for the kit's EDGES, in
- * all six themes, computed from `index.css` itself (R2 F9).
+ * every theme of the registry, computed from `index.css` itself (R2 F9).
  *
  * The marks that carry a scale or a day — a gauge track's outline and notch
  * marks, a ring's track outline, an empty day's outline, a failed day's edge —
@@ -13,12 +13,14 @@
  */
 import { beforeAll, describe, expect, it } from 'vitest'
 import { readSourceFile } from '@/test/readSourceFile'
+import { LIGHT_THEMES, THEME_IDS, type ThemeId } from '@/store/themeStore'
 import { cellFace } from './dayStrip.model'
 import { RING_TRACK } from './RingGauge'
 import { NON_TEXT_EDGE } from './tokens'
 
-const THEMES = ['signal', 'console', 'slate', 'ember', 'lab', 'midnight'] as const
-type Theme = (typeof THEMES)[number]
+// Every theme of the registry (W29a: seven, Paper included).
+const THEMES = THEME_IDS
+type Theme = ThemeId
 type Rgb = [number, number, number]
 
 let css = ''
@@ -35,8 +37,8 @@ function blockOf(selector: string): string {
 function tokenHex(theme: Theme, name: string): string {
   const re = new RegExp(`${name}:\\s*(#[0-9a-fA-F]{6})\\b`)
   const own = re.exec(blockOf(`[data-theme="${theme}"] {`))?.[1]
-  // The five dark themes share one block for the chart axis and its kin.
-  const shared = theme === 'lab' ? undefined : re.exec(blockOf('[data-theme="signal"], [data-theme="console"]'))?.[1]
+  // The five dark themes share one block for the chart axis and its kin; each light theme carries its own.
+  const shared = LIGHT_THEMES.has(theme) ? undefined : re.exec(blockOf('[data-theme="signal"], [data-theme="console"]'))?.[1]
   const hex = own ?? shared
   expect(hex, `${name} in the ${theme} theme`).toBeDefined()
   return hex as string
@@ -96,7 +98,7 @@ function contrast(a: Rgb, b: Rgb): number {
 
 const colourOfBorder = (border: string) => border.replace(/^1px (solid|dashed) /, '')
 
-describe('non-text contrast of the kit’s edges, in all six themes (SC 1.4.11)', () => {
+describe('non-text contrast of the kit’s edges, in every theme (SC 1.4.11)', () => {
   it('measures something: the quiet tokens the edges replaced are under 3:1 somewhere', () => {
     // Positive control: without it a resolver that always answered "white on
     // black" would pass every assertion below.

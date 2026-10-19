@@ -7,7 +7,6 @@ import {
   formatDuration,
   formatPassRate,
   statusColor,
-  categoryColor,
   confidenceColor,
 } from '@/utils/formatters'
 
@@ -55,33 +54,26 @@ describe('formatters', () => {
     })
   })
 
-  describe('categoryColor', () => {
-    it('maps each failure category to the right colour', () => {
-      expect(categoryColor('PRODUCT_BUG')).toBe('text-[var(--status-failed)]')
-      expect(categoryColor('INFRASTRUCTURE')).toBe('text-[var(--status-broken)]')
-      expect(categoryColor('TEST_DATA')).toBe('text-[var(--status-broken)]')
-      expect(categoryColor('AUTOMATION_DEFECT')).toBe('text-[var(--status-flaky)]')
-      expect(categoryColor('FLAKY')).toBe('text-[var(--status-flaky)]')
-    })
-    it('returns slate for unknown category', () => {
-      expect(categoryColor('UNKNOWN')).toBe('text-[var(--color-text-secondary)]')
-    })
-  })
+  // (W29a UIX-02: `categoryColor` is gone; the failure-category map is covered
+  // by components/charts/failureGroups/categoryPatterns.test.tsx and
+  // components/charts/taxonomyConsistency.test.ts.)
 
+  // W29a UIX-07: a confidence score's colour is a MEANING (good / doubtful /
+  // poor), so it reads the --ui-* aliases (the same pixels as the status hues).
   describe('confidenceColor', () => {
-    it('returns green for high confidence (>=80)', () => {
-      expect(confidenceColor(80)).toBe('text-[var(--status-passed)]')
-      expect(confidenceColor(95)).toBe('text-[var(--status-passed)]')
-      expect(confidenceColor(100)).toBe('text-[var(--status-passed)]')
+    it('returns the success colour for high confidence (>=80)', () => {
+      expect(confidenceColor(80)).toBe('text-[var(--ui-success)]')
+      expect(confidenceColor(95)).toBe('text-[var(--ui-success)]')
+      expect(confidenceColor(100)).toBe('text-[var(--ui-success)]')
     })
-    it('returns amber for medium confidence (60-79)', () => {
-      expect(confidenceColor(60)).toBe('text-[var(--status-broken)]')
-      expect(confidenceColor(75)).toBe('text-[var(--status-broken)]')
-      expect(confidenceColor(79)).toBe('text-[var(--status-broken)]')
+    it('returns the warning colour for medium confidence (60-79)', () => {
+      expect(confidenceColor(60)).toBe('text-[var(--ui-warning)]')
+      expect(confidenceColor(75)).toBe('text-[var(--ui-warning)]')
+      expect(confidenceColor(79)).toBe('text-[var(--ui-warning)]')
     })
-    it('returns red for low confidence (<60)', () => {
-      expect(confidenceColor(0)).toBe('text-[var(--status-failed)]')
-      expect(confidenceColor(59)).toBe('text-[var(--status-failed)]')
+    it('returns the danger colour for low confidence (<60)', () => {
+      expect(confidenceColor(0)).toBe('text-[var(--ui-danger)]')
+      expect(confidenceColor(59)).toBe('text-[var(--ui-danger)]')
     })
   })
 })

@@ -46,7 +46,8 @@ vi.mock('react-hot-toast', () => ({
   default: { success: vi.fn(), error: vi.fn() },
 }))
 
-import FlakyCoachPage, { FlakyCoachBody } from './FlakyCoachPage'
+import FlakyCoachPage, { FlakyCoachBody, RecommendationPill } from './FlakyCoachPage'
+import { formatDay } from '@/utils/formatters'
 
 const renderPage = () =>
   render(
@@ -223,5 +224,38 @@ describe('FlakyCoachBody — the Flakiness score column (W09 FLK-03)', () => {
     expect(order()).toEqual(['c', 'b', 'a', 'd'])
     fireEvent.change(sort, { target: { value: 'impact' } })
     expect(order()).toEqual(['a', 'b', 'c', 'd'])
+  })
+})
+
+// W29a UIX-07: a quarantine holds a flaky test, it is not a failure: an outline
+// in the flaky colour with the shield. Investigate / Healthy read the UI tokens.
+describe('RecommendationPill — what each colour means (W29a UIX-07)', () => {
+  it('draws Quarantine as an outline in the quarantined (flaky) colour, never the failed red', () => {
+    const { container } = render(<RecommendationPill value="QUARANTINE" />)
+    const pill = container.firstElementChild as HTMLElement
+    expect(pill).toHaveTextContent('Quarantine')
+    expect(pill.className).toContain('text-[var(--state-quarantined)]')
+    expect(pill.className).toContain('border-[var(--state-quarantined-bd)]')
+    expect(pill.className).toContain('bg-transparent')
+    expect(pill.className).not.toContain('--status-failed')
+    expect(pill.querySelector('svg')).not.toBeNull()
+  })
+
+  it('reads the warning and success UI tokens for Investigate and Healthy', () => {
+    const investigate = render(<RecommendationPill value="INVESTIGATE" />).container.firstElementChild as HTMLElement
+    expect(investigate.className).toContain('text-[var(--ui-warning-ink)]')
+    expect(investigate.className).not.toContain('--status-')
+    const healthy = render(<RecommendationPill value="HEALTHY" />).container.firstElementChild as HTMLElement
+    expect(healthy.className).toContain('text-[var(--ui-success-ink)]')
+    expect(healthy.className).not.toContain('--status-')
+  })
+
+  it('writes "Flaky Since" in the one date format (W29a UIX-10)', () => {
+    renderBody([{ ...scoreEntry('since', SCORED), flaky_since: '2026-09-02T12:00:00Z' }])
+    fireEvent.click(screen.getByRole('button', { name: 'test_since' }))
+    const panel = screen.getByRole('complementary', { name: 'test_since' })
+    const label = within(panel).getByText('Flaky Since')
+    expect(label.nextElementSibling).toHaveTextContent(formatDay('2026-09-02T12:00:00Z'))
+    expect(label.nextElementSibling).toHaveTextContent('Sep 2, 2026')
   })
 })

@@ -100,7 +100,7 @@ import { useRuns } from '@/hooks/useRuns'
 import { useDataFreshness } from '@/hooks/useDataFreshness'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useSlotCloser } from '@/hooks/useSlotCloser'
-import { shortAgo } from '@/utils/formatters'
+import { formatNumber, shortAgo } from '@/utils/formatters'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import { flakyQuarantineService } from '@/services/flakyQuarantineService'
 import { postData } from '@/services/http'
@@ -125,6 +125,13 @@ import {
   FAILURE_KIND_DEFS, failureKindOf, kindDef, type FailureKind,
 } from '@/utils/failureKind'
 import { FailureKindBadge, KindBadgeWithEvidence } from '@/components/failures/KindEvidence'
+import FailureCategoryMark from '@/components/charts/FailureCategoryMark'
+import {
+  INFRASTRUCTURE_DETAIL_DECALS,
+  failureCategoryColor,
+  type FailureCategoryKey,
+} from '@/components/charts/failureTaxonomy'
+import type { PatternDecal } from '@/components/charts/patterns'
 import { utcDayIso } from '@/utils/calendarDay'
 import GaugeBar from '@/components/charts/GaugeBar'
 import { useContainerWidth } from '@/components/charts/chartLayout'
@@ -1454,7 +1461,7 @@ function KindFilterChips({
               <span aria-hidden className="inline-block w-2 h-2 rounded-sm" style={{ background: chip.color }} />
             )}
             {chip.label}
-            <span className="tabular-nums text-[11px]" style={{ color: active && chip.color ? chip.color : 'var(--color-text-faint)' }}>
+            <span className="tabular-nums text-[11px]" style={{ color: active ? 'var(--color-text)' : 'var(--color-text-faint)' }}>
               {chip.count}
             </span>
           </button>
@@ -1472,13 +1479,28 @@ function KindFilterChips({
 // looser historical strings older payloads carried — previously the enum
 // values (except INFRASTRUCTURE/UNKNOWN) all fell through to the Unknown
 // bucket, which made the card disagree with the kind chips.
-const CANONICAL_CATEGORIES: { id: string; label: string; color: string; matcher: RegExp; kind: FailureKind }[] = [
-  { id: 'unknown',   label: 'Unknown',            color: 'var(--cat-unknown)',    matcher: /unknown|unclassified/i, kind: 'unknown' },
-  { id: 'assertion', label: 'Assertion / product', color: 'var(--cat-assertion)',  matcher: /assert|product/i,       kind: 'product' },
-  { id: 'test_code', label: 'Test code / data',    color: 'var(--kind-test-code)', matcher: /automation|test.?data|test.?code|script|fixture|flaky|intermittent/i, kind: 'test_code' },
-  { id: 'timeout',   label: 'Timeout',             color: 'var(--cat-timeout)',    matcher: /timeout|timed.?out/i,   kind: 'infrastructure' },
-  { id: 'network',   label: 'Network / 5xx',       color: 'var(--cat-network)',    matcher: /network|http|5\d\d/i,   kind: 'infrastructure' },
-  { id: 'infra',     label: 'Infra / runner',      color: 'var(--cat-infra)',      matcher: /infra|runner|ci|env/i,  kind: 'infrastructure' },
+//
+// W29a UIX-02: each row's colour and shape come from the ONE taxonomy map
+// (components/charts/failureTaxonomy), so "Assertion / product" and its
+// PRODUCT badge are one colour, the donut's slice another view of the same.
+// The three infrastructure rows share the infrastructure colour and are told
+// apart by their decal (INFRASTRUCTURE_DETAIL_DECALS). Words stay neutral.
+interface CanonicalCategory {
+  id: string
+  label: string
+  /** The taxonomy key whose colour the row's mark AND bar draw (`failureCategoryColor`). */
+  taxon: FailureCategoryKey
+  decal: PatternDecal
+  matcher: RegExp
+  kind: FailureKind
+}
+const CANONICAL_CATEGORIES: CanonicalCategory[] = [
+  { id: 'unknown',   label: 'Unknown',             taxon: 'unknown',        decal: 'grid',                               matcher: /unknown|unclassified/i, kind: 'unknown' },
+  { id: 'assertion', label: 'Assertion / product', taxon: 'product_bug',    decal: 'diagonal',                           matcher: /assert|product/i,       kind: 'product' },
+  { id: 'test_code', label: 'Test code / data',    taxon: 'test_data',      decal: 'dashes',                             matcher: /automation|test.?data|test.?code|script|fixture|flaky|intermittent/i, kind: 'test_code' },
+  { id: 'timeout',   label: 'Timeout',             taxon: 'infrastructure', decal: INFRASTRUCTURE_DETAIL_DECALS.timeout, matcher: /timeout|timed.?out/i,   kind: 'infrastructure' },
+  { id: 'network',   label: 'Network / 5xx',       taxon: 'infrastructure', decal: INFRASTRUCTURE_DETAIL_DECALS.network, matcher: /network|http|5\d\d/i,   kind: 'infrastructure' },
+  { id: 'infra',     label: 'Infra / runner',      taxon: 'infrastructure', decal: INFRASTRUCTURE_DETAIL_DECALS.runner,  matcher: /infra|runner|ci|env/i,  kind: 'infrastructure' },
 ]
 
 /**
@@ -1625,6 +1647,7 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCo
             const count = buckets.get(c.id) ?? 0
             const pct = total > 0 ? Math.round((count / total) * 100) : 0
             const empty = count === 0
+            const color = failureCategoryColor(c.taxon)
             return (
               <div
                 key={c.id}
@@ -1644,7 +1667,7 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCo
                   style={{ flexWrap: 'wrap', columnGap: 8, rowGap: 4, gridColumn: stacked ? '1 / -1' : undefined }}
                 >
                   <span data-category-name="" className="inline-flex items-center gap-2 flex-none whitespace-nowrap">
-                    <span aria-hidden className="inline-block w-2 h-2 rounded-sm flex-none" style={{ background: c.color }} />
+                    <FailureCategoryMark category={c.taxon} decal={c.decal} />
                     {c.label}
                   </span>
                   <span data-category-badge="" className="inline-flex flex-none">
@@ -1657,8 +1680,8 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCo
                     style={{
                       width: `${pct}%`,
                       background: c.id === 'unknown' && pct > 0
-                        ? 'repeating-linear-gradient(45deg, #94a3b8, #94a3b8 4px, #475569 4px, #475569 8px)'
-                        : c.color,
+                        ? 'repeating-linear-gradient(45deg, var(--color-text-muted) 0 4px, var(--color-bg-hover) 4px 8px)'
+                        : color,
                     }}
                   />
                 </div>
@@ -1667,7 +1690,7 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCo
                 </div>
                 <div
                   className={clsx('text-[13px] font-semibold tabular-nums text-right', empty && 'text-[var(--color-text-muted)]')}
-                  style={empty ? undefined : { color: c.id === 'unknown' ? 'var(--status-broken)' : 'var(--color-text)' }}
+                  style={empty ? undefined : { color: c.id === 'unknown' ? 'var(--ui-warning)' : 'var(--color-text)' }}
                 >
                   {empty ? '—' : `${pct}%`}
                 </div>
@@ -1744,7 +1767,7 @@ function ComparisonStrip({
             prior={prior.failed}
             delta={failedDelta}
             deltaColor={colourForFailureDelta(failedDelta)}
-            formatter={(n) => Intl.NumberFormat().format(n)}
+            formatter={(n) => formatNumber(n)}
           />
           <ComparisonCell
             label="Test executions"
@@ -1752,7 +1775,7 @@ function ComparisonStrip({
             prior={prior.total}
             delta={totalDelta}
             deltaColor={NEUTRAL}
-            formatter={(n) => Intl.NumberFormat().format(n)}
+            formatter={(n) => formatNumber(n)}
           />
           <ComparisonCell
             label="Pass rate"
@@ -1987,8 +2010,7 @@ function MuteTestModal({
             onClick={handleSubmit}
             disabled={submitting || !trimmedReason}
             title={!trimmedReason ? 'A reason is required' : undefined}
-            className="text-[12.5px] font-medium rounded-md px-3 py-1.5 disabled:opacity-50"
-            style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
+            className="btn-primary btn-sm"
           >
             {submitting ? 'Proposing…' : 'Propose quarantine'}
           </button>

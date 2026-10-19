@@ -147,12 +147,12 @@ export default function TeamChannelsPage() {
 
       {isRulesError && (
         <div role="alert" className={ALERT}>
-          Failed to load the ownership rules, so teams that have no channel yet are missing below
+          Could not load the ownership rules, so teams that have no channel yet are missing below
         </div>
       )}
       {isChannelsError && (
         <div role="alert" className={ALERT}>
-          Failed to load team channels
+          Could not load team channels
         </div>
       )}
 
@@ -177,7 +177,7 @@ export default function TeamChannelsPage() {
           <tbody className="divide-y divide-[var(--color-border)]">
             {loading ? (
               <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-[var(--color-text-muted)]">Loading...</td>
+                <td colSpan={4} className="px-4 py-6 text-center text-[var(--color-text-muted)]">Loading…</td>
               </tr>
             ) : teamNames.length === 0 ? (
               <tr>

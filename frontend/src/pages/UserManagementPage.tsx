@@ -239,7 +239,7 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
             {canManageUsers && (
               <button
                 onClick={() => toolbarSlot.open('invite')}
-                className="flex items-center gap-1.5 bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] text-sm px-3 py-1.5 rounded transition-colors"
+                className="btn-primary btn-sm flex items-center gap-1.5"
               >
                 <Plus className="h-4 w-4" /> Invite User
               </button>
@@ -464,7 +464,7 @@ function EditUserModal({ user, onClose, slot }: { user: UserItem; onClose: () =>
           <button
             type="submit"
             disabled={saving}
-            className="bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] text-sm px-4 py-2 rounded transition-colors"
+            className="btn-primary"
           >
             {saving ? 'Saving…' : 'Save Changes'}
           </button>
@@ -575,7 +575,7 @@ function EditUserModal({ user, onClose, slot }: { user: UserItem; onClose: () =>
                   type="button"
                   onClick={handleAssignProject}
                   disabled={!assignProjectId}
-                  className="text-xs bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-40 text-[var(--color-btn-primary-text)] px-2 py-1.5 rounded"
+                  className="btn-primary btn-sm"
                 >
                   Add
                 </button>
@@ -701,7 +701,7 @@ function AddUserModal({ onClose, slot }: { onClose: () => void; slot?: InlineSlo
                   <button
                     onClick={handleAssignProject}
                     disabled={!assignProjectId}
-                    className="text-xs bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-40 text-[var(--color-btn-primary-text)] px-2 py-1.5 rounded"
+                    className="btn-primary btn-sm"
                   >
                     Add
                   </button>
@@ -853,7 +853,7 @@ function InviteUserModal({ onClose, slot }: { onClose: () => void; slot?: Inline
             <div className="flex justify-end gap-2 pt-2">
               <button type="button" onClick={onClose} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-4 py-2">Cancel</button>
               <button type="submit" disabled={loading}
-                className="bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] text-sm px-4 py-2 rounded transition-colors">
+                className="btn-primary">
                 {loading ? 'Sending…' : 'Send Invitation'}
               </button>
             </div>

@@ -24,6 +24,7 @@ import toast from 'react-hot-toast'
 import { useApiKeys, refreshApiKeys } from '@/hooks/useApiKeys'
 import { userManagementService } from '@/services/userManagementService'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { formatDay } from '@/utils/formatters'
 import DataUnavailable from '@/components/ui/DataUnavailable'
 import ScopedLink from '@/components/ui/ScopedLink'
 import { copyTextToClipboard } from '@/utils/clipboard'
@@ -100,7 +101,7 @@ function ApiKeysTab({ canGenerateApiKeys }: { canGenerateApiKeys: boolean }) {
         </p>
         {canGenerateApiKeys && (
           <button onClick={() => slot.open('create')}
-            className="flex shrink-0 items-center gap-1.5 bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] text-sm px-3 py-1.5 rounded transition-colors">
+            className="btn-primary flex shrink-0 items-center gap-1.5">
             <Plus className="h-4 w-4" /> Generate key
           </button>
         )}
@@ -137,8 +138,8 @@ function ApiKeysTab({ canGenerateApiKeys }: { canGenerateApiKeys: boolean }) {
                     )) : <span className="text-xs text-[var(--color-text-muted)]">full access</span>}
                   </div>
                 </td>
-                <td className="px-4 py-3 text-[var(--color-text-muted)] text-xs">{k.expires_at ? new Date(k.expires_at).toLocaleDateString() : <span className="text-[var(--color-text-muted)]">Never</span>}</td>
-                <td className="px-4 py-3 text-[var(--color-text-muted)] text-xs">{k.last_used_at ? new Date(k.last_used_at).toLocaleDateString() : <span className="text-[var(--color-text-muted)]">—</span>}</td>
+                <td className="px-4 py-3 text-[var(--color-text-muted)] text-xs">{k.expires_at ? formatDay(k.expires_at) : <span className="text-[var(--color-text-muted)]">Never</span>}</td>
+                <td className="px-4 py-3 text-[var(--color-text-muted)] text-xs">{k.last_used_at ? formatDay(k.last_used_at) : <span className="text-[var(--color-text-muted)]">—</span>}</td>
                 <td className="px-4 py-3">
                   {/* Icon-only: named, and a tooltip says what the red bin does (it had neither). */}
                   <button
@@ -262,7 +263,7 @@ function CreateApiKeyModal({ onClose, slot }: { onClose: () => void; slot?: Inli
               <div role="group" aria-labelledby="apikey-scopes" className="flex flex-wrap gap-2">
                 {AVAILABLE_SCOPES.map((s) => (
                   <button key={s} type="button" onClick={() => toggleScope(s)}
-                    className={`text-xs px-2 py-1 rounded border transition-colors ${scopes.includes(s) ? 'bg-white/10 border-[var(--color-border-light)] text-[var(--color-text-secondary)]' : 'bg-[var(--color-bg-hover)] border-[var(--color-border-light)] text-[var(--color-text-muted)] hover:border-[var(--color-border-light)]'}`}>
+                    className={`text-xs px-2 py-1 rounded border transition-colors ${scopes.includes(s) ? 'bg-[var(--color-accent-muted)] border-[var(--color-accent)] text-[var(--color-text)]' : 'bg-[var(--color-bg-hover)] border-[var(--color-border-light)] text-[var(--color-text-muted)] hover:border-[var(--color-border-light)]'}`}>
                     {s}
                   </button>
                 ))}
@@ -271,7 +272,7 @@ function CreateApiKeyModal({ onClose, slot }: { onClose: () => void; slot?: Inli
             <div className="flex justify-end gap-2 pt-2">
               <button type="button" onClick={onClose} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-4 py-2">Cancel</button>
               <button type="submit" disabled={loading || !name}
-                className="bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] text-sm px-4 py-2 rounded transition-colors">
+                className="btn-primary">
                 {loading ? 'Generating…' : 'Generate'}
               </button>
             </div>

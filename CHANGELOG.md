@@ -52,6 +52,24 @@ locally by default.
 
 ### Added
 
+- **Paper, a soft light theme, and one UI standard across the app** (owner
+  request 2026-10-17, wave W29a, UIX-01, 02, 03, 07, 08, 04a, 10, 11, 13).
+  **Paper** ("Soft light · low glare": a warm grey page, cards a step lighter,
+  softer text and borders) is in the theme picker beside Lab, for long
+  reading sessions; Lab keeps its look. Across every page: one colour per
+  failure category and kind (the Overview donut, the Failures card, the kind
+  badges and the AI category chips agree, with the category word as neutral
+  text beside a coloured mark); one decision vocabulary, **Go / Conditional /
+  No-Go**, and sentence-case statuses; one severity scale (P0-P3) for defects,
+  priorities and investigations; warning, danger and info colours instead of
+  borrowed status colours; one button shape (8 px corners, a small size for
+  dense rows, a solid danger button); one date and number format; one look
+  and wording for loading, empty and error states ("Could not load ...").
+  Six new quality-gate guards keep it so (font sizes off the type scale,
+  status colour as text on a tint, status hues used for other meanings and
+  hand-made spinners may only go down; hand-styled primary buttons and the
+  old error wording are refused).
+
 - **Edit a test case and change its status in the page** (owner request
   2026-10-17, wave W28, TCM-01 to TCM-05). On `/test-management` a case's
   Details tab has **Edit**: every field in one in-page form, saved as one new
@@ -358,6 +376,24 @@ locally by default.
 
 ### Changed
 
+- **What W29a changes on screen.** Buttons have 8 px corners (they were
+  pills); "NO GO" / "No-go" / "CONDITIONAL" read "No-Go" / "Conditional" and
+  statuses read "Failed" rather than "FAILED"; a release's or a run's
+  "conditional" is the warning colour, skipped results the skipped colour;
+  the release rail's aging and awaiting-pack tiles use the warning colour
+  (they were gold); badge text is the status colour mixed with body text, so
+  it reads in every theme. A script or test that matched the old all-caps
+  words needs the new ones. No API answer changes.
+
+- **The homelab deploy cleans up after itself** (OPS-01, OPS-02).
+  `homelabsetup/deploy-homelab.sh` now prunes old TestLookup images from the
+  in-cluster registry after a healthy deploy, keeping the newest three builds
+  (`--keep-builds=N`, `--skip-registry-prune`; `homelabsetup/prune-registry.sh`
+  runs on its own too, with `--dry-run`), and its registry-mirror precheck
+  now reads each node's real result and deletes its own debug pod: the check
+  used to pass on every node whatever it found, and its pods were never
+  removed.
+
 - **What W28 changes on an existing install.** Migration 0222 adds five
   columns and no table. Every project starts with review OFF, so a Draft case
   can be made Active directly until a QA lead turns **Require review** on for
@@ -541,6 +577,12 @@ locally by default.
   changed nothing.
 
 ### Fixed
+
+- In the light theme the loading spinner's moving arc was white on white,
+  destructive buttons were white text on a pale pink (1.26:1) and avatar
+  initials were white on pale tints; all three are legible in every theme
+  now (W29a). Five colour names the pages read were never defined, so those
+  elements fell back to the browser default; they use defined colours now.
 
 - Editing a test case so that its suite or owner changed failed with a 500 on
   PostgreSQL (the audit row stored a raw UUID in a JSON column); the audit

@@ -378,7 +378,7 @@ test.describe('chart gallery (/__charts)', () => {
   ]
 
   // The gate itself (every impact, the full WCAG + best-practice tag set, the
-  // ratchet) and the six themes live in `tests/lib/axe-gate.ts`.
+  // ratchet) and the seven themes live in `tests/lib/axe-gate.ts`.
 
   for (const theme of ALL_THEMES) {
     test(`has no automated accessibility violations at any impact (${theme})`, async ({

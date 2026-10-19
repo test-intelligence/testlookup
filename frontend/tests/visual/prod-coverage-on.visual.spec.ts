@@ -20,7 +20,7 @@
  * never sits on the branch before them. Harness: `tests/lib/production-pages.ts`.
  */
 import { expect, test } from '@playwright/test'
-import { assertHermetic, landmark, PINNED_TALL, THEMES, visualRegion } from '../lib/production-pages'
+import { assertHermetic, landmark, PINNED_TALL, THEMES_WITH_PAPER, visualRegion } from '../lib/production-pages'
 import { bringNear, expectDrawn, expectNoErrorFrame, openRollout, section, sectionFrame } from '../lib/rollout'
 import { COVERAGE_ON } from './production/fixtures'
 import { NEEDS_REVIEW_MAP } from './production/fixtures-trends-coverage'
@@ -35,7 +35,7 @@ const RELEASE = 'coverage-on-heatmap-release'
 const HISTORY = 'coverage-history'
 const NEEDS_REVIEW = 'coverage-map-needs-review'
 
-for (const theme of THEMES) {
+for (const theme of THEMES_WITH_PAPER) {
   test(`coverage Wave 3 regions — ${theme}`, async ({ page }) => {
     const ready = (p: typeof page) => landmark(p, 'Run cadence')
     const { api, errors } = await openRollout(page, '/coverage', { theme, handlers: COVERAGE_ON, ready })

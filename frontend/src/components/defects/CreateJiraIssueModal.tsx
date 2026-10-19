@@ -200,8 +200,7 @@ export default function CreateJiraIssueModal({
                   ? jiraUnavailableCopy(metadata?.reason)
                   : undefined
             }
-            className="text-[12.5px] font-medium rounded-md px-3 py-1.5 disabled:opacity-50"
-            style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
+            className="btn-primary btn-sm"
           >
             {submitting
               ? 'Submitting…'

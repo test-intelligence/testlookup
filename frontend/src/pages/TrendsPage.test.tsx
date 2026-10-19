@@ -851,7 +851,7 @@ describe('TrendsPage rollout (Wave 2.6)', () => {
     try {
       await renderTrends(await activeDays(3))
       openTab('By suite')
-      expect(await screen.findByText('Failed to load charts')).toBeInTheDocument()
+      expect(await screen.findByText('Could not load charts')).toBeInTheDocument()
       expect(screen.getByRole('heading', { name: 'Trends' })).toBeInTheDocument()
       expect(screen.getByRole('heading', { name: 'Pass rate trend' })).toBeInTheDocument()
     } finally {

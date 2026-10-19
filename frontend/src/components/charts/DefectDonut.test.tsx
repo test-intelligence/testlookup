@@ -15,7 +15,10 @@ vi.mock('recharts', () => ({
   ),
   Cell: () => <div data-testid="pie-cell" />,
   Tooltip: () => <div data-testid="tooltip" />,
-  Legend: () => <div data-testid="legend" />,
+  // Renders the legend's content, so its words and status keys can be read.
+  Legend: ({ content }: { content?: () => ReactNode }) => (
+    <div data-testid="legend">{typeof content === 'function' ? content() : null}</div>
+  ),
 }))
 
 describe('DefectDonut', () => {
@@ -38,5 +41,17 @@ describe('DefectDonut', () => {
   it('forwards animate={false} to the pie', () => {
     render(<DefectDonut data={[2, 0, 1, 0]} animate={false} />)
     expect(screen.getByTestId('pie')).toHaveAttribute('data-animate', 'false')
+  })
+
+  // W29a UIX-07: the one severity scale, P0–P3; the data stays positional.
+  it('names the four slices P0 Critical … P3 Low; P0 / P1 are drawn through the failed / broken status path', () => {
+    const { container } = render(<DefectDonut data={[4, 3, 2, 1]} animate={false} />)
+    const items = Array.from(container.querySelectorAll('[data-chart-legend] li'))
+    expect(items.map((li) => li.querySelector('span')?.textContent?.replace(/ \d.*$/, ''))).toEqual([
+      'P0 Critical', 'P1 High', 'P2 Medium', 'P3 Low',
+    ])
+    expect(items.map((li) => li.getAttribute('data-legend-status'))).toEqual(['failed', 'broken', null, null])
+    const decals = Array.from(container.querySelectorAll('pattern')).map((p) => p.getAttribute('data-chart-pattern'))
+    expect(new Set(decals).size).toBe(4)
   })
 })

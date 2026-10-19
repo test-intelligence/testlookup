@@ -26,6 +26,7 @@ import {
 import { clsx } from 'clsx'
 import EmptyState from '@/components/ui/EmptyState'
 import { formatCompactDateTime } from '@/utils/formatCompactDateTime'
+import { formatNumber } from '@/utils/formatters'
 
 export interface WorkflowStageNode {
   stage_name: string
@@ -494,7 +495,7 @@ function StageNode({
             )}
             {stage.total_tokens != null && stage.total_tokens > 0 && (
               <span className="badge bg-[var(--color-accent-muted)]/20 text-[var(--color-accent)] border border-[var(--color-accent)]/30 text-[10px]">
-                {stage.total_tokens.toLocaleString()} tok
+                {formatNumber(stage.total_tokens)} tok
               </span>
             )}
             {stage.cost_usd != null && stage.cost_usd > 0 && (

@@ -6,24 +6,12 @@ import { helpTopicParam } from '@/components/help/helpTopics'
 import MfaSecuritySection from '@/components/mfa/MfaSecuritySection'
 import { useAuthStore } from '@/store/authStore'
 import { api } from '@/services/api'
+import { AVATAR_COLOR_KEYS, AVATAR_COLORS, avatarColor as avatarColorOf } from '@/components/ui/avatarColors'
 
 // ── Avatar colour palette ─────────────────────────────────────────────────────
-const AVATAR_COLORS: { key: string; bg: string; ring: string }[] = [
-  { key: 'slate',   bg: 'bg-[var(--color-bg-hover)]',   ring: 'ring-[var(--color-border-light)]' },
-  { key: 'red',     bg: 'bg-[var(--status-failed-bg)]',     ring: 'ring-[var(--status-failed)]' },
-  { key: 'orange',  bg: 'bg-[var(--status-broken-bg)]',  ring: 'ring-[var(--status-broken)]' },
-  { key: 'amber',   bg: 'bg-[var(--status-broken-bg)]',   ring: 'ring-[var(--status-broken)]' },
-  { key: 'lime',    bg: 'bg-[var(--status-passed-bg)]',    ring: 'ring-[var(--status-passed)]' },
-  { key: 'emerald', bg: 'bg-[var(--status-passed-bg)]', ring: 'ring-[var(--status-passed)]' },
-  { key: 'teal',    bg: 'bg-[var(--status-passed-bg)]',    ring: 'ring-[var(--status-passed)]' },
-  { key: 'cyan',    bg: 'bg-[var(--color-accent-muted)]',    ring: 'ring-[var(--color-accent)]' },
-  { key: 'blue',    bg: 'bg-[var(--color-accent-muted)]',    ring: 'ring-[var(--color-accent)]' },
-  { key: 'violet',  bg: 'bg-[var(--status-flaky-bg)]',  ring: 'ring-[var(--status-flaky)]' },
-  { key: 'fuchsia', bg: 'bg-[var(--status-flaky-bg)]', ring: 'ring-[var(--status-flaky)]' },
-  { key: 'pink',    bg: 'bg-[var(--status-flaky-bg)]',    ring: 'ring-[var(--status-flaky)]' },
-]
-
-const COLOR_MAP = Object.fromEntries(AVATAR_COLORS.map(c => [c.key, c]))
+// The shared avatar map (W29a UIX-01): the same colours as the top bar, the
+// initials in the family's ink on its tint (never white). The stored keys are
+// unchanged.
 
 const HELP_TOPIC = helpTopicParam('/settings/profile')
 
@@ -153,7 +141,7 @@ export default function ProfilePage() {
   if (!user) return null
 
   const initials   = getInitials(fullName || user.full_name, user.username)
-  const colorEntry = COLOR_MAP[avatarColor] ?? COLOR_MAP['blue']
+  const colorEntry = avatarColorOf(avatarColor)
 
   return (
     <div className="space-y-4">
@@ -177,7 +165,10 @@ export default function ProfilePage() {
           {/* Avatar preview + colour picker */}
           <div className="flex items-start gap-6">
             {/* Live preview */}
-            <div className={`h-16 w-16 rounded-full flex items-center justify-center text-white font-bold text-xl flex-shrink-0 ${colorEntry.bg}`}>
+            <div
+              className="h-16 w-16 rounded-full flex items-center justify-center font-bold text-xl flex-shrink-0"
+              style={{ background: colorEntry.bg, color: colorEntry.fg }}
+            >
               {initials}
             </div>
 
@@ -185,23 +176,29 @@ export default function ProfilePage() {
             <div className="flex-1">
               <p className="text-xs font-medium text-[var(--color-text-muted)] mb-2">Avatar colour</p>
               <div className="flex flex-wrap gap-2">
-                {AVATAR_COLORS.map(c => (
-                  <button
-                    key={c.key}
-                    type="button"
-                    title={c.key}
-                    onClick={() => setAvatarColor(c.key)}
-                    className={`h-7 w-7 rounded-full ${c.bg} transition-all ${
-                      avatarColor === c.key
-                        ? `ring-2 ring-offset-2 ring-offset-[var(--color-bg-secondary)] ${c.ring} scale-110`
-                        : 'opacity-70 hover:opacity-100'
-                    }`}
-                  >
-                    {avatarColor === c.key && (
-                      <Check className="h-3.5 w-3.5 text-white mx-auto" />
-                    )}
-                  </button>
-                ))}
+                {AVATAR_COLOR_KEYS.map(key => {
+                  const c = AVATAR_COLORS[key]
+                  const selected = avatarColor === key
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      title={key}
+                      onClick={() => setAvatarColor(key)}
+                      className={`h-7 w-7 rounded-full transition-all ${
+                        selected ? 'scale-110' : 'opacity-70 hover:opacity-100'
+                      }`}
+                      style={{
+                        background: c.bg,
+                        boxShadow: selected ? `0 0 0 2px var(--color-bg-secondary), 0 0 0 4px ${c.ring}` : undefined,
+                      }}
+                    >
+                      {selected && (
+                        <Check className="h-3.5 w-3.5 text-[var(--color-text)] mx-auto" />
+                      )}
+                    </button>
+                  )
+                })}
               </div>
             </div>
           </div>

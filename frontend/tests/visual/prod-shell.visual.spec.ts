@@ -9,7 +9,7 @@
  * height is their height. Lands WITH its PNGs (`visual-baselines.yml`, Linux).
  */
 import { expect, test, type Page } from '@playwright/test'
-import { landmark, PINNED, THEMES, visualRegion } from '../lib/production-pages'
+import { landmark, PINNED, THEMES_WITH_PAPER, visualRegion } from '../lib/production-pages'
 import { networkQuiet, openRollout } from '../lib/rollout'
 import { TRENDS_ON } from './production/fixtures'
 
@@ -17,7 +17,7 @@ test.use({ ...PINNED, viewport: { width: 1280, height: 900 } })
 
 const ready = (p: Page) => landmark(p, 'Trend metrics')
 
-for (const theme of THEMES) {
+for (const theme of THEMES_WITH_PAPER) {
   test(`the P1 shell — ${theme}`, async ({ page }) => {
     const { api, errors } = await openRollout(page, '/trends', { theme, handlers: TRENDS_ON, ready })
     await networkQuiet(page, api)

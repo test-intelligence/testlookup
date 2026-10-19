@@ -117,6 +117,7 @@ function PolicyCard({ policy, projectId, onSaved }: { policy: AgentPolicy; proje
           >
             <span
               aria-hidden
+              // eslint-disable-next-line no-restricted-syntax -- a toggle knob: white on both track colours in every theme (the track carries the state)
               className="absolute rounded-full bg-white"
               style={{ width: 12, height: 12, top: 2, left: enabled ? 18 : 2, transition: 'left 150ms ease-out' }}
             />
@@ -214,8 +215,7 @@ function PolicyCard({ policy, projectId, onSaved }: { policy: AgentPolicy; proje
           type="button"
           onClick={onSave}
           disabled={!dirty || budgetErrors.length > 0 || saving}
-          className="mt-3 px-4 py-1.5 text-sm font-medium rounded-md transition-colors disabled:opacity-50"
-          style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
+          className="btn-primary mt-3"
         >
           {saving ? 'Saving…' : 'Save policy'}
         </button>

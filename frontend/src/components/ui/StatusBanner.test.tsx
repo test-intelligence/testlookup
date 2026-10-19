@@ -20,7 +20,8 @@ describe('StatusBanner', () => {
         />
       </MemoryRouter>,
     )
-    expect(screen.getByText('NO-GO')).toBeInTheDocument()
+    // W29a UIX-03: the one decision vocabulary, sentence case ("No-Go", was "NO-GO").
+    expect(screen.getByText('No-Go')).toBeInTheDocument()
     expect(screen.getByText('83.4%')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /Open gate/ })).toHaveAttribute('href', '/release-gate')
   })
@@ -34,7 +35,27 @@ describe('StatusBanner', () => {
     const pill = container.querySelector('[data-banner-pill]') as HTMLElement
     expect(pill).toHaveTextContent(/^AT RISK$/)
     expect(container.querySelector('[data-status-banner]')).toHaveAttribute('data-status-banner', 'fail')
-    expect(pill.style.color).toBe('var(--status-failed)')
+    // The pill's TEXT is the state's hue mixed toward the body text (the -ink
+    // rule, W29a UIX-03): the bare hue missed 4.5:1 on its own tint.
+    expect(pill.style.color).toBe('color-mix(in srgb, var(--status-failed) 75%, var(--color-text))')
+  })
+
+  it.each([
+    ['go', 'Go', 'var(--status-passed)'],
+    ['ok', 'OK', 'var(--status-passed)'],
+    ['conditional', 'Conditional', 'var(--status-broken)'],
+    ['warn', 'Warning', 'var(--status-broken)'],
+    ['no_go', 'No-Go', 'var(--status-failed)'],
+    ['fail', 'Failing', 'var(--status-failed)'],
+    ['pending', 'Pending', 'var(--color-text-muted)'],
+  ] as const)('the %s pill says "%s" in sentence case, its text mixed toward the body text', (state, word, hue) => {
+    const { container } = render(<StatusBanner state={state} facts={[{ label: 'pass', value: '1%' }]} />)
+    const pill = container.querySelector('[data-banner-pill]') as HTMLElement
+    expect(pill).toHaveTextContent(new RegExp(`^${word}$`))
+    expect(pill.className).not.toMatch(/uppercase/)
+    expect(pill.style.color).toBe(`color-mix(in srgb, ${hue} 75%, var(--color-text))`)
+    expect(pill.style.background).toBe(`color-mix(in srgb, ${hue} 14%, transparent)`)
+    expect((pill.firstElementChild as HTMLElement).style.background).toBe(hue)
   })
 
   it('shows at most four facts', () => {

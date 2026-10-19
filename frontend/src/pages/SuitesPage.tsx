@@ -231,7 +231,7 @@ function CreateSuiteModal({
                 !name.trim() ||
                 (showProjectPicker && !pickedProjectId)
               }
-              className="rounded bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+              className="btn-primary"
             >
               {saving ? 'Creating…' : 'Create suite'}
             </button>
@@ -310,7 +310,7 @@ export default function SuitesPage() {
   if (error) {
     return (
       <EmptyState
-        title="Failed to load suites"
+        title="Could not load suites"
         description="Check the backend logs or try again."
       />
     )
@@ -330,7 +330,7 @@ export default function SuitesPage() {
           canCreate ? (
             <button
               onClick={() => setShowCreate(true)}
-              className="inline-flex items-center gap-1 rounded bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white"
+              className="btn-primary inline-flex items-center gap-1"
             >
               <Plus className="h-4 w-4" /> New suite
             </button>

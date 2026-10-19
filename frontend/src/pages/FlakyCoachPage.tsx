@@ -16,6 +16,7 @@ import { useFlakyCoach } from '@/hooks/useTestHealth'
 import { usePermissions } from '@/hooks/usePermissions'
 import { testHealthService, type FlakyCoachEntry } from '@/services/testHealthService'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
+import { formatDay } from '@/utils/formatters'
 import ChipFilter from './inbox/ChipFilter'
 import { flakySubtitle } from './flaky/flakyModel'
 import {
@@ -36,11 +37,15 @@ import {
 
 type Recommendation = FlakyCoachEntry['quarantine_recommendation']
 
+// W29a UIX-07: what each colour MEANS. A quarantine holds a flaky test, it is
+// not a failure: an OUTLINE in the flaky colour with the shield, no red fill.
+// Investigate is the warning, Healthy the success (UI aliases; their text on
+// the tint reads the legible -ink, UIX-03).
 const QUARANTINE_CONFIG: Record<Recommendation, { label: string; colour: string; bg: string; icon: React.ElementType }> = {
-  QUARANTINE:  { label: 'Quarantine',  colour: 'text-[var(--status-failed)]',     bg: 'bg-[var(--status-failed-bg)]/20 border-[var(--status-failed-bd)]/30',     icon: ShieldAlert },
-  INVESTIGATE: { label: 'Investigate', colour: 'text-[var(--status-broken)]',   bg: 'bg-[var(--status-broken-bg)]/20 border-[var(--status-broken-bd)]/30', icon: AlertTriangle },
-  MONITOR:     { label: 'Monitor',     colour: 'text-[var(--color-text)]',    bg: 'bg-[var(--color-bg-secondary)]/30 border-[var(--color-border-light)]',   icon: Eye },
-  HEALTHY:     { label: 'Healthy',     colour: 'text-[var(--status-passed)]', bg: 'bg-[var(--status-passed-bg)]/20 border-[var(--status-passed-bd)]/30', icon: CheckCircle },
+  QUARANTINE:  { label: 'Quarantine',  colour: 'text-[var(--state-quarantined)]', bg: 'bg-transparent border-[var(--state-quarantined-bd)]',                   icon: ShieldAlert },
+  INVESTIGATE: { label: 'Investigate', colour: 'text-[var(--ui-warning-ink)]',    bg: 'bg-[var(--ui-warning-bg)]/20 border-[var(--ui-warning-bd)]/30',         icon: AlertTriangle },
+  MONITOR:     { label: 'Monitor',     colour: 'text-[var(--color-text)]',        bg: 'bg-[var(--color-bg-secondary)]/30 border-[var(--color-border-light)]', icon: Eye },
+  HEALTHY:     { label: 'Healthy',     colour: 'text-[var(--ui-success-ink)]',    bg: 'bg-[var(--ui-success-bg)]/20 border-[var(--ui-success-bd)]/30',         icon: CheckCircle },
 }
 
 const RECOMMENDATIONS = Object.keys(QUARANTINE_CONFIG) as Recommendation[]
@@ -195,9 +200,7 @@ export function FlakyEntryDetails({ entry }: { entry: FlakyCoachEntry }) {
         <div>
           <p className="text-xs text-[var(--color-text-muted)]">Flaky Since</p>
           <p className="text-[var(--color-text-secondary)] text-xs">
-            {entry.flaky_since
-              ? new Date(entry.flaky_since).toLocaleDateString()
-              : '—'}
+            {entry.flaky_since ? formatDay(entry.flaky_since) : '—'}
           </p>
         </div>
       </div>

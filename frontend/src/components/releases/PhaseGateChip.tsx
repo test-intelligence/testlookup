@@ -7,15 +7,18 @@
  * reason to show instead (R-11).
  */
 import type { PhaseGateResult } from '@/types/releases'
+import { DECISION_TOKEN } from '@/components/ui/statusVocabulary'
 import { mapVerdict } from './mapping'
 import { verdictWord } from './gateCopy'
 
 export const LIVE_PREVIEW = 'Live preview — nothing is recorded'
 
+// W29a UIX-03: the decision's legible ink as text, its border (40 %) as the
+// outline; conditional is the warning hue, never skipped-gold.
 const TONE: Record<string, { fg: string; bd: string }> = {
-  go: { fg: 'var(--status-passed)', bd: 'color-mix(in srgb, var(--status-passed) 40%, transparent)' },
-  no_go: { fg: 'var(--status-failed)', bd: 'color-mix(in srgb, var(--status-failed) 40%, transparent)' },
-  conditional: { fg: 'var(--status-broken)', bd: 'color-mix(in srgb, var(--status-skipped) 40%, transparent)' },
+  go: { fg: DECISION_TOKEN.go.ink, bd: DECISION_TOKEN.go.border },
+  no_go: { fg: DECISION_TOKEN.no_go.ink, bd: DECISION_TOKEN.no_go.border },
+  conditional: { fg: DECISION_TOKEN.conditional.ink, bd: DECISION_TOKEN.conditional.border },
 }
 const MUTED = { fg: 'var(--color-text-muted)', bd: 'var(--color-border)' }
 

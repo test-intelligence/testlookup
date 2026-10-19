@@ -70,7 +70,7 @@ describe('SuiteDetailAdvanced', () => {
     sections.heatmapThrows = true
     vi.spyOn(console, 'error').mockImplementation(() => {})
     render(<SuiteDetailAdvanced days={30} suiteName="Auth" />)
-    expect(await screen.findByText('Failed to load the test x run heatmap', {}, { timeout: LAZY_TIMEOUT })).toBeInTheDocument()
+    expect(await screen.findByText('Could not load the test x run heatmap', {}, { timeout: LAZY_TIMEOUT })).toBeInTheDocument()
     expect(await screen.findByTestId('scatter', {}, { timeout: LAZY_TIMEOUT })).toBeInTheDocument()
   })
 })

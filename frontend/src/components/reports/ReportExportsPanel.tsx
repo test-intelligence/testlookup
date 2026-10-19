@@ -13,6 +13,7 @@ import toast from 'react-hot-toast'
 import { Download, RotateCcw } from 'lucide-react'
 import { summaryReportService, type ReportExport } from '@/services/summaryReportService'
 import { downloadBlob } from '@/utils/download'
+import { formatCompactDateTime } from '@/utils/formatters'
 import {
   STATUS_LABEL,
   formatBytes,
@@ -128,7 +129,7 @@ export default function ReportExportsPanel({ projectId, refreshToken }: ReportEx
               ) : null}
             </span>
             <span className="text-[11.5px] text-[var(--color-text-muted)] tabular-nums">
-              {new Date(exp.requested_at).toLocaleString()}
+              {formatCompactDateTime(exp.requested_at)}
               {exp.size_bytes !== null ? ` · ${formatBytes(exp.size_bytes)}` : ''}
             </span>
             {exp.status === 'completed' ? (

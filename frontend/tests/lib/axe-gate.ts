@@ -26,8 +26,12 @@ import AxeBuilder from '@axe-core/playwright'
  */
 export const AXE_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice'] as const
 
-/** Every theme the app ships: a contrast regression can hide in any one of them. */
-export const ALL_THEMES = ['signal', 'console', 'slate', 'ember', 'lab', 'midnight'] as const
+/**
+ * Every theme the app ships, in the picker's order (`THEMES` in
+ * src/store/themeStore.ts; `src/test/themeLists.test.ts` pins this list to
+ * it): a contrast regression can hide in any one of them.
+ */
+export const ALL_THEMES = ['signal', 'console', 'slate', 'ember', 'lab', 'paper', 'midnight'] as const
 
 /** One tolerated violation: a rule, in one theme, on the node whose HTML contains this text. */
 export interface KnownViolation {

@@ -156,6 +156,35 @@ describe('the frozen candidate set', () => {
     })
     expect(confirm).toBeEnabled()
   })
+
+  // W29a UIX-01 (L2): "Delete permanently" is the shared .btn-danger (white on
+  // the 15 % failed tint was 1.26:1 on Lab).
+  it('"Delete permanently" is the shared destructive button, with no hand-written colours', async () => {
+    renderPanel()
+    fireEvent.change(screen.getByLabelText(/older than days/i), { target: { value: '90' } })
+    fireEvent.click(screen.getByRole('button', { name: /preview/i }))
+    await screen.findByTestId('criteria-preview')
+    fireEvent.click(screen.getByRole('button', { name: /delete 3 runs/i }))
+
+    const confirm = screen.getByRole('button', { name: /delete permanently/i })
+    expect(confirm.classList.contains('btn-danger')).toBe(true)
+    expect(confirm.className).not.toMatch(/text-white|status-failed|rounded\b|px-3/)
+  })
+})
+
+// W29a UIX-07 (§0.27): the selected status criterion read --color-primary,
+// which no theme defines (it silently inherited); it is the accent now.
+describe('the status criteria', () => {
+  it('a selected status is outlined and tinted with the accent', () => {
+    renderPanel()
+    const failed = screen.getByRole('button', { name: 'FAILED' })
+    expect(failed).toHaveAttribute('aria-pressed', 'false')
+    fireEvent.click(failed)
+    expect(failed).toHaveAttribute('aria-pressed', 'true')
+    expect(failed.className).toContain('border-[var(--color-accent)]')
+    expect(failed.className).toContain('bg-[var(--color-accent)]/15')
+    expect(failed.className).not.toContain('--color-primary')
+  })
 })
 
 // ── what the preview must surface ───────────────────────────────────────────

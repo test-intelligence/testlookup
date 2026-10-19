@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type CSSProperties } from 'react'
 import {
   AlertTriangle, Bot, CheckCircle, ChevronDown, ChevronUp,
   ExternalLink, Loader2, Shield, Zap,
@@ -10,6 +10,8 @@ import { usePermissions } from '@/hooks/usePermissions'
 import { useAIConfig } from '@/hooks/useAIConfig'
 import type { AnalysisResult, ConfidenceWhy, RoleActions } from '@/types/ai'
 import { confidenceColor } from '@/utils/formatters'
+import FailureCategoryMark from '@/components/charts/FailureCategoryMark'
+import { failureCategoryColor } from '@/components/charts/failureTaxonomy'
 import RoleActionCard from '@/components/ai/RoleActionCard'
 import ReviewStateControl from '@/components/ai/ReviewStateControl'
 import AISuggestion, { BasisChip, normalizeProvenance } from '@/components/ai/AISuggestion'
@@ -36,13 +38,14 @@ const TOOL_LABELS: Record<string, string> = {
   analyze_openshift_pod_events: 'Analysed OpenShift pod events',
 }
 
-const CATEGORY_STYLES: Record<string, string> = {
-  PRODUCT_BUG:       'bg-[var(--status-failed-bg)]/40 text-[var(--status-failed)] border-[var(--status-failed-bd)]/50',
-  INFRASTRUCTURE:    'bg-[var(--status-broken-bg)]/40 text-[var(--status-broken)] border-[var(--status-broken-bd)]/50',
-  TEST_DATA:         'bg-[var(--status-broken-bg)]/40 text-[var(--status-broken)] border-[var(--status-broken-bd)]/50',
-  AUTOMATION_DEFECT: 'bg-[var(--status-flaky-bg)]/40 text-[var(--status-flaky)] border-[var(--status-flaky-bd)]/50',
-  FLAKY:             'bg-[var(--status-flaky-bg)]/40 text-[var(--status-flaky)] border-[var(--status-flaky-bd)]/50',
-  UNKNOWN:           'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] border-[var(--color-border-light)]',
+/** The category badge's tint and border from the one taxonomy map (W29a UIX-02): the colour is a mark, the words
+ *  beside it are neutral. `failureCategoryColor` returns one of seven constant tokens (CSP-safe inline style). */
+function categoryBadgeStyle(category: string | null | undefined): CSSProperties {
+  const color = failureCategoryColor(category)
+  return {
+    background: `color-mix(in srgb, ${color} 14%, transparent)`,
+    borderColor: `color-mix(in srgb, ${color} 35%, transparent)`,
+  }
 }
 
 const DEPTH_LABEL: Record<string, { label: string; colour: string }> = {
@@ -283,7 +286,7 @@ export default function AIAnalysisPanel({
   if (!loading && !result && !hasError) {
     return (
       <div className="card flex flex-col items-center gap-4 py-10">
-        <div className="p-4 bg-white/10 rounded-2xl">
+        <div className="p-4 bg-[var(--color-bg-hover)] rounded-2xl">
           <Bot className="h-10 w-10 text-[var(--color-text)]" />
         </div>
         <div className="text-center">
@@ -336,7 +339,7 @@ export default function AIAnalysisPanel({
   // ── Result state ───────────────────────────────────────────
   if (!result) return null
 
-  const categoryStyle = CATEGORY_STYLES[result.failure_category] ?? CATEGORY_STYLES.UNKNOWN
+  const categoryStyle = categoryBadgeStyle(result.failure_category)
   const toolsUsed: string[] = result.tools_used ?? []
   const roleActions: RoleActions = result.role_actions ?? { qa: '', developer: '', sre: '', release_manager: '' }
   const confidenceWhy = result.confidence_why ?? {
@@ -376,7 +379,7 @@ export default function AIAnalysisPanel({
       {/* Header */}
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-3">
-          <div className="p-2 bg-white/10 rounded-xl">
+          <div className="p-2 bg-[var(--color-bg-hover)] rounded-xl">
             <Bot className="h-5 w-5 text-[var(--color-text)]" />
           </div>
           <div>
@@ -391,7 +394,10 @@ export default function AIAnalysisPanel({
 
       {/* Category + flags */}
       <div className="flex flex-wrap gap-2">
-        <span className={clsx('badge border', categoryStyle)}>{result.failure_category.replace('_', ' ')}</span>
+        <span className="badge gap-1 border text-[var(--color-text-secondary)]" style={categoryStyle}>
+          <FailureCategoryMark category={result.failure_category} size={8} />
+          {result.failure_category.replace('_', ' ')}
+        </span>
         {result.is_flaky && (
           <span className="badge bg-[var(--status-flaky-bg)]/40 text-[var(--status-flaky)] border border-[var(--status-flaky-bd)]/50">
             ⚠ High Flakiness

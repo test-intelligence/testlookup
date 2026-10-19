@@ -72,7 +72,7 @@ function SeedDataPageBody() {
 
       {/* Dev environment warning */}
       <div className="flex items-start gap-3 rounded-lg border px-4 py-3"
-        style={{ borderColor: 'var(--color-border)', background: 'rgba(217, 119, 6, 0.08)' }}>
+        style={{ borderColor: 'var(--color-border)', background: 'color-mix(in srgb, var(--ui-warning) 8%, transparent)' }}>
         <AlertTriangle className="h-4 w-4 text-[var(--status-broken)] mt-0.5 flex-shrink-0" />
         <div className="text-sm text-[var(--status-broken)]">
           <p className="font-medium">Development environment only</p>

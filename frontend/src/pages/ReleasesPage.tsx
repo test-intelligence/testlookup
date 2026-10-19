@@ -49,6 +49,7 @@ import { isDetailToken } from '@/components/ui/inPage/ids'
 import { SectionErrorBoundary } from '@/components/ui/SectionErrorBoundary'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import { appMutate } from '@/utils/swrCacheMutate'
+import { formatCompactDateTime, formatDay } from '@/utils/formatters'
 import EmptyState from '@/components/ui/EmptyState'
 import DataUnavailable from '@/components/ui/DataUnavailable'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -112,8 +113,7 @@ const RELEASE_PANE_PARAM = 'open'
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function fmtDate(iso: string | null | undefined) {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+  return formatDay(iso)
 }
 
 type RequestError = { message?: string; response?: { status?: number; data?: { detail?: unknown } } }
@@ -218,7 +218,7 @@ export function ReleaseModal({ projectId, onClose, onSaved, initial, slot }: Rel
           <button onClick={onClose} className="px-4 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
           <button
             onClick={save} disabled={saving}
-            className="px-4 py-2 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] rounded-lg font-medium flex items-center gap-2"
+            className="btn-primary flex items-center gap-2"
           >
             {saving && <LoadingSpinner size="sm" />}
             {initial ? 'Save Changes' : 'Create Release'}
@@ -329,7 +329,7 @@ export function LinkRunModal({ releaseId, phases, onClose, onSaved, slot }: {
           <button onClick={onClose} className="px-4 py-2 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)]">Cancel</button>
           <button
             onClick={link} disabled={saving || !selectedRun}
-            className="px-4 py-2 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] rounded-lg font-medium flex items-center gap-2"
+            className="btn-primary flex items-center gap-2"
           >
             {saving && <LoadingSpinner size="sm" />}
             Link Run
@@ -344,7 +344,7 @@ export function LinkRunModal({ releaseId, phases, onClose, onSaved, slot }: {
             <option value="">— Select run —</option>
             {(runs as Array<{ id: string; build_number?: number; created_at: string }>).map(r => (
               <option key={r.id} value={r.id}>
-                {r.build_number ?? r.id.slice(0, 8)} — {new Date(r.created_at).toLocaleDateString()}
+                {r.build_number ?? r.id.slice(0, 8)} — {formatDay(r.created_at)}
               </option>
             ))}
           </select>
@@ -455,7 +455,7 @@ function AddPhaseRow({ releaseId, existingPhaseNames, onSaved }: {
           <button
             onClick={save}
             disabled={!canAdd}
-            className="px-4 py-1 text-xs bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-40 disabled:cursor-not-allowed text-[var(--color-btn-primary-text)] rounded-lg font-medium transition-colors"
+            className="btn-primary btn-sm"
           >
             {saving ? 'Adding…' : 'Add Phase'}
           </button>
@@ -760,7 +760,7 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false, slot, i
                 <div className="flex items-center justify-between gap-3">
                   <span className="font-medium capitalize text-[var(--color-text)]">{outcome.outcome_kind}</span>
                   <time className="text-[var(--color-text-faint)]" dateTime={outcome.marked_at}>
-                    {new Date(outcome.marked_at).toLocaleString()}
+                    {formatCompactDateTime(outcome.marked_at)}
                   </time>
                 </div>
                 <p className="mt-0.5 text-[var(--color-text-muted)]">{outcome.reason}</p>
@@ -1388,7 +1388,7 @@ export default function ReleasesPage() {
       action={!isAllProjects ? (
         <button
           onClick={openNew}
-          className="mt-4 flex items-center gap-2 px-4 py-2 bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] rounded-md text-sm font-medium mx-auto"
+          className="btn-primary mt-4 flex items-center gap-2 mx-auto"
         >
           <Plus className="h-4 w-4" /> Create release
         </button>
@@ -1544,7 +1544,7 @@ export default function ReleasesPage() {
               )}
               <button
                 onClick={openNew}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] rounded-md font-medium"
+                className="btn-primary inline-flex items-center gap-1.5"
               >
                 <Plus className="h-4 w-4" /> New release
               </button>

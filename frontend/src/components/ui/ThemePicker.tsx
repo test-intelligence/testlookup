@@ -17,7 +17,8 @@ export default function ThemePicker() {
         <span className="font-medium uppercase tracking-wider text-[var(--color-text-muted)]">Theme</span>
         <span className="text-[var(--color-text-secondary)]">{active.label}</span>
       </div>
-      <div role="listbox" aria-label="Color theme" className="flex gap-1.5">
+      {/* gap-1: seven 28 px chips = 220 px in the account menu's 230 px row (W29a §0.29). */}
+      <div role="listbox" aria-label="Color theme" className="flex gap-1">
         {THEMES.map((t) => {
           const sel = t.id === theme
           return (

@@ -173,9 +173,10 @@ describe('AgentStatusPage — four-value status chips (E7.5)', () => {
     ])
 
     expect(await screen.findAllByTestId('pipeline-reviewed-at')).toHaveLength(1)
-    expect(screen.getByTestId('pipeline-reviewed-at')).toHaveTextContent(
-      `· reviewed ${new Date('2026-09-12T11:15:00Z').toLocaleString()}`,
-    )
+    // W29a UIX-10: the table stamp in the fixed en-US format (formatCompactDateTime),
+    // never the browser locale's "9/12/2026, 6:15:00 AM". Local time: vitest pins
+    // America/Chicago (vitest.config.ts), so 11:15Z reads 06:15.
+    expect(screen.getByTestId('pipeline-reviewed-at')).toHaveTextContent('· reviewed Sep 12, 06:15')
     const chips = screen.getAllByTestId('pipeline-status-chip')
     const passedChips = chips.filter((chip) => chip.textContent === 'PASSED')
     expect(passedChips).toHaveLength(2)

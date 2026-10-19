@@ -36,6 +36,7 @@ import Pagination from '@/components/ui/Pagination'
 import { useTabParam } from '@/components/ui/useTabParam'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import { formatRunWhen } from '@/utils/formatters'
+import { SEVERITY_STYLE, severityLevel } from '@/components/ui/severity'
 import { useMyFailures, useReassignOptions } from '@/hooks/useMyFailures'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
@@ -68,14 +69,12 @@ function relativeAge(iso: string): string {
   return `${d}d ago`
 }
 
-/** `null` color = severity not known: drawn as a hollow, muted ring. It used
- *  to fall through to the passed green, which read as "this failure is fine". */
+/** The one severity map's dot (W29a UIX-07: P0 danger, P1 warning, P2 info,
+ *  P3 neutral). `null` = severity not known: drawn as a hollow, muted ring. It
+ *  used to fall through to the passed green, which read as "this failure is fine". */
 function severityDot(severity: string | null | undefined): string | null {
-  const s = (severity || '').toLowerCase()
-  if (s === 'blocker' || s === 'critical') return 'var(--status-failed)'  // red
-  if (s === 'major' || s === 'high')        return 'var(--status-broken)' // amber
-  if (s === 'minor' || s === 'low')         return '#9198a1' // slate
-  return null
+  const level = severityLevel(severity)
+  return level ? SEVERITY_STYLE[level].dot : null
 }
 
 const TH = 'px-4 py-2.5 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider whitespace-nowrap'
@@ -590,7 +589,7 @@ function ReassignModal({
             type="button"
             onClick={handleSubmit}
             disabled={submitting || !selectedUserId}
-            className="flex items-center gap-1.5 text-xs bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] px-3 py-1.5 rounded-lg font-medium"
+            className="btn-primary btn-sm flex items-center gap-1.5"
           >
             {submitting && <LoadingSpinner size="sm" />}
             {submitting ? 'Reassigning…' : 'Reassign'}
@@ -740,7 +739,7 @@ function TriageStatusModal({
             type="button"
             onClick={handleSubmit}
             disabled={submitting}
-            className="flex items-center gap-1.5 text-xs bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] px-3 py-1.5 rounded-lg font-medium"
+            className="btn-primary btn-sm flex items-center gap-1.5"
           >
             {submitting && <LoadingSpinner size="sm" />}
             {submitting ? 'Saving…' : 'Update status'}

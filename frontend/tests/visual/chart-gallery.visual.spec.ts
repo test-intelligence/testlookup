@@ -1,19 +1,20 @@
 /**
  * Pixel baselines: one screenshot per gallery item per theme.
  *
- * Two themes — `signal` (the default, dark) and `lab` (the only light one) —
- * because the status hues differ between the dark set and the light theme by
+ * Two themes for every item — `signal` (the default, dark) and `lab` (light) —
+ * because the status hues differ between the dark set and the light themes by
  * design (see `scripts/check-theme-tokens.mjs`), so a regression can hide in
- * either. The item list comes from the gallery's own fixtures module, so a
- * new gallery item gets a test (and needs a baseline) without editing this
- * file. A REMOVED item's baseline is not detected: Playwright has no
+ * either. Paper (the second light theme, W29a OR-06) shoots a representative
+ * set (`PAPER_ITEM_IDS`). The item list comes from the gallery's own fixtures
+ * module, so a new gallery item gets a test (and needs a baseline) without
+ * editing this file. A REMOVED item's baseline is not detected: Playwright has no
  * orphaned-snapshot check, so the old PNG simply stays on disk, unused, and
  * nothing fails. Delete it by hand in the change that removes the item.
  *
  * A missing baseline FAILS (Playwright writes the actual and reports it); a
  * new one is admitted only through `npm run test:visual:update`.
  */
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import {
   GALLERY_DRAWN_DOM_ITEMS,
   GALLERY_DRAWN_SVG_ITEMS,
@@ -164,53 +165,77 @@ test('every Wave-3 edge case still has a gallery item, and so a baseline', () =>
 
 const THEMES = ['signal', 'lab'] as const
 
+/**
+ * W29a (UIX-01, OR-06): Paper, the second light theme, on a representative
+ * set rather than all items: the status decals (`donut-status`), the eight
+ * series (`stacked-many-categories`), the sequential and diverging ramps
+ * (`heatmap-frame`, `bar-diverging`), the scatter and a severity strip.
+ */
+const PAPER_ITEM_IDS = [
+  'donut-status',
+  'stacked-many-categories',
+  'heatmap-frame',
+  'bar-diverging',
+  'scatter',
+  'day-strip-severity',
+] as const
+
+test('every Paper item is still a gallery item, and so a baseline', () => {
+  for (const id of PAPER_ITEM_IDS) expect(GALLERY_ITEM_IDS, id).toContain(id)
+})
+
+/** Open the gallery in `theme` and wait until every item has drawn (see the comments inside). */
+async function openDrawnGallery(page: Page, theme: string) {
+  await page.goto(`/__charts?theme=${theme}`)
+  expect(new URL(page.url()).pathname, 'the gallery route redirected').toBe('/__charts')
+  // The gallery is a lazy route: `goto` settles on the shell's load, and
+  // the page's own module graph (recharts, echarts …) loads after it, from
+  // the dev server, into a fresh context per test. On main 290b79c2 the
+  // echarts modules were first asked for 8 s after the navigation, past
+  // the theme check's 5 s, with the page still empty: 3 of 298 failed,
+  // the same tree passed on its PR. Wait for the page, then its theme.
+  await expect(page.getByTestId('chart-gallery')).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+  await expect(page.locator('[data-gallery-item]')).toHaveCount(GALLERY_ITEM_IDS.length)
+  // Every chart has measured and drawn before any item is captured, so a
+  // screenshot never races ResponsiveContainer's first layout pass.
+  for (const item of GALLERY_DRAWN_SVG_ITEMS) {
+    await expect(
+      page.locator(`[data-gallery-item="${item.id}"] .recharts-wrapper > svg.recharts-surface path`).first(),
+    ).toBeVisible()
+  }
+  // ECharts items (canvas) report ready once the engine has drawn — and
+  // every one does, empty ones included, so none is captured mid-load.
+  for (const id of GALLERY_CANVAS_ITEM_IDS) {
+    await expect(
+      page.locator(`[data-gallery-item="${id}"] [data-chart-engine="echarts"]`),
+    ).toHaveAttribute('data-chart-status', 'ready')
+  }
+  // A `dom` item (the ranked slowest-tests list; since Wave 2.5 the
+  // sparkline, the gauge bar and the day strip) has no engine to report
+  // ready, so wait until its own marks are drawn: a screenshot must not
+  // race React's first paint any more than it may race
+  // ResponsiveContainer's. A mark with a width OR a height counts (a flat
+  // sparkline's line has no height).
+  for (const item of GALLERY_DRAWN_DOM_ITEMS) {
+    const marks = page.locator(`[data-gallery-item="${item.id}"]`).locator(galleryDomMarks(item))
+    await expect
+      .poll(() =>
+        marks.evaluateAll((nodes) =>
+          nodes.filter((node) => {
+            const box = node.getBoundingClientRect()
+            return box.width > 0 || box.height > 0
+          }).length,
+        ),
+      )
+      .toBeGreaterThanOrEqual(Math.max(1, item.minMarks))
+  }
+}
+
 for (const theme of THEMES) {
   test.describe(`theme: ${theme}`, () => {
     test.beforeEach(async ({ page }) => {
-      await page.goto(`/__charts?theme=${theme}`)
-      expect(new URL(page.url()).pathname, 'the gallery route redirected').toBe('/__charts')
-      // The gallery is a lazy route: `goto` settles on the shell's load, and
-      // the page's own module graph (recharts, echarts …) loads after it, from
-      // the dev server, into a fresh context per test. On main 290b79c2 the
-      // echarts modules were first asked for 8 s after the navigation, past
-      // the theme check's 5 s, with the page still empty: 3 of 298 failed,
-      // the same tree passed on its PR. Wait for the page, then its theme.
-      await expect(page.getByTestId('chart-gallery')).toBeVisible({ timeout: 30_000 })
-      await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
-      await expect(page.locator('[data-gallery-item]')).toHaveCount(GALLERY_ITEM_IDS.length)
-      // Every chart has measured and drawn before any item is captured, so a
-      // screenshot never races ResponsiveContainer's first layout pass.
-      for (const item of GALLERY_DRAWN_SVG_ITEMS) {
-        await expect(
-          page.locator(`[data-gallery-item="${item.id}"] .recharts-wrapper > svg.recharts-surface path`).first(),
-        ).toBeVisible()
-      }
-      // ECharts items (canvas) report ready once the engine has drawn — and
-      // every one does, empty ones included, so none is captured mid-load.
-      for (const id of GALLERY_CANVAS_ITEM_IDS) {
-        await expect(
-          page.locator(`[data-gallery-item="${id}"] [data-chart-engine="echarts"]`),
-        ).toHaveAttribute('data-chart-status', 'ready')
-      }
-      // A `dom` item (the ranked slowest-tests list; since Wave 2.5 the
-      // sparkline, the gauge bar and the day strip) has no engine to report
-      // ready, so wait until its own marks are drawn: a screenshot must not
-      // race React's first paint any more than it may race
-      // ResponsiveContainer's. A mark with a width OR a height counts (a flat
-      // sparkline's line has no height).
-      for (const item of GALLERY_DRAWN_DOM_ITEMS) {
-        const marks = page.locator(`[data-gallery-item="${item.id}"]`).locator(galleryDomMarks(item))
-        await expect
-          .poll(() =>
-            marks.evaluateAll((nodes) =>
-              nodes.filter((node) => {
-                const box = node.getBoundingClientRect()
-                return box.width > 0 || box.height > 0
-              }).length,
-            ),
-          )
-          .toBeGreaterThanOrEqual(Math.max(1, item.minMarks))
-      }
+      await openDrawnGallery(page, theme)
     })
 
     for (const id of GALLERY_ITEM_IDS) {
@@ -222,3 +247,17 @@ for (const theme of THEMES) {
     }
   })
 }
+
+test.describe('theme: paper', () => {
+  test.beforeEach(async ({ page }) => {
+    await openDrawnGallery(page, 'paper')
+  })
+
+  for (const id of PAPER_ITEM_IDS) {
+    test(id, async ({ page }) => {
+      const section = page.locator(`[data-gallery-item="${id}"]`)
+      await section.scrollIntoViewIfNeeded()
+      await expect(section).toHaveScreenshot(`${id}--paper.png`)
+    })
+  }
+})

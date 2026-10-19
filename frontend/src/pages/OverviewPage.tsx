@@ -691,7 +691,7 @@ export default function OverviewPage() {
           <LoadingSpinner size="sm" />
         </div>
       ) : (
-        <SectionErrorBoundary message="Failed to load release readiness">
+        <SectionErrorBoundary message="Could not load release readiness">
           <section aria-label="Release readiness">
             <StatusBanner
               state={banner.state}
@@ -785,7 +785,7 @@ export default function OverviewPage() {
         {/* The outline's level 2 for the charts' level-3 titles (axe
             heading-order): the verdict card's h2 used to be it. */}
         <h2 className="sr-only">Pass rate and status</h2>
-        <SectionErrorBoundary message="Failed to load charts">
+        <SectionErrorBoundary message="Could not load charts">
           <Suspense fallback={<CataloguePending row="headline" />}>
             <OverviewCatalogue rows="headline" {...catalogueProps} />
           </Suspense>
@@ -802,7 +802,7 @@ export default function OverviewPage() {
           {tab === 'top-failing' ? (
             // The catalogue's lazy row: Top failing tests beside Failure
             // categories (the page's own failure-categories read).
-            <SectionErrorBoundary message="Failed to load charts">
+            <SectionErrorBoundary message="Could not load charts">
               <Suspense fallback={<CataloguePending row="breakdown" />}>
                 <OverviewCatalogue rows="breakdown" {...catalogueProps} />
               </Suspense>
@@ -811,7 +811,7 @@ export default function OverviewPage() {
             // Recent activity (epic ACT). Inside its own error boundary and on
             // its own SWR key: the panel must never be able to take /overview
             // down or hold up its first paint.
-            <SectionErrorBoundary message="Failed to load recent activity">
+            <SectionErrorBoundary message="Could not load recent activity">
               <RecentActivityPanel days={days} />
             </SectionErrorBoundary>
           )}

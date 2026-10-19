@@ -1459,6 +1459,22 @@ describe('DefectsPage — each defect as entered, and every defect counted', () 
     expect(got).toEqual(SEVERITY_CASES.map(([name, , want]) => [name, want]))
   })
 
+  // W29a UIX-07: the severity chips read the ONE severity palette — the text is
+  // the level's legible ink (a P2 chip's is the info ink), the dot its hue.
+  it('draws each severity chip from SEVERITY_STYLE', async () => {
+    const table = await renderWith({
+      items: (['P0', 'P1', 'P2', 'P3'] as const).map((p) => ({ ...ENTERED, id: `chip-${p}`, title: `Chip ${p}`, severity: null, priority: p })),
+      total: 4, pages: 1,
+    })
+    const chip = (p: string) => within(table).getByText(`Chip ${p}`).closest('tr')?.querySelector('[data-severity]') as HTMLElement
+    expect(chip('P0').style.color).toBe('var(--ui-danger-ink)')
+    expect(chip('P1').style.color).toBe('var(--ui-warning-ink)')
+    expect(chip('P2').style.color).toBe('var(--ui-info-ink)')
+    expect(chip('P3').style.color).toBe('var(--color-text-muted)')
+    expect((chip('P2').querySelector('i') as HTMLElement).style.background).toBe('var(--ui-info)')
+    for (const p of ['P0', 'P1', 'P2', 'P3']) expect(chip(p).getAttribute('style'), p).not.toMatch(/--status-/)
+  })
+
   it('says when the table covers only the newest defects', async () => {
     await renderWith({ items: [ENTERED], total: 1500, pages: 1 })
     expect(document.querySelector('[data-defects-capped]')).toHaveTextContent(

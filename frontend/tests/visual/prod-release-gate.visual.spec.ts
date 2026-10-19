@@ -32,7 +32,7 @@ import {
   openProductionPage,
   PINNED,
   TALL_VIEWPORT,
-  THEMES,
+  THEMES_WITH_PAPER,
   visualRegion,
 } from '../lib/production-pages'
 import { expectDrawn, sectionFrame } from '../lib/rollout'
@@ -46,7 +46,7 @@ async function contextDrawn(page: Page, clusters: boolean) {
   if (clusters) await expectDrawn(sectionFrame(page, 'gate-clusters', 'Failure cluster share'), 'gate-clusters')
 }
 
-for (const theme of THEMES) {
+for (const theme of THEMES_WITH_PAPER) {
   test(`release gate regions — ${theme}`, async ({ page }) => {
     const { api, errors } = await openProductionPage(page, `/release-gate/${RUN_ID}`, {
       theme,
@@ -75,7 +75,7 @@ test.describe('the cluster card, below the Context group', () => {
   // `PINNED`'s launch options stay file-level (a describe cannot change them); only the height grows.
   test.use({ viewport: { ...TALL_VIEWPORT } })
 
-  for (const theme of THEMES) {
+  for (const theme of THEMES_WITH_PAPER) {
     test(`release gate cluster card — ${theme}`, async ({ page }) => {
       const { api, errors } = await openProductionPage(page, `/release-gate/${RUN_ID}?tab=context`, {
         theme,

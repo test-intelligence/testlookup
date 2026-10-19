@@ -148,7 +148,8 @@ describe('SuitesPage', () => {
       isLoading: false,
       error: new Error('boom'),
     })
-    expect(screen.getByText(/failed to load suites/i)).toBeInTheDocument()
+    // W29a UIX-11: one phrasing for a failed read, "Could not load {thing}."
+    expect(screen.getByText(/could not load suites/i)).toBeInTheDocument()
   })
 
   // ── All-Projects mode (Phase I last follow-up) ─────────────────────────

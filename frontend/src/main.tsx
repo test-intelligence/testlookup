@@ -37,7 +37,8 @@ ReactDOM.createRoot(rootElement).render(
           position="top-right"
           toastOptions={{
             duration: 4000,
-            style: { background: '#1e293b', color: '#e2e8f0', border: '1px solid #334155' },
+            // W29a UIX-13: the toast follows the theme (it was a dark-slate toast in every theme, Lab and Paper included).
+            style: { background: 'var(--color-bg-card)', color: 'var(--color-text)', border: '1px solid var(--color-border-light)' },
           }}
         />
       </BrowserRouter>

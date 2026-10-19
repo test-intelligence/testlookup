@@ -18,6 +18,8 @@ import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import Pagination from '@/components/ui/Pagination'
 import StatusBanner, { type BannerState } from '@/components/ui/StatusBanner'
+import { avatarColorForName } from '@/components/ui/avatarColors'
+import { SEVERITY_STYLE, severityLevel } from '@/components/ui/severity'
 import { useTabParam } from '@/components/ui/useTabParam'
 import { DetailPane } from '@/components/ui/inPage/DetailPane'
 import { isDetailToken } from '@/components/ui/inPage/ids'
@@ -1654,11 +1656,11 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
                     >
                       <Sparkles className="h-3.5 w-3.5" />{!activeCase && ' AI Generate'}
                     </button>
+                    {/* .btn-sm: the toolbar's controls are 31 px; md would grow the row (W29a UIX-08). */}
                     <button
                       aria-label="New test case from catalog toolbar"
                       onClick={() => topSlot.open('create')}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-md transition-colors"
-                      style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
+                      className="btn-primary btn-sm inline-flex items-center gap-1.5"
                     >
                       <Plus className="h-3.5 w-3.5" /> New test case
                     </button>
@@ -2226,8 +2228,9 @@ function CaseStatusPill({ status }: { status: string }) {
     under_review:     { bg: 'color-mix(in srgb, var(--status-broken) 10%, transparent)', bd: 'color-mix(in srgb, var(--status-broken) 30%, transparent)', fg: 'var(--status-broken)', label: 'Under review' },
     needs_update:     { bg: 'color-mix(in srgb, var(--status-broken) 10%, transparent)', bd: 'color-mix(in srgb, var(--status-broken) 30%, transparent)', fg: 'var(--status-broken)', label: 'Needs update' },
     draft:            { bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)', fg: 'var(--color-text-muted)', label: 'Draft' },
-    deprecated:       { bg: 'rgba(120,113,108,0.12)', bd: 'rgba(120,113,108,0.30)', fg: '#a8a29e', label: 'Deprecated', lt: true },
-    archived:         { bg: 'rgba(120,113,108,0.08)', bd: 'rgba(120,113,108,0.22)', fg: 'var(--color-text-faint)', label: 'Archived' },
+    // W29a UIX-13: the retired states on theme tokens (were a fixed stone grey).
+    deprecated:       { bg: 'color-mix(in srgb, var(--color-text-muted) 12%, transparent)', bd: 'color-mix(in srgb, var(--color-text-muted) 30%, transparent)', fg: 'var(--color-text-secondary)', label: 'Deprecated', lt: true },
+    archived:         { bg: 'color-mix(in srgb, var(--color-text-muted) 8%, transparent)', bd: 'color-mix(in srgb, var(--color-text-muted) 22%, transparent)', fg: 'var(--color-text-faint)', label: 'Archived' },
     rejected:         { bg: 'color-mix(in srgb, var(--status-failed) 10%, transparent)', bd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)', fg: 'var(--status-failed)', label: 'Rejected' },
   }
   const p = map[status] ?? { bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)', fg: 'var(--color-text-muted)', label: status.replace(/_/g, ' ') }
@@ -2247,36 +2250,23 @@ function CaseStatusPill({ status }: { status: string }) {
   )
 }
 
-function CasePriorityTag({ priority }: { priority: string }) {
-  const map: Record<string, { bg: string; bd: string; fg: string; label: string }> = {
-    critical: { bg: 'color-mix(in srgb, var(--status-failed) 14%, transparent)',  bd: 'color-mix(in srgb, var(--status-failed) 25%, transparent)',  fg: 'var(--status-failed)', label: 'P0' },
-    high:     { bg: 'color-mix(in srgb, var(--status-broken) 14%, transparent)', bd: 'color-mix(in srgb, var(--status-broken) 25%, transparent)', fg: 'var(--status-broken)', label: 'P1' },
-    medium:   { bg: 'color-mix(in srgb, var(--color-accent) 10%, transparent)', bd: 'color-mix(in srgb, var(--color-accent) 22%, transparent)', fg: 'var(--color-accent)', label: 'P2' },
-    low:      { bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)', fg: 'var(--color-text-muted)', label: 'P3' },
-  }
-  const p = map[priority] ?? map.low
+/**
+ * A case's priority as its P-level, in the ONE severity palette (W29a
+ * UIX-07): critical P0, high P1, medium P2, low P3 (any vocabulary
+ * `severityLevel` knows); an unknown word reads as P3, as before.
+ */
+export function CasePriorityTag({ priority }: { priority: string }) {
+  const level = severityLevel(priority) ?? 'P3'
+  const p = SEVERITY_STYLE[level]
   return (
     <span
+      data-priority-level={level}
       className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[10.5px] font-semibold uppercase"
       style={{ background: p.bg, border: `1px solid ${p.bd}`, color: p.fg, letterSpacing: '0.04em' }}
     >
-      {p.label}
+      {level}
     </span>
   )
-}
-
-const AVATAR_GRADIENTS = [
-  'linear-gradient(135deg, #6366f1, #ec4899)',
-  'linear-gradient(135deg, #06b6d4, var(--color-accent))',
-  'linear-gradient(135deg, var(--status-broken), var(--status-failed))',
-  'linear-gradient(135deg, var(--status-passed), #06b6d4)',
-  'linear-gradient(135deg, #8b5cf6, #ec4899)',
-]
-
-function hashIntoBucket(s: string, buckets: number): number {
-  let h = 0
-  for (let i = 0; i < s.length; i++) h = ((h << 5) - h) + s.charCodeAt(i)
-  return Math.abs(h) % buckets
 }
 
 export function OwnerCell({ owner, userId }: { owner: string | null; userId: string | null }) {
@@ -2289,13 +2279,15 @@ export function OwnerCell({ owner, userId }: { owner: string | null; userId: str
       .map(part => part[0])
       .join('')
       .toUpperCase()
-    const grad = AVATAR_GRADIENTS[hashIntoBucket(displayOwner, AVATAR_GRADIENTS.length)]
+    // W29a UIX-01 / UIX-13: the one avatar map — legible fg initials on its bg, never white.
+    const c = avatarColorForName(displayOwner)
     return (
       <span className="inline-flex items-center gap-1.5 text-[11.5px] text-[var(--color-text-secondary)]">
         <span
           aria-hidden
-          className="inline-flex items-center justify-center rounded-full font-bold text-white"
-          style={{ width: 18, height: 18, background: grad, fontSize: 9 }}
+          data-owner-avatar=""
+          className="inline-flex items-center justify-center rounded-full font-bold"
+          style={{ width: 18, height: 18, background: c.bg, color: c.fg, fontSize: 9 }}
         >
           {initials || '?'}
         </span>
@@ -2316,13 +2308,14 @@ export function OwnerCell({ owner, userId }: { owner: string | null; userId: str
     )
   }
   const initials = userId.slice(0, 2).toUpperCase()
-  const grad = AVATAR_GRADIENTS[hashIntoBucket(userId, AVATAR_GRADIENTS.length)]
+  const c = avatarColorForName(userId)
   return (
     <span className="inline-flex items-center gap-1.5 text-[11.5px] text-[var(--color-text-secondary)]">
       <span
         aria-hidden
-        className="inline-flex items-center justify-center rounded-full font-bold text-white"
-        style={{ width: 18, height: 18, background: grad, fontSize: 9 }}
+        data-owner-avatar=""
+        className="inline-flex items-center justify-center rounded-full font-bold"
+        style={{ width: 18, height: 18, background: c.bg, color: c.fg, fontSize: 9 }}
       >
         {initials}
       </span>
@@ -2405,10 +2398,10 @@ function EmptyStateBlock({
             >
               <Sparkles className="h-3.5 w-3.5" /> AI Generate
             </button>
+            {/* .btn-sm: beside two 31 px controls (W29a UIX-08). */}
             <button
               onClick={onCreate}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-md"
-              style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
+              className="btn-primary btn-sm inline-flex items-center gap-1.5"
             >
               <Plus className="h-3.5 w-3.5" /> New test case
             </button>
@@ -2449,7 +2442,8 @@ function PlanItemsView({ planId, onMutate, projectId = null }: PlanItemsViewProp
     passed:  'text-[var(--status-passed)]',
     failed:  'text-[var(--status-failed)]',
     blocked: 'text-[var(--status-broken)]',
-    skipped: 'text-[var(--color-text-muted)]',
+    // W29a UIX-03: a skipped RESULT is the skipped hue (was muted grey).
+    skipped: 'text-[var(--status-skipped)]',
   }
 
   if (isLoading) return <div className="flex justify-center py-4"><LoadingSpinner size="sm" /></div>
@@ -2560,7 +2554,7 @@ function LinkSuiteModal({ planId, projectId, onClose, onLinked }: LinkSuiteModal
   useEffect(() => {
     testManagementService.listSuites(projectId)
       .then(setSuites)
-      .catch(() => toast.error('Failed to load suites'))
+      .catch(() => toast.error('Could not load suites'))
       .finally(() => setLoadingSuites(false))
   }, [projectId])
 
@@ -2628,7 +2622,7 @@ function LinkSuiteModal({ planId, projectId, onClose, onLinked }: LinkSuiteModal
           <button
             onClick={handleLink}
             disabled={linking || !selectedSuite}
-            className="px-4 py-2 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] rounded-lg font-medium flex items-center gap-2"
+            className="btn-primary flex items-center gap-2"
           >
             {linking ? <LoadingSpinner size="sm" /> : <Layers className="h-4 w-4" />}
             {linking ? 'Linking…' : 'Link Suite'}
@@ -2969,7 +2963,7 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
   } = useSWR(['test-suites', projectId], () => testManagementService.listSuites(projectId))
   const suites = useMemo(() => suitesData ?? [], [suitesData])
   useEffect(() => {
-    if (suitesError) toast.error('Failed to load test suites')
+    if (suitesError) toast.error('Could not load test suites')
   }, [suitesError])
   // The list above is aggregated by suite NAME; the suite page is keyed by
   // the suite record's id, so names are looked up in the project's suites.
@@ -3117,7 +3111,7 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
         setSuiteCasesTotal(prev => ({ ...prev, [suiteName]: casesResp.total }))
       }
     } catch {
-      toast.error('Failed to load suite cases')
+      toast.error('Could not load suite cases')
     } finally {
       setLoadingCases(null)
     }
@@ -3145,7 +3139,8 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
     passed:  'text-[var(--status-passed)]',
     failed:  'text-[var(--status-failed)]',
     error:   'text-[var(--status-failed)]',
-    skipped: 'text-[var(--color-text-muted)]',
+    // W29a UIX-03: a skipped RESULT is the skipped hue (was muted grey).
+    skipped: 'text-[var(--status-skipped)]',
     pending: 'text-[var(--status-broken)]',
   }
 
@@ -3185,7 +3180,7 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
         <button
           type="button"
           onClick={() => setShowAddSuite(true)}
-          className="inline-flex items-center gap-1.5 text-xs bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] px-3 py-1.5 rounded-lg font-medium"
+          className="btn-primary btn-sm inline-flex items-center gap-1.5"
         >
           <Plus className="h-3.5 w-3.5" />
           Add test suite
@@ -3670,7 +3665,7 @@ function AddTestSuiteModal({
             type="button"
             onClick={handleSubmit}
             disabled={!canSubmit}
-            className="px-4 py-2 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] rounded-lg font-medium flex items-center gap-2"
+            className="btn-primary flex items-center gap-2"
           >
             {saving ? <LoadingSpinner size="sm" /> : <Plus className="h-4 w-4" />}
             {saving ? 'Creating…' : 'Create suite'}

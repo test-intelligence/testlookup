@@ -35,7 +35,7 @@ Two items carry a live badge: **Inbox** shows how many failures are assigned to 
 - **Search** — type and press Enter to search tests, runs and defects; press `/` anywhere to jump to the box. See [Search and discovery](/docs/search).
 - **Notifications bell** — your recent notifications with an unread count, **Mark all read**, and a link to your notification settings.
 - **Help (?)** — see below.
-- **Account menu** — your name and role, **My profile**, **My notifications**, the colour theme, **Presentation mode** (larger text and stronger contrast for a wall monitor or projector) and **Sign out**.
+- **Account menu** — your name and role, **My profile**, **My notifications**, the colour theme (five dark themes, **Lab**, and **Paper**: soft light, low glare, for long reading sessions; your choice is kept in your browser), **Presentation mode** (larger text and stronger contrast for a wall monitor or projector) and **Sign out**.
 
 ### The time window
 

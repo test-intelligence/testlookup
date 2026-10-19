@@ -48,6 +48,8 @@ import { clsx } from 'clsx'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import StatusBanner, { type BannerFact, type BannerState } from '@/components/ui/StatusBanner'
+import DecisionChip from '@/components/ui/DecisionChip'
+import { DECISION_LABEL, DECISION_TOKEN } from '@/components/ui/statusVocabulary'
 import Disclosure from '@/components/ui/Disclosure'
 import AISuggestion from '@/components/ai/AISuggestion'
 import DecisionTrailDrawer from '@/components/ai/DecisionTrailDrawer'
@@ -92,53 +94,41 @@ import { orderActionRows } from '@/utils/persona'
 type Gate = 'GO' | 'CONDITIONAL_GO' | 'NO_GO' | 'PENDING'
 
 // ── Verdict theming ─────────────────────────────────────────────────────────
+// W29a UIX-03: the words and hues come from the one decision vocabulary
+// (Go / Conditional / No-Go; conditional is the warning hue); the verdict chip
+// is a DecisionChip (its tint, border and legible ink).
 const GATE_THEME: Record<Gate, {
   /** The banner's state (its pill word and hue). */
   banner: BannerState
   gate: string
-  pillBg: string
-  pillBd: string
-  pillFg: string
   meter: string
   label: string
   action: string
 }> = {
   GO: {
     banner: 'go',
-    gate:   'var(--status-passed)',
-    pillBg: 'color-mix(in srgb, var(--status-passed) 15%, transparent)',
-    pillBd: 'color-mix(in srgb, var(--status-passed) 30%, transparent)',
-    pillFg: 'var(--status-passed)',
-    meter:  'var(--status-passed)',
-    label:  'Go',
+    gate:   DECISION_TOKEN.go.hue,
+    meter:  DECISION_TOKEN.go.hue,
+    label:  DECISION_LABEL.go,
     action: 'ship cleared',
   },
   CONDITIONAL_GO: {
     banner: 'conditional',
-    gate:   'var(--status-broken)',
-    pillBg: 'color-mix(in srgb, var(--status-broken) 15%, transparent)',
-    pillBd: 'color-mix(in srgb, var(--status-broken) 30%, transparent)',
-    pillFg: 'var(--status-broken)',
-    meter:  'var(--status-broken)',
-    label:  'Conditional Go',
+    gate:   DECISION_TOKEN.conditional.hue,
+    meter:  DECISION_TOKEN.conditional.hue,
+    label:  DECISION_LABEL.conditional,
     action: 'proceed with mitigation',
   },
   NO_GO: {
     banner: 'no_go',
-    gate:   'var(--status-failed)',
-    pillBg: 'color-mix(in srgb, var(--status-failed) 15%, transparent)',
-    pillBd: 'var(--alert-border-soft)',
-    pillFg: 'var(--status-failed)',
-    meter:  'var(--status-failed)',
-    label:  'No-Go',
+    gate:   DECISION_TOKEN.no_go.hue,
+    meter:  DECISION_TOKEN.no_go.hue,
+    label:  DECISION_LABEL.no_go,
     action: 'ship blocked',
   },
   PENDING: {
     banner: 'pending',
     gate:   'var(--color-text-secondary)',
-    pillBg: 'var(--color-bg-secondary)',
-    pillBd: 'var(--color-border)',
-    pillFg: 'var(--color-text-muted)',
     meter:  'var(--color-text-muted)',
     label:  'Pending',
     action: 'awaiting evidence',
@@ -243,8 +233,8 @@ function GhostBtn({
 // score's working moves below the primary content (P3 template, step 3).
 
 function RiskMeter({
-  gate, score, pillBg, pillBd, pillFg, pillLabel, meterColor,
-}: { gate: Gate; score: number | null; pillBg: string; pillBd: string; pillFg: string; pillLabel: string; meterColor: string }) {
+  gate, score, pillLabel, meterColor,
+}: { gate: Gate; score: number | null; pillLabel: string; meterColor: string }) {
   const clamped = score === null ? 0 : Math.max(0, Math.min(100, score))
   return (
     <div>
@@ -261,12 +251,7 @@ function RiskMeter({
           </span>
           <span className="text-[13px] text-[var(--color-text-muted)] ml-1">/ 100</span>
         </div>
-        <span
-          className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold"
-          style={{ background: pillBg, border: `1px solid ${pillBd}`, color: pillFg }}
-        >
-          {pillLabel}
-        </span>
+        <DecisionChip decision={gate} />
       </div>
       {/* The header above stays page markup (tests read its "—"); only the
           bar and its scale are the kit's. No score, or a PENDING gate, is
@@ -1363,7 +1348,7 @@ function persistedOverride(council: ReleaseCouncilDecision | undefined): Persist
 const GATE_ACTIONS: ReadonlyArray<{ value: OverrideRecommendation; label: string }> = [
   { value: 'NO_GO', label: 'Hold' },
   { value: 'CONDITIONAL_GO', label: 'Approve with conditions' },
-  { value: 'GO', label: 'Override → GO' },
+  { value: 'GO', label: `Override → ${DECISION_LABEL.go}` },
 ]
 
 function VerdictBanner({
@@ -1481,9 +1466,6 @@ function ScoreBreakdown({ verdict }: { verdict: Verdict }) {
       <RiskMeter
         gate={verdict.gate}
         score={verdict.score}
-        pillBg={t.pillBg}
-        pillBd={t.pillBd}
-        pillFg={t.pillFg}
         pillLabel={t.label}
         meterColor={t.meter}
       />
@@ -1601,7 +1583,7 @@ export function RunIntelligenceBody({
       <div className="space-y-4">
         <EmptyState
           icon={<AlertTriangle className="h-8 w-8 text-[var(--status-failed)]" />}
-          title="Failed to load Run Intelligence"
+          title="Could not load Run Intelligence"
           description="Could not fetch AI analysis data for this run."
         />
         {afterPrimary}

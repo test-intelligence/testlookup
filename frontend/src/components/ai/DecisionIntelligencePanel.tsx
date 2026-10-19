@@ -14,6 +14,7 @@ import type {
 import { deriveDecisionTrustState } from './decisionTrustState'
 import { readAnalysisCoverage, describeAnalysisCoverage } from './analysisCoverage'
 import DecisionReportFeedbackControls from './DecisionReportFeedbackControls'
+import { formatCompactDateTime, formatNumber } from '@/utils/formatters'
 
 interface Props {
   runId: string
@@ -46,7 +47,7 @@ function number(value: unknown): number | null {
 }
 
 function displayMetric(key: string, value: number): string {
-  return key === 'pass_rate' ? `${value.toFixed(1)}%` : value.toLocaleString()
+  return key === 'pass_rate' ? `${value.toFixed(1)}%` : formatNumber(value, { maximumFractionDigits: 3 })
 }
 
 /**
@@ -64,7 +65,7 @@ function runAnalysisHref(runId: string, extra: Record<string, string> = {}): str
 function formatTime(value: string | undefined): string {
   if (!value) return 'Unknown time'
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? 'Unknown time' : date.toLocaleString()
+  return Number.isNaN(date.getTime()) ? 'Unknown time' : formatCompactDateTime(date)
 }
 
 function ClaimsSection({ claims, actions, onInspect }: { claims: DecisionClaim[]; actions: ProposedAction[]; onInspect: (claim: DecisionClaim) => void }) {

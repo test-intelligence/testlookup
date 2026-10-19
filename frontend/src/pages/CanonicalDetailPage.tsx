@@ -206,7 +206,7 @@ export default function CanonicalDetailPage() {
             {latestRunHref && (
               <Link
                 to={latestRunHref}
-                className="inline-flex items-center gap-1 rounded bg-[var(--color-accent)] px-3 py-1.5 text-sm font-medium text-white"
+                className="btn-primary inline-flex items-center gap-1"
               >
                 <ExternalLink className="h-4 w-4" /> Open latest run
               </Link>

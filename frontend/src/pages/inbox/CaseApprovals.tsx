@@ -24,6 +24,7 @@ import { useFeatureEnabled } from '@/hooks/useFeatureFlags'
 import { refreshTestCases } from '@/hooks/useTestManagement'
 import { testManagementService } from '@/services/testManagementService'
 import type { ManagedTestCase, TestCaseTransitionAction } from '@/types/test-management'
+import { formatDay } from '@/utils/formatters'
 import { useCaseQueues, type CaseQueueEntry } from './approvalQueues'
 
 const ACTION_LABEL: Partial<Record<TestCaseTransitionAction, string>> = {
@@ -40,8 +41,7 @@ const DECISIONS = new Set<TestCaseTransitionAction>(['approve', 'request_changes
 /** Without lifecycle v2 the server takes these three, for every reviewer. */
 const LEGACY_ACTIONS: TestCaseTransitionAction[] = ['approve', 'request_changes', 'reject']
 
-const fmtDate = (iso?: string) =>
-  iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '—'
+const fmtDate = (iso?: string) => formatDay(iso)
 
 export default function CaseApprovals() {
   const lifecycleV2 = useFeatureEnabled('test_case_lifecycle_v2')

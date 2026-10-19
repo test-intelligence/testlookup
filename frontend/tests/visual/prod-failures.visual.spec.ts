@@ -32,14 +32,14 @@ import {
   landmark,
   openProductionPage,
   PINNED,
-  THEMES,
+  THEMES_WITH_PAPER,
   visualRegion,
 } from '../lib/production-pages'
 import { FAILURES_ON, NOW, PROJECT_ID, USER } from './production/fixtures'
 
 test.use(PINNED)
 
-for (const theme of THEMES) {
+for (const theme of THEMES_WITH_PAPER) {
   test(`failures regions — ${theme}`, async ({ page }) => {
     const { api, errors } = await openProductionPage(page, '/failures', {
       theme,

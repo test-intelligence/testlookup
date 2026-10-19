@@ -153,7 +153,7 @@ export default function DigestViewEditor({
           type="button"
           onClick={() => void handleSave()}
           disabled={saving}
-          className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded text-sm disabled:opacity-50"
+          className="btn-primary"
         >
           Save
         </button>

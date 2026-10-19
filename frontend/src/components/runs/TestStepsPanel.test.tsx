@@ -55,6 +55,23 @@ describe('TestStepsPanel', () => {
     expect(screen.getByText('500 response')).toBeInTheDocument()
   })
 
+  // W29a UIX-07 / §0.27: the failed step read `--color-danger`, which no theme
+  // defines, so its row tint vanished and its message inherited the body colour.
+  it('tints a failed step and writes its message with the danger token, which every theme defines', () => {
+    const detail = normalizeTestCaseDetail({
+      id: 't1',
+      test_name: 'Checkout',
+      steps: [{ id: 'bad', name: 'Pay', status: 'FAILED', error_message: 'card declined' }],
+    })
+    render(<TestStepsPanel detail={detail} />)
+    const message = screen.getByText('card declined')
+    expect(message.className).toContain('text-[var(--ui-danger)]')
+    expect(message.className).not.toContain('--color-danger')
+    const row = screen.getByText('Pay').closest('div.rounded-md') as HTMLElement
+    expect(row.className).toContain('border-[var(--ui-danger)]')
+    expect(row.className).not.toContain('--color-danger')
+  })
+
   it('normalizes a malformed legacy payload and still renders valid attachments', () => {
     stepState.data = {
       steps: [{ id: 'legacy', name: 'Legacy step', status: 'PASSED', steps: null, attachments: null }],

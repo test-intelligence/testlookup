@@ -655,7 +655,7 @@ describe('RunsPage — the page template (P3)', () => {
   it('states the verdict in one banner: the failing count in the title once, last green, red streak, average pass rate, Bisect', async () => {
     renderRunsPage(brokenWindow())
     expect(banner()).toHaveAttribute('data-status-banner', 'fail')
-    expect(banner()).toHaveTextContent('FAILING')
+    expect(banner()).toHaveTextContent('Failing')
     // FAIL-03: "the same error" once the signatures show the three share one.
     await waitFor(() => expect(banner()).toHaveTextContent('Pipeline broken · 3 of 4 builds failed with the same error'))
     const facts = Array.from(banner().querySelectorAll('[data-banner-fact]'), (f) => f.textContent)

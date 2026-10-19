@@ -40,6 +40,7 @@ import type { MultiSeriesMetricKind, MultiSeriesModel } from '@/components/chart
 import { zeroBasedScale } from '@/components/charts/niceScale'
 import type { SeriesStyle } from '@/components/reports/catalogue/compareModel'
 import type { EnvelopeMeta, SeriesChart } from '@/lib/viz/contracts'
+import { formatNumber } from '@/utils/formatters'
 
 // ── The server's vocabularies (held to it by the shared fixture) ─────────────
 
@@ -514,7 +515,7 @@ export function facetPanels(chart: SeriesChart | null | undefined, meta: Envelop
   const panels = real.slice(0, MAX_PANELS).map((key) => ({ key, label: facetLabel(facet, key, labels) }))
   const notices: string[] = []
   const noun = DIMENSION_LABELS[facet].plural
-  if (total > panels.length) notices.push(`Showing the ${panels.length} ${noun} with the most executions of ${total.toLocaleString('en-US')}.`)
+  if (total > panels.length) notices.push(`Showing the ${panels.length} ${noun} with the most executions of ${formatNumber(total)}.`)
   if (hasNone) notices.push(`Runs with no ${DIMENSION_LABELS[facet].label.toLowerCase()} are not shown.`)
   return { panels, total, notices }
 }
@@ -593,7 +594,7 @@ export function panelYAxis(
   return { domain, ticks }
 }
 
-const plain = (n: number) => n.toLocaleString('en-US')
+const plain = (n: number) => formatNumber(n, { maximumFractionDigits: 3 })
 
 /**
  * What a panel says about its scale: "Shared y-scale: 0–100%", "Own y-scale:

@@ -85,7 +85,7 @@ import { useRuns } from '@/hooks/useRuns'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import { useCoverage, useTrendData } from '@/hooks/useMetrics'
 import { useDataFreshness } from '@/hooks/useDataFreshness'
-import { shortAgo } from '@/utils/formatters'
+import { formatNumber, shortAgo } from '@/utils/formatters'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { usePageSuiteFilter } from '@/hooks/usePageSuiteFilter'
 import { PageSuiteTargetContext, usePageSuiteTarget } from '@/hooks/pageSuiteTarget'
@@ -513,7 +513,7 @@ export function CoverageComparisonStrip({
   const colourForCadenceDelta = (delta: number): string =>
     delta === 0 ? NEUTRAL : (delta > 0 ? GREEN : RED)
 
-  const fmtInt = (n: number) => Intl.NumberFormat().format(Math.round(n))
+  const fmtInt = (n: number) => formatNumber(Math.round(n))
   const arrow = (delta: number) => delta === 0 ? '—' : (delta > 0 ? '↑' : '↓')
 
   return (
@@ -1026,7 +1026,7 @@ function StackSegment({ count, status, color, fits }: { count: number; status: '
       data-suite-segment={status}
       title={`${count} ${status}`}
       className="h-full min-w-0 overflow-hidden flex items-center justify-center text-[10.5px] font-semibold tabular-nums"
-      style={{ flex: count, background: color, color: 'rgba(255,255,255,0.92)' }}
+      style={{ flex: count, background: color, color: 'var(--color-text-on-status)' }}
     >
       {fits ? count : null}
     </div>

@@ -17,12 +17,16 @@ import { helpTopicParam } from '@/components/help/helpTopics'
 
 const HELP_TOPIC = helpTopicParam('/settings/integration-health')
 
+// W29a UIX-07: a probe's health is a UI meaning (success / warning / danger),
+// not a test result. "degraded" is the warning hue (it was skipped-gold); the
+// chip's text is its family's ink on the tint (UIX-03). A skipped probe is a
+// workflow state and stays neutral (§0.8).
 const STATUS_COLORS: Record<string, string> = {
-  healthy: 'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]',
-  degraded: 'bg-[var(--status-skipped-bg)]/40 text-[var(--status-skipped)]',
-  down: 'bg-[var(--status-failed-bg)]/40 text-[var(--status-failed)]',
-  auth_error: 'bg-[var(--status-failed-bg)]/40 text-[var(--status-failed)]',
-  timeout: 'bg-[var(--status-broken-bg)]/40 text-[var(--status-broken)]',
+  healthy: 'bg-[var(--ui-success-bg)]/40 text-[var(--ui-success-ink)]',
+  degraded: 'bg-[var(--ui-warning-bg)]/40 text-[var(--ui-warning-ink)]',
+  down: 'bg-[var(--ui-danger-bg)]/40 text-[var(--ui-danger-ink)]',
+  auth_error: 'bg-[var(--ui-danger-bg)]/40 text-[var(--ui-danger-ink)]',
+  timeout: 'bg-[var(--ui-warning-bg)]/40 text-[var(--ui-warning-ink)]',
   unknown: 'bg-[var(--color-bg-card)] text-[var(--color-text-muted)]',
   skipped: 'bg-[var(--color-bg-card)] text-[var(--color-text-muted)]',
 };
@@ -71,7 +75,7 @@ export default function IntegrationHealthPage() {
         helpTopic={HELP_TOPIC}
         actions={
           <button onClick={() => handleProbe()} disabled={probing}
-            className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded-lg hover:bg-[var(--color-bg-hover)] text-sm disabled:opacity-50">
+            className="btn-primary">
             {probing ? 'Probing...' : 'Probe All Now'}
           </button>
         }
@@ -86,7 +90,7 @@ export default function IntegrationHealthPage() {
         ))}
       </div>
 
-      {loading ? <div className="text-[var(--color-text-muted)] text-center py-8">Loading...</div> : (
+      {loading ? <div className="text-[var(--color-text-muted)] text-center py-8">Loading…</div> : (
         <>
           {/* Current Status */}
           {tab === 'status' && (
@@ -127,11 +131,11 @@ export default function IntegrationHealthPage() {
               {trends.map(t => (
                 <div key={t.provider} className="bg-[var(--color-bg-secondary)] rounded-lg px-4 py-3 grid grid-cols-8 gap-2 items-center text-sm">
                   <span className="text-[var(--color-text)] capitalize font-medium">{t.provider}</span>
-                  <span className={clsx('font-mono', t.uptime_pct >= 99 ? 'text-[var(--status-passed)]' : t.uptime_pct >= 90 ? 'text-[var(--status-skipped)]' : 'text-[var(--status-failed)]')}>
+                  <span className={clsx('font-mono', t.uptime_pct >= 99 ? 'text-[var(--status-passed)]' : t.uptime_pct >= 90 ? 'text-[var(--ui-warning)]' : 'text-[var(--status-failed)]')}>
                     {t.uptime_pct}%
                   </span>
                   <span className="text-[var(--status-passed)] text-xs">{t.healthy}</span>
-                  <span className="text-[var(--status-skipped)] text-xs">{t.degraded}</span>
+                  <span className="text-[var(--ui-warning)] text-xs">{t.degraded}</span>
                   <span className="text-[var(--status-failed)] text-xs">{t.down}</span>
                   <span className="text-[var(--status-broken)] text-xs">{t.timeout ?? 0}</span>
                   <span className="text-[var(--status-broken)] text-xs">{t.auth_error ?? 0}</span>

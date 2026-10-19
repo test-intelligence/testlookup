@@ -207,6 +207,7 @@ function ModalSidePanel({ side = 'right', width = 420, className = '', reserveSp
   return createPortal(
     <div
       role="presentation"
+      // eslint-disable-next-line no-restricted-syntax -- a scrim dims whatever theme is under it: black at 50 % in every theme
       className={`fixed inset-0 z-[70] flex bg-black/50 ${side === 'right' ? 'justify-end' : 'justify-start'}`}
       onMouseDown={(event) => {
         // Only a press on the backdrop itself; a drag that starts in the panel

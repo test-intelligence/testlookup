@@ -2,7 +2,8 @@
 
 > Companion to [README.md](./README.md). The React 18 + Vite + TypeScript SPA:
 > its layering, state model, theme system, and the CI ratchets that hold the
-> conventions in place. Verified against the implementation 2026-08-08.
+> conventions in place. Verified against the implementation 2026-08-08; the
+> theme system and the CI rules (§4, §5) re-verified 2026-10-18 (W29a).
 
 ## 1. Layering
 
@@ -59,28 +60,101 @@ re-render storms; object-returning selectors were a real bug class.
 
 ## 4. The theme system
 
-Six themes (`signal` default, `midnight`, `slate`, `console`, `ember`, and
-`lab` — the light one) are CSS custom-property sets under `[data-theme="…"]`
-in `src/index.css`. Components consume **tokens**, never palette colors:
-`--color-*` (surfaces/text/accent), `--status-passed|failed|broken|skipped|flaky`
-(+ derived `-bg`/`-bd` via `color-mix`), and `--gate-go|conditional|no-go`.
+Seven themes are CSS custom-property sets under `[data-theme="…"]` in
+`src/index.css`: five dark ones (`signal`, the default, `console`, `slate`,
+`ember`, `midnight`) and two light ones, `lab` and `paper` (W29a, OR-06:
+"Soft light · low glare", a warm `#EAE8E2` page, `#F5F4F0` cards, softened
+`#26292E` text, muted text at 4.5:1 or better on every surface and a `#2F5FB3`
+accent, for long reading sessions). The registry is `THEMES` in
+`store/themeStore.ts` (id, label, hint and the picker swatch); `THEME_IDS` lists
+the ids in picker order and `LIGHT_THEMES` / `isLightTheme` name the light ones,
+which every contrast test and the solid destructive button key on. A theme is a
+`data-theme` value only: nothing is sent to the server. The chart export's
+**Light background** always re-resolves on Lab's white card, whichever theme is
+active (`EXPORT_LIGHT_THEME` in `components/charts/engines/echarts/exportSvg.ts`,
+`LIGHT_THEME` in `lib/viz/chartImage.ts`): Paper is a screen theme.
 
-Raw Tailwind palette classes (`text-emerald-400`, …) bypass the system and
-break light themes — a `no-restricted-syntax` ESLint rule flags them (a
-warn-ratchet being driven to zero; avatar-color swatches are exempt as user
-data). The `.badge-*` primitives already sit on the tokens.
+Components consume **tokens**, never palette colours or literals:
+
+| Family | Meaning |
+|---|---|
+| `--color-*` | surfaces, borders, text, accent, the primary button (`--color-btn-primary-*`) |
+| `--status-passed\|failed\|broken\|skipped\|flaky` (+ `-bg` / `-bd` / `-soft`) | a test, run or suite RESULT only |
+| `--status-<s>-ink` | status TEXT on its own tint (75 % hue + 25 % body text; 4.5:1 or better on the tint in every theme) |
+| `--ui-danger\|warning\|success\|info` (+ `-bg` / `-bd` / `-ink`) | what a colour MEANS outside results (a destructive action, a warning, an info chip); aliases of the status hues and the accent |
+| `--state-quarantined` (+ `-bd`), `--color-text-on-status` | a quarantine (the flaky hue, drawn as an outline); text ON a solid status fill |
+| `--color-btn-danger-bg\|bd\|text\|hover` | the destructive button: the failed tint + white on the dark themes, solid failed + white on the light ones (a later `[data-theme="lab"], [data-theme="paper"]` rule) |
+| `--gate-go\|conditional\|no-go` | the release decision (conditional is the warning hue, never skipped-gold) |
+| `--chart-*` | the chart kit's series, ramps, grid and axis (`components/charts/tokens.ts`) |
+| `--text-2xs` … `--text-4xl` | the type scale (`text-2xs`, 11 px, and `text-md`, 16 px, since W29a) |
+
+The component classes sit on the tokens: `.btn-primary`, `.btn-secondary`,
+`.btn-ghost` and `.btn-danger` share one 8 px shape (`rounded-md`), `.btn-sm`
+is the 28 px size, and the `.badge-*` text reads the `-ink` tokens.
+
+**One map per vocabulary, in one owner file**; a page imports it and never
+re-declares it:
+
+| Vocabulary | Owner file | What it gives |
+|---|---|---|
+| Failure category and kind | `components/charts/failureTaxonomy.ts` (re-exported by `failureGroups/categoryPatterns.ts`), `components/charts/FailureCategoryMark.tsx` | `taxonOf` (every vocabulary onto seven keys), `failureCategoryColor`, `failureKindColor`, `categorySliceStyles` (colour by category, never by rank); a category is a coloured MARK beside neutral text, never coloured text |
+| Result status and gate decision | `components/ui/statusVocabulary.ts` | sentence-case `statusLabel` ("Failed"), `RESULT_STATUS_TOKEN`, `DECISION_LABEL` (**Go / Conditional / No-Go**) and `DECISION_TOKEN`; drawn by `StatusBadge`, `DecisionChip` and `StatusBanner` |
+| Severity | `components/ui/severity.ts` | `severityLevel` (P0-P3 from every vocabulary) and `SEVERITY_STYLE` on the `--ui-*` tokens |
+| Avatar colours | `components/ui/avatarColors.ts` | `avatarColor` (the stored keys) and `avatarColorForName`; initials are never white |
+| Dates and numbers | `utils/formatters.ts` | a fixed `en-US` locale (`DATE_LOCALE`): `formatDay`, `formatMonthDay`, `formatWeekday`, `formatClock`, `formatCompactDateTime`, `formatNumber` |
+
+Raw Tailwind palette classes (`text-emerald-400`, …), `text-` / `bg-` /
+`border-` / `ring-white|black` and colour literals bypass the system and break a
+theme. The `no-restricted-syntax` palette rule is at `error` (every Tailwind
+hue on every colour utility, and white / black, in string and template literals
+alike); a legitimate white or black (a toggle knob, a scrim, a QR code's quiet
+zone) carries a one-line disable with its reason. The `/__ux-primitives`
+gallery (`?theme=<id>`) shows the buttons, badges, chips and the loading /
+empty / error states in any theme.
 
 ## 5. What CI enforces
 
 - **Quality gates** (`scripts/quality_gate.py`): `frontend.swr-only-fetching`,
   `frontend.single-axios`, `frontend.all-projects-literal`,
   `frontend.clipboard-util` — the layering rules above are checks, not lore.
+  The UI standard (W29a) adds six. Four are COUNT ratchets, where a file's
+  count may only fall (baselines in
+  `scripts/quality-gate-baselines/<guard>.counts.json`, lowered with
+  `--update-baseline --only <guard>`): `frontend.type-scale` (arbitrary
+  `text-[Npx]` sizes and numeric inline `fontSize`),
+  `frontend.status-text-on-tint` (status text drawn on its own tint instead of
+  the `-ink` token), `frontend.status-hue-semantics` (direct
+  `var(--status-failed|broken)` reads instead of `--ui-*` or
+  `RESULT_STATUS_TOKEN`) and `frontend.adhoc-spinners` (`animate-spin` outside
+  `components/ui`). Two are ABSOLUTE rules at zero:
+  `frontend.button-primitives` (a primary-coloured or white-on-tint button
+  that is not `.btn-primary` / `.btn-danger`; toggle tracks exempt) and
+  `frontend.load-error-wording` (a failed read says "Could not load {thing}.").
 - **ESLint ratchets, all at `error` after their burn-downs**: the full
   react-hooks v7 React-Compiler set (purity, set-state-in-effect, refs,
-  immutability, exhaustive-deps), `@typescript-eslint/no-explicit-any`, and
-  `no-non-null-assertion`. The palette rule (§4) is the one remaining `warn`
-  ratchet. Promotion regressions (`*.promotion.test.ts`) pin each rule at
-  `error` so it can't quietly slip back.
+  immutability, exhaustive-deps), `@typescript-eslint/no-explicit-any`,
+  `no-non-null-assertion`, the palette rule (§4), and the date rule
+  (`no-restricted-properties` over `src/pages/**` and `src/components/**`
+  outside the chart kit: no `toLocale(Date|Time)?String`, `Intl.NumberFormat`
+  or `Intl.DateTimeFormat`; format through `utils/formatters`). Promotion
+  regressions (`*.promotion.test.ts`) pin rules at `error` so they can't
+  quietly slip back.
+- **`frontend/scripts/check-theme-tokens.mjs`**: every theme block parses; the
+  dark themes share one set of status hues and each light theme keeps its own;
+  retired colours stay retired; system fonts only; no colour literal in the
+  chart kit, which stays behind its engine boundary; the picker swatches equal
+  their theme's tokens; and since W29a: no white border and no `text-white` on
+  a status / ui tint (rule 7), no `--cat-*` / `--kind-*` token (8), conditional
+  never painted skipped-gold (9), no colour literal in a non-test source
+  outside the swatches, the Mermaid fallbacks and the chart kit (10), every
+  `var(--name)` defined by `index.css` (11), and the derived token families
+  present, with the light override naming exactly the light themes (12). Every
+  rule self-tests on planted violations first.
+- **Contrast tests** (`src/test/chartTokens.test.ts`,
+  `components/charts/tokens.contrast.test.ts`,
+  `store/presentationStore.tokens.test.ts`, `src/test/themeLegibility.test.ts`)
+  measure every theme from `index.css`, and the Playwright axe gate
+  (`tests/lib/axe-gate.ts`, `ALL_THEMES`) audits every theme at every impact.
 - **`tsc --noEmit` strict** and a production `vite build` (vite 8 bundles with
   **rolldown** — `manualChunks` must be the function form).
 

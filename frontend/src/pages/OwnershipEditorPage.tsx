@@ -187,7 +187,7 @@ export default function OwnershipEditorPage() {
             Import CODEOWNERS
           </button>
           <button onClick={() => setShowForm(!showForm)}
-            className="px-4 py-2 bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] rounded-lg hover:bg-[var(--color-bg-hover)] text-sm">
+            className="btn-primary">
             {showForm ? 'Cancel' : 'Add Rule'}
           </button>
           </>
@@ -206,7 +206,7 @@ export default function OwnershipEditorPage() {
         />
       )}
 
-      {isError && <div className="bg-[var(--status-failed-bg)]/30 border border-[var(--status-failed-bd)] rounded-lg p-3 text-[var(--status-failed)] text-sm">Failed to load ownership rules</div>}
+      {isError && <div className="bg-[var(--status-failed-bg)]/30 border border-[var(--status-failed-bd)] rounded-lg p-3 text-[var(--status-failed)] text-sm">Could not load ownership rules</div>}
 
       {/* New rule form */}
       {showForm && (
@@ -269,7 +269,7 @@ export default function OwnershipEditorPage() {
         </div>
       )}
       {loading ? (
-        <div className="text-[var(--color-text-muted)] text-center py-8">Loading...</div>
+        <div className="text-[var(--color-text-muted)] text-center py-8">Loading…</div>
       ) : teamFilter && rules.length === 0 && allRules.length > 0 ? (
         <div className="text-center py-12 text-[var(--color-text-muted)]">
           No ownership rule names this team.
@@ -433,7 +433,7 @@ function ImportCodeownersDialog({
             type="button"
             onClick={handleImport}
             disabled={submitting || (source === 'text' && !text.trim())}
-            className="text-xs bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] px-3 py-1.5 rounded-lg font-medium"
+            className="btn-primary btn-sm"
           >
             {submitting ? 'Importing…' : 'Import'}
           </button>

@@ -82,7 +82,7 @@ export default function GitHubIntegrationPage() {
         if (status === 404) {
           setExisting(null)
         } else if (!cancelled) {
-          toast.error('Failed to load GitHub integration')
+          toast.error('Could not load GitHub integration')
         }
       } finally {
         if (!cancelled) setLoading(false)

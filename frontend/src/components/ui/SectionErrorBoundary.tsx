@@ -10,7 +10,7 @@ import { AlertTriangle } from 'lucide-react'
 
 interface Props {
   children: ReactNode
-  /** Short message shown on crash (e.g. "Failed to load trend chart") */
+  /** Short message shown on crash (e.g. "Could not load the trend chart.") */
   message?: string
 }
 

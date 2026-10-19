@@ -142,7 +142,7 @@ function SuiteBodyState({ body, days, children }: { body: SuiteBody; days: numbe
     return (
       <EmptyState
         icon={<AlertTriangle className="h-8 w-8 text-[var(--status-failed)]" />}
-        title="Failed to load suite details"
+        title="Could not load suite details"
         description="Check the console for errors or try again"
       />
     )
@@ -481,7 +481,9 @@ export default function SuiteDetailPage() {
           onClick={() => setDays(d)}
           className={clsx(
             'px-3 py-1 rounded-md text-sm font-medium transition-colors',
-            days === d ? 'bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-btn-primary-text)]',
+            // A segmented control's chosen segment, not a primary action: the
+            // WindowPicker's selected look (W29a UIX-08, as ActivityPage's window toggle).
+            days === d ? 'bg-[var(--color-accent-muted)] text-[var(--color-accent-ink)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
           )}
         >
           {label}

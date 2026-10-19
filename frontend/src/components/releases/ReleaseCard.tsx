@@ -24,6 +24,7 @@ import { clsx } from 'clsx'
 import { useNow } from '@/hooks/useNow'
 import { Clock, CheckCircle2, BadgeCheck, ChevronRight, ExternalLink } from 'lucide-react'
 import OverflowMenu, { type OverflowItem } from '@/components/ui/OverflowMenu'
+import { formatDay, formatMonthDay } from '@/utils/formatters'
 import type { DerivedRelease, GateDecision } from './types'
 import GateBadge from './GateBadge'
 import PhasePipeline from './PhasePipeline'
@@ -33,7 +34,8 @@ import { safeHttpUrl } from './mapping'
 
 const ICON_TILE: Record<GateDecision, { bg: string; fg: string; icon: typeof Clock }> = {
   go:              { bg: 'color-mix(in srgb, var(--status-passed) 14%, transparent)',  fg: 'var(--status-passed)', icon: CheckCircle2 },
-  conditional:     { bg: 'color-mix(in srgb, var(--status-skipped) 14%, transparent)',  fg: 'var(--status-skipped)', icon: BadgeCheck },
+  // W29a UIX-03: conditional is the warning hue (--gate-conditional), never skipped-gold.
+  conditional:     { bg: 'color-mix(in srgb, var(--gate-conditional) 14%, transparent)',  fg: 'var(--gate-conditional)', icon: BadgeCheck },
   no_go:           { bg: 'color-mix(in srgb, var(--status-failed) 14%, transparent)',  fg: 'var(--status-failed)', icon: BadgeCheck },
   not_evaluated:   { bg: 'var(--color-accent-muted)', fg: 'var(--color-accent)', icon: Clock },
   never_evaluated: { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-muted)', icon: Clock },
@@ -104,7 +106,7 @@ function PassFailBar({ totals }: { totals: NonNullable<DerivedRelease['totals']>
     { color: 'var(--status-passed)', flex: totals.passed,  label: 'passed' },
     { color: 'var(--status-failed)', flex: totals.failed,  label: 'failed' },
     { color: 'var(--status-broken)', flex: totals.broken,  label: 'broken' },
-    { color: '#9ca3af', flex: totals.skipped, label: 'skipped' },
+    { color: 'var(--status-skipped)', flex: totals.skipped, label: 'skipped' },
   ]
   return (
     <div className="flex items-center gap-3" data-pass-fail-bar="">
@@ -121,7 +123,7 @@ function PassFailBar({ totals }: { totals: NonNullable<DerivedRelease['totals']>
         <Dot color="var(--status-passed)" label="passed" /> {totals.passed}
         <Dot color="var(--status-failed)" label="failed" /> {totals.failed}
         <Dot color="var(--status-broken)" label="broken" /> {totals.broken}
-        <Dot color="#9ca3af" label="skipped" /> {totals.skipped}
+        <Dot color="var(--status-skipped)" label="skipped" /> {totals.skipped}
         <span className="text-[var(--color-text-faint)]">/ {total}</span>
       </div>
     </div>
@@ -193,9 +195,7 @@ export default function ReleaseCard({
     menuItems.push({ label: 'Set as active release', onClick: () => onSetActive(release.id) })
   }
 
-  const dueLabel = release.dueAt
-    ? new Date(release.dueAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-    : null
+  const dueLabel = release.dueAt ? formatMonthDay(release.dueAt) : null
   const overdue = release.dueAt
     ? new Date(release.dueAt).getTime() < now && isInProgress
     : false
@@ -299,7 +299,7 @@ export default function ReleaseCard({
               {isReleased && release.source.released_at && (
                 <>
                   <span aria-hidden>·</span>
-                  <span>Released {new Date(release.source.released_at).toLocaleDateString()}</span>
+                  <span>Released {formatDay(release.source.released_at)}</span>
                 </>
               )}
             </div>

@@ -17,7 +17,7 @@
  * Linux).
  */
 import { expect, test, type Page } from '@playwright/test'
-import { assertHermetic, PINNED, TALL_VIEWPORT, THEMES, visualRegion } from '../lib/production-pages'
+import { assertHermetic, PINNED, TALL_VIEWPORT, THEMES_WITH_PAPER, visualRegion } from '../lib/production-pages'
 import { networkQuiet, openRollout } from '../lib/rollout'
 import { HOTFIX_GO, RELEASE, releasesHandlers, SYNC_OFFLINE } from './production/fixtures-releases'
 
@@ -35,7 +35,7 @@ function listWithReadyHotfix() {
   return opened
 }
 
-for (const theme of THEMES) {
+for (const theme of THEMES_WITH_PAPER) {
   test(`releases list: GO card, No-Go card, banner and rail — ${theme}`, async ({ page }) => {
     const { handlers } = listWithReadyHotfix()
     const { api, errors } = await openRollout(page, '/releases', { theme, handlers, ready })

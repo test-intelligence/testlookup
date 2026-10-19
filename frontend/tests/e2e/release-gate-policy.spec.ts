@@ -82,7 +82,7 @@ test.describe('Release Gate — policy application', () => {
     await page.goto(`/release-gate/${RUN_ID}`);
 
     // Recommendation banner reflects the graded verdict.
-    await expect(page.getByText('CONDITIONAL GO')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('Conditional', { exact: true })).toBeVisible({ timeout: 10000 });
     await expect(page.getByText(/Pass rate: 93\.5%/)).toBeVisible();
 
     // Policy badge — level + version are surfaced (ENT-02).
@@ -107,7 +107,7 @@ test.describe('Release Gate — policy application', () => {
 
     await page.goto(`/release-gate/${RUN_ID}`);
 
-    await expect(page.getByText('CONDITIONAL GO')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('Conditional', { exact: true })).toBeVisible({ timeout: 10000 });
     await expect(page.getByText(/system defaults/i)).toBeVisible();
     // With no rule evaluations there is no per-rule breakdown card.
     await expect(page.getByRole('heading', { name: /policy rules evaluated/i })).toHaveCount(0);

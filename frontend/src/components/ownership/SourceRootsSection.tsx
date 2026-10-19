@@ -105,7 +105,7 @@ export default function SourceRootsSection({
       </div>
 
       {isError && (
-        <p className="text-xs text-[var(--status-failed)] m-0">Failed to load the source roots</p>
+        <p className="text-xs text-[var(--status-failed)] m-0">Could not load the source roots</p>
       )}
 
       {isLoading ? (
@@ -200,7 +200,7 @@ export default function SourceRootsSection({
               type="button"
               onClick={runSave}
               disabled={!dirty || busy !== null}
-              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50"
+              className="btn-primary btn-sm"
             >
               {busy === 'save' ? 'Saving…' : 'Save'}
             </button>

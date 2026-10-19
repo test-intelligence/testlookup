@@ -22,7 +22,7 @@ export interface InlineConfirmProps {
   confirmLabel: string
   /** Default 'Cancel'. */
   cancelLabel?: string
-  /** 'danger' for an irreversible action (the confirm button uses the --status-failed tokens). */
+  /** 'danger' for an irreversible action (the confirm button is `.btn-danger`). */
   tone?: 'danger' | 'default'
   /** Both buttons disabled; the confirm button shows LoadingSpinner size="sm". */
   busy?: boolean
@@ -32,10 +32,9 @@ export interface InlineConfirmProps {
 }
 
 const CONFIRM_DEFAULT = 'btn-primary inline-flex items-center gap-1.5 text-xs'
-const CONFIRM_DANGER =
-  'inline-flex items-center gap-1.5 rounded-full border border-[var(--status-failed-bd)] ' +
-  'bg-[var(--status-failed-bg)] px-4 py-2 text-xs font-semibold text-[var(--status-failed)] ' +
-  'transition-colors hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50'
+// W29a UIX-01 / UIX-07: the one destructive button (solid failed + white on the
+// light themes, the failed tint + white on the dark ones).
+const CONFIRM_DANGER = 'btn-danger inline-flex items-center gap-1.5 text-xs'
 
 export function InlineConfirm({
   message,

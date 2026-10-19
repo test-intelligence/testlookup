@@ -103,9 +103,31 @@ export default tseslint.config(
       // avatar-color-swatch exemption. Promoting the rule to error guards
       // against reintroducing token-bypassing palette classes in app code.
       // Avatar-color swatches (user data, not theme UI) are exempt by intent.
+      //
+      // W29a UIX-13 widened it by APPENDED selectors (the first object stays
+      // byte-identical: hooks/paletteRatchet.promotion.test.ts pins it): every
+      // Tailwind hue on every colour utility, and white / black on text / bg /
+      // border / ring, each in a string Literal AND in a template literal's
+      // text (class strings built with `${…}` escaped the old rule). A
+      // legitimate white / black (a toggle knob, a QR code's quiet zone, a
+      // scrim) carries `// eslint-disable-next-line no-restricted-syntax --
+      // <reason>`. A test asserting a class is ABSENT uses a regex literal
+      // (/text-white/), which these selectors do not read.
       'no-restricted-syntax': ['error', {
         selector: 'Literal[value=/(text|bg|border)-(emerald|green|red|amber|yellow|orange|purple|blue)-[0-9]{2,3}/]',
         message: 'Use theme tokens (--status-*, --gate-*, --color-*) instead of raw palette classes.',
+      }, {
+        selector: 'Literal[value=/(?<![\\w-])(text|bg|border|ring|fill|stroke|from|via|to|accent|divide|outline|decoration|placeholder|caret|shadow)-(slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-[0-9]{2,3}(?![\\w-])/]',
+        message: 'A raw Tailwind palette colour ignores the theme. Use a token: text-[var(--color-text…)], bg-[var(--color-bg…)], border-[var(--color-border…)], a result hue var(--status-*), a meaning var(--ui-danger|warning|success|info…).',
+      }, {
+        selector: 'TemplateElement[value.raw=/(?<![\\w-])(text|bg|border|ring|fill|stroke|from|via|to|accent|divide|outline|decoration|placeholder|caret|shadow)-(slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-[0-9]{2,3}(?![\\w-])/]',
+        message: 'A raw Tailwind palette colour ignores the theme. Use a token: text-[var(--color-text…)], bg-[var(--color-bg…)], border-[var(--color-border…)], a result hue var(--status-*), a meaning var(--ui-danger|warning|success|info…).',
+      }, {
+        selector: 'Literal[value=/(?<![\\w-])(text|bg|border|ring)-(white|black)(?![\\w-])/]',
+        message: 'White / black ignore the theme (white is invisible on the light themes, black on the dark ones). Use a token: text-[var(--color-text)], text-[var(--color-btn-primary-text)] on a primary fill, text-[var(--color-text-on-status)] on a solid status fill, bg-[var(--color-bg-hover)] for a sheen; a legitimate knob / scrim / QR zone carries a disable comment with its reason.',
+      }, {
+        selector: 'TemplateElement[value.raw=/(?<![\\w-])(text|bg|border|ring)-(white|black)(?![\\w-])/]',
+        message: 'White / black ignore the theme (white is invisible on the light themes, black on the dark ones). Use a token: text-[var(--color-text)], text-[var(--color-btn-primary-text)] on a primary fill, text-[var(--color-text-on-status)] on a solid status fill, bg-[var(--color-bg-hover)] for a sheen; a legitimate knob / scrim / QR zone carries a disable comment with its reason.',
       }],
 
       // Allow console in development
@@ -129,6 +151,37 @@ export default tseslint.config(
           importNames: ['mutate'],
           message: "A no-op here (SWR's default cache, not the app's provider). Use appMutate from '@/utils/swrCacheMutate', or the mutate useSWR / useSWRConfig returns.",
         }],
+      }],
+    },
+  },
+
+  // W29a UIX-10: ONE date and number format. Pages and components format
+  // through utils/formatters (a FIXED en-US locale, like the numbers: a
+  // screenshot, a CSV and a pasted link never change with the machine), never
+  // with the browser's toLocale*String / Intl. The chart kit is W29b's (UIX-05)
+  // and keeps its own; utils/ is where the formatters live. A different rule
+  // from the palette one, so no options array is repeated.
+  {
+    files: ['src/pages/**/*.{ts,tsx}', 'src/components/**/*.{ts,tsx}'],
+    ignores: ['src/components/charts/**', 'src/**/*.test.{ts,tsx}'],
+    rules: {
+      'no-restricted-properties': ['error', {
+        property: 'toLocaleDateString',
+        message: "Use formatDay / formatMonthDay / formatWeekday from '@/utils/formatters' ('Sep 18, 2026' / 'Sep 18' / 'Friday').",
+      }, {
+        property: 'toLocaleTimeString',
+        message: "Use formatClock from '@/utils/formatters' ('10:05:33', 24 h).",
+      }, {
+        property: 'toLocaleString',
+        message: "A date + time: formatCompactDateTime ('Sep 18, 11:50'); a number: formatNumber — both from '@/utils/formatters'.",
+      }, {
+        object: 'Intl',
+        property: 'NumberFormat',
+        message: "Use formatNumber / formatPercent / formatCompact from '@/utils/formatters' (one fixed locale for every number).",
+      }, {
+        object: 'Intl',
+        property: 'DateTimeFormat',
+        message: "Use formatDay / formatMonthDay / formatWeekday / formatClock / formatCompactDateTime from '@/utils/formatters'.",
       }],
     },
   },

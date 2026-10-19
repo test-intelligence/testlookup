@@ -96,7 +96,7 @@ export default function SyncReleasesDialog({ projectId, onClose, onDone, slot }:
             type="button"
             onClick={() => void sync()}
             disabled={busy}
-            className="px-4 py-2 text-sm bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] rounded-lg font-medium flex items-center gap-2"
+            className="btn-primary flex items-center gap-2"
           >
             {busy && <LoadingSpinner size="sm" />}
             Sync

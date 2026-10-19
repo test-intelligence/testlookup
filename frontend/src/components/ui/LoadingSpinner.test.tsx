@@ -20,4 +20,12 @@ describe('LoadingSpinner', () => {
     const { container } = render(<LoadingSpinner className="custom-spinner" />)
     expect(container.firstChild).toHaveClass('custom-spinner')
   })
+
+  // W29a UIX-01 L1: the moving arc is the accent; a white arc vanished on the light themes.
+  it('draws its arc in the accent, and nothing in white', () => {
+    const { container } = render(<LoadingSpinner />)
+    const spinner = container.firstChild as HTMLElement
+    expect(spinner).toHaveClass('border-t-[var(--color-accent)]')
+    expect(spinner.className).not.toMatch(/white/)
+  })
 })

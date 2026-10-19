@@ -17,7 +17,8 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import ChatMarkdown from '@/components/chat/ChatMarkdown'
 import { useAIHistory, useAIVersion } from '@/hooks/useAIHistory'
 import type { AIDigest, AIRunSummaryPayload } from '@/types/aiHistory'
-import { categoryColor, confidenceColor } from '@/utils/formatters'
+import FailureCategoryMark from '@/components/charts/FailureCategoryMark'
+import { confidenceColor } from '@/utils/formatters'
 import { engineLabel, engineWord, whenLabel } from './aiDigestDiff.model'
 import { applyAiVersion, evidenceHref, runTestHref } from './aiHistoryUrl'
 
@@ -163,7 +164,8 @@ export default function AIVersionSnapshot({ runId, version }: { runId: string; v
         <SnapshotSection id="categories" title="Failure categories">
           <ul className="m-0 flex list-none flex-wrap gap-1.5 p-0">
             {categories.map(([category, count]) => (
-              <li key={category} className={clsx('rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[11px]', categoryColor(category))}>
+              <li key={category} className="inline-flex items-center gap-1 rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[11px] text-[var(--color-text-secondary)]">
+                <FailureCategoryMark category={category} size={8} />
                 {category} {count}
               </li>
             ))}
@@ -208,7 +210,8 @@ export default function AIVersionSnapshot({ runId, version }: { runId: string; v
                       {t.test_name || t.test_fingerprint}
                     </Link>
                   </td>
-                  <td className={clsx('py-1 pr-2', t.category ? categoryColor(t.category) : 'text-[var(--color-text-muted)]')}>
+                  <td className={clsx('py-1 pr-2', t.category ? 'text-[var(--color-text-secondary)]' : 'text-[var(--color-text-muted)]')}>
+                    {t.category && <FailureCategoryMark category={t.category} size={8} className="mr-1" />}
                     {t.category ?? 'UNCATEGORIZED'}
                   </td>
                   <td className={clsx('py-1 pr-2', t.confidence != null ? confidenceColor(t.confidence) : 'text-[var(--color-text-muted)]')}>

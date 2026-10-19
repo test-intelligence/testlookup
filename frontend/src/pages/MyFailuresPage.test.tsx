@@ -18,6 +18,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import MyFailuresPage from './MyFailuresPage'
 import type { MyFailureListResponse } from '@/types/myFailures'
+import { SEVERITY_STYLE } from '@/components/ui/severity'
 import { DEFAULT_TIME_WINDOW_DAYS, useTimeWindowStore } from '@/store/timeWindowStore'
 
 const mockList = vi.fn()
@@ -350,8 +351,34 @@ describe('MyFailuresPage', () => {
     expect(unknown.getAttribute('style')).not.toContain('--status-passed')
     expect(unknown.style.background).toBe('transparent')
     expect(unknown).toHaveAttribute('title', 'Severity unknown')
-    // A known severity keeps its color.
+    // A known severity keeps its color: the one severity map's P0 dot (W29a UIX-07).
     expect(critical).toHaveAttribute('data-severity', 'critical')
-    expect(critical.style.background).toBe('var(--status-failed)')
+    expect(critical.style.background).toBe('var(--ui-danger)')
+  })
+
+  // W29a UIX-07: the dot reads the one severity map (SEVERITY_STYLE). A minor
+  // failure is P3's neutral dot (the '#9198a1' literal is gone); a word the
+  // map does not know is the muted ring, never a guessed colour.
+  it('draws each severity with the one severity map: minor is P3, an unknown word is the ring', async () => {
+    const base = {
+      suite_name: 'S', status: 'FAILED', error_message: null,
+      created_at: new Date().toISOString(), test_run_id: 'run-1', build_number: null,
+      project_id: 'p1', project_name: 'P1',
+      class_name: null, failure_category: null, duration_ms: null,
+    }
+    mockList.mockResolvedValue(makeResponse([
+      { ...base, id: 'm1', test_name: 'test_minor', severity: 'minor', navigation_url: '/runs/run-1/tests/m1' },
+      { ...base, id: 'h1', test_name: 'test_high', severity: 'high', navigation_url: '/runs/run-1/tests/h1' },
+      { ...base, id: 'w1', test_name: 'test_weird', severity: 'sev-banana', navigation_url: '/runs/run-1/tests/w1' },
+    ]))
+    renderPage()
+    await screen.findByText('test_minor')
+    const [minor, high, weird] = screen.getAllByTestId('severity-dot')
+    expect(minor).toHaveAttribute('data-severity', 'minor')
+    expect(minor.style.background).toBe(SEVERITY_STYLE.P3.dot)
+    expect(minor.getAttribute('style')).not.toContain('#')
+    expect(high.style.background).toBe(SEVERITY_STYLE.P1.dot)
+    expect(weird).toHaveAttribute('data-severity', 'unknown')
+    expect(weird.style.background).toBe('transparent')
   })
 })

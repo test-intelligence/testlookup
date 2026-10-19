@@ -19,14 +19,19 @@ import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import { releaseCouncilService, type ReleaseCouncilDecision } from '@/services/releaseCouncilService'
 import { extractErrorMessage } from '@/services/apiErrors'
+import { DECISION_LABEL, DECISION_TOKEN } from '@/components/ui/statusVocabulary'
 
 export type OverrideRecommendation = 'GO' | 'CONDITIONAL_GO' | 'NO_GO'
 
-/** The three values the API accepts, in the order the form offers them. */
+/**
+ * The three values the API accepts, in the order the form offers them, in the
+ * one decision vocabulary (W29a UIX-03): its words (Go / Conditional / No-Go)
+ * and its legible ink for the chosen one.
+ */
 const OVERRIDE_OPTIONS: ReadonlyArray<{ value: OverrideRecommendation; label: string; colour: string }> = [
-  { value: 'GO', label: 'GO', colour: 'text-[var(--status-passed)]' },
-  { value: 'CONDITIONAL_GO', label: 'CONDITIONAL GO', colour: 'text-[var(--status-broken)]' },
-  { value: 'NO_GO', label: 'NO GO', colour: 'text-[var(--status-failed)]' },
+  { value: 'GO', label: DECISION_LABEL.go, colour: DECISION_TOKEN.go.ink },
+  { value: 'CONDITIONAL_GO', label: DECISION_LABEL.conditional, colour: DECISION_TOKEN.conditional.ink },
+  { value: 'NO_GO', label: DECISION_LABEL.no_go, colour: DECISION_TOKEN.no_go.ink },
 ]
 
 /** What the API said when it refused, in its own words where it gave some. */
@@ -97,9 +102,10 @@ export default function OverrideDecisionForm({
             className={clsx(
               'px-3 py-1.5 rounded text-xs font-medium transition-colors',
               recommendation === option.value
-                ? clsx(option.colour, 'bg-[var(--color-bg-hover)]')
+                ? 'bg-[var(--color-bg-hover)]'
                 : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
             )}
+            style={recommendation === option.value ? { color: option.colour } : undefined}
           >
             {option.label}
           </button>
@@ -121,7 +127,7 @@ export default function OverrideDecisionForm({
           type="button"
           onClick={() => void submit()}
           disabled={submitting}
-          className="px-4 py-1.5 bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] text-[var(--color-btn-primary-text)] text-sm rounded-lg disabled:opacity-50"
+          className="btn-primary"
         >
           {submitting ? 'Saving…' : 'Apply Override'}
         </button>

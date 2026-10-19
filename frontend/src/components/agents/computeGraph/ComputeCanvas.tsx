@@ -71,7 +71,7 @@ export default function ComputeCanvas({
               markerHeight="6"
               orient="auto-start-reverse"
             >
-              <path d="M0,0 L10,5 L0,10 z" fill="var(--border-strong, #4a5564)" />
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--border-strong)" />
             </marker>
             <marker
               id="c-arrow-blue"
@@ -93,7 +93,7 @@ export default function ComputeCanvas({
               markerHeight="6"
               orient="auto-start-reverse"
             >
-              <path d="M0,0 L10,5 L0,10 z" fill="var(--fg-faint, #4a525c)" />
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--fg-faint)" />
             </marker>
           </defs>
 
@@ -104,8 +104,8 @@ export default function ComputeCanvas({
             const stroke = isChosen
               ? 'var(--color-accent)'
               : isNot
-                ? 'var(--fg-faint, #4a525c)'
-                : 'var(--border-strong, #4a5564)'
+                ? 'var(--fg-faint)'
+                : 'var(--border-strong)'
             const marker = isChosen
               ? 'url(#c-arrow-blue)'
               : isNot
@@ -145,7 +145,7 @@ export default function ComputeCanvas({
                   color: isChosen
                     ? 'var(--color-accent)'
                     : isNot
-                      ? 'var(--fg-faint, #4a525c)'
+                      ? 'var(--fg-faint)'
                       : 'var(--color-text-muted)',
                   background: isChosen
                     ? 'color-mix(in srgb, var(--color-accent) 6%, transparent)'

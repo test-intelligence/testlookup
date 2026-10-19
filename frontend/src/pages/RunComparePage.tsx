@@ -246,7 +246,7 @@ export default function RunComparePage() {
         <LoadingSpinner size="lg" />
       ) : isError ? (
         // Surface the backend's actual ``detail`` instead of a generic
-        // "Failed to load". The 404 paths in particular ("At least two
+        // "Could not load". The 404 paths in particular ("At least two
         // completed runs are required …", "Suite X was not found in the
         // left and right run") are useful diagnostics — users need to
         // know whether to wait for more runs or to fix the suite-name
@@ -258,7 +258,7 @@ export default function RunComparePage() {
             || message.toLowerCase().includes('was not found')
           return (
             <EmptyState
-              title={isInsufficientData ? 'Not enough data to compare' : 'Failed to load compare'}
+              title={isInsufficientData ? 'Not enough data to compare' : 'Could not load compare'}
               description={message}
             />
           )

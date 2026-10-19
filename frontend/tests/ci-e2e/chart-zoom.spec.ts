@@ -476,7 +476,7 @@ test.describe('VIZ-407 zoom — the strip lies under the plot (baseline review B
 
   // Baseline review B: the strip's outline must be visible against the card
   // (SC 1.4.11, 3:1) — it was about 1.1:1 on the dark themes.
-  for (const theme of ['signal', 'lab', 'midnight', 'console', 'slate', 'ember']) {
+  for (const theme of ['signal', 'lab', 'paper', 'midnight', 'console', 'slate', 'ember']) {
     test(`the strip's outline has at least 3:1 against the card (${theme})`, async ({ page }) => {
       await openGallery(page, `?theme=${theme}`)
       const item = galleryItem(page, TREND)

@@ -4,57 +4,20 @@ export default {
   darkMode: 'class',
   theme: {
     extend: {
-      colors: {
-        brand: {
-          50: '#f0fdfa',
-          100: '#ccfbf1',
-          400: '#2dd4bf',
-          500: '#14b8a6',
-          600: '#0d9488',
-          700: '#0f766e',
-          900: '#134e4a',
-        },
-        bg: {
-          DEFAULT: 'var(--color-bg)',
-          secondary: 'var(--color-bg-secondary)',
-          card: 'var(--color-bg-card)',
-          input: 'var(--color-bg-input)',
-          hover: 'var(--color-bg-hover)',
-        },
-        border: {
-          DEFAULT: 'var(--color-border)',
-          light: 'var(--color-border-light)',
-        },
-        fg: {
-          DEFAULT: 'var(--color-text)',
-          secondary: 'var(--color-text-secondary)',
-          muted: 'var(--color-text-muted)',
-          faint: 'var(--color-text-faint)',
-        },
-        accent: {
-          DEFAULT: 'var(--color-accent)',
-          muted: 'var(--color-accent-muted)',
-          hover: 'var(--color-accent-hover)',
-        },
-        cta: {
-          DEFAULT: 'var(--color-btn-primary-bg)',
-          hover: 'var(--color-btn-primary-hover)',
-        },
-        sidebar: {
-          'active-bg': 'var(--color-sidebar-active-bg)',
-          'active-text': 'var(--color-sidebar-active-text)',
-        },
-        ring: 'var(--color-ring)',
-        passed: 'var(--status-passed)',
-        failed: 'var(--status-failed)',
-        broken: 'var(--status-broken)',
-        skipped: 'var(--status-skipped)',
-        flaky: 'var(--status-flaky)',
-        gate: {
-          go: 'var(--gate-go)',
-          conditional: 'var(--gate-conditional)',
-          'no-go': 'var(--gate-no-go)',
-        },
+      // Colours live in src/index.css as theme tokens, written `bg-[var(--…)]`
+      // at the call site (W29a UIX-13 deleted the unused colour map and its
+      // teal brand scale here: no class read them).
+      //
+      // The two type-scale sizes the default scale lacks (W29a UIX-04a): 11 px
+      // for dense tables and chips, 16 px for lead text. Written as the app's
+      // own tokens (index.css :root --text-2xs / --text-md): under @config,
+      // Tailwind v4 INLINES a JS-config size into the utility, so a literal
+      // '11px' here would never follow presentation mode's --text-2xs: 16px.
+      // The line-heights are ratios: 16 px at the desk sizes, and they grow
+      // with the size.
+      fontSize: {
+        '2xs': ['var(--text-2xs)', { lineHeight: 'calc(16 / 11)' }],
+        md: ['var(--text-md)', { lineHeight: '1.5' }],
       },
       // Point Tailwind's font utilities at the per-theme CSS vars so switching
       // theme swaps the type system too (each [data-theme] block sets --font-*).

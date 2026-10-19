@@ -36,8 +36,9 @@ const HTML = readFileSync(join(ROOT, 'index.html'), 'utf8')
 const STORE = readFileSync(join(ROOT, 'src', 'store', 'themeStore.ts'), 'utf8')
 
 const DARK = ['signal', 'console', 'slate', 'ember', 'midnight']
-const LIGHT = 'lab'
-const ALL = [...DARK, LIGHT]
+// W29a UIX-01: two light themes (Lab, and Paper "soft light · low glare").
+const LIGHT = ['lab', 'paper']
+const ALL = [...DARK, ...LIGHT]
 const STATUSES = ['status-passed', 'status-failed', 'status-broken', 'status-skipped', 'status-flaky', 'status-unknown']
 const WEBFONTS = ['Sora', 'Plus Jakarta Sans', 'Space Grotesk', 'Archivo', 'IBM Plex Mono', 'JetBrains Mono']
 const RETIRED_GREENS = ['#7ce0a0', '#43e0a0', '#3fb950']
@@ -96,10 +97,12 @@ for (const status of STATUSES) {
   }
 }
 
-// 2. Light theme keeps its own darker equivalents (contrast on white cards).
-for (const status of STATUSES) {
-  if (token(LIGHT, status) === token('signal', status)) {
-    fail.push(`--${status} on "${LIGHT}" matches the dark themes — the contrast-adjusted light palette was lost`)
+// 2. Each light theme keeps its own darker equivalents (contrast on light cards).
+for (const light of LIGHT) {
+  for (const status of STATUSES) {
+    if (token(light, status) === token('signal', status)) {
+      fail.push(`--${status} on "${light}" matches the dark themes — the contrast-adjusted light palette was lost`)
+    }
   }
 }
 
@@ -350,13 +353,295 @@ for (const id of ALL) {
   if (accent !== expect.accent) fail.push(`"${id}" swatch accent ${accent} != --color-accent ${expect.accent}`)
 }
 
+// ── W29a UI standard: rules 7-12 ──────────────────────────────────────────────
+//
+// Each rule's matcher runs a SELF-TEST first (a planted violation caught, the
+// clean form passed), as rule 6a's does. Test files are not scanned: a test may
+// name a class or a token to prove it is ABSENT. The hits in other files are
+// the W29a sweep groups' checklists.
+
+/** `code[i]` is ' or ": the index past its closing quote (a newline ends an unterminated one). */
+function skipQuoted(code, i) {
+  const quote = code[i]
+  for (let j = i + 1; j < code.length; j++) {
+    if (code[j] === '\\') { j++; continue }
+    if (code[j] === quote || code[j] === '\n') return j + 1
+  }
+  return code.length
+}
+
+/** `code[i]` is a backtick: the index past the closing one (`${…}` read as expressions). */
+function skipTemplate(code, i) {
+  for (let j = i + 1; j < code.length; j++) {
+    if (code[j] === '\\') { j++; continue }
+    if (code[j] === '`') return j + 1
+    if (code[j] === '$' && code[j + 1] === '{') { j = skipExpression(code, j + 2) - 1 }
+  }
+  return code.length
+}
+
+/** From just inside a `{`: the index past its matching `}`. */
+function skipExpression(code, i) {
+  let depth = 0
+  for (let j = i; j < code.length; j++) {
+    const c = code[j]
+    if (c === '"' || c === "'") { j = skipQuoted(code, j) - 1; continue }
+    if (c === '`') { j = skipTemplate(code, j) - 1; continue }
+    if (c === '{') depth++
+    else if (c === '}') { if (depth === 0) return j + 1; depth-- }
+  }
+  return code.length
+}
+
+/** Every line and block comment OUTSIDE a string becomes spaces (newlines kept). */
+function blankComments(text) {
+  let out = ''
+  let i = 0
+  const blank = (s) => s.replace(/[^\n]/g, ' ')
+  while (i < text.length) {
+    const c = text[i]
+    if (c === '/' && text[i + 1] === '/') {
+      const nl = text.indexOf('\n', i)
+      const end = nl === -1 ? text.length : nl
+      out += blank(text.slice(i, end))
+      i = end
+      continue
+    }
+    if (c === '/' && text[i + 1] === '*') {
+      const close = text.indexOf('*/', i + 2)
+      const end = close === -1 ? text.length : close + 2
+      out += blank(text.slice(i, end))
+      i = end
+      continue
+    }
+    if (c === '"' || c === "'" || c === '`') {
+      const end = c === '`' ? skipTemplate(text, i) : skipQuoted(text, i)
+      out += text.slice(i, end)
+      i = end
+      continue
+    }
+    out += c
+    i++
+  }
+  return out
+}
+
+const STRING_LITERAL = /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g
+
+/** `[index, body]` of every string literal (quotes stripped) in comment-blanked code. */
+function stringLiterals(code) {
+  return [...code.matchAll(STRING_LITERAL)].map((m) => [m.index, m[0].slice(1, -1)])
+}
+
+const relOf = (file) => file.slice(ROOT.length + 1).split('\\').join('/')
+
+// 7 (UIX-01). No white border (the spinner's invisible arc was `border-t-white`),
+// and no class string with text-white on a status / ui TINT (white on Lab's 15 %
+// failed tint is 1.26:1, the destructive buttons; `.btn-danger` replaces them).
+const WHITE_BORDER = /(?<![\w-])border-(?:[trblxy]-)?white(?![\w-])/
+const TEXT_WHITE = /(?<![\w-])text-white(?![\w-])/
+const STATUS_TINT = /bg-\[var\(--(?:status|ui)-[a-z]+-bg/
+function rule7Violations(rel, text) {
+  const out = []
+  const code = blankComments(text)
+  for (const [index, body] of stringLiterals(code)) {
+    const border = WHITE_BORDER.exec(body)
+    if (border) {
+      out.push(`${rel}:${lineOf(code, index)} a white border ("${border[0]}") vanishes on the light themes; use a token (border-t-[var(--color-accent)], border-[var(--color-border)])`)
+    }
+    if (TEXT_WHITE.test(body) && STATUS_TINT.test(body)) {
+      out.push(`${rel}:${lineOf(code, index)} text-white on a status / ui tint (1.26:1 on Lab); a destructive button is .btn-danger, status text on its tint reads var(--status-<s>-ink)`)
+    }
+  }
+  return out
+}
+
+// 8 (UIX-02). The nine --cat-* / --kind-* aliases are gone: the failure-category
+// map (components/charts/failureTaxonomy.ts) is the only source.
+const CAT_KIND = /--(?:cat|kind)-[\w-]*/
+function rule8Violations(rel, text) {
+  const m = CAT_KIND.exec(text)
+  if (!m) return []
+  return [`${rel}:${lineOf(text, m.index)} names "${m[0]}"; failure category / kind colours come from failureCategoryColor / failureKindColor (components/charts/failureTaxonomy)`]
+}
+
+// 9 (UIX-03). Conditional is the WARNING hue (--gate-conditional = broken), never skipped-gold.
+const CONDITIONAL_GOLD = /conditional[^\n]{0,160}--status-skipped/i
+function rule9Violations(rel, text) {
+  const code = blankComments(text)
+  const m = CONDITIONAL_GOLD.exec(code)
+  if (!m) return []
+  return [`${rel}:${lineOf(code, m.index)} paints "conditional" with --status-skipped; conditional is the warning hue: DECISION_TOKEN.conditional (components/ui/statusVocabulary)`]
+}
+
+// 10 (UIX-13). No colour literal in a string of a non-test source outside the
+// picker swatches, the Mermaid fallbacks and the chart kit (rule 6a). The ten
+// stat-tile sheens are W29b's (UIX-09): tolerated up to these counts, which may
+// only fall.
+const RULE10_EXEMPT = new Set(['src/store/themeStore.ts', 'src/components/guide/mermaidConfig.ts'])
+const PENDING_W29B_SHEEN = 'rgba(255,255,255,0.025)'
+const PENDING_W29B = {
+  'src/pages/CoveragePage.tsx': 1,
+  'src/pages/DefectsPage.tsx': 1,
+  'src/pages/FailureAnalysisPage.tsx': 2,
+  'src/pages/RunsPage.tsx': 1,
+  'src/pages/TrendsPage.tsx': 1,
+  'src/pages/RunIntelligencePage.tsx': 3,
+  'src/pages/DeepInvestigationPage.tsx': 1,
+}
+const STRING_COLOUR = [
+  /(?<![\w&])#(?:[0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{3,4})(?![\w-])/gi,
+  /\b(?:rgba?|hsla?|oklch)\s*\(/gi,
+]
+function rule10Violations(rel, text, pending = PENDING_W29B) {
+  if (RULE10_EXEMPT.has(rel) || rel.startsWith('src/components/charts/')) return []
+  const out = []
+  const code = blankComments(text)
+  let sheens = 0
+  for (const [index, body] of stringLiterals(code)) {
+    // A pending sheen is taken out of the string first, so it is counted once, as a sheen.
+    const parts = body.split(PENDING_W29B_SHEEN)
+    sheens += parts.length - 1
+    const rest = parts.join(' ')
+    for (const pattern of STRING_COLOUR) {
+      for (const m of rest.matchAll(pattern)) {
+        out.push(`${rel}:${lineOf(code, index)} colour literal "${m[0].trim()}" in a string; use a theme token (var(--name), or color-mix(in srgb, var(--name) N%, transparent))`)
+      }
+    }
+  }
+  const allowed = pending[rel] ?? 0
+  if (sheens > allowed) {
+    out.push(`${rel} has ${sheens} stat-tile sheens "${PENDING_W29B_SHEEN}" (pending W29b UIX-09: ${allowed}); the count may only fall`)
+  }
+  return out
+}
+
+// 11 (UIX-07). Every var(--name) names a token index.css defines (in a theme
+// block or a :root), a Tailwind runtime variable (--tw-*), or a property the
+// same file declares itself. An undefined token silently inherits the parent's
+// colour (`--color-danger` drew a failed step's tint as nothing).
+function definedTokens(css) {
+  return new Set([...blankComments(css).matchAll(/--([\w-]+)\s*:/g)].map((m) => m[1]))
+}
+const VAR_READ = /var\(\s*--([\w-]+)/g
+const LOCAL_DECLARATION = /--([\w-]+)['"`]?\s*:/g
+function rule11Violations(rel, text, defined) {
+  const code = blankComments(text)
+  const local = new Set([...code.matchAll(LOCAL_DECLARATION)].map((m) => m[1]))
+  const out = []
+  for (const m of code.matchAll(VAR_READ)) {
+    const name = m[1]
+    // var(--chart-${i}): a dynamic family, read from the kit's own token lists.
+    if (code[m.index + m[0].length] === '$') continue
+    if (name.startsWith('tw-') || defined.has(name) || local.has(name)) continue
+    out.push(`${rel}:${lineOf(code, m.index)} reads var(--${name}), which no theme block or :root in index.css defines; it silently inherits the parent's colour`)
+  }
+  return out
+}
+
+// 12 (families). The derived :root defines the W29a token families, and the
+// light override (the solid destructive button) names exactly the light themes.
+const FAMILY_TOKENS = [
+  'status-passed-ink', 'status-failed-ink', 'status-broken-ink', 'status-skipped-ink', 'status-flaky-ink',
+  'ui-danger', 'ui-danger-bg', 'ui-danger-bd', 'ui-danger-ink',
+  'ui-warning', 'ui-warning-bg', 'ui-warning-bd', 'ui-warning-ink',
+  'ui-success', 'ui-success-bg', 'ui-success-bd', 'ui-success-ink',
+  'ui-info', 'ui-info-bg', 'ui-info-bd', 'ui-info-ink',
+  'state-quarantined', 'state-quarantined-bd', 'color-text-on-status',
+  'color-btn-danger-bg', 'color-btn-danger-bd', 'color-btn-danger-text', 'color-btn-danger-hover',
+]
+
+/** `{ selector, body }` of every innermost rule of a stylesheet. */
+function cssRules(css) {
+  return [...blankComments(css).matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ selector: m[1].trim(), body: m[2] }))
+}
+
+function rule12Violations(css, light = LIGHT) {
+  const out = []
+  const rules = cssRules(css)
+  const root = rules.find((r) => r.selector.endsWith(':root') && /--status-passed-bg\s*:/.test(r.body))
+  if (!root) return ['index.css: no derived :root (the one defining --status-passed-bg) found']
+  for (const name of FAMILY_TOKENS) {
+    if (tokenIn(root.body, name) === null) out.push(`index.css: the derived :root does not define --${name}`)
+  }
+  const lightRule = rules.find((r) => r.selector.includes('[data-theme=') && /--color-btn-danger-bg\s*:/.test(r.body))
+  if (!lightRule) {
+    out.push('index.css: no light-theme rule sets --color-btn-danger-bg')
+    return out
+  }
+  const named = [...lightRule.selector.matchAll(/\[data-theme="([\w-]+)"\]/g)].map((m) => m[1]).sort()
+  if (named.join(',') !== [...light].sort().join(',')) {
+    out.push(`index.css: the danger-button light rule names ${named.join(', ')}; it must name exactly the light themes (${light.join(', ')})`)
+  }
+  return out
+}
+
+{
+  const selfTest = []
+  const expectHit = (name, found) => {
+    selfTestCount += 1
+    if (found.length === 0) selfTest.push(`self-test: the planted ${name} was NOT caught`)
+  }
+  const expectClean = (name, found) => {
+    selfTestCount += 1
+    if (found.length !== 0) selfTest.push(`self-test: the clean ${name} was flagged: ${found.join('; ')}`)
+  }
+  expectHit('rule 7 white spinner arc', rule7Violations('p.tsx', "const c = 'animate-spin border-2 border-t-white'"))
+  expectHit('rule 7 white border', rule7Violations('p.tsx', 'const c = "rounded border-white/40"'))
+  expectHit('rule 7 white text on a failed tint', rule7Violations('p.tsx', '<button className="bg-[var(--status-failed-bg)] px-4 text-white">x</button>'))
+  expectHit('rule 7 white text on a ui tint (template)', rule7Violations('p.tsx', 'const c = `px-2 ${a} bg-[var(--ui-danger-bg)] text-white`'))
+  expectClean('rule 7 accent arc and btn-danger', rule7Violations('p.tsx', "const a = 'border-t-[var(--color-accent)]'; const b = 'btn-danger' // border-t-white"))
+  expectHit('rule 8 kind token', rule8Violations('p.tsx', "color: 'var(--kind-product)'"))
+  expectHit('rule 8 cat token in css', rule8Violations('index.css', '  --cat-assertion: var(--status-failed);'))
+  expectClean('rule 8 kind colour from the map', rule8Violations('p.tsx', "color: failureKindColor('product')"))
+  expectHit('rule 9 conditional gold', rule9Violations('p.tsx', "  conditional: { fg: 'var(--status-skipped)' },"))
+  expectClean('rule 9 conditional warning', rule9Violations('p.tsx', "  conditional: { fg: 'var(--status-broken-ink)' },\n  skipped: 'var(--status-skipped)',\n// conditional was --status-skipped once"))
+  expectHit('rule 10 hex in a string', rule10Violations('src/main.tsx', "style: { background: '#1e293b' }"))
+  expectHit('rule 10 rgba in a JSX attribute', rule10Violations('src/pages/X.tsx', '<div style={{ boxShadow: "0 8px 28px rgba(0,0,0,0.25)" }} />'))
+  expectHit('rule 10 a pending sheen over its count', rule10Violations('src/pages/X.tsx', "const a = 'rgba(255,255,255,0.025)'", { 'src/pages/X.tsx': 0 }))
+  expectClean('rule 10 a comment, a token and a pending sheen', rule10Violations('src/pages/X.tsx', "// see #588 and rgba(0,0,0,0.5)\nconst a = 'var(--shadow-md)'; const b = 'rgba(255,255,255,0.025)'", { 'src/pages/X.tsx': 1 }))
+  expectClean('rule 10 the picker swatches', rule10Violations('src/store/themeStore.ts', "swatch: ['#eae8e2', '#f5f4f0', '#2f5fb3']"))
+  const planted = definedTokens(':root { --status-failed: #b3352c; --ui-danger: var(--status-failed); }')
+  expectHit('rule 11 undefined token', rule11Violations('p.tsx', "const c = 'text-[var(--color-danger)]'", planted))
+  expectClean('rule 11 defined, tw, local, dynamic and commented reads', rule11Violations('p.tsx', "const a = 'var(--ui-danger)'; const b = 'var(--tw-ring-color)'; const s = { '--bar-w': '4px', width: 'var(--bar-w)' }; const d = `var(--chart-${i})` // var(--nope)", planted))
+  const complete = `:root { --status-passed-bg: x; ${FAMILY_TOKENS.map((t) => `--${t}: v;`).join(' ')} }`
+  expectHit('rule 12 a missing family token', rule12Violations(':root { --status-passed-bg: x; }\n[data-theme="lab"] { --color-btn-danger-bg: y; }', ['lab']))
+  expectHit('rule 12 a light rule naming a dark theme', rule12Violations(`${complete}\n[data-theme="lab"], [data-theme="signal"] { --color-btn-danger-bg: y; }`, ['lab']))
+  expectClean('rule 12 complete families', rule12Violations(`${complete}\n[data-theme="lab"], [data-theme="paper"] { --color-btn-danger-bg: y; }`, ['lab', 'paper']))
+  if (selfTest.length) {
+    console.error('Theme token check FAILED (W29a rules 7-12 self-test: the guard itself is broken):')
+    for (const f of selfTest) console.error(`  - ${f}`)
+    process.exit(1)
+  }
+}
+
+const DEFINED_TOKENS = definedTokens(CSS)
+let standardFiles = 0
+for (const file of walk(SRC_DIR)) {
+  const rel = relOf(file)
+  const text = readFileSync(file, 'utf8')
+  standardFiles += 1
+  fail.push(...rule7Violations(rel, text))
+  fail.push(...rule8Violations(rel, text))
+  fail.push(...rule9Violations(rel, text))
+  fail.push(...rule10Violations(rel, text))
+  fail.push(...rule11Violations(rel, text, DEFINED_TOKENS))
+}
+fail.push(...rule8Violations('src/index.css', CSS))
+fail.push(...rule11Violations('src/index.css', CSS, DEFINED_TOKENS))
+fail.push(...rule12Violations(CSS))
+if (standardFiles === 0) fail.push('scanned 0 source files for rules 7-11: the W29a rules are measuring nothing')
+
 if (fail.length) {
   console.error('\nTheme token check FAILED:')
   for (const f of fail) console.error(`  - ${f}`)
   process.exit(1)
 }
-console.log(`OK — ${ALL.length} themes: status hues unified across ${DARK.length} dark themes, ` +
-  `light palette distinct, system fonts only, no remote font origins, picker swatches match their tokens; ` +
+console.log(`OK — ${ALL.length} themes (${ALL.join(', ')}): status hues unified across ${DARK.length} dark themes, ` +
+  `light palettes (${LIGHT.join(', ')}) distinct, system fonts only, no remote font origins, picker swatches match their tokens; ` +
+  `W29a rules over ${standardFiles} files: no white border or white text on a tint (7), no --cat-/--kind- (8), ` +
+  `conditional never skipped-gold (9), no colour literal in a string outside the swatches / Mermaid / chart kit (10), ` +
+  `every var(--…) defined (11), the token families and the light override (12); ` +
   `chart kit (${chartFiles} files): no colour literals; engine packages value-imported only under ` +
   `${ENGINE_DIRS.join(', ')} (${boundaryFiles} files checked, ${engineFiles} inside); ` +
   (RECHARTS_BOUNDARY_ENFORCED

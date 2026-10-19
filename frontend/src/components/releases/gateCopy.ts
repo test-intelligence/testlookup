@@ -3,15 +3,19 @@
  * (REL-01): one definition for the card's Evaluate, the toolbar's Evaluate
  * all, the gate panel and the phase chips. Pure: no fetching.
  */
+import { DECISION_LABEL } from '@/components/ui/statusVocabulary'
 import { mapVerdict } from './mapping'
 import type { ReleaseGateEvaluationResult } from '@/services/releasesService'
 
-/** `GO` -> "Go"; an unknown word reads "Not evaluated", never a pass. */
+/**
+ * `GO` -> "Go" (the one decision vocabulary, W29a UIX-03: Go / Conditional /
+ * No-Go); an unknown word reads "Not evaluated", never a pass.
+ */
 export function verdictWord(verdict: string): string {
   switch (mapVerdict(verdict)) {
-    case 'go': return 'Go'
-    case 'no_go': return 'No-Go'
-    case 'conditional': return 'Conditional Go'
+    case 'go': return DECISION_LABEL.go
+    case 'no_go': return DECISION_LABEL.no_go
+    case 'conditional': return DECISION_LABEL.conditional
     default: return 'Not evaluated'
   }
 }
@@ -37,7 +41,7 @@ export function evaluationToast(name: string, result: ReleaseGateEvaluationResul
     case 'no_go':
       return `${name}: No-Go — ${items(blocking.length)}`
     case 'conditional':
-      return `${name}: Conditional Go — ${items(blocking.length)}`
+      return `${name}: ${DECISION_LABEL.conditional} — ${items(blocking.length)}`
     default: {
       const reason = result.scorecard?.insufficient_reason || blocking[0] || 'the server gave no reason'
       return `${name}: Not evaluated — ${reason}`
@@ -55,7 +59,7 @@ export function evaluateAllToast(verdicts: string[]): string {
   const conditional = verdicts.filter(v => mapVerdict(v) === 'conditional').length
   const rest = n - go - noGo - conditional
   return `Evaluated ${n} release${n === 1 ? '' : 's'}: ${go} Go, ${noGo} No-Go, `
-    + `${conditional ? `${conditional} Conditional Go, ` : ''}${rest} not evaluated.`
+    + `${conditional ? `${conditional} ${DECISION_LABEL.conditional}, ` : ''}${rest} not evaluated.`
 }
 
 /** The toast when some evaluations of "Evaluate all" failed. */

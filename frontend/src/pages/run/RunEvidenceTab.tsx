@@ -19,10 +19,11 @@ import { usePipelines } from '@/hooks/useAgentRuns'
 import { publicPipelineStatus, PUBLIC_PIPELINE_STATUS_LABEL } from '@/types/agent'
 import { PipelineDetail } from '../AgentStatusPage'
 import { RunDecisionReport } from '../RunIntelligencePage'
+import { formatCompactDateTime } from '@/utils/formatters'
 
 function pipelineLabel(p: { workflow_type: string; created_at: string }, status: string): string {
   const when = new Date(p.created_at)
-  const at = Number.isNaN(when.getTime()) ? '' : ` · ${when.toLocaleString()}`
+  const at = Number.isNaN(when.getTime()) ? '' : ` · ${formatCompactDateTime(when)}`
   return `${p.workflow_type} pipeline · ${status}${at}`
 }
 
