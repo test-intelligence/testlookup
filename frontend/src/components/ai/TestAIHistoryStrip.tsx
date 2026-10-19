@@ -1,7 +1,8 @@
 /**
  * W03 AIH-05: "AI analysis across runs" on the test History tab (contract W03
  * §9.8): one chip per run whose result has an AI analysis, oldest -> newest,
- * coloured by category; the markers say where the category changed
+ * marked by category (W29a UIX-02: the taxonomy's coloured mark beside the
+ * API's own words, in neutral text); the markers say where the category changed
  * ("Category changed on Run #60: INFRASTRUCTURE → PRODUCT_BUG") or only
  * reworded its root cause. A chip opens that run's stored versions.
  *
@@ -12,7 +13,7 @@
 import { useMemo, useState } from 'react'
 import { clsx } from 'clsx'
 import type { TestHistoryAIChange, TestHistoryAIPoint } from '@/types/aiTestHistory'
-import { categoryColor } from '@/utils/formatters'
+import FailureCategoryMark from '@/components/charts/FailureCategoryMark'
 import { buildStripModel } from './aiTestHistory.model'
 import TestAIVersionsPopover from './TestAIVersionsPopover'
 
@@ -69,13 +70,13 @@ export default function TestAIHistoryStrip({
               title={chip.title}
               onClick={() => setOpenKey((key) => (key === chip.key ? null : chip.key))}
               className={clsx(
-                'inline-flex items-center rounded border bg-[var(--color-bg-secondary)] px-1.5 py-0.5 font-mono text-[10px] hover:bg-[var(--color-bg-hover)]',
-                categoryColor(chip.category ?? ''),
+                'inline-flex items-center gap-1 rounded border bg-[var(--color-bg-secondary)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]',
                 chip.isCurrentRun ? 'border-[var(--color-accent)]' : 'border-[var(--color-border)]',
                 changedCategory && 'ring-1 ring-[var(--status-broken)]',
                 selected && 'bg-[var(--color-bg-hover)]',
               )}
             >
+              <FailureCategoryMark category={chip.category} size={8} />
               {chip.text}
             </button>
           )

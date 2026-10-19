@@ -24,6 +24,7 @@
  * verdict made up from the pass rate.
  */
 import { deriveDecisionTrustState } from '@/components/ai/decisionTrustState'
+import { DECISION_LABEL } from '@/components/ui/statusVocabulary'
 import type { RunIntelligence } from '@/services/runIntelligenceService'
 import type { RunVerdictItem } from '@/types/runs'
 
@@ -90,11 +91,11 @@ export function aiVerdictOf(intel: Partial<RunIntelligence> | null | undefined):
   return { recommendation: null, reason: analysed ? 'no-recommendation' : 'not-analysed' }
 }
 
-/** The pill's words. */
+/** The pill's words: the one decision vocabulary's (W29a UIX-03). */
 export const RECOMMENDATION_LABEL: Record<AiRecommendation, string> = {
-  GO: 'Go',
-  CONDITIONAL_GO: 'Conditional',
-  NO_GO: 'No-Go',
+  GO: DECISION_LABEL.go,
+  CONDITIONAL_GO: DECISION_LABEL.conditional,
+  NO_GO: DECISION_LABEL.no_go,
 }
 
 /** The "—" cell's title. */

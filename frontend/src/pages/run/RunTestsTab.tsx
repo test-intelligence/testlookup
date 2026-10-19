@@ -101,7 +101,7 @@ function statusChips(run: TestRun): StatusChip[] {
   }
   chips.push(
     { value: 'PASSED', count: run.passed_tests ?? 0, label: 'passed', hue: 'var(--status-passed)' },
-    { value: 'SKIPPED', count: run.skipped_tests ?? 0, label: 'skipped', hue: 'var(--color-text-muted)' },
+    { value: 'SKIPPED', count: run.skipped_tests ?? 0, label: 'skipped', hue: 'var(--status-skipped)' },
   )
   return chips
 }
@@ -266,7 +266,7 @@ export default function RunTestsTab({
               <div className="flex items-center justify-center py-20"><LoadingSpinner size="lg" /></div>
             ) : error ? (
               <div className="flex items-center justify-center py-16 text-[var(--status-failed)] text-sm gap-2">
-                <span>Failed to load test cases — {(error as Error)?.message ?? 'server error'}</span>
+                <span>Could not load test cases — {(error as Error)?.message ?? 'server error'}</span>
               </div>
             ) : !data?.items?.length ? (
               <div className="flex flex-col items-center justify-center py-16 text-[var(--color-text-muted)] text-sm gap-3 px-6 text-center max-w-2xl mx-auto">

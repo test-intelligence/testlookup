@@ -1,12 +1,8 @@
 import { ArrowDown, ArrowUp, CheckCircle, AlertTriangle, TrendingDown, TrendingUp } from 'lucide-react'
 import clsx from 'clsx'
 import type { ExecutivePanel } from '@/services/runIntelligenceService'
-
-const STATUS_STYLES: Record<string, { bg: string; text: string; label: string }> = {
-  GO: { bg: 'bg-[var(--status-passed-bg)] border-[var(--status-passed-bd)]', text: 'text-[var(--gate-go)]', label: 'GO' },
-  CONDITIONAL_GO: { bg: 'bg-[var(--gate-conditional-bg)] border-[var(--gate-conditional-border)]', text: 'text-[var(--gate-conditional)]', label: 'CONDITIONAL GO' },
-  NO_GO: { bg: 'bg-[var(--status-failed-bg)] border-[var(--status-failed-bd)]', text: 'text-[var(--gate-no-go)]', label: 'NO GO' },
-}
+import FailureCategoryMark from '@/components/charts/FailureCategoryMark'
+import { DECISION_LABEL, DECISION_TOKEN, decisionKey } from '@/components/ui/statusVocabulary'
 
 const CATEGORY_LABELS: Record<string, string> = {
   PRODUCT_BUG: 'Product Bug',
@@ -15,15 +11,6 @@ const CATEGORY_LABELS: Record<string, string> = {
   AUTOMATION_DEFECT: 'Automation Defect',
   FLAKY: 'Flaky',
   UNKNOWN: 'Unknown',
-}
-
-const CATEGORY_COLOUR: Record<string, string> = {
-  PRODUCT_BUG: 'text-[var(--status-failed)]',
-  INFRASTRUCTURE: 'text-[var(--status-broken)]',
-  TEST_DATA: 'text-[var(--color-cyan)]',
-  AUTOMATION_DEFECT: 'text-[var(--color-purple)]',
-  FLAKY: 'text-[var(--status-flaky)]',
-  UNKNOWN: 'text-[var(--color-text-muted)]',
 }
 
 function passRateColour(rate: number): string {
@@ -38,7 +25,11 @@ interface Props {
 }
 
 export default function ExecutiveSummaryPanel({ panel, compact = false }: Props) {
-  const status = STATUS_STYLES[panel.status_signal] ?? STATUS_STYLES.CONDITIONAL_GO
+  // The one decision vocabulary (W29a UIX-03): Go / Conditional / No-Go, the decision's tint and border, and
+  // its legible ink as text. An unknown signal reads as conditional, as before.
+  const decision = decisionKey(panel.status_signal) ?? 'conditional'
+  const statusToken = DECISION_TOKEN[decision]
+  const statusLabel = DECISION_LABEL[decision]
   const { metrics } = panel
 
   return (
@@ -56,11 +47,13 @@ export default function ExecutiveSummaryPanel({ panel, compact = false }: Props)
         <div className="flex items-center gap-2 shrink-0">
           <span
             role="status"
-            aria-label={`Release readiness: ${status.label}`}
-            className={clsx('px-2.5 py-1 rounded-md text-xs font-bold border', status.bg, status.text)}
+            aria-label={`Release readiness: ${statusLabel}`}
+            data-decision={decision}
+            className="px-2.5 py-1 rounded-md text-xs font-bold border"
+            style={{ background: statusToken.tint, borderColor: statusToken.border, color: statusToken.ink }}
             title="Release readiness assessment"
           >
-            {status.label}
+            {statusLabel}
           </span>
           {panel.risk_score != null && (
             <span
@@ -112,10 +105,12 @@ export default function ExecutiveSummaryPanel({ panel, compact = false }: Props)
       {/* Dominant Failure */}
       {panel.dominant_failure && (
         <div className="flex items-center gap-3 bg-[var(--color-bg-secondary)]/60 border border-[var(--color-border)] rounded-lg px-3 py-2">
-          <AlertTriangle className={clsx('h-4 w-4 shrink-0', CATEGORY_COLOUR[panel.dominant_failure.category] ?? 'text-[var(--color-text-muted)]')} />
+          <AlertTriangle className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" />
           <div className="flex-1 min-w-0">
             <span className="text-sm text-[var(--color-text)]">
-              <span className={clsx('font-medium', CATEGORY_COLOUR[panel.dominant_failure.category])}>
+              {/* W29a UIX-02: the category's colour is a mark from the one taxonomy map; its words stay neutral. */}
+              <FailureCategoryMark category={panel.dominant_failure.category} size={8} className="mr-1.5" />
+              <span className="font-medium">
                 {CATEGORY_LABELS[panel.dominant_failure.category] ?? panel.dominant_failure.category}
               </span>
               {' '}&mdash; {panel.dominant_failure.count} failure{panel.dominant_failure.count !== 1 ? 's' : ''} ({panel.dominant_failure.percentage}%)

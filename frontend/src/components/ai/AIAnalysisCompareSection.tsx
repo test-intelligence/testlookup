@@ -11,14 +11,15 @@ import { Sparkles } from 'lucide-react'
 import { clsx } from 'clsx'
 import { useAICompare } from '@/hooks/useAIHistory'
 import type { DigestSide } from '@/types/aiHistory'
-import { categoryColor } from '@/utils/formatters'
+import FailureCategoryMark from '@/components/charts/FailureCategoryMark'
+import { DECISION_TOKEN, decisionKey } from '@/components/ui/statusVocabulary'
 import AIDigestDiff from './AIDigestDiff'
 import { engineWord, previousRunEmptyText, runLabel } from './aiDigestDiff.model'
 
-const VERDICT_TONE: Record<string, string> = {
-  GO: 'text-[var(--status-passed)]',
-  CONDITIONAL_GO: 'text-[var(--status-broken)]',
-  NO_GO: 'text-[var(--status-failed)]',
+/** The verdict's colour from the one decision vocabulary (W29a UIX-03); its words stay the API's (`CONDITIONAL_GO`). */
+function verdictColor(verdict: string | null | undefined): string | undefined {
+  const key = decisionKey(verdict)
+  return key ? DECISION_TOKEN[key].hue : undefined
 }
 
 function Note({ children, kind }: { children: React.ReactNode; kind: string }) {
@@ -30,6 +31,7 @@ function Note({ children, kind }: { children: React.ReactNode; kind: string }) {
 function SideColumn({ side, title, runName, data }: { side: 'baseline' | 'current'; title: string; runName: string; data: DigestSide | null }) {
   const categories = Object.entries(data?.categories ?? {}).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
   const model = data?.llm_model && data.llm_model.toLowerCase() !== 'none' ? data.llm_model : null
+  const verdictHue = verdictColor(data?.verdict)
   return (
     <div data-ai-compare-side={side} className="min-w-0 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3">
       <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">{title}</div>
@@ -39,7 +41,11 @@ function SideColumn({ side, title, runName, data }: { side: 'baseline' | 'curren
       ) : (
         <div className="mt-1.5 space-y-1.5 text-[12px]">
           <p className="m-0">
-            <span data-ai-compare-verdict="" className={clsx('font-semibold', VERDICT_TONE[data.verdict ?? ''] ?? 'text-[var(--color-text)]')}>
+            <span
+              data-ai-compare-verdict=""
+              className={clsx('font-semibold', !verdictHue && 'text-[var(--color-text)]')}
+              style={verdictHue ? { color: verdictHue } : undefined}
+            >
               {data.verdict ?? 'No verdict'}
             </span>
             {data.risk_score != null && <span className="ml-2 text-[var(--color-text-muted)]">risk {data.risk_score}/100</span>}
@@ -57,7 +63,8 @@ function SideColumn({ side, title, runName, data }: { side: 'baseline' | 'curren
           {categories.length > 0 && (
             <ul className="m-0 flex list-none flex-wrap gap-1 p-0">
               {categories.map(([category, n]) => (
-                <li key={category} className={clsx('rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[11px]', categoryColor(category))}>
+                <li key={category} className="inline-flex items-center gap-1 rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[11px] text-[var(--color-text-secondary)]">
+                  <FailureCategoryMark category={category} size={8} />
                   {category} {n}
                 </li>
               ))}

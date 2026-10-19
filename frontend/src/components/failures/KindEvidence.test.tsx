@@ -8,12 +8,15 @@
  *  - the confidence-basis chip maps human_corrected → "human-corrected"
  *    and heuristic_estimate → "estimated";
  *  - no lookup key → plain badge, no button;
- *  - empty evidence → honest fallback copy instead of a fake checklist.
+ *  - empty evidence → honest fallback copy instead of a fake checklist;
+ *  - (W29a UIX-02) the badge's words are neutral text; the kind's colour from
+ *    the one taxonomy map is a mark (the dot, the tint, the border).
  */
 import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { KindBadgeWithEvidence, KindEvidencePanel } from './KindEvidence'
+import { FailureKindBadge, KindBadgeWithEvidence, KindEvidencePanel } from './KindEvidence'
+import { failureKindColor } from '@/components/charts/failureTaxonomy'
 import type { KindEvidence } from '@/types/analytics'
 
 vi.mock('@/hooks/useMetrics', () => ({
@@ -106,5 +109,28 @@ describe('KindBadgeWithEvidence', () => {
     render(<KindBadgeWithEvidence kind="product" />)
     expect(screen.queryByRole('button')).not.toBeInTheDocument()
     expect(screen.getByTitle(/AI-classified failure kind: Product/i)).toBeInTheDocument()
+  })
+})
+
+describe('FailureKindBadge (W29a UIX-02)', () => {
+  it.each(['product', 'test_code', 'infrastructure', 'unknown'] as const)(
+    'draws %s words in neutral text and its colour as the dot, tint and border',
+    (kind) => {
+      const { container } = render(<FailureKindBadge kind={kind} />)
+      const badge = container.firstElementChild as HTMLElement
+      const color = failureKindColor(kind)
+      expect(badge.style.color).toBe('var(--color-text-secondary)')
+      expect(badge.getAttribute('style')).not.toContain(`color: ${color}`)
+      expect(badge.getAttribute('style')).toContain(`color-mix(in srgb, ${color} 14%, transparent)`)
+      const dot = badge.querySelector<HTMLElement>('span[aria-hidden]')
+      expect(dot?.style.background).toBe(color)
+    },
+  )
+
+  it('keeps its words, case and title', () => {
+    render(<FailureKindBadge kind="product" compact />)
+    const badge = screen.getByTitle(/AI-classified failure kind: Product/)
+    expect(badge).toHaveTextContent('Product')
+    expect(badge.className).toContain('uppercase')
   })
 })

@@ -69,7 +69,9 @@ export default function KnowledgeSourcePicker({ sources, selectedIds, onToggle, 
               'h-5 w-5 rounded border flex items-center justify-center flex-shrink-0',
               isSelected ? 'bg-[var(--color-accent-muted)] border-[var(--color-accent)]' : 'border-[var(--color-border)]',
             )}>
-              {isSelected && <Check className="h-3 w-3 text-white" />}
+              {/* W29a UIX-13: the box is the accent TINT, not a solid accent fill, so a white check was
+                  invisible on the light themes; the info ink is legible on its own tint in every theme. */}
+              {isSelected && <Check className="h-3 w-3 text-[var(--ui-info-ink)]" />}
             </div>
             <Icon className="h-4 w-4 text-[var(--color-text-muted)] flex-shrink-0" />
             <div className="flex-1 min-w-0">

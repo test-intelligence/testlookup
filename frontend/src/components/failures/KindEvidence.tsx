@@ -19,8 +19,10 @@ import { kindDef } from '@/utils/failureKind'
 import { useKindEvidence } from '@/hooks/useMetrics'
 import type { KindEvidence, KindEvidenceCheck } from '@/types/analytics'
 
-/** Compact color-coded pill for a failure kind. Tokens come from the
- *  existing palette (--kind-* aliases in index.css — no new hex). */
+/** Compact pill for a failure kind. Its colour is the one taxonomy map's
+ *  (`failureKindColor`, via `kindDef`), drawn as a MARK — the dot, the tint
+ *  and the border — beside NEUTRAL words (W29a UIX-02: a series colour is a
+ *  >= 3:1 mark, not 4.5:1 text). */
 export function FailureKindBadge({ kind, compact }: { kind: string | null | undefined; compact?: boolean }) {
   const d = kindDef(kind)
   return (
@@ -32,7 +34,7 @@ export function FailureKindBadge({ kind, compact }: { kind: string | null | unde
         padding: compact ? '1px 6px' : '2px 8px',
         background: `color-mix(in srgb, ${d.color} 14%, transparent)`,
         border: `1px solid color-mix(in srgb, ${d.color} 35%, transparent)`,
-        color: d.color,
+        color: 'var(--color-text-secondary)',
       }}
       title={`AI-classified failure kind: ${d.label} — ${d.desc}`}
     >

@@ -8,12 +8,15 @@
  * text unless the caller names that run (`fromRunId`).
  *
  * Every name, label and excerpt is AI or CI text: rendered as React text, never as markup.
+ *
+ * W29a UIX-02: a category is a coloured MARK (the one taxonomy map) beside neutral words; the words stay the
+ * API's own (`PRODUCT_BUG`), a stored analysis as recorded.
  */
 import { Link } from 'react-router-dom'
 import { Info } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { AIDiffMode, AIDigestDiff } from '@/types/aiHistory'
-import { categoryColor } from '@/utils/formatters'
+import FailureCategoryMark from '@/components/charts/FailureCategoryMark'
 import { buildDiffModel, type DiffClusterGroup, type DiffTestGroup, type DiffTestRow } from './aiDigestDiff.model'
 import { runTestHref } from './aiHistoryUrl'
 
@@ -33,7 +36,8 @@ function TestRow({ row, runId, fromRunId }: { row: DiffTestRow; runId: string; f
     <>
       <span className="font-medium text-[var(--color-text)] break-all">{row.name}</span>
       {row.suite && <span className="text-[var(--color-text-faint)]"> · {row.suite}</span>}
-      <span className={clsx('ml-2', row.category ? categoryColor(row.category) : 'text-[var(--color-text-muted)]')}>
+      <span className={clsx('ml-2', row.category ? 'text-[var(--color-text-secondary)]' : 'text-[var(--color-text-muted)]')}>
+        {row.category && <FailureCategoryMark category={row.category} size={8} className="mr-1" />}
         {row.detail}
       </span>
     </>
@@ -185,8 +189,9 @@ export default function AIDigestDiff({
                       key={row.category}
                       data-ai-diff-category={row.category}
                       title={`${row.from} -> ${row.to}`}
-                      className={clsx('rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[11px]', categoryColor(row.category))}
+                      className="inline-flex items-center gap-1 rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[11px] text-[var(--color-text-secondary)]"
                     >
+                      <FailureCategoryMark category={row.category} size={8} />
                       {row.text}
                     </li>
                   ))}

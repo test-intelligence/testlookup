@@ -59,6 +59,7 @@ import Pagination from '@/components/ui/Pagination'
 import PageHeader from '@/components/ui/PageHeader'
 import type { OverflowItem } from '@/components/ui/OverflowMenu'
 import StatusBanner, { type BannerFact, type BannerState } from '@/components/ui/StatusBanner'
+import { DECISION_LABEL } from '@/components/ui/statusVocabulary'
 import Disclosure from '@/components/ui/Disclosure'
 import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
 import WindowPicker, { DEFAULT_WINDOW_OPTIONS } from '@/components/ui/WindowPicker'
@@ -118,9 +119,9 @@ const VERDICT_FILTERS = ['', 'GO', 'CONDITIONAL_GO', 'NO_GO', 'none'] as const
 type VerdictFilter = (typeof VERDICT_FILTERS)[number]
 const VERDICT_FILTER_LABELS: Record<VerdictFilter, string> = {
   '':             'Any verdict',
-  GO:             'Go',
-  CONDITIONAL_GO: 'Conditional',
-  NO_GO:          'No-Go',
+  GO:             DECISION_LABEL.go,
+  CONDITIONAL_GO: DECISION_LABEL.conditional,
+  NO_GO:          DECISION_LABEL.no_go,
   none:           'No verdict',
 }
 const isVerdictFilter = (value: string): value is VerdictFilter =>
@@ -492,10 +493,7 @@ function PrimaryBtn({
       onClick={onClick}
       title={title}
       disabled={disabled}
-      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-md transition-colors disabled:opacity-50"
-      style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
-      onMouseEnter={(e) => !disabled && (e.currentTarget.style.background = 'var(--color-btn-primary-hover)')}
-      onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--color-btn-primary-bg)')}
+      className="btn-primary inline-flex items-center gap-1.5"
     >
       {children}
     </button>
@@ -1203,9 +1201,9 @@ function RunsTable({
                       <span
                         className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[9.5px] font-medium align-middle"
                         style={{
-                          background: 'rgba(99,102,241,0.12)',
-                          border: '1px solid rgba(99,102,241,0.30)',
-                          color: '#a5b4fc',
+                          background: 'var(--ui-info-bg)',
+                          border: '1px solid var(--ui-info-bd)',
+                          color: 'var(--ui-info-ink)',
                         }}
                         title="Results were manually uploaded from a report file"
                       >

@@ -48,31 +48,32 @@ describe('ExecutiveSummaryPanel', () => {
   it('renders the headline and status signal', () => {
     render(<ExecutiveSummaryPanel panel={makePanel()} />)
     expect(screen.getByText('Release candidate is healthy')).toBeInTheDocument()
-    expect(screen.getByRole('status', { name: /Release readiness: GO/ })).toBeInTheDocument()
+    expect(screen.getByRole('status', { name: 'Release readiness: Go' })).toHaveTextContent('Go')
   })
 
-  it('colours the GO gate through gate/status tokens, not raw palette', () => {
+  it('colours the Go gate through the decision vocabulary tokens, not raw palette', () => {
     const { container } = render(<ExecutiveSummaryPanel panel={makePanel()} />)
-    const badge = screen.getByRole('status', { name: /Release readiness: GO/ })
-    expect(badge.className).toContain('var(--gate-go)')
-    expect(badge.className).toContain('var(--status-passed-bg)')
+    const badge = screen.getByRole('status', { name: 'Release readiness: Go' })
+    // W29a UIX-03: DECISION_TOKEN's tint and its legible ink (not the bare hue) as text.
+    expect(badge.getAttribute('style')).toContain('var(--status-passed-ink)')
+    expect(badge.getAttribute('style')).toContain('var(--status-passed-bg)')
     expect(container.innerHTML).not.toMatch(RAW_PALETTE)
   })
 
-  it('colours the CONDITIONAL and NO_GO gates through tokens', () => {
+  it('colours the Conditional and No-Go gates through tokens', () => {
     const conditional = render(
       <ExecutiveSummaryPanel panel={makePanel({ status_signal: 'CONDITIONAL_GO' })} />,
     )
     expect(
-      screen.getByRole('status', { name: /Release readiness: CONDITIONAL GO/ }).className,
-    ).toContain('var(--gate-conditional)')
+      screen.getByRole('status', { name: 'Release readiness: Conditional' }).getAttribute('style'),
+    ).toContain('var(--status-broken-ink)')
     expect(conditional.container.innerHTML).not.toMatch(RAW_PALETTE)
     conditional.unmount()
 
     const noGo = render(<ExecutiveSummaryPanel panel={makePanel({ status_signal: 'NO_GO' })} />)
     expect(
-      screen.getByRole('status', { name: /Release readiness: NO GO/ }).className,
-    ).toContain('var(--gate-no-go)')
+      screen.getByRole('status', { name: 'Release readiness: No-Go' }).getAttribute('style'),
+    ).toContain('var(--status-failed-ink)')
     expect(noGo.container.innerHTML).not.toMatch(RAW_PALETTE)
   })
 

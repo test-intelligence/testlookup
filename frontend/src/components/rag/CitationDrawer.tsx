@@ -66,7 +66,7 @@ export default function CitationDrawer({ citations, caseIndex, onClose }: Props)
                   href={sourceUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex text-xs text-[var(--color-link)] hover:underline"
+                  className="inline-flex text-xs text-[var(--color-accent-ink)] hover:underline"
                 >
                   Open source
                 </a>

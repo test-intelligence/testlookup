@@ -244,7 +244,7 @@ export default function ReviewStateControl({ testCaseId }: Props) {
               type="button"
               onClick={() => commit('defect_filed', defectLink.trim(), note.trim() || undefined)}
               disabled={saving || !defectLink.trim()}
-              className="text-xs px-3 py-1 rounded bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] font-medium"
+              className="btn-primary btn-sm"
             >
               {saving ? 'Saving…' : 'Save'}
             </button>

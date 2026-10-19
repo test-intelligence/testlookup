@@ -87,15 +87,20 @@ describe('TestAIHistoryStrip', () => {
     versionsState.isLoading = false
   })
 
-  it('draws a chip per analysed run, oldest -> newest, coloured by category, with the run named in its title', () => {
+  it('draws a chip per analysed run, oldest -> newest, marked by category, with the run named in its title', () => {
     const { container } = renderStrip()
     const all = chips(container)
     expect(all.map((c) => c.dataset.runId)).toEqual(['run-1', 'run-2', 'run-4'])
     expect(all.map((c) => c.dataset.category)).toEqual(['INFRASTRUCTURE', 'INFRASTRUCTURE', 'PRODUCT_BUG'])
     expect(all.map((c) => c.textContent)).toEqual(['INFRASTRUCTURE 45%', 'INFRASTRUCTURE 40%', 'PRODUCT_BUG 85%'])
     expect(all[2].title).toBe('Run #4 - PRODUCT_BUG 85% - LLM llama3.1')
-    expect(all[2].className).toContain('text-[var(--status-failed)]') // categoryColor(PRODUCT_BUG)
-    expect(all[0].className).toContain('text-[var(--status-broken)]') // categoryColor(INFRASTRUCTURE)
+    // W29a UIX-02: the words are neutral text; the category's colour is a mark from the one taxonomy map.
+    for (const chip of all) {
+      expect(chip.className).toContain('text-[var(--color-text-secondary)]')
+      expect(chip.className).not.toMatch(/text-\[var\(--status-/)
+    }
+    expect(all[2].querySelector('svg[data-failure-category]')).toHaveAttribute('data-failure-category', 'product_bug')
+    expect(all[0].querySelector('svg[data-failure-category]')).toHaveAttribute('data-failure-category', 'infrastructure')
     // The page's own run is outlined; the run where the category changed is ringed.
     expect(all[2]).toHaveAttribute('data-current-run')
     expect(all[2]).toHaveAttribute('data-changed', 'category')

@@ -80,6 +80,7 @@ const RANKED_CHROME_PX = 68
 const STATUS_CHROME_PX = RANKED_CHROME_PX + 32
 
 /** `formatNumber`'s output for a count (en-US, whole numbers), without its module. */
+// eslint-disable-next-line no-restricted-properties -- light shell chunk: no date-fns (see the comment above)
 const COUNT_FORMAT = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 })
 const formatNumber = (n: number) => COUNT_FORMAT.format(n)
 

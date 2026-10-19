@@ -12,6 +12,7 @@
  */
 import type { CoverageSuite } from '@/types/analytics'
 import type { TrendPoint } from '@/types/metrics'
+import { formatCompactDateTime } from '@/utils/formatters'
 
 const HOUR_MS = 3_600_000
 const DAY_MS = 86_400_000
@@ -69,7 +70,7 @@ export function lastRunChip(
   suite: Pick<CoverageSuite, 'last_run_at' | 'last_run_id'>,
   typicalGapDays: number,
   nowMs: number,
-  formatLocal: (atMs: number) => string = (atMs) => new Date(atMs).toLocaleString(),
+  formatLocal: (atMs: number) => string = (atMs) => formatCompactDateTime(atMs),
 ): LastRunChip | null {
   const at = typeof suite.last_run_at === 'string' ? Date.parse(suite.last_run_at) : Number.NaN
   if (!Number.isFinite(at)) return null

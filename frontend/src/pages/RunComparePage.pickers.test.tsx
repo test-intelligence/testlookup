@@ -15,7 +15,7 @@ import type { TestRun } from '@/types/runs'
 vi.mock('@/hooks/useRunCompare', () => ({
   useRunCompare: () => ({ compare: undefined, isLoading: false, isError: false, error: undefined }),
   useLatestSuiteCompare: () => ({ compare: undefined, isLoading: false, isError: false, error: undefined }),
-  extractCompareErrorMessage: () => 'Failed to load compare',
+  extractCompareErrorMessage: () => 'Could not load compare',
 }))
 const SUITE_RUNS = { data: { items: [{ id: 'x', primary_suite_name: 'Auth', suite_names: ['Auth'] }] }, isLoading: false }
 vi.mock('@/hooks/useRuns', () => ({ useRuns: () => SUITE_RUNS }))

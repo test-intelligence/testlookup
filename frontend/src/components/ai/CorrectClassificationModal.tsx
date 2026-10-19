@@ -108,8 +108,7 @@ export default function CorrectClassificationModal({
               onClick={handleSubmit}
               disabled={submitting || !selected}
               title={!selected ? 'Pick the corrected category first' : undefined}
-              className="text-[12.5px] font-medium rounded-md px-3 py-1.5 disabled:opacity-50"
-              style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
+              className="btn-primary btn-sm"
             >
               {submitting ? 'Recording…' : 'Record correction'}
             </button>

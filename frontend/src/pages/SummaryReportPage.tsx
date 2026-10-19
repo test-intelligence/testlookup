@@ -49,7 +49,7 @@ import { summaryReportService } from '@/services/summaryReportService'
 import { validateEnvelopeMeta, type EnvelopeMeta } from '@/lib/viz/contracts'
 import type { SummaryReport, SummaryReportMode, SummarySuiteRow } from '@/types/summaryReport'
 import { flakyCriteriaSentence, flakySubtitle } from './summaryFlakyCriteria'
-import { formatDuration } from '@/utils/formatters'
+import { formatCompactDateTime, formatDuration, formatNumber } from '@/utils/formatters'
 import SummaryCatalogueShell from '@/components/reports/catalogue/SummaryCatalogueShell'
 import ReportExportsPanel from '@/components/reports/ReportExportsPanel'
 import SavedViewsMenu from '@/components/reports/SavedViewsMenu'
@@ -109,16 +109,12 @@ function fmtPct(value: number | null | undefined): string {
 
 function fmtInt(value: number | null | undefined): string {
   if (value == null) return '—'
-  return value.toLocaleString()
+  return formatNumber(value)
 }
 
+/** W29a UIX-10: the one table stamp ("Sep 18, 11:50", fixed en-US); '—' when missing or invalid. */
 function fmtDateTime(iso: string | null | undefined): string {
-  if (!iso) return '—'
-  try {
-    return new Date(iso).toLocaleString()
-  } catch {
-    return iso
-  }
+  return formatCompactDateTime(iso)
 }
 
 export default function SummaryReportPage() {
@@ -384,7 +380,7 @@ export default function SummaryReportPage() {
                 style={{
                   background: active ? 'color-mix(in srgb, var(--status-flaky) 14%, transparent)' : 'transparent',
                   borderColor: active ? 'color-mix(in srgb, var(--status-flaky) 30%, transparent)' : 'var(--color-border)',
-                  color: active ? '#d8b4fe' : 'var(--color-text-muted)',
+                  color: active ? 'var(--status-flaky-ink)' : 'var(--color-text-muted)',
                 }}
                 title={MODE_LABELS[m].hint}
               >
@@ -433,7 +429,7 @@ export default function SummaryReportPage() {
               failed, broken, skipped, per unique test — are the KPI row's
               tiles right above, from the same `totals`. */}
           <div data-primary="">
-            <SectionErrorBoundary message="Failed to load charts">
+            <SectionErrorBoundary message="Could not load charts">
               <Suspense fallback={<SummaryCatalogueShell part="suites" report={data} days={days} mode={mode} />}>
                 <SummaryCatalogue part="suites" report={data} days={days} mode={mode} />
               </Suspense>
@@ -453,7 +449,7 @@ export default function SummaryReportPage() {
               and near the reader (its own lazy section). It counts
               executions, not unique tests, and its caption says so. */}
           <Disclosure title="Trend" summary={`pass rate per day · ${windowLabel}`}>
-            <SectionErrorBoundary message="Failed to load the trend">
+            <SectionErrorBoundary message="Could not load the trend">
               <Suspense fallback={<SummaryCatalogueShell part="trend" report={data} days={days} mode={mode} />}>
                 <SummaryCatalogue part="trend" report={data} days={days} mode={mode} />
               </Suspense>
@@ -796,8 +792,8 @@ function SuiteTable({ rows }: { rows: SummarySuiteRow[] }) {
               <td className="px-4 py-2.5 text-right text-xs tabular-nums">{fmtInt(s.total)}</td>
               <td className="px-4 py-2.5 text-right text-xs tabular-nums text-[var(--status-passed)]">{fmtInt(s.passed)}</td>
               <td className="px-4 py-2.5 text-right text-xs tabular-nums text-[var(--status-failed)]">{fmtInt(s.failed)}</td>
-              <td className="px-4 py-2.5 text-right text-xs tabular-nums text-[var(--status-broken)]">{fmtInt(s.skipped)}</td>
-              <td className="px-4 py-2.5 text-right text-xs tabular-nums text-[var(--status-failed)]">{fmtInt(s.broken)}</td>
+              <td className="px-4 py-2.5 text-right text-xs tabular-nums text-[var(--status-skipped)]">{fmtInt(s.skipped)}</td>
+              <td className="px-4 py-2.5 text-right text-xs tabular-nums text-[var(--status-broken)]">{fmtInt(s.broken)}</td>
               <td className="px-4 py-2.5 text-right text-xs tabular-nums">
                 <span className={clsx('inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium', passPctClass(s.pass_rate_pct))}>{fmtPct(s.pass_rate_pct)}</span>
               </td>

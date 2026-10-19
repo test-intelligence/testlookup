@@ -92,7 +92,7 @@ function StepNode({ step, depth }: { step: TestCaseDetailStep; depth: number }) 
         className={clsx(
           'flex items-start gap-2 rounded-md px-2 py-1.5',
           isFailed
-            ? 'bg-[var(--color-danger)]/10 border-l-2 border-[var(--color-danger)]'
+            ? 'bg-[var(--ui-danger)]/10 border-l-2 border-[var(--ui-danger)]'
             : 'hover:bg-[var(--color-bg-hover)]/50',
         )}
         style={{ marginLeft: depth * 16 }}
@@ -125,7 +125,7 @@ function StepNode({ step, depth }: { step: TestCaseDetailStep; depth: number }) 
           {open && hasDetail && (
             <div className="mt-1.5 space-y-1.5">
               {(step.assertion_message || step.error_message) && (
-                <p className="text-xs text-[var(--color-danger)]">{step.assertion_message || step.error_message}</p>
+                <p className="text-xs text-[var(--ui-danger)]">{step.assertion_message || step.error_message}</p>
               )}
               {(step.action || step.expected != null || step.actual != null) && (
                 <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">

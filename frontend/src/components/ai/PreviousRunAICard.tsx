@@ -17,7 +17,8 @@ import { useRuns } from '@/hooks/useRuns'
 import type { AIPreviousRun } from '@/types/aiHistory'
 import type { TestRun } from '@/types/runs'
 import { buildCompareWithPreviousHref } from '@/utils/runComparisons'
-import { categoryColor, formatRunWhen } from '@/utils/formatters'
+import FailureCategoryMark from '@/components/charts/FailureCategoryMark'
+import { formatRunWhen } from '@/utils/formatters'
 import { baselineChipText, buildDiffModel, previousRunEmptyText, runLabel, type DiffTestRow } from './aiDigestDiff.model'
 import { runTestHref } from './aiHistoryUrl'
 
@@ -59,7 +60,10 @@ function TestChangeRow({ row, runId }: { row: DiffTestRow; runId: string }) {
   const body = (
     <>
       <span className="font-medium text-[var(--color-text)] break-all">{row.name}</span>
-      <span className={clsx('ml-2', row.category ? categoryColor(row.category) : 'text-[var(--color-text-muted)]')}>{row.detail}</span>
+      <span className={clsx('ml-2', row.category ? 'text-[var(--color-text-secondary)]' : 'text-[var(--color-text-muted)]')}>
+        {row.category && <FailureCategoryMark category={row.category} size={8} className="mr-1" />}
+        {row.detail}
+      </span>
     </>
   )
   return row.testId ? (

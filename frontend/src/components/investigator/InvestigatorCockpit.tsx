@@ -43,7 +43,7 @@ import {
   type InvestigationHypothesis,
   type InvestigationSummary,
 } from '@/types/investigator'
-import { formatRunWhen } from '@/utils/formatters'
+import { formatNumber, formatRunWhen } from '@/utils/formatters'
 
 // ── Hypothesis metadata (fixed 5-card matrix) ────────────────────────────
 
@@ -105,7 +105,7 @@ function HypothesisStatusIcon({ status }: { status: InvestigationHypothesis['sta
 
 /** Spend-vs-budget mini bar (llm calls / tokens / seconds). */
 function BudgetBar({ label, used, max, format }: { label: string; used: number; max: number; format?: (n: number) => string }) {
-  const fmt = format ?? ((n: number) => n.toLocaleString())
+  const fmt = format ?? ((n: number) => formatNumber(n, { maximumFractionDigits: 3 }))
   const pct = max > 0 ? Math.min(100, (used / max) * 100) : 0
   const over = max > 0 && used >= max
   return (
@@ -144,7 +144,7 @@ function HypothesisCard({ id, hypothesis }: { id: HypothesisId; hypothesis: Inve
       style={{
         padding: '10px 12px',
         background: 'var(--color-bg)',
-        borderColor: status === 'validated' ? 'var(--gate-go-border, var(--color-border))' : 'var(--color-border)',
+        borderColor: status === 'validated' ? 'var(--status-passed-bd)' : 'var(--color-border)',
       }}
     >
       <div className="flex items-center gap-2">
@@ -441,8 +441,7 @@ export default function InvestigatorCockpit({ runId, projectId }: { runId: strin
               onClick={onInvestigate}
               disabled={!!disabledReason || starting}
               data-testid="investigate-run"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12.5px] font-medium rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
+              className="btn-primary btn-sm inline-flex items-center gap-1.5"
             >
               {starting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
               Investigate this run

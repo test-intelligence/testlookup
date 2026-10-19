@@ -69,7 +69,7 @@ import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
 import { TimingCell } from '@/components/ui/TimingCell'
 import WindowPicker from '@/components/ui/WindowPicker'
 import { helpTopicParam } from '@/components/help/helpTopics'
-import { formatRunWhen } from '@/utils/formatters'
+import { formatClock, formatNumber, formatRunWhen } from '@/utils/formatters'
 import { suiteMatchesValue } from '@/utils/suiteFilters'
 import { isActivelyRunning, isStaleRunning } from '@/utils/liveSessionFreshness'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
@@ -291,10 +291,10 @@ function ClientSDKGuide({ projectId }: { projectId?: string }) {
             key={tab.id}
             onClick={() => setLang(tab.id)}
             className={clsx(
-              'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors',
+              'flex items-center gap-1.5',
               lang === tab.id
-                ? 'bg-[var(--color-btn-primary-bg)] text-[var(--color-btn-primary-text)]'
-                : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+                ? 'btn-primary btn-sm'
+                : 'px-3 py-1.5 rounded-md text-xs font-medium transition-colors text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
             )}
           >
             <Code2 className="h-3 w-3" />
@@ -499,7 +499,7 @@ export default function LiveExecutionPage() {
 
   // Last update timestamp for the header.
   const lastUpdateLabel = recentEvents[0]
-    ? new Date(recentEvents[0].timestamp).toLocaleTimeString()
+    ? formatClock(recentEvents[0].timestamp)
     : '—'
 
   // Pipeline events feed. Maps recentEvents through a small tone-aware
@@ -532,7 +532,7 @@ export default function LiveExecutionPage() {
         'Stream event'
       return {
         label,
-        time: new Date(e.timestamp).toLocaleTimeString(),
+        time: formatClock(e.timestamp),
         ago: relativeTime(e.timestamp),
         kind: e.type,
         tone,
@@ -566,7 +566,7 @@ export default function LiveExecutionPage() {
       const totalActive = suiteScopedRunningSessions.reduce((a, s) => a + (s.total || 0), 0)
       return {
         hero: `${suiteScopedRunningSessions.length} active run${suiteScopedRunningSessions.length > 1 ? 's' : ''}`,
-        sub: `${totalActive.toLocaleString()} tests in flight${idleSuffix}`,
+        sub: `${formatNumber(totalActive)} tests in flight${idleSuffix}`,
         isLive: true,
       }
     }
@@ -657,7 +657,7 @@ export default function LiveExecutionPage() {
           <div className="hidden sm:block w-px h-12 bg-[var(--color-border)]" />
           {/* Inline KPIs */}
           <div className="flex items-baseline gap-1">
-            <p className="text-2xl font-semibold tabular-nums text-[var(--color-text)]">{visibleStats.totalTests.toLocaleString()}</p>
+            <p className="text-2xl font-semibold tabular-nums text-[var(--color-text)]">{formatNumber(visibleStats.totalTests)}</p>
             <p className="text-[11px] text-[var(--color-text-muted)] ml-1.5 leading-tight">
               tests across<br />{dedupedSessions.length} session{dedupedSessions.length === 1 ? '' : 's'}
             </p>
@@ -810,7 +810,7 @@ export default function LiveExecutionPage() {
                               populated test_run_id (older response shape). */}
                           <Link
                             to={`/runs/${s.test_run_id || s.run_id}`}
-                            className="font-mono text-[var(--color-text)] hover:text-[var(--color-accent-2)]"
+                            className="font-mono text-[var(--color-text)] hover:text-[var(--color-accent-ink)]"
                           >
                             {/* Prefer the per-suite incremental Run #N
                                 identifier (1-based) — backed by a
@@ -934,7 +934,7 @@ export default function LiveExecutionPage() {
             <button
               type="button"
               onClick={() => setShowRawSessions(v => !v)}
-              className="text-[var(--color-accent-2)] hover:underline flex items-center gap-1"
+              className="text-[var(--color-accent-ink)] hover:underline flex items-center gap-1"
             >
               <List className="w-3 h-3" />
               {showRawSessions ? 'Hide raw rows' : `Show ${visibleSessions.length} raw rows`}
@@ -988,7 +988,7 @@ export default function LiveExecutionPage() {
                 e.tone === 'success' ? 'text-[var(--status-passed)]' :
                 e.tone === 'warning' ? 'text-[var(--status-broken)]' :
                 e.tone === 'error' ? 'text-[var(--status-failed)]' :
-                'text-[var(--color-accent-2)]'
+                'text-[var(--color-accent-ink)]'
               return (
                 <div
                   key={`${e.kind}-${e.time}-${i}`}

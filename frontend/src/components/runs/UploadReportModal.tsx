@@ -288,7 +288,7 @@ export default function UploadReportModal({
           </button>
           <button
             onClick={() => newRunId && onSuccess(newRunId)}
-            className="px-5 py-2 rounded-lg text-sm font-medium text-white bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)]"
+            className="btn-primary"
           >
             View run
           </button>
@@ -313,7 +313,7 @@ export default function UploadReportModal({
           <button
             onClick={handleSubmit}
             disabled={!files.length || busy || !effectiveProjectId}
-            className="inline-flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-medium text-white bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 disabled:cursor-not-allowed"
+            className="btn-primary inline-flex items-center gap-2"
           >
             {busy && <Loader2 className="h-4 w-4 animate-spin" />}
             {busy ? 'Uploading…' : 'Upload'}

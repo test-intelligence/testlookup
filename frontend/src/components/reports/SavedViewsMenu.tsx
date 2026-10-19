@@ -338,7 +338,7 @@ export default function SavedViewsMenu({
               type="submit"
               data-saved-view-save=""
               disabled={busy || trimmed.length < VIEW_NAME_MIN}
-              className="self-start rounded-md bg-[var(--color-btn-primary-bg)] px-3 py-1.5 text-sm font-semibold text-[var(--color-btn-primary-text)] disabled:opacity-50"
+              className="btn-primary self-start"
             >
               Save view
             </button>

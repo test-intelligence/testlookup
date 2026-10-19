@@ -17,6 +17,7 @@ import {
 import { clsx } from 'clsx'
 import { Link } from 'react-router-dom'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { SEVERITY_STYLE, severityLevel } from '@/components/ui/severity'
 import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
 import type { InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import { useDefectCandidate, usePromoteCluster } from '@/hooks/useDefectPromotion'
@@ -30,11 +31,13 @@ const DEFECT_APPROVALS_URL = '/my-failures?tab=approvals&source=defects'
 const SEVERITY_OPTIONS = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as const
 type Severity = (typeof SEVERITY_OPTIONS)[number]
 
-const SEVERITY_COLOURS: Record<Severity, string> = {
-  CRITICAL: 'text-[var(--status-failed)] border-[var(--status-failed-bd)]/60 bg-[var(--status-failed-bg)]/20',
-  HIGH:     'text-[var(--status-broken)] border-[var(--status-broken-bd)]/60 bg-[var(--status-broken-bg)]/20',
-  MEDIUM:   'text-[var(--status-broken)] border-[var(--status-broken-bd)]/60 bg-[var(--status-broken-bg)]/20',
-  LOW:      'text-[var(--status-passed)] border-[var(--status-passed-bd)]/60 bg-[var(--status-passed-bg)]/20',
+/** The chosen option's look, from the one severity map (W29a UIX-07): CRITICAL P0 danger, HIGH P1 warning,
+ *  MEDIUM P2 info, LOW P3 neutral (MEDIUM and LOW are no longer orange and passed-green). Constant tokens. */
+function severityOptionStyle(opt: Severity): { color: string; borderColor: string; background: string } | undefined {
+  const level = severityLevel(opt)
+  if (!level) return undefined
+  const style = SEVERITY_STYLE[level]
+  return { color: style.fg, borderColor: style.bd, background: style.bg }
 }
 
 interface DefectPromotionModalProps {
@@ -146,7 +149,7 @@ export default function DefectPromotionModal({
         type="submit"
         onClick={handleSubmit}
         disabled={isPromoting || !title.trim()}
-        className="flex items-center gap-2 px-5 py-2 bg-[var(--color-btn-primary-bg)] hover:bg-[var(--color-btn-primary-hover)] disabled:opacity-50 text-[var(--color-btn-primary-text)] text-sm font-medium rounded-lg transition-colors"
+        className="btn-primary flex items-center gap-2"
       >
         {isPromoting && <LoadingSpinner size="sm" />}
         {isPromoting ? 'Promoting…' : 'Promote to Defect'}
@@ -178,7 +181,7 @@ export default function DefectPromotionModal({
 
         {isError && (
           <div className="rounded-xl bg-[var(--status-failed-bg)]/20 border border-[var(--status-failed-bd)]/40 p-4 text-sm text-[var(--status-failed)]">
-            Failed to load defect candidate. You can still fill in the form manually.
+            Could not load defect candidate. You can still fill in the form manually.
           </div>
         )}
 
@@ -305,10 +308,9 @@ export default function DefectPromotionModal({
                     onClick={() => setSeverity(opt)}
                     className={clsx(
                       'px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors',
-                      severity === opt
-                        ? SEVERITY_COLOURS[opt]
-                        : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]',
+                      severity !== opt && 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]',
                     )}
+                    style={severity === opt ? severityOptionStyle(opt) : undefined}
                   >
                     {opt}
                   </button>
@@ -414,7 +416,7 @@ export default function DefectPromotionModal({
                           {candidate.evidence_bundle.data_sources.map(src => (
                             <span
                               key={src}
-                              className="text-xs bg-white/10 text-[var(--color-text-secondary)] border border-[var(--color-border-light)] px-2 py-0.5 rounded"
+                              className="text-xs bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)] border border-[var(--color-border-light)] px-2 py-0.5 rounded"
                             >
                               {src}
                             </span>

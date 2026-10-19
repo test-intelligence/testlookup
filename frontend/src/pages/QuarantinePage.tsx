@@ -31,6 +31,7 @@ import {
   type QuarantineStatus,
 } from '@/services/flakyQuarantineService'
 import { parseQuarantinePolicy } from '@/services/quarantinePolicyService'
+import { formatDay } from '@/utils/formatters'
 import {
   QUARANTINE_VIEW_STATUSES,
   overCapText,
@@ -120,7 +121,7 @@ export function QuarantineBody({
         </p>
       )}
       {isLoading && <LoadingSpinner size="lg" />}
-      {isError && <EmptyState title="Failed to load quarantine requests" />}
+      {isError && <EmptyState title="Could not load quarantine requests" />}
       {!isLoading && !isError && rows.length === 0 && (
         <EmptyState
           title="Nothing here"
@@ -391,7 +392,7 @@ function QuarantineRow({
           </div>
         </td>
         <td className="px-3 py-2 text-right text-[11px] text-[var(--color-text-faint)]">
-          {new Date(row.updated_at).toLocaleDateString()}
+          {formatDay(row.updated_at)}
         </td>
         <td className="px-3 py-2 text-right whitespace-nowrap">
           {canAct && view === 'proposals' && decision === null && (

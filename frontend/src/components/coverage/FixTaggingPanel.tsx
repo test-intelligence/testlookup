@@ -35,6 +35,7 @@ import { extractErrorMessage } from '@/services/apiErrors'
 import { suitesService } from '@/services/suitesService'
 import type { UntaggedTest } from '@/types/analytics'
 import type { TestSuite } from '@/types/suites'
+import { formatCompactDateTime } from '@/utils/formatters'
 
 export const FIX_TAGGING_COPY =
   'Moving a test files it under another suite in the catalogue (Test Management, Suites, the coverage map). ' +
@@ -58,7 +59,7 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
 function lastSeen(iso: string | null): string {
   if (!iso) return '—'
   const at = Date.parse(iso)
-  return Number.isFinite(at) ? new Date(at).toLocaleString() : '—'
+  return Number.isFinite(at) ? formatCompactDateTime(at) : '—'
 }
 
 function suitesOf(raw: unknown): TestSuite[] {

@@ -345,10 +345,10 @@ describe('OverviewPage', () => {
     for (const stage of ['Quality Snapshot', 'Readiness Check', 'Trend Analysis', 'Action Focus']) {
       expect(screen.queryByRole('link', { name: `Open ${stage}` }), stage).toBeNull()
     }
-    // UX redesign P3: the verdict is ONE line — ``GREEN`` readiness is the GO
-    // pill and its words — with the way to the failures.
+    // UX redesign P3: the verdict is ONE line — ``GREEN`` readiness is the Go
+    // pill (W29a: sentence case) and its words — with the way to the failures.
     expect(banner).toHaveAttribute('data-status-banner', 'go')
-    expect(within(banner).getByText('GO')).toBeInTheDocument()
+    expect(within(banner).getByText('Go')).toBeInTheDocument()
     expect(banner).toHaveTextContent('ship cleared')
     expect(within(banner).getByRole('link', { name: /Open failures/ })).toHaveAttribute('href', '/failures')
     // What the verdict IS generated from (the readiness band) and the window it
@@ -427,9 +427,9 @@ describe('OverviewPage', () => {
     // misleading "Critical issues must be resolved" copy.
     const banner = await findBanner()
     expect(banner).toHaveAttribute('data-status-banner', 'pending')
-    expect(within(banner).getByText('PENDING')).toBeInTheDocument()
+    expect(within(banner).getByText('Pending')).toBeInTheDocument()
     expect(banner).toHaveTextContent('awaiting evidence')
-    expect(within(banner).queryByText('NO-GO')).toBeNull()
+    expect(within(banner).queryByText('No-Go')).toBeNull()
     expect(screen.queryByText(/Critical issues must be resolved/i)).toBeNull()
   })
 

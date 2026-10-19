@@ -211,7 +211,7 @@ export default function EmailReportDialog({
             data-email-send=""
             onClick={() => void send()}
             disabled={!canSend}
-            className="flex items-center gap-2 rounded-lg bg-[var(--color-btn-primary-bg)] px-4 py-2 text-sm font-medium text-[var(--color-btn-primary-text)] hover:bg-[var(--color-btn-primary-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+            className="btn-primary flex items-center gap-2"
           >
             {busy && <LoadingSpinner size="sm" />}
             Send

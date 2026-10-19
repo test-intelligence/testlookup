@@ -45,6 +45,7 @@ import Pagination from '@/components/ui/Pagination'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { searchService } from '@/services/searchService'
+import { formatNumber } from '@/utils/formatters'
 import type { SearchType } from '@/services/searchService'
 import type {
   GlobalSearchResponse, GlobalSearchResult, IndexStatus, SearchEntityType,
@@ -209,10 +210,7 @@ function PrimaryBtn({
       onClick={onClick}
       title={title}
       disabled={disabled}
-      className="inline-flex items-center gap-1.5 px-4 py-1.5 text-[13px] font-medium rounded-md transition-colors disabled:opacity-50"
-      style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
-      onMouseEnter={(e) => !disabled && (e.currentTarget.style.background = 'var(--color-btn-primary-hover)')}
-      onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--color-btn-primary-bg)')}
+      className="btn-primary inline-flex items-center gap-1.5"
     >
       {children}
     </button>
@@ -256,8 +254,8 @@ function SearchCommandBar({
         padding: '14px 16px',
         marginBottom: 14,
         boxShadow: focused
-          ? '0 0 0 1px color-mix(in srgb, var(--color-accent) 16%, transparent), 0 8px 28px rgba(0,0,0,0.25)'
-          : '0 0 0 1px color-mix(in srgb, var(--color-accent) 8%, transparent), 0 8px 28px rgba(0,0,0,0.25)',
+          ? '0 0 0 1px color-mix(in srgb, var(--color-accent) 16%, transparent), var(--shadow-md)'
+          : '0 0 0 1px color-mix(in srgb, var(--color-accent) 8%, transparent), var(--shadow-md)',
         transition: 'box-shadow 200ms ease',
       }}
     >
@@ -342,9 +340,9 @@ function SearchCommandBar({
               {s.label}
               <span
                 className="font-mono text-[10.5px] tabular-nums ml-1"
-                style={{ color: scope === s.id ? 'rgba(255,255,255,0.75)' : 'var(--color-text-faint)' }}
+                style={{ color: scope === s.id ? 'var(--ui-info-ink)' : 'var(--color-text-faint)' }}
               >
-                {Intl.NumberFormat().format(scopeCounts[s.id] ?? 0)}
+                {formatNumber(scopeCounts[s.id] ?? 0)}
               </span>
             </Chip>
           ))}
@@ -436,7 +434,7 @@ function VerdictRibbon({
           Index ready
         </span>
         <h2 className="font-bold m-0" style={{ fontSize: 'var(--text-display-sm)', lineHeight: 1.15, letterSpacing: '-0.02em', margin: '6px 0 6px' }}>
-          {Intl.NumberFormat().format(totalItems)} item{totalItems === 1 ? '' : 's'} indexed across {typeCount} entity type{typeCount === 1 ? '' : 's'}
+          {formatNumber(totalItems)} item{totalItems === 1 ? '' : 's'} indexed across {typeCount} entity type{typeCount === 1 ? '' : 's'}
         </h2>
         {/* Exactly the columns global_search_service.py matches with ILIKE. */}
         <p className="text-[13px] m-0" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5, maxWidth: '80ch' }} data-testid="search-matched-fields">
@@ -682,7 +680,7 @@ function SavedList({
                 <strong className="text-[var(--color-text-secondary)] font-semibold">scope:</strong>{' '}{r.scope}
                 {' · '}
                 <strong className="text-[var(--color-text-secondary)] font-semibold">filter:</strong>{' '}
-                <code className="font-mono text-[11px]" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid var(--color-border)', borderRadius: 3, padding: '1px 5px' }}>{r.query}</code>
+                <code className="font-mono text-[11px]" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', borderRadius: 3, padding: '1px 5px' }}>{r.query}</code>
               </>
             }
             trailing={<Kbd>⌘{r.slot}</Kbd>}
@@ -717,7 +715,7 @@ const SEARCHABLE_ENTITIES: SearchableEntity[] = [
   { entity: 'test_case',  label: 'Tests',    Icon: TestTube,      iconBg: 'color-mix(in srgb, var(--color-accent) 14%, transparent)', iconFg: 'var(--color-accent)' },
   { entity: 'test_run',   label: 'Runs',     Icon: Zap,           iconBg: 'color-mix(in srgb, var(--status-passed) 14%, transparent)',  iconFg: 'var(--status-passed)' },
   { entity: 'suite',      label: 'Suites',   Icon: Layers,        iconBg: 'color-mix(in srgb, var(--status-flaky) 14%, transparent)', iconFg: 'var(--status-flaky)' },
-  { entity: 'defect',     label: 'Defects',  Icon: ShieldCheck,   iconBg: 'rgba(236,72,153,0.14)',  iconFg: '#f9a8d4' },
+  { entity: 'defect',     label: 'Defects',  Icon: ShieldCheck,   iconBg: 'var(--color-cyan-soft)',  iconFg: 'var(--color-cyan)' },
   { entity: 'flaky_test', label: 'Flaky',    Icon: AlertTriangle, iconBg: 'color-mix(in srgb, var(--status-broken) 14%, transparent)', iconFg: 'var(--status-broken)' },
   { entity: 'release',    label: 'Releases', Icon: Package,       iconBg: 'var(--color-bg-secondary)', iconFg: 'var(--color-text-muted)' },
 ]
@@ -746,7 +744,7 @@ function describeSemanticIndex(indexStatus: IndexStatus | null): SemanticIndexLi
       : 'no indexing time recorded'
     return {
       label: 'Ready',
-      detail: `${Intl.NumberFormat().format(docs)} doc${docs === 1 ? '' : 's'} · ${when}`,
+      detail: `${formatNumber(docs)} doc${docs === 1 ? '' : 's'} · ${when}`,
       tone: 'passed',
     }
   }
@@ -824,7 +822,7 @@ function SearchableDataCard({
               <div className="min-w-0">
                 <div className="text-[12.5px] text-[var(--color-text)] font-medium">{r.label}</div>
                 <div className="text-[10.5px] text-[var(--color-text-muted)] truncate">
-                  {count === null ? '— rows' : `${Intl.NumberFormat().format(count)} row${count === 1 ? '' : 's'}`} · keyword match
+                  {count === null ? '— rows' : `${formatNumber(count)} row${count === 1 ? '' : 's'}`} · keyword match
                 </div>
               </div>
               <StatusPill label="Keyword" tone="passed" ariaLabel={`${r.label}: keyword search`} />
@@ -1179,7 +1177,7 @@ export default function SearchPage() {
   // the compact header's one line.
   const subtitle = [
     `Find tests, runs, suites, defects, releases across ${projectLabel}`,
-    `${Intl.NumberFormat().format(totalIndexed)} items indexed`,
+    `${formatNumber(totalIndexed)} items indexed`,
     indexStatus?.last_indexed_at
       ? `fresh ${relativeTime(new Date(indexStatus.last_indexed_at).getTime())}`
       : null,
@@ -1226,7 +1224,7 @@ export default function SearchPage() {
             title={
               <>
                 Results <span className="text-[11.5px] font-normal text-[var(--color-text-muted)] ml-2">
-                  <strong>{Intl.NumberFormat().format(response.total)}{response.counts_are_exact === false ? '+' : ''}</strong> across {scope === 'all' ? '6' : '1'} type{scope === 'all' ? 's' : ''}
+                  <strong>{formatNumber(response.total)}{response.counts_are_exact === false ? '+' : ''}</strong> across {scope === 'all' ? '6' : '1'} type{scope === 'all' ? 's' : ''}
                 </span>
                 {/* The header's release picker is visible on this page and does
                     NOT apply here. Without saying so, a reader with 2.4.0
@@ -1378,7 +1376,7 @@ const ENTITY_PALETTE: Record<SearchEntityType, { bg: string; fg: string }> = {
   test_case:  { bg: 'color-mix(in srgb, var(--color-accent) 14%, transparent)',  fg: 'var(--color-accent)' },
   test_run:   { bg: 'color-mix(in srgb, var(--status-passed) 14%, transparent)',   fg: 'var(--status-passed)' },
   suite:      { bg: 'color-mix(in srgb, var(--status-flaky) 14%, transparent)', fg: 'var(--status-flaky)' },
-  defect:     { bg: 'rgba(236,72,153,0.14)',  fg: '#f9a8d4' },
+  defect:     { bg: 'var(--color-cyan-soft)',  fg: 'var(--color-cyan)' },
   flaky_test: { bg: 'color-mix(in srgb, var(--status-broken) 14%, transparent)',  fg: 'var(--status-broken)' },
   release:    { bg: 'var(--color-bg-secondary)', fg: 'var(--color-text-muted)' },
 }

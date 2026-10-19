@@ -143,7 +143,7 @@ export default function DecisionReportFeedbackControls({ runId, reportVersion, c
           footer={
             <>
               <button type="button" className="rounded border border-[var(--color-border)] px-3 py-1.5 text-[12px]" onClick={() => setSelectedClaim(null)}>Cancel</button>
-              <button type="submit" disabled={submitting || evidenceOptions.length === 0} className="rounded bg-[var(--color-accent)] px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-50">{submitting ? 'Recording…' : 'Record correction'}</button>
+              <button type="submit" disabled={submitting || evidenceOptions.length === 0} className="btn-primary btn-sm">{submitting ? 'Recording…' : 'Record correction'}</button>
             </>
           }
         >

@@ -102,8 +102,7 @@ export default function ProposeQuarantineModal({
             onClick={handleSubmit}
             disabled={submitting || !trimmedReason}
             title={!trimmedReason ? 'A reason is required' : undefined}
-            className="text-[12.5px] font-medium rounded-md px-3 py-1.5 disabled:opacity-50"
-            style={{ background: 'var(--color-btn-primary-bg)', color: 'white' }}
+            className="btn-primary btn-sm"
           >
             {submitting ? 'Proposing…' : 'Propose quarantine'}
           </button>

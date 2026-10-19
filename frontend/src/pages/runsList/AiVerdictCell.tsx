@@ -9,18 +9,8 @@
  */
 import { Link } from 'react-router-dom'
 import Skeleton from '@/components/ui/Skeleton'
-import {
-  NO_VERDICT_TITLE,
-  RECOMMENDATION_LABEL,
-  type AiRecommendation,
-  type AiVerdict,
-} from './aiVerdict'
-
-const HUE: Record<AiRecommendation, string> = {
-  GO: 'var(--status-passed)',
-  CONDITIONAL_GO: 'var(--status-broken)',
-  NO_GO: 'var(--status-failed)',
-}
+import DecisionChip from '@/components/ui/DecisionChip'
+import { NO_VERDICT_TITLE, RECOMMENDATION_LABEL, type AiVerdict } from './aiVerdict'
 
 const REVIEW_TITLE = {
   draft: 'AI-generated draft: awaiting human review',
@@ -52,7 +42,6 @@ export default function AiVerdictCell({
     )
   }
   const label = RECOMMENDATION_LABEL[verdict.recommendation]
-  const hue = HUE[verdict.recommendation]
   const review = verdict.review
   // The review state goes UNDER the pill, not beside it: the column stays as
   // narrow as its widest pill ("Conditional"), which is what lets the table
@@ -65,15 +54,10 @@ export default function AiVerdictCell({
       title={review ? `${label}: ${REVIEW_TITLE[review]}. Open the run's analysis.` : `${label}. Open the run's analysis.`}
       className="inline-flex flex-col items-start gap-0.5 whitespace-nowrap hover:underline"
     >
-      <span
-        className="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-semibold"
-        style={{
-          background: `color-mix(in srgb, ${hue} 15%, transparent)`,
-          color: hue,
-        }}
-      >
-        {label}
-      </span>
+      {/* W29a UIX-03: the one decision chip (its tint, border and legible ink). The cell keeps the
+          table's 10.5 px (a later utility than the chip's text-xs, so it wins): the verdict column
+          stays as narrow as before, which is what fits the table at 1280 px. */}
+      <DecisionChip decision={verdict.recommendation} className="text-[10.5px]" />
       {review && (
         <span data-ai-verdict-review={review} className="pl-2 text-[10.5px] leading-none text-[var(--color-text-muted)]">
           {review}
