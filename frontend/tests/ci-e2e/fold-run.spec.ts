@@ -237,7 +237,7 @@ test('Approve with conditions from the Analysis banner persists as the release g
   await banner.getByRole('button', { name: 'Apply Override' }).click()
 
   await expect(banner.locator('[data-status-banner]')).toHaveAttribute('data-status-banner', 'conditional')
-  await expect(banner).toContainText('Conditional (overridden)')
+  await expect(banner).toContainText('Overridden · proceed with mitigation')
   await expect(banner.locator('[data-verdict-override]')).toHaveText(`Overridden to Conditional by ${USER.username} · ${reason} · Sep 18, 11:40`)
   expect(posted).toEqual([{ override_recommendation: 'CONDITIONAL_GO', reason }])
   // The override drops the run's intelligence snapshot: the page re-read it.
