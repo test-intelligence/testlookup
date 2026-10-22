@@ -52,11 +52,11 @@ export default function RunStepFlipCard({ runId }: { runId?: string }) {
         className="flex items-center justify-between gap-2.5 px-4 py-3"
         style={{ borderBottom: '1px solid var(--color-border)' }}
       >
-        <h3 className="m-0 text-[13px] font-semibold text-[var(--color-text)]">
+        <h3 className="m-0 text-sm font-semibold text-[var(--color-text)]">
           Step-level flakiness
         </h3>
         {data && (
-          <span className="text-[12px] text-[var(--color-text-muted)]">
+          <span className="text-xs text-[var(--color-text-muted)]">
             {data.tests_with_flips} of {data.tests_analyzed} test
             {data.tests_analyzed === 1 ? '' : 's'}
           </span>

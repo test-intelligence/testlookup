@@ -24,7 +24,7 @@ function AttachmentList({ attachments }: { attachments?: TestCaseDetailAttachmen
           <Paperclip className="h-3 w-3 shrink-0" />
           <span className="truncate">{att.name}</span>
           {att.media_type && (
-            <span className="text-[10px] text-[var(--color-text-muted)]/70">
+            <span className="text-2xs text-[var(--color-text-muted)]/70">
               {att.media_type}
             </span>
           )}
@@ -49,7 +49,7 @@ function LinkList({ links }: { links?: TestCaseLink[] | null }) {
           >
             {link.name || link.url}
           </a>
-          {link.type && <span className="ml-1.5 text-[10px] text-[var(--color-text-muted)]">{link.type}</span>}
+          {link.type && <span className="ml-1.5 text-2xs text-[var(--color-text-muted)]">{link.type}</span>}
         </li>
       ))}
     </ul>
@@ -63,7 +63,7 @@ function ParameterList({ parameters }: { parameters?: TestCaseDetailStep['parame
     <dl className="mt-1.5 grid grid-cols-1 gap-1 sm:grid-cols-2">
       {safeParameters.map((parameter, index) => (
         <div key={`${parameter.name}-${index}`} className="rounded bg-[var(--color-bg-hover)]/50 px-2 py-1">
-          <dt className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">{parameter.name}</dt>
+          <dt className="eyebrow uppercase text-[var(--color-text-muted)]">{parameter.name}</dt>
           <dd className="break-words font-mono text-xs text-[var(--color-text-secondary)]">
             {parameter.masked ? 'Masked' : (parameter.display_value ?? parameter.value ?? 'Not supplied')}
           </dd>
@@ -131,13 +131,13 @@ function StepNode({ step, depth }: { step: TestCaseDetailStep; depth: number }) 
                 <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
                   {step.action && (
                     <div className="rounded bg-[var(--color-bg-hover)]/50 px-2 py-1 sm:col-span-2">
-                      <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Action</span>
+                      <span className="eyebrow uppercase text-[var(--color-text-muted)]">Action</span>
                       <p className="break-words text-xs text-[var(--color-text-secondary)]">{step.action}</p>
                     </div>
                   )}
                   {step.expected != null && (
                     <div className="rounded bg-[var(--color-bg-hover)]/50 px-2 py-1">
-                      <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
+                      <span className="eyebrow uppercase text-[var(--color-text-muted)]">
                         Expected
                       </span>
                       <p className="break-words font-mono text-xs text-[var(--color-text-secondary)]">
@@ -147,7 +147,7 @@ function StepNode({ step, depth }: { step: TestCaseDetailStep; depth: number }) 
                   )}
                   {step.actual != null && (
                     <div className="rounded bg-[var(--color-bg-hover)]/50 px-2 py-1">
-                      <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
+                      <span className="eyebrow uppercase text-[var(--color-text-muted)]">
                         Actual
                       </span>
                       <p className="break-words font-mono text-xs text-[var(--color-text-secondary)]">
@@ -158,7 +158,7 @@ function StepNode({ step, depth }: { step: TestCaseDetailStep; depth: number }) 
                 </div>
               )}
               {step.assertion_trace || step.error_trace ? (
-                <pre className="max-h-64 overflow-auto rounded bg-[var(--color-bg-secondary)] px-2 py-1.5 font-mono text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+                <pre className="max-h-64 overflow-auto rounded bg-[var(--color-bg-secondary)] px-2 py-1.5 font-mono text-2xs leading-relaxed text-[var(--color-text-muted)]">
                   {step.assertion_trace || step.error_trace}
                 </pre>
               ) : null}
@@ -240,7 +240,7 @@ export default function TestStepsPanel({
 
       {testAttachments.length > 0 && (
         <div className="border-t border-[var(--color-border)] pt-2">
-          <p className="mb-1 text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
+          <p className="mb-1 eyebrow uppercase text-[var(--color-text-muted)]">
             Attachments
           </p>
           <AttachmentList attachments={testAttachments} />

@@ -60,7 +60,7 @@ function MetaRow({ label, value }: { label: string; value?: string | null }) {
   if (!value) return null;
   return (
     <div className="flex items-baseline justify-between gap-3 py-1">
-      <span className="shrink-0 text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
+      <span className="shrink-0 eyebrow uppercase text-[var(--color-text-muted)]">
         {label}
       </span>
       <span className="truncate text-right text-xs text-[var(--color-text-secondary)]">
@@ -112,7 +112,7 @@ function DurationHistorySection({
       className="space-y-1.5"
     >
       <details data-duration-history-disclosure="" className="group">
-        <summary className="cursor-pointer select-none text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
+        <summary className="cursor-pointer select-none eyebrow uppercase text-[var(--color-text-muted)]">
           Duration across runs{" "}
           <span
             data-duration-history-summary=""
@@ -256,7 +256,10 @@ export default function TestHistoryPanel({
       {/* Pass/fail timeline (most-recent-first → render reversed so oldest is left) */}
       {history.length > 0 ? (
         <div className="space-y-1.5">
-          <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
+          {/* leading-tight: the label's 10 -> 11 px (the floor) in the label style's 16 px line was a 1 px taller
+              History tab than the 15 px line it inherited (fold budget, /runs/:id/tests/:testId); a ratio, so
+              presentation mode still scales it. */}
+          <p className="eyebrow uppercase leading-tight text-[var(--color-text-muted)]">
             Recent runs (oldest → newest)
           </p>
           <div className="flex flex-wrap items-center gap-1.5">

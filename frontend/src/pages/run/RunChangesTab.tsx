@@ -31,7 +31,7 @@ interface RegressionDiff {
   commit_range?: Array<{ sha: string; message: string; author: string; timestamp: string }>
 }
 
-const LINK = 'inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] px-2.5 py-1.5 text-[13px] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]'
+const LINK = 'inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] px-2.5 py-1.5 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]'
 
 export default function RunChangesTab({
   runId,
@@ -91,7 +91,7 @@ export default function RunChangesTab({
 
             {(data.new_failing_tests?.length ?? 0) > 0 && (
               <div>
-                <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-1.5">New failures</p>
+                <p className="eyebrow uppercase text-[var(--color-text-muted)] mb-1.5">New failures</p>
                 <ul className="space-y-1">
                   {data.new_failing_tests?.slice(0, 10).map((t, i) => (
                     <li key={i} className="text-sm text-[var(--color-text-secondary)] flex items-center gap-2">
@@ -109,7 +109,7 @@ export default function RunChangesTab({
 
             {(data.commit_range?.length ?? 0) > 0 && (
               <div>
-                <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-1.5">
+                <p className="eyebrow uppercase text-[var(--color-text-muted)] mb-1.5">
                   Commits since baseline ({data.commit_range?.length})
                 </p>
                 <ul className="space-y-1">

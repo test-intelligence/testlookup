@@ -1083,3 +1083,40 @@ describe('RunsPage — Compare to previous run is the server\'s rule', () => {
     expect(last(seen)).toBe('/runs')
   })
 })
+
+// ── W29b UIX-06 / UIX-09: the ONE table, panel and KPI tile ─────────────────
+describe('RunsPage — the one table, the one panel, the one tile (W29b)', () => {
+  it('the runs table is the compact Table: numbers right-aligned, Timing the one sort button, no inert arrow', () => {
+    renderRunsPage(brokenWindow())
+    const table = within(primary()).getByRole('table')
+    expect(table).toHaveAttribute('data-density', 'compact')
+    const header = (label: string) => within(table).getAllByRole('columnheader').find((th) => th.textContent?.trim() === label) as HTMLElement
+    for (const label of ['Tests', 'Pass rate', 'Timing']) expect(header(label), label).toHaveClass('th', 'th-num')
+    expect(header('Build')).not.toHaveAttribute('aria-sort')
+    expect(header('Pass rate')).not.toHaveAttribute('aria-sort')
+    const timing = header('Timing')
+    expect(timing).toHaveAttribute('aria-sort', 'descending')
+    expect(within(timing).getByRole('button', { name: 'Timing' })).toHaveClass('th-sort')
+    // A sort control is a chevron, never a text arrow; Build and Pass rate lost their inert "↕".
+    expect(within(table).getAllByRole('columnheader').map((th) => th.textContent ?? '').join('')).not.toMatch(/[↕↑↓]/)
+    expect(primary().querySelector('#run-row-run-1 [data-run-pass-rate]')).toHaveClass('td', 'td-num')
+    expect(primary().querySelector('#run-row-run-1')).toHaveClass('table-row')
+  })
+
+  it('the table and the build velocity are Panels; the dimensions are the in-panel KPI tile, on no white sheen', () => {
+    renderRunsPage(brokenWindow())
+    const panel = primary().querySelector('[data-panel]') as HTMLElement
+    expect(panel).toHaveClass('card')
+    expect(within(panel).getByRole('heading', { level: 3, name: /^Runs/ })).toBeInTheDocument()
+    fireEvent.click(disclosureButton('How this verdict is computed'))
+    const tiles = Array.from(document.querySelectorAll<HTMLElement>('[data-dimension]'))
+    expect(tiles).toHaveLength(4)
+    for (const tile of tiles) {
+      expect(tile).toHaveAttribute('data-metric-card', 'stat')
+      expect(tile.outerHTML).not.toMatch(/rgba\(/)
+    }
+    fireEvent.click(disclosureButton('Build history'))
+    expect(screen.getByRole('heading', { level: 3, name: 'Build velocity · 14d' }).closest('[data-panel]')).not.toBeNull()
+    expect(screen.getByRole('region', { name: 'Average pass rate' }).querySelector('[data-metric-card="compact"]')).not.toBeNull()
+  })
+})

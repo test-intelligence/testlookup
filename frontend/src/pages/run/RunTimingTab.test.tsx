@@ -205,6 +205,24 @@ describe('RunTimingTab — a timed run', () => {
     expect(other).toHaveTextContent(NOT_REPORTED)
   })
 
+  // W29b UIX-06: the three tables are the ONE table at compact density; a number column is right-aligned.
+  it('draws its three tables as the compact Table, the number columns right-aligned in header and cells', () => {
+    show({ data: TIMED })
+    for (const name of ['Workers', 'Suites', 'Slowest tests']) {
+      expect(screen.getByRole('table', { name }), name).toHaveAttribute('data-density', 'compact')
+    }
+    const slowest = screen.getByRole('table', { name: 'Slowest tests' })
+    const headers = within(slowest).getAllByRole('columnheader')
+    const duration = headers.findIndex((th) => th.textContent === 'Duration')
+    expect(headers[duration]).toHaveClass('th', 'th-num')
+    expect(headers.find((th) => th.textContent === 'Test')).not.toHaveClass('th-num')
+    const row = slowest.querySelector('[data-timing-slow-test="t-0-2"]') as HTMLElement
+    expect(row).toHaveClass('table-row')
+    expect(row.children[duration]).toHaveClass('td', 'td-num')
+    const workers = screen.getByRole('table', { name: 'Workers' })
+    expect(within(workers).getByRole('columnheader', { name: 'Busy share' })).toHaveClass('th-num')
+  })
+
   it('names the limit only when it cut the list', () => {
     show({ data: { ...TIMED, slowest: { ...TIMED.slowest, total: 240 } } })
     const slow = screen.getByRole('region', { name: 'Slowest tests' })

@@ -141,6 +141,23 @@ describe('FlakyCoachBody — the Flakiness score column (W09 FLK-03)', () => {
     )
   })
 
+  // W29b UIX-06: the ONE table at dense density; Fail % and Impact right-aligned in header and cells.
+  it('is the dense Table: Fail % and Impact are number columns, the score header keeps its two tight lines', () => {
+    renderBody()
+    const table = screen.getByRole('table', { name: 'Flaky tests' })
+    expect(table).toHaveAttribute('data-density', 'dense')
+    const headers = within(table).getAllByRole('columnheader')
+    const fail = headers.findIndex((th) => th.textContent === 'Fail %')
+    const impact = headers.findIndex((th) => th.textContent === 'Impact')
+    expect(headers[fail]).toHaveClass('th', 'th-num')
+    expect(headers[impact]).toHaveClass('th', 'th-num')
+    expect(headers.find((th) => th.textContent?.startsWith('Flakiness score'))).toHaveClass('th', 'py-0.5', 'leading-tight')
+    const row = document.querySelector('tr[data-flaky-row="scored"]') as HTMLElement
+    expect(row).toHaveClass('table-row')
+    expect(row.children[fail]).toHaveClass('td', 'td-num')
+    expect(row.children[impact]).toHaveClass('td', 'td-num')
+  })
+
   it('prints each state on one line, and never 0.00 for a test without a score', () => {
     renderBody()
     const scored = scoreCellOf('scored')

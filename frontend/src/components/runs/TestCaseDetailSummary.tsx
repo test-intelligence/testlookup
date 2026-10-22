@@ -9,14 +9,14 @@ function Value({ value }: { value?: string | null }) {
 function Row({ label, value }: { label: string; value?: string | null }) {
   return (
     <div className="flex items-baseline justify-between gap-3 py-1">
-      <span className="shrink-0 text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">{label}</span>
+      <span className="shrink-0 eyebrow uppercase text-[var(--color-text-muted)]">{label}</span>
       <Value value={value} />
     </div>
   )
 }
 
 function SectionTitle({ children }: { children: string }) {
-  return <p className="mb-1 text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">{children}</p>
+  return <p className="mb-1 eyebrow uppercase text-[var(--color-text-muted)]">{children}</p>
 }
 
 export default function TestCaseDetailSummary({ detail }: { detail: NormalizedTestCaseDetail }) {
@@ -58,7 +58,7 @@ export default function TestCaseDetailSummary({ detail }: { detail: NormalizedTe
           <Row label="Service" value={classification?.service ? `${classification.service.name}${classification.service.source ? ` · ${classification.service.source}` : ''}` : null} />
           {components.length > 0 && (
             <div className="flex items-baseline justify-between gap-3 py-1">
-              <span className="shrink-0 text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Components</span>
+              <span className="shrink-0 eyebrow uppercase text-[var(--color-text-muted)]">Components</span>
               <span className="flex flex-wrap justify-end gap-1">
                 {components.map(component => <span key={`${component.name}-${component.source ?? ''}`} className="badge">{component.name}</span>)}
               </span>
@@ -122,7 +122,7 @@ export default function TestCaseDetailSummary({ detail }: { detail: NormalizedTe
                   <a href={link.url} target="_blank" rel="noreferrer" className="inline-flex max-w-full items-center gap-1 text-xs text-[var(--color-accent)] hover:underline">
                     <span className="truncate">{link.name || link.url}</span><ExternalLink className="h-3 w-3 shrink-0" />
                   </a>
-                  {link.type && <span className="ml-1 text-[10px] text-[var(--color-text-muted)]">{link.type}</span>}
+                  {link.type && <span className="ml-1 text-2xs text-[var(--color-text-muted)]">{link.type}</span>}
                 </li>
               ))}
             </ul>

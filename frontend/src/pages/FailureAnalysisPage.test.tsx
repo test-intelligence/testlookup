@@ -1708,7 +1708,7 @@ describe('FailureAnalysisPage — Wave 3', () => {
 
   it('category rows share ONE grid whose label column is as wide as the widest label (no fixed 220 px)', async () => {
     const heading = await renderWithCategories()
-    const rows = within(heading.closest('.rounded-xl') as HTMLElement).getAllByRole('row')
+    const rows = within(heading.closest('.card') as HTMLElement).getAllByRole('row')
     expect(rows).toHaveLength(6)
     const grid = rows[0].parentElement as HTMLElement
     // The label column's FLOOR is its min-content: the widest whole name (or badge), never 0 (R2-B F-17).
@@ -1738,7 +1738,7 @@ describe('FailureAnalysisPage — Wave 3', () => {
       })
     }
     const grid = (heading: HTMLElement) =>
-      (heading.closest('.rounded-xl') as HTMLElement).querySelector('[data-category-grid]') as HTMLElement
+      (heading.closest('.card') as HTMLElement).querySelector('[data-category-grid]') as HTMLElement
 
     afterEach(() => vi.restoreAllMocks())
 
@@ -2015,6 +2015,42 @@ describe('FailureAnalysisPage — Median time to fix (W07 FAIL-02)', () => {
     renderFailures()
     await screen.findByRole('heading', { name: 'Failure Analysis' })
     expect((await dimensions()).ttfValue).toBe('74')
+  })
+
+  // W29b UIX-06 / UIX-09: the ONE table, panel and KPI tile.
+  it('Top failing is the compact Table in a Panel: Failures right-aligned in its header and cells', async () => {
+    await seed(measured())
+    renderFailures()
+    const table = await screen.findByRole('table', { name: 'Top failing tests' })
+    // Compact, not dense: the type scale's wider kind badges and row actions otherwise wrap every failure-rate line
+    // at 1280 px (the source comment has the measurement).
+    expect(table).toHaveAttribute('data-density', 'compact')
+    const failures = within(table).getByRole('columnheader', { name: 'Failures' })
+    expect(failures).toHaveClass('th', 'th-num')
+    expect(within(table).getAllByRole('columnheader').every((th) => th.classList.contains('th'))).toBe(true)
+    const row = table.querySelector('[data-failing-row]') as HTMLElement
+    expect(row).toHaveClass('table-row')
+    const cells = Array.from(row.children) as HTMLElement[]
+    expect(cells[2]).toHaveClass('td', 'td-num')
+    const panel = table.closest('[data-panel]') as HTMLElement
+    expect(panel).toHaveClass('card')
+    expect(within(panel).getByRole('heading', { level: 3, name: 'Top failing tests' })).toBeInTheDocument()
+  })
+
+  it('the four dimensions are the in-panel KPI tile, and the suites list sits in a well: no white sheen', async () => {
+    await seed(measured())
+    renderFailures()
+    await screen.findByRole('heading', { name: 'Failure Analysis' })
+    await dimensions()
+    const tiles = Array.from(document.querySelectorAll<HTMLElement>('[data-dimension]'))
+    expect(tiles).toHaveLength(4)
+    for (const tile of tiles) {
+      expect(tile).toHaveAttribute('data-metric-card', 'stat')
+      expect(tile.outerHTML).not.toMatch(/rgba\(/)
+    }
+    const suites = screen.getByText('Suites with failures').closest('div.rounded-sm') as HTMLElement
+    expect(suites).toHaveClass('bg-[var(--color-bg-secondary)]')
+    expect(suites.outerHTML).not.toMatch(/rgba\(/)
   })
 })
 

@@ -7,6 +7,7 @@ import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
+import { Table, Td, Th, Tr } from '@/components/ui/Table'
 import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState'
 import { isDetailToken } from '@/components/ui/inPage/ids'
 import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
@@ -83,18 +84,18 @@ export function RecommendationPill({ value }: { value: Recommendation }) {
   )
 }
 
-/** The confidence band's chip (low / medium / high), in the existing status tokens. */
+/** The confidence band's chip (low / medium / high), in the existing status tokens; the words read the hue's -ink. */
 const BAND_TONE: Record<string, string> = {
-  low: 'text-[var(--status-skipped)] bg-[var(--status-skipped-bg)] border-[var(--color-border)]',
-  medium: 'text-[var(--status-broken)] bg-[var(--status-broken-bg)] border-[var(--status-broken-bd)]/40',
-  high: 'text-[var(--status-flaky)] bg-[var(--status-flaky-bg)] border-[var(--status-flaky)]/30',
+  low: 'text-[var(--status-skipped-ink)] bg-[var(--status-skipped-bg)] border-[var(--color-border)]',
+  medium: 'text-[var(--status-broken-ink)] bg-[var(--status-broken-bg)] border-[var(--status-broken-bd)]/40',
+  high: 'text-[var(--status-flaky-ink)] bg-[var(--status-flaky-bg)] border-[var(--status-flaky)]/30',
 }
 
 function BandChip({ band }: { band: string }) {
   return (
     <span
       data-score-band={band}
-      className={clsx('rounded border px-1.5 text-[11px] leading-4', BAND_TONE[band] ?? 'border-[var(--color-border)] text-[var(--color-text-muted)]')}
+      className={clsx('rounded border px-1.5 text-2xs leading-4', BAND_TONE[band] ?? 'border-[var(--color-border)] text-[var(--color-text-muted)]')}
     >
       {band}
     </span>
@@ -152,20 +153,20 @@ function FlakyScoreSection({ entry }: { entry: FlakyCoachEntry }) {
           <p className="text-xs text-[var(--color-text-faint)]">{windowLine(brief)}</p>
           <ul className="space-y-0.5">
             {brief.components.map((component) => (
-              <li key={component.name} className="font-mono text-[11px] text-[var(--color-text-secondary)]">
+              <li key={component.name} className="font-mono text-2xs text-[var(--color-text-secondary)]">
                 {componentLine(component)}
               </li>
             ))}
           </ul>
-          <p className="text-[11px] text-[var(--color-text-faint)]">{weightsLine(brief.components)}</p>
-          <p className="text-[11px] text-[var(--color-text-faint)]">
+          <p className="text-2xs text-[var(--color-text-faint)]">{weightsLine(brief.components)}</p>
+          <p className="text-2xs text-[var(--color-text-faint)]">
             Separate from Fail %, the failure-rate detector: the score weighs result flips, retries, environment disagreement and runtime spread.
           </p>
         </>
       ) : brief.status === 'insufficient' ? (
         <>
           <p className="text-xs text-[var(--color-text-secondary)]">{insufficientLine(brief)}</p>
-          <p className="text-[11px] text-[var(--color-text-faint)]">{INSUFFICIENT_NOTE}</p>
+          <p className="text-2xs text-[var(--color-text-faint)]">{INSUFFICIENT_NOTE}</p>
         </>
       ) : (
         <p className="text-xs text-[var(--color-text-secondary)]">{pendingLine(brief)}</p>
@@ -259,7 +260,7 @@ export function FlakyEntryDetails({ entry }: { entry: FlakyCoachEntry }) {
             <span className="text-[var(--color-text-faint)]">(latest run)</span>
           </p>
           <p className="text-[var(--color-text-secondary)] text-xs">
-            <span className="font-mono text-[11px] text-[var(--status-broken)]">{entry.failing_step}</span>
+            <span className="font-mono text-2xs text-[var(--status-broken)]">{entry.failing_step}</span>
             {entry.failing_step_detail && (
               <span className="block text-[var(--color-text-muted)] mt-0.5">{entry.failing_step_detail}</span>
             )}
@@ -283,14 +284,6 @@ export function FlakyEntryDetails({ entry }: { entry: FlakyCoachEntry }) {
     </div>
   )
 }
-
-const TH = 'px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]'
-/**
- * A two-line header (the score's) inside the row's own height: 2 x 13 px lines
- * + 2 x 2 px = 30 px, under the one-line headers' 32.2 px (measured), so the
- * header row does not grow.
- */
-const TH_COMPACT = 'px-3 py-0.5 leading-[13px] text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]'
 
 /**
  * The flaky-test list (Flaky tests › Detected; was Flaky Coach's body): a
@@ -356,11 +349,7 @@ export function FlakyCoachBody({
           ]}
         />
         <label className="ml-auto inline-flex items-center gap-2">
-          <span
-            aria-hidden
-            className="text-[10.5px] font-medium uppercase text-[var(--color-text-muted)]"
-            style={{ letterSpacing: 'var(--tracking-wider)' }}
-          >
+          <span aria-hidden className="eyebrow uppercase text-[var(--color-text-muted)]">
             Sort
           </span>
           <select
@@ -368,7 +357,7 @@ export function FlakyCoachBody({
             value={sort}
             onChange={(event) => setSort(event.target.value as FlakySort)}
             data-flaky-sort=""
-            className="h-7 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-input)] px-2 text-[12.5px] text-[var(--color-text)]"
+            className="h-7 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-input)] px-2 text-sm text-[var(--color-text)]"
           >
             {SORT_OPTIONS.map((option) => (
               <option key={option.id} value={option.id}>{option.label}</option>
@@ -386,20 +375,23 @@ export function FlakyCoachBody({
           />
         ) : (
           <div className="overflow-hidden rounded-md border border-[var(--color-border)]">
-            <table className="w-full text-sm" aria-label="Flaky tests">
-              <thead className="bg-[var(--color-bg-secondary)]">
+            {/* The ONE table at `dense` density (W29b UIX-06: the px-3 py-2 cells this table already used); the
+                header row's sunken surface is the `.th` cells'. */}
+            <Table density="dense" aria-label="Flaky tests">
+              <thead>
                 <tr>
-                  <th className={clsx(TH, 'text-left')}>Test</th>
-                  <th className={clsx(TH, 'text-left')}>History</th>
-                  <th className={clsx(TH, 'text-right')}>Fail %</th>
-                  {/* Two compact lines in the header row's own height (py-1, 14 px leading): the row does not grow. */}
-                  <th className={clsx(TH_COMPACT, 'text-left whitespace-nowrap')} title={SCORE_HEADER_TITLE}>
+                  <Th>Test</Th>
+                  <Th>History</Th>
+                  <Th numeric>Fail %</Th>
+                  {/* Two compact lines inside the header row's own height: 2 x 13.2 px (leading-tight) + 2 x 2 px =
+                      30.4 px, under the one-line headers' 32 px, so the header row does not grow. */}
+                  <Th className="py-0.5 leading-tight whitespace-nowrap" title={SCORE_HEADER_TITLE}>
                     Flakiness score
                     <span className="block font-normal normal-case tracking-normal text-[var(--color-text-faint)]">(4 signals)</span>
-                  </th>
-                  <th className={clsx(TH, 'text-left')}>Recommendation</th>
-                  <th className={clsx(TH, 'text-right')} title="Impact score: how much this flake costs the project's runs">Impact</th>
-                  {renderAction && <th className={clsx(TH, 'text-right')}>{actionLabel}</th>}
+                  </Th>
+                  <Th>Recommendation</Th>
+                  <Th numeric title="Impact score: how much this flake costs the project's runs">Impact</Th>
+                  {renderAction && <Th className="text-right">{actionLabel}</Th>}
                 </tr>
               </thead>
               <tbody>
@@ -407,16 +399,18 @@ export function FlakyCoachBody({
                   const below = renderBelowRow?.(entry)
                   return (
                   <Fragment key={entry.test_fingerprint}>
-                  <tr
+                  {/* The line sits above each row (the first one under the header), as it did: no line doubles the
+                      box's own bottom edge. The open row keeps its grey. */}
+                  <Tr
                     data-flaky-row={entry.test_fingerprint}
                     onClick={() => detail.open(entry.test_fingerprint)}
                     className={clsx(
-                      'cursor-pointer border-t border-[var(--color-border)] hover:bg-[var(--color-bg-hover)]',
+                      'border-b-0 border-t border-[var(--color-border)]',
                       openFingerprint === entry.test_fingerprint && 'bg-[var(--color-bg-hover)]',
                     )}
                   >
                     {/* 280 px (was 420) pays for the score column: measured, see the W09 G-C report. */}
-                    <td className="px-3 py-2 max-w-[280px]">
+                    <Td className="max-w-[280px]">
                       <button
                         type="button"
                         onClick={(event) => {
@@ -431,28 +425,28 @@ export function FlakyCoachBody({
                       {entry.suite_name && (
                         <p className="truncate text-xs text-[var(--color-text-muted)]">{entry.suite_name}</p>
                       )}
-                    </td>
-                    <td className="px-3 py-2">
+                    </Td>
+                    <Td>
                       <StatusHistoryBar history={entry.status_history} />
-                    </td>
-                    <td className="px-3 py-2 text-right font-mono text-[var(--status-failed)]">
+                    </Td>
+                    <Td numeric className="font-mono text-[var(--status-failed)]">
                       {(entry.failure_rate * 100).toFixed(0)}%
-                    </td>
-                    <td className="px-3 py-2">
+                    </Td>
+                    <Td>
                       <ScoreCell entry={entry} />
-                    </td>
-                    <td className="px-3 py-2">
+                    </Td>
+                    <Td>
                       <RecommendationPill value={entry.quarantine_recommendation} />
-                    </td>
-                    <td className="px-3 py-2 text-right font-mono text-xs text-[var(--color-text-muted)]">
+                    </Td>
+                    <Td numeric className="font-mono text-xs text-[var(--color-text-muted)]">
                       {entry.impact_score.toFixed(0)}
-                    </td>
+                    </Td>
                     {renderAction && (
-                      <td className="px-3 py-2 text-right whitespace-nowrap" onClick={(event) => event.stopPropagation()}>
+                      <Td className="text-right whitespace-nowrap" onClick={(event) => event.stopPropagation()}>
                         {renderAction(entry)}
-                      </td>
+                      </Td>
                     )}
-                  </tr>
+                  </Tr>
                   {/* Across every column; neither can widen the table (InlineRowSection). */}
                   {below ? <InlineRowSection colSpan={columns}>{below}</InlineRowSection> : null}
                   {open && open.test_fingerprint === entry.test_fingerprint && (
@@ -471,7 +465,7 @@ export function FlakyCoachBody({
                   )
                 })}
               </tbody>
-            </table>
+            </Table>
           </div>
         )}
       </section>
