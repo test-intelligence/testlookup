@@ -90,7 +90,6 @@
     "frontend/src/pages/WorkflowEditorPage.tsx": 5,
     "frontend/src/pages/dev/ChartGalleryPage.tsx": 1,
     "frontend/src/pages/inbox/CaseApprovals.tsx": 1,
-    "frontend/src/pages/inbox/ChipFilter.tsx": 3,
     "frontend/src/pages/inbox/DefectApprovals.tsx": 4,
     "frontend/src/pages/settings/AIAgentsPage.tsx": 2,
     "frontend/src/pages/settings/AIConfigPage.tsx": 11,
