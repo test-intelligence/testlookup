@@ -29,7 +29,19 @@ import type {
   VisualMapComponentOption,
 } from 'echarts/components'
 import type { MatrixChart, StatusCounts, VizStatus } from '@/lib/viz/contracts'
-import { DECAL_TILE, decalOf, echartsDecal, STATUS_ENCODING, type ChartDecal, type ChartTokens } from '../../tokens'
+import {
+  CHART_FONT,
+  DECAL_TILE,
+  decalOf,
+  echartsAxisLabel,
+  echartsBaseText,
+  echartsDecal,
+  echartsLegendText,
+  STATUS_ENCODING,
+  type ChartDecal,
+  type ChartTokens,
+  type EchartsText,
+} from '../../tokens'
 import { domTooltipFormatter, sampleRow, tipContent, type TooltipContent } from '../../tooltip'
 import { echartsTipPosition, type EchartsMarkOf } from '../../tipPlacement'
 import { canvasSafeLabels, canvasSafeText } from './canvasText'
@@ -225,10 +237,14 @@ export interface HeatmapOptionInput {
   domain?: readonly [number, number]
 }
 
-/** ECharts' own default label size, px: what the heatmap's axis and ramp text draw at unscaled. */
-export const HEATMAP_FONT_SIZE = 12
+/**
+ * The heatmap's axis and ramp text size, px, unscaled: the kit's tick size
+ * (W29b UIX-05; it was ECharts' own 12 px default). Every label carries it
+ * with the page's font (`echartsAxisLabel`).
+ */
+export const HEATMAP_FONT_SIZE = CHART_FONT.tick
 
-/** The label size for a text scale; `undefined` at 1, so an unscaled option keeps ECharts' default. */
+/** The label size for a text scale; `undefined` at 1 (the text is not SCALED: the insets stay as they are). */
 export function heatmapFontSize(textScale: number): number | undefined {
   if (!Number.isFinite(textScale) || textScale <= 1) return undefined
   return Math.round(HEATMAP_FONT_SIZE * textScale)
@@ -254,18 +270,16 @@ export function heatmapGrid(textScale: number): { top: number; right: number; bo
  * past `HEATMAP_ALL_LABELS_MAX`. The FULL label is always in the tooltip, the
  * announcement and the table (`heatmapTooltipContent`) — the cut is display only.
  */
-function categoryLabels(count: number, width: number, color: string, fontSize: number | undefined) {
+function categoryLabels(count: number, width: number, text: EchartsText) {
   const every = count <= HEATMAP_ALL_LABELS_MAX
-  const style = {
-    color,
+  // The page's font at the kit's size, scaled with the canvas text (W29b UIX-05).
+  return {
+    ...text,
     interval: every ? 0 : ('auto' as const),
     width: Math.max(1, Math.floor(width)),
     overflow: 'truncate' as const,
     ellipsis: '…',
   }
-  // Only when scaled: an unscaled option must stay byte-identical (the
-  // committed heatmap baselines were drawn at ECharts' default size).
-  return fontSize === undefined ? style : { ...style, fontSize }
 }
 
 export function formatHeatmapValue(valueType: HeatmapMatrix['value_type'], value: number | VizStatus): string {
@@ -374,6 +388,8 @@ export function buildHeatmapOption({
   const byCell = new Map<string, Cell>(data.cells.map((cell) => [`${cell.x}:${cell.y}`, cell]))
   const empty = data.cells.filter((cell) => cell.value === null)
   const fontSize = heatmapFontSize(textScale)
+  // Every label's text style: the page's font at the kit's 11 px, grown with the canvas text (W29b UIX-05).
+  const axisText = echartsAxisLabel(tokens, textScale)
   // The colour bar: a numeric matrix with at least one measured cell.
   const rampShown = data.value_type !== 'status' && empty.length < data.cells.length
   // R2-18: hatched cells get a "No data" key, in its own row under the bar
@@ -399,7 +415,7 @@ export function buildHeatmapOption({
   const plotWidth = chartWidth - grid.left - grid.right
   const columnWidth = plotWidth / Math.max(1, data.x_labels.length)
   const given = columnLabels && columnLabels.length === data.x_labels.length ? columnLabels : data.x_labels
-  const fontPx = fontSize ?? HEATMAP_FONT_SIZE
+  const fontPx = axisText.fontSize
   // Past the limit (a 14- to 90-day axis), label every k-th column and give
   // each printed label the k columns it stands for. Cutting each to ONE
   // column's width, whatever ECharts then thinned, printed "S…" under every
@@ -417,10 +433,10 @@ export function buildHeatmapOption({
       : given
   const xLabel =
     step === 0
-      ? categoryLabels(data.x_labels.length, labelWidth, tokens.axis, fontSize)
-      : { ...categoryLabels(data.x_labels.length, labelWidth, tokens.axis, fontSize), interval: step - 1 }
+      ? categoryLabels(data.x_labels.length, labelWidth, axisText)
+      : { ...categoryLabels(data.x_labels.length, labelWidth, axisText), interval: step - 1 }
   // The y labels share the left inset, whatever the row count.
-  const yLabel = categoryLabels(data.y_labels.length, grid.left - LABEL_GAP, tokens.axis, fontSize)
+  const yLabel = categoryLabels(data.y_labels.length, grid.left - LABEL_GAP, axisText)
   // Canvas-safe: a row named `__proto__` must not reach zrender's text cache as a member name (`canvasText.ts`).
   const yData = canvasSafeLabels(rowLabels && rowLabels.length === data.y_labels.length ? rowLabels : data.y_labels)
   const axisLine = { lineStyle: { color: tokens.grid } }
@@ -516,7 +532,7 @@ export function buildHeatmapOption({
       // not), the same end colour meant "lowest" on one heatmap and "highest" on
       // the next — the first Linux baselines showed both, unlabelled.
       text: [rampEndLabel(data.value_type, max), rampEndLabel(data.value_type, min)],
-      textStyle: fontSize === undefined ? { color: tokens.axis } : { color: tokens.axis, fontSize },
+      textStyle: axisText,
     })
   }
   if (empty.length > 0) selfColoured.push(1)
@@ -537,6 +553,8 @@ export function buildHeatmapOption({
     animation: animate,
     // Off: the wrapper names the chart (once) and the frame's summary describes it.
     aria: { enabled: false },
+    // ECharts' global default for every text it draws (the tooltip box's family too).
+    textStyle: echartsBaseText(tokens, textScale),
     grid,
     tooltip: {
       trigger: 'item',
@@ -572,7 +590,7 @@ export function buildHeatmapOption({
             name: canvasSafeText(columnAxisName),
             nameLocation: 'middle' as const,
             nameGap: scaled(HEATMAP_STATUS_BOTTOM),
-            nameTextStyle: fontSize === undefined ? { color: tokens.axis } : { color: tokens.axis, fontSize },
+            nameTextStyle: axisText,
           }
         : {}),
     },
@@ -597,7 +615,8 @@ export function buildHeatmapOption({
             itemWidth: 14,
             itemHeight: 14,
             itemStyle: { color: tokens.card, borderColor: tokens.border, borderWidth: 1, decal: noDataDecal },
-            textStyle: fontSize === undefined ? { color: tokens.axis } : { color: tokens.axis, fontSize },
+            // A legend: the kit's legend size, in the axis colour beside the colour bar's words.
+            textStyle: { ...echartsLegendText(tokens, textScale), color: tokens.axis },
           },
         }
       : {}),

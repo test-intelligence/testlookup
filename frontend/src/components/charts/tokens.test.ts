@@ -2,12 +2,21 @@ import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { VIZ_STATUSES } from '@/lib/viz/contracts'
 import {
+  CHART_FONT,
   CHART_VARS,
   FLAKY_MARKER,
   PRESENTATION_TOKEN_ATTRIBUTE,
+  RECHARTS_AXIS_TICK,
+  RECHARTS_AXIS_TITLE,
+  RECHARTS_GRID,
+  RECHARTS_TOOLTIP_STYLE,
   SERIES_COUNT,
   STATUS_ENCODING,
+  echartsAxisLabel,
+  echartsBaseText,
   echartsDecal,
+  echartsLegendText,
+  echartsSplitLine,
   readChartTokens,
   resetChartTokenCache,
   seriesColor,
@@ -50,6 +59,9 @@ describe('readChartTokens', () => {
     expect(tokens.grid).toBe('signal:--chart-grid')
     expect(tokens.axis).toBe('signal:--chart-axis')
     expect(tokens.card).toBe('signal:--color-bg-card')
+    // W29b UIX-05: the one-measure colour and the page's font, for the canvas.
+    expect(tokens.measure).toBe('signal:--chart-measure')
+    expect(tokens.fontSans).toBe('signal:--font-sans')
   })
 
   it('is memoised per theme: a second read does not call getComputedStyle again', () => {
@@ -162,6 +174,40 @@ describe('CHART_VARS (Recharts / SVG)', () => {
     })
     expect(CHART_VARS.grid).toBe('var(--chart-grid)')
     expect(CHART_VARS.axis).toBe('var(--chart-axis)')
+    expect(CHART_VARS.measure).toBe('var(--chart-measure)')
+    expect(CHART_VARS.measureTint).toBe('var(--chart-measure-tint)')
+  })
+})
+
+/** W29b UIX-05: one text style, one grid and one measure colour across the engines. */
+describe('the kit’s one text, grid and measure style (UIX-05)', () => {
+  it('CHART_FONT is the one font table: 11 for every in-plot text, 12 legend and tooltip, 20 the donut centre', () => {
+    expect(CHART_FONT).toEqual({ tick: 11, axisTitle: 11, dataLabel: 11, annotation: 11, legend: 12, tip: 12, centre: 20 })
+    // Nothing the kit draws is under the 11 px floor.
+    expect(Math.min(...Object.values(CHART_FONT))).toBe(11)
+  })
+
+  it('Recharts reads it: ticks and axis titles at 11, the tooltip at 12', () => {
+    expect(RECHARTS_AXIS_TICK).toEqual({ fill: 'var(--chart-axis)', fontSize: 11 })
+    expect(RECHARTS_AXIS_TITLE).toEqual({ fill: 'var(--chart-axis)', fontSize: 11 })
+    expect(RECHARTS_TOOLTIP_STYLE.fontSize).toBe('12px')
+  })
+
+  it('RECHARTS_GRID is a solid 1 px hairline in the grid colour (no dash)', () => {
+    expect(RECHARTS_GRID).toEqual({ stroke: 'var(--chart-grid)', strokeWidth: 1 })
+    expect(RECHARTS_GRID).not.toHaveProperty('strokeDasharray')
+  })
+
+  it('the ECharts helpers carry the page font, the kit size and the axis / text colour, scaled up only', () => {
+    const tokens = { fontSans: 'TestSans, sans-serif', axis: 'axis', text: 'text', grid: 'grid' }
+    expect(echartsBaseText(tokens)).toEqual({ fontFamily: 'TestSans, sans-serif', fontSize: 11, color: 'axis' })
+    expect(echartsAxisLabel(tokens)).toEqual({ fontFamily: 'TestSans, sans-serif', fontSize: 11, color: 'axis' })
+    expect(echartsLegendText(tokens)).toEqual({ fontFamily: 'TestSans, sans-serif', fontSize: 12, color: 'text' })
+    expect(echartsSplitLine(tokens)).toEqual({ lineStyle: { color: 'grid', width: 1, type: 'solid' } })
+    // Presentation mode (16/11) reaches 16 px; a scale at or under 1, or not a number, never shrinks the text.
+    expect(echartsAxisLabel(tokens, 16 / 11).fontSize).toBe(16)
+    expect(echartsLegendText(tokens, 16 / 11).fontSize).toBe(17)
+    for (const scale of [1, 0.5, Number.NaN]) expect(echartsBaseText(tokens, scale).fontSize).toBe(11)
   })
 })
 

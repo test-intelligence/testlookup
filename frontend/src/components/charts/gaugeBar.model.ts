@@ -22,7 +22,7 @@
  *   - Which end is good is a PROP (`direction`), not a colour choice buried
  *     in a page: risk is lower-is-better, health is higher-is-better.
  */
-import { CHART_VARS } from './tokens'
+import { CHART_FONT, CHART_VARS } from './tokens'
 
 /**
  * Semantic tone of a gauge. Always paired with text: never colour-only.
@@ -78,8 +78,8 @@ export const GAUGE_BAR_SIZES: Record<GaugeBarSize, { thickness: number; marker: 
 /** The track width beside an inline value, px (the IntelligenceHub table meter's). */
 export const INLINE_TRACK_WIDTH = 56
 
-/** The tick labels' font size, px (the copied meters' `text-[10px]`). */
-export const GAUGE_TICK_FONT_PX = 10
+/** The tick labels' font size, px: a tick in the kit's one font table (W29b UIX-05; it was 10 px, under the 11 px floor). */
+export const GAUGE_TICK_FONT_PX = CHART_FONT.tick
 
 /** The fallback domain when none (or a degenerate one) is given. */
 export const DEFAULT_GAUGE_DOMAIN: readonly [number, number] = [0, 100]

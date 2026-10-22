@@ -30,6 +30,8 @@ const tokens: ChartTokens = {
   border: 'border',
   text: 'text',
   textMuted: 'muted',
+  measure: 'measure',
+  fontSans: 'sans-serif',
 }
 
 const stats = (over: Partial<TreeNodeStats> = {}): TreeNodeStats => ({
@@ -183,8 +185,11 @@ describe('buildTreemapOption', () => {
     expect(treemapFontSize(1)).toBe(TREEMAP_FONT_SIZE)
     expect(treemapFontSize(0.5)).toBe(TREEMAP_FONT_SIZE)
     expect(treemapFontSize(Number.NaN)).toBe(TREEMAP_FONT_SIZE)
-    expect(treemapFontSize(1.5)).toBe(18)
-    expect((seriesOf(build({ textScale: 1.5 })).label as Loose).fontSize).toBe(18)
+    // W29b UIX-05: 11 px unscaled (the kit's tick size), so 1.5x is 16.5 → 17 (it was 12 → 18).
+    expect(treemapFontSize(1.5)).toBe(Math.round(TREEMAP_FONT_SIZE * 1.5))
+    expect((seriesOf(build({ textScale: 1.5 })).label as Loose).fontSize).toBe(Math.round(TREEMAP_FONT_SIZE * 1.5))
+    // The label carries the page's font (the canvas default is not the page's).
+    expect((seriesOf(build({ textScale: 1.5 })).label as Loose).fontFamily).toBe(tokens.fontSans)
   })
 
   it('animates only when asked', () => {

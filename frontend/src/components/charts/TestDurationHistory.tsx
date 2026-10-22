@@ -21,7 +21,7 @@ import {
   ratioText,
   type DurationHistoryModel,
 } from './testDurationHistory.model'
-import { CHART_VARS } from './tokens'
+import { CHART_FONT, CHART_VARS, RECHARTS_GRID } from './tokens'
 
 export interface TestDurationHistoryProps {
   model: DurationHistoryModel
@@ -97,8 +97,8 @@ export default function TestDurationHistory({ model, height = 190 }: TestDuratio
 
           {axis.ticks.map((tick) => (
             <g key={tick}>
-              <line x1={MARGIN.left} x2={MARGIN.left + plotW} y1={y(tick)} y2={y(tick)} stroke={CHART_VARS.grid} strokeDasharray="3 3" />
-              <text x={MARGIN.left - 6} y={y(tick)} dy={4} textAnchor="end" fill={CHART_VARS.axis} fontSize={11}>
+              <line x1={MARGIN.left} x2={MARGIN.left + plotW} y1={y(tick)} y2={y(tick)} stroke={RECHARTS_GRID.stroke} strokeWidth={RECHARTS_GRID.strokeWidth} />
+              <text x={MARGIN.left - 6} y={y(tick)} dy={4} textAnchor="end" fill={CHART_VARS.axis} fontSize={CHART_FONT.tick}>
                 {durationTickLabel(tick, axis)}
               </text>
             </g>
@@ -162,7 +162,7 @@ export default function TestDurationHistory({ model, height = 190 }: TestDuratio
                       y={y(point.durationMs) - 11 < 10 ? y(point.durationMs) + 21 : y(point.durationMs) - 11}
                       textAnchor={index === n - 1 && n > 1 ? 'end' : index === 0 && n > 1 ? 'start' : 'middle'}
                       fill={CHART_VARS.text}
-                      fontSize={11}
+                      fontSize={CHART_FONT.dataLabel}
                     >
                       {ratioText(point, model.reference)}
                     </text>
@@ -201,12 +201,12 @@ export default function TestDurationHistory({ model, height = 190 }: TestDuratio
           ))}
 
           {firstLabel && (
-            <text x={MARGIN.left} y={height - 6} textAnchor="start" fill={CHART_VARS.axis} fontSize={11}>
+            <text x={MARGIN.left} y={height - 6} textAnchor="start" fill={CHART_VARS.axis} fontSize={CHART_FONT.tick}>
               {firstLabel}
             </text>
           )}
           {lastLabel && (
-            <text x={MARGIN.left + plotW} y={height - 6} textAnchor="end" fill={CHART_VARS.axis} fontSize={11}>
+            <text x={MARGIN.left + plotW} y={height - 6} textAnchor="end" fill={CHART_VARS.axis} fontSize={CHART_FONT.tick}>
               {lastLabel}
             </text>
           )}

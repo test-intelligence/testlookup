@@ -10,6 +10,14 @@
  * existed (X4, 2026-10-02), rendering each plot through real Recharts with a
  * DejaVu-like measure (only the container is given a size: jsdom lays nothing
  * out). A change to it is a change to every flag-off bar chart's pixels.
+ *
+ * ONE deliberate change since (W29b UIX-05, the kit's one grid, measure colour
+ * and font table): the value-axis gridlines are solid 1 px (`RECHARTS_GRID`:
+ * `stroke-dasharray="3 3"` → `stroke-width="1"`), a ranked chart that is not a
+ * change fills its bars with `--chart-measure` (was `--chart-div-7`), and the
+ * compact card's value labels are 11 px (were 10). Nothing else moved: every
+ * x / y / width in the snapshot is as it was. The `bar-*` / `breakdown-*`
+ * baselines change with it, on purpose.
  */
 import { render } from '@testing-library/react'
 import { cloneElement, isValidElement, type ReactElement, type ReactNode } from 'react'

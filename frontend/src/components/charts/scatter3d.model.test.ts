@@ -152,6 +152,8 @@ describe('scatter3D words and colours', () => {
       flaky: 'purple',
       series: ['teal'],
       textMuted: 'gray',
+      measure: 'teal',
+      fontSans: 'sans-serif',
       axis: 'black',
       grid: 'silver',
     } as unknown as ChartTokens

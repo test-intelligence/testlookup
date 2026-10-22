@@ -34,7 +34,7 @@ import {
   useChartPatternPrefix,
   type LegendEntry,
 } from './patterns'
-import { CHART_VARS, STATUS_ENCODING, STATUS_STACK_ORDER } from './tokens'
+import { CHART_FONT, CHART_VARS, RECHARTS_GRID, STATUS_ENCODING, STATUS_STACK_ORDER } from './tokens'
 
 export interface ExecutionTimelineProps {
   model: ExecutionTimelineModel
@@ -187,7 +187,7 @@ export default function ExecutionTimeline({ model, onSelect, selectedTestId = nu
               const anchor = index === 0 ? 'start' : index === axis.ticks.length - 1 ? 'end' : 'middle'
               return (
                 <g key={tick}>
-                  <text x={x} y={AXIS_HEIGHT - 10} textAnchor={anchor} fill={CHART_VARS.axis} fontSize={11}>
+                  <text x={x} y={AXIS_HEIGHT - 10} textAnchor={anchor} fill={CHART_VARS.axis} fontSize={CHART_FONT.tick}>
                     {durationTickLabel(tick, axis)}
                   </text>
                   <line x1={x} x2={x} y1={AXIS_HEIGHT - 6} y2={AXIS_HEIGHT} stroke={CHART_VARS.axis} strokeWidth={1} />
@@ -211,7 +211,7 @@ export default function ExecutionTimeline({ model, onSelect, selectedTestId = nu
                 style={{ height: LANE_HEIGHT }}
               >
                 <span className="truncate">{lane.label}</span>
-                <span className="shrink-0 tabular-nums text-[10px] text-[var(--color-text-muted)]">{lane.bars.length}</span>
+                <span className="shrink-0 tabular-nums text-2xs text-[var(--color-text-muted)]">{lane.bars.length}</span>
               </li>
             ))}
           </ul>
@@ -237,8 +237,8 @@ export default function ExecutionTimeline({ model, onSelect, selectedTestId = nu
                   x2={scale.x(tick)}
                   y1={0}
                   y2={rowsHeight}
-                  stroke={CHART_VARS.grid}
-                  strokeDasharray="3 3"
+                  stroke={RECHARTS_GRID.stroke}
+                  strokeWidth={RECHARTS_GRID.strokeWidth}
                 />
               ))}
               <BarsLayer

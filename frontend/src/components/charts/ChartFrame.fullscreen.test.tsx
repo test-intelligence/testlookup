@@ -152,6 +152,8 @@ afterEach(() => {
 })
 
 describe('ChartFrame outside full screen — unchanged apart from the new buttons', () => {
+  // ONE deliberate change to the file snapshot since (W29b UIX-09): the title's class is the one
+  // panel title (`PANEL_TITLE_CLASS`, 14 px / 600 `leading-tight`; it was `text-sm font-semibold`).
   it('every state serialises to the markup of the frame before full screen existed', async () => {
     await expect(serialiseFrameScenarios(ChartFrame)).toMatchFileSnapshot('./__snapshots__/ChartFrame.outside-fullscreen.html')
   })

@@ -8,6 +8,7 @@ import {
   SCATTER_ALPHA,
   SCATTER_DENSE_POINTS,
   SCATTER_EDGE_PAD,
+  SCATTER_FONT_SIZE,
   SCATTER_SYMBOL,
   SCATTER_SYMBOL_DENSE,
   axisName,
@@ -37,6 +38,8 @@ const tokens: ChartTokens = {
   border: 'border',
   text: 'text',
   textMuted: 'muted',
+  measure: 'measure',
+  fontSans: 'sans-serif',
 }
 
 const point = (id: string, x: number, y: number, size = 10, label = id): PointsChartPoint => ({ id, label, x, y, size, n: size })
@@ -52,6 +55,8 @@ const chart: PointsChart = {
 }
 
 type Loose = Record<string, unknown>
+/** W29b UIX-05: every tick label carries the page's font at the kit's 11 px (ECharts' axis default is 12 px). */
+const LABEL_TEXT = { fontFamily: tokens.fontSans, fontSize: SCATTER_FONT_SIZE }
 const build = (data: PointsChart = chart, textScale?: number) =>
   buildScatterOption({ data, tokens, textScale }) as unknown as Loose
 const seriesOf = (option: Loose) => (option.series as Loose[])[0]
@@ -80,7 +85,7 @@ describe('buildScatterOption', () => {
     const inner: PointsChart = { ...chart, points: chart.points.map((p) => ({ ...p, y: p.y === 0 ? 20 : p.y })) }
     const y = build(inner).yAxis as Loose
     expect([y.type, y.min, y.max]).toEqual(['value', 0, 100])
-    expect(y.axisLabel).toEqual({ color: 'axis' })
+    expect(y.axisLabel).toEqual({ ...LABEL_TEXT, color: 'axis' })
     const ratio = build({ ...inner, y: { ...chart.y, unit: 'ratio' }, points: inner.points.map((p) => ({ ...p, y: p.y / 100 })) })
       .yAxis as Loose
     expect([ratio.min, ratio.max]).toEqual([0, 1])
@@ -101,7 +106,7 @@ describe('buildScatterOption', () => {
     const y = option.yAxis as Loose
     expect(y.min).toBeCloseTo(-100 * SCATTER_EDGE_PAD, 9)
     expect(y.max).toBe(100)
-    expect(y.axisLabel).toEqual({ color: 'axis', showMinLabel: false })
+    expect(y.axisLabel).toEqual({ ...LABEL_TEXT, color: 'axis', showMinLabel: false })
     const x = option.xAxis as Loose
     expect((x.axisLine as Loose).onZero).toBe(false)
     expect(((option.yAxis as Loose).axisLine as Loose).onZero).toBe(false)
@@ -116,10 +121,10 @@ describe('buildScatterOption', () => {
     const pad = 4 * SCATTER_EDGE_PAD
     expect(Math.log10(x.min as number)).toBeCloseTo(-pad, 9)
     expect(Math.log10(x.max as number)).toBeCloseTo(4 + pad, 9)
-    expect(x.axisLabel).toEqual({ color: 'axis', showMinLabel: false, showMaxLabel: false })
+    expect(x.axisLabel).toEqual({ ...LABEL_TEXT, color: 'axis', showMinLabel: false, showMaxLabel: false })
     const y = option.yAxis as Loose
     expect([y.min, y.max]).toEqual([0, 100 + 100 * SCATTER_EDGE_PAD])
-    expect(y.axisLabel).toEqual({ color: 'axis', showMaxLabel: false })
+    expect(y.axisLabel).toEqual({ ...LABEL_TEXT, color: 'axis', showMaxLabel: false })
   })
 
   it('carries no formatter but the DOM tooltip, and passes the runtime guard', () => {
@@ -210,10 +215,11 @@ describe('buildScatterOption', () => {
 
   it('scales its text and insets in full screen, and is unchanged at 1', () => {
     const plain = build(chart, 1)
-    expect((plain.xAxis as Loose).axisLabel).toEqual({ color: 'axis' })
+    expect((plain.xAxis as Loose).axisLabel).toEqual({ ...LABEL_TEXT, color: 'axis' })
     expect(plain.grid).toEqual(scatterGrid(1))
     const big = build(chart, 1.5)
-    expect((big.xAxis as Loose).axisLabel).toEqual({ color: 'axis', fontSize: 18 })
+    // 11 px x 1.5 = 16.5 → 17 (it was 12 → 18).
+    expect((big.xAxis as Loose).axisLabel).toEqual({ ...LABEL_TEXT, color: 'axis', fontSize: Math.round(SCATTER_FONT_SIZE * 1.5) })
     expect((big.grid as Loose).bottom).toBeGreaterThan((plain.grid as Loose).bottom as number)
     expect(xNameGap(1.5)).toBeGreaterThan(xNameGap(1))
     expect(scatterGrid(Number.NaN)).toEqual(scatterGrid(1))

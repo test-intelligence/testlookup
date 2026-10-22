@@ -25,7 +25,7 @@ import type {
   LegendComponentOption,
   TooltipComponentOption,
 } from 'echarts/components'
-import { decalOf, type ChartTokens } from '../../tokens'
+import { decalOf, echartsAxisLabel, echartsBaseText, echartsLegendText, echartsSplitLine, type ChartTokens } from '../../tokens'
 import { changeRow, domTooltipFormatter, formatRatePoints, sampleRow, tipContent, type TooltipContent } from '../../tooltip'
 import { COLUMN_SIDES, columnMark, echartsTipPosition } from '../../tipPlacement'
 import { NO_VALUE } from '../../chartText'
@@ -70,7 +70,7 @@ export interface TimeSeriesTooltipInput {
   locale?: string
   timeZone?: string
   inProgressRuns?: readonly InProgressRuns[]
-  tokens?: Pick<ChartTokens, 'series' | 'axis'>
+  tokens?: Pick<ChartTokens, 'series' | 'axis' | 'measure'>
 }
 
 /** A pass-rate change is in percentage POINTS (`tooltip.ts`, shared with the comparison chart). */
@@ -129,7 +129,7 @@ export function timeSeriesTooltipContent({
       key: 'executions',
       label: EXECUTIONS_AXIS_TITLE,
       value: point.executions === null ? NO_VALUE : formatNumber(point.executions),
-      color: tokens?.series[1],
+      color: tokens?.measure,
     },
     sampleRow(point.n),
     changeRow({
@@ -211,9 +211,10 @@ export function buildTimeSeriesOption({
   timeZone,
   inProgressRuns,
 }: TimeSeriesOptionInput): TimeSeriesOption {
-  const axisLabel = { color: tokens.axis }
+  // W29b UIX-05: the page's font at the kit's 11 px (ECharts' axis default is 12 px "Microsoft YaHei" / sans-serif).
+  const axisLabel = echartsAxisLabel(tokens)
   const axisLine = { lineStyle: { color: tokens.grid } }
-  const splitLine = { lineStyle: { color: tokens.grid } }
+  const splitLine = echartsSplitLine(tokens)
   // TRND-04: the notes on the DRAWN axis (a zoomed slice carries the full window's).
   const notes = clipNoteMarkers(model.notes, model.points.map((point) => point.x))
   const lineNotes = notes.filter((note) => note.kind === 'line')
@@ -223,6 +224,8 @@ export function buildTimeSeriesOption({
     animation: animate,
     // ECharts' own generated description is not useful; the wrapper names the chart.
     aria: { enabled: false },
+    // ECharts' global default for every text it draws (a mark's label, the tooltip box's family).
+    textStyle: echartsBaseText(tokens),
     /**
      * The legend the SVG path draws (`ChartLegend`), on canvas too. Crossing
      * the 366-point boundary used to delete it: the same chart, one point
@@ -233,7 +236,7 @@ export function buildTimeSeriesOption({
     legend: {
       data: [RATE_AXIS_TITLE, EXECUTIONS_AXIS_TITLE],
       top: 0,
-      textStyle: { color: tokens.text },
+      textStyle: echartsLegendText(tokens),
       inactiveColor: tokens.textMuted,
     },
     grid: { ...TIME_SERIES_GRID, containLabel: true },
@@ -275,7 +278,7 @@ export function buildTimeSeriesOption({
       {
         type: 'value',
         name: RATE_AXIS_TITLE,
-        nameTextStyle: { color: tokens.axis },
+        nameTextStyle: axisLabel,
         min: model.rateAxis.domain[0],
         max: model.rateAxis.domain[1],
         // The model's tick step, as in SVG: the same axis on either renderer.
@@ -289,7 +292,7 @@ export function buildTimeSeriesOption({
         // a percentage axis is read as more percentages.
         type: 'value',
         name: EXECUTIONS_AXIS_TITLE,
-        nameTextStyle: { color: tokens.axis },
+        nameTextStyle: axisLabel,
         min: model.executionsAxis.domain[0],
         max: model.executionsAxis.domain[1],
         interval: tickStep(model.executionsAxis.ticks),
@@ -314,13 +317,14 @@ export function buildTimeSeriesOption({
          * series-2 measures 2.5:1 on the darkest card and 1.6:1 on the light
          * one, under the 3:1 a data-carrying object owes SC 1.4.11.
          */
+        // W29b UIX-05: one quantity, the one-measure colour (`--chart-measure` = series-2: no pixel moves).
         data: model.points.map((point) => ({
           value: point.executions,
           itemStyle: point.partial
-            ? { color: tokens.series[1], decal: decalOf('diagonal', tokens.card) ?? undefined }
+            ? { color: tokens.measure, decal: decalOf('diagonal', tokens.card) ?? undefined }
             : undefined,
         })),
-        itemStyle: { color: tokens.series[1] },
+        itemStyle: { color: tokens.measure },
         large: true,
       },
       {
@@ -344,7 +348,8 @@ export function buildTimeSeriesOption({
               // No `formatter` here by design: ECharts' default label is the
               // mark's own `name`, and any formatter would have to go through
               // `domTooltipFormatter`, which a markLine label cannot use.
-              label: { color: tokens.axis, position: 'insideEndTop' },
+              // Every key spelled out (the chart guard reads a label's keys): the page's font at 11 px.
+              label: { fontFamily: axisLabel.fontFamily, fontSize: axisLabel.fontSize, color: tokens.axis, position: 'insideEndTop' },
               // Canvas-safe: a release named (or starting with) `__proto__` must not reach zrender's text cache
               // as a member name, nor may any prefix of it (`canvasText.ts`).
               data: [
@@ -357,7 +362,12 @@ export function buildTimeSeriesOption({
                   xAxis: canvasSafeText(note.from),
                   name: noteCanvasLabel(note.label),
                   lineStyle: { color: tokens.axis, type: 'dashed' as const },
-                  label: { color: tokens.axis, position: 'insideEndBottom' as const },
+                  label: {
+                    fontFamily: axisLabel.fontFamily,
+                    fontSize: axisLabel.fontSize,
+                    color: tokens.axis,
+                    position: 'insideEndBottom' as const,
+                  },
                 })),
               ],
             }
@@ -368,7 +378,7 @@ export function buildTimeSeriesOption({
           ? {
               silent: true,
               itemStyle: { color: tokens.axis, opacity: NOTE_BAND_OPACITY },
-              label: { color: tokens.axis, position: 'insideTopLeft' },
+              label: { fontFamily: axisLabel.fontFamily, fontSize: axisLabel.fontSize, color: tokens.axis, position: 'insideTopLeft' },
               data: bandNotes.map((note) => [
                 { xAxis: canvasSafeText(note.from), name: noteCanvasLabel(note.label) },
                 { xAxis: canvasSafeText(note.to) },

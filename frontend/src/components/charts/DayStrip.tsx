@@ -262,7 +262,7 @@ export default function DayStrip({
         // is under 4.5:1 on the light theme (4.15), which the gallery's axe gate caught.
         <div
           data-day-strip-legend=""
-          className="mt-2.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[10px] text-[var(--color-text-secondary)]"
+          className="mt-2.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-2xs text-[var(--color-text-secondary)]"
         >
           <span>{startLabel ?? defaultStartLabel(count, unit, model.text.today)}</span>
           {mode === 'intensity' ? (

@@ -20,7 +20,7 @@
  */
 import { useMemo } from 'react'
 import { Bar, BarChart, CartesianGrid, Cell, Tooltip, XAxis, YAxis } from 'recharts'
-import { CHART_VARS, RECHARTS_AXIS_TICK } from './tokens'
+import { CHART_VARS, RECHARTS_AXIS_TICK, RECHARTS_AXIS_TITLE, RECHARTS_GRID } from './tokens'
 import { useChartAnimation } from './motion'
 import { formatNumber } from '@/utils/formatters'
 import { cursorPoint, useChartCursor, type ChartCursorPoint } from './ChartCursor'
@@ -135,7 +135,7 @@ export default function DurationHistogram({
         <defs>
           <pattern id={patternId} width={6} height={6} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
             <rect width={6} height={6} fill={CHART_VARS.card} />
-            <rect width={2.5} height={6} fill={CHART_VARS.series[2]} />
+            <rect width={2.5} height={6} fill={CHART_VARS.measure} />
           </pattern>
         </defs>
       </svg>
@@ -154,7 +154,7 @@ export default function DurationHistogram({
         <ChartResponsive height={height}>
           {/* `accessibilityLayer={false}` — explicitly; see `ChartCursor`. */}
           <BarChart data={rows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} accessibilityLayer={false}>
-            <CartesianGrid strokeDasharray="3 3" stroke={CHART_VARS.grid} vertical={false} />
+            <CartesianGrid {...RECHARTS_GRID} vertical={false} />
             {/* The edges ARE the axis: every bucket shows the range it counts. */}
             <XAxis dataKey="label" axisLine={false} tickLine={false} tick={RECHARTS_AXIS_TICK} interval={0} angle={-BUCKET_LABEL_ANGLE} textAnchor="end" height={axisHeight} />
             <YAxis
@@ -165,7 +165,7 @@ export default function DurationHistogram({
               // `offset: 14`, as the time series' rate title: at the default 5
               // the rotated title's line box overhung the svg's left edge by
               // 4 px, and was cut — on the page and in full screen alike.
-              label={{ value: 'Executions', angle: -90, position: 'insideLeft', offset: 14, fill: CHART_VARS.axis, fontSize: 11 }}
+              label={{ value: 'Executions', angle: -90, position: 'insideLeft', offset: 14, ...RECHARTS_AXIS_TITLE }}
             />
             {/* Pinned beside its bucket (`PinnedTip`): a fixed origin, no slide. */}
             <Tooltip
@@ -184,8 +184,8 @@ export default function DurationHistogram({
                   // Hatched, not merely another colour: the overflow bucket
                   // counts a DIFFERENT thing (everything above the axis) and
                   // must not read as just one more equal-width bucket.
-                  fill={row.isOverflow ? `url(#${patternId})` : CHART_VARS.series[2]}
-                  stroke={row.isOverflow ? CHART_VARS.series[2] : undefined}
+                  fill={row.isOverflow ? `url(#${patternId})` : CHART_VARS.measure}
+                  stroke={row.isOverflow ? CHART_VARS.measure : undefined}
                 />
               ))}
             </Bar>
@@ -226,7 +226,7 @@ export const UNDERFLOW_NOTE = 'Everything below the axis'
  */
 export function histogramTipContent(model: DurationHistogramModel, bucket: DurationBucket): TooltipContent {
   return tipContent(bucket.label, [
-    { kind: 'value', key: 'count', label: 'Executions', value: formatNumber(bucket.count), color: CHART_VARS.series[2] },
+    { kind: 'value', key: 'count', label: 'Executions', value: formatNumber(bucket.count), color: CHART_VARS.measure },
     shareRow(bucket.count, model.counted),
     { ...sampleRow(model.counted), detail: 'executions placed' },
     bucket.overflow && { kind: 'note', key: 'overflow', label: '', value: OVERFLOW_NOTE },

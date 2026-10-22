@@ -14,7 +14,7 @@ import { failureGroupsSeries, HOSTILE_GROUP_LABELS } from './failureGroups.fixtu
 import { failureGroupsModel } from './failureGroups.model'
 import FailureGroupBubbles from './FailureGroupBubbles'
 import FailureGroupRelations, { RELATIONS_CAPTION } from './FailureGroupRelations'
-import { GROUP_PLOT_HINT, GROUP_PLOT_HINT_RESERVE } from './GroupPlot'
+import GroupPlot, { GROUP_PLOT_HINT, GROUP_PLOT_HINT_RESERVE, type PlotItem } from './GroupPlot'
 import { wordTruncate } from './plot.model'
 
 const announcer = vi.hoisted(() => ({ assertive: vi.fn(), report: vi.fn() }))
@@ -278,6 +278,64 @@ describe('FailureGroupBubbles', () => {
   it('draws nothing before it has a width', () => {
     const { container } = render(<FailureGroupBubbles groups={model.groups} height={300} description="d" />)
     expect(container.querySelector('svg')).toBeNull()
+  })
+})
+
+/**
+ * W29b UIX-05 (the W29a follow-up C7): a plain circle (a systemic cluster: no
+ * category) shows ONE quantity — the one-measure tint with a one-measure edge —
+ * and its label has NO card halo: on the old 55 % series-1 wash the halo swamped
+ * the 11 px glyphs in both light themes. A failure group keeps its pattern, its
+ * card edge and its haloed label (the halo is right over a pattern).
+ */
+describe('GroupPlot — the plain circle and its label (UIX-05)', () => {
+  const item = (id: string, rank: number, category: PlotItem['category']): PlotItem => ({
+    id,
+    rank,
+    label: `cluster ${id}`,
+    category,
+    tip: { rows: [] },
+    mark: null,
+  })
+  const items = [item('plain', 1, null), item('grouped', 2, 'unknown')]
+  const layout = () => ({
+    nodes: [
+      { id: 'plain', x: 90, y: 90, r: 80 },
+      { id: 'grouped', x: 260, y: 90, r: 80 },
+    ],
+  })
+  const drawn = () => render(<GroupPlot kind="clusters" items={items} layout={layout} shape="wide" height={200} width={900} description="d" />)
+  const circle = (container: HTMLElement, id: string) => container.querySelector(`[data-group-id="${id}"] > circle:first-of-type`) as SVGElement
+  const label = (container: HTMLElement, id: string) => container.querySelector(`[data-group-id="${id}"] [data-group-label]`) as SVGElement
+
+  it('a circle with no category is the measure tint, edged in the measure, at full opacity', () => {
+    const { container } = drawn()
+    const plain = circle(container, 'plain')
+    expect(plain).toHaveAttribute('fill', 'var(--chart-measure-tint)')
+    expect(plain).toHaveAttribute('stroke', 'var(--chart-measure)')
+    expect(plain).toHaveAttribute('stroke-width', '1.5')
+    expect(plain.getAttribute('fill-opacity') ?? '1').toBe('1')
+  })
+
+  it('its label has no halo: no stroke, no paint-order', () => {
+    const { container } = drawn()
+    const text = label(container, 'plain')
+    expect(text).not.toBeNull()
+    expect(text).toHaveAttribute('fill', 'var(--color-text)')
+    expect(text.hasAttribute('stroke')).toBe(false)
+    expect(text.hasAttribute('paint-order')).toBe(false)
+  })
+
+  it('a categorised circle keeps its pattern, its card edge and its haloed label', () => {
+    const { container } = drawn()
+    const grouped = circle(container, 'grouped')
+    expect(grouped.getAttribute('fill')).toMatch(/^url\(#/)
+    expect(grouped).toHaveAttribute('stroke', 'var(--color-bg-card)')
+    expect(grouped).toHaveAttribute('stroke-width', '1')
+    const text = label(container, 'grouped')
+    expect(text).toHaveAttribute('stroke', 'var(--color-bg-card)')
+    expect(text).toHaveAttribute('stroke-width', '3')
+    expect(text).toHaveAttribute('paint-order', 'stroke')
   })
 })
 

@@ -36,6 +36,7 @@
  * any option whose formatter this module did not build.
  */
 import { formatNumber, formatPercent } from '@/utils/formatters'
+import { CHART_FONT } from './tokens'
 
 /**
  * What a row IS. It fixes the order rows are listed in (`orderRows`) and the
@@ -190,7 +191,7 @@ type TipStyle = Readonly<Record<string, string>>
  * looks, whichever engine drew it. Colours are CSS custom properties only.
  */
 export const TIP_STYLE = {
-  body: { display: 'grid', gap: '2px', fontSize: '12px', lineHeight: '1.35', minWidth: '0' },
+  body: { display: 'grid', gap: '2px', fontSize: `${CHART_FONT.tip}px`, lineHeight: '1.35', minWidth: '0' },
   title: { fontWeight: '600', overflowWrap: 'anywhere' },
   row: { display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', columnGap: '6px', rowGap: '0' },
   note: { display: 'block', maxWidth: '20rem', whiteSpace: 'normal', overflowWrap: 'anywhere' },

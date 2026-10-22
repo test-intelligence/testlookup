@@ -45,6 +45,7 @@ import { niceScale, niceStep, zeroBasedScale } from './niceScale'
 import { SVG_POINT_LIMIT, utcDayRange } from './timeSeriesModel'
 import { ALIGNED_X_TITLE, alignByReleaseStart, alignedRowLabel, type AlignmentStartSource } from './seriesAlignment'
 import { finishLine, SERIES_DASHES, volumeOf } from './lineFinish'
+import { CHART_FONT } from './tokens'
 
 // `finishLine` and the dashes live in a leaf so the zoom can use them without
 // this model (see lineFinish.ts); re-exported for callers.
@@ -873,8 +874,8 @@ export function directLabelText(label: string, max = DIRECT_LABEL_MAX_CHARS): st
   return chars.length <= max ? label : `${chars.slice(0, max - 1).join('')}…`
 }
 
-/** A direct label's size, px. */
-export const DIRECT_LABEL_FONT_SIZE = 11
+/** A direct label's size, px: a data label in the kit's one font table. */
+export const DIRECT_LABEL_FONT_SIZE = CHART_FONT.dataLabel
 
 /**
  * A direct label's text as DRAWN: `directLabelText`, then shortened further

@@ -87,7 +87,7 @@ import {
   useChartPatternPrefix,
   type LegendEntry,
 } from './patterns'
-import { CHART_VARS, DIV_COUNT, RECHARTS_AXIS_TICK, STATUS_ENCODING } from './tokens'
+import { CHART_FONT, CHART_VARS, DIV_COUNT, RECHARTS_AXIS_TICK, RECHARTS_AXIS_TITLE, RECHARTS_GRID, STATUS_ENCODING } from './tokens'
 import type { ChartMark, MarkActivationProps, PointerModifiers } from './marks'
 
 const BAR_SIZE = 16
@@ -533,12 +533,15 @@ export function RankedBarPlot({
         >
           <defs>
             {renderPatterns([
-              // A rise and a fall differ by pattern as well as by colour.
-              { id: risePattern, color: CHART_VARS.div[DIV_COUNT - 1], decal: 'solid' },
+              // A CHANGE chart: a rise and a fall differ by pattern as well as by
+              // colour (the diverging pair). Anything else shows ONE quantity:
+              // the one-measure colour every such bar in the kit reads (W29b UIX-05).
+              { id: risePattern, color: model.diverging ? CHART_VARS.div[DIV_COUNT - 1] : CHART_VARS.measure, decal: 'solid' },
               { id: fallPattern, color: CHART_VARS.div[0], decal: 'diagonal' },
             ])}
           </defs>
-          <CartesianGrid stroke={CHART_VARS.grid} strokeDasharray="3 3" horizontal={false} />
+          {/* The one gridline (W29b UIX-05): solid, on the value axis only. */}
+          <CartesianGrid {...RECHARTS_GRID} horizontal={false} />
           {/*
             The value axis. `domain` AND `ticks` come from the model: it starts
             at zero and ends on a nice number, so the last interval is as wide
@@ -558,8 +561,7 @@ export function RankedBarPlot({
               value: valueTitle,
               position: 'insideBottom',
               offset: -4,
-              fill: CHART_VARS.axis,
-              fontSize: 11,
+              ...RECHARTS_AXIS_TITLE,
             }}
           />
           <YAxis
@@ -577,8 +579,7 @@ export function RankedBarPlot({
               value: dimension,
               position: 'top',
               offset: CATEGORY_AXIS_TITLE_OFFSET,
-              fill: CHART_VARS.axis,
-              fontSize: 11,
+              ...RECHARTS_AXIS_TITLE,
             }}
           />
           {/* Pinned beside its bar (`PinnedTip`): a fixed origin, no slide. */}
@@ -596,7 +597,8 @@ export function RankedBarPlot({
               dataKey="valueLabel"
               position="right"
               fill={CHART_VARS.text}
-              fontSize={compact ? 10 : 11}
+              // One size on every card (W29b UIX-05): the compact card's 10 px was under the kit's 11 px floor.
+              fontSize={CHART_FONT.dataLabel}
             />
             {model.bars.map((drawn) => (
               <Cell key={drawn.key} fill={patternFill(drawn.value < 0 ? fallPattern : risePattern)} />
@@ -767,7 +769,7 @@ export function StatusBarPlot({
           margin={{ top: PLOT_MARGIN_TOP, right: rightMargin, left: PLOT_MARGIN_LEFT, bottom: PLOT_MARGIN_BOTTOM }}
         >
           <defs>{renderPatterns(statusPatternSpecs(prefix, model.statuses))}</defs>
-          <CartesianGrid stroke={CHART_VARS.grid} strokeDasharray="3 3" horizontal={false} />
+          <CartesianGrid {...RECHARTS_GRID} horizontal={false} />
           <XAxis
             type="number"
             domain={model.domain}
@@ -786,8 +788,7 @@ export function StatusBarPlot({
               value: percent ? PERCENT_AXIS_TITLE : valueAxisLabel,
               position: 'insideBottom',
               offset: -4,
-              fill: CHART_VARS.axis,
-              fontSize: 11,
+              ...RECHARTS_AXIS_TITLE,
             }}
           />
           <YAxis
@@ -803,8 +804,7 @@ export function StatusBarPlot({
               value: dimension,
               position: 'top',
               offset: CATEGORY_AXIS_TITLE_OFFSET,
-              fill: CHART_VARS.axis,
-              fontSize: 11,
+              ...RECHARTS_AXIS_TITLE,
             }}
           />
           <Tooltip

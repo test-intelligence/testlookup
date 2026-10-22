@@ -34,7 +34,7 @@ import ChartResponsive from './ChartResponsive'
 import type { ChartState } from './chartStateCore'
 import { useChartAnimation } from './motion'
 import { ChartLegend, type LegendEntry } from './patterns'
-import { CHART_VARS, RECHARTS_AXIS_TICK, RECHARTS_TOOLTIP_STYLE } from './tokens'
+import { CHART_FONT, CHART_VARS, RECHARTS_AXIS_TICK, RECHARTS_AXIS_TITLE, RECHARTS_GRID, RECHARTS_TOOLTIP_STYLE } from './tokens'
 import {
   CATALOGUE_LABEL,
   coverageHistoryToChartSeries,
@@ -65,7 +65,7 @@ function NoteLabel({ note, viewBox }: { note: NoteMarker; viewBox?: { x?: number
   const y = (viewBox?.y ?? 0) + 12
   return (
     <g data-chart-note={note.id} data-chart-note-kind={note.kind}>
-      <text x={x} y={y} fill={CHART_VARS.axis} fontSize={10}>
+      <text x={x} y={y} fill={CHART_VARS.axis} fontSize={CHART_FONT.annotation}>
         {noteShortLabel(note.label)}
       </text>
     </g>
@@ -114,7 +114,8 @@ function HistoryTooltip({
 export function CoverageHistoryPlot({ model, height, animate: requested }: { model: CoverageHistoryModel; height: number; animate?: boolean }) {
   const animate = useChartAnimation(requested)
   const legend: LegendEntry[] = [
-    { key: 'catalogue', label: CATALOGUE_LABEL, fill: CHART_VARS.series[1] },
+    // One quantity per day: the one-measure colour (W29b UIX-05; = series-2, no pixel moves).
+    { key: 'catalogue', label: CATALOGUE_LABEL, fill: CHART_VARS.measure },
     { key: 'exercised', label: EXERCISED_LABEL, stroke: CHART_VARS.series[0], dot: true },
   ]
   const rows = model.rows.map((row) => ({ x: row.x, catalogue: row.catalogue, exercised: row.exercisedPct }))
@@ -122,7 +123,7 @@ export function CoverageHistoryPlot({ model, height, animate: requested }: { mod
     <figure data-chart="coverage-history" className="m-0 flex flex-col gap-1">
       <ChartResponsive height={height}>
         <ComposedChart data={rows} margin={{ top: 16, right: 12, left: 8, bottom: 8 }} accessibilityLayer={false}>
-          <CartesianGrid strokeDasharray="3 3" stroke={CHART_VARS.grid} vertical={false} />
+          <CartesianGrid {...RECHARTS_GRID} vertical={false} />
           <XAxis dataKey="x" axisLine={false} tickLine={false} tick={RECHARTS_AXIS_TICK} tickFormatter={shortDay} minTickGap={16} />
           <YAxis
             yAxisId="pct"
@@ -132,7 +133,7 @@ export function CoverageHistoryPlot({ model, height, animate: requested }: { mod
             tickLine={false}
             tick={RECHARTS_AXIS_TICK}
             width={44}
-            label={{ value: 'Exercised %', angle: -90, position: 'insideLeft', fill: CHART_VARS.axis, fontSize: 11 }}
+            label={{ value: 'Exercised %', angle: -90, position: 'insideLeft', ...RECHARTS_AXIS_TITLE }}
           />
           <YAxis
             yAxisId="tests"
@@ -143,11 +144,11 @@ export function CoverageHistoryPlot({ model, height, animate: requested }: { mod
             tickLine={false}
             tick={RECHARTS_AXIS_TICK}
             width={56}
-            label={{ value: 'Tests', angle: 90, position: 'insideRight', fill: CHART_VARS.axis, fontSize: 11 }}
+            label={{ value: 'Tests', angle: 90, position: 'insideRight', ...RECHARTS_AXIS_TITLE }}
           />
           <Tooltip content={<HistoryTooltip model={model} />} isAnimationActive={false} />
           <Legend content={() => <ChartLegend entries={legend} />} />
-          <Bar yAxisId="tests" dataKey="catalogue" name={CATALOGUE_LABEL} fill={CHART_VARS.series[1]} barSize={10} isAnimationActive={animate} />
+          <Bar yAxisId="tests" dataKey="catalogue" name={CATALOGUE_LABEL} fill={CHART_VARS.measure} barSize={10} isAnimationActive={animate} />
           <Line
             yAxisId="pct"
             dataKey="exercised"

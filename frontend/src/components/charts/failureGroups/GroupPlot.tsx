@@ -38,7 +38,7 @@ import {
 } from '../marks'
 import { patternFill, renderPatterns, useChartPatternPrefix } from '../patterns'
 import { useTextMeasure } from '../textMeasure'
-import { CHART_VARS } from '../tokens'
+import { CHART_FONT, CHART_VARS } from '../tokens'
 import { tooltipText } from '../tooltip'
 import { useChartKeyboard } from '../useChartKeyboard'
 import { categoryPatternId, categoryPatternSpecs, type FailureCategoryKey } from './categoryPatterns'
@@ -85,7 +85,8 @@ const SURFACE =
 const BESIDE = 'flex-row items-start'
 const UNDER = 'flex-col'
 
-const LABEL_FONT = 11
+/** A circle's label: a data label in the kit's one font table. */
+const LABEL_FONT = CHART_FONT.dataLabel
 /** A circle narrower than this gets no label (the readout and the table name it). */
 const MIN_LABELLED_RADIUS = 18
 /** A label may use this share of its circle's diameter; a whole label the cut would barely shorten may use the circle's width. */
@@ -297,14 +298,21 @@ export default function GroupPlot({
                         cursor: item.mark && onMarkActivate ? 'pointer' : undefined,
                       }}
                     >
+                      {/*
+                        A failure group (a category set) is its category's pattern,
+                        edged in the card colour. A plain circle (a systemic cluster)
+                        shows ONE quantity: the one-measure tint with a one-measure
+                        edge (W29b UIX-05, the W29a follow-up C7). The old 55 % wash of
+                        series-1 under a card-coloured label halo left its 11 px label
+                        faint in both light themes.
+                      */}
                       <circle
                         cx={node.x}
                         cy={node.y}
                         r={node.r}
-                        fill={item.category ? patternFill(categoryPatternId(prefix, item.category)) : CHART_VARS.series[0]}
-                        fillOpacity={item.category ? 1 : 0.55}
-                        stroke={CHART_VARS.card}
-                        strokeWidth={1}
+                        fill={item.category ? patternFill(categoryPatternId(prefix, item.category)) : CHART_VARS.measureTint}
+                        stroke={item.category ? CHART_VARS.card : CHART_VARS.measure}
+                        strokeWidth={item.category ? 1 : 1.5}
                       />
                       {item.id === selectedId && (
                         <circle
@@ -337,9 +345,10 @@ export default function GroupPlot({
                           dominantBaseline="central"
                           fontSize={labelFont}
                           fill={CHART_VARS.text}
-                          stroke={CHART_VARS.card}
-                          strokeWidth={3}
-                          paintOrder="stroke"
+                          // The card-coloured halo keeps a label readable over a PATTERN;
+                          // on the plain measure tint (≥ 6.9:1 in every theme) it only
+                          // thinned the glyphs, so a plain circle's label has none.
+                          {...(item.category ? { stroke: CHART_VARS.card, strokeWidth: 3, paintOrder: 'stroke' as const } : {})}
                           pointerEvents="none"
                           data-group-label=""
                         >

@@ -19,7 +19,7 @@
  */
 import { useMemo } from 'react'
 import { CartesianGrid, ComposedChart, Legend, Line, Tooltip, XAxis, YAxis } from 'recharts'
-import { CHART_VARS, RECHARTS_AXIS_TICK } from './tokens'
+import { CHART_FONT, CHART_VARS, RECHARTS_AXIS_TICK, RECHARTS_AXIS_TITLE, RECHARTS_GRID } from './tokens'
 import { useChartAnimation } from './motion'
 import { cursorPoint, useChartCursor, type ChartCursorPoint } from './ChartCursor'
 import { PinnedTip, useColumnMark } from './ChartTooltip'
@@ -58,7 +58,7 @@ export interface ExecutionTimeTrendProps {
 /** A duration tick as an element: no `*formatter` key (chart-guard), the axis's own unit. */
 function DurationTick({ x, y, payload, axis }: { x?: number; y?: number; payload?: { value?: number }; axis: NiceScale | null }) {
   return (
-    <text x={x} y={y} dy={4} textAnchor="end" fill={CHART_VARS.axis} fontSize={11}>
+    <text x={x} y={y} dy={4} textAnchor="end" fill={CHART_VARS.axis} fontSize={CHART_FONT.tick}>
       {durationTickLabel(payload?.value ?? 0, axis)}
     </text>
   )
@@ -98,7 +98,7 @@ export default function ExecutionTimeTrend({
         <ChartResponsive height={height}>
           {/* `accessibilityLayer={false}` — explicitly; see `ChartCursor`. */}
           <ComposedChart data={rows} margin={{ top: 8, right: 12, left: 8, bottom: 8 }} accessibilityLayer={false}>
-            <CartesianGrid strokeDasharray="3 3" stroke={CHART_VARS.grid} vertical={false} />
+            <CartesianGrid {...RECHARTS_GRID} vertical={false} />
             <XAxis
               dataKey="key"
               axisLine={false}
@@ -109,7 +109,7 @@ export default function ExecutionTimeTrend({
               minTickGap={12}
               dy={8}
               height={48}
-              label={{ value: EXECUTION_TREND_X_AXIS[model.grain], position: 'insideBottom', fill: CHART_VARS.axis, fontSize: 11 }}
+              label={{ value: EXECUTION_TREND_X_AXIS[model.grain], position: 'insideBottom', ...RECHARTS_AXIS_TITLE }}
             />
             <YAxis
               domain={axis?.domain}
@@ -119,7 +119,7 @@ export default function ExecutionTimeTrend({
               tickLine={false}
               tick={<DurationTick axis={axis} />}
               width={78}
-              label={{ value: EXECUTION_TREND_Y_AXIS, angle: -90, position: 'insideLeft', fill: CHART_VARS.axis, fontSize: 11 }}
+              label={{ value: EXECUTION_TREND_Y_AXIS, angle: -90, position: 'insideLeft', ...RECHARTS_AXIS_TITLE }}
             />
             {/* Pinned beside its point (`PinnedTip`): a fixed origin, no slide. */}
             <Tooltip

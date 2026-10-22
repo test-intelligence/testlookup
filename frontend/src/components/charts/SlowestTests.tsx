@@ -101,7 +101,7 @@ export default function SlowestTests({ model }: SlowestTestsProps) {
                 // The value axis starts at zero by construction: the bar's
                 // length IS the value, scaled against the longest measured p95
                 // — or against the clamp, which a longer bar runs past.
-                style={{ width: `${width}%`, backgroundColor: CHART_VARS.series[4] }}
+                style={{ width: `${width}%`, backgroundColor: CHART_VARS.measure }}
                 className="relative inline-block h-2 rounded-sm"
               >
                 {off ? (
@@ -125,7 +125,7 @@ export default function SlowestTests({ model }: SlowestTestsProps) {
             <span className={stacked ? 'relative flex items-baseline gap-2 tabular-nums' : 'relative flex flex-col items-end tabular-nums'}>
               <span className="text-[var(--color-text)]">{row.p95 === null ? NO_VALUE : formatDuration(row.p95)}</span>
               {off ? <span className="sr-only">{OFF_SCALE_TEXT}</span> : null}
-              <span className="text-[10px] text-[var(--color-text-secondary)]">
+              <span className="text-2xs leading-tight text-[var(--color-text-secondary)]">
                 {formatNumber(row.runs)} {row.runs === 1 ? 'run' : 'runs'}
               </span>
             </span>

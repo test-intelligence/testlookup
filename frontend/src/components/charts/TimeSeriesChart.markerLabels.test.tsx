@@ -6,13 +6,17 @@
  * browser: two releases on adjacent days of a narrow plot draw their names one
  * row apart, never edge to edge; where nothing collides, the labels are
  * exactly what they always were.
+ *
+ * W29b UIX-05: the labels are 11 px (the kit's annotation size; they were
+ * 10), and sit at `offset` MARKER_LABEL_OFFSET (4; it was Recharts' default
+ * 5, left unset) so an 11 px label's box stays inside the svg's top margin.
  */
 import { render } from '@testing-library/react'
 import { cloneElement, isValidElement, type ReactElement, type ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import TimeSeriesChart from './TimeSeriesChart'
 import { trendWithReleasesFixture } from './__fixtures__/wave2Fixtures'
-import { MARKER_LABEL_ROW_HEIGHT } from './releaseMarkerLabels'
+import { MARKER_LABEL_FONT_SIZE, MARKER_LABEL_OFFSET, MARKER_LABEL_ROW_HEIGHT } from './releaseMarkerLabels'
 import type { TimeSeriesModel } from './timeSeriesModel'
 
 const size = vi.hoisted(() => ({ width: 640 }))
@@ -74,9 +78,9 @@ describe('R2-10: release labels never run together', () => {
     // 10 days over ~190 px: one day is ~19 px; two days are under "2026.09"'s 42 + the gap.
     const { markers, margin } = draw(PAIR, 320)
     expect(labelOf(markers[0])?.value).toBe('2026.09')
-    expect(labelOf(markers[0])?.offset).toBeUndefined()
+    expect(labelOf(markers[0])?.offset).toBe(MARKER_LABEL_OFFSET)
     expect(labelOf(markers[1])?.value).toBe('2026.10')
-    expect(labelOf(markers[1])?.offset).toBe(5 + MARKER_LABEL_ROW_HEIGHT)
+    expect(labelOf(markers[1])?.offset).toBe(MARKER_LABEL_OFFSET + MARKER_LABEL_ROW_HEIGHT)
     expect(margin.top).toBe(16 + MARKER_LABEL_ROW_HEIGHT)
   })
 
@@ -86,7 +90,13 @@ describe('R2-10: release labels never run together', () => {
       { x: '2026-03-09', names: ['2026.10'], ids: ['b'] },
     ])
     const { markers, margin } = draw(wide, 1200)
-    for (const marker of markers) expect(labelOf(marker)).toEqual({ value: String(labelOf(marker)?.value), position: 'top', fill: 'var(--chart-axis)', fontSize: 10 })
+    // W29b UIX-05: at the kit's annotation size (11 px; it was 10, under the floor),
+    // 4 px above the plot (it was Recharts' default 5: the 11 px box rose out of the svg).
+    for (const marker of markers) {
+      expect(labelOf(marker)).toEqual({ value: String(labelOf(marker)?.value), position: 'top', offset: MARKER_LABEL_OFFSET, fill: 'var(--chart-axis)', fontSize: MARKER_LABEL_FONT_SIZE })
+    }
+    expect(MARKER_LABEL_FONT_SIZE).toBe(11)
+    expect(MARKER_LABEL_OFFSET).toBe(4)
     expect(margin.top).toBe(16)
   })
 

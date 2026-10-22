@@ -225,7 +225,9 @@ describe('words', () => {
   })
 
   it('utcDay and trendLabel', () => {
-    expect(utcDay('2026-09-12T08:00:00Z')).toBe('2026-09-12')
+    // W29b UIX-05: the app's day words, read in UTC (late on the 12th UTC is still the 12th).
+    expect(utcDay('2026-09-12T08:00:00Z')).toBe('Sep 12, 2026')
+    expect(utcDay('2026-09-12T23:30:00Z')).toBe('Sep 12, 2026')
     expect(utcDay('soon')).toBe('—')
     expect(utcDay(null)).toBe('—')
     expect(trendLabel('week')).toBe('Failures per week')

@@ -19,7 +19,7 @@
  * whose signature is `__proto__` or `constructor` is just another group.
  */
 import type { DrillLevel, GraphChart, SeriesChart } from '@/lib/viz/contracts'
-import { formatNumber, formatPercent } from '@/utils/formatters'
+import { DATE_LOCALE, formatNumber, formatPercent } from '@/utils/formatters'
 import { NO_VALUE } from '../chartText'
 import type { ChartMark } from '../marks'
 import type { FailureCategoryKey } from './categoryPatterns'
@@ -321,11 +321,21 @@ export function paretoTakeaway(model: FailureGroupsModel): string | undefined {
   return `Top ${top.length} groups = ${percent} of failures`
 }
 
-/** A UTC instant as its UTC day ("2026-09-12"), or "—". The server sends `…Z` instants. */
+/** The app's one day format ("Sep 12, 2026", `formatDay`'s words), read in UTC. */
+const UTC_DAY_FORMAT = new Intl.DateTimeFormat(DATE_LOCALE, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
+
+/**
+ * A UTC instant as its UTC day in the app's words ("Sep 12, 2026"), or "—".
+ * The server sends `…Z` instants; the day is the instant's UTC day, so every
+ * viewer's zone reads the same one (the headers say "(UTC)"). W29b UIX-05: it
+ * printed the ISO key ("2026-09-12"), the one ISO date the kit still showed.
+ */
 export function utcDay(instant: string | null): string {
   if (instant === null) return NO_VALUE
   const match = /^(\d{4}-\d{2}-\d{2})T/.exec(instant)
-  return match ? match[1] : NO_VALUE
+  if (!match) return NO_VALUE
+  const day = new Date(`${match[1]}T00:00:00Z`)
+  return Number.isNaN(day.getTime()) ? NO_VALUE : UTC_DAY_FORMAT.format(day)
 }
 
 /** What one trend bucket is, for the sparkline's name. */

@@ -35,6 +35,16 @@
  * diff is the x tick texts and, on the single-point item, one legend
  * `<circle data-legend-dot>`; the `timeseries-*` baselines change with it.
  *
+ * A fourth (W29b UIX-05 / UIX-09): the kit's one grid, measure colour, font
+ * table and panel title. The snapshot diff is the rate grid's lines (solid
+ * 1 px: `stroke-dasharray="3 3"` → `stroke-width="1"`), the executions bars,
+ * their legend swatch and their hatch tile naming `--chart-measure` (=
+ * series-2: the same pixels), the release-marker labels at 11 px (were 10)
+ * and 1 px lower (`offset` 5 → 4, `y` 11 → 12: an 11 px label's box rose
+ * 1 px out of the svg's top, `MARKER_LABEL_OFFSET`), and the frame title's
+ * class (14 px / 600 `leading-tight`, `PANEL_TITLE_CLASS`); the
+ * `timeseries-*` baselines change with it.
+ *
  * Wave 2.4 (VIZ-606 / VIZ-608) gave EVERY drawn frame two toolbar buttons —
  * Export and Full screen. They belong to `ChartFrame`, not to the time-series
  * chart, and are pinned by `ChartFrame.fullscreen.test.tsx`'s own regression

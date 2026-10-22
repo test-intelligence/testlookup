@@ -102,4 +102,17 @@ describe('ExecutionTimeline', () => {
     expect(ticks[0]).toBe('0s')
     expect(ticks[ticks.length - 1]).toMatch(/^\d+\.\ds$/)
   })
+
+  it('draws its tick gridlines solid, in the kit grid style (UIX-05: no dash on any gridline)', () => {
+    const { container } = draw([item('a', 0, 9000)])
+    const ticks = container.querySelectorAll('[data-timeline-axis] text')
+    const gridlines = Array.from(container.querySelectorAll('[data-timeline-plot] line'))
+    expect(gridlines.length).toBeGreaterThan(1)
+    expect(gridlines).toHaveLength(ticks.length)
+    for (const line of gridlines) {
+      expect(line.getAttribute('stroke')).toBe('var(--chart-grid)')
+      expect(line.getAttribute('stroke-width')).toBe('1')
+      expect(line.hasAttribute('stroke-dasharray')).toBe(false)
+    }
+  })
 })
