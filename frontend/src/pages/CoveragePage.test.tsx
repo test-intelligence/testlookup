@@ -1045,7 +1045,8 @@ describe('CoveragePage P2: no stubs, no invented values', () => {
     })
     await renderCoverage(NOISY, [day(1), day(2), day(3), day(4), day(5), day(6)], 8)
     const kpis = within(screen.getByRole('region', { name: 'Coverage metrics' }))
-    expect(kpis.getByText('Run cadence').closest('[data-metric-card]')).toHaveTextContent('6 / 30 days')
+    // W29b: the value is "N / D" ("12 / 14 days" drew past a room-size tile); the change line names the days.
+    expect(kpis.getByText('Run cadence').closest('[data-metric-card]')).toHaveTextContent('6 / 30')
     expect(screen.getByRole('img', { name: /^Run cadence over the last 30 days\. 6 active days, 24 empty days\.$/ })).toBeInTheDocument()
   })
 
@@ -1074,7 +1075,7 @@ describe('CoveragePage P2: no stubs, no invented values', () => {
     expect(screen.getByRole('region', { name: 'Untagged executions' })).toHaveTextContent("5 of 55 executions (9%) didn't carry a suite label")
     const kpis = within(screen.getByRole('region', { name: 'Coverage metrics' }))
     expect(kpis.getByText('Test suites').closest('[data-metric-card]')).toHaveTextContent('+ 1 untagged')
-    expect(kpis.getByText('Run cadence').closest('[data-metric-card]')).toHaveTextContent('1 / 30 days')
+    expect(kpis.getByText('Run cadence').closest('[data-metric-card]')).toHaveTextContent('1 / 30')
     expect(kpis.getByText('Run cadence').closest('[data-metric-card]')).toHaveTextContent('Schedule may be paused')
     // W08 TRND-07: Fix tagging is BUILT now (QA engineer and above, see the
     // "Fix tagging" tests below); this reader (no role: a viewer) has none.

@@ -1547,12 +1547,15 @@ export default function CoveragePage() {
                   })(),
                 }}
               />
+              {/* "N / D" without the word "days": at the room size (40 px) "12 / 14 days" drew past a four-column
+                  tile at 1440 px (kpi-labels, CI); the change line names the days instead. */}
               <MetricCard
                 title="Run cadence"
+                hint="Days with at least one run, of the days in the window"
                 metric={{
-                  value: `${model.daysWithRuns} / ${days} days`,
+                  value: `${model.daysWithRuns} / ${days}`,
                   trend_direction: 'none',
-                  trend_text: cadencePaused ? '⚠ Schedule may be paused' : `${Math.round((model.daysWithRuns / days) * 100)}% of window`,
+                  trend_text: cadencePaused ? '⚠ Schedule may be paused' : `${Math.round((model.daysWithRuns / days) * 100)}% of ${days} days`,
                 }}
               />
             </KpiStrip>
