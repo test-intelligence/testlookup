@@ -849,6 +849,11 @@ locally by default.
 
 ### Security
 
+- **aiohttp 3.14.4 and follow-redirects 1.16.1.** The backend's aiohttp
+  (CVE-2026-111064, CVE-2026-111066: denial of service) and the frontend's
+  follow-redirects under axios (CVE-2026-111755, CVE-2026-111756: information
+  disclosure) move to their fixed releases; aiohttp 3.14.4 needs yarl 1.25.1.
+
 - **Digest subscriptions check every id they are given** (W09). Creating or
   editing a subscription accepted any `saved_view_id`, and editing accepted
   any `scope_value`, including another project's view or release; both are
