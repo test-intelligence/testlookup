@@ -1507,7 +1507,9 @@ export default function TrendsPage() {
             metric={{
               value: lastRunRel,
               trend_direction: 'none',
-              trend_text: previousRunRel ? `previous run was ${previousRunGapDays}d prior` : 'no prior run in window',
+              // "previous run was 1d prior" lost its last letters in the 12 px change line at 1280 px on CI's fonts
+              // (W29b fix-kpi): the same words without "was" fit.
+              trend_text: previousRunRel ? `previous run ${previousRunGapDays}d prior` : 'no prior run in window',
             }}
           />
         </KpiStrip>

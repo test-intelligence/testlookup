@@ -153,22 +153,49 @@ describe('the scheme of native controls', () => {
 describe('the token-drawn checkbox and radio', () => {
   const controlRules = () => rules().filter((r) => /input\[type="(?:checkbox|radio)"\]/.test(r.selector))
 
-  it('one base rule for both types: appearance none, 13 px, the input surface and a muted edge', () => {
+  it('one base rule for both types: appearance none, 13 px; one colour rule: the input surface and a muted edge', () => {
     const base = rule('input[type="checkbox"], input[type="radio"]')
     expect(decl(base, 'appearance')).toBe('none')
     expect(decl(base, 'width')).toBe('13px')
     expect(decl(base, 'height')).toBe('13px')
-    expect(decl(base, 'background')).toBe('var(--color-bg-input)')
-    expect(decl(base, 'border')).toBe('1px solid var(--color-text-muted)')
+    const colours = rule(':is(input[type="checkbox"], input[type="radio"])')
+    expect(decl(colours, 'background')).toBe('var(--color-bg-input)')
+    expect(decl(colours, 'border')).toBe('1px solid var(--color-text-muted)')
     expect(controlRules().some((r) => r.selector.includes('checkbox'))).toBe(true)
     expect(controlRules().some((r) => r.selector.includes('radio'))).toBe(true)
   })
 
   it('checked is the primary button pair; the focus ring is kept', () => {
-    expect(decl(rule('input[type="checkbox"]:checked, input[type="checkbox"]:indeterminate'), 'background')).toBe('var(--color-btn-primary-bg)')
+    expect(decl(rule('input[type="checkbox"]:is(:checked, :indeterminate)'), 'background')).toBe('var(--color-btn-primary-bg)')
     expect(decl(rule('input[type="checkbox"]:checked::before'), 'opacity')).toBe('1')
-    expect(decl(rule('input[type="radio"]:checked'), 'background')).toBe('var(--color-btn-primary-bg)')
+    expect(decl(rule('input[type="radio"]:is(:checked)'), 'background')).toBe('var(--color-btn-primary-bg)')
     expect(decl(rule('input[type="checkbox"]:focus-visible, input[type="radio"]:focus-visible'), 'outline')).toBe('2px solid var(--color-ring)')
+  })
+
+  it('the colours sit in @layer utilities, where a page bg-* / border-* utility cannot paint over the checked box', () => {
+    // Tailwind v4 layers: a utility beats any @layer base rule whatever its specificity, so a checkbox carrying
+    // `bg-[var(--color-bg-secondary)]` drew its checked state in the unchecked colour (white tick on near-white).
+    const start = css.indexOf('@layer utilities {')
+    expect(start, 'an @layer utilities block in index.css').toBeGreaterThan(-1)
+    let depth = 0
+    let end = start
+    for (let i = css.indexOf('{', start); i < css.length; i += 1) {
+      if (css[i] === '{') depth += 1
+      if (css[i] === '}') depth -= 1
+      if (depth === 0) {
+        end = i
+        break
+      }
+    }
+    const block = css.slice(start, end)
+    for (const selector of [
+      ':is(input[type="checkbox"], input[type="radio"])',
+      'input[type="checkbox"]:is(:checked, :indeterminate)',
+      'input[type="radio"]:is(:checked)',
+    ]) {
+      expect(block, selector).toContain(selector)
+    }
+    expect(block, 'no size in the utilities layer: page size utilities (h-4 w-4) must keep winning').not.toMatch(/\b(width|height)\s*:/)
   })
 
   it('reads tokens only: no hex, and no function but var() and rotate() (no colour literal, no image: CSP)', () => {

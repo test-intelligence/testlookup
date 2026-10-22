@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
+import { readSourceFile } from '@/test/readSourceFile'
 import KpiStrip from './KpiStrip'
 import MetricCard from './MetricCard'
 import StatusBanner from './StatusBanner'
@@ -58,6 +59,31 @@ describe('StatusBanner', () => {
     expect((pill.firstElementChild as HTMLElement).style.background).toBe(hue)
   })
 
+  // W29b fix-kpi: on /releases at 1280 px the 12 px pill pushed "Open 2026.11 →" to a second line (+15 px). A
+  // string title gives way first: its flex basis is 17em (the row breaks as if it were at most that wide), it grows
+  // back to its own width (`max-w-max`) where the line has room, and its whole text is the hover text.
+  it('a string title truncates before the link wraps; its whole text is the hover text', () => {
+    const headline = '2026.11 is blocked — was due Wednesday'
+    const { container } = render(
+      <StatusBanner state="no_go" title={headline} facts={[{ label: 'Blocked', value: 1 }]} action={{ label: 'Open 2026.11', onClick: () => {} }} />,
+    )
+    const title = container.querySelector('[data-banner-title]') as HTMLElement
+    expect(title).toHaveTextContent(headline)
+    expect(title).toHaveAttribute('title', headline)
+    expect(title).toHaveClass('min-w-0', 'max-w-max', 'flex-[1_1_17em]', 'truncate')
+    // The pill, then the title, then the facts and the link: the order the row wraps in is unchanged.
+    expect(Array.from((container.querySelector('[data-status-banner]') as HTMLElement).children).indexOf(title)).toBe(1)
+  })
+
+  it('a node title is drawn as the page built it (no basis, no truncation, no hover text)', () => {
+    const { container } = render(<StatusBanner state="warn" title={<span>Flaky · 2 tests</span>} facts={[{ label: 'pass', value: '1%' }]} />)
+    expect(container.querySelector('[data-banner-title]')).toBeNull()
+    const title = screen.getByText('Flaky · 2 tests').parentElement as HTMLElement
+    expect(title).toHaveClass('font-medium')
+    expect(title).not.toHaveClass('truncate')
+    expect(title).not.toHaveAttribute('title')
+  })
+
   it('shows at most four facts', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const view = render(
@@ -82,9 +108,28 @@ describe('KpiStrip + compact MetricCard', () => {
     expect(strip.querySelectorAll('[data-metric-card="compact"]')).toHaveLength(5)
     // Fits the width (one row of five on a desktop page, fewer columns when
     // presentation-sized tiles cannot fit), never a fixed count that overflows.
-    expect(strip.style.gridTemplateColumns).toBe('repeat(auto-fit, minmax(10rem, 1fr))')
+    // W29b fix-kpi: the floor is the `--kpi-tile-min` token (10rem at the desk), which presentation mode raises.
+    expect(strip.style.gridTemplateColumns).toBe('repeat(auto-fit, minmax(var(--kpi-tile-min, 10rem), 1fr))')
     expect(warn).toHaveBeenCalled()
     warn.mockRestore()
+  })
+
+  // W29b fix-kpi: the tile's label and change line are 16 px in presentation mode (the `.eyebrow` / `text-xs`
+  // tokens), and five 186 px tiles at 1280 px cut "TOTAL EXECU…" and "Down … (worse)" on CI's fonts. The strip's
+  // floor follows the room size: 10rem at the desk (five in a row at 1280), 16.5rem in the room (three at 1280).
+  it('the strip floor is 10rem at the desk and grows with the room-sized label in presentation mode', async () => {
+    const css = await readSourceFile('src/index.css')
+    const declared = (selector: string) => {
+      const start = css.indexOf(selector)
+      expect(start, selector).toBeGreaterThanOrEqual(0)
+      return /--kpi-tile-min:\s*([\d.]+)rem;/.exec(css.slice(start, css.indexOf('}', start)))?.[1]
+    }
+    expect(declared(':root {\n    --text-display-sm')).toBe('10')
+    const room = Number(declared('[data-presentation="on"] {'))
+    // "DUPLICATES AVOIDED" at 16 px in the label style is ~224 px on DejaVu Sans; 32 px of padding, 4 px spare.
+    expect(room * 16).toBeGreaterThanOrEqual(224 + 32 + 4)
+    // ...and five tiles still fit one row of a 1920 px page in the room (a 1616 px strip, 12 px gaps).
+    expect(5 * room * 16 + 4 * 12).toBeLessThanOrEqual(1616)
   })
 
   it('a compact card keeps the change words and judgement, on one line', () => {
@@ -98,8 +143,10 @@ describe('KpiStrip + compact MetricCard', () => {
     // never a fixed `text-2xl` that presentation mode cannot raise.
     expect(screen.getByText('91.2%').className).toContain('text-[length:var(--text-stat-lg)]')
     expect(screen.getByText('91.2%').className).not.toContain('text-2xl')
-    // Two spans, so a narrow tile truncates the change text and never "(worse)".
-    expect(screen.getByText('Down 2.1 pp vs previous period')).toBeInTheDocument()
+    // Separate spans, so a narrow tile truncates the change's context and never "(worse)" (nor, since W29b
+    // fix-kpi, the figure: "Down 2.1 pp" is its own span that does not shrink).
+    expect(screen.getByTitle('Down 2.1 pp vs previous period (worse)')).toHaveTextContent(/^Down 2\.1 pp vs previous period\(worse\)$/)
+    expect(screen.getByText('Down 2.1 pp')).toHaveAttribute('data-change-head')
     expect(screen.getByText('(worse)')).toBeInTheDocument()
     expect(screen.getByTitle('Down 2.1 pp vs previous period (worse)')).toHaveAttribute('data-metric-trend', 'down')
   })

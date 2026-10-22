@@ -66,18 +66,20 @@ describe('MetricCard accessibility', () => {
     expect(container.querySelector('[aria-live],[role="status"]')).toBeNull()
   })
 
-  const cases: Array<[label: string, direction: 'up' | 'down' | 'flat', positive: 'up' | 'down', change: string]> = [
-    ['good trend', 'up', 'up', 'Up 3% vs prev period'],
-    ['bad trend', 'up', 'down', 'Up 3% vs prev period'],
-    ['flat trend', 'flat', 'up', 'No change 3% vs prev period'],
+  // The change words are two spans (W29b fix-kpi): the figure, which never truncates, and the context after it.
+  const cases: Array<[label: string, direction: 'up' | 'down' | 'flat', positive: 'up' | 'down', figure: string]> = [
+    ['good trend', 'up', 'up', 'Up 3%'],
+    ['bad trend', 'up', 'down', 'Up 3%'],
+    ['flat trend', 'flat', 'up', 'No change 3%'],
   ]
 
-  for (const [label, direction, positive, change] of cases) {
+  for (const [label, direction, positive, figure] of cases) {
     it(`the label and the change words reach 4.5:1 on the card in every theme (${label})`, () => {
       render(<MetricCard title="Pass Rate" metric={{ value: '98%', trend: 3, trend_direction: direction }} positiveDirection={positive} />)
       const texts: Record<string, string> = {
         label: textToken(screen.getByText('Pass Rate')),
-        change: textToken(screen.getByText(change)),
+        change: textToken(screen.getByText(figure)),
+        context: textToken(screen.getByText('vs prev period')),
         value: textToken(screen.getByText('98%')),
       }
       const judgement = document.querySelector('[data-trend-judgement]')

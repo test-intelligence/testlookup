@@ -118,8 +118,11 @@ function deriveKpis(releases: DerivedRelease[]): KpiCardProps[] {
 
 export default function KpiStrip({ releases, override }: KpiStripProps) {
   const cards = override ?? deriveKpis(releases)
+  // Two columns: the strip sits in the list column (584 px at 1280, 744 at 1440), where four 136 px tiles cut the
+  // `.eyebrow` labels on CI's fonts ("READY TO SH…", "RELEASED · 3…") and their captions, and presentation mode's
+  // 16 px labels cut them at 1440 too (W29b fix-kpi). It is inside a closed disclosure: no page grows.
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
+    <div className="grid grid-cols-2 gap-3.5">
       {cards.map((c, i) => <KpiCard key={`${c.label}-${i}`} {...c} />)}
     </div>
   )

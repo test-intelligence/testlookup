@@ -32,9 +32,10 @@ describe('MetricCard', () => {
   })
 
   it('renders absolute trend value regardless of sign', () => {
-    render(<MetricCard title="Flaky" metric={{ value: 7, trend: -6, trend_direction: 'down' }} />)
+    const { container } = render(<MetricCard title="Flaky" metric={{ value: 7, trend: -6, trend_direction: 'down' }} />)
 
-    expect(screen.getByText('Down 6% vs prev period')).toBeInTheDocument()
+    expect(container.querySelector('[data-metric-trend]')).toHaveTextContent(/^Down 6% vs prev period\(worse\)$/)
+    expect(screen.getByText('Down 6%')).toHaveAttribute('data-change-head')
   })
 
   /** The change line's own class (it carries the judgement's hue, which paints the icon). */
@@ -264,10 +265,43 @@ describe('MetricCard', () => {
     expect(judgement).toHaveTextContent('(better)')
     expect(judgement).toHaveClass('shrink-0')
     expect(judgement).not.toHaveClass('truncate')
-    const change = judgement?.previousElementSibling
-    expect(change).toHaveTextContent('Up 8% vs previous period')
-    expect(change).toHaveClass('truncate')
+    // W29b fix-kpi: the context truncates, never the figure before it.
+    const context = judgement?.previousElementSibling
+    expect(context).toHaveTextContent(/^vs previous period$/)
+    expect(context).toHaveClass('truncate')
     expect(container.querySelector('[data-metric-trend]')).toHaveAttribute('title', 'Up 8% vs previous period (better)')
+  })
+
+  // W29b fix-kpi: ONE truncating span cut the figure itself where the tile is narrow for its type size: "Down 1.6
+  // p… (worse)" at 1280 px and "Down … (worse)", "Up 4.2… (better)" in presentation mode, on CI's fonts. The
+  // direction word and the figure are a span that never shrinks; only the context after them takes the ellipsis.
+  it.each([
+    ['1.6 pp vs previous 14 days', 'down', 'Down 1.6 pp', 'vs previous 14 days'],
+    ['10% · later vs earlier half of window', 'down', 'Down 10%', '· later vs earlier half of window'],
+    ['1022 passed · 119 failed · 21 broken', 'none', '1022 passed', '· 119 failed · 21 broken'],
+    ['50% — schedule may be paused', 'none', '50%', '— schedule may be paused'],
+  ] as const)('the figure of "%s" never truncates; the context after it does', (trendText, dir, head, tail) => {
+    const { container } = render(<MetricCard title="Pass rate" metric={{ value: '88%', trend_direction: dir, trend_text: trendText }} />)
+    const row = container.querySelector('[data-metric-trend]') as HTMLElement
+    const figure = row.querySelector('[data-change-head]') as HTMLElement
+    expect(figure.textContent).toBe(head)
+    expect(figure).toHaveClass('shrink-0', 'whitespace-nowrap')
+    expect(figure).not.toHaveClass('truncate')
+    const context = figure.nextElementSibling as HTMLElement
+    expect(context.textContent).toBe(tail)
+    expect(context).toHaveClass('min-w-0', 'truncate')
+    // The words read as one line: a space between the figure and its context, the judgement after them.
+    expect(row.textContent).toBe([head, ' ', tail, dir === 'none' ? '' : '(worse)'].join(''))
+  })
+
+  it('a change with no context is one truncating span (a list, a sentence)', () => {
+    const { container } = render(
+      <MetricCard title="Suites" metric={{ value: 5, trend_direction: 'none', trend_text: 'Auth, Checkout, Payments, Search' }} />,
+    )
+    const row = container.querySelector('[data-metric-trend]') as HTMLElement
+    expect(row.querySelector('[data-change-head]')).toBeNull()
+    expect(row.querySelectorAll('span')).toHaveLength(1)
+    expect(screen.getByText('Auth, Checkout, Payments, Search')).toHaveClass('min-w-0', 'truncate')
   })
 
   it('compact: an unjudged change has no judgement span', () => {

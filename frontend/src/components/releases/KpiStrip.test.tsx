@@ -168,6 +168,16 @@ describe('KpiStrip states only what it counted', () => {
     expect(document.body.textContent).toMatch(/2.*at Planning/)
   })
 
+  // W29b fix-kpi: four tiles across the list column (584 px at 1280) were 136 px each: the `.eyebrow` labels read
+  // "READY TO SH…" and "RELEASED · 3…" on CI's fonts, and presentation mode's 16 px labels were cut at 1440 too.
+  it('lays the four tiles out two per row, at every width', () => {
+    const { container } = render(<KpiStrip releases={[release(), release({ gate: gate('go') })]} />)
+    const grid = container.firstElementChild as HTMLElement
+    expect(grid.querySelectorAll(':scope > [data-metric-card]')).toHaveLength(4)
+    expect(grid).toHaveClass('grid', 'grid-cols-2')
+    expect(grid.className).not.toMatch(/grid-cols-[34]/)
+  })
+
   it('honours an override, and still draws no trend line (the prop that could is gone)', () => {
     const { container } = render(
       <KpiStrip releases={[]} override={[{ label: 'Measured', value: 7 }]} />,

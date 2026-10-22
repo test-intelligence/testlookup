@@ -70,6 +70,19 @@ const TONE_HUE: Record<MetricTone, string> = {
   neutral: 'var(--color-text-muted)',
 }
 
+/** Where a change line's figure ends and its context begins: "Down 1.6 pp | vs previous 14 days". */
+const CHANGE_TAIL = / (?:vs\.?|·|—) /
+
+/**
+ * A change line as its head (the direction word and the figure: "Down 1.6 pp", "Up 4.2%", "1022 passed") and its
+ * tail (the context: "vs previous 14 days", "· 119 failed · …"). A line with no context separator has no tail
+ * ("previous run 1d prior", "Auth, Checkout, Payments"): it truncates as one span.
+ */
+function splitChangeLine(line: string): { head: string; tail: string } {
+  const at = line.search(CHANGE_TAIL)
+  return at > 0 ? { head: line.slice(0, at), tail: line.slice(at + 1) } : { head: line, tail: '' }
+}
+
 function dataAttributesOf(rest: Record<string, unknown>): DataAttributes {
   const out: DataAttributes = {}
   for (const [key, value] of Object.entries(rest)) {
@@ -119,6 +132,7 @@ export default function MetricCard({
   const word = dir && dir !== 'none' ? DIRECTION_WORD[dir] : null
   const judgement = judged ? (dir === positiveDirection ? '(better)' : '(worse)') : null
   const changeLine = [word, trendText].filter(Boolean).join(' ')
+  const { head, tail } = splitChangeLine(changeLine)
   const pct = typeof bar === 'number' && Number.isFinite(bar) ? Math.max(0, Math.min(100, bar)) : null
 
   return (
@@ -187,9 +201,21 @@ export default function MetricCard({
           className={clsx('mt-1 flex min-w-0 items-center gap-1 text-xs font-medium', trendColor)}
         >
           {dir !== 'none' && <TrendIcon aria-hidden="true" className="h-3 w-3 shrink-0" />}
-          {/* Only the change text truncates: the judgement is what a narrow strip card must never cut
-              ("vs previous period (bet…"). */}
-          <span className="min-w-0 truncate text-[var(--color-text-secondary)]">{changeLine}</span>
+          {/* Only the change's CONTEXT truncates: the judgement is what a narrow strip card must never cut
+              ("vs previous period (bet…"), and neither is the figure. One truncating span cut "Down 1.6 p… (worse)"
+              at 1280 px and "Down … (worse)" in presentation mode on CI's fonts (W29b fix-kpi), so the direction
+              word and the figure are a span that does not shrink, and the context after them takes the ellipsis.
+              The space between the two is a text node: the flex row draws its gap, `textContent` keeps the words. */}
+          {tail ? (
+            <>
+              <span data-change-head="" className="shrink-0 whitespace-nowrap text-[var(--color-text-secondary)]">
+                {head}
+              </span>{' '}
+              <span className="min-w-0 truncate text-[var(--color-text-secondary)]">{tail}</span>
+            </>
+          ) : (
+            <span className="min-w-0 truncate text-[var(--color-text-secondary)]">{changeLine}</span>
+          )}
           {judgement && (
             <span data-trend-judgement="" className="shrink-0 text-[var(--color-text-secondary)]">
               {judgement}

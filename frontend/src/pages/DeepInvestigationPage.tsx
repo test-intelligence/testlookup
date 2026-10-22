@@ -676,11 +676,11 @@ function buildModel({
   const lastRunAgeHours = lastAnalysisDone && trail?.completed_at
     ? Math.max(0, Math.floor((Date.now() - new Date(trail.completed_at).getTime()) / 3600000))
     : null
+  // Its cost (`lastRunCostDollars`, the same trail cost) is the tile's note, not a third part of this line (W29b).
   const lastRunSummary = lastAnalysisDone
     ? [
         `${clusters.length} cluster${clusters.length === 1 ? '' : 's'}`,
         `${findings.length} finding${findings.length === 1 ? '' : 's'}`,
-        ...(trailCost != null ? [`$${trailCost.toFixed(2)}`] : []),
       ].join(' · ')
     : null
 
@@ -1032,6 +1032,9 @@ export function InvestigationKpiStrip({ model }: { model: DeepModel }) {
       .map((key) => `${sev[key]} ${key.toUpperCase()}`),
     ...(unscoredClusters > 0 ? [`${unscoredClusters} unscored`] : []),
   ].join(' · ')
+  // The bar's name is its accessible name only (no `showLabel`): drawn as a two-line caption beside the value it
+  // made the aside 28 px taller than the value's line and pushed "3" below the other four values (CI, DejaVu).
+  // The tile's label ("Clusters", hint "Likely clusters") says what it splits; the counts stay written out under it.
   const severityGauge = clusterTotal > 0 ? (
     <TileGlyph>
       <GaugeBar
@@ -1039,7 +1042,6 @@ export function InvestigationKpiStrip({ model }: { model: DeepModel }) {
         domain={[0, clusterTotal]}
         size="sm"
         label="Proposed clusters by severity"
-        showLabel
         segments={[
           { value: sev.p0, label: 'P0', tone: 'bad' },
           { value: sev.p1, label: 'P1', tone: 'warn' },
@@ -1112,6 +1114,14 @@ export function InvestigationKpiStrip({ model }: { model: DeepModel }) {
             title="Analyzed"
             hint="Last analysis"
             metric={{ value: model.lastRunAgeHours != null ? `${model.lastRunAgeHours}h ago` : '—' }}
+            // The run's cost sits beside the age (the aside; under the value where the value leaves no room, as in
+            // presentation mode): at the end of the one-line caption it was the part a CI-wide font cut ("3 clusters ·
+            // 3 findings ·…"), and as the label row's note it cut the label in presentation mode on that font.
+            sparkline={model.lastRunSummary != null && model.lastRunCostDollars != null ? (
+              <span title="Cost of the last analysis" className="whitespace-nowrap text-xs tabular-nums text-[var(--color-text-secondary)]">
+                ${model.lastRunCostDollars.toFixed(2)}
+              </span>
+            ) : undefined}
             caption={model.lastRunSummary ?? <>no prior run</>}
           />,
           <InputTile

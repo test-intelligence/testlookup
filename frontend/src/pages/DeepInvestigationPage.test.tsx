@@ -373,14 +373,21 @@ describe('InvestigationKpiStrip — glyphs from real numbers only', () => {
     expect(within(kpiCell('Eligible failures')).queryByRole('meter')).toBeNull()
   })
 
-  it('names the severity bar, and its counts, in visible text — not only for a screen reader', () => {
+  // W29b (CI shots): the bar's two-line caption beside the value pushed "3" 28 px below the other four values, so
+  // the bar is named by its tile — the label "Clusters", its title "Likely clusters" — and by its accessible name;
+  // it sits in the tile's aside, and its counts stay written out under it.
+  it('names the severity bar by its tile and its accessible name, and writes its counts in visible text', () => {
     render(<InvestigationKpiStrip model={stripModel()} />)
     const cell = kpiCell('Likely clusters')
-    const name = within(cell).getByText('Proposed clusters by severity')
-    expect(name).toBeVisible()
-    expect(name.closest('.sr-only')).toBeNull()
-    // The segments are not colour-only: the counts are written out.
-    expect(within(cell).getByText('1 P0 · 2 P1 · 1 P3')).toBeVisible()
+    const meter = within(cell).getByRole('meter', { name: 'Proposed clusters by severity' })
+    expect(meter).not.toHaveAttribute('aria-labelledby')
+    expect(within(cell).queryByText('Proposed clusters by severity')).toBeNull()
+    expect(meter.closest('[data-metric-aside]')).not.toBeNull()
+    expect(within(cell).getByText('Clusters')).toBeVisible()
+    // The segments are not colour-only: the counts are written out, under the bar, in the aside.
+    const counts = within(cell).getByText('1 P0 · 2 P1 · 1 P3')
+    expect(counts).toBeVisible()
+    expect(counts.closest('[data-metric-aside]')).toBe(meter.closest('[data-metric-aside]'))
   })
 
   it('draws no severity bar when analysis proposed no cluster', () => {
@@ -569,7 +576,11 @@ describe('DeepInvestigationPage — only what it really does', () => {
     const cell = within(inputs).getByTitle('Last analysis').closest('div')?.parentElement as HTMLElement
     // The focused run is 80h old ("3d ago"), which used to surface as "3 h ago".
     expect(cell).toHaveTextContent('5h ago')
-    expect(cell).toHaveTextContent('1 cluster · 1 finding · $0.42')
+    // W29b (CI shots): the run's cost sits beside the age (the tile's aside), no longer the caption's cut-off third part.
+    expect(cell.querySelector('[data-metric-caption]')).toHaveTextContent(/^1 cluster · 1 finding$/)
+    const cost = within(cell).getByText('$0.42')
+    expect(cost.closest('[data-metric-aside]')).not.toBeNull()
+    expect(cost).toHaveAttribute('title', 'Cost of the last analysis')
   })
 
   // ── An unscored cluster is unscored (it used to get an invented 0.7) ──

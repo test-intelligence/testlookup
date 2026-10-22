@@ -326,7 +326,11 @@
      a verdict panel. --text-stat-sm is 18px like --text-lg, but --text-lg is a
      UI size that presentation mode does not raise. --text-stat-md and
      --text-display-md have no reader today (W29b F-9). Presentation mode
-     (below) raises all of these together. */
+     (below) raises all of these together.
+     --kpi-tile-min is the narrowest a KpiStrip tile may get before the strip
+     takes one column fewer: 10rem at the desk (five tiles in one row at 1280
+     px); presentation mode raises it with the tile's 16px label and change
+     line, so a room-sized label is never cut (W29b fix-kpi). */
   :root {
     --text-display-sm: 26px;
     --text-display-md: 28px;
@@ -334,6 +338,7 @@
     --text-stat-lg:    24px;
     --text-stat-md:    22px;
     --text-stat-sm:    18px;
+    --kpi-tile-min:    10rem;
   }
 
   /* Typography scale — UI dense, optimised for data tables. */
@@ -416,25 +421,21 @@
     transition: background-color 0.25s ease, color 0.25s ease;
   }
 
-  /* W29b: native checkboxes and radios drawn from tokens (no pure-white box in any theme). Utilities (h-4 w-4 …)
-     still win: this is @layer base. The tick is drawn with borders: no data-URI image (CSP). */
+  /* W29b: native checkboxes and radios drawn from tokens (no pure-white box in any theme). Size utilities
+     (h-4 w-4 …) still win: this is @layer base. Their colours are in @layer utilities below. The tick is drawn
+     with borders: no data-URI image (CSP). */
   input[type="checkbox"], input[type="radio"] {
     appearance: none; display: inline-grid; place-content: center; flex-shrink: 0;
     width: 13px; height: 13px; margin: 0; vertical-align: middle; cursor: pointer;
-    background: var(--color-bg-input); border: 1px solid var(--color-text-muted);
   }
   input[type="checkbox"] { border-radius: 3px; }
   input[type="radio"]    { border-radius: 9999px; }
-  input[type="checkbox"]:checked, input[type="checkbox"]:indeterminate {
-    background: var(--color-btn-primary-bg); border-color: var(--color-btn-primary-bg);
-  }
   input[type="checkbox"]::before {
     content: ''; width: 7px; height: 4px; margin-top: -2px; transform: rotate(-45deg); opacity: 0;
     border: solid var(--color-btn-primary-text); border-width: 0 0 2px 2px;
   }
   input[type="checkbox"]:checked::before { opacity: 1; }
   input[type="checkbox"]:indeterminate::before { opacity: 1; transform: none; margin-top: 0; width: 7px; height: 0; border-width: 0 0 2px 0; }
-  input[type="radio"]:checked { border-color: var(--color-btn-primary-bg); box-shadow: inset 0 0 0 3px var(--color-bg-input); background: var(--color-btn-primary-bg); }
   input[type="checkbox"]:disabled, input[type="radio"]:disabled { opacity: 0.5; cursor: not-allowed; }
   input[type="checkbox"]:focus-visible, input[type="radio"]:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; }
 
@@ -449,6 +450,22 @@
   ::-webkit-scrollbar-track { background: var(--color-scrollbar-track); }
   ::-webkit-scrollbar-thumb { background: var(--color-scrollbar-thumb); border-radius: 9999px; }
   ::-webkit-scrollbar-thumb:hover { opacity: 0.8; }
+}
+
+/* The checkbox and radio colours sit in the UTILITIES layer: many inputs carry a page's bg-* / border-* utility,
+   a no-op on the browser's own control but, on the token-drawn one, a utility beats any base rule (Tailwind v4
+   layers) and painted the checked box in the unchecked colour (a white tick on near-white in Lab). Inside this
+   layer these selectors (0,1,1+) out-specify a utility (0,1,0). */
+@layer utilities {
+  :is(input[type="checkbox"], input[type="radio"]) {
+    background: var(--color-bg-input); border: 1px solid var(--color-text-muted);
+  }
+  input[type="checkbox"]:is(:checked, :indeterminate) {
+    background: var(--color-btn-primary-bg); border-color: var(--color-btn-primary-bg);
+  }
+  input[type="radio"]:is(:checked) {
+    border-color: var(--color-btn-primary-bg); box-shadow: inset 0 0 0 3px var(--color-bg-input); background: var(--color-btn-primary-bg);
+  }
 }
 
 @layer components {
@@ -661,6 +678,10 @@
      small value meets it in the room too. */
   --text-stat-md:    40px;
   --text-stat-sm:    40px;
+  /* A KpiStrip tile at the room size: "DUPLICATES AVOIDED" in the 16px label
+     style is ~224px on CI's DejaVu Sans; 16.5rem keeps 4px of it free. Three
+     columns at 1280px, four at 1440, five at 1920 (W29b fix-kpi). */
+  --kpi-tile-min:    16.5rem;
   --text-xs:   16px;
   --text-sm:   16px;
   --text-base: 16px;
