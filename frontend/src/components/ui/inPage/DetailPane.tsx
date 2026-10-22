@@ -162,7 +162,7 @@ export function DetailPane({
                   {position && (
                     <span
                       data-testid={testIds?.position}
-                      className="px-1 text-[11px] tabular-nums text-[var(--color-text-muted)] whitespace-nowrap"
+                      className="px-1 text-2xs tabular-nums text-[var(--color-text-muted)] whitespace-nowrap"
                     >
                       {position.index} of {position.total}
                     </span>

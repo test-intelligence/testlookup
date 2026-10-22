@@ -13,68 +13,37 @@
  * trend line this strip could draw was an invented one.
  */
 import type { ReactNode } from 'react'
-import { clsx } from 'clsx'
-import { TrendingDown, TrendingUp } from 'lucide-react'
+import MetricCard, { type MetricTone } from '@/components/ui/MetricCard'
 import type { DerivedRelease } from './types'
 import { countReleases, openBlockerCount } from './health'
-
-type Tone = 'good' | 'warn' | 'bad' | 'neutral'
-
-const TONE_COLOR: Record<Tone, string> = {
-  good:    'var(--status-passed)',
-  warn:    'var(--status-broken)',
-  bad:     'var(--status-failed)',
-  neutral: 'var(--color-text)',
-}
 
 interface KpiCardProps {
   label: string
   value: number | string
-  tone?: Tone
+  /** The value's ink (MetricCard's tone: the -ink tokens, >= 4.5:1 on the card in every theme). */
+  tone?: MetricTone
   delta?: { dir: 'up' | 'down'; value: number; period: string }
   /** The sub-line. Rendered as React children: text in it stays text. */
   sub?: ReactNode
 }
 
+/**
+ * One card: the ONE KPI tile (W29b UIX-09, `MetricCard` md) — the label in the `.eyebrow` style, the 24 px
+ * `--text-stat-lg` value in its tone's ink, the sub-line as the tile's caption, a delta as its change line ("Up 3 ·
+ * vs last month (better)": up is good here, as the green / red delta was).
+ */
 function KpiCard({ label, value, tone = 'neutral', delta, sub }: KpiCardProps) {
-  return (
-    <div
-      className="rounded-xl border p-3 flex flex-col gap-1"
-      style={{
-        borderColor: 'var(--color-border)',
-        background: 'var(--color-bg-card)',
-      }}
-    >
-      <div className="min-w-0">
-        <div className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
-          {label}
-        </div>
-        <div
-          className="mt-1 font-bold tabular-nums leading-none"
-          style={{ fontSize: 26, letterSpacing: '-0.02em', color: TONE_COLOR[tone] }}
-        >
-          {value}
-        </div>
-      </div>
-      {(sub || delta) && (
-        <div className="text-[11.5px] text-[var(--color-text-muted)] flex items-center gap-1.5 flex-wrap">
-          {delta && (
-            <span
-              className={clsx(
-                'inline-flex items-center gap-0.5 font-semibold tabular-nums',
-                delta.dir === 'up' ? 'text-[var(--status-passed)]' : 'text-[var(--status-failed)]',
-              )}
-            >
-              {delta.dir === 'up' ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-              {delta.dir === 'up' ? '+' : '−'}{delta.value}
-            </span>
-          )}
-          {delta && delta.period && <span>· {delta.period}</span>}
-          {sub && <span>{sub}</span>}
-        </div>
-      )}
-    </div>
-  )
+  const metric = {
+    value,
+    ...(delta
+      ? {
+          trend: delta.value,
+          trend_direction: delta.dir,
+          trend_text: [String(delta.value), delta.period].filter(Boolean).join(' · '),
+        }
+      : {}),
+  }
+  return <MetricCard title={label} metric={metric} tone={tone} caption={sub} />
 }
 
 interface KpiStripProps {

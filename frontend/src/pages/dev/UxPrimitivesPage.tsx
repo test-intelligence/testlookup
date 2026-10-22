@@ -8,17 +8,21 @@
  * reading surface (UIX-01/02/03/07/08/11): `buttons` (every `.btn-*`, md and
  * sm), `badges` (result StatusBadges, DecisionChips, severity chips, a
  * FailureCategoryMark per category, an avatar per tone) and `states` (the
- * empty, warning, compact, unavailable and loading looks). It fetches nothing,
- * so it runs with no backend and no login, and it is the subject of
- * `tests/visual/ux-primitives.visual.spec.ts`.
+ * empty, warning, compact, unavailable and loading looks); and W29b's
+ * (UIX-04b/06/09): `type-scale` (every step with its px and line-height, the
+ * `.eyebrow` label, the stat and display numbers), `table` (the one table at
+ * each density: a sortable header active and inactive, a numeric column, a
+ * selected row) and `panel` (a Panel over a KpiStrip of md tiles and a row of
+ * sm dimension tiles). It fetches nothing, so it runs with no backend and no
+ * login, and it is the subject of `tests/visual/ux-primitives.visual.spec.ts`.
  *
  * `App.tsx` guards both the import and the route with `import.meta.env.DEV`,
  * as it does for `/__charts` and `/__primitives`. `?theme=<id>` renders it in
  * one of the app's real themes.
  */
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { CheckCircle2, Inbox, Trash2 } from 'lucide-react'
+import { Inbox, Trash2 } from 'lucide-react'
 import FailureCategoryMark from '@/components/charts/FailureCategoryMark'
 import { FAILURE_CATEGORY_PATTERNS, type FailureCategoryKey } from '@/components/charts/failureTaxonomy'
 import { AVATAR_COLORS, type AvatarColorKey } from '@/components/ui/avatarColors'
@@ -32,11 +36,14 @@ import StatusBadge from '@/components/ui/StatusBadge'
 import KpiStrip from '@/components/ui/KpiStrip'
 import MetricCard from '@/components/ui/MetricCard'
 import PageHeader from '@/components/ui/PageHeader'
+import { Panel } from '@/components/ui/PanelHeader'
 import RouteTabs from '@/components/ui/RouteTabs'
 import StatusBanner, { type BannerState } from '@/components/ui/StatusBanner'
+import { Table, Td, Th, ThSort, Tr, type TableDensity } from '@/components/ui/Table'
 import Tabs from '@/components/ui/Tabs'
 import { useTabParam } from '@/components/ui/useTabParam'
 import WindowPicker from '@/components/ui/WindowPicker'
+import type { SortDir } from '@/hooks/useTableSort'
 import { THEMES, type ThemeId } from '@/store/themeStore'
 
 const THEME_QUERY_PARAM = 'theme'
@@ -67,6 +74,85 @@ const AVATAR_TONES: readonly { key: AvatarColorKey; initials: string }[] = [
 /** A fixed 503 for DataUnavailable (the shape an axios error carries). */
 const UNAVAILABLE_503 = { response: { status: 503 } }
 const noop = () => undefined
+
+// W29b: the type scale, one line per step (the classes are written out so Tailwind sees them).
+const TYPE_STEPS: readonly { step: string; className: string; spec: string }[] = [
+  { step: '2xs', className: 'text-2xs', spec: '11 px / 16' },
+  { step: 'xs', className: 'text-xs', spec: '12 px / 16' },
+  { step: 'sm', className: 'text-sm', spec: '13 px / 18.6' },
+  { step: 'base', className: 'text-base', spec: '14 px / 21' },
+  { step: 'md', className: 'text-md', spec: '16 px / 24' },
+  { step: 'lg', className: 'text-lg', spec: '18 px / 28' },
+  { step: 'xl', className: 'text-xl', spec: '20 px / 28' },
+  { step: '2xl', className: 'text-2xl', spec: '24 px / 32' },
+]
+const STAT_NUMBERS: readonly { token: string; className: string; value: string }[] = [
+  { token: '--text-stat-sm', className: 'text-[length:var(--text-stat-sm)] leading-[1.3333] font-semibold', value: '82' },
+  { token: '--text-stat-lg', className: 'text-[length:var(--text-stat-lg)] leading-[1.3333] font-bold', value: '91.2%' },
+  { token: '--text-display-lg', className: 'text-[length:var(--text-display-lg)] leading-tight font-bold', value: '64' },
+]
+
+// W29b: the one table, from fixed rows.
+type TableKey = 'test' | 'suite' | 'duration'
+const TABLE_ROWS: readonly { id: string; test: string; suite: string; status: string; duration: number; failures: number }[] = [
+  { id: 'r1', test: 'checkout › pays with a saved card', suite: 'payments', status: 'Failed', duration: 4.2, failures: 7 },
+  { id: 'r2', test: 'login › remembers the device', suite: 'auth', status: 'Passed', duration: 1.8, failures: 0 },
+  { id: 'r3', test: 'search › filters by tag', suite: 'catalog', status: 'Broken', duration: 12.6, failures: 3 },
+]
+const TABLE_DENSITIES: readonly TableDensity[] = ['comfortable', 'dense', 'compact']
+const SELECTED_ROW = 'r1'
+
+/** The table section: the same rows at each density, sorted by one shared ThSort state. */
+function TableGallery() {
+  const [sort, setSort] = useState<{ key: TableKey; dir: SortDir }>({ key: 'test', dir: 'asc' })
+  const onSort = (key: string) =>
+    setSort((s) => (s.key === key ? { key: s.key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key: key as TableKey, dir: 'asc' }))
+  const rows = [...TABLE_ROWS].sort((a, b) => {
+    const order = sort.key === 'duration' ? a.duration - b.duration : a[sort.key].localeCompare(b[sort.key])
+    return sort.dir === 'asc' ? order : -order
+  })
+  return (
+    <div className="flex flex-col gap-4">
+      {TABLE_DENSITIES.map((density) => (
+        <div key={density} data-table-density={density}>
+          <p className="eyebrow mb-1">{density}</p>
+          <div className="overflow-hidden rounded-md border border-[var(--color-border)]">
+            <Table density={density} aria-label={`Slowest failing tests (${density})`}>
+              <thead>
+                <tr>
+                  <ThSort label="Test" sortKey="test" currentKey={sort.key} dir={sort.dir} onSort={onSort} />
+                  <ThSort label="Suite" sortKey="suite" currentKey={sort.key} dir={sort.dir} onSort={onSort} />
+                  <Th>Status</Th>
+                  <ThSort label="Duration" sortKey="duration" currentKey={sort.key} dir={sort.dir} onSort={onSort} numeric />
+                  <Th numeric>Failures</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <Tr key={row.id} data-row={row.id} selected={row.id === SELECTED_ROW}>
+                    <Td className="text-[var(--color-text)]">{row.test}</Td>
+                    <Td>{row.suite}</Td>
+                    <Td>{row.status}</Td>
+                    <Td numeric>{`${row.duration.toFixed(1)} s`}</Td>
+                    <Td numeric>{row.failures}</Td>
+                  </Tr>
+                ))}
+              </tbody>
+            </Table>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** The panel section's four score dimensions (sm tiles with a weight and a bar). */
+const DIMENSIONS: readonly { id: string; label: string; weight: string; score: number | null; tone: 'good' | 'warn' | 'bad' | 'neutral' }[] = [
+  { id: 'stability', label: 'Stability', weight: '30%', score: 82, tone: 'good' },
+  { id: 'diversity', label: 'Signature diversity', weight: '25%', score: 54, tone: 'warn' },
+  { id: 'time_to_fix', label: 'Time to fix', weight: '25%', score: 31, tone: 'bad' },
+  { id: 'coverage', label: 'Coverage', weight: '20%', score: null, tone: 'neutral' },
+]
 
 function resolveTheme(requested: string | null): ThemeId | null {
   return THEMES.find((theme) => theme.id === requested)?.id ?? null
@@ -180,13 +266,13 @@ export default function UxPrimitivesPage() {
           </div>
         </Section>
 
-        <Section id="kpi-strip" title="KpiStrip (compact MetricCard)">
+        <Section id="kpi-strip" title="KpiStrip (MetricCard md)">
           <KpiStrip>
-            <MetricCard compact title="Pass rate" icon={<CheckCircle2 />} metric={{ value: '91.2%', trend_direction: 'down', trend_text: '2.1 pp vs previous period' }} sparkline={<Spark points={[93, 92, 94, 91, 90, 92, 91]} />} />
-            <MetricCard compact title="Runs" icon={null} metric={{ value: 412, trend_direction: 'up', trend_text: '8% vs previous period' }} positiveDirection="up" />
-            <MetricCard compact title="New failures" icon={null} metric={{ value: 12, trend_direction: 'up', trend_text: '3 vs previous period' }} positiveDirection="down" />
-            <MetricCard compact title="Flaky tests" icon={null} metric={{ value: 7, trend_direction: 'flat', trend_text: 'vs previous period' }} />
-            <MetricCard compact title="Median duration" icon={null} metric={{ value: '4m 12s', trend_direction: 'none', trend_text: 'not measured last period' }} />
+            <MetricCard title="Pass rate" metric={{ value: '91.2%', trend_direction: 'down', trend_text: '2.1 pp vs previous period' }} sparkline={<Spark points={[93, 92, 94, 91, 90, 92, 91]} />} />
+            <MetricCard title="Runs" metric={{ value: 412, trend_direction: 'up', trend_text: '8% vs previous period' }} positiveDirection="up" />
+            <MetricCard title="New failures" metric={{ value: 12, trend_direction: 'up', trend_text: '3 vs previous period' }} positiveDirection="down" />
+            <MetricCard title="Flaky tests" metric={{ value: 7, trend_direction: 'flat', trend_text: 'vs previous period' }} />
+            <MetricCard title="Median duration" metric={{ value: '4m 12s', trend_direction: 'none', trend_text: 'not measured last period' }} />
           </KpiStrip>
         </Section>
 
@@ -314,6 +400,69 @@ export default function UxPrimitivesPage() {
               <DataUnavailable error={UNAVAILABLE_503} onRetry={noop} testId="ux-primitives-unavailable" />
             </div>
           </div>
+        </Section>
+
+        <Section id="type-scale" title="Type scale">
+          <div className="flex flex-col gap-1.5">
+            {TYPE_STEPS.map(({ step, className, spec }) => (
+              <div key={step} data-type-step={step} className="flex items-baseline gap-4">
+                <span className="w-48 shrink-0 font-mono text-2xs text-[var(--color-text-muted)]">{`text-${step} · ${spec}`}</span>
+                <span className={`${className} text-[var(--color-text)]`}>Failures by cause, last 30 days</span>
+              </div>
+            ))}
+            <div data-type-step="eyebrow" className="flex items-baseline gap-4">
+              <span className="w-48 shrink-0 font-mono text-2xs text-[var(--color-text-muted)]">.eyebrow · 11 / 600</span>
+              <span className="eyebrow">New failures</span>
+            </div>
+            <div className="mt-2 flex flex-wrap items-end gap-8">
+              {STAT_NUMBERS.map(({ token, className, value }) => (
+                <div key={token} data-type-number={token}>
+                  <p className={`${className} tabular-nums text-[var(--color-text)]`}>{value}</p>
+                  <p className="font-mono text-2xs text-[var(--color-text-muted)]">{token}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Section>
+
+        <Section id="table" title="Table">
+          <TableGallery />
+        </Section>
+
+        <Section id="panel" title="Panel and KPI tiles">
+          <Panel
+            title="Release readiness"
+            subtitle="Last 30 days · 41 runs on main"
+            actions={
+              <>
+                <span>12 new failures</span>
+                <button type="button" className="btn-secondary btn-sm" onClick={noop}>Open gate</button>
+              </>
+            }
+          >
+            <div className="flex flex-col gap-3 p-4">
+              <KpiStrip>
+                <MetricCard title="Pass rate" metric={{ value: '91.2%', trend_direction: 'down', trend_text: '2.1 pp vs previous period' }} />
+                <MetricCard title="New failures" metric={{ value: 12, trend_direction: 'up', trend_text: '3 vs previous period' }} positiveDirection="down" />
+                <MetricCard title="Median duration" metric={{ value: '4m 12s' }} caption="p95 9m 40s" />
+              </KpiStrip>
+              <div data-dimension-row="" className="grid grid-cols-4 gap-2">
+                {DIMENSIONS.map((d) => (
+                  <MetricCard
+                    key={d.id}
+                    size="sm"
+                    title={d.label}
+                    note={d.weight}
+                    metric={{ value: d.score === null ? '—' : d.score }}
+                    tone={d.tone}
+                    bar={d.score}
+                    data-dimension={d.id}
+                    hint={d.score === null ? 'Not measured: left out of the score' : undefined}
+                  />
+                ))}
+              </div>
+            </div>
+          </Panel>
         </Section>
       </div>
     </main>

@@ -40,8 +40,8 @@ API endpoint, a pipeline agent, a UI page and a migration.
 
 ## 1. Quality gates — the invariant ratchets
 
-`make quality-gate` runs `scripts/quality_gate.py`, which enforces **62 guards**.
-23 are *ratchets*: pre-existing violations are baselined in
+`make quality-gate` runs `scripts/quality_gate.py`, which enforces **64 guards**.
+25 are *ratchets*: pre-existing violations are baselined in
 `scripts/quality-gate-baselines/` and the count can only shrink. New violations
 fail CI. The other 39 ship at zero with **no baseline file at all** — those are
 absolute rules, not ratchets, and are marked **†** in the tables below. Know
@@ -109,6 +109,8 @@ fails if a *second* deleter appears.
 | `frontend.adhoc-spinners` | a file gaining `animate-spin` in `pages/` / `components/` outside `components/ui` (count ratchet) | Use `LoadingSpinner` (`components/ui/LoadingSpinner`) or a skeleton |
 | `frontend.button-primitives` † | a `<button>` / `<a>` / `<Link>` painted with the primary fill, the accent fill + `text-white`, a status / ui tint + `text-white`, or such a `style` object (`role="switch"` / `data-toggle-track` tracks exempt) | `className="btn-primary"` (`btn-primary btn-sm` for a 12 px button, `btn-danger` for a destructive one); keep the layout classes, drop the hand-written padding, radius, colours, `hover:` and `disabled:` |
 | `frontend.load-error-wording` † | "Failed to load" in `frontend/src` code (comments exempt); "Something went wrong" outside the crash screen, the chunk error, MFA's retry line and the chart-export failure | Say "Could not load {thing}." — the wording of `chartMessages` and `utils/loadError` |
+| `frontend.table-headers` | a file gaining `<th>` tags that carry their own `className=` or `style=` in `pages/` / `components/` outside `components/ui` (the tag is read whole, so a multi-line tag counts once; a `<Th>` / `<ThSort>` never counts; count ratchet, `frontend__table-headers.counts.json`) | Use `Table` / `Th` / `ThSort` / `Td` / `Tr` from `components/ui/Table` (density `comfortable` / `dense` / `compact`; `numeric` on a number column's header and cells) |
+| `frontend.adhoc-card-surfaces` | a file gaining hand-made card surfaces — `bg-[var(--color-bg-card)]` classes or `background(Color): 'var(--color-bg-card)'` style values — in `pages/` / `components/` outside `components/ui`, `components/layout` and `components/charts` (comments exempt; count ratchet, `frontend__adhoc-card-surfaces.counts.json`) | A panel is `Panel` / `PanelHeader` (`components/ui/PanelHeader`) or the `.card` class; a stat tile is `MetricCard` (`size="sm"` inside a panel) |
 | `frontend.clipboard-util` | raw `navigator.clipboard` | Use `copyTextToClipboard` from `@/utils/clipboard` (HTTP homelabs lack the secure-context API) |
 | `frontend.modal-dialog-role` † | a `fixed inset-0` modal overlay with no `role="dialog"` | Add `role="dialog" aria-modal="true"` and name it with `aria-labelledby` pointing at the modal heading's `id` — a static `aria-label` goes stale when the title is dynamic. A full-screen overlay that genuinely is not a dialog opts out with a `not-a-dialog` comment |
 | `frontend.no-page-modals` | a page modal (`role="dialog"` / `aria-modal`), a `<SidePanel>`, a `fixed` full-height edge panel, or a native `confirm()` under `frontend/src/pages` / `components`, outside the OR-03 allow-list | Open it in the page: `MasterDetail` + `DetailPane`, `InlineFormSection` (in an `InlineRowSection` under a row), `InlineConfirm` (`components/ui/inPage/`). An overlay of an OR-03 class gets an allow-list entry with its reason |

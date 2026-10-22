@@ -65,14 +65,14 @@ export default function StatusBanner({
     <div
       data-status-banner={state}
       className={clsx(
-        'flex min-h-11 flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border px-4 py-2 text-[13px]',
+        'flex min-h-11 flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border px-4 py-2 text-sm',
         className,
       )}
       style={{ borderColor: `color-mix(in srgb, ${hue} 40%, var(--color-border))`, background: `color-mix(in srgb, ${hue} 8%, var(--color-bg-card))` }}
     >
       <span
         data-banner-pill=""
-        className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11.5px] font-semibold tracking-wide"
+        className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-semibold tracking-wide"
         style={{ color: bannerInk(hue), background: `color-mix(in srgb, ${hue} 14%, transparent)` }}
       >
         <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full" style={{ background: hue }} />

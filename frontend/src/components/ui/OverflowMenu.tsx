@@ -17,7 +17,7 @@ export interface OverflowItem {
 }
 
 const ITEM =
-  'flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-[13px] hover:bg-[var(--color-bg-hover)] disabled:cursor-not-allowed disabled:opacity-50'
+  'flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-sm hover:bg-[var(--color-bg-hover)] disabled:cursor-not-allowed disabled:opacity-50'
 
 /**
  * The page header's **⋯** menu (UX redesign P0): every header action beyond

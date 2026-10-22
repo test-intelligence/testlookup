@@ -107,7 +107,7 @@ export function TimingCell({
         {sub && (
           <span
             className={clsx(
-              'text-[11px] whitespace-nowrap',
+              'text-2xs whitespace-nowrap',
               live ? 'text-[var(--status-flaky)]' : 'text-[var(--color-text-muted)]',
             )}
           >

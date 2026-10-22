@@ -24,7 +24,7 @@
  */
 import { Suspense, useEffect, useMemo, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
-import { Activity, ArrowLeft, ArrowRightLeft, CheckCircle2, Clock, Layers, XCircle } from 'lucide-react'
+import { ArrowLeft, ArrowRightLeft } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
@@ -466,44 +466,34 @@ export default function SuiteCasesPage() {
           {[
             <MetricCard
               key="tests"
-              compact
               title="Tests run"
               hint="Unique tests that ran in the window (the Tests tab counts the whole catalog)"
-              icon={<Layers className="h-4 w-4" />}
               loading={detailLoading}
               metric={{ value: summary?.unique_tests ?? 0 }}
             />,
             <MetricCard
               key="executions"
-              compact
               title="Executions"
-              icon={<Activity className="h-4 w-4" />}
               loading={detailLoading}
               metric={{ value: summary?.total_executions ?? 0 }}
             />,
             <MetricCard
               key="pass-rate"
-              compact
               title="Pass rate"
               hint="Passed over evaluated executions (skipped excluded)"
-              icon={<CheckCircle2 className="h-4 w-4" />}
               loading={detailLoading}
               metric={{ value: summary?.pass_rate != null ? `${Number(summary.pass_rate).toFixed(1)}%` : '—' }}
             />,
             <MetricCard
               key="failed"
-              compact
               title="Failed"
               hint="Executions that failed or broke"
-              icon={<XCircle className="h-4 w-4" />}
               loading={detailLoading}
               metric={{ value: summary?.failed ?? 0 }}
             />,
             <MetricCard
               key="duration"
-              compact
               title="Avg duration"
-              icon={<Clock className="h-4 w-4" />}
               loading={detailLoading}
               metric={{ value: formatSuiteDuration(summary?.avg_duration_ms) }}
             />,

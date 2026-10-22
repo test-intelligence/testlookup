@@ -128,6 +128,15 @@ describe.each(THEME_IDS)('%s', (theme) => {
     expect(contrast(resolve('var(--color-btn-danger-text)'), resolve('var(--color-btn-danger-bg)'))).toBeGreaterThanOrEqual(TEXT_FLOOR)
   })
 
+  // W29b UIX-05: the one-measure colour. A label sits ON the tint (the uncategorised cluster bubbles, no halo);
+  // the measure itself is a mark (a bar, an edge), so 3:1 on the card.
+  it('--color-text reads >= 4.5:1 on --chart-measure-tint, and --chart-measure is >= 3:1 on the card', () => {
+    const resolve = resolver(theme)
+    expect(contrast(resolve('var(--color-text)'), resolve('var(--chart-measure-tint)')), 'text on the measure tint').toBeGreaterThanOrEqual(TEXT_FLOOR)
+    expect(contrast(resolve('var(--chart-measure)'), resolve('var(--color-bg-card)')), 'the measure on the card').toBeGreaterThanOrEqual(3)
+    expect(resolve('var(--chart-measure)')).toEqual(resolve('var(--chart-series-2)'))
+  })
+
   it('a solid status fill carries --color-text-on-status (count bubbles, stacked-bar segments)', () => {
     const resolve = resolver(theme)
     expect(resolve('var(--color-text-on-status)')).toEqual(resolve('var(--color-bg-card)'))

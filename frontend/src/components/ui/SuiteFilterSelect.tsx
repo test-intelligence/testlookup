@@ -23,7 +23,7 @@ export default function SuiteFilterSelect({
         value={value}
         onChange={event => onChange(event.target.value)}
         disabled={disabled}
-        className="appearance-none pl-3 pr-8 py-1.5 text-[12.5px] font-medium rounded-md bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:border-[var(--color-border-light)] focus:outline-none focus:border-[var(--color-ring)] disabled:opacity-60 disabled:cursor-not-allowed max-w-[240px]"
+        className="appearance-none pl-3 pr-8 py-1.5 text-sm font-medium rounded-md bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)] hover:border-[var(--color-border-light)] focus:outline-none focus:border-[var(--color-ring)] disabled:opacity-60 disabled:cursor-not-allowed max-w-[240px]"
       >
         <option value="">{allLabel}</option>
         {suiteSelectOptions(options, value).map(name => (

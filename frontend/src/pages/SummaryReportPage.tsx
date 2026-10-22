@@ -609,18 +609,14 @@ function SummaryKpis({ report }: { report: SummaryReport }) {
     <section aria-label="Summary KPIs">
       <KpiStrip>
         <MetricCard
-          compact
           title="Total tests"
-          icon={null}
           metric={{
             value: fmtInt(t.total_test_cases),
             ...line(`${fmtInt(t.evaluated)} evaluated · ${fmtInt(t.skipped)} skipped (${fmtPct(t.skip_rate_pct)})`),
           }}
         />
         <MetricCard
-          compact
           title="Pass %"
-          icon={null}
           metric={{ value: fmtPct(t.pass_rate_pct), ...line(`${fmtInt(t.passed)} passed${basis ? ` · ${basis}` : ''}`) }}
           sparkline={
             // Wraps inside its own box ("weighted" over "82.8%") rather than
@@ -632,23 +628,17 @@ function SummaryKpis({ report }: { report: SummaryReport }) {
           }
         />
         <MetricCard
-          compact
           title="Fail %"
-          icon={null}
           metric={{ value: fmtPct(t.fail_rate_pct), ...line(`${fmtInt(t.failed)} failed`) }}
         />
         <MetricCard
-          compact
           title="Broken %"
-          icon={null}
           metric={{ value: fmtPct(t.broken_rate_pct), ...line(`${fmtInt(t.broken)} broken`) }}
         />
         {/* The flaky rule (BUG-007) on hover: MetricCard itself takes no title. */}
         <div className="min-w-0" title={flakyCriteriaSentence(report.flaky_criteria)} data-summary-flaky="">
           <MetricCard
-            compact
             title="Flaky"
-            icon={null}
             metric={{
               value: fmtInt(report.flaky_test_count),
               ...line(flakySubtitle(report.flaky_rate_pct, report.flaky_criteria, report.flaky_test_count)),

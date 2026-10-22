@@ -2923,6 +2923,79 @@ def _frontend_load_error_wording() -> list[Violation]:
     return violations
 
 
+# ── W29b UI standard (UIX-06, UIX-09): two more COUNT ratchets ───────────────
+#
+# Same helper, same JSON shape as W29a's four (_CountRatchet above); comments
+# are blanked first (_ts_blank_comments: a commented-out tag or class is not a
+# surface). Baselines generated on the A0 tree, before the W29b page sweeps.
+
+# frontend.table-headers (UIX-06): a <th> that styles itself. The table look is
+# the .th class applied by Th / ThSort (components/ui/Table); a <Th> / <ThSort>
+# never counts (the match is case-sensitive and `<thead` is not `<th`). The tag
+# is read whole (_jsx_open_tag), so a multi-line tag counts once.
+_TABLE_TH_TAG_RE = re.compile(r"<th(?=[\s>/])")
+_TABLE_TH_STYLED_RE = re.compile(r"\s(?:className|style)\s*=")
+
+
+def _table_header_counts() -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for rel, path in _ui_sources(_UI_PAGES_COMPONENTS):
+        if rel.startswith(_UI_PRIMITIVES):
+            continue
+        code = _ts_blank_comments(_ui_read(path))
+        n = sum(
+            1 for m in _TABLE_TH_TAG_RE.finditer(code)
+            if _TABLE_TH_STYLED_RE.search(_jsx_open_tag(code, m.start()))
+        )
+        if n:
+            counts[rel] = n
+    return counts
+
+
+# frontend.adhoc-card-surfaces (UIX-09): a hand-made panel or tile surface —
+# the card colour written as a class or a style value. A Panel, the .card class
+# and MetricCard never count (they own the surface). The shared primitives, the
+# shell and the chart kit (popovers, the layout, the chart frame) are surfaces
+# by design and are not read.
+_CARD_SURFACE_CLASS_RE = re.compile(r"(?<![\w-])bg-\[var\(--color-bg-card\)\]")
+_CARD_SURFACE_STYLE_RE = re.compile(r"""\bbackground(?:Color)?\s*:\s*['"`]var\(--color-bg-card\)['"`]""")
+_CARD_SURFACE_SKIP = (_UI_PRIMITIVES, "frontend/src/components/layout/", _UI_CHART_KIT)
+
+
+def _adhoc_card_surface_counts() -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for rel, path in _ui_sources(_UI_PAGES_COMPONENTS):
+        if rel.startswith(_CARD_SURFACE_SKIP):
+            continue
+        code = _ts_blank_comments(_ui_read(path))
+        n = len(_CARD_SURFACE_CLASS_RE.findall(code)) + len(_CARD_SURFACE_STYLE_RE.findall(code))
+        if n:
+            counts[rel] = n
+    return counts
+
+
+_COUNTS_COMMENT_W29B = (
+    "Per-file count ratchet ({guard}, W29b {story}): a file's count may not rise; a file "
+    "absent here has 0. Generated on the A0 tree before the W29b sweeps; lower it with "
+    "`python scripts/quality_gate.py --only {guard} --update-baseline` (reviewed in the PR)."
+)
+
+_TABLE_HEADERS = _CountRatchet(
+    name="frontend.table-headers",
+    what="hand-styled table headers (<th className= / style=)",
+    fix="use Th / ThSort (+ Table, Td, Tr) from components/ui/Table: the .th look, `numeric` for a number column",
+    comment=_COUNTS_COMMENT_W29B.format(guard="frontend.table-headers", story="UIX-06"),
+    count=_table_header_counts,
+)
+_ADHOC_CARD_SURFACES = _CountRatchet(
+    name="frontend.adhoc-card-surfaces",
+    what="hand-made card surfaces (bg-[var(--color-bg-card)] / background: 'var(--color-bg-card)')",
+    fix="use Panel / PanelHeader (components/ui/PanelHeader), the .card class, or MetricCard for a stat tile",
+    comment=_COUNTS_COMMENT_W29B.format(guard="frontend.adhoc-card-surfaces", story="UIX-09"),
+    count=_adhoc_card_surface_counts,
+)
+
+
 _AXIOS_CREATE_RE = re.compile(r"\baxios\.create\s*\(")
 _AXIOS_OWNER = "frontend/src/services/api.ts"
 
@@ -7223,6 +7296,33 @@ GUARDS: list[Guard] = [
         ),
         check=_frontend_load_error_wording,
         fix_hint="Say \"Could not load {thing}.\" (the wording of chartMessages and utils/loadError).",
+    ),
+    Guard(
+        name="frontend.table-headers",
+        description=(
+            "Count ratchet (UIX-06): <th> tags carrying their own className= or style= in pages/ and "
+            "components/ (outside components/ui) may not rise."
+        ),
+        check=lambda: _count_ratchet_check(_TABLE_HEADERS),
+        fix_hint=(
+            "Use Table / Th / ThSort / Td / Tr from components/ui/Table (density comfortable / dense / "
+            "compact; `numeric` on a number column's header and cells)."
+        ),
+        update=lambda: _count_ratchet_update(_TABLE_HEADERS),
+    ),
+    Guard(
+        name="frontend.adhoc-card-surfaces",
+        description=(
+            "Count ratchet (UIX-09): hand-made card surfaces (bg-[var(--color-bg-card)] classes and "
+            "background(Color): 'var(--color-bg-card)' style values) in pages/ and components/ (outside "
+            "components/ui, components/layout and components/charts) may not rise."
+        ),
+        check=lambda: _count_ratchet_check(_ADHOC_CARD_SURFACES),
+        fix_hint=(
+            "A panel is Panel / PanelHeader (components/ui/PanelHeader) or the .card class; a stat tile is "
+            "MetricCard (size=\"sm\" inside a panel)."
+        ),
+        update=lambda: _count_ratchet_update(_ADHOC_CARD_SURFACES),
     ),
     Guard(
         name="backend.project-scope-guard-placement",

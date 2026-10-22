@@ -74,7 +74,7 @@ describe('KpiStrip + compact MetricCard', () => {
     const view = render(
       <KpiStrip>
         {[1, 2, 3, 4, 5, 6].map((n) => (
-          <MetricCard key={n} compact title={`KPI ${n}`} icon={null} metric={{ value: n }} />
+          <MetricCard key={n} title={`KPI ${n}`} metric={{ value: n }} />
         ))}
       </KpiStrip>,
     )
@@ -90,9 +90,7 @@ describe('KpiStrip + compact MetricCard', () => {
   it('a compact card keeps the change words and judgement, on one line', () => {
     render(
       <MetricCard
-        compact
         title="Pass rate"
-        icon={null}
         metric={{ value: '91.2%', trend_direction: 'down', trend_text: '2.1 pp vs previous period' }}
       />,
     )

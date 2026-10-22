@@ -1,8 +1,8 @@
-import { ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { TrendingDown, TrendingUp, Minus } from 'lucide-react'
 import { clsx } from 'clsx'
 
-interface MetricData {
+export interface MetricData {
   value: string | number
   trend?: number | null
   /** `none`: no number to compare, only `trend_text` saying why. */
@@ -14,173 +14,194 @@ interface MetricData {
   trend_text?: string
 }
 
-interface Props {
+/** The value's ink (W29a's -ink tokens: >= 4.5:1 on the card and the secondary surface in every theme). */
+export type MetricTone = 'good' | 'warn' | 'bad' | 'neutral'
+
+type DataAttributes = { [data: `data-${string}`]: string | undefined }
+
+export interface MetricCardProps extends DataAttributes {
+  /** The label: ONE truncated line; the long name goes in `hint` (kpi-labels.spec). */
   title: string
   metric?: MetricData
-  icon: ReactNode
-  accentColor?: string
   loading?: boolean
   /**
    * Which trend direction is GOOD for this metric. Pass-rate style metrics
    * default to 'up'; count-of-bad-things metrics (Failed, Flaky, Duration)
-   * should pass 'down' so a falling trend renders green, not red.
+   * should pass 'down' so a falling trend is "(better)", not "(worse)".
    */
   positiveDirection?: 'up' | 'down'
-  /**
-   * The KPI-strip variant (UX redesign P0): ~72 px tall, a `--text-stat-lg` value
-   * (24 px at the desk, raised in presentation mode),
-   * no icon block, the change line on one line, and `sparkline` beside the
-   * value.
-   */
-  compact?: boolean
-  /** A small inline chart beside the value (compact variant only). */
+  /** A small inline chart beside the value (the aside slot). */
   sparkline?: ReactNode
-  /**
-   * The label's hover text (compact variant; default: the label). A compact
-   * label is one truncated line, so a strip's labels are kept short
-   * (`kpi-labels.spec.ts`) and the full name goes here.
-   */
+  /** The label's hover text (default: the label). */
   hint?: string
+  /** `md` (default) is the KPI-strip tile; `sm` an in-panel stat (a score dimension, a facet, a callout). */
+  size?: 'md' | 'sm'
+  /** The right end of the label row, not uppercase (a dimension's weight, "30%"). */
+  note?: string
+  /** One truncated 12 px line under the value (a facet's "in Run #12"); not a trend. */
+  caption?: ReactNode
+  /** The value's ink; default neutral (--color-text). */
+  tone?: MetricTone
+  /** 0-100: a 4 px bar in the aside slot (a score dimension); `null` draws the empty track. */
+  bar?: number | null
+  /**
+   * Data attributes for the VALUE element (the root gets the others): the score tiles' `data-dimension-value`
+   * that the page tests and specs read inside the tile.
+   */
+  valueData?: DataAttributes
+  /** Layout only (opacity-50 on a placeholder, h-full); the surface is the tile's. */
+  className?: string
 }
 
 const DIRECTION_WORD = { up: 'Up', down: 'Down', flat: 'No change' } as const
 
+const TONE_INK: Record<MetricTone, string> = {
+  good: 'text-[var(--ui-success-ink)]',
+  warn: 'text-[var(--ui-warning-ink)]',
+  bad: 'text-[var(--ui-danger-ink)]',
+  neutral: 'text-[var(--color-text)]',
+}
+
+/** The bar's fill: the tone's hue (a 4 px mark, not text). */
+const TONE_HUE: Record<MetricTone, string> = {
+  good: 'var(--ui-success)',
+  warn: 'var(--ui-warning)',
+  bad: 'var(--ui-danger)',
+  neutral: 'var(--color-text-muted)',
+}
+
+function dataAttributesOf(rest: Record<string, unknown>): DataAttributes {
+  const out: DataAttributes = {}
+  for (const [key, value] of Object.entries(rest)) {
+    if (key.startsWith('data-') && (typeof value === 'string' || value === undefined)) out[key as `data-${string}`] = value
+  }
+  return out
+}
+
 /**
- * A headline number with an optional change line.
+ * The ONE KPI tile (W29b UIX-09). `md` is the strip tile (`KpiStrip`): a `--text-stat-lg` value (24 px at the desk,
+ * 40 in presentation mode), the label in the `.eyebrow` style, the change line on one line, a sparkline or a bar
+ * beside the value. `sm` is the in-panel stat (`data-metric-card="stat"`, so the strip specs keep counting the
+ * strip's tiles only): an 18 px `--text-stat-sm` value in the sunken well, an optional `note`, `bar` and `caption`.
  *
- * The change line never relies on colour or the icon alone (WCAG 1.4.1): the
- * DIRECTION is a word ("Up" / "Down" / "No change") and whether that is good
- * is a word too ("better" / "worse"). The status hue only paints the icon,
- * which is decoration (`aria-hidden`).
+ * The change line never relies on colour or the icon alone (WCAG 1.4.1): the DIRECTION is a word ("Up" / "Down" /
+ * "No change") and whether that is good is a word too ("better" / "worse"). The judgement's hue only paints the
+ * icon, which is decoration (`aria-hidden`). Not a live region: a dashboard of polling tiles must not announce
+ * itself.
  */
 export default function MetricCard({
   title,
   metric,
-  icon,
-  accentColor = 'default',
   loading,
   positiveDirection = 'up',
-  compact = false,
   sparkline,
   hint,
-}: Props) {
+  size = 'md',
+  note,
+  caption,
+  tone = 'neutral',
+  bar,
+  valueData,
+  className,
+  ...rest
+}: MetricCardProps) {
+  const sm = size === 'sm'
   const dir = metric?.trend_direction
   const hasTrend = metric?.trend != null || Boolean(metric?.trend_text)
   const TrendIcon = dir === 'up' ? TrendingUp : dir === 'down' ? TrendingDown : Minus
   const judged = dir === 'up' || dir === 'down'
   const trendColor = judged
     ? dir === positiveDirection
-      ? 'text-[var(--status-passed)]'
-      : 'text-[var(--status-failed)]'
+      ? 'text-[var(--ui-success)]'
+      : 'text-[var(--ui-danger)]'
     : 'text-[var(--color-text-muted)]'
   const trendText = metric?.trend_text ?? (metric?.trend != null ? `${Math.abs(metric.trend)}% vs prev period` : '')
   const word = dir && dir !== 'none' ? DIRECTION_WORD[dir] : null
-
-  const accentBg: Record<string, string> = {
-    // eslint-disable-next-line no-restricted-syntax -- the icon tile's dark-theme sheen; W29b UIX-09 retires it with the KPI tile (one re-shoot, not two)
-    default: 'bg-white/5 text-[var(--color-text)]',
-    green:   'bg-[var(--status-passed-bg)] text-[var(--status-passed)]',
-    red:     'bg-[var(--status-failed-bg)] text-[var(--status-failed)]',
-    amber:   'bg-[var(--status-broken-bg)] text-[var(--status-broken)]',
-    purple:  'bg-[var(--status-flaky-bg)] text-[var(--status-flaky)]',
-  }
-
-  if (compact) {
-    const judgement = judged ? (dir === positiveDirection ? '(better)' : '(worse)') : null
-    const changeLine = [word, trendText].filter(Boolean).join(' ')
-    return (
-      // h-full: a card inside a link (KpiLink) fills the strip's row like a bare
-      // one does, so a row of tiles is one height when one of them grows.
-      <div data-metric-card="compact" className="card !px-4 !py-3 min-w-0 h-full">
-        <p title={hint ?? title} className="mb-1 truncate text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-secondary)]">
-          {title}
-        </p>
-        {/* The aside (a sparkline, a hint) takes what the value leaves and is
-            capped to it; under 3rem it drops below the value instead. The room-
-            sized value (40 px) left a w-24 sparkline no room: drawn over the
-            value and out of the tile (P3 baseline, overview-presentation-kpis).
-            4rem was too much at the desk: on CI's DejaVu at 1280 px "88.0%"
-            left 60 px, and Trends' sparkline dropped a line (strip 100 -> 132). */}
-        <div className="flex flex-wrap items-end justify-between gap-x-2 gap-y-1">
-          {loading ? (
-            <div className="h-7 w-20 animate-pulse rounded bg-[var(--color-bg-secondary)]">
-              <span className="sr-only">Loading</span>
-            </div>
-          ) : (
-            // The stat token, not `text-2xl`: the same 24 px at the desk, and
-            // presentation mode raises it (40 px) like every other metric value.
-            // `leading-[1.3333]` keeps text-2xl's 32 px line at the desk.
-            <p className="whitespace-nowrap text-[length:var(--text-stat-lg)] leading-[1.3333] font-bold tabular-nums text-[var(--color-text)]">{metric?.value ?? '—'}</p>
-          )}
-          {sparkline && !loading && (
-            <div data-metric-aside="" className="flex min-w-12 flex-1 justify-end [&>*]:max-w-full">
-              {sparkline}
-            </div>
-          )}
-        </div>
-        {hasTrend && !loading && (
-          <p
-            data-metric-trend={dir ?? 'unknown'}
-            title={[changeLine, judgement].filter(Boolean).join(' ')}
-            className={clsx('mt-1 flex min-w-0 items-center gap-1 text-[11px] font-medium', trendColor)}
-          >
-            {dir !== 'none' && <TrendIcon aria-hidden="true" className="h-3 w-3 shrink-0" />}
-            {/* Only the change text truncates: the judgement is what a narrow
-                strip card must never cut ("vs previous period (bet…"). */}
-            <span className="min-w-0 truncate text-[var(--color-text-secondary)]">{changeLine}</span>
-            {judgement && (
-              <span data-trend-judgement="" className="shrink-0 text-[var(--color-text-secondary)]">
-                {judgement}
-              </span>
-            )}
-          </p>
-        )}
-      </div>
-    )
-  }
+  const judgement = judged ? (dir === positiveDirection ? '(better)' : '(worse)') : null
+  const changeLine = [word, trendText].filter(Boolean).join(' ')
+  const pct = typeof bar === 'number' && Number.isFinite(bar) ? Math.max(0, Math.min(100, bar)) : null
 
   return (
-    <div className="card flex items-start justify-between gap-4">
-      <div className="min-w-0 flex-1">
-        {/* Text tokens: --color-text-secondary is >= 7.7:1 on the card in all
-            six themes; --color-text-muted is 4.15:1 in lab (axe color-contrast). */}
-        <p className="text-xs font-medium text-[var(--color-text-secondary)] uppercase tracking-wider mb-2">{title}</p>
+    // h-full (md): a card inside a link (KpiLink) fills the strip's row like a bare one does, so a row of tiles is
+    // one height when one of them grows.
+    <div
+      {...dataAttributesOf(rest)}
+      data-metric-card={sm ? 'stat' : 'compact'}
+      className={clsx(
+        sm
+          ? 'min-w-0 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2.5 py-2'
+          : 'card !px-4 !py-3 min-w-0 h-full',
+        className,
+      )}
+    >
+      {note ? (
+        <p title={hint ?? title} className="eyebrow mb-1 flex justify-between gap-2 text-[var(--color-text-secondary)]">
+          <span className="min-w-0 truncate">{title}</span>
+          <span className="shrink-0 font-medium normal-case tracking-normal text-[var(--color-text-muted)]">{note}</span>
+        </p>
+      ) : (
+        <p title={hint ?? title} className="eyebrow mb-1 truncate text-[var(--color-text-secondary)]">
+          {title}
+        </p>
+      )}
+      {/* The aside (a sparkline, a bar) takes what the value leaves and is capped to it; under 3rem it drops below
+          the value instead. The room-sized value (40 px) left a w-24 sparkline no room: drawn over the value and out
+          of the tile (P3 baseline, overview-presentation-kpis). 4rem was too much at the desk: on CI's DejaVu at
+          1280 px "88.0%" left 60 px, and Trends' sparkline dropped a line (strip 100 -> 132). */}
+      <div className={sm ? 'flex items-center gap-2' : 'flex flex-wrap items-end justify-between gap-x-2 gap-y-1'}>
         {loading ? (
-          // aria-label on a role-less div is prohibited (axe aria-prohibited-attr,
-          // serious) and ignored by screen readers: the bar is decoration, the
-          // busy state is visually hidden TEXT. Not a live region on purpose.
-          <div className="h-8 w-24 bg-[var(--color-bg-secondary)] rounded animate-pulse">
+          // The bar is decoration; the busy state is visually hidden TEXT (an aria-label on a role-less div is
+          // prohibited: axe aria-prohibited-attr). Not a live region on purpose.
+          <div className={clsx('animate-pulse rounded', sm ? 'h-6 w-12 bg-[var(--color-bg-hover)]' : 'h-7 w-20 bg-[var(--color-bg-secondary)]')}>
             <span className="sr-only">Loading</span>
           </div>
         ) : (
-          <p className="text-3xl font-bold text-[var(--color-text)] tabular-nums whitespace-nowrap">{metric?.value ?? '—'}</p>
-        )}
-        {hasTrend && !loading && (
-          <div
-            data-metric-trend={dir ?? 'unknown'}
-            className={clsx('flex flex-wrap items-center gap-x-1 mt-2 text-xs font-medium', trendColor)}
+          // The stat tokens, never a fixed size: presentation mode raises them (40 px) like every metric value.
+          // `leading-[1.3333]` keeps a 32 px line at the desk for the 24 px value (24 px for the 18 px one).
+          <p
+            {...valueData}
+            className={clsx(
+              'whitespace-nowrap leading-[1.3333] tabular-nums',
+              sm ? 'text-[length:var(--text-stat-sm)] font-semibold' : 'text-[length:var(--text-stat-lg)] font-bold',
+              TONE_INK[tone],
+            )}
           >
-            {dir !== 'none' && <TrendIcon aria-hidden="true" className="h-3 w-3 shrink-0" />}
-            {/* The row's status hue paints the ICON (non-text, >= 3:1). The 12 px
-                text takes a text token: the status hues fall below 4.5:1 on
-                the card in four dark themes. The words carry the meaning. */}
-            {word && (
-              <span data-trend-direction="" className="text-[var(--color-text-secondary)]">
-                {word}
-              </span>
-            )}
-            <span className="text-[var(--color-text-secondary)]">{trendText}</span>
-            {judged && (
-              <span data-trend-judgement="" className="text-[var(--color-text-secondary)]">
-                {dir === positiveDirection ? '(better)' : '(worse)'}
-              </span>
-            )}
+            {metric?.value ?? '—'}
+          </p>
+        )}
+        {sparkline && !loading && (
+          <div data-metric-aside="" className="flex min-w-12 flex-1 justify-end [&>*]:max-w-full">
+            {sparkline}
           </div>
         )}
+        {bar !== undefined && !sparkline && !loading && (
+          <span data-metric-bar="" className="h-1 min-w-12 flex-1 overflow-hidden rounded-full bg-[var(--color-border)]">
+            {pct !== null && <i className="block h-full rounded-full" style={{ width: `${pct}%`, background: TONE_HUE[tone] }} />}
+          </span>
+        )}
       </div>
-      <div className={clsx('p-3 rounded-xl flex-shrink-0', accentBg[accentColor] ?? accentBg.default)}>
-        {icon}
-      </div>
+      {hasTrend && !loading && (
+        <p
+          data-metric-trend={dir ?? 'unknown'}
+          title={[changeLine, judgement].filter(Boolean).join(' ')}
+          className={clsx('mt-1 flex min-w-0 items-center gap-1 text-xs font-medium', trendColor)}
+        >
+          {dir !== 'none' && <TrendIcon aria-hidden="true" className="h-3 w-3 shrink-0" />}
+          {/* Only the change text truncates: the judgement is what a narrow strip card must never cut
+              ("vs previous period (bet…"). */}
+          <span className="min-w-0 truncate text-[var(--color-text-secondary)]">{changeLine}</span>
+          {judgement && (
+            <span data-trend-judgement="" className="shrink-0 text-[var(--color-text-secondary)]">
+              {judgement}
+            </span>
+          )}
+        </p>
+      )}
+      {caption && !loading && (
+        <div data-metric-caption="" className="mt-0.5 truncate text-xs text-[var(--color-text-secondary)]">
+          {caption}
+        </div>
+      )}
     </div>
   )
 }

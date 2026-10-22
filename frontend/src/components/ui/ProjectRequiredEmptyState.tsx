@@ -54,7 +54,7 @@ export default function ProjectRequiredEmptyState({ description, icon }: Props) 
       action={
         <div className="flex flex-col items-center gap-1.5">
           <label className="flex flex-col items-center gap-1.5">
-            <span className="text-[11px] uppercase tracking-wider text-[var(--color-text-muted)]">
+            <span className="eyebrow uppercase text-[var(--color-text-muted)]">
               Choose one to continue
             </span>
             <select

@@ -725,8 +725,6 @@ export default function OverviewPage() {
       <KpiStrip>
         <KpiLink to="/runs">
           <MetricCard
-            compact
-            icon={null}
             title="Total executions"
             loading={kpiLoading}
             metric={kpiMetric(`${totalExecutions}`, summary?.total_executions_7d)}
@@ -734,8 +732,6 @@ export default function OverviewPage() {
           />
         </KpiLink>
         <MetricCard
-          compact
-          icon={null}
           title="Avg pass rate"
           loading={kpiLoading}
           metric={kpiMetric(`${Math.round(passRate)}%`, summary?.avg_pass_rate_7d)}
@@ -746,8 +742,6 @@ export default function OverviewPage() {
         />
         <KpiLink to="/failures">
           <MetricCard
-            compact
-            icon={null}
             title="New failures · 24h"
             positiveDirection="down"
             loading={kpiLoading}
@@ -757,8 +751,6 @@ export default function OverviewPage() {
         </KpiLink>
         <KpiLink to="/flaky">
           <MetricCard
-            compact
-            icon={null}
             title="Flaky tests"
             positiveDirection="down"
             loading={kpiLoading}
@@ -767,8 +759,6 @@ export default function OverviewPage() {
         </KpiLink>
         <KpiLink to="/defects">
           <MetricCard
-            compact
-            icon={null}
             title="Active defects"
             positiveDirection="down"
             loading={kpiLoading}

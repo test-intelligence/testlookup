@@ -103,8 +103,9 @@ describe('KpiStrip states only what it counted', () => {
         ]}
       />,
     )
+    // W29b: each card is the one KPI tile (MetricCard md); its value is the tile's `.tabular-nums`.
     const valueOf = (label: string) =>
-      screen.getByText(label).closest('div')?.parentElement?.querySelector('.tabular-nums')?.textContent
+      screen.getByText(label).closest('[data-metric-card]')?.querySelector('.tabular-nums')?.textContent
     expect(valueOf('In progress')).toBe('2')
     expect(valueOf('Ready to ship')).toBe('1')
     expect(valueOf('Blocked')).toBe('1')

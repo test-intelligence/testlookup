@@ -69,7 +69,7 @@ export default function ScopedLink({
       </Link>
       {!reachable && !hintInTitleOnly && (
         <span
-          className={clsx('text-[10px] text-[var(--color-text-faint)]')}
+          className={clsx('text-2xs text-[var(--color-text-faint)]')}
           // Not aria-hidden: "one more step before you see data" is exactly the
           // kind of thing a screen-reader user needs BEFORE following a link,
           // and it is the reason this component exists.

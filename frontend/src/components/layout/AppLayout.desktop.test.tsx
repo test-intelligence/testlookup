@@ -14,7 +14,13 @@
  * the skip link is `.btn-primary` (UIX-08), the unread count on its solid red
  * bubble reads `--color-text-on-status` instead of white (UIX-13), and the
  * avatar initials are the shared avatar map's ink on its tint, set by `style`,
- * never `text-white` (UIX-01). Any other change at desktop width
+ * never `text-white` (UIX-01), and once more, by hand (no `-u`), for W29b's type
+ * scale (UIX-04b), class tokens only: the sidebar's section labels and the
+ * settings group labels are the `.eyebrow` label (`text-[11px]` / `[10.5px]` +
+ * weight + `tracking-wider` → `eyebrow`, `uppercase` and the colour kept); the
+ * Inbox count, the search shortcut and the unread count `text-[10px]` /
+ * `[11px]` → `text-2xs`; the settings links and the section tabs
+ * `text-[13px]` → `text-sm`; the logo `text-[20px]` → `text-xl`. Any other change at desktop width
  * fails here. The drawer's own
  * styling lives ONLY in `max-lg:` utilities, which apply below 1024 px, so
  * they are removed before the comparison. `AppLayout.drawer.test.tsx` covers

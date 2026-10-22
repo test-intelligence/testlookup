@@ -1,10 +1,11 @@
 /**
  * `/__ux-primitives` (dev only): every section the visual spec shoots renders
- * once, in order — the six UX-redesign primitives and the W29a standard's
- * three (`buttons`, `badges`, `states`; contract §2.8) — and each of the new
- * three shows what it is the reading surface for.
+ * once, in order — the six UX-redesign primitives, the W29a standard's three
+ * (`buttons`, `badges`, `states`; contract §2.8) and W29b's three
+ * (`type-scale`, `table`, `panel`; W29b contract §2.6) — and each of the
+ * standard's sections shows what it is the reading surface for.
  */
-import { render, within } from '@testing-library/react'
+import { fireEvent, render, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it } from 'vitest'
 import UxPrimitivesPage from './UxPrimitivesPage'
@@ -12,6 +13,7 @@ import UxPrimitivesPage from './UxPrimitivesPage'
 const SECTIONS = [
   'page-header', 'route-tabs', 'status-banner', 'kpi-strip', 'window-picker', 'disclosure',
   'buttons', 'badges', 'states',
+  'type-scale', 'table', 'panel',
 ]
 
 function renderAt(search = '') {
@@ -29,7 +31,7 @@ describe('UxPrimitivesPage', () => {
     document.documentElement.removeAttribute('data-theme')
   })
 
-  it('renders the nine sections once each, in order, each named by its heading', () => {
+  it('renders the twelve sections once each, in order, each named by its heading', () => {
     const { container } = renderAt()
     const ids = Array.from(container.querySelectorAll('[data-ux-primitive]')).map((n) => n.getAttribute('data-ux-primitive'))
     expect(ids).toEqual(SECTIONS)
@@ -88,6 +90,81 @@ describe('UxPrimitivesPage', () => {
     expect(unavailable).toHaveAttribute('role', 'alert')
     expect(within(unavailable).getByText('HTTP 503')).toBeInTheDocument()
     expect(within(unavailable).getByRole('button', { name: /Retry/ })).toBeInTheDocument()
+  })
+
+  it('type-scale: one line per step 2xs … 2xl with its px and line-height, the eyebrow label, the three numbers', () => {
+    const { container } = renderAt()
+    const section = sectionOf(container, 'type-scale')
+    const steps = Array.from(section.querySelectorAll('[data-type-step]'))
+    expect(steps.map((s) => s.getAttribute('data-type-step'))).toEqual(['2xs', 'xs', 'sm', 'base', 'md', 'lg', 'xl', '2xl', 'eyebrow'])
+    for (const step of steps.slice(0, 8)) {
+      const id = step.getAttribute('data-type-step')
+      const [spec, sample] = Array.from(step.children)
+      expect(spec.textContent).toMatch(new RegExp(`^text-${id} · \\d+ px / [\\d.]+$`))
+      expect(sample.className.split(/\s+/)).toContain(`text-${id}`)
+      expect(sample.className).not.toMatch(/text-\[\d/)
+    }
+    expect(within(section).getByText('New failures')).toHaveClass('eyebrow')
+    expect(Array.from(section.querySelectorAll('[data-type-number]'), (n) => n.getAttribute('data-type-number'))).toEqual([
+      '--text-stat-sm', '--text-stat-lg', '--text-display-lg',
+    ])
+    for (const number of Array.from(section.querySelectorAll('[data-type-number]'))) {
+      expect(number.querySelector('p')?.className).toContain(`text-[length:var(${number.getAttribute('data-type-number')})]`)
+    }
+  })
+
+  it('table: the one table at each density, a sortable header active and inactive, a numeric column, a selected row', () => {
+    const { container } = renderAt()
+    const section = sectionOf(container, 'table')
+    const tables = Array.from(section.querySelectorAll('table'))
+    expect(tables.map((t) => t.getAttribute('data-density'))).toEqual(['comfortable', 'dense', 'compact'])
+    for (const table of tables) {
+      const headers = Array.from(table.querySelectorAll('th'))
+      expect(headers.map((h) => h.textContent)).toEqual(['Test', 'Suite', 'Status', 'Duration', 'Failures'])
+      expect(headers.map((h) => h.getAttribute('aria-sort'))).toEqual(['ascending', 'none', null, 'none', null])
+      expect(headers.every((h) => h.classList.contains('th'))).toBe(true)
+      expect(headers.filter((h) => h.classList.contains('th-num')).map((h) => h.textContent)).toEqual(['Duration', 'Failures'])
+      expect(headers[0].querySelector('button.th-sort')).not.toBeNull()
+      const rows = Array.from(table.querySelectorAll('tbody tr'))
+      expect(rows.every((r) => r.classList.contains('table-row'))).toBe(true)
+      expect(rows.filter((r) => r.hasAttribute('data-selected')).map((r) => r.getAttribute('data-row'))).toEqual(['r1'])
+      for (const row of rows) {
+        expect(Array.from(row.querySelectorAll('td')).filter((c) => c.classList.contains('td-num'))).toHaveLength(2)
+      }
+    }
+    // The shared sort state: Duration sorts every table, numerically, and the Test header goes back to none.
+    fireEvent.click(within(tables[0]).getByRole('button', { name: 'Duration' }))
+    for (const table of tables) {
+      expect(Array.from(table.querySelectorAll('tbody tr'), (r) => r.getAttribute('data-row'))).toEqual(['r2', 'r1', 'r3'])
+      expect(Array.from(table.querySelectorAll('th'), (h) => h.getAttribute('aria-sort'))).toEqual(['none', 'none', null, 'ascending', null])
+    }
+  })
+
+  it('panel: a Panel with a subtitle and actions over a KpiStrip of three md tiles and four sm dimension tiles', () => {
+    const { container } = renderAt()
+    const section = sectionOf(container, 'panel')
+    const panel = section.querySelector('[data-panel]') as HTMLElement
+    expect(panel).toHaveClass('card')
+    expect(within(panel).getByRole('heading', { level: 3, name: 'Release readiness' })).toBeInTheDocument()
+    expect(within(panel).getByText('Last 30 days · 41 runs on main')).toBeInTheDocument()
+    expect(within(panel.querySelector('[data-panel-actions]') as HTMLElement).getByRole('button', { name: 'Open gate' })).toHaveClass('btn-secondary', 'btn-sm')
+    const strip = panel.querySelector('[data-kpi-strip]') as HTMLElement
+    expect(strip.querySelectorAll('[data-metric-card="compact"]')).toHaveLength(3)
+    const dims = Array.from(panel.querySelectorAll<HTMLElement>('[data-dimension-row] [data-metric-card="stat"]'))
+    expect(dims.map((d) => d.getAttribute('data-dimension'))).toEqual(['stability', 'diversity', 'time_to_fix', 'coverage'])
+    for (const dim of dims) {
+      expect(dim.querySelector('[data-metric-bar]')).not.toBeNull()
+      expect(dim.querySelector('p')?.textContent).toMatch(/\d+%$/)
+    }
+    // The unmeasured one: an em dash and the empty track.
+    expect(dims[3].querySelector('p.tabular-nums')?.textContent).toBe('—')
+    expect(dims[3].querySelector('[data-metric-bar] i')).toBeNull()
+    expect(dims[0].querySelector<HTMLElement>('[data-metric-bar] i')?.style.width).toBe('82%')
+    // No white sheen and no 16 px corner anywhere in the section.
+    for (const el of Array.from(section.querySelectorAll('*'))) {
+      expect(el.getAttribute('class') ?? '').not.toMatch(/\bbg-white|\brounded-xl\b/)
+      expect(el.getAttribute('style') ?? '').not.toMatch(/rgba\(/)
+    }
   })
 
   it('applies a registry theme, Paper included, and ignores anything else', () => {
