@@ -66,8 +66,10 @@ describe('useEChart registers the chart’s export option (TRND-11)', () => {
     const first = vi.fn(() => ({ first: true }))
     view = render(<Probe option={{ series: [] }} exportOption={first} />)
     await waitFor(() => expect(status()).toBe('ready'))
+    // The registration is a passive effect of the 'ready' render: under CI load the DOM can read 'ready' before it
+    // has run (it failed in W29b's PR CI at "expected 0 to be greater than 0"), so wait for the registration itself.
+    await waitFor(() => expect(register.mock.calls.length).toBeGreaterThan(0))
     const calls = register.mock.calls.length
-    expect(calls).toBeGreaterThan(0)
     const second = vi.fn(() => ({ second: true }))
     await act(async () => view.rerender(<Probe option={{ series: [] }} exportOption={second} />))
     expect(register.mock.calls.length).toBe(calls)
