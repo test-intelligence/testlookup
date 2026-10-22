@@ -334,8 +334,10 @@ describe('InvestigationKpiStrip — glyphs from real numbers only', () => {
     } as unknown as StripModel
   }
 
+  // W29b §0 G2: a tile's visible label may be a short name ("Confidence"); its full name is the label's title
+  // (MetricCard's `hint`), so a KPI is found by its full name.
   function kpiCell(label: string): HTMLElement {
-    const cell = screen.getByText(label).closest('div')?.parentElement
+    const cell = screen.getByTitle(label).closest('div')?.parentElement
     if (!cell) throw new Error(`no KPI cell labelled ${label}`)
     return cell
   }
@@ -519,8 +521,9 @@ describe('DeepInvestigationPage — only what it really does', () => {
     const verdict = await renderPage()
     expect(screen.queryByText(/24h/)).toBeNull()
     expect(screen.queryByText(/window/)).toBeNull()
-    // Failures eligible: 7, counted in Run #12 — and the Scope facet says so.
-    expect(verdict).toHaveTextContent('Failures eligible7in Run #12')
+    // Failures eligible: 7, counted in Run #12 — and the Scope facet says so. (W29b §0 G2: the facet's label is
+    // "Eligible", its full name the label's title.)
+    expect(verdict).toHaveTextContent('Eligible7in Run #12')
     expect(verdict).toHaveTextContent(/ScopeRun #12/)
     // The headline's "across N suites" counted clusters; it now names the scope.
     expect(verdict).toHaveTextContent('7 failures in Run #12 — 1 cluster proposed')
@@ -562,7 +565,8 @@ describe('DeepInvestigationPage — only what it really does', () => {
   it('reads "Last analysis" from the decision trail, not from a run\'s age label', async () => {
     await renderPage({ trailCompletedAt: hoursAgo(5.5) })
     const inputs = screen.getByRole('region', { name: 'Investigation inputs' })
-    const cell = within(inputs).getByText('Last analysis').closest('div')?.parentElement as HTMLElement
+    // Found by its full name, the label's title (W29b §0 G2: the label reads "Analyzed").
+    const cell = within(inputs).getByTitle('Last analysis').closest('div')?.parentElement as HTMLElement
     // The focused run is 80h old ("3d ago"), which used to surface as "3 h ago".
     expect(cell).toHaveTextContent('5h ago')
     expect(cell).toHaveTextContent('1 cluster · 1 finding · $0.42')
@@ -572,8 +576,9 @@ describe('DeepInvestigationPage — only what it really does', () => {
   const cluster = (id: string, label: string, cohesion: number | null) => ({
     cluster_id: id, label, representative_error: 'E', member_test_ids: ['t1'], size: 3, cohesion_score: cohesion,
   })
+  // By the KPI's full name, the label's title (W29b §0 G2: a label may be a short name).
   const kpi = (label: string) =>
-    within(screen.getByRole('region', { name: 'Investigation inputs' })).getByText(label).closest('div')?.parentElement as HTMLElement
+    within(screen.getByRole('region', { name: 'Investigation inputs' })).getByTitle(label).closest('div')?.parentElement as HTMLElement
 
   it('shows an unscored cluster with no severity band and no confidence number', async () => {
     await renderPage({ clusters: [cluster('cl-u', 'Mystery Errors', null)], findings: [] })
@@ -617,7 +622,7 @@ describe('DeepInvestigationPage — only what it really does', () => {
     expect(within(avg).getByText('—')).toHaveStyle({ color: 'var(--color-text)' })
     expect(within(avg).queryByRole('meter')).toBeNull()
     expect(kpi('Likely clusters')).toHaveTextContent('pre-scan · avg conf —')
-    expect(screen.getByRole('region', { name: 'Investigation verdict' })).toHaveTextContent(/Pre-scan signal2 clustersunscored/)
+    expect(screen.getByRole('region', { name: 'Investigation verdict' })).toHaveTextContent(/Pre-scan2 clustersunscored/)
   })
 
   // ── UX redesign P6: the page template's header, not a page-made heading ──
@@ -670,5 +675,58 @@ describe('DeepInvestigationPage — only what it really does', () => {
     await renderPage()
     expect(within(header()).queryByRole('link')).toBeNull()
     expect(header()).not.toHaveTextContent('—')
+  })
+
+  // ── W29b UIX-06 / UIX-09: the one table, the one panel, the one KPI tile ──
+  it('W29b: the recent runs are the dense Table, its five number columns right-aligned in header and cells', async () => {
+    await renderPage()
+    const table = screen.getByRole('table')
+    expect(table).toHaveAttribute('data-density', 'dense')
+    const headers = within(table).getAllByRole('columnheader')
+    expect(headers.map((h) => h.textContent)).toEqual(['Test Suite', 'Run', 'Failures', 'Clusters', 'Findings', 'Avg conf', 'Cost', 'Status'])
+    expect(headers.map((h) => h.classList.contains('th-num'))).toEqual([false, false, true, true, true, true, true, false])
+    const row = within(table).getAllByRole('row')[1]
+    expect(row).toHaveClass('table-row')
+    expect(Array.from(row.querySelectorAll('td'), (td) => td.classList.contains('td-num')))
+      .toEqual([false, false, true, true, true, true, true, false])
+  })
+
+  it('W29b: its cards are Panels with an h3; the KPI row is a strip of five md tiles; the facets are sm tiles, no sheen', async () => {
+    const verdict = await renderPage()
+    for (const name of ['Proposed clusters', 'Recent runs', 'Evidence sources', 'Model routing']) {
+      const heading = screen.getByRole('heading', { level: 3, name: new RegExp(`^${name}`) })
+      expect(heading.closest('[data-panel]'), name).toHaveClass('card')
+    }
+    const inputs = screen.getByRole('region', { name: 'Investigation inputs' })
+    expect(inputs.querySelector('[data-kpi-strip]')).not.toBeNull()
+    expect(inputs.querySelectorAll('[data-metric-card="compact"]')).toHaveLength(5)
+    // The four input facets and nothing else in the verdict card are in-panel stats; the cost is an md tile.
+    const facets = verdict.querySelectorAll('[data-metric-card="stat"]')
+    expect(Array.from(facets, (f) => f.querySelector('p')?.textContent))
+      .toEqual(['Eligible', 'Scope', 'Sources', 'Pre-scan'])
+    expect(verdict.querySelectorAll('[data-metric-card="compact"]')).toHaveLength(1)
+    expect(verdict.innerHTML).not.toMatch(/rgba\(/)
+  })
+
+  it('W29b §0 G2: a label that did not fit its tile is a short name; its full name is the label\'s title (the hint)', async () => {
+    const verdict = await renderPage()
+    const inputs = screen.getByRole('region', { name: 'Investigation inputs' })
+    const labels = (root: Element, selector: string) =>
+      Array.from(root.querySelectorAll(`${selector} > p:first-child`), (p) => [p.textContent, p.getAttribute('title')])
+    // The four facets: three short names; "Scope" fits and is its own title.
+    expect(labels(verdict, '[data-metric-card="stat"]')).toEqual([
+      ['Eligible', 'Failures eligible'],
+      ['Scope', 'Scope'],
+      ['Sources', 'Evidence sources'],
+      ['Pre-scan', 'Pre-scan signal'],
+    ])
+    // The five KPI tiles: four short names; "Spend MTD" fits.
+    expect(labels(inputs, '[data-metric-card="compact"]')).toEqual([
+      ['Eligible', 'Eligible failures'],
+      ['Clusters', 'Likely clusters'],
+      ['Analyzed', 'Last analysis'],
+      ['Confidence', 'Avg cluster confidence'],
+      ['Spend MTD', 'Spend MTD'],
+    ])
   })
 })

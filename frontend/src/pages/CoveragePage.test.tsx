@@ -572,6 +572,24 @@ describe('CoverageComparisonStrip', () => {
     // Pass-rate cell shows the em-dash because delta < 0.01.
     expect(strip.textContent).toContain('—')
   })
+
+  it('W29b: each compared metric is the one KPI tile at sm (no hand-made 18 px tile)', () => {
+    render(
+      <CoverageComparisonStrip
+        current={baseStats({ total: 120, passRate: 80, daysWithRuns: 3 })}
+        prior={baseStats({ total: 100, passRate: 95, daysWithRuns: 6 })}
+        windowDays={7}
+      />,
+    )
+    const strip = screen.getByLabelText(/Coverage comparison/i)
+    const tiles = [...strip.querySelectorAll('[data-metric-card="stat"]')]
+    expect(tiles.map((t) => t.querySelector('p')?.textContent)).toEqual(['Total executions', 'Pass rate', 'Days with runs'])
+    expect(tiles.map((t) => t.querySelector('p.tabular-nums')?.textContent)).toEqual(['120', '80.0%', '3'])
+    expect(tiles[1].querySelector('[data-metric-caption]')).toHaveTextContent(/^↓ 15\.0% vs prior 95\.0%$/)
+    // A worse pass rate is the danger ink, never the status hue as small text.
+    expect((tiles[1].querySelector('[data-metric-caption] span') as HTMLElement).style.color).toBe('var(--ui-danger-ink)')
+    expect(strip.innerHTML).not.toMatch(/text-\[\d/)
+  })
 })
 
 const day = (date: string, executions: number): TrendPoint => ({
@@ -662,6 +680,18 @@ describe('CoveragePage — verdict meter and cadence strip', () => {
     expect(strip.querySelectorAll('[data-day-cell]').length).toBeGreaterThan(1)
     expect(strip.querySelector('[data-day-cue]')).toBeNull()
     expect(strip.closest('[data-day-strip]')).toHaveAttribute('data-day-strip', 'intensity')
+
+    // W29b UIX-09: the four weighted dimensions are the one KPI tile at sm — the weight as the note, the score's
+    // bar — on the sunken well, never the white sheen.
+    const verdict = screen.getByRole('region', { name: 'Coverage verdict' })
+    const tiles = [...verdict.querySelectorAll('[data-metric-card="stat"]')]
+    expect(tiles).toHaveLength(4)
+    for (const tile of tiles) {
+      expect(tile.querySelector('[data-metric-bar]')).not.toBeNull()
+      expect(tile.querySelector('p')?.textContent).toMatch(/\d+%$/)
+    }
+    expect(verdict.innerHTML).not.toMatch(/rgba\(/)
+    expect(verdict.querySelector('[data-metric-card="compact"]')).toBeNull()
   })
 
   it('a PENDING verdict (composite 0) draws no reading: the bar is not measured', async () => {

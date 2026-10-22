@@ -178,14 +178,14 @@ export default function CreateJiraIssueModal({
       showClose={false}
       busy={submitting}
       slot={slot}
-      description={<code className="font-mono text-[11.5px] [overflow-wrap:anywhere]">{testName}</code>}
+      description={<code className="font-mono text-xs [overflow-wrap:anywhere]">{testName}</code>}
       footer={
         <>
           <button
             type="button"
             onClick={onClose}
             disabled={submitting}
-            className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 disabled:opacity-50"
+            className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 disabled:opacity-50"
           >
             Cancel
           </button>
@@ -215,11 +215,11 @@ export default function CreateJiraIssueModal({
     >
       <div className="max-w-2xl">
         {previewLoading || metaLoading ? (
-          <p className="mt-4 text-[12.5px] text-[var(--color-text-muted)]">
+          <p className="mt-4 text-sm text-[var(--color-text-muted)]">
             Assembling the pre-filled payload…
           </p>
         ) : previewError || !preview ? (
-          <p className="mt-4 text-[12.5px]" style={{ color: 'var(--status-failed)' }}>
+          <p className="mt-4 text-sm" style={{ color: 'var(--ui-danger)' }}>
             Could not assemble the defect payload — the failure may not have
             per-test rows yet. Try again in a moment.
           </p>
@@ -227,7 +227,7 @@ export default function CreateJiraIssueModal({
           <>
             {existing && (
               <div
-                className="mt-3 rounded-md border px-3 py-2 text-[12px]"
+                className="mt-3 rounded-md border px-3 py-2 text-xs"
                 style={{
                   background: 'color-mix(in srgb, var(--color-accent) 6%, transparent)',
                   borderColor: 'color-mix(in srgb, var(--color-accent) 25%, transparent)',
@@ -249,7 +249,7 @@ export default function CreateJiraIssueModal({
 
             {/* Delivery target */}
             <div className="mt-3" role="radiogroup" aria-label="Delivery target">
-              <span className="block text-[12px] font-medium text-[var(--color-text)] mb-1.5">Deliver via</span>
+              <span className="block text-xs font-medium text-[var(--color-text)] mb-1.5">Deliver via</span>
               <div className="flex gap-2">
                 <button
                   type="button"
@@ -259,7 +259,7 @@ export default function CreateJiraIssueModal({
                   title={jiraAvailable ? 'Create the issue directly in Jira' : jiraUnavailableCopy(metadata?.reason)}
                   onClick={() => setTargetChoice('jira')}
                   className={clsx(
-                    'px-3 py-1.5 text-[12.5px] rounded-md border transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
+                    'px-3 py-1.5 text-sm rounded-md border transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
                     target === 'jira'
                       ? 'border-[var(--color-accent)] bg-[var(--color-bg-hover)]/40 text-[var(--color-text)]'
                       : 'border-[var(--color-border)] text-[var(--color-text-muted)]',
@@ -279,7 +279,7 @@ export default function CreateJiraIssueModal({
                   }
                   onClick={() => setTargetChoice('webhook')}
                   className={clsx(
-                    'px-3 py-1.5 text-[12.5px] rounded-md border transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
+                    'px-3 py-1.5 text-sm rounded-md border transition-colors disabled:opacity-50 disabled:cursor-not-allowed',
                     target === 'webhook'
                       ? 'border-[var(--color-accent)] bg-[var(--color-bg-hover)]/40 text-[var(--color-text)]'
                       : 'border-[var(--color-border)] text-[var(--color-text-muted)]',
@@ -289,7 +289,7 @@ export default function CreateJiraIssueModal({
                 </button>
               </div>
               {!jiraAvailable && (
-                <p className="mt-1.5 text-[11.5px] text-[var(--color-text-muted)]">
+                <p className="mt-1.5 text-xs text-[var(--color-text-muted)]">
                   {jiraUnavailableCopy(metadata?.reason)}
                 </p>
               )}
@@ -298,13 +298,13 @@ export default function CreateJiraIssueModal({
             {/* Jira pickers */}
             {target === 'jira' && (
               <div className="mt-3 grid grid-cols-2 gap-2">
-                <label className="block text-[12px] font-medium text-[var(--color-text)]">
+                <label className="block text-xs font-medium text-[var(--color-text)]">
                   Jira project
                   <select
                     value={projectKey}
                     onChange={(e) => setProjectKeyChoice(e.target.value)}
                     disabled={submitting}
-                    className="mt-1 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1.5 text-[12.5px] text-[var(--color-text)]"
+                    className="mt-1 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1.5 text-sm text-[var(--color-text)]"
                   >
                     {(metadata?.projects.length ? metadata.projects : [{ key: projectKey || 'QA', name: null }]).map((p) => (
                       <option key={p.key} value={p.key}>
@@ -314,13 +314,13 @@ export default function CreateJiraIssueModal({
                     ))}
                   </select>
                 </label>
-                <label className="block text-[12px] font-medium text-[var(--color-text)]">
+                <label className="block text-xs font-medium text-[var(--color-text)]">
                   Issue type
                   <select
                     value={issueType}
                     onChange={(e) => setIssueTypeChoice(e.target.value)}
                     disabled={submitting}
-                    className="mt-1 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1.5 text-[12.5px] text-[var(--color-text)]"
+                    className="mt-1 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1.5 text-sm text-[var(--color-text)]"
                   >
                     {(metadata?.issue_types.length ? metadata.issue_types : ['Bug']).map((t) => (
                       <option key={t} value={t}>
@@ -334,26 +334,26 @@ export default function CreateJiraIssueModal({
 
             {/* Read-only preview */}
             <div className="mt-3">
-              <span className="block text-[12px] font-medium text-[var(--color-text)] mb-1">
+              <span className="block text-xs font-medium text-[var(--color-text)] mb-1">
                 Summary <span className="text-[var(--color-text-faint)] font-normal">(prefilled)</span>
               </span>
-              <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 text-[12.5px] font-mono text-[var(--color-text-secondary)] [overflow-wrap:anywhere]">
+              <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 text-sm font-mono text-[var(--color-text-secondary)] [overflow-wrap:anywhere]">
                 {preview.summary}
               </div>
             </div>
             <div className="mt-2">
-              <span className="block text-[12px] font-medium text-[var(--color-text)] mb-1">
+              <span className="block text-xs font-medium text-[var(--color-text)] mb-1">
                 Description <span className="text-[var(--color-text-faint)] font-normal">(prefilled — failure, history, context{preview.ai_analysis ? ', AI root cause' : ''})</span>
               </span>
               <pre
                 aria-label="Prefilled description"
-                className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 text-[11px] font-mono text-[var(--color-text-muted)] whitespace-pre-wrap [overflow-wrap:anywhere] m-0 max-h-44 overflow-y-auto"
+                className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 text-2xs font-mono text-[var(--color-text-muted)] whitespace-pre-wrap [overflow-wrap:anywhere] m-0 max-h-44 overflow-y-auto"
               >
                 {preview.description}
               </pre>
             </div>
 
-            <label className="block mt-3 text-[12px] font-medium text-[var(--color-text)]">
+            <label className="block mt-3 text-xs font-medium text-[var(--color-text)]">
               Comment <span className="text-[var(--color-text-faint)] font-normal">(optional — appended to the ticket)</span>
               <textarea
                 value={comment}
@@ -361,7 +361,7 @@ export default function CreateJiraIssueModal({
                 rows={2}
                 disabled={submitting}
                 placeholder="Anything the assignee should know?"
-                className="mt-1 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 text-[12.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]"
+                className="mt-1 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]"
               />
             </label>
           </>
@@ -370,19 +370,19 @@ export default function CreateJiraIssueModal({
         {outcomeUnknown ? (
           <div
             role="alert"
-            className="mt-4 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2.5 text-[12.5px] text-[var(--color-text)]"
+            className="mt-4 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2.5 text-sm text-[var(--color-text)]"
           >
             <p className="m-0 font-medium">Jira may already have this issue</p>
             <p className="mt-1 mb-0 text-[var(--color-text-muted)]">{outcomeUnknown.message}</p>
             <p className="mt-1.5 mb-0">
-              Label: <code className="font-mono text-[11.5px] select-all">{outcomeUnknown.jira_label}</code>
+              Label: <code className="font-mono text-xs select-all">{outcomeUnknown.jira_label}</code>
             </p>
             <div className="mt-2 flex justify-end">
               <button
                 type="button"
                 onClick={() => handleSubmit(true)}
                 disabled={!canSubmit}
-                className="text-[12px] font-medium rounded-md border border-[var(--color-border)] px-2.5 py-1 disabled:opacity-50"
+                className="text-xs font-medium rounded-md border border-[var(--color-border)] px-2.5 py-1 disabled:opacity-50"
               >
                 I checked Jira, file it
               </button>

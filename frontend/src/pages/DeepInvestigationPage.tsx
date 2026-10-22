@@ -34,14 +34,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
-  AlertCircle, Bot, Clock, Database, DollarSign, FileText,
-  GitBranch, KeyRound, Layers, Mail, MessageSquare, Play, Plug,
-  Server, ShieldCheck, Sparkles, Target,
+  Bot, Database, FileText,
+  GitBranch, KeyRound, Mail, MessageSquare, Play, Plug,
+  Server, ShieldCheck,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
 import AISuggestion from '@/components/ai/AISuggestion'
 import EmptyState from '@/components/ui/EmptyState'
+import KpiStrip from '@/components/ui/KpiStrip'
+import MetricCard, { type MetricTone } from '@/components/ui/MetricCard'
+import { Panel } from '@/components/ui/PanelHeader'
+import { Table, Td, Th, Tr } from '@/components/ui/Table'
 import { SEVERITY_STYLE, severityLevel } from '@/components/ui/severity'
 import InvestigatorCockpit from '@/components/investigator/InvestigatorCockpit'
 import GaugeBar from '@/components/charts/GaugeBar'
@@ -283,7 +287,7 @@ function SecondaryBtn({
       title={title}
       disabled={disabled}
       data-testid={testId}
-      className="inline-flex items-center gap-1.5 font-medium rounded-md border border-[var(--color-border)] transition-colors disabled:opacity-50 px-3 py-1.5 text-[13px] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] disabled:hover:bg-transparent"
+      className="inline-flex items-center gap-1.5 font-medium rounded-md border border-[var(--color-border)] transition-colors disabled:opacity-50 px-3 py-1.5 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] disabled:hover:bg-transparent"
     >
       {children}
     </button>
@@ -297,7 +301,7 @@ function SecondaryBtn({
  */
 function DeepDisabledNote({ message }: { message: string | null }) {
   return (
-    <span data-testid="deep-disabled-note" className="text-[12px] text-[var(--color-text-muted)]">
+    <span data-testid="deep-disabled-note" className="text-xs text-[var(--color-text-muted)]">
       {message}
     </span>
   )
@@ -443,8 +447,8 @@ function DeepRetryOutcome({ retry, isQaEngineer }: { retry: DeepRetry; isQaEngin
           data-testid="deep-retry-note"
           data-tone={retry.note.tone}
           role="status"
-          className="text-[12px]"
-          style={{ color: retry.note.tone === 'error' ? 'var(--status-failed)' : 'var(--color-text-secondary)' }}
+          className="text-xs"
+          style={{ color: retry.note.tone === 'error' ? 'var(--ui-danger)' : 'var(--color-text-secondary)' }}
         >
           {retry.note.text}
         </span>
@@ -788,10 +792,7 @@ function VerdictCard({
       <span aria-hidden className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: t.bar }} />
 
       <div className="min-w-0" style={{ paddingLeft: 4 }}>
-        <span
-          className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase"
-          style={{ color: t.eyebrowText, letterSpacing: 'var(--tracking-wider)' }}
-        >
+        <span className="eyebrow uppercase inline-flex items-center gap-1.5" style={{ color: t.eyebrowText }}>
           <span
             className="h-1.5 w-1.5 rounded-full"
             style={{
@@ -805,16 +806,23 @@ function VerdictCard({
         <h2 className="font-bold m-0" style={{ fontSize: 'var(--text-display-sm)', lineHeight: 1.15, letterSpacing: '-0.02em', margin: '6px 0 6px' }}>
           {headline}
         </h2>
-        <p className="text-[13px] m-0 mb-3.5 max-w-[64ch]" style={{ color: 'var(--color-text-secondary)' }}>
+        <p className="text-sm m-0 mb-3.5 max-w-[64ch]" style={{ color: 'var(--color-text-secondary)' }}>
           {lede}
         </p>
 
-        {/* Input facets */}
-        <div className="grid gap-2.5 mb-3" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+        {/* Input facets: the one KPI tile at `sm` (W29b UIX-09). A tile is at least six of its value's size wide:
+            four in a row at the desk (18 px values: 108 px, the tiles are 133 at 1280), two in presentation mode
+            (40 px values: 240 px), where "3 clusters" / "Run #60" no longer fit a quarter of the card. auto-fit, not
+            auto-fill: at 1440 px a fifth, empty track would narrow the four tiles. */}
+        <div
+          className="grid gap-2.5 mb-3"
+          style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, calc(var(--text-stat-sm) * 6)), 1fr))' }}
+        >
           {/* The sub-line used to say "N suites" where N was the number of
               proposed clusters. */}
           <FacetTile
-            label="Failures eligible"
+            label="Eligible"
+            hint="Failures eligible"
             value={model.eligibleFailures}
             sub={`in ${model.windowLabel}`}
             tone="bad"
@@ -826,7 +834,8 @@ function VerdictCard({
             tone="neutral"
           />
           <FacetTile
-            label="Evidence sources"
+            label="Sources"
+            hint="Evidence sources"
             value={`${model.evidenceConnected} / ${model.evidenceTotal}`}
             sub={model.evidenceConnected > 0
               ? model.evidenceSources.filter(s => s.status === 'live').map(s => s.id).join(', ')
@@ -834,7 +843,8 @@ function VerdictCard({
             tone={model.evidenceConnected >= 3 ? 'neutral' : 'warn'}
           />
           <FacetTile
-            label="Pre-scan signal"
+            label="Pre-scan"
+            hint="Pre-scan signal"
             value={model.preScanClusters > 0 ? `${model.preScanClusters} clusters` : '—'}
             sub={model.preScanClusters === 0 ? 'run analysis'
               : model.preScanAvgConfidence != null ? `avg conf ${model.preScanAvgConfidence.toFixed(2)}`
@@ -873,33 +883,22 @@ function VerdictCard({
   )
 }
 
+/**
+ * An input facet: the one KPI tile at `sm` — its label, its value in its tone, its sub-line as the caption.
+ * `hint` is the full name of a label shortened to fit (§0 G2: the tile's label is one truncated line; at 1280 px
+ * "Failures eligible", "Evidence sources" and "Pre-scan signal" were cut on CI-wide fonts): it is the label's title.
+ */
 function FacetTile({
-  label, value, sub, tone,
+  label, hint, value, sub, tone,
 }: {
   label: string
-  value: React.ReactNode
+  hint?: string
+  value: string | number
   sub?: React.ReactNode
-  tone: 'bad' | 'warn' | 'good' | 'neutral'
+  tone: MetricTone
 }) {
-  const valueColor =
-    tone === 'bad'  ? 'var(--status-failed)' :
-    tone === 'warn' ? 'var(--status-broken)' :
-    tone === 'good' ? 'var(--status-passed)' :
-    'var(--color-text)'
-  return (
-    <div
-      className="rounded-md border px-3 py-2"
-      style={{ background: 'rgba(255,255,255,0.025)', borderColor: 'var(--color-border)' }}
-    >
-      <div className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
-        {label}
-      </div>
-      <div className="text-[14px] font-semibold tabular-nums mt-0.5 truncate" style={{ color: valueColor }}>
-        {value}
-      </div>
-      {sub && <div className="text-[10.5px] text-[var(--color-text-muted)] truncate">{sub}</div>}
-    </div>
-  )
+  // overflow-hidden: a long scope ("latest 10 runs") stays inside its tile on CI's wider fonts at 1280 px.
+  return <MetricCard size="sm" className="overflow-hidden" title={label} hint={hint} metric={{ value }} caption={sub} tone={tone} />
 }
 
 // ── Estimate card ───────────────────────────────────────────────────────
@@ -914,31 +913,24 @@ function EstimateCard({ model }: { model: DeepModel }) {
     : 0
   const softWarnPct = model.spendSoftWarnPct
   return (
-    <div
-      className="rounded-md border flex flex-col gap-2.5 p-3.5"
-      style={{ background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
-    >
-      <div>
-        <div className="text-[11px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
-          Cost &amp; time
-        </div>
-        <div className="flex items-end gap-2 mt-0.5">
-          <span className="font-bold tabular-nums leading-none" style={{ fontSize: 32, color: 'var(--color-text)', letterSpacing: '-0.02em' }}>
-            {model.lastRunCostDollars != null ? `$${model.lastRunCostDollars.toFixed(2)}` : '—'}
-          </span>
-          <span className="text-[12px] text-[var(--color-text-muted)] mb-0.5">
-            {model.lastRunCostDollars != null ? 'last run' : 'no costed run yet'}
-          </span>
+    // The headline is the one KPI tile (W29b UIX-09: the md tile, its value on --text-stat-lg, which presentation
+    // mode raises; it was a fixed 32 px); the workload and the budget follow it.
+    <div className="flex min-w-0 flex-col gap-2.5">
+      <MetricCard
+        title="Cost & time"
+        metric={{ value: model.lastRunCostDollars != null ? `$${model.lastRunCostDollars.toFixed(2)}` : '—' }}
+        caption={model.lastRunCostDollars != null ? 'last run' : 'no costed run yet'}
+        sparkline={
           <span
-            className="ml-auto inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold tabular-nums"
+            className="inline-flex items-center px-2 py-0.5 rounded-full text-2xs font-semibold tabular-nums"
             style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
           >
             ~{model.estimateMinutes.toFixed(1)} min
           </span>
-        </div>
-      </div>
+        }
+      />
 
-      <div className="flex flex-col gap-1.5 text-[12px]">
+      <div className="flex flex-col gap-1.5 text-xs">
         {model.estimateBreakdown.map((r, i) => (
           <div key={i} className="flex items-baseline justify-between gap-3">
             <span className="text-[var(--color-text-secondary)]">{r.label}</span>
@@ -961,13 +953,13 @@ function EstimateCard({ model }: { model: DeepModel }) {
               />
             )}
           </div>
-          <div className="text-[10.5px] text-[var(--color-text-muted)] mt-1.5 flex justify-between">
+          <div className="text-2xs text-[var(--color-text-muted)] mt-1.5 flex justify-between">
             <span>${model.spendMtdDollars.toFixed(2)} of ${budget} monthly</span>
             {softWarnPct != null && <span>warn at {softWarnPct}%</span>}
           </div>
         </div>
       ) : (
-        <div className="text-[10.5px] text-[var(--color-text-muted)] mt-1">
+        <div className="text-2xs text-[var(--color-text-muted)] mt-1">
           ${model.spendMtdDollars.toFixed(2)} spent this month · no budget set — configure in Settings → Billing
         </div>
       )}
@@ -976,55 +968,29 @@ function EstimateCard({ model }: { model: DeepModel }) {
 }
 
 // ── KPI strip ───────────────────────────────────────────────────────────
-type KpiTone = 'good' | 'warn' | 'bad' | 'accent' | 'neutral'
+/** A tone's ink, as the tile's value draws it (MetricCard's `tone`). */
+const TONE_INK: Record<MetricTone, string> = {
+  good: 'var(--ui-success-ink)',
+  warn: 'var(--ui-warning-ink)',
+  bad: 'var(--ui-danger-ink)',
+  neutral: 'var(--color-text)',
+}
 
-function KpiCell({
-  Icon, label, value, sub, meta, tone = 'neutral', spark, isFirst, isLast,
-}: {
-  Icon?: typeof Sparkles
-  label: string
-  value: React.ReactNode
-  sub?: React.ReactNode
-  meta?: React.ReactNode
-  tone?: KpiTone
-  spark?: React.ReactNode
-  isFirst?: boolean
-  isLast?: boolean
-}) {
-  const valueColor =
-    tone === 'good'   ? 'var(--status-passed)' :
-    tone === 'warn'   ? 'var(--status-broken)' :
-    tone === 'bad'    ? 'var(--status-failed)' :
-    tone === 'accent' ? 'var(--color-accent)' :
-    'var(--color-text)'
+/**
+ * One strip cell: the md KPI tile (W29b UIX-09) in its own grid cell, whose text colour is the tile's ink (the
+ * value's own class paints the same; an element in the tile with no colour of its own reads it too).
+ */
+function InputTile({ tone = 'neutral', ...tile }: Omit<React.ComponentProps<typeof MetricCard>, 'size'>) {
   return (
-    <div
-      className="flex flex-col gap-1"
-      style={{
-        padding: '14px 18px',
-        background: 'var(--color-bg-card)',
-        borderTop:    '1px solid var(--color-border)',
-        borderBottom: '1px solid var(--color-border)',
-        borderRight:  '1px solid var(--color-border)',
-        borderLeft:   isFirst ? '1px solid var(--color-border)' : '0',
-        borderTopLeftRadius:     isFirst ? 'var(--radius-lg)' : 0,
-        borderBottomLeftRadius:  isFirst ? 'var(--radius-lg)' : 0,
-        borderTopRightRadius:    isLast  ? 'var(--radius-lg)' : 0,
-        borderBottomRightRadius: isLast  ? 'var(--radius-lg)' : 0,
-      }}
-    >
-      <div className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] flex items-center gap-1.5" style={{ letterSpacing: 'var(--tracking-wider)' }}>
-        {Icon && <Icon className="h-3 w-3 opacity-70" />}
-        <span>{label}</span>
-      </div>
-      <div className="font-bold tabular-nums leading-[1.1]" style={{ fontSize: 'var(--text-stat-lg)', letterSpacing: '-0.01em', color: valueColor }}>
-        {value}
-        {sub && <span className="text-[14px] font-medium text-[var(--color-text-muted)] ml-1">{sub}</span>}
-      </div>
-      {meta && <div className="text-[10.5px] text-[var(--color-text-muted)]">{meta}</div>}
-      {spark && <div className="mt-1.5">{spark}</div>}
+    <div className="min-w-0 h-full" style={{ color: TONE_INK[tone] }}>
+      <MetricCard {...tile} tone={tone} />
     </div>
   )
+}
+
+/** A glyph in a tile's aside: the aside's full width (a gauge is as wide as its box). */
+function TileGlyph({ children }: { children: React.ReactNode }) {
+  return <div className="w-full min-w-0">{children}</div>
 }
 
 /** The confidence target the meta line states ("target ≥ 0.7"), and the KPI's own tone bands. */
@@ -1067,7 +1033,7 @@ export function InvestigationKpiStrip({ model }: { model: DeepModel }) {
     ...(unscoredClusters > 0 ? [`${unscoredClusters} unscored`] : []),
   ].join(' · ')
   const severityGauge = clusterTotal > 0 ? (
-    <>
+    <TileGlyph>
       <GaugeBar
         value={clusterTotal}
         domain={[0, clusterTotal]}
@@ -1081,8 +1047,8 @@ export function InvestigationKpiStrip({ model }: { model: DeepModel }) {
           { value: sev.p3, label: 'P3', tone: 'neutral' },
         ]}
       />
-      <div className="mt-1 text-[10.5px] tabular-nums text-[var(--color-text-secondary)]">{severitySplit}</div>
-    </>
+      <div className="mt-1 text-2xs tabular-nums text-[var(--color-text-secondary)]">{severitySplit}</div>
+    </TileGlyph>
   ) : undefined
   // An average exists only when analysis proposed a cluster AND at least one
   // of them carries a real score.
@@ -1091,74 +1057,85 @@ export function InvestigationKpiStrip({ model }: { model: DeepModel }) {
   const scoredBelowTarget = model.proposedClusters
     .filter(c => c.confidence != null && c.confidence < CONFIDENCE_TARGET.value).length
   const confidenceGauge = (
-    <GaugeBar
-      value={avgConfidence}
-      domain={CONFIDENCE_DOMAIN}
-      tone={CONFIDENCE_BANDS}
-      target={CONFIDENCE_TARGET}
-      size="sm"
-      format={confidenceText}
-      label="Average cluster confidence"
-    />
+    <TileGlyph>
+      <GaugeBar
+        value={avgConfidence}
+        domain={CONFIDENCE_DOMAIN}
+        tone={CONFIDENCE_BANDS}
+        target={CONFIDENCE_TARGET}
+        size="sm"
+        format={confidenceText}
+        label="Average cluster confidence"
+      />
+    </TileGlyph>
   )
   const budget = model.spendBudgetDollars
   const spendGauge = budget != null && budget > 0 ? (
-    <GaugeBar
-      value={model.spendMtdDollars}
-      domain={[0, budget]}
-      tone="accent"
-      size="sm"
-      format={dollars}
-      label="Spend this month against the monthly budget"
-    />
-  ) : undefined
-  return (
-    <section aria-label="Investigation inputs" className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 mb-3.5">
-      <KpiCell
-        Icon={AlertCircle}
-        label="Eligible failures"
-        value={model.eligibleFailures}
-        tone={model.eligibleFailures > 0 ? 'bad' : 'good'}
-        meta={<>{model.evidenceConnected}/{model.evidenceTotal} sources · {model.windowLabel}</>}
-        isFirst
-      />
-      <KpiCell
-        Icon={Layers}
-        label="Likely clusters"
-        value={model.preScanClusters}
+    <TileGlyph>
+      <GaugeBar
+        value={model.spendMtdDollars}
+        domain={[0, budget]}
         tone="accent"
-        meta={<>pre-scan · avg conf {avgConfidence != null ? avgConfidence.toFixed(2) : '—'}</>}
-        spark={severityGauge}
+        size="sm"
+        format={dollars}
+        label="Spend this month against the monthly budget"
       />
-      <KpiCell
-        Icon={Clock}
-        label="Last analysis"
-        value={model.lastRunAgeHours != null ? model.lastRunAgeHours : '—'}
-        sub={model.lastRunAgeHours != null ? 'h ago' : undefined}
-        tone="neutral"
-        meta={model.lastRunSummary ?? <>no prior run</>}
-      />
-      <KpiCell
-        Icon={Target}
-        label="Avg cluster confidence"
-        value={avgConfidence != null ? avgConfidence.toFixed(2) : '—'}
-        tone={avgConfidence == null ? 'neutral' : avgConfidence >= 0.8 ? 'good' : avgConfidence >= 0.7 ? 'warn' : 'bad'}
-        meta={hasClusters && avgConfidence == null
-          ? <>no proposed cluster has a score</>
-          : <>target ≥ 0.7 · {scoredBelowTarget} below</>}
-        spark={confidenceGauge}
-      />
-      <KpiCell
-        Icon={DollarSign}
-        label="Spend MTD"
-        value={`$${model.spendMtdDollars.toFixed(2)}`}
-        tone="neutral"
-        meta={model.spendBudgetDollars != null && model.spendBudgetDollars > 0
-          ? <>of ${model.spendBudgetDollars} budget · {Math.round((model.spendMtdDollars / model.spendBudgetDollars) * 100)}%</>
-          : <>no budget set</>}
-        spark={spendGauge}
-        isLast
-      />
+    </TileGlyph>
+  ) : undefined
+  // The page's KPI row (W29b UIX-09): a `KpiStrip` of five md tiles, the meta line each tile's caption, a gauge its
+  // aside. "Likely clusters" is a count, not a judgement: the neutral ink (it was the accent).
+  // §0 G2: a label is one truncated line, so four take a short name and keep the full one as their `hint` (the
+  // label's title): "Avg cluster confidence" was cut at 1280 px on every font, and "Eligible failures", "Likely
+  // clusters" and "Last analysis" were cut in presentation mode on a CI-wide font.
+  return (
+    <section aria-label="Investigation inputs" className="mb-3.5">
+      <KpiStrip>
+        {[
+          <InputTile
+            key="eligible"
+            title="Eligible"
+            hint="Eligible failures"
+            metric={{ value: model.eligibleFailures }}
+            tone={model.eligibleFailures > 0 ? 'bad' : 'good'}
+            caption={<>{model.evidenceConnected}/{model.evidenceTotal} sources · {model.windowLabel}</>}
+          />,
+          <InputTile
+            key="clusters"
+            title="Clusters"
+            hint="Likely clusters"
+            metric={{ value: model.preScanClusters }}
+            caption={<>pre-scan · avg conf {avgConfidence != null ? avgConfidence.toFixed(2) : '—'}</>}
+            sparkline={severityGauge}
+          />,
+          <InputTile
+            key="last"
+            title="Analyzed"
+            hint="Last analysis"
+            metric={{ value: model.lastRunAgeHours != null ? `${model.lastRunAgeHours}h ago` : '—' }}
+            caption={model.lastRunSummary ?? <>no prior run</>}
+          />,
+          <InputTile
+            key="confidence"
+            title="Confidence"
+            hint="Avg cluster confidence"
+            metric={{ value: avgConfidence != null ? avgConfidence.toFixed(2) : '—' }}
+            tone={avgConfidence == null ? 'neutral' : avgConfidence >= 0.8 ? 'good' : avgConfidence >= 0.7 ? 'warn' : 'bad'}
+            caption={hasClusters && avgConfidence == null
+              ? <>no proposed cluster has a score</>
+              : <>target ≥ 0.7 · {scoredBelowTarget} below</>}
+            sparkline={confidenceGauge}
+          />,
+          <InputTile
+            key="spend"
+            title="Spend MTD"
+            metric={{ value: `$${model.spendMtdDollars.toFixed(2)}` }}
+            caption={model.spendBudgetDollars != null && model.spendBudgetDollars > 0
+              ? <>of ${model.spendBudgetDollars} budget · {Math.round((model.spendMtdDollars / model.spendBudgetDollars) * 100)}%</>
+              : <>no budget set</>}
+            sparkline={spendGauge}
+          />,
+        ]}
+      </KpiStrip>
     </section>
   )
 }
@@ -1174,27 +1151,27 @@ function ProposedClustersCard({
 }) {
   if (model.proposedClusters.length === 0) {
     return (
-      <CardShell title="Proposed clusters" rightSlot={<><span>0 candidates</span>{action}</>}>
-        <div className="px-4 py-8 text-center text-[13px] text-[var(--color-text-secondary)]">
+      <Panel title="Proposed clusters" actions={<><span>0 candidates</span>{action}</>}>
+        <div className="px-4 py-8 text-center text-sm text-[var(--color-text-secondary)]">
           Run analysis to discover clusters.
         </div>
-      </CardShell>
+      </Panel>
     )
   }
   return (
-    <CardShell
+    <Panel
       title={
         <span className="inline-flex items-center gap-2">
           Proposed clusters
           <span
-            className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10.5px] font-semibold uppercase"
-            style={{ background: 'color-mix(in srgb, var(--color-accent) 16%, transparent)', color: 'var(--color-accent)', letterSpacing: 'var(--tracking-wide)' }}
+            className="eyebrow uppercase inline-flex items-center px-1.5 py-0.5 rounded-full"
+            style={{ background: 'color-mix(in srgb, var(--color-accent) 16%, transparent)', color: 'var(--color-accent)' }}
           >
             pre-scan
           </span>
         </span>
       }
-      rightSlot={<><span><strong className="text-[var(--color-text)] font-semibold">{model.proposedClusters.length}</strong> candidates · {model.eligibleFailures} failures grouped</span>{action}</>}
+      actions={<><span><strong className="text-[var(--color-text)] font-semibold">{model.proposedClusters.length}</strong> candidates · {model.eligibleFailures} failures grouped</span>{action}</>}
     >
       <div className="px-4 py-3.5 flex flex-col gap-2">
         {model.proposedClusters.map(c => (
@@ -1202,7 +1179,7 @@ function ProposedClustersCard({
         ))}
       </div>
       <div
-        className="flex items-center justify-between gap-2 px-4 py-2.5 text-[11.5px] text-[var(--color-text-muted)]"
+        className="flex items-center justify-between gap-2 px-4 py-2.5 text-xs text-[var(--color-text-muted)]"
         style={{ borderTop: '1px solid var(--color-border)' }}
       >
         <span>
@@ -1218,7 +1195,7 @@ function ProposedClustersCard({
           </Link>
         )}
       </div>
-    </CardShell>
+    </Panel>
   )
 }
 
@@ -1237,21 +1214,21 @@ function ClusterRow({ cluster }: { cluster: ProposedCluster }) {
     >
       <span
         aria-hidden
-        className="inline-flex items-center justify-center rounded-md font-bold tabular-nums text-[14px]"
+        className="inline-flex items-center justify-center rounded-md font-bold tabular-nums text-base"
         style={{ width: 32, height: 32, background: sev.bg, border: `1px solid ${sev.bd}`, color: sev.fg }}
       >
         {cluster.failures}
       </span>
       <div className="min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[13px] font-semibold text-[var(--color-text)] truncate">{cluster.name}</span>
+          <span className="text-sm font-semibold text-[var(--color-text)] truncate">{cluster.name}</span>
           <span
-            className="inline-flex items-center px-1.5 py-px rounded-full text-[10px] font-semibold uppercase"
-            style={{ background: sev.bg, border: `1px solid ${sev.bd}`, color: sev.fg, letterSpacing: 'var(--tracking-wide)' }}
+            className="eyebrow uppercase inline-flex items-center px-1.5 py-px rounded-full"
+            style={{ background: sev.bg, border: `1px solid ${sev.bd}`, color: sev.fg }}
           >
             {cluster.isFlaky ? 'flaky' : cluster.severity ? `${cluster.severity} likely` : 'unscored'}
           </span>
-          <span className="text-[10.5px] text-[var(--color-text-muted)]">
+          <span className="text-2xs text-[var(--color-text-muted)]">
             {cluster.failures} failure{cluster.failures === 1 ? '' : 's'} · {cluster.testCount} test{cluster.testCount === 1 ? '' : 's'}
           </span>
         </div>
@@ -1268,12 +1245,12 @@ function ClusterRow({ cluster }: { cluster: ProposedCluster }) {
             confidenceBasis={cluster.confidenceBasis}
             provenance={cluster.origin ? { modeUsed: ORIGIN_LABELS[cluster.origin] } : null}
           >
-            <p className="text-[12px] m-0" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+            <p className="text-xs m-0" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
               {cluster.rationale}
             </p>
           </AISuggestion>
         ) : (
-          <p className="text-[12px] m-0 mt-1" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+          <p className="text-xs m-0 mt-1" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
             {cluster.rationale}
             {cluster.confidence != null ? (
               <>
@@ -1289,7 +1266,7 @@ function ClusterRow({ cluster }: { cluster: ProposedCluster }) {
         {/* Only the service the AI finding names. This line used to add an
             invented "@team-<word>" owner handle and "N affected" capped at 5. */}
         {cluster.affectedService && (
-          <div className="mt-1.5 text-[10.5px] text-[var(--color-text-muted)]">
+          <div className="mt-1.5 text-2xs text-[var(--color-text-muted)]">
             service <code className="font-mono">{cluster.affectedService}</code>
           </div>
         )}
@@ -1301,26 +1278,26 @@ function ClusterRow({ cluster }: { cluster: ProposedCluster }) {
 // ── Past investigations ────────────────────────────────────────────────
 function PastInvestigations({ rows, onOpen }: { rows: PastRun[]; onOpen: (runId: string) => void }) {
   return (
-    <CardShell
+    <Panel
       title="Recent runs"
-      rightSlot={<span>latest {rows.length} · investigation data for the focused run</span>}
+      actions={<span>latest {rows.length} · investigation data for the focused run</span>}
     >
       <div className="overflow-x-auto">
-        <table className="w-full text-[12.5px]">
+        <Table density="dense">
           <thead>
-            <tr style={{ background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)' }}>
-              <Th label="Test Suite" />
+            <tr>
+              <Th>Test Suite</Th>
               {/* Per-(project, suite) human-readable run number,
                   alongside the suite the row belongs to. Same value
                   rendered on /runs, /live, /my-failures, /intelligence,
                   and /agents — the column is named "Run" everywhere. */}
-              <Th label="Run" />
-              <Th label="Failures" align="right" />
-              <Th label="Clusters" align="right" />
-              <Th label="Findings" align="right" />
-              <Th label="Avg conf" align="right" />
-              <Th label="Cost" align="right" />
-              <Th label="Status" />
+              <Th>Run</Th>
+              <Th numeric>Failures</Th>
+              <Th numeric>Clusters</Th>
+              <Th numeric>Findings</Th>
+              <Th numeric>Avg conf</Th>
+              <Th numeric>Cost</Th>
+              <Th>Status</Th>
             </tr>
           </thead>
           <tbody>
@@ -1333,9 +1310,9 @@ function PastInvestigations({ rows, onOpen }: { rows: PastRun[]; onOpen: (runId:
             )}
             {rows.map(r => <PastRow key={r.runId} row={r} onOpen={() => onOpen(r.runId)} />)}
           </tbody>
-        </table>
+        </Table>
       </div>
-    </CardShell>
+    </Panel>
   )
 }
 
@@ -1350,12 +1327,8 @@ function PastRow({ row, onOpen }: { row: PastRun; onOpen: () => void }) {
         : null
   const unknown = <span className="text-[var(--color-text-faint)]">—</span>
   return (
-    <tr
-      style={{ borderBottom: '1px solid var(--color-border)' }}
-      className="transition-colors hover:bg-[var(--color-bg-hover)] cursor-pointer"
-      onClick={onOpen}
-    >
-      <td style={{ padding: '10px 12px' }}>
+    <Tr onClick={onOpen}>
+      <Td>
         <div className="flex flex-col min-w-0">
           {/* Clickable badge → /test-management Test Suites tab pre-
               filtered to this suite. Same deep-link shape used by the
@@ -1368,37 +1341,37 @@ function PastRow({ row, onOpen }: { row: PastRun; onOpen: () => void }) {
             className="self-start max-w-full"
             linkTo={name => `/test-management?tab=Test+Suites&suite=${encodeURIComponent(name)}`}
           />
-          <span className="text-[10.5px] text-[var(--color-text-muted)] tabular-nums mt-1">
+          <span className="text-2xs text-[var(--color-text-muted)] tabular-nums mt-1">
             {row.whenRel} · {row.whenAbs}
           </span>
         </div>
-      </td>
-      <td style={{ padding: '10px 12px' }}>
+      </Td>
+      <Td>
         {/* Run #N when known; fall back to the 8-char run-uuid slug
             (already computed as ``row.runIdLabel`` above) so legacy
             rows still have a clickable handle. */}
-        <span className="font-mono text-[12px] text-[var(--color-text)]">
+        <span className="font-mono text-xs text-[var(--color-text)]">
           {row.runSeq != null ? `Run #${row.runSeq}` : row.runIdLabel}
         </span>
-      </td>
-      <td className="text-right tabular-nums" style={{ padding: '10px 12px' }}>{row.failures}</td>
-      <td className="text-right tabular-nums" style={{ padding: '10px 12px' }}>{row.clusters ?? unknown}</td>
-      <td className="text-right tabular-nums" style={{ padding: '10px 12px' }}>{row.findings ?? unknown}</td>
-      <td className="text-right tabular-nums" style={{ padding: '10px 12px' }}>
+      </Td>
+      <Td numeric>{row.failures}</Td>
+      <Td numeric>{row.clusters ?? unknown}</Td>
+      <Td numeric>{row.findings ?? unknown}</Td>
+      <Td numeric>
         {row.avgConf == null ? unknown : (
           <span className="inline-flex items-center gap-1.5" style={{ color: confColor }}>
             <i aria-hidden style={{ width: 6, height: 6, borderRadius: 999, background: 'currentColor' }} />
             {row.avgConf.toFixed(2)}
           </span>
         )}
-      </td>
-      <td className="text-right tabular-nums font-mono text-[11.5px]" style={{ padding: '10px 12px' }}>
+      </Td>
+      <Td numeric className="font-mono text-xs">
         {row.cost == null ? unknown : `$${row.cost.toFixed(2)}`}
-      </td>
-      <td style={{ padding: '10px 12px' }}>
+      </Td>
+      <Td>
         {statusPalette == null ? unknown : (
           <span
-            className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-full text-[10.5px]"
+            className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-full text-2xs"
             style={{ background: statusPalette.bg, border: `1px solid ${statusPalette.bd}`, color: statusPalette.fg }}
           >
             <i
@@ -1409,26 +1382,8 @@ function PastRow({ row, onOpen }: { row: PastRun; onOpen: () => void }) {
             {statusPalette.label}
           </span>
         )}
-      </td>
-    </tr>
-  )
-}
-
-function Th({ label, align }: { label: string; align?: 'right' }) {
-  return (
-    <th
-      style={{
-        padding: '8px 12px',
-        textAlign: align ?? 'left',
-        color: 'var(--color-text-muted)',
-        fontWeight: 500,
-        fontSize: 10.5,
-        textTransform: 'uppercase',
-        letterSpacing: 'var(--tracking-wider)',
-      }}
-    >
-      {label}
-    </th>
+      </Td>
+    </Tr>
   )
 }
 
@@ -1438,13 +1393,13 @@ function EvidenceSourcesCard({
 }: { sources: EvidenceSource[]; isLoading: boolean; isError: boolean; restricted?: boolean }) {
   const externalCount = sources.filter(s => s.id !== 'tests').length
   return (
-    <CardShell title="Evidence sources" rightSlot={<span>{sources.filter(s => s.status === 'live').length} live</span>}>
+    <Panel title="Evidence sources" actions={<span>{sources.filter(s => s.status === 'live').length} live</span>}>
       {isLoading && externalCount === 0 ? (
         <div className="px-4 py-6 flex justify-center"><LoadingSpinner size="sm" /></div>
       ) : (
       <>
       {(restricted || isError || externalCount === 0) && (
-        <div className="px-4 pt-3 text-[12px] text-[var(--color-text-muted)]" data-evidence-note={restricted ? 'restricted' : isError ? 'error' : 'none'}>
+        <div className="px-4 pt-3 text-xs text-[var(--color-text-muted)]" data-evidence-note={restricted ? 'restricted' : isError ? 'error' : 'none'}>
           {restricted
             ? 'Integration health (Jira, GitHub, Splunk and more) is shown to QA leads and admins.'
             : isError
@@ -1470,11 +1425,11 @@ function EvidenceSourcesCard({
                 <Icon className="h-3 w-3" />
               </span>
               <div className="min-w-0">
-                <div className="text-[12.5px] text-[var(--color-text)] font-medium">{src.name}</div>
-                <div className="text-[10.5px] text-[var(--color-text-muted)] truncate">{src.description}</div>
+                <div className="text-sm text-[var(--color-text)] font-medium">{src.name}</div>
+                <div className="text-2xs text-[var(--color-text-muted)] truncate">{src.description}</div>
               </div>
               <span
-                className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10.5px] font-semibold"
+                className="inline-flex items-center px-1.5 py-0.5 rounded-full text-2xs font-semibold"
                 style={{ background: statusPalette.bg, border: `1px solid ${statusPalette.bd}`, color: statusPalette.fg }}
               >
                 {src.detail}
@@ -1485,7 +1440,7 @@ function EvidenceSourcesCard({
       </div>
       </>
       )}
-    </CardShell>
+    </Panel>
   )
 }
 
@@ -1500,64 +1455,43 @@ function ModelRoutingCard({
 }: { trail: DecisionTrailResponse | undefined; isLoading: boolean }) {
   const stages = (trail?.stages ?? []).filter(s => s.analysis_mode || s.execution_path)
   return (
-    <CardShell title="Model routing">
+    <Panel title="Model routing">
       {isLoading ? (
         <div className="px-4 py-5 flex justify-center"><LoadingSpinner size="sm" /></div>
       ) : stages.length === 0 ? (
-        <div className="px-4 py-4 text-[12px] text-[var(--color-text-muted)]">
+        <div className="px-4 py-4 text-xs text-[var(--color-text-muted)]">
           Routing appears once an investigation runs — each stage records the
           engine it actually used (rules / ML / LLM) in the decision trail.
         </div>
       ) : (
         <div className="px-4 py-3 flex flex-col gap-1.5">
           {stages.map((s, i) => (
-            <div key={i} className="flex items-baseline justify-between gap-2 text-[12px]">
+            <div key={i} className="flex items-baseline justify-between gap-2 text-xs">
               <span className="text-[var(--color-text-secondary)] capitalize">
                 {s.stage_name.replace(/_/g, ' ')}
               </span>
               <span className="inline-flex items-center gap-1.5 ml-auto">
                 {s.fallback_used && (
                   <span
-                    className="inline-flex items-center px-1.5 py-px rounded-full text-[10px] font-semibold"
+                    className="inline-flex items-center px-1.5 py-px rounded-full text-2xs font-semibold"
                     style={{ background: 'color-mix(in srgb, var(--status-broken) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--status-broken) 25%, transparent)', color: 'var(--status-broken)' }}
                     title={s.fallback_reason ?? 'Fallback engine used'}
                   >
                     fallback
                   </span>
                 )}
-                <code className="font-mono text-[11px] px-1.5 py-px rounded" style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border)' }}>
+                <code className="font-mono text-2xs px-1.5 py-px rounded" style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border)' }}>
                   {s.analysis_mode ?? s.execution_path}
                 </code>
                 {s.analysis_mode && s.execution_path && s.execution_path !== s.analysis_mode && (
-                  <span className="text-[10.5px] text-[var(--color-text-muted)]">{s.execution_path}</span>
+                  <span className="text-2xs text-[var(--color-text-muted)]">{s.execution_path}</span>
                 )}
               </span>
             </div>
           ))}
         </div>
       )}
-    </CardShell>
-  )
-}
-
-// ── Shared shell ─────────────────────────────────────────────────────────
-function CardShell({
-  title, rightSlot, children,
-}: { title: React.ReactNode; rightSlot?: React.ReactNode; children?: React.ReactNode }) {
-  return (
-    <div
-      className="overflow-hidden rounded-xl"
-      style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
-    >
-      <div
-        className="flex items-center justify-between gap-2.5 px-4 py-3"
-        style={{ borderBottom: '1px solid var(--color-border)' }}
-      >
-        <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">{title}</h3>
-        {rightSlot && <div className="flex items-center gap-2.5 text-[12px] text-[var(--color-text-muted)]">{rightSlot}</div>}
-      </div>
-      {children}
-    </div>
+    </Panel>
   )
 }
 
@@ -1943,7 +1877,7 @@ export default function DeepInvestigationPage() {
         </div>
       </div>
 
-      <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-[12px] text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
+      <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-xs text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
         Wider screen needed for the full layout. Some sections may overflow on narrow viewports.
       </div>
     </PageShell>

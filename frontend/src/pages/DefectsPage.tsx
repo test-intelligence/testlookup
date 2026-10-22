@@ -62,6 +62,8 @@ import PageHeader from '@/components/ui/PageHeader'
 import StatusBanner, { type BannerFact, type BannerState } from '@/components/ui/StatusBanner'
 import KpiStrip from '@/components/ui/KpiStrip'
 import MetricCard from '@/components/ui/MetricCard'
+import { Panel } from '@/components/ui/PanelHeader'
+import { Table, Td, Th, ThSort, Tr } from '@/components/ui/Table'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
 import WindowPicker from '@/components/ui/WindowPicker'
 import Tabs, { type TabItem } from '@/components/ui/Tabs'
@@ -530,7 +532,7 @@ function QueueHealthDetails({ model, verdict }: { model: QueueModel; verdict: Ve
   return (
     <div data-queue-health="" className="flex flex-col gap-3.5">
       <HealthMeter model={model} verdict={verdict} />
-      <p data-ownership-note="" className="m-0 text-[12px] text-[var(--color-text-muted)]">{OWNERSHIP_SENTENCE}</p>
+      <p data-ownership-note="" className="m-0 text-xs text-[var(--color-text-muted)]">{OWNERSHIP_SENTENCE}</p>
       <DimensionGrid dimensions={model.dimensions} />
     </div>
   )
@@ -557,7 +559,7 @@ export function HealthMeter({ model, verdict }: { model: QueueModel; verdict: Ve
   const pillLabel = score >= 70 ? 'Healthy' : score >= 33 ? 'At risk' : 'Blocked'
   return (
     <div>
-      <div className="text-[11px] uppercase font-medium text-[var(--color-text-muted)] mb-1.5" style={{ letterSpacing: 'var(--tracking-wider)' }}>
+      <div className="eyebrow uppercase mb-1.5 text-[var(--color-text-muted)]">
         Queue health
       </div>
       <div className="flex items-end justify-between">
@@ -565,10 +567,10 @@ export function HealthMeter({ model, verdict }: { model: QueueModel; verdict: Ve
           <span className="font-bold tabular-nums leading-none" style={{ fontSize: 'var(--text-display-lg)', color: t.meter, letterSpacing: '-0.02em' }}>
             {verdict === 'PENDING' ? '—' : score}
           </span>
-          <span className="text-[13px] text-[var(--color-text-muted)] ml-1">/ 100</span>
+          <span className="text-sm text-[var(--color-text-muted)] ml-1">/ 100</span>
         </div>
         <span
-          className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold"
+          className="inline-flex items-center px-2.5 py-1 rounded-full text-2xs font-semibold"
           style={{ background: t.pillBg, border: `1px solid ${t.pillBd}`, color: t.pillFg }}
         >
           {pillLabel}
@@ -599,30 +601,17 @@ function DimensionGrid({ dimensions }: { dimensions: DimensionScore[] }) {
   )
 }
 
+/** A weighted dimension: the one KPI tile at `sm` (W29b UIX-09) — its weight, its score in its tone, the score's bar. */
 function DimensionTile({ dim }: { dim: DimensionScore }) {
-  const valueColor = dim.tone === 'bad' ? 'var(--status-failed)' : dim.tone === 'warn' ? 'var(--status-broken)' : 'var(--status-passed)'
-  const barColor   = dim.tone === 'bad' ? 'var(--status-failed)' : dim.tone === 'warn' ? 'var(--status-broken)' : 'var(--status-passed)'
   return (
-    <div
-      className="rounded-sm px-2.5 py-2 border"
-      style={{ background: 'rgba(255,255,255,0.025)', borderColor: 'var(--color-border)' }}
-    >
-      <div
-        className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] flex justify-between"
-        style={{ letterSpacing: 'var(--tracking-wider)' }}
-      >
-        <span>{dim.label}</span>
-        <span className="text-[var(--color-text-faint)] font-medium">{Math.round(dim.weight * 100)}%</span>
-      </div>
-      <div className="flex items-center gap-2 mt-1.5">
-        <span className="text-[14px] font-semibold tabular-nums min-w-[40px]" style={{ color: valueColor }}>
-          {Math.round(dim.score)}
-        </span>
-        <div className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: 'var(--color-bg-secondary)' }}>
-          <i className="block h-full rounded-full" style={{ width: `${dim.score}%`, background: barColor }} />
-        </div>
-      </div>
-    </div>
+    <MetricCard
+      size="sm"
+      title={dim.label}
+      note={`${Math.round(dim.weight * 100)}%`}
+      metric={{ value: Math.round(dim.score) }}
+      tone={dim.tone}
+      bar={dim.score}
+    />
   )
 }
 
@@ -671,7 +660,7 @@ function trendSpark(
   }
   const hint = `${days}d · not enough data for a trend line`
   return (
-    <span data-spark-hint="" title={hint} className="block max-w-[9.5rem] text-right text-[11px] leading-tight text-[var(--color-text-faint)]">
+    <span data-spark-hint="" title={hint} className="block max-w-[9.5rem] text-right text-2xs leading-tight text-[var(--color-text-faint)]">
       {hint}
     </span>
   )
@@ -710,8 +699,6 @@ function EscapeRateTile({ escape }: { escape: EscapeState }) {
   return (
     <div data-escape-measured={data ? String(data.measured && data.rate != null) : undefined} className="min-w-0 h-full">
       <MetricCard
-        compact
-        icon={null}
         title="Escape rate"
         hint={hint}
         loading={!data && !escape.error && Boolean(escape.isLoading)}
@@ -796,12 +783,10 @@ export function DefectKpiStrip({
     <section aria-label="Defect KPIs">
       <KpiStrip>
         {[
-          <MetricCard key="open" compact icon={null} title="Open defects" metric={{ value: openValue }} sparkline={openSpark} />,
-          <MetricCard key="p0p1" compact icon={null} title="P0 / P1 open" metric={{ value: p0p1Value }} sparkline={p0p1Spark} />,
+          <MetricCard key="open" title="Open defects" metric={{ value: openValue }} sparkline={openSpark} />,
+          <MetricCard key="p0p1" title="P0 / P1 open" metric={{ value: p0p1Value }} sparkline={p0p1Spark} />,
           <MetricCard
             key="mttr"
-            compact
-            icon={null}
             title="Time to resolve"
             hint={trend
               ? `Mean time to resolve, over the defects resolved in the last ${n} days`
@@ -812,8 +797,6 @@ export function DefectKpiStrip({
           <EscapeRateTile key="escape" escape={escape} />,
           <MetricCard
             key="oldest"
-            compact
-            icon={null}
             title="Oldest open P0"
             metric={{ value: oldestP0Days != null ? `${oldestP0Days}d` : '—' }}
             sparkline={oldestP0Gauge}
@@ -878,16 +861,21 @@ function DefectsTable({
     return arr
   }, [filtered, sortKey])
 
+  // One sort per column, in one direction each (the oldest first; P0 first; Open first).
+  const onSort = (key: string) => setSortKey(key as SortKey)
   return (
-    <CardShell
+    // Words never wrap in the header (a tab read "In / progress", the title "Age / ↓" on CI's fonts at 1280 px):
+    // when the title and the actions do not fit one line, the actions take a second one.
+    <Panel
+      nowrapTitle
       title={
         <>
-          All defects <span className="text-[11.5px] text-[var(--color-text-muted)] font-normal ml-2">
+          All defects <span className="text-xs text-[var(--color-text-muted)] font-normal ml-2">
             <strong>{rows.length}</strong> · sorted by {sortKey === 'age' ? 'Age ↓' : sortKey === 'severity' ? 'Severity ↑' : 'Status ↑'}
           </span>
         </>
       }
-      rightSlot={
+      actions={
         <>
           {statusFilter}
           <div
@@ -900,7 +888,7 @@ function DefectsTable({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search defects, Jira keys, owners…"
-              className="bg-transparent text-[12px] text-[var(--color-text)] outline-none w-[220px]"
+              className="bg-transparent text-xs text-[var(--color-text)] outline-none w-[220px]"
               aria-label="Search defects"
             />
           </div>
@@ -908,17 +896,21 @@ function DefectsTable({
       }
     >
       <div className="overflow-x-auto">
-        <table aria-label="Defects" className="w-full text-[12.5px]">
+        {/* compact (px-2 py-1.5), not dense: the standard's uppercase sort headers with their chevrons are ~37 px
+            wider than the old mixed-case ones, which left the Title column 26 px above its 240 px floor at 1280 px
+            (a wide-font proxy for CI's DejaVu Sans overflowed by 48 px). Compact gives the 64 px back (Title 322 at
+            1280, and the proxy fits as the old table did); rows get 4 px shorter, nothing gets smaller. */}
+        <Table aria-label="Defects" density="compact">
           <thead>
-            <tr style={{ background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)' }}>
-              <Th label="Key" />
-              <Th label="Title" />
-              <ThSort label="Severity" active={sortKey === 'severity'} onClick={() => setSortKey('severity')} />
-              <ThSort label="Status"   active={sortKey === 'status'}   onClick={() => setSortKey('status')} />
-              <Th label="Owner" />
-              <Th label="Jira" />
-              <ThSort label="Age" active={sortKey === 'age'} onClick={() => setSortKey('age')} sortDir={sortKey === 'age' ? '↓' : undefined} />
-              <Th label="Actions" align="right" />
+            <tr>
+              <Th>Key</Th>
+              <Th>Title</Th>
+              <ThSort label="Severity" sortKey="severity" currentKey={sortKey} dir="asc" onSort={onSort} />
+              <ThSort label="Status" sortKey="status" currentKey={sortKey} dir="asc" onSort={onSort} />
+              <Th>Owner</Th>
+              <Th>Jira</Th>
+              <ThSort label="Age" sortKey="age" currentKey={sortKey} dir="desc" onSort={onSort} numeric />
+              <Th className="text-right">Actions</Th>
             </tr>
           </thead>
           <tbody>
@@ -941,9 +933,9 @@ function DefectsTable({
               />
             ))}
           </tbody>
-        </table>
+        </Table>
       </div>
-    </CardShell>
+    </Panel>
   )
 }
 
@@ -956,13 +948,13 @@ function DefectsTable({
 function OwnerCell({ row }: { row: DefectRow }) {
   const { primary, secondary } = ownerLines(row)
   if (!primary) {
-    return <span data-owner="none" className="text-[11.5px] text-[var(--color-text-muted)]">Unassigned</span>
+    return <span data-owner="none" className="text-xs text-[var(--color-text-muted)]">Unassigned</span>
   }
   const full = secondary ? `${primary} · ${secondary}` : primary
   return (
     <div data-owner={row.assignee_name?.trim() ? 'assignee' : 'team'} className="flex flex-col gap-0.5 min-w-0 max-w-[160px]" title={full}>
-      <span className="text-[12px] text-[var(--color-text)] truncate">{primary}</span>
-      {secondary && <span className="text-[10.5px] text-[var(--color-text-muted)] truncate">{secondary}</span>}
+      <span className="text-xs text-[var(--color-text)] truncate">{primary}</span>
+      {secondary && <span className="text-2xs text-[var(--color-text-muted)] truncate">{secondary}</span>}
     </div>
   )
 }
@@ -1010,63 +1002,63 @@ function DefectRowEl({
 
   return (
     <>
-    <tr
+    {/* The `?defect=` row is the table's selected row (`Tr selected`: the accent tint and the 3 px accent bar on its
+        first cell); it keeps `data-highlighted` (the specs read it). A P0 row keeps its 4 % data tint (it says
+        something about the row; the grey hover does not), unless it is the selected one. Nothing opens a row. */}
+    <Tr
       ref={rowRef}
       data-defect-row={row.id}
       data-highlighted={highlighted ? 'true' : undefined}
-      style={{
-        background: highlighted
-          ? 'color-mix(in srgb, var(--color-accent) 8%, transparent)'
-          : isP0 ? 'color-mix(in srgb, var(--status-failed) 4%, transparent)' : 'transparent',
-        borderBottom: '1px solid var(--color-border)',
-      }}
-      className="transition-colors hover:bg-[var(--color-bg-hover)]"
+      selected={highlighted}
+      interactive={false}
+      style={!highlighted && isP0 ? { background: 'color-mix(in srgb, var(--status-failed) 4%, transparent)' } : undefined}
     >
-      <td
-        className="font-mono text-[11.5px] text-[var(--color-text-secondary)] whitespace-nowrap"
-        // The `?defect=` row's accent left border (on the cell: a <tr> draws no border of its own here).
-        style={{ padding: '10px 12px', boxShadow: highlighted ? 'inset 3px 0 0 var(--color-accent)' : undefined }}
+      <Td
+        className="font-mono text-xs text-[var(--color-text-secondary)] whitespace-nowrap"
+        // The selected row's 3 px accent bar, on the first cell: the same bar `.table-row[data-selected]` draws,
+        // kept inline as well (the page test reads the cell's own style; a cell paints over its row).
+        style={highlighted ? { boxShadow: 'inset 3px 0 0 var(--color-accent)' } : undefined}
       >
         {row.keyLabel}
-      </td>
+      </Td>
       {/* w-full max-w-0: the title takes the room the other columns leave and
           truncates in it. Without it a nowrap title sized its column to the
           whole text, and at 1280 px a "not filed (offline)" Jira chip pushed
           Actions out of the card (W06 local demo). */}
-      <td className="w-full max-w-0" style={{ padding: '10px 12px', minWidth: 240 }}>
+      <Td className="w-full max-w-0" style={{ minWidth: 240 }}>
         <div className="flex flex-col gap-0.5 min-w-0">
-          <span className="text-[12.5px] text-[var(--color-text)] truncate">{row.titleText}</span>
-          <span className="text-[10.5px] text-[var(--color-text-muted)] truncate">
+          <span className="text-sm text-[var(--color-text)] truncate">{row.titleText}</span>
+          <span className="text-2xs text-[var(--color-text-muted)] truncate">
             {row.subtitleText}
           </span>
         </div>
-      </td>
-      <td style={{ padding: '10px 12px' }}>
+      </Td>
+      <Td>
         <span
-          className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-full text-[10.5px] font-semibold"
+          className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-full text-2xs font-semibold"
           style={{ background: sev.bg, border: `1px solid ${sev.bd}`, color: sev.fg }}
           data-severity={row.severity}
         >
           <i aria-hidden style={{ width: 5, height: 5, borderRadius: 999, background: sev.dot }} />
           {row.severity}
         </span>
-      </td>
-      <td style={{ padding: '10px 12px' }}>
-        <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-[11.5px]" style={{ color: statusColor }}>
+      </Td>
+      <Td>
+        <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs" style={{ color: statusColor }}>
           <i aria-hidden style={{ width: 6, height: 6, borderRadius: 999, background: 'currentColor' }} />
           {row.statusLabel}
         </span>
-      </td>
-      <td style={{ padding: '10px 12px' }}>
+      </Td>
+      <Td>
         <OwnerCell row={row} />
-      </td>
-      <td style={{ padding: '10px 12px' }}>
+      </Td>
+      <Td>
         {row.isUnlinked ? (
           // DEF-06: an approval that tried to file a ticket says what happened, the reason on hover.
           <span
             data-jira-filing={filing ? row.jira_filing_status ?? undefined : undefined}
             title={filing ? row.jira_filing_reason ?? undefined : undefined}
-            className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10.5px] italic font-mono whitespace-nowrap"
+            className="inline-flex items-center px-1.5 py-0.5 rounded-md text-2xs italic font-mono whitespace-nowrap"
             style={{
               background: 'transparent',
               border: `1px dashed ${filing && row.jira_filing_status !== 'not_filed' ? 'color-mix(in srgb, var(--status-broken) 45%, transparent)' : 'var(--color-border)'}`,
@@ -1082,7 +1074,7 @@ function DefectRowEl({
             rel="noopener noreferrer"
             aria-label={`Open ${row.jiraKey ?? row.keyLabel} in Jira`}
             title={`Open ${row.jiraKey ?? row.keyLabel} in Jira`}
-            className="inline-flex items-center gap-1 whitespace-nowrap text-[10.5px] font-mono px-1.5 py-0.5 rounded-md"
+            className="inline-flex items-center gap-1 whitespace-nowrap text-2xs font-mono px-1.5 py-0.5 rounded-md"
             style={{ background: 'color-mix(in srgb, var(--color-accent) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--color-accent) 25%, transparent)', color: 'var(--color-accent)' }}
           >
             {row.jiraKey ?? row.jira_ticket_id}
@@ -1090,7 +1082,7 @@ function DefectRowEl({
           </a>
         ) : (
           <span
-            className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10.5px] font-mono"
+            className="inline-flex items-center px-1.5 py-0.5 rounded-md text-2xs font-mono"
             style={{ background: 'color-mix(in srgb, var(--color-accent) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--color-accent) 25%, transparent)', color: 'var(--color-accent)' }}
           >
             {row.jiraKey ?? row.jira_ticket_id}
@@ -1099,7 +1091,7 @@ function DefectRowEl({
         {row.jira_ticket_id && row.jira_status && (
           // US-6.2: Jira status mirrored by the 15-min sync-back beat.
           <span
-            className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] ml-1"
+            className="inline-flex items-center px-1.5 py-0.5 rounded-md text-2xs ml-1"
             style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-muted)' }}
             title="Jira status (mirrored every ~15 min)"
           >
@@ -1108,20 +1100,20 @@ function DefectRowEl({
         )}
         {row.external_status_conflict && (
           <span
-            className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] ml-1"
+            className="inline-flex items-center px-1.5 py-0.5 rounded-md text-2xs ml-1"
             style={{ border: '1px solid color-mix(in srgb, var(--status-broken) 40%, transparent)', color: 'var(--status-broken)', background: 'color-mix(in srgb, var(--status-broken) 10%, transparent)' }}
             title="Jira reports this issue as done, but the failure signature still fired within the last 7 days."
           >
             closed in Jira but still failing
           </span>
         )}
-      </td>
-      <td className="text-right" style={{ padding: '10px 12px' }}>
-        <span className="whitespace-nowrap text-[11.5px] tabular-nums font-semibold" style={{ color: ageColor }}>
+      </Td>
+      <Td numeric>
+        <span className="whitespace-nowrap text-xs font-semibold" style={{ color: ageColor }}>
           {row.ageLabel}
         </span>
-      </td>
-      <td style={{ padding: '10px 12px', textAlign: 'right' }}>
+      </Td>
+      <Td className="text-right">
         {/* Controlled by the row: the chosen action's form opens UNDER the row (a cell cannot host a row). */}
         <DefectRowActions
           defect={row.source}
@@ -1132,8 +1124,8 @@ function DefectRowEl({
             else if (formKey) closeForm(formKey)
           }}
         />
-      </td>
-    </tr>
+      </Td>
+    </Tr>
     {action && formKey && (
       // Across all eight columns; its content can never widen the table (InlineRowSection).
       <InlineRowSection colSpan={8}>
@@ -1147,48 +1139,6 @@ function DefectRowEl({
       </InlineRowSection>
     )}
     </>
-  )
-}
-
-function Th({ label, align }: { label: string; align?: 'right' }) {
-  return (
-    <th
-      style={{
-        padding: '8px 12px',
-        textAlign: align ?? 'left',
-        color: 'var(--color-text-muted)',
-        fontWeight: 500,
-        fontSize: 10.5,
-        textTransform: 'uppercase',
-        letterSpacing: 'var(--tracking-wider)',
-      }}
-    >
-      {label}
-    </th>
-  )
-}
-
-function ThSort({
-  label, active, onClick, sortDir,
-}: { label: string; active?: boolean; onClick: () => void; sortDir?: '↑' | '↓' }) {
-  return (
-    <th
-      aria-sort={active && sortDir === '↓' ? 'descending' : active && sortDir === '↑' ? 'ascending' : undefined}
-      style={{
-        padding: '8px 12px',
-        textAlign: 'left',
-        color: active ? 'var(--color-text)' : 'var(--color-text-muted)',
-        fontWeight: 500,
-        fontSize: 10.5,
-        textTransform: 'uppercase',
-        letterSpacing: 'var(--tracking-wider)',
-        cursor: 'pointer',
-      }}
-    >
-      <button type="button" onClick={onClick} className="inline-flex items-center gap-1 text-inherit">
-        {label} <span aria-hidden className="opacity-70">{sortDir ?? '↕'}</span>
-      </button>
-    </th>
   )
 }
 
@@ -1209,16 +1159,17 @@ function JiraBridgeCard({ model }: { model: QueueModel }) {
   const linkedCount = model.total - model.unlinkedTotal
   const linkedPct = model.total > 0 ? Math.round((linkedCount / model.total) * 100) : 100
   return (
-    <CardShell
+    <Panel
+      nowrapTitle
       title={
         <span className="inline-flex items-center gap-2 text-[var(--color-text)]">
           <ShieldCheck className="h-3.5 w-3.5" style={{ color: 'var(--color-accent)' }} />
-          Jira bridge · <code className="font-mono text-[11.5px]" style={{ color: 'var(--color-accent)' }}>{host}</code>
+          Jira bridge · <code className="font-mono text-xs" style={{ color: 'var(--color-accent)' }}>{host}</code>
         </span>
       }
-      rightSlot={
+      actions={
         <span
-          className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-full text-[10.5px] font-semibold"
+          className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-full text-2xs font-semibold"
           style={{ background: `color-mix(in srgb, ${badge.color} 15%, transparent)`, color: badge.color, border: `1px solid color-mix(in srgb, ${badge.color} 25%, transparent)` }}
         >
           <i aria-hidden style={{ width: 6, height: 6, borderRadius: 999, background: badge.color }} />
@@ -1227,18 +1178,18 @@ function JiraBridgeCard({ model }: { model: QueueModel }) {
       }
     >
       {state !== 'connected' && (
-        <p className="px-4 pt-3 pb-0 m-0 text-[12px] text-[var(--color-text-secondary)]">
+        <p className="px-4 pt-3 pb-0 m-0 text-xs text-[var(--color-text-secondary)]">
           {state === 'not_configured'
             ? <>No Jira workspace is configured, so nothing here is syncing. The link columns below reflect ticket ids already stored on these defects. <Link to="/settings/integrations" style={{ color: 'var(--color-accent)' }}>Configure Jira →</Link></>
             : <>Integration settings are readable by QA leads and admins only, so this view cannot confirm whether Jira is connected.</>}
         </p>
       )}
-      <div className="px-4 py-3 flex flex-col gap-1.5 text-[12px]">
+      <div className="px-4 py-3 flex flex-col gap-1.5 text-xs">
         <BridgeRow l="Linked defects" v={<>{linkedCount} / {model.total} <span className="text-[var(--color-text-muted)]">({linkedPct}%)</span></>} />
         <BridgeRow l="Unlinked" v={<span style={{ color: model.unlinkedTotal > 0 ? 'var(--status-broken)' : 'var(--status-passed)' }}>{model.unlinkedTotal}{model.unlinkedP0 > 0 ? ` · ${model.unlinkedP0} P0` : ''}</span>} />
       </div>
       <div
-        className="flex items-center justify-between gap-2 px-4 py-2 text-[11.5px] text-[var(--color-text-muted)]"
+        className="flex items-center justify-between gap-2 px-4 py-2 text-xs text-[var(--color-text-muted)]"
         style={{ borderTop: '1px solid var(--color-border)' }}
       >
         <span>{state === 'connected' ? `Project key ${config?.jira_default_project_key ?? '—'}` : 'Not syncing'}</span>
@@ -1250,7 +1201,7 @@ function JiraBridgeCard({ model }: { model: QueueModel }) {
           Bridge settings →
         </Link>
       </div>
-    </CardShell>
+    </Panel>
   )
 }
 
@@ -1270,38 +1221,38 @@ function ComponentBreakdown({ model }: { model: QueueModel }) {
     .slice(0, 6)
   if (entries.length === 0) {
     return (
-      <CardShell title="Where defects live" rightSlot={<span>0 open</span>}>
-        <div className="px-4 py-6 text-center text-[13px] text-[var(--color-text-secondary)]">
+      <Panel nowrapTitle title="Where defects live" actions={<span>0 open</span>}>
+        <div className="px-4 py-6 text-center text-sm text-[var(--color-text-secondary)]">
           No open defects to break down by component.
         </div>
-      </CardShell>
+      </Panel>
     )
   }
   const max = Math.max(...entries.map(([, v]) => v.total))
   return (
-    <CardShell title="Where defects live" rightSlot={<span>open by component</span>}>
+    <Panel nowrapTitle title="Where defects live" actions={<span>open by component</span>}>
       <div className="px-4 py-3 flex flex-col gap-1.5">
-        <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-2">{model.open + model.inProgress} open defects by component, severity stacked.</p>
+        <p className="text-xs text-[var(--color-text-muted)] m-0 mb-2">{model.open + model.inProgress} open defects by component, severity stacked.</p>
         {entries.map(([name, v]) => {
           const widthPct = (v.total / max) * 100
           return (
             <div key={name} className="grid items-center gap-2.5" style={{ gridTemplateColumns: '90px 1fr 28px' }}>
-              <span className="font-mono text-[11.5px] text-[var(--color-text-secondary)] truncate">{name}</span>
+              <span className="font-mono text-xs text-[var(--color-text-secondary)] truncate">{name}</span>
               <div className="flex h-3 rounded-sm overflow-hidden" style={{ background: 'var(--color-bg-secondary)', width: `${widthPct}%` }}>
                 {SEVERITY_ORDER.map((level) => v.bySev[level] > 0 && (
                   <span key={level} data-severity-segment={level} style={{ flex: v.bySev[level], background: SEVERITY_STYLE[level].dot }} />
                 ))}
               </div>
-              <span className="text-[11.5px] tabular-nums text-right text-[var(--color-text-secondary)]">{v.total}</span>
+              <span className="text-xs tabular-nums text-right text-[var(--color-text-secondary)]">{v.total}</span>
             </div>
           )
         })}
-        <div className="flex items-center gap-3.5 mt-2.5 text-[10.5px] text-[var(--color-text-muted)] flex-wrap">
+        <div className="flex items-center gap-3.5 mt-2.5 text-2xs text-[var(--color-text-muted)] flex-wrap">
           {/* The ONE severity palette's dots (W29a UIX-07), the same as the bars above. */}
           {SEVERITY_ORDER.map((level) => <Legend key={level} color={SEVERITY_STYLE[level].dot} label={level} />)}
         </div>
       </div>
-    </CardShell>
+    </Panel>
   )
 }
 
@@ -1311,30 +1262,6 @@ function Legend({ color, label }: { color: string; label: string }) {
       <i aria-hidden className="inline-block w-2 h-2 rounded-sm" style={{ background: color }} />
       {label}
     </span>
-  )
-}
-
-// ── Shared shell ─────────────────────────────────────────────────────────
-function CardShell({
-  title, rightSlot, children,
-}: { title: React.ReactNode; rightSlot?: React.ReactNode; children?: React.ReactNode }) {
-  return (
-    <div
-      className="overflow-hidden rounded-xl"
-      style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
-    >
-      {/* Words never wrap here (a tab read "In / progress", the title "Age / ↓" on
-          CI's fonts at 1280 px); when the title and the right slot do not fit one
-          line, the right slot takes a second one. */}
-      <div
-        className="flex flex-wrap items-center justify-between gap-x-2.5 gap-y-2 px-4 py-3"
-        style={{ borderBottom: '1px solid var(--color-border)' }}
-      >
-        <h3 className="whitespace-nowrap text-[13px] font-semibold m-0 text-[var(--color-text)]">{title}</h3>
-        {rightSlot && <div className="flex items-center gap-2.5 whitespace-nowrap text-[12px] text-[var(--color-text-muted)]">{rightSlot}</div>}
-      </div>
-      {children}
-    </div>
   )
 }
 
@@ -1565,7 +1492,7 @@ export default function DefectsPage() {
     model.oldestP0
       ? {
           label: 'Oldest open P0',
-          value: <><code className="font-mono text-[12px]">{model.oldestP0.keyLabel}</code> · {model.oldestP0.ageLabel}</>,
+          value: <><code className="font-mono text-xs">{model.oldestP0.keyLabel}</code> · {model.oldestP0.ageLabel}</>,
         }
       : { label: 'Net this week', value: `${netThisWeek > 0 ? '+' : ''}${netThisWeek}` },
     { label: 'Queue health', value: verdict === 'PENDING' ? '—' : `${model.composite}/100` },
@@ -1594,7 +1521,7 @@ export default function DefectsPage() {
                 aria-pressed={scopeOn}
                 title={RELEASE_SCOPE_TITLE}
                 onClick={() => setScopeOn(!scopeOn)}
-                className="inline-flex items-center rounded-full border px-2.5 py-1 text-[12.5px] transition-colors"
+                className="inline-flex items-center rounded-full border px-2.5 py-1 text-sm transition-colors"
                 style={{
                   background: scopeOn ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',
                   borderColor: scopeOn ? 'color-mix(in srgb, var(--color-accent) 30%, transparent)' : 'var(--color-border)',
@@ -1613,7 +1540,7 @@ export default function DefectsPage() {
             <button
               type="button"
               onClick={openIntake}
-              className="btn-primary inline-flex items-center gap-1 !px-3 !py-1.5 text-[13px]"
+              className="btn-primary inline-flex items-center gap-1 !px-3 !py-1.5 text-sm"
             >
               <Plus className="h-3.5 w-3.5" aria-hidden="true" />
               New defect
@@ -1649,7 +1576,7 @@ export default function DefectsPage() {
                 <span
                   data-defects-scope-chip=""
                   title={RELEASE_SCOPE_TITLE}
-                  className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium whitespace-nowrap"
+                  className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-2xs font-medium whitespace-nowrap"
                   style={{
                     background: 'color-mix(in srgb, var(--color-accent) 12%, transparent)',
                     borderColor: 'color-mix(in srgb, var(--color-accent) 30%, transparent)',
@@ -1670,14 +1597,14 @@ export default function DefectsPage() {
       <DefectKpiStrip model={model} trend={trend} escape={escape} />
 
       {allDefectsData && capped && (
-        <p data-defects-capped="" className="text-[12px] text-[var(--color-text-muted)]">
+        <p data-defects-capped="" className="text-xs text-[var(--color-text-muted)]">
           {trend
             ? `The table and the tabs cover the newest ${allDefectsData.items.length} of ${allDefectsData.total} defects; the KPI tiles count all of them.`
             : `The counts and the table cover the newest ${allDefectsData.items.length} of ${allDefectsData.total} defects.`}
         </p>
       )}
       {allDefectsData && highlightMissing && (
-        <p data-defect-missing="" className="text-[12px] text-[var(--color-text-muted)]">
+        <p data-defect-missing="" className="text-xs text-[var(--color-text-muted)]">
           That defect is not among the newest {allDefectsData.items.length} loaded.
         </p>
       )}
@@ -1728,7 +1655,7 @@ export default function DefectsPage() {
         <QueueHealthDetails model={model} verdict={verdict} />
       </Disclosure>
 
-      <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-[12px] text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
+      <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-xs text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
         Wider screen needed for the full layout. Some sections may overflow on narrow viewports.
       </div>
     </PageShell>

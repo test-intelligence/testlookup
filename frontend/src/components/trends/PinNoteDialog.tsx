@@ -167,12 +167,12 @@ export default function PinNoteDialog({ range, note = null, suite, onClose, onSa
             aria-describedby={`${id}-count`}
             autoFocus
           />
-          <span id={`${id}-count`} data-pin-note="count" className="self-end text-[11px] tabular-nums text-[var(--color-text-secondary)]">
+          <span id={`${id}-count`} data-pin-note="count" className="self-end text-2xs tabular-nums text-[var(--color-text-secondary)]">
             {count} / {NOTE_TEXT_MAX}
           </span>
         </div>
         {offeredSuite ? (
-          <label className="mt-2 flex items-center gap-2 text-[13px] text-[var(--color-text)]">
+          <label className="mt-2 flex items-center gap-2 text-sm text-[var(--color-text)]">
             <input type="checkbox" data-pin-note="suite" checked={onlySuite} onChange={(e) => setOnlySuite(e.target.checked)} />
             <span>
               Only for suite <span className="font-mono">{offeredSuite}</span>

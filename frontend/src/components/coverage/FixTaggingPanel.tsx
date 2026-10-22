@@ -117,15 +117,15 @@ function UntaggedPage({
               />
             )}
             <div className="min-w-0 flex-1">
-              <div className="truncate font-mono text-[11.5px] text-[var(--color-text)]" title={test.test_name}>
+              <div className="truncate font-mono text-xs text-[var(--color-text)]" title={test.test_name}>
                 {test.test_name}
               </div>
               {test.class_name && (
-                <div className="truncate text-[11px] text-[var(--color-text-muted)]" title={test.class_name}>
+                <div className="truncate text-2xs text-[var(--color-text-muted)]" title={test.class_name}>
                   {test.class_name}
                 </div>
               )}
-              <div className="mt-0.5 text-[11px] text-[var(--color-text-secondary)]">
+              <div className="mt-0.5 text-2xs text-[var(--color-text-secondary)]">
                 {plural(test.executions, 'execution')} · last {lastSeen(test.last_executed_at)} · catalogue:{' '}
                 {movable ? (test.catalogue_suite ?? '—') : 'not in the catalogue yet'}
               </div>

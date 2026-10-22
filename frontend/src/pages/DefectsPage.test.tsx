@@ -1525,3 +1525,77 @@ describe('DefectsPage — the Jira filing chip (DEF-06)', () => {
     expect(jira('filed').querySelector('[data-jira-filing]')).toBeNull()
   })
 })
+
+// ── W29b UIX-06 / UIX-09: the one table, the one panel, the one tile ─────
+describe('DefectsPage — the one table, panel and KPI tile (W29b)', () => {
+  const defect = (id: string, extra: Record<string, unknown> = {}) => ({
+    id, project_id: 'proj-1', title: `defect ${id}`, test_name: `t ${id}`, failure_category: 'FLAKY',
+    resolution_status: 'OPEN', created_at: ago(2), ...extra,
+  })
+
+  it('is the compact Table: Severity, Status and Age sort through buttons in th[aria-sort]; Age is a number column', async () => {
+    await mockRows([defect('a'), defect('b', { created_at: ago(9) })])
+    renderDefects()
+    const table = await screen.findByRole('table', { name: 'Defects' })
+    // compact, not dense: the sort headers' width at 1280 px (DefectsPage.tsx, the comment on the Table).
+    expect(table).toHaveAttribute('data-density', 'compact')
+    const headers = within(table).getAllByRole('columnheader')
+    const header = (name: string) => headers.find(h => h.textContent === name) as HTMLElement
+    for (const h of headers) expect(h).toHaveClass('th')
+    // Sortable headers: a real button, the label exactly (a chevron icon, never a text arrow), aria-sort on the th.
+    expect(header('Age')).toHaveAttribute('aria-sort', 'descending')
+    expect(header('Severity')).toHaveAttribute('aria-sort', 'none')
+    expect(header('Status')).toHaveAttribute('aria-sort', 'none')
+    for (const name of ['Severity', 'Status', 'Age']) {
+      const button = within(header(name)).getByRole('button', { name })
+      expect(button).toHaveClass('th-sort')
+      expect(button.textContent).toBe(name)
+    }
+    for (const name of ['Key', 'Title', 'Owner', 'Jira', 'Actions']) {
+      expect(within(header(name)).queryByRole('button')).toBeNull()
+      expect(header(name)).not.toHaveAttribute('aria-sort')
+    }
+    // Age: right-aligned with tabular figures, in its header AND its cells.
+    expect(header('Age')).toHaveClass('th-num')
+    expect(cellOf(rowOf('defect a'), 'Age')).toHaveClass('td', 'td-num')
+    expect(cellOf(rowOf('defect a'), 'Title')).not.toHaveClass('td-num')
+    // Severity sorts P0 first, so its header reads ascending once chosen.
+    fireEvent.click(within(header('Severity')).getByRole('button', { name: 'Severity' }))
+    expect(header('Severity')).toHaveAttribute('aria-sort', 'ascending')
+    expect(header('Age')).toHaveAttribute('aria-sort', 'none')
+    // Body rows are the table's rows; nothing opens one.
+    expect(rowOf('defect a')).toHaveClass('table-row', 'cursor-default')
+  })
+
+  it('marks the ?defect= row selected as well as highlighted, and only that row', async () => {
+    await mockRows([defect('d1'), defect('d2')])
+    renderDefects('?defect=d2')
+    await screen.findByRole('table', { name: 'Defects' })
+    expect(rowOf('defect d2')).toHaveAttribute('data-selected', '')
+    expect(rowOf('defect d2')).toHaveAttribute('data-highlighted', 'true')
+    expect(rowOf('defect d1')).not.toHaveAttribute('data-selected')
+    // The selected row's tint is the class's (no inline background over it).
+    expect(rowOf('defect d2').style.background).toBe('')
+  })
+
+  it('draws its cards as Panels with an h3, and the queue-health dimensions as sm tiles with no sheen', async () => {
+    await mockRows([defect('a', { severity: 'CRITICAL' })])
+    renderDefects()
+    const table = await screen.findByRole('table', { name: 'Defects' })
+    const tablePanel = table.closest('[data-panel]') as HTMLElement
+    expect(tablePanel).toHaveClass('card')
+    expect(within(tablePanel).getByRole('heading', { level: 3 })).toHaveTextContent(/^All defects/)
+    const sections = screen.getByRole('tabpanel', { name: 'Where defects live' })
+    expect(within(sections).getByRole('heading', { level: 3, name: 'Where defects live' }).closest('[data-panel]')).not.toBeNull()
+
+    const details = openHealthDetails()
+    const tiles = details.querySelectorAll('[data-metric-card="stat"]')
+    expect(tiles).toHaveLength(4)
+    for (const tile of tiles) {
+      expect(tile.getAttribute('style') ?? '').not.toMatch(/rgba\(/)
+      expect(tile.querySelector('[data-metric-bar]')).not.toBeNull()
+    }
+    expect(details.querySelector('[data-metric-card="compact"]')).toBeNull()
+    expect(details.innerHTML).not.toMatch(/rgba\(/)
+  })
+})

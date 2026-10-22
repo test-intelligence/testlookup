@@ -229,6 +229,22 @@ describe('ExecutionTimeSection: what it draws', () => {
     expect((window as { __xss?: unknown }).__xss).toBeUndefined()
   })
 
+  it('W29b: the per-suite table is the one dense Table; its five number columns are right-aligned in header and cells', async () => {
+    renderSection(<ExecutionTimeSection days={14} suiteFilter={null} />)
+    await screen.findByRole('heading', { name: SUITES_TITLE })
+    const table = (document.querySelector('[data-execution-suites]') as HTMLElement).querySelector('table') as HTMLTableElement
+    expect(table).toHaveAttribute('data-density', 'dense')
+    const headers = within(table).getAllByRole('columnheader')
+    expect(headers.map((h) => h.className.split(/\s+/).filter((c) => c === 'th' || c === 'th-num'))).toEqual([
+      ['th'], ['th', 'th-num'], ['th', 'th-num'], ['th', 'th-num'], ['th', 'th-num'], ['th', 'th-num'],
+    ])
+    const checkout = document.querySelector('[data-execution-suite="checkout"]') as HTMLElement
+    expect(checkout).toHaveClass('table-row', 'cursor-default')
+    expect([...checkout.querySelectorAll('td')].map((td) => td.classList.contains('td-num'))).toEqual([false, true, true, true, true, true])
+    // The page-made header recipe is gone: no header carries its own size or tracking.
+    for (const h of headers) expect(h.className).not.toMatch(/text-xs|tracking-wider|font-medium/)
+  })
+
   it('regressions: the slowed suite with its figures and rule; the tests block says why it is not measured', async () => {
     renderSection(<ExecutionTimeSection days={14} suiteFilter={null} />)
     const block = (await screen.findByRole('heading', { name: REGRESSIONS_TITLE })).closest('section') as HTMLElement
