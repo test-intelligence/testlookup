@@ -29,6 +29,7 @@
  */
 import { useSyncExternalStore } from 'react'
 import { VIZ_STATUSES, type VizStatus } from '@/lib/viz/contracts'
+import { STATUS_ENCODING, type DecalKind } from './statusEncoding'
 
 export const SERIES_COUNT = 8
 export const SEQ_COUNT = 7
@@ -283,30 +284,9 @@ export function useChartTokens(): ChartTokens {
 
 // ── Status encodings: colour + icon + decal + label, fixed per status ─────────
 
-export type DecalKind = 'solid' | 'diagonal' | 'crosshatch' | 'dashes' | 'dots'
-
-export interface StatusEncoding {
-  label: string
-  /** lucide-react icon name. */
-  icon: string
-  /**
-   * `<pattern id>` suffix for SVG fills (Recharts). Each chart prefixes it with
-   * its own id (`patterns.tsx`), so two charts on a page never share a pattern.
-   */
-  patternId: string
-  /** Decal id; `echartsDecal()` turns it into an ECharts decal object, `patterns.tsx` into an SVG pattern. */
-  decal: DecalKind
-  /** `stroke-dasharray` for a line drawn in this status; `undefined` = solid. */
-  dash: string | undefined
-}
-
-export const STATUS_ENCODING: Record<VizStatus, StatusEncoding> = {
-  passed: { label: 'Passed', icon: 'CircleCheck', patternId: 'chart-pattern-passed', decal: 'solid', dash: undefined },
-  failed: { label: 'Failed', icon: 'CircleX', patternId: 'chart-pattern-failed', decal: 'diagonal', dash: '7 3' },
-  broken: { label: 'Broken', icon: 'CircleAlert', patternId: 'chart-pattern-broken', decal: 'crosshatch', dash: '9 3 2 3' },
-  skipped: { label: 'Skipped', icon: 'CircleSlash', patternId: 'chart-pattern-skipped', decal: 'dashes', dash: '2 3' },
-  unknown: { label: 'Unknown', icon: 'CircleHelp', patternId: 'chart-pattern-unknown', decal: 'dots', dash: '1 4' },
-}
+// The label / icon / decal maps live in `statusEncoding.ts`, so the eager status vocabulary can read them without
+// this module; re-exported here for the kit.
+export { FLAKY_MARKER, STATUS_ENCODING, type DecalKind, type StatusEncoding } from './statusEncoding'
 
 /**
  * The edge a NON-TEXT mark is drawn with where it must be told from the card
@@ -341,14 +321,6 @@ export const STATUS_STACK_ORDER: readonly VizStatus[] = VIZ_STATUSES
 export function statusStackRank(status: VizStatus): number {
   return STATUS_STACK_ORDER.indexOf(status)
 }
-
-/** Flaky is an attribute marker over a status, not a status. */
-export const FLAKY_MARKER = {
-  label: 'Flaky',
-  icon: 'Shuffle',
-  patternId: 'chart-pattern-flaky-marker',
-  token: '--status-flaky',
-} as const
 
 /** The subset of ECharts' `DecalObject` this kit uses (kept structural: no echarts import here). */
 export interface ChartDecal {
