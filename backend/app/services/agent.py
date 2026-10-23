@@ -443,12 +443,24 @@ async def run_triage_agent(
     from app.tools.investigation_context import (
         InvestigationContext,
         reset_investigation_context,
+        reset_prefetched_observations,
         set_investigation_context,
+        set_prefetched_observations,
     )
     from app.tools.recall_memory import reset_recall_context, set_recall_context
     _investigation_token = None
+    _investigation: InvestigationContext | None = None
+    _integrations = None
     if project_id and run_id:
-        _investigation_token = set_investigation_context(InvestigationContext(
+        # W10 INT-01: the Splunk / OpenShift settings saved in the UI (and the
+        # project's index / namespace), resolved BEFORE any HTTP and before the
+        # model call. A bound config, the 30 s process cache, or one short
+        # session that is closed when this returns; None -> the tools use the
+        # environment. Nothing is resolved when no context would be bound.
+        from app.services.integration_config_service import runtime_integrations_for
+
+        _integrations = await runtime_integrations_for(project_id)
+        _investigation = InvestigationContext(
             project_id=str(project_id),
             run_id=str(run_id),
             test_case_id=str(test_case_id),
@@ -458,14 +470,38 @@ async def run_triage_agent(
             timestamp=timestamp,
             ocp_pod_name=ocp_pod_name,
             ocp_namespace=ocp_namespace,
-        ))
+            integrations=_integrations,
+        )
+        _investigation_token = set_investigation_context(_investigation)
     _recall_token = set_recall_context(
         project_id=project_id,
         test_fingerprint=test_fingerprint,
         test_name=test_name,
         error_message=error_message,
     )
+    _prefetch_token = None
+    server_steps: list = []
     try:
+        # W10 D-4: the server runs the authorized Splunk / OpenShift lookups
+        # itself, so the evidence exists even when a small model skips the
+        # tools or the model call fails. They go into the question, a memo
+        # answers a repeated tool call, and they are kept on every exit below.
+        if _investigation is not None:
+            from app.services.integration_evidence import gather_server_side_lookups
+
+            server_steps = await gather_server_side_lookups(_investigation, _integrations)
+            _prefetch_token = set_prefetched_observations(
+                {action.tool: observation for action, observation in server_steps}
+            )
+            if server_steps:
+                user_question = (
+                    user_question
+                    + "\n\nServer-side lookups already ran (do not call these tools again):\n"
+                    + "\n".join(
+                        f"- {action.tool}: {observation[:2000]}"
+                        for action, observation in server_steps
+                    )
+                )
         with _tracer.start_as_current_span(
             "agent.react_triage",
             attributes={
@@ -482,7 +518,9 @@ async def run_triage_agent(
                 executor = _build_executor()
                 result = await executor.ainvoke({"input": user_question})
                 raw_output = result.get("output", "{}")
-                intermediate_steps = result.get("intermediate_steps", [])
+                executor_steps = list(result.get("intermediate_steps", []) or [])
+                # The server-side lookups first: they ran before the model.
+                intermediate_steps = server_steps + executor_steps
 
                 # Parse JSON from agent output
                 analysis = _parse_agent_output(raw_output)
@@ -526,7 +564,7 @@ async def run_triage_agent(
                         "provider": settings.LLM_PROVIDER,
                         "model": settings.LLM_MODEL,
                         "tools_used": tools_used,
-                        "iterations": len(intermediate_steps),
+                        "iterations": len(executor_steps),
                         "confidence": analysis.get("confidence_score", 0),
                         "category": analysis.get("failure_category", "UNKNOWN"),
                     },
@@ -535,7 +573,7 @@ async def run_triage_agent(
                 triage_span.set_attribute("agent.tools_used", ",".join(tools_used))
                 triage_span.set_attribute("agent.confidence_score", analysis.get("confidence_score", 0))
                 triage_span.set_attribute("agent.failure_category", analysis.get("failure_category", "UNKNOWN"))
-                triage_span.set_attribute("agent.iterations", len(intermediate_steps))
+                triage_span.set_attribute("agent.iterations", len(executor_steps))
 
             except Exception as e:
                 logger.error("Agent execution failed: %s", e, exc_info=True)
@@ -597,8 +635,23 @@ async def run_triage_agent(
                     routing["mode_used"] = None
                     routing["fallback_from"] = "llm"
                     routing["fallback_reason"] = "llm_error"
-                intermediate_steps = []
+                # W10 D-4: the model failed, the server-side evidence did not.
+                intermediate_steps = list(server_steps)
+
+            # Every exit (the model's answer, the rules fallback, the canned
+            # stub) carries what the server-side lookups found.
+            if server_steps:
+                analysis["tools_used"] = _extract_tools_used(intermediate_steps)
+                analysis["evidence_references"] = _tool_observation_references(
+                    intermediate_steps,
+                    project_id=project_id,
+                    run_id=run_id,
+                    pipeline_run_id=pipeline_run_id,
+                    test_case_id=test_case_id,
+                )
     finally:
+        if _prefetch_token is not None:
+            reset_prefetched_observations(_prefetch_token)
         reset_recall_context(_recall_token)
         if _investigation_token is not None:
             reset_investigation_context(_investigation_token)

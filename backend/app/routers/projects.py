@@ -242,6 +242,13 @@ async def update_project(
         )
 
     await db.commit()
+    # W10 INT-03: the AI log / pod lookups of this project read its Splunk
+    # index and OpenShift namespace through a 30 s cache; this process sees
+    # the change at once (other processes within 30 s).
+    if "splunk_index" in changed or "ocp_namespace" in changed:
+        from app.services.integration_config_service import invalidate_runtime_integrations
+
+        invalidate_runtime_integrations(project_id)
     await db.refresh(project)
     return project
 

@@ -55,7 +55,7 @@ def register(mcp) -> None:  # noqa: ANN001
             f"- **Jira Project Key:** {data.get('jira_project_key') or 'Not configured'}",
             f"- **Splunk Index:** {data.get('splunk_index') or 'Not configured'}",
             f"- **OCP Namespace:** {data.get('ocp_namespace') or 'Not configured'}",
-            f"- **Jenkins Job Pattern:** {data.get('jenkins_job_pattern') or 'Not configured'}",
+            f"- **Jenkins Job Pattern (not used):** {data.get('jenkins_job_pattern') or 'Not configured'}",
             "",
             f"- **Created:** {data.get('created_at', 'N/A')}",
             f"- **Updated:** {data.get('updated_at', 'N/A')}",
@@ -80,9 +80,9 @@ def register(mcp) -> None:  # noqa: ANN001
             slug: URL-safe identifier, lowercase, hyphens (e.g., "payments-service").
             description: Optional description of the project.
             jira_project_key: Jira project key for auto-ticket creation (e.g., "PAY").
-            splunk_index: Splunk index to query for service logs.
-            ocp_namespace: OpenShift namespace for pod event correlation.
-            jenkins_job_pattern: Jenkins job name pattern for build detection.
+            splunk_index: Splunk index the AI log lookups use for this project (empty: the deployment's index).
+            ocp_namespace: OpenShift namespace used for a run that names a pod but no namespace.
+            jenkins_job_pattern: Stored for older clients; TestLookup does not use it.
         """
         body = {
             "name": name,

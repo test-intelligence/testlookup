@@ -790,12 +790,13 @@ async def _load_integrations_config(db: AsyncSession) -> dict:
     return await resolve_global_integrations(db, overrides=overrides)
 
 
-@router.get("/integrations", response_model=IntegrationsConfigRead)
-async def get_integrations_config(
-    _: User = Depends(require_role(UserRole.QA_LEAD)),
-    db: AsyncSession = Depends(get_db),
-) -> IntegrationsConfigRead:
-    cfg = await _load_integrations_config(db)
+def _integrations_read(cfg: dict) -> IntegrationsConfigRead:
+    """The read model of the effective integrations config (GET and PUT).
+
+    Secrets are answered as ``*_set`` booleans only. ``environment_fields``
+    names the keys whose shown value comes from the process environment
+    because they were never saved here (W10 INT-01); never a value.
+    """
     return IntegrationsConfigRead(
         jira_enabled=cfg["jira_enabled"],
         jira_domain=cfg["jira_domain"],
@@ -818,7 +819,48 @@ async def get_integrations_config(
         teams_webhook_set=bool(cfg["teams_webhook_url"]),
         github_repo=cfg["github_repo"],
         github_token_set=bool(cfg.get("github_token")),
+        environment_fields=list(cfg.get("_environment_fields") or []),
     )
+
+
+#: The saved hosts an outbound integration call sends a credential to, as the
+#: URL the egress guard checks (W10 INT-01; ``jira_domain`` is a bare host).
+_INTEGRATION_HOST_FIELDS = {
+    "splunk_base_url": lambda value: value,
+    "ocp_api_url": lambda value: value,
+    "jira_domain": lambda value: f"https://{value}",
+}
+
+
+async def _integration_host_problems(updates: dict) -> list[dict]:
+    """422 items for every saved integration host the egress guard refuses.
+
+    Checked BEFORE anything is written. The blocked address is logged (with
+    the field name) and never echoed to the caller.
+    """
+    from app.core.integration_values import TARGET_NOT_ALLOWED
+    from app.services.url_safety import egress_block_reason
+
+    problems: list[dict] = []
+    for field_name, as_url in _INTEGRATION_HOST_FIELDS.items():
+        value = updates.get(field_name)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        block = await egress_block_reason(as_url(value.strip()))
+        if block is None:
+            continue
+        logger.info("Integrations save refused: field=%s reason=%s", field_name, block)
+        problems.append({"loc": ["body", field_name], "msg": TARGET_NOT_ALLOWED, "type": "target_not_allowed"})
+    return problems
+
+
+@router.get("/integrations", response_model=IntegrationsConfigRead)
+async def get_integrations_config(
+    _: User = Depends(require_role(UserRole.QA_LEAD)),
+    db: AsyncSession = Depends(get_db),
+) -> IntegrationsConfigRead:
+    cfg = await _load_integrations_config(db)
+    return _integrations_read(cfg)
 
 
 @router.put("/integrations", response_model=IntegrationsConfigRead)
@@ -828,10 +870,19 @@ async def update_integrations_config(
     db: AsyncSession = Depends(get_db),
 ) -> IntegrationsConfigRead:
     from sqlalchemy import select
+    from app.services.integration_config_service import invalidate_runtime_integrations
     from app.services.secret_service import expire_secret, has_secret
-    existing = await _load_integrations_config(db)
+
     updates = payload.model_dump(exclude_none=True)
-    merged = {**existing, **updates}
+    # INT-02 (D21): the Slack "Default Channel" is accepted and ignored -- an
+    # incoming webhook is bound to one channel. Never stored, never audited.
+    updates.pop("slack_default_channel", None)
+
+    # INT-01: a loopback / link-local / unspecified host is refused before
+    # anything (a secret included) is written.
+    host_problems = await _integration_host_problems(updates)
+    if host_problems:
+        raise HTTPException(status_code=422, detail=host_problems)
 
     # Store secrets separately
     secret_fields = {
@@ -862,9 +913,14 @@ async def update_integrations_config(
         [await has_secret(db, _INTEGRATIONS_KEY, key_name) for key_name in secret_fields]
     )
 
-    store_value = strip_secrets_from_config(_INTEGRATIONS_KEY, merged)
+    # INT-01 task 2: persist the SAVED row plus the changes -- never the
+    # environment-merged view, or every env value would be frozen into the
+    # row as if an admin had typed it, and the environment would stop being
+    # the fallback for keys never saved.
     result = await db.execute(select(AppSetting).where(AppSetting.key == _INTEGRATIONS_KEY))
     row = result.scalar_one_or_none()
+    saved = dict(row.value) if row and row.value else {}
+    store_value = strip_secrets_from_config(_INTEGRATIONS_KEY, {**saved, **updates})
     if row:
         row.value = store_value
         row.updated_by = current_user.id
@@ -874,31 +930,11 @@ async def update_integrations_config(
 
     await log_settings_change(db, _INTEGRATIONS_KEY, "updated", current_user, changed_fields=list(updates.keys()))
     await db.commit()
+    # This process reads the new values at once; others within 30 s.
+    invalidate_runtime_integrations()
     logger.info("Integrations configuration updated by user_id=%s", current_user.id)
     effective = await _load_integrations_config(db)
-    return IntegrationsConfigRead(
-        jira_enabled=effective["jira_enabled"],
-        jira_domain=effective["jira_domain"],
-        jira_email=effective["jira_email"],
-        jira_token_set=bool(effective.get("jira_api_token")),
-        jira_default_project_key=effective["jira_default_project_key"],
-        splunk_enabled=effective["splunk_enabled"],
-        splunk_base_url=effective["splunk_base_url"],
-        splunk_token_set=bool(effective.get("splunk_api_token")),
-        ocp_enabled=effective["ocp_enabled"],
-        ocp_api_url=effective["ocp_api_url"],
-        ocp_token_set=bool(effective.get("ocp_sa_token")),
-        ocp_default_namespace=effective["ocp_default_namespace"],
-        slack_enabled=effective["slack_enabled"],
-        slack_webhook_url=None,
-        slack_webhook_set=bool(effective["slack_webhook_url"]),
-        slack_default_channel=effective["slack_default_channel"],
-        teams_enabled=effective["teams_enabled"],
-        teams_webhook_url=None,
-        teams_webhook_set=bool(effective["teams_webhook_url"]),
-        github_repo=effective["github_repo"],
-        github_token_set=bool(effective.get("github_token")),
-    )
+    return _integrations_read(effective)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1168,10 +1204,16 @@ async def get_integration_health(
     _: User = Depends(require_role(UserRole.QA_LEAD)),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return health status for all tracked integration providers."""
+    """Return health status for all tracked integration providers.
+
+    The deployment-wide view only (``scope_key = ''``): per-project GitHub /
+    GitLab rows (W10 INT-04) are Integration Health's ``?scope=all`` read.
+    """
     from sqlalchemy import select as sa_select
     from app.models.postgres import IntegrationHealthCheck
-    result = await db.execute(sa_select(IntegrationHealthCheck))
+    result = await db.execute(
+        sa_select(IntegrationHealthCheck).where(IntegrationHealthCheck.scope_key == "")
+    )
     return [
         {
             "provider": h.provider,

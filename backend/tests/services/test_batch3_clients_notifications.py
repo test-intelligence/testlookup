@@ -24,12 +24,19 @@ def test_jira_auth_header_and_adf_contains_link():
 
 
 @pytest.mark.asyncio
-async def test_jira_create_issue_success():
+async def test_jira_create_issue_success(monkeypatch):
+    from app.core.config import settings as real_settings
+
     resp = SimpleNamespace(
         raise_for_status=lambda: None,
         json=lambda: {"id": "1", "key": "QA-1"},
     )
     shared_client = SimpleNamespace(post=AsyncMock(return_value=resp))
+    # W10 (contract §0.5): the legacy client now refuses offline (the real
+    # AI_OFFLINE_MODE defaults True) and takes the resolved Jira config.
+    monkeypatch.setattr(real_settings, "AI_OFFLINE_MODE", False)
+    cfg = {"enabled": True, "domain": "jira.example.com", "email": "a", "api_token": "b",
+           "default_project_key": "QA"}
 
     # jira_client now uses the pooled ``get_http_client`` singleton instead
     # of constructing per-request ``httpx.AsyncClient`` instances. Patch the
@@ -42,7 +49,7 @@ async def test_jira_create_issue_success():
         s.JIRA_DOMAIN = "jira.example.com"
         s.JIRA_EMAIL = "a"
         s.JIRA_API_TOKEN = "b"
-        out = await jira_client.create_jira_issue("PRJ", "test", "r1", "sum", "do")
+        out = await jira_client.create_jira_issue("PRJ", "test", "r1", "sum", "do", cfg=cfg)
     assert out["ticket_key"] == "QA-1"
 
 

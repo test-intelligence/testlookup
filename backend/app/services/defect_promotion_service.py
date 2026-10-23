@@ -786,18 +786,39 @@ async def _create_jira_ticket(
     severity: str,
     labels: list[str],
 ) -> tuple[Optional[dict], Optional[str]]:
-    try:
-        from app.services.jira_client import create_jira_issue
+    """File a Jira ticket through the legacy client; ``(None, None)`` on any failure.
 
-        ticket = await create_jira_issue(
-            project_key=project_key,
-            test_name=title[:255],
-            run_id="defect-promotion",
-            ai_summary=description[:1000],
-            recommended_action=f"Severity: {severity}. Labels: {', '.join(labels) if labels else 'none'}",
-            stack_trace="",
-            dashboard_link="",
-        )
+    W10 INT-01 (D-7): the Jira config saved in Settings > Integrations is read
+    on a short session of its own, CLOSED before the call (a failed read uses
+    the environment); a refusal (offline, disabled, unconfigured, a blocked
+    host) is swallowed like every other error here, logged with its reason.
+    """
+    try:
+        from app.db.postgres import AsyncSessionLocal
+        from app.services.defect_jira_service import resolve_jira_config
+        from app.services.jira_client import JiraUnavailable, create_jira_issue, env_jira_config
+
+        try:
+            async with AsyncSessionLocal() as config_db:
+                jira_cfg = await resolve_jira_config(config_db)
+        except Exception as cfg_exc:  # noqa: BLE001 -- the environment is the documented fallback
+            logger.warning("Jira config read failed (%s); using the environment", type(cfg_exc).__name__)
+            jira_cfg = env_jira_config()
+
+        try:
+            ticket = await create_jira_issue(
+                project_key=project_key,
+                test_name=title[:255],
+                run_id="defect-promotion",
+                ai_summary=description[:1000],
+                recommended_action=f"Severity: {severity}. Labels: {', '.join(labels) if labels else 'none'}",
+                stack_trace="",
+                dashboard_link="",
+                cfg=jira_cfg,
+            )
+        except JiraUnavailable as unavailable:
+            logger.warning("Jira ticket creation refused: %s", unavailable.reason)
+            return None, None
         url = ticket.get("ticket_url") if ticket else None
         return ticket, url
     except Exception as exc:

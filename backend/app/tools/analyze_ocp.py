@@ -1,9 +1,23 @@
-"""LangChain tool: analyze OpenShift pod events."""
+"""LangChain tool: analyze OpenShift pod events.
+
+W10 INT-01 / INT-03: the OpenShift API URL and token come from the bound
+runtime integration config (``investigation_context.runtime_integrations()``);
+``ocp_client`` falls back to its own ``settings`` when nothing is bound. A
+lookup the server already ran for this investigation (D-4) answers from the
+memo instead of a second call.
+"""
 from langchain_core.tools import tool
 
+from app.core.config import settings
 from app.services.ocp_client import analyze_pod_events
-from app.tools.investigation_context import get_investigation_context
+from app.tools.investigation_context import (
+    get_investigation_context,
+    prefetched_observation,
+    runtime_integrations,
+)
 from app.services.evidence_sanitizer import sanitize_reference_text
+
+TOOL_NAME = "analyze_openshift_pod_events"
 
 
 @tool
@@ -35,8 +49,13 @@ async def analyze_openshift_pod_events(pod_name: str, namespace: str, timestamp_
         or timestamp_utc != context.timestamp
     ):
         return "OpenShift lookup denied: requested scope differs from the investigation context."
+    if not settings.AI_OFFLINE_MODE:
+        memo = prefetched_observation(TOOL_NAME)
+        if memo is not None:
+            return memo
     result = await analyze_pod_events(
-        context.ocp_pod_name, context.ocp_namespace, context.timestamp
+        context.ocp_pod_name, context.ocp_namespace, context.timestamp,
+        config=runtime_integrations(),
     )
     safe, _, _ = sanitize_reference_text(str(result), limit=6000)
     return safe

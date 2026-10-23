@@ -8,15 +8,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.deps import get_current_active_user, require_role, resolve_project_scope
-from app.db.postgres import get_db
+from app.db.postgres import get_db, release_read_connection
 from app.models.postgres import AIAnalysis, Defect, TestCase, TestRun, User, UserRole
 from app.models.schemas import JiraIssueRequest, JiraIssueResponse
 from app.services.action_policy import (
     ActionStatus,
     check_jira_ticket_creation_policy,
 )
+from app.services.defect_jira_service import resolve_jira_config
 from app.services.defect_status import ACTIVE_STATUSES
-from app.services.jira_client import create_jira_issue
+from app.services.jira_client import JiraUnavailable, create_jira_issue
 
 router = APIRouter(prefix="/api/v1/integrations", tags=["Integrations"])
 
@@ -96,18 +97,30 @@ async def create_jira_defect(
 
     stack_trace = tc.error_message or "Stack trace not available"
     dashboard_link = f"{settings.public_base_url}/runs/{request.run_id}/tests/{tc.id}"
+    test_name = tc.test_name
+
+    # W10 INT-01 (D-7): the Jira saved in Settings > Integrations, read on
+    # this request's session; the connection is then handed back (nothing is
+    # pending on this branch), so no pooled connection waits on Jira.
+    jira_cfg = await resolve_jira_config(db)
+    await release_read_connection(db)
 
     try:
         result = await create_jira_issue(
             project_key=request.project_key,
-            test_name=tc.test_name,
+            test_name=test_name,
             run_id=str(request.run_id),
             ai_summary=request.ai_summary,
             recommended_action=request.recommended_action,
             stack_trace=stack_trace,
             dashboard_link=dashboard_link,
+            cfg=jira_cfg,
         )
         return JiraIssueResponse(**result)
+    except JiraUnavailable as e:
+        # Offline mode, a disabled / unconfigured integration or a refused
+        # host: nothing was sent, and the sentence says which.
+        raise HTTPException(status_code=503, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:

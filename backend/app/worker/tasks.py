@@ -4490,22 +4490,84 @@ async def _send_to_dlq(
     queue="default",
 )
 def run_integration_health_probes(self):
-    """Periodic task: probe all configured integrations and record health status."""
+    """Periodic task: probe all configured integrations and record health status.
+
+    W10 INT-04: the deployment-wide probes, then every enabled per-project
+    GitHub / GitLab integration (read on one short session, probed over HTTP
+    with no session open, at most 5 in flight), persisted together; this full
+    sweep also prunes the rows of integrations that were removed or disabled.
+    """
     logger.info("[Task %s] Running integration health probes", self.request.id)
 
     async def _probe():
-        from app.services.integration_probe_service import persist_probe_results, run_all_probes
+        from app.services.integration_probe_service import (
+            persist_probe_results,
+            run_all_probes,
+            run_project_probes,
+        )
 
         results = await run_all_probes()
-        await persist_probe_results(results)
+        project_results = await run_project_probes(prune=True)
+        results += project_results
+        await persist_probe_results(results, prune=True)
         healthy = sum(1 for r in results if r.status == "healthy")
         skipped = sum(1 for r in results if r.status == "skipped")
         logger.info(
-            "Integration probes complete: %d healthy, %d degraded/down, %d skipped",
+            "Integration probes complete: %d healthy, %d degraded/down, %d skipped "
+            "(%d deployment-wide, %d per project)",
             healthy, len(results) - healthy - skipped, skipped,
+            len(results) - len(project_results), len(project_results),
         )
 
     _run_async(_probe())
+
+
+# ── W10 INT-03: OpenShift pod metadata of an ingested run ────────────────────
+
+
+@celery_app.task(
+    name="app.worker.tasks.enrich_run_ocp_metadata",
+    bind=True,
+    max_retries=0,
+    queue="ingestion",
+)
+def enrich_run_ocp_metadata(self, run_id: str):
+    """Fetch the OpenShift pod metadata of a run the sentinel ingest committed.
+
+    Enqueued by ``ingestion.process_sentinel`` after its commit, for a run
+    that names a pod and a namespace. ``ocp_enrichment.pod_metadata_for_run``
+    reads on a short session that it closes, then makes the pod and events
+    calls with no session open; this task then stages the write on its own
+    short session and commits it (the worker owns the transaction). Best
+    effort: every failure is logged (structlog kwargs, no token) and
+    swallowed, and nothing is retried (the run is complete without it).
+    """
+
+    async def _enrich() -> bool:
+        from app.db.postgres import AsyncSessionLocal
+        from app.services.ocp_enrichment import pod_metadata_for_run, stage_ocp_metadata
+
+        result = await pod_metadata_for_run(uuid.UUID(str(run_id)))
+        if result is None:
+            return False
+        enriched_run_id, meta = result
+        async with AsyncSessionLocal() as db:
+            await stage_ocp_metadata(db, enriched_run_id, meta)
+            await db.commit()
+        return True
+
+    try:
+        stored = _run_async(_enrich())
+    except Exception as exc:  # noqa: BLE001 -- enrichment is best-effort
+        _slog.warning(
+            "ocp_enrichment_failed",
+            task_id=str(self.request.id),
+            run_id=str(run_id),
+            error_type=type(exc).__name__,
+        )
+        return {"run_id": str(run_id), "stored": False}
+    _slog.info("ocp_enrichment_done", task_id=str(self.request.id), run_id=str(run_id), stored=stored)
+    return {"run_id": str(run_id), "stored": stored}
 
 
 # ── PMF US-6.2: Jira defect status sync-back ─────────────────────────────────

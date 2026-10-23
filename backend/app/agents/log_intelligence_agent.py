@@ -300,27 +300,44 @@ class LogIntelligenceAgent(BaseAgent):
                 "errors": [],
             }
 
+        # W10 INT-01 / INT-03: the two Splunk tools below run server-side with
+        # no InvestigationContext, so the Splunk settings saved in the UI (and
+        # the project's index) are bound for them on a standalone ContextVar,
+        # resolved once here (a bound config, the 30 s cache, or one short
+        # session closed before any HTTP). Tokens stay in process memory: the
+        # config never enters workflow state, so no checkpoint carries it.
+        from app.services.integration_config_service import runtime_integrations_for
+        from app.tools.investigation_context import (
+            bind_runtime_integrations,
+            reset_runtime_integrations,
+        )
+
+        runtime_cfg = await runtime_integrations_for(state.get("project_id"))
+        integrations_token = bind_runtime_integrations(runtime_cfg)
         cluster_results: list[dict] = []
-        for cluster_id, (service, timestamp, correlation, related) in contexts:
-            try:
-                result = await self.investigate(service, timestamp, correlation, related)
-            except Exception as exc:  # noqa: BLE001 - preserve cluster-level degradation
-                result = {
-                    "status": "failed",
-                    "distributed_trace": {"error": type(exc).__name__},
-                    "log_anomaly": {},
-                    "log_summary": "Log specialist failed for this cluster.",
-                }
-            safe_result, _ = sanitize_persistence_payload(result if isinstance(result, dict) else {})
-            safe_cluster_id, _, _ = sanitize_reference_text(cluster_id, limit=64)
-            cluster_results.append({
-                "cluster_id": safe_cluster_id,
-                "status": safe_result.get("status", "failed"),
-                "distributed_trace": safe_result.get("distributed_trace") or {},
-                "log_anomaly": safe_result.get("log_anomaly") or {},
-                "log_summary": str(safe_result.get("log_summary") or "")[:500],
-                "evidence_refs": list(safe_result.get("evidence_refs") or [])[:20],
-            })
+        try:
+            for cluster_id, (service, timestamp, correlation, related) in contexts:
+                try:
+                    result = await self.investigate(service, timestamp, correlation, related)
+                except Exception as exc:  # noqa: BLE001 - preserve cluster-level degradation
+                    result = {
+                        "status": "failed",
+                        "distributed_trace": {"error": type(exc).__name__},
+                        "log_anomaly": {},
+                        "log_summary": "Log specialist failed for this cluster.",
+                    }
+                safe_result, _ = sanitize_persistence_payload(result if isinstance(result, dict) else {})
+                safe_cluster_id, _, _ = sanitize_reference_text(cluster_id, limit=64)
+                cluster_results.append({
+                    "cluster_id": safe_cluster_id,
+                    "status": safe_result.get("status", "failed"),
+                    "distributed_trace": safe_result.get("distributed_trace") or {},
+                    "log_anomaly": safe_result.get("log_anomaly") or {},
+                    "log_summary": str(safe_result.get("log_summary") or "")[:500],
+                    "evidence_refs": list(safe_result.get("evidence_refs") or [])[:20],
+                })
+        finally:
+            reset_runtime_integrations(integrations_token)
 
         # Reuse the first cluster result for the legacy top-level fields without
         # issuing a duplicate provider/tool call.

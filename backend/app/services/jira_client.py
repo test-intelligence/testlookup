@@ -1,18 +1,62 @@
-"""Jira REST API v3 client with ADF payload builder and self-healing retry."""
+"""Jira REST API v3 client with ADF payload builder and self-healing retry.
+
+W10 INT-01 (D-7): the legacy ticket path (``POST /api/v1/integrations/jira``
+and the triage stage) takes the Jira config saved at ``/settings/integrations``
+(``defect_jira_service.resolve_jira_config``) as ``cfg``; without one it uses
+THIS module's ``settings``. Before anything is sent it refuses, with a fixed
+sentence (``JiraUnavailable``): offline mode FIRST, then a disabled or
+unconfigured integration, then a host the egress guard refuses. A create is
+retried only on errors that provably never reached Jira (a connect failure or
+a pool timeout): a read timeout, a dropped connection or a 5xx may follow a
+created issue and is raised, never re-POSTed.
+"""
 import base64
 import logging
-from typing import Any, cast
+from typing import Any, Optional, cast
 
+import httpx
 
 from app.core.config import settings
 from app.core.http_client import get_http_client
 from app.services.resilience import async_retry
+from app.services.url_safety import egress_block_reason
 
 logger = logging.getLogger(__name__)
 
+LEGACY_JIRA_REASON_TEXT = {
+    "offline_mode": "Jira is unavailable: AI_OFFLINE_MODE is enabled, so outbound calls are blocked.",
+    "disabled": "Jira is unavailable: the Jira integration is disabled in Settings › Integrations.",
+    "not_configured": "Jira is unavailable: set the domain, email and API token in Settings › Integrations.",
+    "target_not_allowed": "Jira is unavailable: Target host is not allowed.",
+}
 
-def _auth_header() -> str:
-    raw = f"{settings.JIRA_EMAIL}:{settings.JIRA_API_TOKEN}"
+#: Errors raised before the request could reach Jira: safe to retry a create.
+_UNSENT_ERRORS: tuple[type[Exception], ...] = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
+
+
+class JiraUnavailable(RuntimeError):
+    """The legacy Jira path refused before sending anything (``reason`` is a
+    key of ``LEGACY_JIRA_REASON_TEXT``; the message is its sentence)."""
+
+    def __init__(self, reason: str):
+        super().__init__(LEGACY_JIRA_REASON_TEXT.get(reason, reason))
+        self.reason = reason
+
+
+def env_jira_config() -> dict:
+    """The Jira config of THIS module's settings, in ``resolve_jira_config``'s shape."""
+    return {
+        "enabled": settings.JIRA_ENABLED,
+        "domain": settings.JIRA_DOMAIN,
+        "email": settings.JIRA_EMAIL,
+        "api_token": settings.JIRA_API_TOKEN,
+        "default_project_key": settings.JIRA_DEFAULT_PROJECT_KEY,
+    }
+
+
+def _auth_header(cfg: Optional[dict] = None) -> str:
+    cfg = cfg if cfg is not None else env_jira_config()
+    raw = f"{cfg.get('email')}:{cfg.get('api_token')}"
     return f"Basic {base64.b64encode(raw.encode()).decode()}"
 
 
@@ -61,16 +105,33 @@ async def create_jira_issue(
     recommended_action: str,
     stack_trace: str = "",
     dashboard_link: str = "",
+    *,
+    cfg: Optional[dict] = None,
 ) -> dict:
-    """Create a Jira Bug issue from AI analysis output."""
-    if not settings.JIRA_ENABLED:
-        raise RuntimeError("Jira integration is not enabled (JIRA_ENABLED=false)")
+    """Create a Jira Bug issue from AI analysis output.
 
-    url = f"https://{settings.JIRA_DOMAIN}/rest/api/3/issue"
+    ``cfg`` is ``resolve_jira_config``'s dict (the settings saved in the UI);
+    ``None`` uses this module's settings. Raises ``JiraUnavailable`` before
+    any request when offline mode is on (checked first), the integration is
+    disabled or unconfigured, or the host is not allowed.
+    """
+    from app.services.defect_jira_service import availability_reason
+
+    cfg = cfg if cfg is not None else env_jira_config()
+    reason = availability_reason(cfg)
+    if reason is not None:
+        raise JiraUnavailable(reason)
+    domain = str(cfg["domain"]).strip()
+    block = await egress_block_reason(f"https://{domain}")
+    if block is not None:
+        logger.info("Legacy Jira create refused before sending credentials: %s", block)
+        raise JiraUnavailable("target_not_allowed")
+
+    url = f"https://{domain}/rest/api/3/issue"
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/json",
-        "Authorization": _auth_header(),
+        "Authorization": _auth_header(cfg),
     }
     payload = {
         "fields": {
@@ -91,13 +152,18 @@ async def create_jira_issue(
         return {
             "ticket_id": data["id"],
             "ticket_key": ticket_key,
-            "ticket_url": f"https://{settings.JIRA_DOMAIN}/browse/{ticket_key}",
+            "ticket_url": f"https://{domain}/browse/{ticket_key}",
         }
 
+    # "A timeout is not a failure": only errors that never reached Jira are
+    # retried; anything after the request was sent (a read timeout, a dropped
+    # connection, any HTTP status) may follow a created issue and is raised.
     return cast(dict[Any, Any], await async_retry(
         _do_create,
         max_retries=settings.AI_MAX_RETRIES,
         base_delay=2.0,
         max_delay=30.0,
+        retryable_exceptions=_UNSENT_ERRORS,
+        retryable_status_codes=frozenset(),
         operation_name=f"jira_create_issue({project_key}/{test_name[:40]})",
     ))
