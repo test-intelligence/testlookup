@@ -858,6 +858,10 @@ locally by default.
 
 ### Security
 
+- **DOMPurify 3.4.17.** The frontend's and the Mermaid check's DOMPurify
+  override moves from 3.4.16 to 3.4.17 (GHSA-cg2g-xh64-v4q7, critical: a
+  SAFE_FOR_TEMPLATES bypass; GHSA-mrv2-3pqr-j5jr, high: IN_PLACE hook removal).
+
 - **aiohttp 3.14.4 and follow-redirects 1.16.1.** The backend's aiohttp
   (CVE-2026-111064, CVE-2026-111066: denial of service) and the frontend's
   follow-redirects under axios (CVE-2026-111755, CVE-2026-111756: information
