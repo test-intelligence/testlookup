@@ -38,16 +38,12 @@ Design notes
 """
 from __future__ import annotations
 
-import asyncio
-import ipaddress
 import re
-import socket
 import uuid
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Mapping, Optional, Sequence
-from urllib.parse import urlparse
 
 import httpx
 import structlog
@@ -63,6 +59,13 @@ from app.services.run_compare_service import (
     _load_test_rows,
     _status_bucket,
 )
+# The egress guard for an operator- / QA-lead-configured integration base (the
+# PAT is sent to ``api_base_url``): loopback, link-local (cloud metadata) and
+# unspecified addresses are refused, RFC1918 is allowed (self-hosted GHE), a
+# non-resolving host is allowed. Moved to ``url_safety.egress_block_reason`` in
+# W10 and re-exported here under its old name, so the name stays importable
+# and IS the url_safety function.
+from app.services.url_safety import egress_block_reason as _ssrf_block_reason  # noqa: F401 -- re-exported: five modules import this name and ~40 tests patch it per module
 
 logger = structlog.get_logger("services.github_checks")
 
@@ -78,40 +81,6 @@ def _secret_key(project_id: uuid.UUID | str) -> str:
 # Commit-SHA recognizer. Rejects short SHAs because the Checks API
 # requires a full 40-char SHA on the target commit.
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
-
-
-async def _ssrf_block_reason(url: str) -> Optional[str]:
-    """Return a reason string if ``url``'s host resolves to a loopback,
-    link-local, or unspecified address — else ``None``.
-
-    ``api_base_url`` is QA_LEAD-configurable and we send the project's PAT to
-    it (and surface the response body from ``test_connection``), so an
-    unguarded base is an SSRF read primitive: a QA_LEAD could point it at the
-    cloud metadata endpoint (169.254.169.254 → IAM creds) or localhost and use
-    ``repo_owner``/``repo_name`` path-traversal to hit arbitrary internal
-    paths. We block exactly the loopback + link-local + unspecified ranges —
-    those are never a valid GitHub / GitHub-Enterprise base — while
-    INTENTIONALLY allowing RFC1918 private ranges so a self-hosted GHE on a
-    private network still works. A non-resolving host is allowed (don't block
-    initial setup / air-gapped DNS); the check runs at egress time so it also
-    defends against DNS rebinding and pre-existing rows.
-    """
-    host = (urlparse(url).hostname or "").strip()
-    if not host:
-        return "invalid_url"
-    try:
-        infos = await asyncio.to_thread(socket.getaddrinfo, host, None)
-    except Exception:
-        return None  # non-resolving → allow (setup-friendly, no SSRF reach)
-    for info in infos:
-        raw = info[4][0]
-        try:
-            addr = ipaddress.ip_address(raw.split("%")[0])
-        except ValueError:
-            continue
-        if addr.is_loopback or addr.is_link_local or addr.is_unspecified:
-            return f"blocked_target:{raw}"
-    return None
 
 
 class GitHubChecksDisabledError(RuntimeError):

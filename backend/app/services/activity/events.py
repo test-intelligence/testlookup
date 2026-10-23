@@ -377,6 +377,11 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("webhook.updated", "integration", "webhook", "Webhook {entity_label} changed: {changed}"),
     _spec("webhook.deleted", "integration", "webhook", "Webhook {entity_label} was deleted"),
     _spec("webhook.disabled", "integration", "webhook", "Webhook {entity_label} was disabled"),
+    # W10 INT-07: staged by services/webhook_breaker.py (system actor) in the
+    # delivery's transaction when a subscription is paused after N consecutive
+    # failed deliveries (context: count, threshold, error).
+    _spec("webhook.circuit_opened", "integration", "webhook",
+          "Webhook {entity_label} paused after {count} consecutive failures", actor_types=frozenset({"system"})),
     _spec("integration.connected", "integration", "integration", "{provider} was connected"),
     _spec("integration.disconnected", "integration", "integration", "{provider} was disconnected"),
     _spec("integration.tested", "integration", "integration", "{provider} connection was tested"),

@@ -459,6 +459,16 @@ class Settings(BaseSettings):
     # instead. Any webhook may then target it (user, team or global), so name
     # a chat server only, never an internal API. Empty: none.
     WEBHOOK_PRIVATE_ALLOWED_HOSTS: str = ""
+    # Private-network or loopback hosts an OUTBOUND webhook subscription may
+    # target (comma-separated, EXACT host names, case and a trailing dot aside,
+    # no wildcard, no range). Online, subscriptions go through the public-only
+    # check at create / update and the public-only client at delivery; a host
+    # named here skips both and is reached through the shared client
+    # (HTTP_CA_BUNDLE honoured). Any QA lead of any project may then point a
+    # subscription at it: name a test receiver or a trusted internal endpoint
+    # only. Separate from WEBHOOK_PRIVATE_ALLOWED_HOSTS (chat servers) on
+    # purpose. Offline mode still refuses every delivery. Empty: none. (W10 INT-07)
+    OUTBOUND_WEBHOOK_PRIVATE_ALLOWED_HOSTS: str = ""
     AGENT_MEMORY_RETENTION_DAYS: int = 365
     AI_CONFIDENCE_THRESHOLD: int = 80
     AIQ_GAP_REFINEMENT_ENABLED: bool = False         # AIQ-P4: gap_detection + report_refinement deep stages (default off)
