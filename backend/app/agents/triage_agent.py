@@ -26,7 +26,8 @@ from app.services.action_policy import (
     ActionStatus,
     check_jira_ticket_creation_policy,
 )
-from app.services.jira_client import create_jira_issue
+from app.services.defect_jira_service import availability_reason, resolve_jira_config
+from app.services.jira_client import create_jira_issue, env_jira_config
 from app.services.pipeline_lease import LeaseLost
 from app.services.tool_call_idempotency import JIRA_TICKET_TOOL, prior_tool_calls, run_once
 
@@ -142,10 +143,13 @@ class DefectTriageAgent(BaseAgent):
         # taken off the work list rather than filed again. ``executed`` subjects
         # stay on it: their call replays from the ledger without reaching Jira,
         # which also repairs a defect row the crashed attempt never linked.
-        # Gated by the same flag as the call itself; a failed read falls back to
+        # Gated by the same rule as the call itself; a failed read falls back to
         # the per-call guard, which enforces the same rule.
+        # W10 INT-01 (D-7): that rule reads the Jira saved in Settings >
+        # Integrations, offline mode first; resolved once for the stage.
+        jira_cfg: dict | None = await self._jira_config() if analyses else None
         prior_calls: dict = {}
-        if settings.JIRA_ENABLED and analyses:
+        if jira_cfg is not None and availability_reason(jira_cfg) is None:
             try:
                 prior_calls = await prior_tool_calls(
                     project_id=project_id,
@@ -182,7 +186,9 @@ class DefectTriageAgent(BaseAgent):
                 continue
 
             try:
-                result = await self._triage_one(tc_id, analysis, project_id, test_run_data, state)
+                result = await self._triage_one(
+                    tc_id, analysis, project_id, test_run_data, state, jira_cfg=jira_cfg,
+                )
                 triage_results.append(result)
             except LeaseLost:
                 # The row was reclaimed: stop, never carry on writing under a
@@ -274,6 +280,8 @@ class DefectTriageAgent(BaseAgent):
         project_id: str,
         test_run_data: dict,
         state: dict,
+        *,
+        jira_cfg: dict | None = None,
     ) -> dict:
         """
         Create or skip a defect for one failed test case.
@@ -282,6 +290,9 @@ class DefectTriageAgent(BaseAgent):
         - If an OPEN defect already exists for this test_case_id, skip.
         - Otherwise, atomically insert a new one.
         This prevents duplicate defects from concurrent pipeline runs.
+
+        ``jira_cfg`` is the Jira config the stage resolved (Settings >
+        Integrations); ``None`` resolves it here (W10 INT-01).
         """
         async with AsyncSessionLocal() as db:
             # Look up test case name
@@ -369,7 +380,11 @@ class DefectTriageAgent(BaseAgent):
         # transient Jira failure.
         ticket_key = ticket_url = ticket_id = None
         jira_error = None
-        if settings.JIRA_ENABLED:
+        if jira_cfg is None:
+            jira_cfg = await self._jira_config()
+        # W10 INT-01 (D-7): offline mode first, then the saved integration's
+        # enabled flag and its domain / email / token.
+        if availability_reason(jira_cfg) is None:
             policy_result = await check_jira_ticket_creation_policy(
                 project_id=project_id,
                 confidence_score=analysis.get("confidence_score"),
@@ -389,7 +404,12 @@ class DefectTriageAgent(BaseAgent):
                 }
             try:
                 jira_project_key = await self._get_jira_key(project_id)
-                resolved_project_key = jira_project_key or settings.JIRA_DEFAULT_PROJECT_KEY
+                resolved_project_key = (
+                    jira_project_key
+                    or jira_cfg.get("default_project_key")
+                    or settings.JIRA_DEFAULT_PROJECT_KEY
+                )
+                ticket_cfg = jira_cfg
 
                 async def _file_ticket() -> dict:
                     # No ``labels=``: create_jira_issue has never accepted one.
@@ -404,6 +424,7 @@ class DefectTriageAgent(BaseAgent):
                         recommended_action=", ".join(analysis.get("recommended_actions", [])[:2]),
                         stack_trace="",
                         dashboard_link=f"{settings.public_base_url}/runs/{state['test_run_id']}",
+                        cfg=ticket_cfg,
                     )
 
                 # E7.6: at most one ticket per (test case, test run), however
@@ -489,6 +510,19 @@ class DefectTriageAgent(BaseAgent):
                 )
             )
             await db.commit()
+
+    async def _jira_config(self) -> dict:
+        """The Jira config saved in Settings > Integrations (W10 INT-01).
+
+        Read on a short session that is closed before any Jira call; a failed
+        read falls back to the environment (``jira_client.env_jira_config``).
+        """
+        try:
+            async with AsyncSessionLocal() as db:
+                return await resolve_jira_config(db)
+        except Exception as exc:  # noqa: BLE001 -- the environment is the documented fallback
+            logger.warning("triage_jira_config_unavailable", error_type=type(exc).__name__)
+            return env_jira_config()
 
     async def _get_jira_key(self, project_id: str) -> str | None:
         from app.models.postgres import Project

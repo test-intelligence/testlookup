@@ -270,12 +270,19 @@ export interface IntegrationsConfigRead {
   slack_enabled: boolean
   slack_webhook_url: string | null
   slack_webhook_set: boolean
+  /** @deprecated W10 INT-02: ignored by the server; kept because old servers and fixtures send it. */
   slack_default_channel: string
   teams_enabled: boolean
   teams_webhook_url: string | null
   teams_webhook_set: boolean
   github_repo: string | null
   github_token_set: boolean
+  /**
+   * W10 INT-01: the text and secret keys whose shown value (or `*_set`) comes
+   * from the deployment's environment because the key was never saved here.
+   * Names only, never a value. Optional: an older server sends nothing (read `[]`).
+   */
+  environment_fields?: string[]
 }
 
 export interface IntegrationsConfigUpdate {
@@ -293,7 +300,6 @@ export interface IntegrationsConfigUpdate {
   ocp_default_namespace?: string
   slack_enabled?: boolean
   slack_webhook_url?: string
-  slack_default_channel?: string
   teams_enabled?: boolean
   teams_webhook_url?: string
   github_repo?: string
@@ -368,8 +374,14 @@ export const appSettingsService = {
   getIntegrationsConfig(): Promise<IntegrationsConfigRead> {
     return api.get<IntegrationsConfigRead>('/api/v1/settings/integrations').then(r => r.data)
   },
-  updateIntegrationsConfig(payload: IntegrationsConfigUpdate): Promise<IntegrationsConfigRead> {
-    return api.put<IntegrationsConfigRead>('/api/v1/settings/integrations', payload).then(r => r.data)
+  /**
+   * `opts.suppressToast`: the caller renders the failure itself (W10 INT-01:
+   * a field-level 422 shows under its field; anything else is one toast).
+   */
+  updateIntegrationsConfig(payload: IntegrationsConfigUpdate, opts?: { suppressToast?: boolean }): Promise<IntegrationsConfigRead> {
+    return api
+      .put<IntegrationsConfigRead>('/api/v1/settings/integrations', payload, opts?.suppressToast ? { suppressToast: true } : undefined)
+      .then(r => r.data)
   },
 
   // Data & Storage

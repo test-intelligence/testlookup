@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useState, type ReactNode } from 'react'
 import { Save } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
@@ -7,6 +7,23 @@ import ScopedLink from '@/components/ui/ScopedLink'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import { appSettingsService, type IntegrationsConfigRead, type IntegrationsConfigUpdate } from '@/services/appSettingsService'
 import { usePermissions } from '@/hooks/usePermissions'
+import { fieldErrorsFrom } from '@/utils/fieldErrors'
+import {
+  ENV_HINT,
+  INTEGRATION_FORM_FIELDS,
+  NO_CHANGES,
+  SAVED,
+  SAVE_FAILED,
+  SECRET_SET,
+  SLACK_CHANNEL_HELP_LEAD,
+  SLACK_CHANNEL_HELP_LINK,
+  SLACK_CHANNEL_HELP_TO,
+  changedIntegrationFields,
+  environmentFields,
+  initialIntegrationForm,
+  secretStateLabel,
+  showsEnvHint,
+} from './integrationsForm'
 
 const HELP_TOPIC = helpTopicParam('/settings/integrations')
 
@@ -16,6 +33,8 @@ const HELP_TOPIC = helpTopicParam('/settings/integrations')
  * fields either way, none narrower than a URL needs.
  */
 const FIELD_GRID = 'grid grid-cols-2 gap-3 xl:grid-cols-1'
+
+const INPUT = 'w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50'
 
 function Toggle({ label, checked, onChange, disabled }: { label: string; checked: boolean; onChange: (v: boolean) => void; disabled: boolean }) {
   return (
@@ -27,18 +46,71 @@ function Toggle({ label, checked, onChange, disabled }: { label: string; checked
   )
 }
 
+/**
+ * The lines under an input: the environment hint, a help line, the field's
+ * 422 sentence. Each is a `text-xs` block that wraps inside the card; the input
+ * is described by every one shown.
+ */
+function useFieldLines(name: string, hint: boolean, error: string | undefined, helpId?: string) {
+  const id = useId()
+  const hintId = `${id}-hint`
+  const errorId = `${id}-error`
+  const describedBy = [hint ? hintId : null, helpId ?? null, error ? errorId : null].filter(Boolean).join(' ') || undefined
+  const lines = (
+    <>
+      {hint && (
+        <p id={hintId} data-env-hint={name} className="mt-1 text-xs text-[var(--color-text-muted)]">{ENV_HINT}</p>
+      )}
+      {error && (
+        <p id={errorId} role="alert" data-field-error={name} className="mt-1 text-xs text-[var(--ui-danger-ink)]">{error}</p>
+      )}
+    </>
+  )
+  return { id, describedBy, lines }
+}
+
 // The label is wired to the input by id. Without it every field this renders —
 // Jira URL, user, project key, and the token inputs — is an unnamed edit box to
 // a screen reader, however clear the visible text is.
-function Field({ label, value, onChange, disabled, placeholder, type = 'text' }: {
-  label: string; value: string; onChange: (v: string) => void; disabled: boolean; placeholder?: string; type?: string
+function Field({ name, label, value, onChange, disabled, placeholder, type = 'text', hint = false, error, help, helpId }: {
+  name: string; label: string; value: string; onChange: (v: string) => void; disabled: boolean; placeholder?: string; type?: string
+  /** The shown value comes from the deployment's environment. */
+  hint?: boolean
+  /** The server's sentence for this field (a 422). */
+  error?: string
+  /** A help line under the input (it carries `helpId`). */
+  help?: ReactNode
+  helpId?: string
 }) {
-  const id = useId()
+  const { id, describedBy, lines } = useFieldLines(name, hint, error, help ? helpId : undefined)
   return (
-    <div>
+    <div className="min-w-0">
       <label htmlFor={id} className="block text-xs text-[var(--color-text-muted)] mb-1">{label}</label>
       <input id={id} type={type} value={value} onChange={e => onChange(e.target.value)} disabled={disabled} placeholder={placeholder}
-        className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+        aria-describedby={describedBy} aria-invalid={error ? true : undefined}
+        className={INPUT} />
+      {help}
+      {lines}
+    </div>
+  )
+}
+
+/** A token input: never prefilled; its label says whether one is stored here or by the environment. */
+function SecretField({ id, label, state, value, onChange, disabled, placeholder, error, name, className }: {
+  id: string; label: string; state: string | null; value: string; onChange: (v: string) => void; disabled: boolean
+  /** Shown while none is stored (a stored one shows dots). */
+  placeholder: string; error?: string; name: string; className?: string
+}) {
+  const { describedBy, lines } = useFieldLines(name, false, error)
+  return (
+    <div className={className ?? 'min-w-0'}>
+      <label htmlFor={id} className="block text-xs text-[var(--color-text-muted)] mb-1">
+        {label} {state && <span data-secret-state={name} className={state === SECRET_SET ? 'text-[var(--status-passed)]' : 'text-[var(--color-text-muted)]'}>{state}</span>}
+      </label>
+      <input id={id} type="password" value={value} placeholder={state ? '••••••••' : placeholder} disabled={disabled}
+        onChange={e => onChange(e.target.value)} aria-describedby={describedBy} aria-invalid={error ? true : undefined}
+        className={INPUT} />
+      {lines}
     </div>
   )
 }
@@ -48,26 +120,20 @@ export default function IntegrationsPage() {
   const [config, setConfig] = useState<IntegrationsConfigRead | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  // `initial` is the form as loaded (or as last saved): Save sends only what differs from it.
+  const [initial, setInitial] = useState<IntegrationsConfigUpdate>({})
   const [form, setForm] = useState<IntegrationsConfigUpdate>({})
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+  const [noChanges, setNoChanges] = useState(false)
+  const slackHelpId = useId()
 
   useEffect(() => {
     appSettingsService.getIntegrationsConfig()
       .then(cfg => {
+        const loaded = initialIntegrationForm(cfg)
         setConfig(cfg)
-        setForm({
-          jira_enabled: cfg.jira_enabled,
-          jira_domain: cfg.jira_domain ?? '',
-          jira_email: cfg.jira_email ?? '',
-          jira_default_project_key: cfg.jira_default_project_key,
-          splunk_enabled: cfg.splunk_enabled,
-          splunk_base_url: cfg.splunk_base_url ?? '',
-          ocp_enabled: cfg.ocp_enabled,
-          ocp_api_url: cfg.ocp_api_url ?? '',
-          ocp_default_namespace: cfg.ocp_default_namespace,
-          slack_enabled: cfg.slack_enabled,
-          slack_default_channel: cfg.slack_default_channel,
-          teams_enabled: cfg.teams_enabled,
-        })
+        setInitial(loaded)
+        setForm(loaded)
       })
       .catch(() => toast.error('Could not load integrations'))
       .finally(() => setLoading(false))
@@ -75,13 +141,27 @@ export default function IntegrationsPage() {
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
+    const changed = changedIntegrationFields(initial, form)
+    if (Object.keys(changed).length === 0) {
+      setNoChanges(true)
+      return
+    }
+    setNoChanges(false)
+    setFieldErrors({})
     setSaving(true)
     try {
-      const updated = await appSettingsService.updateIntegrationsConfig(form)
+      const updated = await appSettingsService.updateIntegrationsConfig(changed, { suppressToast: true })
+      const saved = initialIntegrationForm(updated)
       setConfig(updated)
-      toast.success('Integrations saved')
-    } catch {
-      toast.error('Failed to save integrations')
+      setInitial(saved)
+      setForm(saved)
+      toast.success(SAVED)
+    } catch (err) {
+      // A field-level 422 (a refused host, a malformed URL or namespace) shows
+      // under its field and the form keeps what was typed; anything else is one toast.
+      const errors = fieldErrorsFrom(err, INTEGRATION_FORM_FIELDS)
+      if (errors) setFieldErrors(errors)
+      else toast.error(SAVE_FAILED)
     } finally {
       setSaving(false)
     }
@@ -89,10 +169,20 @@ export default function IntegrationsPage() {
 
   function upd(field: keyof IntegrationsConfigUpdate, value: unknown) {
     setForm(prev => ({ ...prev, [field]: value }))
+    setNoChanges(false)
+    setFieldErrors(prev => {
+      if (!(field in prev)) return prev
+      const next = { ...prev }
+      delete next[field]
+      return next
+    })
   }
 
   if (loading) return <div className="flex justify-center py-16"><LoadingSpinner size="lg" /></div>
   if (!config) return null
+
+  const envFields = environmentFields(config)
+  const envHint = (key: Parameters<typeof showsEnvHint>[0]) => showsEnvHint(key, envFields, initial, form)
 
   return (
     <div className="space-y-4">
@@ -108,15 +198,15 @@ export default function IntegrationsPage() {
             <Toggle label="Enabled" checked={form.jira_enabled ?? false} onChange={v => upd('jira_enabled', v)} disabled={!isAdmin} />
           </div>
           <div className={FIELD_GRID}>
-            <Field label="Domain" value={form.jira_domain ?? ''} onChange={v => upd('jira_domain', v)} disabled={!isAdmin} placeholder="your-company.atlassian.net" />
-            <Field label="Email" value={form.jira_email ?? ''} onChange={v => upd('jira_email', v)} disabled={!isAdmin} placeholder="user@company.com" />
-            <Field label="Default Project Key" value={form.jira_default_project_key ?? ''} onChange={v => upd('jira_default_project_key', v)} disabled={!isAdmin} placeholder="QA" />
-            <div>
-              <label htmlFor="integration-secret-0" className="block text-xs text-[var(--color-text-muted)] mb-1">API Token {config.jira_token_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
-              <input id="integration-secret-0" type="password" placeholder={config.jira_token_set ? '••••••••' : 'Enter token'} disabled={!isAdmin}
-                onChange={e => upd('jira_api_token', e.target.value || undefined)}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
-            </div>
+            <Field name="jira_domain" label="Domain" value={form.jira_domain ?? ''} onChange={v => upd('jira_domain', v)} disabled={!isAdmin} placeholder="your-company.atlassian.net"
+              hint={envHint('jira_domain')} error={fieldErrors.jira_domain} />
+            <Field name="jira_email" label="Email" value={form.jira_email ?? ''} onChange={v => upd('jira_email', v)} disabled={!isAdmin} placeholder="user@company.com"
+              hint={envHint('jira_email')} error={fieldErrors.jira_email} />
+            <Field name="jira_default_project_key" label="Default Project Key" value={form.jira_default_project_key ?? ''} onChange={v => upd('jira_default_project_key', v)} disabled={!isAdmin} placeholder="QA"
+              hint={envHint('jira_default_project_key')} error={fieldErrors.jira_default_project_key} />
+            <SecretField id="integration-secret-0" name="jira_api_token" label="API Token" state={secretStateLabel('jira_api_token', config, envFields)}
+              value={form.jira_api_token ?? ''} onChange={v => upd('jira_api_token', v)} disabled={!isAdmin}
+              placeholder="Enter token" error={fieldErrors.jira_api_token} />
           </div>
         </div>
 
@@ -127,13 +217,11 @@ export default function IntegrationsPage() {
             <Toggle label="Enabled" checked={form.splunk_enabled ?? false} onChange={v => upd('splunk_enabled', v)} disabled={!isAdmin} />
           </div>
           <div className={FIELD_GRID}>
-            <Field label="Base URL" value={form.splunk_base_url ?? ''} onChange={v => upd('splunk_base_url', v)} disabled={!isAdmin} placeholder="https://splunk.company.com:8089" />
-            <div>
-              <label htmlFor="integration-secret-1" className="block text-xs text-[var(--color-text-muted)] mb-1">API Token {config.splunk_token_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
-              <input id="integration-secret-1" type="password" placeholder={config.splunk_token_set ? '••••••••' : 'Enter token'} disabled={!isAdmin}
-                onChange={e => upd('splunk_api_token', e.target.value || undefined)}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
-            </div>
+            <Field name="splunk_base_url" label="Base URL" value={form.splunk_base_url ?? ''} onChange={v => upd('splunk_base_url', v)} disabled={!isAdmin} placeholder="https://splunk.company.com:8089"
+              hint={envHint('splunk_base_url')} error={fieldErrors.splunk_base_url} />
+            <SecretField id="integration-secret-1" name="splunk_api_token" label="API Token" state={secretStateLabel('splunk_api_token', config, envFields)}
+              value={form.splunk_api_token ?? ''} onChange={v => upd('splunk_api_token', v)} disabled={!isAdmin}
+              placeholder="Enter token" error={fieldErrors.splunk_api_token} />
           </div>
         </div>
 
@@ -144,28 +232,40 @@ export default function IntegrationsPage() {
             <Toggle label="Enabled" checked={form.ocp_enabled ?? false} onChange={v => upd('ocp_enabled', v)} disabled={!isAdmin} />
           </div>
           <div className={FIELD_GRID}>
-            <Field label="API URL" value={form.ocp_api_url ?? ''} onChange={v => upd('ocp_api_url', v)} disabled={!isAdmin} placeholder="https://api.cluster.example.com:6443" />
-            <Field label="Default Namespace" value={form.ocp_default_namespace ?? ''} onChange={v => upd('ocp_default_namespace', v)} disabled={!isAdmin} placeholder="qa-testing" />
+            <Field name="ocp_api_url" label="API URL" value={form.ocp_api_url ?? ''} onChange={v => upd('ocp_api_url', v)} disabled={!isAdmin} placeholder="https://api.cluster.example.com:6443"
+              hint={envHint('ocp_api_url')} error={fieldErrors.ocp_api_url} />
+            <Field name="ocp_default_namespace" label="Default Namespace" value={form.ocp_default_namespace ?? ''} onChange={v => upd('ocp_default_namespace', v)} disabled={!isAdmin} placeholder="qa-testing"
+              hint={envHint('ocp_default_namespace')} error={fieldErrors.ocp_default_namespace} />
             {/* `xl:col-span-1`: a bare `col-span-2` in the one-column xl grid
                 would open an implicit second column. */}
-            <div className="col-span-2 xl:col-span-1">
-              <label htmlFor="integration-secret-2" className="block text-xs text-[var(--color-text-muted)] mb-1">Service Account Token {config.ocp_token_set && <span className="text-[var(--status-passed)]">(set)</span>}</label>
-              <input id="integration-secret-2" type="password" placeholder={config.ocp_token_set ? '••••••••' : 'Enter SA token'} disabled={!isAdmin}
-                onChange={e => upd('ocp_sa_token', e.target.value || undefined)}
-                className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
-            </div>
+            <SecretField id="integration-secret-2" name="ocp_sa_token" label="Service Account Token" state={secretStateLabel('ocp_sa_token', config, envFields)}
+              value={form.ocp_sa_token ?? ''} onChange={v => upd('ocp_sa_token', v)} disabled={!isAdmin}
+              placeholder="Enter SA token" error={fieldErrors.ocp_sa_token}
+              className="col-span-2 xl:col-span-1 min-w-0" />
           </div>
         </div>
 
-        {/* Slack */}
+        {/* Slack — INT-02 (D21): no Default Channel. An incoming webhook posts to
+            the one channel it was created for; other channels are routed per
+            team in Team channels. */}
         <div className="card space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-[var(--color-text)]">Slack</h3>
             <Toggle label="Enabled" checked={form.slack_enabled ?? false} onChange={v => upd('slack_enabled', v)} disabled={!isAdmin} />
           </div>
           <div className={FIELD_GRID}>
-            <Field label={`Webhook URL${config.slack_webhook_set ? ' (set)' : ''}`} type="password" value={form.slack_webhook_url ?? ''} onChange={v => upd('slack_webhook_url', v || undefined)} disabled={!isAdmin} placeholder={config.slack_webhook_set ? '••••••••' : 'https://hooks.slack.com/services/...'} />
-            <Field label="Default Channel" value={form.slack_default_channel ?? ''} onChange={v => upd('slack_default_channel', v)} disabled={!isAdmin} placeholder="#qa-alerts" />
+            <Field name="slack_webhook_url" label={webhookLabel(secretStateLabel('slack_webhook_url', config, envFields))} type="password"
+              value={form.slack_webhook_url ?? ''} onChange={v => upd('slack_webhook_url', v)} disabled={!isAdmin}
+              placeholder={config.slack_webhook_set ? '••••••••' : 'https://hooks.slack.com/services/...'}
+              error={fieldErrors.slack_webhook_url} helpId={slackHelpId}
+              help={
+                <p id={slackHelpId} data-slack-channel-help="" className="mt-1 text-xs text-[var(--color-text-muted)]">
+                  {SLACK_CHANNEL_HELP_LEAD}
+                  {/* ScopedLink: Team channels shows one project at a time; the
+                      sentence already says "per team", so the hint stays in the title. */}
+                  <ScopedLink to={SLACK_CHANNEL_HELP_TO} hintInTitleOnly className="text-[var(--color-accent)] hover:underline">{SLACK_CHANNEL_HELP_LINK}</ScopedLink>.
+                </p>
+              } />
           </div>
         </div>
 
@@ -175,7 +275,10 @@ export default function IntegrationsPage() {
             <h3 className="text-sm font-semibold text-[var(--color-text)]">Microsoft Teams</h3>
             <Toggle label="Enabled" checked={form.teams_enabled ?? false} onChange={v => upd('teams_enabled', v)} disabled={!isAdmin} />
           </div>
-          <Field label={`Webhook URL${config.teams_webhook_set ? ' (set)' : ''}`} type="password" value={form.teams_webhook_url ?? ''} onChange={v => upd('teams_webhook_url', v || undefined)} disabled={!isAdmin} placeholder={config.teams_webhook_set ? '••••••••' : 'https://outlook.office.com/webhook/...'} />
+          <Field name="teams_webhook_url" label={webhookLabel(secretStateLabel('teams_webhook_url', config, envFields))} type="password"
+            value={form.teams_webhook_url ?? ''} onChange={v => upd('teams_webhook_url', v)} disabled={!isAdmin}
+            placeholder={config.teams_webhook_set ? '••••••••' : 'https://outlook.office.com/webhook/...'}
+            error={fieldErrors.teams_webhook_url} />
         </div>
 
         {/* GitHub is configured in ONE place, per project (P5 item 3): the
@@ -190,14 +293,22 @@ export default function IntegrationsPage() {
         </p>
 
         {isAdmin && (
-          <div className="xl:col-span-2">
+          <div className="flex flex-wrap items-center gap-3 xl:col-span-2">
             <button type="submit" disabled={saving}
               className="btn-primary flex items-center gap-2">
               <Save className="h-4 w-4" /> {saving ? 'Saving…' : 'Save Integrations'}
             </button>
+            {noChanges && (
+              <p role="status" data-no-changes="" className="text-xs text-[var(--color-text-muted)]">{NO_CHANGES}</p>
+            )}
           </div>
         )}
       </form>
     </div>
   )
+}
+
+/** "Webhook URL", plus where the stored one comes from. */
+function webhookLabel(state: string | null): string {
+  return state ? `Webhook URL ${state}` : 'Webhook URL'
 }

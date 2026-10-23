@@ -26,7 +26,9 @@ export const projectsService = {
   list: (): Promise<Project[]> => getData('/api/v1/projects'),
   get: (id: string): Promise<Project> => getData(`/api/v1/projects/${id}`),
   create: (data: Partial<Project>) => postData<Project, Partial<Project>>('/api/v1/projects', data),
-  update: (id: string, data: ProjectUpdate) => putData<Project, ProjectUpdate>(`/api/v1/projects/${id}`, data),
+  /** `opts.suppressToast`: the caller renders the failure (W10 INT-03: a field-level 422 shows under its field). */
+  update: (id: string, data: ProjectUpdate, opts?: { suppressToast?: boolean }) =>
+    putData<Project, ProjectUpdate>(`/api/v1/projects/${id}`, data, opts?.suppressToast ? { suppressToast: true } : undefined),
   delete: (id: string) => deleteData(`/api/v1/projects/${id}`),
   reset: (id: string, body: ProjectResetRequest) =>
     postData<ProjectResetResponse, ProjectResetRequest>(`/api/v1/projects/${id}/reset`, body),

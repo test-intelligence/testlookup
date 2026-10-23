@@ -4,15 +4,35 @@ Integration Probe Service — active health probes for external systems (OPS-01)
 Probes: Jira, Splunk, GitHub, OCP/K8s, Slack, Teams, SMTP, Ollama, ChromaDB.
 Records auth validity, latency, payload correctness.
 Alerts on sustained failures (consecutive_failures >= threshold).
+
+Per-project probes (W10 INT-04). GitHub / GitHub Enterprise and GitLab are
+configured per project (Settings > GitHub / GitLab), so each enabled
+integration is probed against ITS OWN base with ITS OWN token and stored under
+``(provider, scope_key = str(project_id))``; a deployment-wide row keeps
+``scope_key = ''``. ``run_project_probes`` reads every target on ONE session,
+hands that session's connection back (or closes it), and only then probes over
+HTTP with at most ``PROJECT_PROBE_CONCURRENCY`` requests in flight -- no
+session is ever held across a call. ``persist_probe_results`` owns the one
+commit (the transaction allow-list holds this module at 1).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any, Optional
 
 from app.core.http_client import get_http_client
+from app.services.url_safety import egress_block_reason
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.services.github_target import GitHubTargetResolution
+    from app.services.gitlab_integration_service import GitLabTargetResolution
 
 logger = logging.getLogger("services.integration_probe")
 
@@ -26,6 +46,24 @@ INTEGRATION_HEALTH_VALUES = {
     "skipped": -1.0,
 }
 
+# ── Per-project probes (W10 INT-04): the vocabularies, in ONE place ──────────
+
+#: Providers configured per project, and therefore probed per project.
+PROJECT_PROBE_PROVIDERS = ("github", "gitlab")
+#: At most this many per-project probe requests are in flight at once.
+PROJECT_PROBE_CONCURRENCY = 5
+#: ``IntegrationHealthRow.kind``: a deployment-wide row, a project's
+#: integration, or a paused outbound webhook subscription.
+HEALTH_ROW_KINDS = ("global", "project", "webhook")
+#: ``GET /integration-health/status?scope=``.
+HEALTH_SCOPES = ("global", "all")
+#: What a project row says before its first probe. Absence is not health:
+#: such a row reads ``probed: false`` / ``status: "unknown"``, never healthy.
+NOT_PROBED_MESSAGE = "Not probed yet. Probe now, or wait for the 15-minute check."
+
+_PROVIDER_LABEL = {"github": "GitHub", "gitlab": "GitLab"}
+_PROBE_TIMEOUT = 10.0
+
 
 @dataclass
 class ProbeResult:
@@ -35,6 +73,12 @@ class ProbeResult:
     message: str = ""
     auth_valid: bool | None = None
     payload_valid: bool | None = None
+    # W10 INT-04: "" = deployment-wide; else the project id of a per-project
+    # integration. ``target`` is what a page may show of the probed base
+    # (github_target.target_label: host + path, never a credential).
+    scope_key: str = ""
+    project_id: str | None = None
+    target: str | None = None
 
 
 async def _offline_refusal(provider: str, destination: str | None) -> ProbeResult | None:
@@ -130,6 +174,11 @@ async def probe_splunk(config: dict | None = None) -> ProbeResult:
     refused = _offline_hard_gate("splunk")
     if refused:
         return refused
+    # W10 (D-5): the operator-configured base is checked before the token is
+    # sent: a loopback / link-local / unspecified host is refused, no request.
+    block = await egress_block_reason(base_url)
+    if block:
+        return ProbeResult("splunk", "down", 0, f"Target host is not allowed ({block})")
 
     import httpx
 
@@ -202,7 +251,9 @@ async def probe_ocp(config: dict | None = None) -> ProbeResult:
     refused = _offline_hard_gate("ocp")
     if refused:
         return refused
-
+    block = await egress_block_reason(api_url)
+    if block:
+        return ProbeResult("ocp", "down", 0, f"Target host is not allowed ({block})")
 
     start = time.monotonic()
     try:
@@ -425,10 +476,262 @@ async def run_all_probes() -> list[ProbeResult]:
     return out
 
 
+# ── Per-project probes (W10 INT-04) ──────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class _ProjectProbeTarget:
+    """One enabled per-project integration, read into plain values."""
+
+    provider: str
+    project_id: uuid.UUID
+    project_name: Optional[str]
+    resolution: Any  # GitHubTargetResolution | GitLabTargetResolution | None (offline)
+
+
+def _project_result(target: _ProjectProbeTarget, status: str, response_ms: int = 0, message: str = "",
+                    auth_valid: bool | None = None, payload_valid: bool | None = None,
+                    base: Optional[str] = None) -> ProbeResult:
+    from app.services.github_target import target_label
+
+    return ProbeResult(
+        target.provider, status, response_ms, message, auth_valid, payload_valid,
+        scope_key=str(target.project_id), project_id=str(target.project_id),
+        target=target_label(base),
+    )
+
+
+async def _read_project_targets(
+    db: "AsyncSession",
+    *,
+    project_ids: Optional[set[uuid.UUID]],
+    providers: set[str],
+    offline: bool,
+) -> list[_ProjectProbeTarget]:
+    """The READ phase: the enabled integrations (+ project names), then -- online
+    only -- each one's target through the one resolver per provider. DB reads
+    only; no HTTP. Offline, no secret is read at all."""
+    from sqlalchemy import select
+
+    from app.models.postgres import GitHubIntegration, GitLabIntegration, Project
+
+    listed: list[tuple[str, uuid.UUID, Optional[str]]] = []
+    for provider, model in (("github", GitHubIntegration), ("gitlab", GitLabIntegration)):
+        if provider not in providers:
+            continue
+        stmt = (
+            select(model.project_id, Project.name)
+            .join(Project, Project.id == model.project_id)
+            .where(model.enabled.is_(True))
+        )
+        if project_ids is not None:
+            stmt = stmt.where(model.project_id.in_(project_ids))
+        rows = (await db.execute(stmt.order_by(Project.name))).all()
+        listed.extend((provider, row[0], row[1]) for row in rows)
+
+    if offline:
+        return [_ProjectProbeTarget(p, pid, name, None) for p, pid, name in listed]
+
+    from app.services import github_target, gitlab_integration_service
+
+    targets: list[_ProjectProbeTarget] = []
+    for provider, pid, name in listed:
+        if provider == "github":
+            resolution: Any = await github_target.resolve_github_target(db, pid, check_gate=False)
+        else:
+            resolution = await gitlab_integration_service.load_gitlab_target(db, pid)
+        targets.append(_ProjectProbeTarget(provider, pid, name, resolution))
+    return targets
+
+
+async def _timed_get(url: str, headers: dict[str, str]) -> tuple[Any, int]:
+    start = time.monotonic()
+    resp = await get_http_client().get(url, headers=headers, timeout=_PROBE_TIMEOUT)
+    return resp, int((time.monotonic() - start) * 1000)
+
+
+def _http_outcome(target: _ProjectProbeTarget, resp: Any, ms: int, *, base: str, healthy: str,
+                  not_found: str) -> ProbeResult:
+    code = resp.status_code
+    if code == 200:
+        return _project_result(target, "healthy", ms, healthy, True, True, base=base)
+    if code in (401, 403):
+        return _project_result(target, "auth_error", ms, f"HTTP {code}: the token was refused", False, base=base)
+    if code == 404:
+        return _project_result(target, "degraded", ms, f"HTTP 404: {not_found}", base=base)
+    return _project_result(target, "degraded", ms, f"HTTP {code}", base=base)
+
+
+def _exception_outcome(target: _ProjectProbeTarget, exc: BaseException, ms: int, *, base: str) -> ProbeResult:
+    import httpx
+
+    if isinstance(exc, httpx.TimeoutException):
+        return _project_result(target, "timeout", ms, "Timed out", base=base)
+    # The exception text, never a header: the token is not in the URL.
+    return _project_result(target, "down", 0, f"{type(exc).__name__}: {str(exc)[:200]}", base=base)
+
+
+async def probe_github_project(res: "GitHubTargetResolution",
+                               target: Optional[_ProjectProbeTarget] = None) -> ProbeResult:
+    """Probe ONE project's GitHub / GHE: ``GET {api_base}/repos/{repo}`` with its PAT."""
+    target = target or _ProjectProbeTarget("github", uuid.UUID(str(res.project_id)), None, res)
+    base = res.api_base or ""
+    if res.target is None:
+        if res.reason == "no_token":
+            return _project_result(
+                target, "auth_error", 0, "No token is stored for this project's GitHub integration.", False,
+                base=base or None,
+            )
+        return _project_result(target, "down", 0, f"GitHub integration unavailable ({res.reason})",
+                               base=base or None)
+    gh = res.target
+    url = f"{gh.api_base}/repos/{gh.repo}"
+    block = await egress_block_reason(url)
+    if block:
+        return _project_result(target, "down", 0, f"Target host is not allowed ({block})", base=gh.api_base)
+    headers = {
+        "Authorization": f"Bearer {gh.pat}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "TestLookup/1.0",
+    }
+    start = time.monotonic()
+    try:
+        resp, ms = await _timed_get(url, headers)
+    except Exception as exc:  # noqa: BLE001 -- a probe reports, it does not raise
+        return _exception_outcome(target, exc, int((time.monotonic() - start) * 1000), base=gh.api_base)
+    return _http_outcome(
+        target, resp, ms, base=gh.api_base,
+        healthy=f"Repository {gh.repo} reachable",
+        not_found=f"repository {gh.repo} not found, or the token cannot see it",
+    )
+
+
+async def probe_gitlab_project(res: "GitLabTargetResolution",
+                               target: Optional[_ProjectProbeTarget] = None) -> ProbeResult:
+    """Probe ONE project's GitLab: ``GET {base}/api/v4/projects/{ref}`` with its PAT."""
+    from app.services import gitlab_integration_service as gl
+
+    target = target or _ProjectProbeTarget("gitlab", uuid.UUID(str(res.project_id)), None, res)
+    base = res.base_url or ""
+    if res.pat is None or not res.project_path or res.reason:
+        if res.reason == "no_token":
+            return _project_result(
+                target, "auth_error", 0, "No token is stored for this project's GitLab integration.", False,
+                base=base or None,
+            )
+        if res.reason == "no_project_path":
+            return _project_result(
+                target, "degraded", 0, "No project path is configured for this project's GitLab integration.",
+                base=base or None,
+            )
+        return _project_result(target, "down", 0, f"GitLab integration unavailable ({res.reason})",
+                               base=base or None)
+    url = f"{gl._api_root(base)}/projects/{gl._project_ref(res.project_path)}"
+    block = await egress_block_reason(url)
+    if block:
+        return _project_result(target, "down", 0, f"Target host is not allowed ({block})", base=base)
+    start = time.monotonic()
+    try:
+        resp, ms = await _timed_get(url, gl._headers(res.pat))
+    except Exception as exc:  # noqa: BLE001 -- a probe reports, it does not raise
+        return _exception_outcome(target, exc, int((time.monotonic() - start) * 1000), base=base)
+    return _http_outcome(
+        target, resp, ms, base=base,
+        healthy=f"Project {res.project_path} reachable",
+        not_found=f"project {res.project_path} not found, or the token cannot see it",
+    )
+
+
+async def run_project_probes(
+    *,
+    project_ids: set[uuid.UUID] | None = None,
+    providers: set[str] | None = None,
+    db: "AsyncSession | None" = None,
+    prune: bool = False,
+) -> list[ProbeResult]:
+    """Probe every ENABLED per-project GitHub / GitLab integration (W10 INT-04).
+
+    READ phase on ONE session -- the request's ``db`` when given, else a short
+    ``AsyncSessionLocal()``: the enabled integration rows (+ project names),
+    filtered by ``project_ids`` (None = all) and ``providers`` (None = both).
+    Offline (``AI_OFFLINE_MODE``): one ``skipped`` result per row and NO secret
+    read. Online, each row's target through ``github_target.resolve_github_target
+    (check_gate=False)`` / ``gitlab_integration_service.load_gitlab_target`` as
+    plain values. Then the request session's connection is handed back
+    (``release_read_connection``) or the short session closes.
+
+    HTTP phase with NO session open: at most ``PROJECT_PROBE_CONCURRENCY``
+    probes in flight. One result per row, each with ``scope_key = project_id =
+    str(project id)`` and ``target = target_label(base)``.
+
+    ``prune`` is accepted so the beat's full sweep says what it is; the pruning
+    itself happens in ``persist_probe_results(prune=True)``, inside the write
+    transaction.
+    """
+    from app.core.config import settings
+
+    wanted = set(PROJECT_PROBE_PROVIDERS) if providers is None else set(providers) & set(PROJECT_PROBE_PROVIDERS)
+    if not wanted or (project_ids is not None and not project_ids):
+        return []
+    offline = bool(settings.AI_OFFLINE_MODE)
+
+    if db is not None:
+        targets = await _read_project_targets(db, project_ids=project_ids, providers=wanted, offline=offline)
+        from app.db.postgres import release_read_connection
+
+        await release_read_connection(db)
+    else:
+        from app.db.postgres import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as read_db:
+            targets = await _read_project_targets(
+                read_db, project_ids=project_ids, providers=wanted, offline=offline,
+            )
+
+    if offline:
+        return [
+            _project_result(
+                t, "skipped", message=f"AI_OFFLINE_MODE=true -- outbound {t.provider} calls are disabled",
+            )
+            for t in targets
+        ]
+
+    gate = asyncio.Semaphore(PROJECT_PROBE_CONCURRENCY)
+
+    async def _probe(t: _ProjectProbeTarget) -> ProbeResult:
+        async with gate:
+            if t.provider == "github":
+                return await probe_github_project(t.resolution, t)
+            return await probe_gitlab_project(t.resolution, t)
+
+    outcomes = await asyncio.gather(*(_probe(t) for t in targets), return_exceptions=True)
+    results: list[ProbeResult] = []
+    for t, outcome in zip(targets, outcomes):
+        if isinstance(outcome, BaseException):
+            results.append(_project_result(t, "down", 0, f"{type(outcome).__name__}: {str(outcome)[:200]}"))
+        else:
+            results.append(outcome)
+    return results
+
+
 async def persist_probe_results(
     results: list[ProbeResult],
+    *,
+    prune: bool = False,
 ) -> None:
-    """Persist probe results to DB and update Prometheus metrics."""
+    """Persist probe results to DB and update Prometheus metrics.
+
+    Rows key on ``(provider, scope_key)`` (W10 INT-04): ``''`` is the
+    deployment-wide row, a project id a per-project integration's. The GLOBAL
+    gauge (``integration_health_gauge``, labelled by provider only) is staged
+    for deployment-wide results only; the per-project rows are counted into
+    ``integration_project_health_gauge`` per (provider, status) after the
+    commit -- 12 series whatever the number of projects, never a project
+    label. ``prune=True`` (the beat's full sweep only) deletes, in the same
+    transaction, the per-project rows whose integration is no longer enabled
+    (removed, disabled).
+    """
     from sqlalchemy import select
 
     from app.core.metrics import integration_health_gauge
@@ -465,12 +768,13 @@ async def persist_probe_results(
                 # alone for the same reason — a skip is not a failure.
                 existing = await db.execute(
                     select(IntegrationHealthCheck).where(
-                        IntegrationHealthCheck.provider == r.provider
+                        IntegrationHealthCheck.provider == r.provider,
+                        IntegrationHealthCheck.scope_key == r.scope_key,
                     )
                 )
                 hc = existing.scalar_one_or_none()
                 if hc is None:
-                    hc = IntegrationHealthCheck(provider=r.provider)
+                    hc = IntegrationHealthCheck(provider=r.provider, scope_key=r.scope_key)
                     db.add(hc)
                 hc.status = "skipped"
                 hc.last_checked_at = now
@@ -479,15 +783,19 @@ async def persist_probe_results(
 
                 # A one-hot status is multiprocess-safe: prometheus_client does
                 # not implement Gauge.remove() in multiprocess mode, so absence
-                # cannot reliably represent "skipped".
-                metric_updates.append(
-                    (r.provider, INTEGRATION_HEALTH_VALUES["skipped"])
-                )
+                # cannot reliably represent "skipped". The provider-labelled
+                # gauge is the deployment-wide row's only; a project's row is
+                # counted into the per-(provider, status) gauge after commit.
+                if not r.scope_key:
+                    metric_updates.append(
+                        (r.provider, INTEGRATION_HEALTH_VALUES["skipped"])
+                    )
                 continue
 
             # Insert history record
             db.add(IntegrationProbeResult(
                 provider=r.provider,
+                scope_key=r.scope_key,
                 status=r.status,
                 response_ms=r.response_ms,
                 message=r.message,
@@ -497,11 +805,14 @@ async def persist_probe_results(
 
             # Upsert latest status
             existing = await db.execute(
-                select(IntegrationHealthCheck).where(IntegrationHealthCheck.provider == r.provider)
+                select(IntegrationHealthCheck).where(
+                    IntegrationHealthCheck.provider == r.provider,
+                    IntegrationHealthCheck.scope_key == r.scope_key,
+                )
             )
             hc = existing.scalar_one_or_none()
             if hc is None:
-                hc = IntegrationHealthCheck(provider=r.provider)
+                hc = IntegrationHealthCheck(provider=r.provider, scope_key=r.scope_key)
                 db.add(hc)
 
             hc.status = r.status
@@ -518,15 +829,80 @@ async def persist_probe_results(
             # Stage the Prometheus gauge update until the transaction commits.
             # Resolve the declared status before commit. An unknown producer
             # value must not commit history and then fail while publishing it.
-            metric_updates.append((r.provider, INTEGRATION_HEALTH_VALUES[r.status]))
+            gauge_value = INTEGRATION_HEALTH_VALUES[r.status]
+            if not r.scope_key:
+                metric_updates.append((r.provider, gauge_value))
+
+        if prune:
+            await _prune_project_rows(db)
 
         await db.commit()
 
+        # The per-project gauge, from the committed table: ONE grouped read.
+        project_counts = await _project_status_counts(db)
+
     for provider, gauge_value in metric_updates:
         integration_health_gauge.labels(provider=provider).set(gauge_value)
+    _set_project_gauge(project_counts)
 
     # Check for alerts
     await _check_alerts(results)
+
+
+async def _prune_project_rows(db: "AsyncSession") -> None:
+    """Delete the per-project rows whose integration is no longer enabled.
+
+    Stage-only (the caller's transaction commits). The deployment-wide rows
+    (``scope_key = ''``) are never touched; a project row survives only while
+    its provider's integration for that project exists and is enabled.
+    """
+    from sqlalchemy import String, cast, delete, select
+
+    from app.models.postgres import GitHubIntegration, GitLabIntegration, IntegrationHealthCheck
+
+    for provider, model in (("github", GitHubIntegration), ("gitlab", GitLabIntegration)):
+        enabled_scopes = select(cast(model.project_id, String)).where(model.enabled.is_(True))
+        await db.execute(
+            delete(IntegrationHealthCheck)
+            .where(
+                IntegrationHealthCheck.provider == provider,
+                IntegrationHealthCheck.scope_key != "",
+                IntegrationHealthCheck.scope_key.not_in(enabled_scopes),
+            )
+            .execution_options(synchronize_session=False)
+        )
+
+
+async def _project_status_counts(db: "AsyncSession") -> dict[tuple[str, str], int]:
+    """``{(provider, status): rows}`` over the per-project health rows."""
+    from sqlalchemy import func, select
+
+    from app.models.postgres import IntegrationHealthCheck
+
+    rows = (
+        await db.execute(
+            select(
+                IntegrationHealthCheck.provider,
+                IntegrationHealthCheck.status,
+                func.count().label("count"),
+            )
+            .where(IntegrationHealthCheck.scope_key != "")
+            .group_by(IntegrationHealthCheck.provider, IntegrationHealthCheck.status)
+        )
+    ).all()
+    return {(row[0], row[1]): int(row[2]) for row in rows}
+
+
+def _set_project_gauge(counts: dict[tuple[str, str], int]) -> None:
+    """Every (provider, status) pair is set, a missing pair to 0, so a
+    recovered state reads 0 rather than its last count."""
+    from app.core.metrics import integration_project_health_gauge
+
+    for provider in PROJECT_PROBE_PROVIDERS:
+        for status in INTEGRATION_HEALTH_VALUES:
+            integration_project_health_gauge.labels(provider=provider, status=status).set(
+                counts.get((provider, status), 0)
+            )
 
 
 async def _check_alerts(results: list[ProbeResult]) -> None:
@@ -542,10 +918,19 @@ async def _check_alerts(results: list[ProbeResult]) -> None:
                 continue
 
             existing = await db.execute(
-                select(IntegrationHealthCheck).where(IntegrationHealthCheck.provider == r.provider)
+                select(IntegrationHealthCheck).where(
+                    IntegrationHealthCheck.provider == r.provider,
+                    IntegrationHealthCheck.scope_key == r.scope_key,
+                )
             )
             hc = existing.scalar_one_or_none()
             if hc and (hc.consecutive_failures or 0) >= ALERT_THRESHOLD:
+                if r.scope_key:
+                    logger.warning(
+                        "ALERT: Integration %s of project %s has %d consecutive failures. Status: %s. Message: %s",
+                        r.provider, r.project_id or r.scope_key, hc.consecutive_failures, r.status, r.message,
+                    )
+                    continue
                 logger.warning(
                     "ALERT: Integration %s has %d consecutive failures. Status: %s. Message: %s",
                     r.provider, hc.consecutive_failures, r.status, r.message,

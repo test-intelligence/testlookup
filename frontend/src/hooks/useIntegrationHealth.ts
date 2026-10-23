@@ -42,6 +42,21 @@ export function useIntegrationStatus(enabled = true) {
   return { statuses: data ?? [], isLoading, isError: !!error }
 }
 
+/**
+ * W10 INT-04: the Integration Health page's read — `GET /status?scope=all`: the
+ * deployment-wide rows, then every project's GitHub / GitLab row and the paused
+ * webhooks. Its own key (`[STATUS_KEY, 'all']`) so the global read above keeps
+ * its cache; `refreshIntegrationHealth` matches both on `key[0]`.
+ */
+export function useIntegrationStatusAll(enabled: boolean) {
+  const { data, error, isLoading } = useSWR<IntegrationStatus[]>(
+    enabled ? ([STATUS_KEY, 'all'] as const) : null,
+    () => getAllStatus('all'),
+    OPTS,
+  )
+  return { statuses: data ?? [], isLoading, isError: !!error }
+}
+
 export function useHealthTrends(enabled: boolean, days = 7) {
   const { data, error, isLoading } = useSWR<HealthTrend[]>(
     enabled ? ([TRENDS_KEY, days] as const) : null,
@@ -51,10 +66,15 @@ export function useHealthTrends(enabled: boolean, days = 7) {
   return { trends: data ?? [], isLoading, isError: !!error }
 }
 
-export function useProviderHistory(provider: string, enabled: boolean, days = 7) {
+/**
+ * `projectId` (W10 INT-04) reads that project's row's history; without it the
+ * deployment-wide history, called with exactly two arguments as before.
+ */
+export function useProviderHistory(provider: string, enabled: boolean, days = 7, projectId?: string) {
   const { data, error, isLoading } = useSWR<ProbeHistoryEntry[]>(
-    enabled && provider ? ([HISTORY_KEY, provider, days] as const) : null,
-    ([, p, d]: readonly [string, string, number]) => getProviderHistory(p, d),
+    enabled && provider ? ([HISTORY_KEY, provider, days, projectId ?? ''] as const) : null,
+    ([, p, d, pid]: readonly [string, string, number, string]) =>
+      pid ? getProviderHistory(p, d, pid) : getProviderHistory(p, d),
     OPTS,
   )
   return { history: data ?? [], isLoading, isError: !!error }

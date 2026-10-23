@@ -14,8 +14,21 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from pydantic_core import PydanticCustomError
 
 from app.core.config import MAX_RESULTS_PER_INGEST
+# W10 (INT-01 / INT-03): one definition of each integration value's shape and
+# its sentence, shared with the services that refuse a stored value at use.
+from app.core.integration_values import (
+    DNS_LABEL_RE,
+    INTEGRATION_URL_SENTENCE,
+    JIRA_DOMAIN_SENTENCE,
+    JIRA_HOST_RE,
+    OCP_NAMESPACE_SENTENCE,
+    SPLUNK_INDEX_RE,
+    SPLUNK_INDEX_SENTENCE,
+    integration_url_problem,
+)
 # W03 (AI history): the types live in their own module; the existing models
 # below only gain optional fields of these types.
 from app.models.ai_history_schemas import (
@@ -448,6 +461,33 @@ class MfaPolicyUpdate(BaseModel):
 
 # ── Project Schemas ───────────────────────────────────────────
 
+_JENKINS_JOB_PATTERN_DESCRIPTION = "Stored only; TestLookup does not use it (W10 D22)."
+
+
+def _project_splunk_index(value: Optional[str], *, empty: Optional[str]) -> Optional[str]:
+    """W10 INT-03: an SPL-safe index name, or ``empty`` for a cleared field."""
+    if value is None:
+        return None
+    value = value.strip()
+    if value == "":
+        return empty
+    if SPLUNK_INDEX_RE.fullmatch(value) is None:
+        raise PydanticCustomError("splunk_index", SPLUNK_INDEX_SENTENCE)
+    return value
+
+
+def _project_ocp_namespace(value: Optional[str], *, empty: Optional[str]) -> Optional[str]:
+    """W10 INT-03: a DNS-1123 label (an OpenShift namespace), or ``empty`` for a cleared field."""
+    if value is None:
+        return None
+    value = value.strip()
+    if value == "":
+        return empty
+    if DNS_LABEL_RE.fullmatch(value) is None:
+        raise PydanticCustomError("ocp_namespace", OCP_NAMESPACE_SENTENCE)
+    return value
+
+
 class ProjectCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=255)
     slug: str = Field(..., min_length=2, max_length=100, pattern=r"^[a-z0-9-]+$")
@@ -455,12 +495,26 @@ class ProjectCreate(BaseModel):
     jira_project_key: Optional[str] = Field(None, max_length=50)
     splunk_index: Optional[str] = Field(None, max_length=255)
     ocp_namespace: Optional[str] = Field(None, max_length=255)
-    jenkins_job_pattern: Optional[str] = Field(None, max_length=500)
+    jenkins_job_pattern: Optional[str] = Field(
+        None, max_length=500, description=_JENKINS_JOB_PATTERN_DESCRIPTION,
+    )
     component_owner_map: Optional[dict] = None
     # Optional at create time — admin can set later. When set, the user must
     # already have ProjectMember.role=QA_LEAD on this project (or be ADMIN).
     # The router enforces the role check.
     default_qa_lead_user_id: Optional[uuid.UUID] = None  # migration 0079
+
+    # W10 INT-03: validated at save (422 with a fixed sentence); an empty
+    # value is stored as None on create.
+    @field_validator("splunk_index", mode="after")
+    @classmethod
+    def _splunk_index_is_spl_safe(cls, value: Optional[str]) -> Optional[str]:
+        return _project_splunk_index(value, empty=None)
+
+    @field_validator("ocp_namespace", mode="after")
+    @classmethod
+    def _ocp_namespace_is_a_dns_label(cls, value: Optional[str]) -> Optional[str]:
+        return _project_ocp_namespace(value, empty=None)
 
 
 class ProjectUpdate(BaseModel):
@@ -470,7 +524,9 @@ class ProjectUpdate(BaseModel):
     jira_project_key: Optional[str] = Field(None, max_length=50)
     splunk_index: Optional[str] = Field(None, max_length=255)
     ocp_namespace: Optional[str] = Field(None, max_length=255)
-    jenkins_job_pattern: Optional[str] = Field(None, max_length=500)
+    jenkins_job_pattern: Optional[str] = Field(
+        None, max_length=500, description=_JENKINS_JOB_PATTERN_DESCRIPTION,
+    )
     component_owner_map: Optional[dict] = None
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
@@ -480,6 +536,18 @@ class ProjectUpdate(BaseModel):
     # W28 TCM-02 (migration 0222): a test case needs an approved review before
     # Active. exclude_none in the PUT applies a False (routers/projects.py).
     require_case_review: Optional[bool] = None
+
+    # W10 INT-03: validated at save; "" clears the field (stored "", read as
+    # unset by the precedence rule, so the deployment's index / namespace apply).
+    @field_validator("splunk_index", mode="after")
+    @classmethod
+    def _splunk_index_is_spl_safe(cls, value: Optional[str]) -> Optional[str]:
+        return _project_splunk_index(value, empty="")
+
+    @field_validator("ocp_namespace", mode="after")
+    @classmethod
+    def _ocp_namespace_is_a_dns_label(cls, value: Optional[str]) -> Optional[str]:
+        return _project_ocp_namespace(value, empty="")
 
 
 class ProjectResponse(TimestampMixin):
@@ -4378,12 +4446,25 @@ class IntegrationsConfigRead(BaseModel):
     slack_enabled: bool
     slack_webhook_url: Optional[str] = None  # always redacted; compatibility field
     slack_webhook_set: bool
-    slack_default_channel: str
+    slack_default_channel: str = Field(..., deprecated=(
+        "Ignored since W10 (INT-02): an incoming webhook is bound to one channel. "
+        "Route other channels per team in Team channels."))
     teams_enabled: bool
     teams_webhook_url: Optional[str] = None  # always redacted; compatibility field
     teams_webhook_set: bool
     github_repo: Optional[str]
     github_token_set: bool
+    # W10 INT-01: the keys of INTEGRATION_TEXT_KEYS | INTEGRATION_SECRET_KEYS
+    # (services/integration_config_service.py) whose shown value (or *_set)
+    # comes from the process environment because the key was never saved here
+    # (non-empty environment value only). Names only, never a value.
+    environment_fields: List[str] = Field(default_factory=list)
+
+
+def _stripped(value: Optional[str]) -> Optional[str]:
+    """None stays None; a string loses its outer whitespace ("" is kept: it
+    hands the key back to the environment)."""
+    return None if value is None else value.strip()
 
 
 class IntegrationsConfigUpdate(BaseModel):
@@ -4402,11 +4483,88 @@ class IntegrationsConfigUpdate(BaseModel):
     ocp_default_namespace: Optional[str] = Field(None, max_length=255)
     slack_enabled: Optional[bool] = None
     slack_webhook_url: Optional[str] = Field(None, max_length=1000)
-    slack_default_channel: Optional[str] = Field(None, max_length=100)
+    slack_default_channel: Optional[str] = Field(None, max_length=100, deprecated=(
+        "Accepted and ignored since W10 (INT-02)."))
     teams_enabled: Optional[bool] = None
     teams_webhook_url: Optional[str] = Field(None, max_length=1000)
     github_repo: Optional[str] = Field(None, max_length=500)
     github_token: Optional[str] = Field(None, max_length=500)
+
+    # W10 INT-01: shapes checked at save. The host check of the two URLs (and
+    # of https://{jira_domain}) is async DNS and lives in the PUT handler (422
+    # "Target host is not allowed").
+    @field_validator("splunk_base_url", "ocp_api_url", mode="after")
+    @classmethod
+    def _integration_url_shape(cls, value: Optional[str]) -> Optional[str]:
+        value = _stripped(value)
+        if value and integration_url_problem(value) is not None:
+            raise PydanticCustomError("integration_url", INTEGRATION_URL_SENTENCE)
+        return value
+
+    @field_validator("jira_domain", mode="after")
+    @classmethod
+    def _jira_domain_is_a_host(cls, value: Optional[str]) -> Optional[str]:
+        value = _stripped(value)
+        if value and JIRA_HOST_RE.fullmatch(value) is None:
+            raise PydanticCustomError("jira_domain", JIRA_DOMAIN_SENTENCE)
+        return value
+
+    @field_validator("ocp_default_namespace", mode="after")
+    @classmethod
+    def _ocp_default_namespace_is_a_dns_label(cls, value: Optional[str]) -> Optional[str]:
+        value = _stripped(value)
+        if value and DNS_LABEL_RE.fullmatch(value) is None:
+            raise PydanticCustomError("ocp_namespace", OCP_NAMESPACE_SENTENCE)
+        return value
+
+
+# ── Integration health (W10 INT-04) ──────────────────────────
+# GET /integration-health/status answers list[IntegrationHealthRow]. Enum-like
+# fields are plain ``str``; their vocabularies live in
+# services/integration_probe_service.py (HEALTH_ROW_KINDS, the probe statuses).
+
+
+class IntegrationHealthRow(BaseModel):
+    provider: str                                   # jira | splunk | github | ocp | slack | teams | smtp | ollama | chromadb | gitlab | webhook
+    scope_key: str = ""                             # "" = deployment-wide; the project id (github / gitlab rows); the subscription id (webhook rows)
+    kind: str = "global"                            # HEALTH_ROW_KINDS
+    project_id: Optional[uuid.UUID] = None
+    project_name: Optional[str] = None
+    label: Optional[str] = None                     # the project's name, or the webhook's name
+    target: Optional[str] = None                    # host + path of the probed base, never a credential (github_target.target_label)
+    status: str                                     # a probe status, "unknown" (not probed yet) or "paused" (webhook rows)
+    probed: bool = True                             # False: no probe has run for this row: status "unknown", message NOT_PROBED_MESSAGE
+    last_checked_at: Optional[str] = None
+    message: Optional[str] = None
+    response_ms: Optional[int] = None
+    consecutive_failures: int = 0
+    last_success_at: Optional[str] = None
+    breaker_threshold: Optional[int] = None         # webhook rows only
+
+
+# ── Regression diff commit range (W10 FAIL-09) ───────────────
+# Built by regression_diff_service and returned inside its existing dict.
+
+
+class CommitRangeStatus(BaseModel):
+    available: bool                                 # commits are listed
+    source: str                                     # connector | supplied | unavailable (commit_attribution_service SOURCE_*)
+    base_source: str                                # supplied | green_baseline | last_completed_run | unavailable
+    base_anchor_is_strong: bool
+    base_run_id: Optional[uuid.UUID] = None
+    base_build_number: Optional[str] = None         # the build the commit range starts after (NOT necessarily the diff's baseline)
+    reason: Optional[str] = None                    # COMMIT_RANGE_REASONS; None when available
+    commit_count: int = 0
+    resolved_at: Optional[str] = None
+
+
+class RegressionDiffCommit(BaseModel):              # one item of the dict's existing "commit_range" list (shape kept, two fields added)
+    sha: str                                        # first 8 characters, as today
+    message: str
+    author: Optional[str] = None
+    timestamp: Optional[str] = None                 # the commit's committed_at
+    full_sha: Optional[str] = None
+    commit_url: Optional[str] = None                # https link built server-side (_commit_html_url), else None
 
 
 # ── Data & Storage Schemas ───────────────────────────────────
@@ -6959,6 +7117,9 @@ class WebhookSubscriptionWrite(BaseModel):
     max_retries: int = Field(5, ge=0, le=10)
     # Null = leave existing secret alone; "" = clear; any value = upsert.
     secret: Optional[str] = Field(None, max_length=200)
+    # W10 INT-07: pause after this many consecutive failed deliveries. None
+    # keeps the stored value (create: webhook_breaker.DEFAULT_BREAKER_THRESHOLD).
+    breaker_threshold: Optional[int] = Field(None, ge=1, le=100)
 
 
 class WebhookSubscriptionRead(BaseModel):
@@ -6977,7 +7138,26 @@ class WebhookSubscriptionRead(BaseModel):
     total_delivered: int
     created_at: datetime
     updated_at: datetime
+    # W10 INT-07 (migration 0224): the circuit breaker. A hand-built row
+    # without them reads the defaults (from_attributes).
+    consecutive_failures: int = 0
+    breaker_threshold: int = 10
+    disabled_reason: Optional[str] = None           # webhook_breaker.WEBHOOK_DISABLED_REASONS
+    disabled_at: Optional[datetime] = None
     model_config = ConfigDict(from_attributes=True)
+
+    # NOT NULL with server defaults, but the ORM defaults apply only at INSERT:
+    # a row answered before its flush (a hand-built row, a session double)
+    # still carries None. That is the default.
+    @field_validator("consecutive_failures", mode="before")
+    @classmethod
+    def _unflushed_counter_is_zero(cls, value: Any) -> Any:
+        return 0 if value is None else value
+
+    @field_validator("breaker_threshold", mode="before")
+    @classmethod
+    def _unflushed_threshold_is_the_default(cls, value: Any) -> Any:
+        return 10 if value is None else value
 
 
 class WebhookDeliveryRead(BaseModel):

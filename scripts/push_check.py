@@ -145,6 +145,22 @@ KNOWN_LOCAL_FAILURES: dict[str, str] = {
     # under .venv311 (CI's pin). The rules-mode cases in the file stay covered.
     "tests/test_confidence_threshold_freeze.py::"
     "test_an_llm_analysis_records_the_frozen_threshold_check": _LANGCHAIN,
+    # W10 (2026-10-23): the server-side lookups (D-4) are proven by driving the
+    # real ReAct slow path, which needs create_react_agent; 8/8 pass under
+    # .venv311 (langchain 0.3.x, CI's pin) and fail here only on the AttributeError.
+    **{
+        f"tests/test_server_side_lookups.py::{name}": _LANGCHAIN
+        for name in (
+            "test_a_model_that_calls_no_tool_still_gets_the_splunk_evidence",
+            "test_the_resolver_session_is_closed_before_any_http_and_before_the_model",
+            "test_a_repeated_tool_call_answers_from_the_memo",
+            "test_a_failed_model_call_still_carries_the_server_side_evidence",
+            "test_a_get_llm_failure_propagates_and_no_lookup_is_made",
+            "test_offline_mode_makes_no_request_and_no_server_step",
+            "test_without_a_run_nothing_is_resolved_or_looked_up",
+            "test_a_tool_grant_without_splunk_skips_the_lookup",
+        )
+    },
     "tests/test_rag_services.py::TestDocumentConnectorInternals::"
     "test_extract_docx_preserves_mixed_block_order_and_formatting": (
         "docx extraction differs under the local python-docx build"

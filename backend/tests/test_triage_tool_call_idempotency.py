@@ -32,6 +32,8 @@ RUN = str(uuid.uuid4())
 TC = str(uuid.uuid4())
 DEFECT = uuid.uuid4()
 TICKET = {"ticket_id": "10001", "ticket_key": "QA-1", "ticket_url": "https://jira/browse/QA-1"}
+JIRA_CFG = {"enabled": True, "domain": "jira.example.test", "email": "bot@example.test", "api_token": "t",
+            "default_project_key": "QA"}
 
 
 class _Ledger:
@@ -123,6 +125,10 @@ def wired(monkeypatch):
     monkeypatch.setattr("app.db.postgres.AsyncSessionLocal", ledger.factory())
     monkeypatch.setattr(triage_agent, "AsyncSessionLocal", triage_db.factory())
     monkeypatch.setattr(settings, "JIRA_ENABLED", True)
+    # W10 (contract §0.5): the ticket call is gated on offline mode and the
+    # Jira saved in Settings > Integrations, not on JIRA_ENABLED alone.
+    monkeypatch.setattr(settings, "AI_OFFLINE_MODE", False)
+    monkeypatch.setattr(triage_agent, "resolve_jira_config", AsyncMock(return_value=dict(JIRA_CFG)))
     monkeypatch.setattr(
         triage_agent,
         "check_jira_ticket_creation_policy",
@@ -202,6 +208,8 @@ async def test_stage_entry_takes_unknown_outcomes_off_the_work_list(monkeypatch)
     from app.services.tool_call_idempotency import PriorToolCall
 
     monkeypatch.setattr(settings, "JIRA_ENABLED", True)
+    monkeypatch.setattr(settings, "AI_OFFLINE_MODE", False)
+    monkeypatch.setattr(triage_agent, "resolve_jira_config", AsyncMock(return_value=dict(JIRA_CFG)))
     monkeypatch.setattr(
         triage_agent, "prior_tool_calls",
         AsyncMock(return_value={TC: PriorToolCall(status="executing")}),

@@ -177,7 +177,7 @@ revoked nothing: the auto-provisioned QA-lead account stayed live, and
 any API key bound to the project kept authenticating and kept accepting
 ingestion. See ``project_access_revocation_service`` for the measurements.
 
-Source: [backend/app/routers/projects.py:249](../../../backend/app/routers/projects.py#L249).
+Source: [backend/app/routers/projects.py:256](../../../backend/app/routers/projects.py#L256).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -451,7 +451,7 @@ yet (covers projects created before this feature shipped). Returns
 the new password so the operator can hand it off; the response is
 not persisted anywhere else.
 
-Source: [backend/app/routers/projects.py:341](../../../backend/app/routers/projects.py#L341).
+Source: [backend/app/routers/projects.py:348](../../../backend/app/routers/projects.py#L348).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -559,7 +559,7 @@ Two-step confirmation: ``payload.confirmation_name`` must equal
 the project's ``name`` exactly (case-sensitive). A mismatch
 returns 422 and nothing is deleted.
 
-Source: [backend/app/routers/projects.py:284](../../../backend/app/routers/projects.py#L284).
+Source: [backend/app/routers/projects.py:291](../../../backend/app/routers/projects.py#L291).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 

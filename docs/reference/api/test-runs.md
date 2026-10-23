@@ -737,7 +737,7 @@ Four guards, each a real hazard rather than defensive habit:
   beyond non-empty. Prefixes outside the project's scope are refused and
   REPORTED, never deleted.
 
-Source: [backend/app/routers/runs.py:925](../../../backend/app/routers/runs.py#L925).
+Source: [backend/app/routers/runs.py:932](../../../backend/app/routers/runs.py#L932).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 
@@ -1131,7 +1131,7 @@ check could be made -- an empty list never stands in for "no
 regressions". A live run still streaming answers the same way instead of
 404, as ``/regression-diff`` does.
 
-Source: [backend/app/routers/runs.py:643](../../../backend/app/routers/runs.py#L643).
+Source: [backend/app/routers/runs.py:650](../../../backend/app/routers/runs.py#L650).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1227,7 +1227,7 @@ re-checks whether work is already done before inserting.
 Returns 422 when the run isn't recoverable (already populated / not a
 live run / no buffer left in Redis).
 
-Source: [backend/app/routers/runs.py:760](../../../backend/app/routers/runs.py#L760).
+Source: [backend/app/routers/runs.py:767](../../../backend/app/routers/runs.py#L767).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1425,7 +1425,7 @@ Set Run Release
 
 
 
-Source: [backend/app/routers/runs.py:681](../../../backend/app/routers/runs.py#L681).
+Source: [backend/app/routers/runs.py:688](../../../backend/app/routers/runs.py#L688).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 

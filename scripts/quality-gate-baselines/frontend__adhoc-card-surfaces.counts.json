@@ -77,7 +77,7 @@
     "frontend/src/pages/settings/GitHubIntegrationPage.tsx": 1,
     "frontend/src/pages/settings/GitLabIntegrationPage.tsx": 1,
     "frontend/src/pages/settings/IntegrationHealthPage.tsx": 3,
-    "frontend/src/pages/settings/IntegrationsPage.tsx": 4,
+    "frontend/src/pages/settings/IntegrationsPage.tsx": 1,
     "frontend/src/pages/settings/MyNotificationsPage.tsx": 1,
     "frontend/src/pages/settings/OutboundWebhooksPage.tsx": 2,
     "frontend/src/pages/settings/PersonalKeysPage.tsx": 5,

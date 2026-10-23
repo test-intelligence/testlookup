@@ -17,6 +17,25 @@ denylist: a denylist misses ``0x7f.0.0.1``, ``2130706433``, IPv6-mapped
 forms, and DNS names that resolve to private space. We resolve the host and
 reject if ANY resolved address is private / loopback / link-local / reserved /
 multicast / unspecified.
+
+Two policies (W10)
+------------------
+
+* **Public only** -- ``is_safe_public_url`` / ``assert_public_url`` /
+  ``PublicOnlyAsyncHTTPTransport``: for a URL any user or QA lead types that
+  the server then POSTs data to (outbound webhooks, knowledge-source URLs, SSO
+  metadata). Every non-global address is refused (RFC1918 included) and a DNS
+  failure fails closed.
+* **Integration egress** -- ``egress_block_reason``: for an integration base
+  an ADMIN (Splunk, OpenShift, Jira) or a QA lead (per-project GitHub /
+  GitLab) configures, to which the server sends that integration's
+  credential. Only loopback, link-local (169.254.169.254 included) and
+  unspecified addresses are refused: RFC1918 stays allowed (on-prem Splunk,
+  OpenShift, GitHub Enterprise, GitLab) and a host that does not resolve is
+  allowed (setup, air-gapped DNS -- nothing is reachable through it). It runs
+  at save and again at use, before the credential is sent.
+  ``github_checks_service._ssrf_block_reason`` is this same function under its
+  old name.
 """
 
 from __future__ import annotations
@@ -26,7 +45,7 @@ import ipaddress
 import socket
 import time
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import urlparse
 
 import httpcore
@@ -36,6 +55,7 @@ __all__ = [
     "UnsafeTargetError",
     "PublicOnlyAsyncHTTPTransport",
     "assert_public_url",
+    "egress_block_reason",
     "is_safe_public_url",
     "is_unsafe_target_error",
     "resolve_public_addresses",
@@ -132,6 +152,39 @@ async def assert_public_url(url: str) -> None:
     safe, reason = await asyncio.to_thread(is_safe_public_url, url)
     if not safe:
         raise ValueError(reason)
+
+
+async def egress_block_reason(url: str) -> Optional[str]:
+    """Why the server must not send an integration's credential to ``url``'s
+    host, or ``None`` when it may.
+
+    ``"invalid_url"`` when the URL names no host; ``"blocked_target:<ip>"``
+    when ANY resolved address is loopback, link-local (169.254.169.254, cloud
+    metadata) or unspecified. RFC1918 is ALLOWED (an on-prem Splunk,
+    OpenShift, GitHub Enterprise or GitLab); a host that does not resolve is
+    ALLOWED (initial setup, air-gapped DNS: nothing is reachable through it).
+    Run at egress time, so it also covers DNS rebinding and rows saved before
+    the check existed. DNS runs off the event loop.
+
+    Moved verbatim from ``github_checks_service._ssrf_block_reason`` (W10),
+    which remains importable there as this same object.
+    """
+    host = (urlparse(url).hostname or "").strip()
+    if not host:
+        return "invalid_url"
+    try:
+        infos = await asyncio.to_thread(socket.getaddrinfo, host, None)
+    except Exception:
+        return None  # non-resolving -> allow (setup-friendly, no SSRF reach)
+    for info in infos:
+        raw = str(info[4][0])
+        try:
+            addr = ipaddress.ip_address(raw.split("%")[0])
+        except ValueError:
+            continue
+        if addr.is_loopback or addr.is_link_local or addr.is_unspecified:
+            return f"blocked_target:{raw}"
+    return None
 
 
 def is_unsafe_target_error(exc: BaseException) -> bool:

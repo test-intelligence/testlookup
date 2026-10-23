@@ -89,7 +89,25 @@ Every time the pipeline analyses a run (**Trigger pipeline**, or the analysis th
 
 ### Changes
 
-**What changed since the last good run**: the pass-rate change, **New failures** and **Resolved** tests against the most recent passing run (the baseline), a list of the new failures, and the commits since the baseline when the run carried a commit range. Buttons open Compare against the last good build, against the previous run, or empty (**Open Compare**). If no passing run exists to compare with, the tab says so.
+**What changed since the last good run**: the pass-rate change, **New failures** and **Resolved** tests against the most recent passing run (the baseline), a list of the new failures, and the commits that landed before this run. Buttons open Compare against the last good build, against the previous run, or empty (**Open Compare**). If no passing run exists to compare with, the tab says so.
+
+**The commits** are the project's own: the range fetched through the project's GitHub or GitHub Enterprise integration (**Settings › GitHub**), the same commits the **Suspects** panel shows, or the commits your CI sent with the run (`Commits supplied with the run (no GitHub call).`). The heading names the build the range starts after, `Commits since build #238 (3)`, and each commit's short hash links to it on GitHub. That build is usually the last green run of the branch; when the branch has none, the range starts at the last completed run and a line says so: `Counted from the last completed run, not the last green one: some of these may predate the failure.` The range is fetched when the tab is first opened, at most once every 6 hours per run, and never while offline mode is on.
+
+When no commits can be listed, one line says why:
+
+| Line | What to do |
+|---|---|
+| `Commit list unavailable: offline mode (AI_OFFLINE_MODE=true).` | Nothing: offline mode blocks GitHub. CI can still send the commits with the run |
+| `Commit list unavailable: GitHub checks are turned off for this project.` | An administrator turns on `github_checks` (**Feature flags**) |
+| `Commit list unavailable: this project has no GitHub integration.` | **Connect GitHub in Settings › GitHub** |
+| `Commit list unavailable: this project's GitHub integration is turned off.` | Turn it on in **Settings › GitHub** |
+| `Commit list unavailable: this run's repository is not the project's GitHub repository.` | The run came from another repository; check the repository in **Settings › GitHub** |
+| `Commit list unavailable: no GitHub token is stored for this project.` | Save a token in **Settings › GitHub** |
+| `Commit list unavailable: this run carries no commit hash.` | Send the commit with the run (the SDKs and CLI read it from CI) |
+| `Commit list unavailable: no earlier run of this branch carries a commit hash to compare with.` | Nothing yet: the next run has this one to compare with |
+| `Commit list not resolved yet.` | Open the tab again shortly |
+| `Commit list unavailable: GitHub did not answer the comparison. It is tried again after 6 hours.` | Check the project's row on **Integration health** |
+| `No commits between build #238 and this run.` | Nothing: the same commit was tested twice |
 
 ### Evidence
 

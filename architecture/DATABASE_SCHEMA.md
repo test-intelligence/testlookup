@@ -822,6 +822,7 @@ erDiagram
     }
     INTEGRATION_HEALTH_CHECKS {
         String provider PK
+        String scope_key PK
         String status
     }
     INTEGRATION_PROBE_RESULTS {
@@ -2911,6 +2912,7 @@ _Constraints:_ Index(`ix_notif_log_user_created`, `user_id`, `created_at`); Inde
 | Column | Type | Key | Flags | References |
 |---|---|---|---|---|
 | `provider` | `String(50)` | PK | NN |  |
+| `scope_key` | `String(64)` | PK | NN def |  |
 | `status` | `String(20)` |  | NN def |  |
 | `last_checked_at` | `DateTime` |  |  |  |
 | `message` | `Text` |  |  |  |
@@ -2918,12 +2920,15 @@ _Constraints:_ Index(`ix_notif_log_user_created`, `user_id`, `created_at`); Inde
 | `consecutive_failures` | `Integer` |  | NN def |  |
 | `last_success_at` | `DateTime` |  |  |  |
 
+_Constraints:_ the primary key is (`provider`, `scope_key`) since migration 0223 (built `CONCURRENTLY` as `uq_integration_health_checks_provider_scope`, attached as `integration_health_checks_pkey`). `scope_key` is `''` for a deployment-wide row (every row written before 0223) and the project id for a per-project GitHub or GitLab row (INT-04). No foreign key: the key is a string shared by kinds; the beat prunes the rows of an integration that was removed or turned off.
+
 #### `integration_probe_results`  <sub>(model `IntegrationProbeResult`)</sub>
 
 | Column | Type | Key | Flags | References |
 |---|---|---|---|---|
 | `id` | `UUID` | PK | NN def |  |
 | `provider` | `String(50)` |  | NN |  |
+| `scope_key` | `String(64)` |  | NN def |  |
 | `status` | `String(20)` |  | NN |  |
 | `response_ms` | `Integer` |  |  |  |
 | `message` | `Text` |  |  |  |
@@ -2931,7 +2936,7 @@ _Constraints:_ Index(`ix_notif_log_user_created`, `user_id`, `created_at`); Inde
 | `payload_valid` | `Boolean` |  |  |  |
 | `checked_at` | `DateTime` |  | NN def |  |
 
-_Constraints:_ Index(`ix_ipr_provider_time`, `provider`, `checked_at`)
+_Constraints:_ Index(`ix_ipr_provider_time`, `provider`, `checked_at`); Index(`ix_ipr_provider_scope_time`, `provider`, `scope_key`, `checked_at`). `scope_key` as in `integration_health_checks` (`''` = deployment-wide; the trends read only those).
 
 #### `webhook_subscriptions`  <sub>(model `WebhookSubscription`)</sub>
 
@@ -2950,11 +2955,17 @@ _Constraints:_ Index(`ix_ipr_provider_time`, `provider`, `checked_at`)
 | `last_error` | `Text` |  |  |  |
 | `failure_count` | `Integer` |  | NN def |  |
 | `total_delivered` | `Integer` |  | NN def |  |
+| `consecutive_failures` | `Integer` |  | NN def |  |
+| `breaker_threshold` | `Integer` |  | NN def |  |
+| `disabled_at` | `DateTime` |  |  |  |
+| `disabled_reason` | `String(40)` |  |  |  |
 | `created_at` | `DateTime` |  | NN def |  |
 | `updated_at` | `DateTime` |  | NN def |  |
 | `updated_by_user_id` | `UUID` | FK |  | → `users.id` |
 
 _Constraints:_ Index(`ix_webhook_sub_project`, `project_id`); Index(`ix_webhook_sub_enabled`, `enabled`, `project_id`)
+
+The circuit breaker's columns (migration 0224, INT-07): `consecutive_failures` (default 0) counts deliveries in a row that ended `FAILED` or `DLQ` with the subscription's bookkeeping (a retried attempt counts once, at its terminal status) and is reset to 0 by a `SUCCESS` and by a re-enable; `failure_count` keeps counting every failed attempt. `breaker_threshold` (default 10, 1-100 through the API) is the count at which one guarded `UPDATE … RETURNING` in the delivery's transaction sets `enabled = false`, `disabled_reason = 'circuit_open'` and `disabled_at`. `disabled_reason` is `circuit_open` or `manual` (a person turned it off), `NULL` on an enabled row and on a row disabled before 0224.
 
 #### `webhook_deliveries`  <sub>(model `WebhookDelivery`)</sub>
 

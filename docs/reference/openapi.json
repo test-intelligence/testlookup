@@ -15324,9 +15324,154 @@
         "title": "IngestTestResult",
         "type": "object"
       },
+      "IntegrationHealthRow": {
+        "properties": {
+          "breaker_threshold": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Breaker Threshold"
+          },
+          "consecutive_failures": {
+            "default": 0,
+            "title": "Consecutive Failures",
+            "type": "integer"
+          },
+          "kind": {
+            "default": "global",
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "last_checked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Checked At"
+          },
+          "last_success_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Success At"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "probed": {
+            "default": true,
+            "title": "Probed",
+            "type": "boolean"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "project_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Name"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "response_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Ms"
+          },
+          "scope_key": {
+            "default": "",
+            "title": "Scope Key",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target"
+          }
+        },
+        "required": [
+          "provider",
+          "status"
+        ],
+        "title": "IntegrationHealthRow",
+        "type": "object"
+      },
       "IntegrationsConfigRead": {
         "description": "External integrations configuration (no tokens).",
         "properties": {
+          "environment_fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Environment Fields",
+            "type": "array"
+          },
           "github_repo": {
             "anyOf": [
               {
@@ -15400,6 +15545,7 @@
             "type": "boolean"
           },
           "slack_default_channel": {
+            "deprecated": true,
             "title": "Slack Default Channel",
             "type": "string"
           },
@@ -15628,6 +15774,7 @@
                 "type": "null"
               }
             ],
+            "deprecated": true,
             "title": "Slack Default Channel"
           },
           "slack_enabled": {
@@ -22941,6 +23088,7 @@
                 "type": "null"
               }
             ],
+            "description": "Stored only; TestLookup does not use it (W10 D22).",
             "title": "Jenkins Job Pattern"
           },
           "jira_project_key": {
@@ -23426,6 +23574,7 @@
                 "type": "null"
               }
             ],
+            "description": "Stored only; TestLookup does not use it (W10 D22).",
             "title": "Jenkins Job Pattern"
           },
           "jira_project_key": {
@@ -38216,10 +38365,43 @@
       },
       "WebhookSubscriptionRead": {
         "properties": {
+          "breaker_threshold": {
+            "default": 10,
+            "title": "Breaker Threshold",
+            "type": "integer"
+          },
+          "consecutive_failures": {
+            "default": 0,
+            "title": "Consecutive Failures",
+            "type": "integer"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "disabled_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disabled At"
+          },
+          "disabled_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disabled Reason"
           },
           "enabled": {
             "title": "Enabled",
@@ -38326,6 +38508,19 @@
       },
       "WebhookSubscriptionWrite": {
         "properties": {
+          "breaker_threshold": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Breaker Threshold"
+          },
           "enabled": {
             "default": true,
             "title": "Enabled",
@@ -52616,7 +52811,7 @@
     },
     "/api/v1/integration-health/history/{provider}": {
       "get": {
-        "description": "Get probe history for a specific provider.",
+        "description": "Probe history for a provider: the deployment-wide history, or -- with\n``project_id`` (checked by ``resolve_project_scope`` first) -- that\nproject's integration.",
         "operationId": "get_provider_history_api_v1_integration_health_history__provider__get",
         "parameters": [
           {
@@ -52638,6 +52833,23 @@
               "minimum": 1,
               "title": "Days",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
             }
           },
           {
@@ -52690,7 +52902,7 @@
     },
     "/api/v1/integration-health/probe": {
       "post": {
-        "description": "Trigger an on-demand health probe for all or a specific provider (QA_LEAD+).",
+        "description": "Trigger an on-demand health probe for all or a specific provider (QA_LEAD+).\n\n``project_id`` probes that project's GitHub or GitLab integration\n(``provider=github|gitlab``); the id passes ``resolve_project_scope`` before\nanything is read. Without a provider and a project: every deployment-wide\nprobe plus every per-project integration the reader may see. The request\nsession's connection is handed back before any probe makes an HTTP call.",
         "operationId": "trigger_probe_api_v1_integration_health_probe_post",
         "parameters": [
           {
@@ -52707,6 +52919,23 @@
                 }
               ],
               "title": "Provider"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
             }
           },
           {
@@ -52759,9 +52988,19 @@
     },
     "/api/v1/integration-health/status": {
       "get": {
-        "description": "Get latest health status for all integration providers.",
+        "description": "Latest health per integration.\n\n``scope=global`` (the default, every existing consumer): the\ndeployment-wide rows. ``scope=all``: those, then one row per enabled\nper-project GitHub / GitLab integration of the reader's projects (an admin:\nevery project), then one row per paused outbound webhook in them. Five\nreads for ``all``, none per row.",
         "operationId": "get_all_status_api_v1_integration_health_status_get",
         "parameters": [
+          {
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "default": "global",
+              "title": "Scope",
+              "type": "string"
+            }
+          },
           {
             "in": "header",
             "name": "X-API-Key",
@@ -52783,7 +53022,13 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/IntegrationHealthRow"
+                  },
+                  "title": "Response Get All Status Api V1 Integration Health Status Get",
+                  "type": "array"
+                }
               }
             },
             "description": "Successful Response"
@@ -52812,7 +53057,7 @@
     },
     "/api/v1/integration-health/trends": {
       "get": {
-        "description": "Get aggregated health trends for all providers over a period.\n\nEvery status the probe service persists gets its own counter. The probers\nemit five (``skipped`` is dropped before insert, see\n``integration_probe_service._persist``), and reporting only three left\n``auth_error`` and ``timeout`` probes counted in ``total_probes`` — so they\ndragged ``uptime_pct`` down — while appearing in no column at all. A\nprovider whose token had expired rendered as 0% uptime with 0 healthy,\n0 degraded and 0 down, which reads as \"no data\" rather than \"your\ncredentials are wrong\".",
+        "description": "Get aggregated health trends for all providers over a period.\n\nEvery status the probe service persists gets its own counter. The probers\nemit five (``skipped`` is dropped before insert, see\n``integration_probe_service._persist``), and reporting only three left\n``auth_error`` and ``timeout`` probes counted in ``total_probes`` — so they\ndragged ``uptime_pct`` down — while appearing in no column at all. A\nprovider whose token had expired rendered as 0% uptime with 0 healthy,\n0 degraded and 0 down, which reads as \"no data\" rather than \"your\ncredentials are wrong\".\n\nThe trend is deployment-wide (W10 INT-04): per-project probes\n(``scope_key <> ''``) stay out of both statements.",
         "operationId": "get_health_trends_api_v1_integration_health_trends_get",
         "parameters": [
           {
@@ -75716,7 +75961,7 @@
     },
     "/api/v1/settings/integrations/health": {
       "get": {
-        "description": "Return health status for all tracked integration providers.",
+        "description": "Return health status for all tracked integration providers.\n\nThe deployment-wide view only (``scope_key = ''``): per-project GitHub /\nGitLab rows (W10 INT-04) are Integration Health's ``?scope=all`` read.",
         "operationId": "get_integration_health_api_v1_settings_integrations_health_get",
         "parameters": [
           {

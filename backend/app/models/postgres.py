@@ -160,6 +160,11 @@ class NotificationEventType(str, PyEnum):
     # row through this enum, so a value missing here fails its delivery.
     TEST_NEWLY_SLOW = "test.newly_slow"
     SUITE_NEWLY_SLOW = "suite.newly_slow"
+    # ── Outbound webhook circuit breaker (W10 INT-07) — staged by
+    # services/webhook_breaker.py as one explicit email delivery per recipient
+    # (the subscription's last editor and the project's QA leads) when a
+    # subscription is paused after N consecutive failed deliveries.
+    WEBHOOK_CIRCUIT_OPENED = "webhook.circuit_opened"
 
 
 # ── Models ───────────────────────────────────────────────────
@@ -4387,10 +4392,16 @@ class RunComparisonReport(Base):
 
 
 class IntegrationHealthCheck(Base):
-    """Integration provider health status (latest snapshot per provider)."""
+    """Integration health status: the latest snapshot per (provider, scope).
+
+    Scope ``''`` = deployment-wide (every row before migration 0223); else a
+    project id (per-project GitHub / GitLab rows, W10 INT-04). The primary key
+    is ``(provider, scope_key)`` since 0223.
+    """
     __tablename__ = "integration_health_checks"
 
     provider: Mapped[str] = mapped_column(String(50), primary_key=True)
+    scope_key: Mapped[str] = mapped_column(String(64), primary_key=True, default="", server_default="")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="unknown")
     last_checked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     message: Mapped[Optional[str]] = mapped_column(Text)
@@ -4404,10 +4415,14 @@ class IntegrationProbeResult(Base):
     __tablename__ = "integration_probe_results"
     __table_args__ = (
         Index("ix_ipr_provider_time", "provider", "checked_at"),
+        # Migration 0223 (W10 INT-04): one project's history.
+        Index("ix_ipr_provider_scope_time", "provider", "scope_key", "checked_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    # '' = a deployment-wide probe; else the project id (migration 0223).
+    scope_key: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
     status: Mapped[str] = mapped_column(String(20), nullable=False)  # healthy | degraded | down | auth_error | timeout
     response_ms: Mapped[Optional[int]] = mapped_column(Integer)
     message: Mapped[Optional[str]] = mapped_column(Text)
@@ -6558,6 +6573,19 @@ class WebhookSubscription(Base):
     last_error: Mapped[Optional[str]] = mapped_column(Text)
     failure_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     total_delivered: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # Circuit breaker (migration 0224, W10 INT-07). ``failure_count`` above
+    # counts ATTEMPTS and is never reset; ``consecutive_failures`` counts
+    # DELIVERIES that ended FAILED or DLQ with this subscription's bookkeeping
+    # (a retried attempt counts once, when its retries are spent), and a
+    # SUCCESS resets it to 0. When it reaches ``breaker_threshold`` the
+    # subscription is paused: ``enabled = false``, ``disabled_reason =
+    # 'circuit_open'``, ``disabled_at`` stamped. A person's disable writes
+    # ``'manual'``; Re-enable resets the counter and clears both.
+    consecutive_failures: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    breaker_threshold: Mapped[int] = mapped_column(Integer, default=10, server_default="10", nullable=False)
+    disabled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    disabled_reason: Mapped[Optional[str]] = mapped_column(String(40))
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

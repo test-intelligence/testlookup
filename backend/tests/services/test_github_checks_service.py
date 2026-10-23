@@ -143,50 +143,17 @@ async def test_post_allowed_true_when_online_and_flagged():
 # ── _ssrf_block_reason (SSRF guard) ─────────────────────────────────────────
 #
 # Regression (review/github-checks-service, 2026-06-02): api_base_url is
-# QA_LEAD-configurable and the PAT is sent to it (test_connection even returns
-# the response body), so an unguarded base is an SSRF read primitive (cloud
-# metadata 169.254.169.254 → IAM creds; localhost pivot; path-traversal via
-# repo_owner/name). Block loopback/link-local/unspecified at egress time while
-# ALLOWING RFC1918 so self-hosted GitHub Enterprise on a private net still works.
+# QA_LEAD-configurable and the PAT is sent to it. W10 moved the guard to
+# ``url_safety.egress_block_reason`` (one egress guard for every
+# operator- / QA-lead-configured integration host); its cases live in
+# ``tests/test_url_safety_egress.py``. The old name stays importable here and
+# IS that function, so every per-module patch and import keeps working.
 
 
-def _addrinfo(ip: str):
-    return [(2, 1, 6, "", (ip, 0))]
+def test_ssrf_block_reason_is_the_url_safety_egress_guard():
+    from app.services import url_safety
 
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("url,ip", [
-    ("http://169.254.169.254/x", "169.254.169.254"),  # cloud metadata
-    ("http://127.0.0.1/x", "127.0.0.1"),               # loopback
-    ("http://0.0.0.0/x", "0.0.0.0"),                   # unspecified
-    ("http://[::1]/x", "::1"),                         # IPv6 loopback (bracketed)
-])
-async def test_ssrf_block_reason_blocks_dangerous_targets(url, ip):
-    with patch.object(svc.socket, "getaddrinfo", lambda *a, **k: _addrinfo(ip)):
-        reason = await svc._ssrf_block_reason(url)
-    assert reason is not None and reason.startswith("blocked_target")
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("ip", ["140.82.112.3", "10.0.0.5", "192.168.1.10"])
-async def test_ssrf_block_reason_allows_public_and_private_ghe(ip):
-    # Public GitHub AND RFC1918 (self-hosted GHE) must be allowed.
-    with patch.object(svc.socket, "getaddrinfo", lambda *a, **k: _addrinfo(ip)):
-        assert await svc._ssrf_block_reason(f"http://{ip}/x") is None
-
-
-@pytest.mark.asyncio
-async def test_ssrf_block_reason_allows_non_resolving_host():
-    def _boom(*a, **k):
-        raise OSError("name resolution failed")
-
-    with patch.object(svc.socket, "getaddrinfo", _boom):
-        assert await svc._ssrf_block_reason("https://ghe.invalid.example/x") is None
-
-
-@pytest.mark.asyncio
-async def test_ssrf_block_reason_rejects_empty_url():
-    assert await svc._ssrf_block_reason("") == "invalid_url"
+    assert svc._ssrf_block_reason is url_safety.egress_block_reason
 
 
 # ═══════════════════════════════════════════════════════════════════════════

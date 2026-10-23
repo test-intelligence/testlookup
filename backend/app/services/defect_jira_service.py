@@ -73,6 +73,9 @@ from app.models.postgres import (
 )
 from app.services import tool_call_idempotency as tci
 from app.services.defect_status import ACTIVE_STATUSES, parse_jira_key
+# W10 INT-01: the ONE precedence rule (a saved None / "" hands a key back to
+# the environment; a saved boolean is a value).
+from app.services.integration_config_service import effective_value
 
 logger = structlog.get_logger("services.defect_jira")
 
@@ -100,6 +103,11 @@ async def resolve_jira_config(db: AsyncSession) -> dict[str, Any]:
     AppSetting overrides win over env settings; the API token additionally
     checks the secret service (Settings-UI-stored tokens live there, the
     stored AppSetting value is stripped of secrets).
+
+    W10 INT-01: each text / boolean key goes through
+    ``integration_config_service.effective_value``, so a saved ``None`` or an
+    empty string no longer beats the environment. Same two statements, same
+    keys.
     """
     result = await db.execute(
         select(AppSetting).where(AppSetting.key == _INTEGRATIONS_KEY)
@@ -116,13 +124,13 @@ async def resolve_jira_config(db: AsyncSession) -> dict[str, Any]:
         logger.debug("jira_token_secret_lookup_failed", error=str(exc))
 
     return {
-        "enabled": overrides.get("jira_enabled", settings.JIRA_ENABLED),
-        "domain": overrides.get("jira_domain", settings.JIRA_DOMAIN),
-        "email": overrides.get("jira_email", settings.JIRA_EMAIL),
+        "enabled": effective_value(overrides, "jira_enabled", settings.JIRA_ENABLED)[0],
+        "domain": effective_value(overrides, "jira_domain", settings.JIRA_DOMAIN)[0],
+        "email": effective_value(overrides, "jira_email", settings.JIRA_EMAIL)[0],
         "api_token": token or overrides.get("jira_api_token") or settings.JIRA_API_TOKEN,
-        "default_project_key": overrides.get(
-            "jira_default_project_key", settings.JIRA_DEFAULT_PROJECT_KEY
-        ),
+        "default_project_key": effective_value(
+            overrides, "jira_default_project_key", settings.JIRA_DEFAULT_PROJECT_KEY
+        )[0],
     }
 
 

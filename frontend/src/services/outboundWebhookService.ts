@@ -23,6 +23,15 @@ export interface WebhookSubscriptionRead {
   total_delivered: number
   created_at: string
   updated_at: string
+  // W10 INT-07, the circuit breaker. Optional: an older server sends none of
+  // them, which reads "not paused".
+  /** Deliveries in a row that ended FAILED / DLQ (a retried attempt counts once, at its end). */
+  consecutive_failures?: number
+  /** Pause after this many (1-100; the server's default is 10). */
+  breaker_threshold?: number
+  /** `circuit_open` (paused by the breaker) | `manual` (turned off by a person) | null. */
+  disabled_reason?: string | null
+  disabled_at?: string | null
 }
 
 export interface WebhookSubscriptionWrite {
@@ -32,6 +41,8 @@ export interface WebhookSubscriptionWrite {
   enabled: boolean
   max_retries: number
   secret?: string | null
+  /** W10 INT-07: 1-100. Omitted keeps the stored value (a new subscription: the server's default, 10). */
+  breaker_threshold?: number
 }
 
 export interface WebhookDeliveryRead {

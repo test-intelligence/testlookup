@@ -479,6 +479,24 @@ integration_health_gauge = Gauge(
     multiprocess_mode="mostrecent",
 )
 
+# W10 INT-04: per-project integrations, counted per (provider, status) after
+# each probe persist -- 2 providers (github | gitlab) x 6 statuses = 12 series
+# whatever the project count, never a project label. The deployment-wide rows
+# stay on integration_health_gauge above.
+integration_project_health_gauge = Gauge(
+    "testlookup_integration_project_health",
+    "Per-project integrations (GitHub / GitLab) in each probe status, counted",
+    ["provider", "status"],
+    multiprocess_mode="mostrecent",
+)
+
+# W10 INT-07: incremented once per circuit-breaker trip, after the delivery's
+# commit (services/webhook_breaker.py count_trip).
+webhook_circuit_opened_total = Counter(
+    "testlookup_webhook_circuit_opened_total",
+    "Outbound webhook subscriptions paused by the circuit breaker (one per trip)",
+)
+
 feature_flag_evaluations_total = Counter(
     "testlookup_feature_flag_evaluations_total",
     "Total feature flag evaluations",

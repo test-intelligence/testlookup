@@ -57,7 +57,6 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from urllib.parse import urlsplit
@@ -78,13 +77,12 @@ from app.models.postgres import (
     TestRun,
 )
 from app.services.github_checks_service import (
-    SECRET_SCOPE,
     _locate_failure,
     _post_allowed,
-    _secret_key,
     _ssrf_block_reason,
     get_integration,
 )
+from app.services.github_target import GitHubTarget, resolve_github_target
 from app.services.run_compare_service import _status_bucket
 from app.services.github_urls import github_html_root
 from app.services.cluster_snapshot import is_current_snapshot
@@ -545,35 +543,22 @@ async def _gh_get(
         return await one_shot.get(url, headers=headers, params=params)
 
 
-@dataclass
-class _ConnectorTarget:
-    """Plain-value connector coordinates read out of the DB up front so the
-    HTTP phase runs with no session open."""
-
-    api_base: str
-    repo: str
-    pat: str
+# Plain-value connector coordinates read out of the DB up front so the HTTP
+# phase runs with no session open. W10: the per-project GitHub target has ONE
+# resolver (services/github_target.py); the old name is kept for the tests that
+# construct ``_ConnectorTarget(api_base=, repo=, pat=)``.
+_ConnectorTarget = GitHubTarget
 
 
 async def _connector_target(db: AsyncSession, run: TestRun) -> Optional[_ConnectorTarget]:
     """Resolve integration + PAT into plain values (DB reads only, no HTTP).
-    ``None`` when the connector isn't usable (no integration / repo mismatch /
-    no PAT)."""
-    integration = await get_integration(db, run.project_id)
-    if integration is None or not integration.enabled:
-        return None
-    api_base = (integration.api_base_url or "").rstrip("/")
-    repo = f"{integration.repo_owner}/{integration.repo_name}"
-    # Honor the repo match: a run's commit only makes sense against its repo.
-    if run.ci_repo and run.ci_repo.strip().lower() != repo.lower():
-        logger.debug("commit_range connector repo mismatch", run_id=str(run.id))
-        return None
-
-    from app.services import secret_service
-    pat = await secret_service.read_secret(db, SECRET_SCOPE, _secret_key(run.project_id))
-    if not pat:
-        return None
-    return _ConnectorTarget(api_base=api_base, repo=repo, pat=pat)
+    ``None`` when the connector isn't usable (no integration / disabled / repo
+    mismatch / no PAT). The gate is not asked again: ``resolve_commit_range``
+    already asked ``_post_allowed``."""
+    resolution = await resolve_github_target(
+        db, run.project_id, ci_repo=run.ci_repo, check_gate=False,
+    )
+    return resolution.target
 
 
 async def _fetch_commit_files(

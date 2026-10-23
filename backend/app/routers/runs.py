@@ -637,6 +637,13 @@ async def get_regression_diff(
             "flipped_to_passing": [],
         }
 
+    # W10 FAIL-09: the commits come from the run's stored per-project range
+    # (the Suspects panel's). Resolve it lazily, at most once per 6 h cooldown,
+    # on the helper's own write session after the read connection is handed
+    # back; offline, nothing. The diff itself only reads.
+    from app.routers.commit_attribution import lazy_resolve_commit_range
+
+    await lazy_resolve_commit_range(db, run)
     return await compute_regression_diff(run, db)
 
 

@@ -12,18 +12,22 @@ Endpoints (both project/run-guarded via ``require_run_access``):
       Deterministic suspect ranking for a newly-failing cluster/test — ranked
       commits with the overlapping-files rationale and the monorepo caveat.
 
-All logic lives in ``services/commit_attribution_service``.
+All logic lives in ``services/commit_attribution_service``. The one write --
+the lazy resolve -- lives HERE (``lazy_resolve_commit_range``) because the
+service is stage-only and the services' commit allow-list is at its bound; the
+run's Changes tab (``GET /runs/{id}/regression-diff``) calls the same helper.
 """
 import uuid
 from typing import Any, Optional
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
+from app.core.config import settings
 from app.core.deps import require_run_access
-from app.db.postgres import AsyncSessionLocal, get_db
-from app.models.postgres import TestRun
+from app.db.postgres import AsyncSessionLocal, get_db, release_read_connection
+from app.models.postgres import RunCommitRange, TestRun
 from app.services import commit_attribution_service as svc
 
 logger = structlog.get_logger("routers.commit_attribution")
@@ -39,19 +43,61 @@ async def _load_run(db: Any, run_id: uuid.UUID) -> TestRun:
     return run
 
 
-async def _lazy_resolve(run_id: uuid.UUID) -> None:
-    """One-shot resolve on a dedicated write session so the GET handler's own
-    transaction stays read-only (mirrors the run_intelligence cache-populate
-    pattern). The service stages the row; this write session owns the commit.
-    Best-effort — a resolution failure must not fail the read."""
+async def lazy_resolve_commit_range(db: Any, run: TestRun) -> None:
+    """Resolve a run's commit range at most once per cooldown, on its own session.
+
+    A GET never persists a GATED outcome. Offline, a run without a commit
+    hash, or a project whose GitHub target is unavailable right now
+    (``github_target_status``: the ``github_checks`` flag off, no or a disabled
+    integration, a repository mismatch, no token -- read without decrypting
+    anything) -> nothing is written and no call is made; the Changes tab then
+    shows that reason, and the first view after the admin fixes it resolves.
+
+    Otherwise, reads the stored range on the request's session and resolves
+    only when it ``needs_resolution`` (no row yet, or an ``unavailable`` row
+    older than the 6 h cooldown) or the row ``never_reached_the_connector``
+    (written while the gate was shut: no base commit although a baseline run
+    exists). It then hands the request session's read connection back
+    (``release_read_connection``) and works on a dedicated write session: a
+    gated row is deleted first (committed, so the service's own read session
+    no longer sees it and its cooldown does not keep the stale answer), then
+    ``resolve_commit_range`` runs and is committed -- so a GET never holds two
+    connections and never writes on every view. A row that reached the
+    connector (a fetch failure: base commit set) keeps the 6 h cooldown.
+    Best-effort: a failure is logged and the read goes on."""
+    from app.services.github_target import github_target_status
+    from app.services.regression_diff_service import never_reached_the_connector
+
+    if settings.AI_OFFLINE_MODE or not run.commit_hash:
+        return
+    serialized = await svc.get_commit_range(db, run)
+    if serialized.get("available"):
+        return
+    reason, _api_base = await github_target_status(db, run.project_id, ci_repo=run.ci_repo)
+    if reason:
+        return
+    stale = await never_reached_the_connector(db, run, serialized)
+    if not stale and not svc.needs_resolution(serialized):
+        return
+    await release_read_connection(db)
     try:
         async with AsyncSessionLocal() as write_db:
-            await svc.resolve_commit_range(write_db, run_id)
+            if stale:
+                await write_db.execute(
+                    delete(RunCommitRange).where(
+                        RunCommitRange.run_id == run.id,
+                        RunCommitRange.source == svc.SOURCE_UNAVAILABLE,
+                        RunCommitRange.base_commit.is_(None),
+                    )
+                )
+                await write_db.commit()
+            await svc.resolve_commit_range(write_db, run.id)
             await write_db.commit()
     except Exception as exc:
         logger.warning(
             "commit_range_lazy_resolve_failed",
-            run_id=str(run_id),
+            run_id=str(run.id),
+            error_type=type(exc).__name__,
             error=str(exc),
         )
 
@@ -71,11 +117,8 @@ async def get_run_commit_range(
     means repeated GETs on a range-less run do NOT re-run the connector.
     """
     run = await _load_run(db, run_id)
-    result = await svc.get_commit_range(db, run)
-    if svc.needs_resolution(result):
-        await _lazy_resolve(run_id)
-        result = await svc.get_commit_range(db, run)
-    return result
+    await lazy_resolve_commit_range(db, run)
+    return await svc.get_commit_range(db, run)
 
 
 @router.get("/{run_id}/suspects")
@@ -99,9 +142,7 @@ async def get_run_suspects(
     # Resolve the range on demand so suspects work even before finalize ran
     # the connector path (mirrors the commit-range endpoint's lazy resolve,
     # including its re-resolve cooldown gate).
-    existing = await svc.get_commit_range(db, run)
-    if svc.needs_resolution(existing):
-        await _lazy_resolve(run_id)
+    await lazy_resolve_commit_range(db, run)
     return await svc.rank_suspects(
         db, run, cluster_id=cluster_id, fingerprint=fingerprint,
     )

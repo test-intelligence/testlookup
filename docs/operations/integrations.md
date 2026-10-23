@@ -7,7 +7,26 @@ How to connect TestLookup to issue trackers, chat, email, log and cluster source
 Two rules apply to everything on this page:
 
 - **Offline mode wins.** `AI_OFFLINE_MODE` defaults to `true`, and while it is on most outbound integrations stay silent even when configured. Read [Offline mode and egress allow-lists](#offline-mode-and-egress-allow-lists) before you wonder why nothing is sent.
-- **The UI can override the environment, but not everywhere.** Values saved under Settings, Integrations (`/settings/integrations`) and Settings, Email and channels (`/settings/notifications`) are stored in the database (credentials encrypted with `APP_SECRET_KEY`) and win over the environment for most paths. The exceptions are listed per integration and in [Configuration](configuration.md#how-settings-are-loaded). Settings pages are QA_LEAD or ADMIN.
+- **A value saved in the UI wins over the environment.** Values saved under Settings, Integrations (`/settings/integrations`) and Settings, Email and channels (`/settings/notifications`) are stored in the database (credentials encrypted with `APP_SECRET_KEY`) and win over the environment on every runtime path: Jira (every path), Splunk, OpenShift, Slack, Teams and SMTP, and the health probes. The environment applies to a key never saved, or saved empty; a project's own value (Splunk index, OpenShift namespace) comes first. The full rule is in [Which value applies](#which-value-applies). Settings pages are QA_LEAD or ADMIN.
+
+## Which value applies
+
+One resolver (`integration_config_service`) decides every integration value, for the request paths, the agent tools, the workers and the health probes alike. First match wins:
+
+| Key | Order |
+|---|---|
+| any outbound call | `AI_OFFLINE_MODE=true` refuses it (read live at each call, never cached) |
+| Splunk index | the project's Splunk Index (`projects.splunk_index`, non-empty) → `SPLUNK_INDEX` (default `main`) |
+| OpenShift namespace of a run | the run's own namespace → the project's OCP Namespace → the saved Default Namespace → `OCP_DEFAULT_NAMESPACE` |
+| every other text key or switch | saved at `/settings/integrations` (a text that is non-empty after trimming, any saved boolean) → the environment variable |
+| every secret | the `secret_refs` row → a legacy inline value → the environment variable (clearing a token in the UI expires it, so the environment applies again) |
+| GitHub / GitLab | per project only (`/settings/github`, `/settings/gitlab`); `GITHUB_TOKEN` feeds only the deployment-wide GitHub row of Integration health |
+
+- A text saved empty (or only spaces) counts as **never saved**, so clearing a field hands it back to the environment; a saved boolean is always a value (saved `false` beats `SPLUNK_ENABLED=true`).
+- `GET /api/v1/settings/integrations` returns `environment_fields`: the names of the keys whose shown value (or `*_set`) comes from the environment because they were never saved. Never a value.
+- `PUT /api/v1/settings/integrations` stores the saved row merged with the fields sent, never the environment's values, and the page sends only the fields the reader changed. Before this release the page re-sent every field it showed, so an earlier save may have copied environment values into the row (they then no longer follow the environment and are not listed in `environment_fields`); save the field empty to hand it back.
+- Each process caches a project's resolved configuration for **30 seconds**; the saving process drops its cache at once, a worker sees a save within 30 seconds. Offline mode is never cached.
+- **The egress check.** A Splunk base URL, an OpenShift API URL and `https://<Jira domain>` are checked at save and again before every call, before any credential is sent: a host that resolves to a loopback, link-local (`169.254.169.254` included) or unspecified address is refused (`422 Target host is not allowed` at save; the call is refused at use). RFC 1918 addresses (on-premises Splunk, OpenShift, GitHub Enterprise, GitLab) are allowed, and so is a host that does not resolve (nothing is reachable through it). The per-project GitHub and GitLab bases are checked the same way. The save also refuses a URL that is not `http(s)://` with a host and no user name or password, a Jira domain with a scheme or path, and a Default Namespace that is not a DNS label.
 
 ## Jira
 
@@ -19,7 +38,7 @@ TestLookup talks to **Jira Cloud** through REST API v3 with basic authentication
 - Triage on the Defects page (`PATCH /api/v1/projects/{project_id}/defects/{defect_id}`): a Jira key a person links is **checked** against Jira (`GET /rest/api/3/issue/{key}`), and a status change on a linked defect is **written back** by moving the issue to a status in the matching category (`GET .../transitions`, then `POST .../transitions`; nothing is sent when the issue is already in that category or no transition leads there). The link itself is always built by the server from the configured domain (`https://<JIRA_DOMAIN>/browse/<KEY>`).
 - Approving a promoted defect in Inbox › Approvals: when the promotion named a Jira project key, the approval files the ticket on that defect, or links it to the open issue already filed for the same failure (the one-click flow's de-duplication and claim, so the two paths never file one failure twice).
 - Jira as a knowledge source (`knowledge_rag` flag) and the Jira fix-version release sync.
-- Tickets filed by the AI pipeline's triage stage and by `POST /api/v1/integrations/jira`. The `defect_commander` stage (flag) and defect promotion never file at once: a promotion that names a Jira project waits for approval, and the ticket is filed when it is approved.
+- Tickets filed by the AI pipeline's triage stage and by `POST /api/v1/integrations/jira` (the legacy client). The `defect_commander` stage (flag) and defect promotion never file at once: a promotion that names a Jira project waits for approval, and the ticket is filed when it is approved.
 
 **Set it up**
 
@@ -28,9 +47,9 @@ TestLookup talks to **Jira Cloud** through REST API v3 with basic authentication
 3. Set `AI_OFFLINE_MODE=false` (Jira is off-box).
 4. Check `/settings/integration-health`, which probes Jira with the stored configuration.
 
-**Which configuration applies.** The one-click issue, the Defects-page link check and write-back, the approval filing, the knowledge connector and the release sync use the configuration saved in the UI, falling back to the environment. The triage stage and `POST /api/v1/integrations/jira` read **only** the environment variables. Set both to the same values, or use the environment only.
+**Which configuration applies.** Every Jira path (the one-click issue, the Defects-page link check and write-back, the approval filing, the knowledge connector, the release sync, the triage stage, defect promotion and `POST /api/v1/integrations/jira`) uses the configuration saved in the UI, falling back to the environment per key ([Which value applies](#which-value-applies)). The ticket link is built on the saved domain (`https://<domain>/browse/<KEY>`). A domain that resolves to a loopback, link-local or unspecified address is refused at save (`422`, `Target host is not allowed`) and before every call.
 
-**Offline mode.** With `AI_OFFLINE_MODE=true` the one-click issue answers 503 ("outbound Jira calls are blocked"). The Defects-page link check, the write-back and the approval filing are gated by the same rule (Jira configured, enabled, and offline mode off) and make **no** call while it fails: a linked key is saved without a check (`saved_locally`, reason `offline_mode`, `disabled` or `not_configured`), a status change is saved without moving the Jira issue (`write_back: not_sent`), and an approval is committed with "Jira not filed" (`jira_status: not_filed`). Use the one-click flow's `target="webhook"` instead: it emits the [`defect.create_requested`](#outbound-webhooks) event with the full prefilled ticket so your own automation can file it. Known gap: the AI triage stage and `POST /api/v1/integrations/jira` do not check offline mode; leave `JIRA_ENABLED=false` in the environment if a sealed install must never reach Jira.
+**Offline mode.** With `AI_OFFLINE_MODE=true` the one-click issue answers 503 ("outbound Jira calls are blocked"). The Defects-page link check, the write-back and the approval filing are gated by the same rule (Jira configured, enabled, and offline mode off) and make **no** call while it fails: a linked key is saved without a check (`saved_locally`, reason `offline_mode`, `disabled` or `not_configured`), a status change is saved without moving the Jira issue (`write_back: not_sent`), and an approval is committed with "Jira not filed" (`jira_status: not_filed`). Use the one-click flow's `target="webhook"` instead: it emits the [`defect.create_requested`](#outbound-webhooks) event with the full prefilled ticket so your own automation can file it. The legacy client (the triage stage, defect promotion's ticket and `POST /api/v1/integrations/jira`) is gated the same way, offline mode first: the route answers **503** with `Jira is unavailable: AI_OFFLINE_MODE is enabled, so outbound calls are blocked.` (or `… the Jira integration is disabled in Settings › Integrations.`, `… set the domain, email and API token in Settings › Integrations.`, `… Target host is not allowed.`), the triage stage files nothing, and no request leaves. It retries a create only after an error that provably sent nothing (connect error, connect or pool timeout); a read timeout or a 5xx is reported, never re-posted, so a slow Jira cannot get the same ticket twice.
 
 **Online behaviour of the Defects-page calls.** The link check answers 422 for an issue Jira does not have (`Jira has no issue ABC-999.`) and 502 when Jira answers another error or cannot be reached; in both cases nothing is saved. The write-back runs after the change is committed and never undoes it: a refused transition (for example a workflow screen with required fields, HTTP 400) is returned as `write_back.status = "failed"` and shown to the person, with no retry. The account needs, in addition to the permissions above, "Transition issues" in the target projects. Every call has the client's 15-second timeout.
 
@@ -48,7 +67,7 @@ Replay protection: a delivery must carry Jira's numeric `timestamp`, be at most 
 
 Messages are posted to Slack **incoming webhooks** as Block Kit messages.
 
-- **Deployment-wide channel:** `SLACK_ENABLED=true` and `SLACK_WEBHOOK_URL`, or the Slack card at `/settings/integrations` / `/settings/notifications`. `SLACK_DEFAULT_CHANNEL` is stored with the configuration. `SLACK_BOT_TOKEN` is optional and only used by the integration health probe (Slack `auth.test`) when no webhook URL is set; nothing is sent with it.
+- **Deployment-wide channel:** `SLACK_ENABLED=true` and `SLACK_WEBHOOK_URL`, or the Slack card at `/settings/integrations` / `/settings/notifications`. An incoming webhook posts to the channel it was created for. `SLACK_DEFAULT_CHANNEL` is accepted for compatibility and not used: the UI's Default Channel field is gone, and the API accepts `slack_default_channel` on save and ignores it (the read still returns it, marked deprecated). `SLACK_BOT_TOKEN` is optional and only used by the integration health probe (Slack `auth.test`) when no webhook URL is set; nothing is sent with it.
 - **Per team:** Settings, Team channels (`/settings/team-channels`, QA_LEAD) maps an ownership team to an `email`, `slack` or `teams` target, so a failure owned by that team goes to its channel.
 - **Per user:** each user can set a personal Slack or Teams webhook under Settings, My notifications; left blank, the shared channel is used.
 - An on-premises Slack-compatible server (for example Mattermost) on a private address must be named in `WEBHOOK_PRIVATE_ALLOWED_HOSTS`; webhooks otherwise refuse private addresses.
@@ -80,24 +99,27 @@ Offline mode: an on-box relay may deliver. An off-box relay must be listed in `O
 
 The agent pipeline's log tools search Splunk for log lines around a failure (search jobs API, bearer token).
 
-- `SPLUNK_ENABLED=true`, `SPLUNK_BASE_URL` (management port, for example `https://splunk.example.com:8089`), `SPLUNK_API_TOKEN` (a token whose user may run searches on the index), `SPLUNK_INDEX`.
-- The agent tools read the **environment only**; values saved at `/settings/integrations` are used by the health probe only.
-- Off while `AI_OFFLINE_MODE=true` unless the host is on-box.
+- The Splunk card at `/settings/integrations` (Enabled, Base URL, API Token) or `SPLUNK_ENABLED=true`, `SPLUNK_BASE_URL` (management port, for example `https://splunk.example.com:8089`), `SPLUNK_API_TOKEN` (a token whose user may run searches on the index). The saved value wins per key ([Which value applies](#which-value-applies)); the agent tools, the log-intelligence stage of a deep investigation and the health probe all use it.
+- **The index** is the project's **Splunk Index** (Edit Project), else `SPLUNK_INDEX` (default `main`). Both are checked at use (letters, digits, `_`, `-`, 1-80 characters), and a project's at save, so nothing else can reach the search.
+- **What runs.** Before the model is asked, the server itself runs the Splunk correlation for a failure that carries a service and a timestamp (the **Re-analyse** path, `POST /api/v1/analyze`), attaches the result to the question and records it as a tool step, so the evidence appears even with a small model that skips tools, or when the model call fails. The model then gets that result instead of a second search. The anomaly and trace tools (deep investigation) use the same configuration.
+- **Offline mode refuses every Splunk call**, on-box hosts included; so does a disabled or unconfigured integration, an invalid index and a refused host, each with a fixed sentence in the evidence and no request.
 
 ## OpenShift and Kubernetes event correlation
 
 TestLookup can pull pod events from a cluster to correlate failures with restarts, OOM kills and scheduling problems.
 
-- `OCP_ENABLED=true`, `OCP_API_URL` (for example `https://api.cluster.example.com:6443`), `OCP_SA_TOKEN`, `OCP_DEFAULT_NAMESPACE`.
+- The OpenShift card at `/settings/integrations` (Enabled, API URL, Default Namespace, Service Account Token) or `OCP_ENABLED=true`, `OCP_API_URL` (for example `https://api.cluster.example.com:6443`), `OCP_SA_TOKEN`, `OCP_DEFAULT_NAMESPACE`. The saved value wins per key, as for Splunk.
 - The token needs read access (`get`, `list`) to `events` and `pods` in the namespaces your tests run in; a namespaced Role and RoleBinding for a dedicated service account is enough.
-- Like Splunk, the runtime reads the environment only, and offline mode applies. Outbound TLS to the cluster API follows [Corporate CA and TLS interception](#corporate-ca-and-tls-interception).
+- **The namespace** of a run is the run's own, else the project's **OCP Namespace**, else the saved Default Namespace, else `OCP_DEFAULT_NAMESPACE`. A sentinel upload that names a pod but no namespace stores the resolved namespace on the run when it is ingested; the pod's metadata is then fetched by a worker task (`enrich_run_ocp_metadata`, `ingestion` queue) after the ingest has committed, never inside the ingest's transaction. A namespace that is not a DNS label or a pod name that is not a DNS subdomain is refused without a request.
+- The server-side look-up of the pod's events runs before the model is asked, as for Splunk (the Re-analyse path, when the failure names a pod).
+- **Offline mode refuses every OpenShift call**, on-box clusters included. Outbound TLS to the cluster API follows [Corporate CA and TLS interception](#corporate-ca-and-tls-interception).
 
 ## GitHub and GitLab
 
 - **GitHub check runs and the sticky PR comment** (flag `github_checks`, off by default) are configured per project at `/settings/github` with a personal access token. Setup, token scopes and behaviour: the GitHub section of [user-guide/administration.md](../../user-guide/administration.md).
 - **GitLab merge-request notes and commit statuses** (flag `gitlab`, off by default) are configured per project at `/settings/gitlab`: the GitLab section of the same page, plus the CI template [user-guide/reference/testlookup-gitlab-ci.yml](../../user-guide/reference/testlookup-gitlab-ci.yml).
 - Both need `AI_OFFLINE_MODE=false`. A GitHub Enterprise or self-hosted GitLab behind an internal CA needs `HTTP_CA_BUNDLE`.
-- Separately, the instance-wide `GITHUB_TOKEN` + `GITHUB_REPO` let the agents and the regression diff list the commits between two runs. Known gap: those lookups do not check offline mode.
+- **Commits between two runs** (the run's Changes tab, the regression diff, the build-changes agent tool and the Suspects panel) come from the project's own GitHub / GitHub Enterprise integration, offline-gated and behind the `github_checks` flag; the Changes tab says why when none can be listed. The instance-wide `GITHUB_TOKEN` and `GITHUB_REPO` are **no longer read** for commits (they bypassed the egress check and offline mode): `GITHUB_TOKEN` now feeds only the deployment-wide GitHub row of Integration health, and `GITHUB_REPO` has no reader.
 
 ## Single sign-on (SAML 2.0)
 
@@ -144,9 +166,9 @@ Supported: `/Users` (list with filter, get, create, replace, patch, delete) and 
 
 ## Outbound webhooks
 
-Outbound webhooks send TestLookup events to your own HTTPS endpoint. They are **off by default**: they need the `outbound_webhooks` [feature flag](feature-flags.md) **and** `AI_OFFLINE_MODE=false`. While either is off the subsystem is silent: nothing is queued, the "Send test" action reports that no delivery was enqueued, and replay answers 503.
+Outbound webhooks send TestLookup events to your own HTTPS endpoint. They need the `outbound_webhooks` [feature flag](feature-flags.md) **and** `AI_OFFLINE_MODE=false`. Migration 0224 turns the flag **on for a new install** (no user and no project yet); an upgraded install keeps its stored value, off unless an administrator turned it on (`PATCH /api/v1/feature-flags/outbound_webhooks` with `{"enabled_global": true}`). While either is off the subsystem is silent: nothing is queued, the "Send test" action reports that no delivery was enqueued, and replay answers 503.
 
-**Subscriptions** are per project, managed at `/settings/webhooks` or `/api/v1/webhooks` (QA_LEAD; a project-scoped API key with admin scope also works). A subscription has a `name`, a `target_url` (`http` or `https`; it must resolve to a public address, checked at registration and at every delivery, and redirects are not followed), `events` (at least one), `enabled`, an optional signing `secret`, and `max_retries` (0-10, default 5). `GET /api/v1/webhooks/events` lists the catalogue.
+**Subscriptions** are per project, managed at `/settings/webhooks` or `/api/v1/webhooks` (QA_LEAD; a project-scoped API key with admin scope also works). A subscription has a `name`, a `target_url` (`http` or `https`; it must resolve to a public address, checked at registration and at every delivery, and redirects are not followed, unless its host is listed in `OUTBOUND_WEBHOOK_PRIVATE_ALLOWED_HOSTS`, below), `events` (at least one), `enabled`, an optional signing `secret`, `max_retries` (0-10, default 5) and `breaker_threshold` (1-100, default 10; left out of an update, the stored value is kept). The read adds `consecutive_failures`, `disabled_reason` (`circuit_open` or `manual`) and `disabled_at`. `GET /api/v1/webhooks/events` lists the catalogue.
 
 **Events**
 
@@ -186,7 +208,16 @@ def verify(secret: str, raw_body: bytes, header_value: str) -> bool:
 - Every attempt is recorded. History: `GET /api/v1/webhooks/{id}/deliveries`; replay a `FAILED` or `DLQ` delivery (as a new delivery, attempts reset) with `POST /api/v1/webhooks/{id}/deliveries/{delivery_id}/replay`.
 - `release.decided` deliveries re-check the review gate at send time.
 
-`WEBHOOK_PRIVATE_ALLOWED_HOSTS` does not apply to subscriptions; it covers Slack and Teams webhooks only.
+**Private test receivers.** `OUTBOUND_WEBHOOK_PRIVATE_ALLOWED_HOSTS` (comma-separated exact host names, case and a trailing dot aside; no wildcards or ranges; empty by default) lets a subscription target a private or loopback host: a listed host skips the public-only check at create, update and delivery and is reached through the shared client (`HTTP_CA_BUNDLE` honoured). Any QA lead of any project may then point a subscription at it, so name a test receiver or a trusted internal endpoint only. Offline mode still refuses every delivery. `WEBHOOK_PRIVATE_ALLOWED_HOSTS` does not apply to subscriptions; it covers Slack and Teams webhooks only.
+
+### Outbound webhook circuit breaker
+
+A subscription whose receiver keeps failing is paused instead of failing every event for ever.
+
+- **What counts.** A delivery counts **once**, when it reaches a terminal status the subscription is responsible for: `DLQ` after its retries are spent, or `FAILED` at once for a refused (private or unsafe) target, a missing signing secret or a non-retryable 4xx. An attempt that will be retried does not count (a read timeout is not a failure until the retries are spent). "Subscription disabled", "webhooks disabled or offline" and the relay's own "dispatch attempts exhausted" never count. `failure_count` keeps counting every failed attempt; the breaker uses `consecutive_failures`, which a `SUCCESS` sets back to 0.
+- **The trip.** When `consecutive_failures` reaches `breaker_threshold`, one guarded `UPDATE … RETURNING` in the delivery's own transaction sets `enabled = false`, `disabled_reason = 'circuit_open'` and `disabled_at`; row locks make it exactly one trip however many workers fail at once. The same transaction records the activity event `webhook.circuit_opened` ("Webhook <name> paused after N consecutive failures", system actor) and an email notification to the subscription's last editor and the project's active QA leads (their notification bell lists it; it carries no link). `testlookup_webhook_circuit_opened_total` counts trips, after the commit.
+- **While paused** no event creates a delivery for it, and `POST /api/v1/webhooks/{id}/test` reports that none was enqueued. A delivery already queued is marked `FAILED` ("subscription paused after N consecutive failures"), replayable and not counted. Integration health lists the subscription under **Paused webhooks** (`GET /api/v1/integration-health/status?scope=all`, `kind: "webhook"`, `status: "paused"`).
+- **Re-enable** is `PATCH /api/v1/webhooks/{id}` with the full body and `enabled: true` (the page's **Re-enable**): `consecutive_failures = 0`, `disabled_reason` and `disabled_at` cleared. Turning a subscription off by hand writes `disabled_reason = 'manual'` and keeps the count. Lowering the threshold below the current count does not trip by itself; the next terminal failure does. Then replay the failed deliveries you want.
 
 ## Inbound bucket-notification webhook (`/webhooks/minio`)
 
@@ -205,11 +236,11 @@ def verify(secret: str, raw_body: bytes, header_value: str) -> bool:
 | LLM calls | Only local providers whose endpoint resolves to loopback or private addresses (checked again at connect time). `AI_LLM_PROVIDER_ALLOWLIST` and `AI_LLM_ALLOWED_BASE_URLS` can restrict further. |
 | ChromaDB embedder | May not download model weights; point `CHROMA_ONNX_MODEL_DIR` at a side-loaded copy or semantic features fall back to keyword search. |
 | Outbound webhooks, GitHub checks and PR comments, GitLab, the Fixer | Off. |
-| Jira one-click issue, the Defects-page link check and status write-back, the ticket filed on approving a promoted defect, external knowledge sync, Splunk, OpenShift | Off (unless the host is on-box, for Splunk and OpenShift). A linked key is saved without a check, a status change and an approval are saved without a Jira call. |
+| Jira one-click issue, the Defects-page link check and status write-back, the ticket filed on approving a promoted defect, the triage stage's tickets and `POST /api/v1/integrations/jira` (503), external knowledge sync, Splunk, OpenShift, the run Changes tab's commit lookup and the build-changes tool | Off, on-box hosts included. A linked key is saved without a check, a status change and an approval are saved without a Jira call; the Splunk and OpenShift look-ups say they are disabled; the Changes tab says `offline mode`. |
 | Deployment-wide Slack/Teams webhooks and the SMTP relay | Allowed when on-box, or when the host is listed in `OFFLINE_NOTIFICATION_ALLOWED_HOSTS` (comma-separated; `.example.com` matches subdomains). Email additionally obeys `OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS`. A refused delivery is recorded as blocked, and the API logs each refused configured destination at startup. |
 | Team and personal Slack/Teams webhooks | Allowed only when on-box; the host allow-list does not apply (it would admit every tenant on a shared host such as `hooks.slack.com`). |
 
-Known gaps in this release (they do not check `AI_OFFLINE_MODE`): Jira tickets filed by the AI triage stage and by `POST /api/v1/integrations/jira` (gated only by `JIRA_ENABLED`), and the `GITHUB_TOKEN` commit lookups. On a sealed install keep `JIRA_ENABLED=false` and `GITHUB_TOKEN` unset in the environment. Air-gapped installation as a whole is covered in [user-guide/air-gapped-install.md](../../user-guide/air-gapped-install.md).
+Every Jira, Splunk, OpenShift and GitHub path checks `AI_OFFLINE_MODE`: the two gaps of earlier releases are closed (the legacy Jira client is gated, and the `GITHUB_TOKEN` commit lookups are gone). Air-gapped installation as a whole is covered in [user-guide/air-gapped-install.md](../../user-guide/air-gapped-install.md).
 
 ## Corporate CA and TLS interception
 
@@ -225,7 +256,14 @@ Hosted LLM provider SDKs build their own HTTP clients and do not read `HTTP_CA_B
 
 ## Integration health
 
-`/settings/integration-health` (API: `GET /api/v1/integration-health/status`, `POST /api/v1/integration-health/probe` to probe now, `/history/{provider}`, `/trends`) shows the last probe of each integration: Jira, Splunk, GitHub, OpenShift, Slack, Teams, SMTP, Ollama and ChromaDB. Probes run every 15 minutes from Celery beat, use the same stored configuration the senders use, and respect offline mode (a refused destination is reported as such, not as down).
+`/settings/integration-health` (API: `GET /api/v1/integration-health/status`, `POST /api/v1/integration-health/probe` to probe now, `/history/{provider}`, `/trends`) shows the last probe of each integration: Jira, Splunk, GitHub, OpenShift, Slack, Teams, SMTP, Ollama and ChromaDB. Probes run every 15 minutes from Celery beat, use the same stored configuration the senders use, and respect offline mode (a refused destination is reported as such, not as down). The Splunk and OpenShift probes apply the egress check first (a refused host reads `down`, "Target host is not allowed", and no token is sent).
+
+**Per-project probes.** Every enabled per-project GitHub / GitHub Enterprise and GitLab integration is probed with its own API base and token: the targets are read on one short database session that is closed before any HTTP, then at most 5 probes run at a time (`GET {api_base}/repos/{owner}/{name}` with the PAT, or `GET {base}/api/v4/projects/{path}` with `PRIVATE-TOKEN`). Health rows are keyed `(provider, scope_key)`: `scope_key` is `''` for a deployment-wide row and the project id for a project row (migration 0223). The beat prunes the rows of integrations that were removed or turned off.
+
+- `GET /status` answers the deployment-wide rows (unchanged); `GET /status?scope=all` adds one row per enabled integration of the reader's projects (an administrator: all; a QA lead: their own) and one `kind: "webhook"` row per paused subscription. A row never probed reads `probed: false`, `status: "unknown"`, "Not probed yet. Probe now, or wait for the 15-minute check." (never `healthy`).
+- `POST /probe?provider=github&project_id=<id>` (or `provider=gitlab`) probes one project; the query `project_id` is checked against the reader's projects before anything is read (`403` otherwise), `404` when the project has no enabled integration of that kind, `422` for GitLab without a project. `POST /probe` with neither probes the deployment-wide integrations and the reader's project integrations.
+- `GET /history/{provider}?project_id=<id>` reads one project's probe history (same check); without it, the deployment-wide history. `/trends`, `GET /api/v1/settings/integrations/health` and the `testlookup_integration_health{provider}` gauge stay deployment-wide; `testlookup_integration_project_health{provider,status}` counts the project rows per status (12 series, never a project label).
+- Offline: every project row reads `skipped` and no token is read.
 
 ## Operator runbook: dead letters, outbox and backfills
 

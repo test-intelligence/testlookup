@@ -1,27 +1,59 @@
 """
 Tool: Fetch CI build changes (commits, changed files) from version control or CI system.
 Used by FlakySentinelAgent to correlate flakiness onset with specific code changes.
+
+W10 FAIL-09: the commits come from the PROJECT's GitHub / GitHub Enterprise
+integration (Settings > GitHub), resolved by ``github_target.resolve_github_target``
+with the gate ON (offline mode, the ``github_checks`` flag) on the tool's short
+session, which is closed before the one HTTP call. The env ``GITHUB_TOKEN`` /
+``GITHUB_REPO`` are not read here any more (they bypassed the egress guard and
+the offline gate); ``github_status`` in the answer says why no commits were
+fetched.
 """
 import logging
+import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 from langchain_core.tools import tool
 
-from app.core.config import settings
 from app.core.http_client import get_http_client
 from app.db.postgres import AsyncSessionLocal
+from app.services.github_target import GitHubTarget, resolve_github_target
+from app.services.url_safety import egress_block_reason
 
 logger = logging.getLogger("tools.fetch_build_changes")
 
+#: The no-commit summary's words for each ``github_target`` reason.
+_UNAVAILABLE_TEXT = {
+    "offline_mode": "offline mode",
+    "github_checks_off": "GitHub checks are turned off for this project",
+    "no_integration": "no GitHub integration",
+    "integration_disabled": "the project's GitHub integration is turned off",
+    "repo_mismatch": "the run's repository is not the project's GitHub repository",
+    "no_token": "no GitHub token is stored for this project",
+}
 
-async def _fetch_github_commits(repo: str, since: str, until: str, token: str) -> list[dict]:
-    """Fetch commits from GitHub API between two ISO timestamps."""
+
+async def _fetch_github_commits(target: GitHubTarget, since: str, until: str) -> list[dict]:
+    """Commits of the project's repository between two ISO timestamps.
+
+    Plain connector coordinates, NO session. The base is checked by the egress
+    guard before the PAT is sent; any failure answers ``[]``."""
+    url = f"{target.api_base}/repos/{target.repo}/commits"
     try:
+        block = await egress_block_reason(url)
+        if block:
+            logger.info("GitHub commits refused: target host is not allowed (%s)", block)
+            return []
         client = get_http_client()
         resp = await client.get(
-            f"https://api.github.com/repos/{repo}/commits",
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.v3+json"},
+            url,
+            headers={
+                "Authorization": f"Bearer {target.pat}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
             params={"since": since, "until": until, "per_page": 20},
             timeout=15.0,
         )
@@ -39,8 +71,15 @@ async def _fetch_github_commits(repo: str, since: str, until: str, token: str) -
             for c in commits
         ]
     except Exception as exc:
-        logger.debug("GitHub API call failed: %s", exc)
+        logger.debug("GitHub API call failed: %s", type(exc).__name__)
         return []
+
+
+def _project_uuid(project_id: str) -> Optional[uuid.UUID]:
+    try:
+        return uuid.UUID(str(project_id))
+    except (TypeError, ValueError):
+        return None
 
 
 @tool
@@ -54,7 +93,7 @@ async def fetch_build_changes(params_json: str) -> str:
       - flaky_build_number: first build where test started flaking
       - project_id: project ID for config lookup
 
-    Returns: JSON with commits, changed_files, and a change_summary.
+    Returns: JSON with commits, changed_files, github_status and a change_summary.
     """
     import json
 
@@ -67,20 +106,29 @@ async def fetch_build_changes(params_json: str) -> str:
     stable_build: str = params.get("stable_build_number", "")
     flaky_build: str = params.get("flaky_build_number", "")
     project_id: str = params.get("project_id", "")
+    pid = _project_uuid(project_id) if project_id else None
 
-    # Look up build timestamps from DB
+    # Look up build timestamps and the project's GitHub target from the DB,
+    # on a short session that is closed before any HTTP.
     from sqlalchemy import select
     from app.models.postgres import TestRun
+    runs: list[Any] = []
+    target: Optional[GitHubTarget] = None
+    github_status: Optional[str] = "no_integration"
     async with AsyncSessionLocal() as db:
-        runs: list[Any] = []
-        if project_id:
+        if pid is not None:
             result = await db.execute(
                 select(TestRun)
-                .where(TestRun.project_id == project_id)
+                .where(TestRun.project_id == pid)
                 .where(TestRun.build_number.in_([stable_build, flaky_build]))
                 .order_by(TestRun.created_at)
             )
             runs = list(result.scalars().all())
+            stable = next((r for r in runs if r.build_number == stable_build), None)
+            flaky = next((r for r in runs if r.build_number == flaky_build), None)
+            ci_repo = getattr(flaky, "ci_repo", None) or getattr(stable, "ci_repo", None)
+            resolution = await resolve_github_target(db, pid, ci_repo=ci_repo)
+            target, github_status = resolution.target, resolution.reason
 
     stable_run = next((r for r in runs if r.build_number == stable_build), None)
     flaky_run = next((r for r in runs if r.build_number == flaky_build), None)
@@ -88,13 +136,7 @@ async def fetch_build_changes(params_json: str) -> str:
     since_ts = stable_run.created_at.isoformat() if stable_run else datetime.now(timezone.utc).isoformat()
     until_ts = flaky_run.created_at.isoformat() if flaky_run else datetime.now(timezone.utc).isoformat()
 
-    # Check if we have GitHub config in environment
-    github_token = getattr(settings, "GITHUB_TOKEN", None)
-    github_repo = getattr(settings, "GITHUB_REPO", None)
-    commits: list[dict] = []
-
-    if github_token and github_repo:
-        commits = await _fetch_github_commits(github_repo, since_ts, until_ts, github_token)
+    commits: list[dict] = await _fetch_github_commits(target, since_ts, until_ts) if target else []
 
     # Build change summary from available data
     if commits:
@@ -107,8 +149,13 @@ async def fetch_build_changes(params_json: str) -> str:
         # Fall back to what we know from the run records
         stable_info = f"build {stable_build} at {since_ts}" if stable_build else "unknown"
         flaky_info = f"build {flaky_build} at {until_ts}" if flaky_build else "unknown"
+        why = (
+            f"GitHub commits unavailable for this project ({_UNAVAILABLE_TEXT.get(github_status, github_status)})."
+            if github_status
+            else "No GitHub commits were found in this window."
+        )
         change_summary = (
-            f"GitHub API not configured (set GITHUB_TOKEN + GITHUB_REPO). "
+            f"{why} "
             f"Test '{test_fingerprint}' was stable at {stable_info} and first flaked at {flaky_info}. "
             f"Investigate commits and deployments in this window manually."
         )
@@ -118,6 +165,7 @@ async def fetch_build_changes(params_json: str) -> str:
         "stable_build": stable_build,
         "flaky_build": flaky_build,
         "commits": commits,
+        "github_status": github_status,
         "change_summary": change_summary,
         "time_window": {"since": since_ts, "until": until_ts},
     })

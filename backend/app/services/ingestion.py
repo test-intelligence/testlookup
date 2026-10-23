@@ -32,7 +32,6 @@ from app.services.allure_parser import parse_allure_result
 from app.services.report_timings import ReportTimings, case_timing_columns, empty_timings, merge_timings
 from app.services.run_status import terminal_run_status
 from app.services.testng_parser import parse_testng_xml_with_timings
-from app.services.ocp_client import get_pod_metadata
 
 logger = structlog.get_logger("services.ingestion")
 
@@ -151,7 +150,10 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
     2. Parse TestNG XML if available
     3. Upsert structured data to PostgreSQL
     4. Store raw payloads to MongoDB
-    5. Enrich with OpenShift metadata
+    5. Resolve the OpenShift namespace of a run that names a pod but no
+       namespace (stored with the run); the pod metadata itself is fetched by
+       the ``enrich_run_ocp_metadata`` worker task AFTER the commit, so no
+       OpenShift call runs inside this transaction (W10 INT-03)
     6. Update test run aggregates
     """
     logger.info(f"Starting ingestion: project={sentinel.project_id} build={sentinel.build_number}")
@@ -160,6 +162,27 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
         try:
             # ── Get or create test run ─────────────────────
             run = await _upsert_test_run(db, sentinel, minio_prefix)
+
+            # ── OpenShift namespace of a run that names only a pod (INT-03) ──
+            # The chain run -> project -> saved default -> environment,
+            # resolved with DB reads on this session (no HTTP) and STORED with
+            # the run, so the analysis and the run diff read the same value.
+            if (getattr(run, "ocp_pod_name", None) or "").strip() and not (
+                getattr(run, "ocp_namespace", None) or ""
+            ).strip():
+                from app.core.integration_values import valid_namespace
+                from app.services.integration_config_service import resolve_runtime_integrations
+
+                ocp_cfg = await resolve_runtime_integrations(db, run.project_id)
+                resolved_namespace = ocp_cfg.namespace_for(None)
+                if valid_namespace(resolved_namespace):
+                    run.ocp_namespace = resolved_namespace
+                else:
+                    logger.info(
+                        "ocp_namespace_unresolved",
+                        run_id=str(run.id),
+                        source=ocp_cfg.ocp_namespace_source,
+                    )
             storage = get_storage_provider()
 
             # ── Process Allure results ─────────────────────
@@ -272,21 +295,6 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
             run.ingestion_complete = True
             run.ingestion_rejection_reasons = None
 
-            # ── Enrich with OCP metadata ───────────────────
-            if sentinel.ocp_pod_name and sentinel.ocp_namespace:
-                try:
-                    pod_meta = await get_pod_metadata(
-                        sentinel.ocp_pod_name,
-                        sentinel.ocp_namespace,
-                    )
-                    await db.execute(
-                        update(TestRun)
-                        .where(TestRun.id == run.id)
-                        .values(ocp_metadata=pod_meta)
-                    )
-                except Exception as e:
-                    logger.warning(f"OCP metadata enrichment failed: {e}")
-
             # ── Update run aggregates ──────────────────────
             await _update_run_aggregates(db, run.id)
             # EXEC-02: this path finalizes inline (not through finalize_run),
@@ -380,6 +388,26 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
 
             await invalidate_analytics_cache(str(run.project_id))
             logger.info(f"Ingestion complete: {len(parsed_cases)} test cases processed")
+
+            # W10 INT-03: the OpenShift pod lookup runs in a worker task after
+            # the commit (reads, then HTTP with no session open, then its own
+            # write) -- it used to run inside this transaction. Best-effort,
+            # like the live notification below; offline mode sends nothing.
+            if (
+                (getattr(run, "ocp_pod_name", None) or "").strip()
+                and (getattr(run, "ocp_namespace", None) or "").strip()
+                and not settings.AI_OFFLINE_MODE
+            ):
+                try:
+                    from app.worker.tasks import enrich_run_ocp_metadata
+
+                    enrich_run_ocp_metadata.delay(run_id=str(run.id))
+                except Exception as enrich_err:
+                    logger.warning(
+                        "ocp_enrichment_enqueue_failed",
+                        run_id=str(run.id),
+                        error_type=type(enrich_err).__name__,
+                    )
 
             # Publish through Redis so every API process can reach its local
             # WebSocket/SSE clients (this code may run in a worker process).

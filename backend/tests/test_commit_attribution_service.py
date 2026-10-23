@@ -325,50 +325,16 @@ async def test_rank_suspects_ranks_with_range():
 
 
 # ── Connector target (DB reads → plain values) ──────────────────────────────
-
-
-def _integration(**overrides):
-    base = dict(
-        enabled=True,
-        repo_owner="acme",
-        repo_name="webapp",
-        api_base_url="https://api.github.com",
-    )
-    base.update(overrides)
-    return SimpleNamespace(**base)
+#
+# W10: ``_connector_target`` resolves through the ONE per-project GitHub
+# resolver, ``services/github_target.resolve_github_target``; its success /
+# repo-mismatch / no-PAT cases moved to ``tests/test_github_target.py``.
 
 
 def _target(**overrides):
     base = dict(api_base="https://api.github.com", repo="acme/webapp", pat="pat")
     base.update(overrides)
     return svc._ConnectorTarget(**base)
-
-
-@pytest.mark.asyncio
-async def test_connector_target_success():
-    run = _run()
-    with patch.object(svc, "get_integration", AsyncMock(return_value=_integration())), \
-         patch("app.services.secret_service.read_secret", AsyncMock(return_value="pat")):
-        target = await svc._connector_target(MagicMock(), run)
-    assert target is not None
-    assert target.api_base == "https://api.github.com"
-    assert target.repo == "acme/webapp"
-    assert target.pat == "pat"
-
-
-@pytest.mark.asyncio
-async def test_connector_target_repo_mismatch():
-    run = _run(ci_repo="other/repo")
-    with patch.object(svc, "get_integration", AsyncMock(return_value=_integration())):
-        assert await svc._connector_target(MagicMock(), run) is None
-
-
-@pytest.mark.asyncio
-async def test_connector_target_no_pat():
-    run = _run()
-    with patch.object(svc, "get_integration", AsyncMock(return_value=_integration())), \
-         patch("app.services.secret_service.read_secret", AsyncMock(return_value=None)):
-        assert await svc._connector_target(MagicMock(), run) is None
 
 
 # ── Connector fetch (pure HTTP; no DB session) ───────────────────────────────
