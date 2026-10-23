@@ -52,6 +52,31 @@ locally by default.
 
 ### Added
 
+- **Integration health per project, a webhook circuit breaker, and a Changes
+  tab that says why** (wave W10, INT-04, INT-07, FAIL-09; branch
+  `feat/df-integrations-runtime-20261023`). **Integration Health** lists every
+  project's GitHub / GitHub Enterprise and GitLab integration as its own row
+  ("GitHub · Payments", its API host, healthy / auth error / unreachable, Probe
+  now, a link to its settings), probed every 15 minutes with that project's own
+  token and base URL; a row that has never been probed reads "Not probed yet",
+  never healthy; a QA lead sees only the projects they belong to; paused
+  webhooks are listed too. **Outbound webhooks pause themselves** after N
+  deliveries in a row end failed (default 10, set per subscription, 1-100; a
+  retried delivery counts once, a refused target counts): the row shows
+  PAUSED with the last error and a Re-enable button, the activity log records
+  it, and the last editor and the project's QA leads are emailed;
+  `OUTBOUND_WEBHOOK_PRIVATE_ALLOWED_HOSTS` admits a test receiver on a private
+  host. The run **Changes** tab lists the commits since the base run from the
+  project's own GitHub integration (the Suspects panel's range) and, when it
+  cannot, says why: offline mode, no GitHub integration, the GitHub checks
+  flag off, no commit hash on the run, or a weak base anchor. Tests:
+  `test_project_integration_probes.py`, `test_integration_health_scope.py`,
+  `test_integration_health_routes_scoped.py`, `test_webhook_circuit_breaker.py`,
+  `test_regression_diff_commit_range.py`, `test_fetch_build_changes_per_project.py`,
+  five `*_postgres.py` suites, the vitests of the three pages, and the specs
+  `integration-health-projects`, `webhooks-circuit-breaker`,
+  `run-changes-commits`.
+
 - **Paper, a soft light theme, and one UI standard across the app** (owner
   request 2026-10-17, wave W29a, UIX-01, 02, 03, 07, 08, 04a, 10, 11, 13).
   **Paper** ("Soft light · low glare": a warm grey page, cards a step lighter,
@@ -376,6 +401,35 @@ locally by default.
 
 ### Changed
 
+- **Integration settings saved in the UI now drive Splunk, OpenShift and
+  legacy Jira** (wave W10, INT-01, INT-03; behaviour change for existing
+  installs). The rule, everywhere: `AI_OFFLINE_MODE` overrides everything; a
+  project's value beats the global one; a value saved at Settings ›
+  Integrations beats the deployment environment; the environment applies only
+  to a key never saved, and saving a field empty hands it back to the
+  environment. Workers pick a saved change up within 30 seconds. The
+  Integrations page now saves only the fields you changed (an earlier save may
+  have copied environment values into the stored settings: re-save such a
+  field empty to hand it back) and marks values that come from the
+  environment. AI analysis attaches the Splunk log correlation and the
+  OpenShift pod events server-side, before the model runs, so a small local
+  model still sees them. A project's **Splunk index** is used in its log
+  searches, and its **OpenShift namespace** for a run that names a pod but no
+  namespace (run → project → saved default → environment; the run keeps the
+  resolved namespace); both are validated when saved. The OpenShift pod lookup
+  moved out of the ingest transaction into a worker task. Outbound webhooks
+  (`outbound_webhooks`) start ON for a new install (an existing install keeps
+  its setting). The run Changes tab and the build-changes tool read commits
+  through the project's GitHub integration; `GITHUB_TOKEN` / `GITHUB_REPO` now
+  feed only the deployment-wide GitHub probe. Migrations `0223`
+  (integration health keyed by project) and `0224` (webhook breaker columns).
+  Tests: `test_integration_runtime_resolver.py`,
+  `test_integrations_put_keeps_env_fallback.py`, `test_splunk_ocp_tools_runtime.py`,
+  `test_server_side_lookups.py`, `test_log_intelligence_uses_runtime_config.py`,
+  `test_ocp_namespace_resolution.py`, `test_project_integration_field_validation.py`,
+  the extended integration fake, and the specs `integrations-runtime-settings`,
+  `projects-integration-fields`.
+
 - **Lab is easier to read, and stays white** (owner request 2026-10-17, wave
   W29c, UIX-12). Muted text (labels, hints, captions) is darker and now reads
   at least 4.5:1 on every Lab surface (5.78:1 on cards, 4.75:1 on hover; it was
@@ -575,6 +629,12 @@ locally by default.
   CA, or `NODE_TLS_REJECT_UNAUTHORIZED=0` to skip verification.
 
 ### Removed
+
+- **Slack "Default Channel" and project "Jenkins Job Pattern" fields** (wave
+  W10, INT-02, INT-03b; owner decisions D21, D22). Neither did anything: an
+  incoming Slack webhook is bound to one channel (route other channels per
+  team in Team channels), and nothing read the Jenkins pattern. The API still
+  accepts and ignores `slack_default_channel`; the stored Jenkins value is kept.
 
 - Internal working material (run evidence, working notes, review registers,
   live probes against a private deployment, owner-specific CI and deploy
@@ -857,6 +917,18 @@ locally by default.
   `retention_activation_nudge`.
 
 ### Security
+
+- **Legacy Jira tickets respect offline mode, and integration hosts are
+  checked** (wave W10, INT-01, INT-03). The AI panel's "Create Jira ticket"
+  (`POST /api/v1/integrations/jira`) and the triage stage's Jira tickets had no
+  `AI_OFFLINE_MODE` check: they now refuse offline, disabled, unconfigured or
+  blocked targets with 503 and a sentence, before anything is staged. A
+  loopback, link-local or unspecified Splunk, OpenShift or Jira host is refused
+  when saved (422 "Target host is not allowed") and again before any request
+  carries a credential (private, RFC 1918 hosts stay allowed for on-premises
+  servers). A project's Splunk index must be a plain index name, so it cannot
+  inject search commands. Tests: `test_legacy_jira_offline_gate.py`,
+  `test_url_safety_egress.py`.
 
 - **DOMPurify 3.4.17.** The frontend's and the Mermaid check's DOMPurify
   override moves from 3.4.16 to 3.4.17 (GHSA-cg2g-xh64-v4q7, critical: a

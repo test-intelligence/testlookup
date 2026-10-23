@@ -16409,12 +16409,162 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## IntegrationHealthRow
+
+```json
+{
+  "properties": {
+    "breaker_threshold": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Breaker Threshold"
+    },
+    "consecutive_failures": {
+      "default": 0,
+      "title": "Consecutive Failures",
+      "type": "integer"
+    },
+    "kind": {
+      "default": "global",
+      "title": "Kind",
+      "type": "string"
+    },
+    "label": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Label"
+    },
+    "last_checked_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Last Checked At"
+    },
+    "last_success_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Last Success At"
+    },
+    "message": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Message"
+    },
+    "probed": {
+      "default": true,
+      "title": "Probed",
+      "type": "boolean"
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Project Id"
+    },
+    "project_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Project Name"
+    },
+    "provider": {
+      "title": "Provider",
+      "type": "string"
+    },
+    "response_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Response Ms"
+    },
+    "scope_key": {
+      "default": "",
+      "title": "Scope Key",
+      "type": "string"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    },
+    "target": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Target"
+    }
+  },
+  "required": [
+    "provider",
+    "status"
+  ],
+  "title": "IntegrationHealthRow",
+  "type": "object"
+}
+```
+
 ## IntegrationsConfigRead
 
 ```json
 {
   "description": "External integrations configuration (no tokens).",
   "properties": {
+    "environment_fields": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Environment Fields",
+      "type": "array"
+    },
     "github_repo": {
       "anyOf": [
         {
@@ -16488,6 +16638,7 @@ These are the full generated JSON Schema definitions, including required fields,
       "type": "boolean"
     },
     "slack_default_channel": {
+      "deprecated": true,
       "title": "Slack Default Channel",
       "type": "string"
     },
@@ -16721,6 +16872,7 @@ These are the full generated JSON Schema definitions, including required fields,
           "type": "null"
         }
       ],
+      "deprecated": true,
       "title": "Slack Default Channel"
     },
     "slack_enabled": {
@@ -24569,6 +24721,7 @@ These are the full generated JSON Schema definitions, including required fields,
           "type": "null"
         }
       ],
+      "description": "Stored only; TestLookup does not use it (W10 D22).",
       "title": "Jenkins Job Pattern"
     },
     "jira_project_key": {
@@ -25084,6 +25237,7 @@ These are the full generated JSON Schema definitions, including required fields,
           "type": "null"
         }
       ],
+      "description": "Stored only; TestLookup does not use it (W10 D22).",
       "title": "Jenkins Job Pattern"
     },
     "jira_project_key": {
@@ -40999,10 +41153,43 @@ These are the full generated JSON Schema definitions, including required fields,
 ```json
 {
   "properties": {
+    "breaker_threshold": {
+      "default": 10,
+      "title": "Breaker Threshold",
+      "type": "integer"
+    },
+    "consecutive_failures": {
+      "default": 0,
+      "title": "Consecutive Failures",
+      "type": "integer"
+    },
     "created_at": {
       "format": "date-time",
       "title": "Created At",
       "type": "string"
+    },
+    "disabled_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Disabled At"
+    },
+    "disabled_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Disabled Reason"
     },
     "enabled": {
       "title": "Enabled",
@@ -41114,6 +41301,19 @@ These are the full generated JSON Schema definitions, including required fields,
 ```json
 {
   "properties": {
+    "breaker_threshold": {
+      "anyOf": [
+        {
+          "maximum": 100.0,
+          "minimum": 1.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Breaker Threshold"
+    },
     "enabled": {
       "default": true,
       "title": "Enabled",

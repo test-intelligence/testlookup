@@ -8,16 +8,18 @@ Generated from tracked source by `scripts/generate_reference.py`. Do not edit by
 
 Get Provider History
 
-Get probe history for a specific provider.
+Probe history for a provider: the deployment-wide history, or -- with
+``project_id`` (checked by ``resolve_project_scope`` first) -- that
+project's integration.
 
-Source: [backend/app/routers/integration_health.py:93](../../../backend/app/routers/integration_health.py#L93).
+Source: [backend/app/routers/integration_health.py:310](../../../backend/app/routers/integration_health.py#L310).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-provider: str, days: int=Query(default=7, ge=1, le=90), current_user: User=Depends(require_role(UserRole.QA_LEAD)), db: AsyncSession=Depends(get_db)
+provider: str, days: int=Query(default=7, ge=1, le=90), project_id: Optional[uuid.UUID]=None, current_user: User=Depends(require_role(UserRole.QA_LEAD)), db: AsyncSession=Depends(get_db)
 ```
 
 ### Declared wire contract
@@ -47,6 +49,23 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
         "minimum": 1,
         "title": "Days",
         "type": "integer"
+      }
+    },
+    {
+      "in": "query",
+      "name": "project_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "format": "uuid",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Project Id"
       }
     },
     {
@@ -108,20 +127,29 @@ Trigger Probe
 
 Trigger an on-demand health probe for all or a specific provider (QA_LEAD+).
 
-Source: [backend/app/routers/integration_health.py:43](../../../backend/app/routers/integration_health.py#L43).
+``project_id`` probes that project's GitHub or GitLab integration
+(``provider=github|gitlab``); the id passes ``resolve_project_scope`` before
+anything is read. Without a provider and a project: every deployment-wide
+probe plus every per-project integration the reader may see. The request
+session's connection is handed back before any probe makes an HTTP call.
+
+Source: [backend/app/routers/integration_health.py:236](../../../backend/app/routers/integration_health.py#L236).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-provider: Optional[str]=None, current_user: User=Depends(require_role(UserRole.QA_LEAD)), db: AsyncSession=Depends(get_db)
+provider: Optional[str]=None, project_id: Optional[uuid.UUID]=None, current_user: User=Depends(require_role(UserRole.QA_LEAD)), db: AsyncSession=Depends(get_db)
 ```
 
 Direct handler error branches (dependency/service errors can add others):
 
 ```python
-HTTPException(status_code=422, detail=f"Unknown integration provider: {provider}. Supported: {', '.join(sorted(ALL_PROBES))}")
+HTTPException(status_code=404, detail=f'This project has no enabled {label} integration.')
+HTTPException(status_code=422, detail='A per-project probe needs provider=github or provider=gitlab.')
+HTTPException(status_code=422, detail='GitLab is probed per project: pass project_id.')
+HTTPException(status_code=422, detail=f"Unknown integration provider: {provider}. Supported: {', '.join(sorted(set(ALL_PROBES) | set(PROJECT_PROBE_PROVIDERS)))}")
 ```
 
 ### Declared wire contract
@@ -149,6 +177,23 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
       }
     },
     {
+      "in": "query",
+      "name": "project_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "format": "uuid",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Project Id"
+      }
+    },
+    {
       "in": "header",
       "name": "X-API-Key",
       "required": false,
@@ -196,7 +241,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-[{'provider': r.provider, 'status': r.status, 'response_ms': r.response_ms, 'message': r.message, 'auth_valid': r.auth_valid, 'payload_valid': r.payload_valid} for r in results]
+_probe_answer(results)
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -205,16 +250,28 @@ Contract limit: at least one response has an unstructured schema. Read the linke
 
 Get All Status
 
-Get latest health status for all integration providers.
+Latest health per integration.
 
-Source: [backend/app/routers/integration_health.py:19](../../../backend/app/routers/integration_health.py#L19).
+``scope=global`` (the default, every existing consumer): the
+deployment-wide rows. ``scope=all``: those, then one row per enabled
+per-project GitHub / GitLab integration of the reader's projects (an admin:
+every project), then one row per paused outbound webhook in them. Five
+reads for ``all``, none per row.
+
+Source: [backend/app/routers/integration_health.py:188](../../../backend/app/routers/integration_health.py#L188).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-current_user: User=Depends(require_role(UserRole.QA_LEAD)), db: AsyncSession=Depends(get_db)
+scope: str='global', current_user: User=Depends(require_role(UserRole.QA_LEAD)), db: AsyncSession=Depends(get_db)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=422, detail='scope must be global or all')
 ```
 
 ### Declared wire contract
@@ -226,6 +283,16 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
   "operationId": "get_all_status_api_v1_integration_health_status_get",
   "parameters": [
     {
+      "in": "query",
+      "name": "scope",
+      "required": false,
+      "schema": {
+        "default": "global",
+        "title": "Scope",
+        "type": "string"
+      }
+    },
+    {
       "in": "header",
       "name": "X-API-Key",
       "required": false,
@@ -246,7 +313,13 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
     "200": {
       "content": {
         "application/json": {
-          "schema": {}
+          "schema": {
+            "items": {
+              "$ref": "#/components/schemas/IntegrationHealthRow"
+            },
+            "title": "Response Get All Status Api V1 Integration Health Status Get",
+            "type": "array"
+          }
         }
       },
       "description": "Successful Response"
@@ -269,14 +342,6 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
   ]
 }
 ```
-
-Handler return expressions (source excerpts, not an inferred wire schema):
-
-```python
-[{'provider': hc.provider, 'status': hc.status, 'last_checked_at': hc.last_checked_at.isoformat() if hc.last_checked_at else None, 'message': hc.message, 'response_ms': hc.response_ms, 'consecutive_failures': hc.consecutive_failures or 0, 'last_success_at': hc.last_success_at.isoformat() if hc.last_success_at else None} for hc in checks]
-```
-
-Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
 
 ## GET `/api/v1/integration-health/trends`
 
@@ -293,7 +358,10 @@ provider whose token had expired rendered as 0% uptime with 0 healthy,
 0 degraded and 0 down, which reads as "no data" rather than "your
 credentials are wrong".
 
-Source: [backend/app/routers/integration_health.py:126](../../../backend/app/routers/integration_health.py#L126).
+The trend is deployment-wide (W10 INT-04): per-project probes
+(``scope_key <> ''``) stay out of both statements.
+
+Source: [backend/app/routers/integration_health.py:350](../../../backend/app/routers/integration_health.py#L350).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 

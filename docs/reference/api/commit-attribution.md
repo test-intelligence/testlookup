@@ -16,7 +16,7 @@ connector → unavailable) in a dedicated write session so this GET stays
 read-only, then returns the freshly-resolved range. The cooldown gate
 means repeated GETs on a range-less run do NOT re-run the connector.
 
-Source: [backend/app/routers/commit_attribution.py:59](../../../backend/app/routers/commit_attribution.py#L59).
+Source: [backend/app/routers/commit_attribution.py:105](../../../backend/app/routers/commit_attribution.py#L105).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -92,7 +92,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-result
+await svc.get_commit_range(db, run)
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -106,7 +106,7 @@ Return ranked suspect commits for a newly-failing cluster/test (US-8.2).
 Honest ``available: False`` when there's no commit range for the run.
 Ranking is deterministic + inspectable (per-commit overlapping files).
 
-Source: [backend/app/routers/commit_attribution.py:81](../../../backend/app/routers/commit_attribution.py#L81).
+Source: [backend/app/routers/commit_attribution.py:124](../../../backend/app/routers/commit_attribution.py#L124).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
