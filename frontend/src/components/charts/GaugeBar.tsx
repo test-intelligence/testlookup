@@ -196,7 +196,7 @@ function TickRow({
       data-gauge-ticks={layout.level}
       // `--color-text-secondary`, the kit's token for small text. The pages' old
       // scale rows used `--color-text-faint`, which is 2.5-3.3:1 on every theme
-      // (AA asks 4.5:1); `--color-text-muted` is 4.15:1 on the light theme.
+      // (AA asks 4.5:1); `--color-text-muted` was 4.15:1 on the light theme then (5.78 since W29c).
       className="relative mt-1.5 uppercase text-[var(--color-text-secondary)] whitespace-nowrap"
       // An explicit line height: the row's height must not depend on which font the reader has.
       style={{ fontSize: GAUGE_TICK_FONT_PX, lineHeight: '15px', height: 15, letterSpacing: 'var(--tracking-wide)' }}

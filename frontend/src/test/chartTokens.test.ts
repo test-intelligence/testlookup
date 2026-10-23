@@ -216,8 +216,9 @@ describe('chart tokens in index.css', () => {
     expect(['passed', 'failed', 'broken', 'skipped', 'flaky'].map((s) => tokens.get('signal')?.get(`status-${s}`))).toEqual([
       '#34a06b', '#d1554e', '#cf8542', '#bfa14a', '#9d85d6',
     ])
+    // W29c UIX-12 (Story 12) darkened Lab's broken and skipped; the dark hues (Signal's row) never move.
     expect(['passed', 'failed', 'broken', 'skipped', 'flaky'].map((s) => tokens.get('lab')?.get(`status-${s}`))).toEqual([
-      '#1f7a48', '#b3352c', '#b05816', '#91701c', '#6742ad',
+      '#1f7a48', '#b3352c', '#a05509', '#7b6806', '#6742ad',
     ])
   })
 

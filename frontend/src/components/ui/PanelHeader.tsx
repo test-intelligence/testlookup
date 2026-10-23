@@ -4,7 +4,7 @@
  * - The title is 14 px / 600 in a tight line (`PANEL_TITLE_CLASS`, which ChartFrame's title reads too): one step
  *   above the 13 px body, in a line SHORTER than the CardShells' (13 px in an inherited 19.5 px line), so no panel
  *   grows. Sentence case; a real heading (`h3` by default: every CardShell was an h3).
- * - `subtitle` is one 13 px line in --color-text-secondary (muted is 4.15:1 on Lab's card).
+ * - `subtitle` is one 13 px line in --color-text-secondary (chosen when muted was 4.15:1 on Lab's card; 5.78 since W29c).
  * - `actions` sits on the right: counts, links, a `btn-secondary btn-sm`; 12 px --color-text-muted, its words never
  *   wrap (when the title and the actions do not fit one line, the actions take a second one).
  * - `Panel`'s root carries the class `card` (12 px corners, the card surface and border) and is a `<div>`, never a

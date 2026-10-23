@@ -362,20 +362,9 @@ test.describe('chart gallery (/__charts)', () => {
     expect(errors).toEqual([])
   })
 
-  /**
-   * Pre-existing, and outside this harness's remit to fix: DefectDonut's
-   * empty-state text is `--color-text-muted` (#767d89), which on the `lab`
-   * theme's white card measures 4.14:1 — under AA's 4.5:1. The fix belongs in
-   * the component (a secondary-text token) or in the lab palette, not here.
-   *
-   * Allowlisted by rule AND node, so nothing else can shelter behind it, and
-   * ratcheted: the moment the contrast is fixed this entry stops matching and
-   * the test fails until the entry is deleted. A green run therefore means
-   * "no NEW violation", never "none".
-   */
-  const KNOWN_VIOLATIONS: KnownViolation[] = [
-    { theme: 'lab', rule: 'color-contrast', nodeHtmlIncludes: 'No defect data' },
-  ]
+  // W29c UIX-12: Lab's muted text is 5.78:1 on the gallery card; DefectDonut's empty-state entry stopped firing and
+  // was removed (the ratchet, `tests/lib/axe-gate.ts`). An entry here is matched by rule AND node and ratcheted.
+  const KNOWN_VIOLATIONS: KnownViolation[] = []
 
   // The gate itself (every impact, the full WCAG + best-practice tag set, the
   // ratchet) and the seven themes live in `tests/lib/axe-gate.ts`.

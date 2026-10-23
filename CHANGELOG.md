@@ -376,6 +376,15 @@ locally by default.
 
 ### Changed
 
+- **Lab is easier to read, and stays white** (owner request 2026-10-17, wave
+  W29c, UIX-12). Muted text (labels, hints, captions) is darker and now reads
+  at least 4.5:1 on every Lab surface (5.78:1 on cards, 4.75:1 on hover; it was
+  3.4-4.15:1); the broken and skipped status colours are darker, so their text
+  passes on the grey wells and stays distinct from failed; the olive chart
+  colour no longer looks like the gold one beside it; cards and menus cast a
+  soft, cool shadow instead of the dark themes' black one. Cards, the page,
+  body text and the blue accent are unchanged, and no other theme changes.
+
 - **The UI standard reaches the analysis pages and the charts** (owner
   request 2026-10-17, wave W29b, UIX-04b, 05, 06, 09). Failures, Runs, Run
   analysis, Flaky, My failures, Defects, Deep investigation, Coverage and

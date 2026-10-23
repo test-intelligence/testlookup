@@ -131,14 +131,14 @@
     --color-bg:#f5f6f8; --color-bg-secondary:#eef0f3; --color-bg-card:#ffffff;
     --color-bg-input:#eceef2; --color-bg-hover:#e6e9ee;
     --color-border:#d9dde4; --color-border-light:#c8cdd6;
-    --color-text:#1a1d23; --color-text-secondary:#454a54; --color-text-muted:#767d89; --color-text-faint:#9aa1ac;
+    --color-text:#1a1d23; --color-text-secondary:#454a54; --color-text-muted:#5f6672; --color-text-faint:#9aa1ac;
     --color-accent:#2563eb; --color-accent-ink:#2563eb;
     --color-btn-primary-bg:#2563eb; --color-btn-primary-text:#ffffff;
-    --status-passed:#1f7a48; --status-failed:#b3352c; --status-broken:#b05816; --status-skipped:#91701c; --status-flaky:#6742ad;
+    --status-passed:#1f7a48; --status-failed:#b3352c; --status-broken:#a05509; --status-skipped:#7b6806; --status-flaky:#6742ad;
     --color-purple:#6742ad; --color-cyan:#0e7490;
     --grid-dot:rgba(0,0,0,0.06);
     --status-unknown:#666d78;
-    --chart-series-1:#bd8200; --chart-series-2:#4794bf; --chart-series-3:#009e73; --chart-series-4:#958d29; --chart-series-5:#0072b2; --chart-series-6:#d55e00; --chart-series-7:#c474a0; --chart-series-8:#4b5260;
+    --chart-series-1:#bd8200; --chart-series-2:#4794bf; --chart-series-3:#009e73; --chart-series-4:#7a8a1f; --chart-series-5:#0072b2; --chart-series-6:#d55e00; --chart-series-7:#c474a0; --chart-series-8:#4b5260;
     --chart-seq-1:#22a186; --chart-seq-2:#238b8d; --chart-seq-3:#2c738e; --chart-seq-4:#375b8c; --chart-seq-5:#424185; --chart-seq-6:#482273; --chart-seq-7:#440154;
     --chart-div-1:#b35806; --chart-div-2:#e08214; --chart-div-3:#fdb863; --chart-div-4:#dfe3e8; --chart-div-5:#b2abd2; --chart-div-6:#8073ac; --chart-div-7:#542788;
     --chart-grid:#e6e9ee; --chart-axis:#5f6672;
@@ -404,6 +404,13 @@
     --shadow-lg:0 12px 32px rgba(48,40,28,0.10);
     --shadow-xl:0 24px 60px rgba(48,40,28,0.14);
   }
+  /* Lab: soft, cool elevation, as Paper's (W29c UIX-12; the :root shadows are tuned for dark surfaces). */
+  [data-theme="lab"] {
+    --shadow-sm:0 1px 2px rgba(16,24,40,0.06);
+    --shadow-md:0 4px 12px rgba(16,24,40,0.08);
+    --shadow-lg:0 12px 32px rgba(16,24,40,0.10);
+    --shadow-xl:0 24px 60px rgba(16,24,40,0.14);
+  }
 
   * { box-sizing: border-box; }
 
@@ -576,7 +583,8 @@
 
   /* W29b UIX-06: ONE table. Header = the label style (.eyebrow's size, weight, case, tracking) on the sunken row;
      a header that holds a sort button keeps its case (the UA stylesheet resets a <button>'s text-transform).
-     Header text is --color-text-secondary: muted is 4.15:1 on Lab's card (the axe gate). components/ui/Table.tsx
+     Header text is --color-text-secondary (chosen when muted was 4.15:1 on Lab's card; W29c raised muted to 5.78,
+     secondary stays the stronger ink for 11 px labels). components/ui/Table.tsx
      applies these classes; a page's own utilities on a cell still win (@layer utilities). */
   .th {
     color: var(--color-text-secondary);

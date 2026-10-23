@@ -258,8 +258,8 @@ export default function DayStrip({
       </div>
       {cursor.readout}
       {legend && (
-        // `--color-text-secondary`, the kit's token for small text: `--color-text-muted`
-        // is under 4.5:1 on the light theme (4.15), which the gallery's axe gate caught.
+        // `--color-text-secondary`, the kit's token for small text (chosen when `--color-text-muted` was 4.15:1 on
+        // the light theme, which the gallery's axe gate caught; W29c raised Lab's muted to 5.78).
         <div
           data-day-strip-legend=""
           // One row whose two ends never move: on a narrow strip only the middle key wraps (inside its own span),
