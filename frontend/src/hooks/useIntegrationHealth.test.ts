@@ -112,4 +112,61 @@ describe('useProviderHistory', () => {
     expect(getProviderHistory).not.toHaveBeenCalled()
     expect(result.current.history).toEqual([])
   })
+
+  // W10 INT-04: a project row's history.
+  it('fetches a project row\'s history with the project id', async () => {
+    const { getProviderHistory } = await import('@/services/integrationHealthService')
+    ;(getProviderHistory as ReturnType<typeof vi.fn>).mockResolvedValue([])
+
+    const { useProviderHistory } = await import('./useIntegrationHealth')
+    const { result } = renderHook(() => useProviderHistory('github', true, 7, 'p-1'), { wrapper })
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    expect(getProviderHistory).toHaveBeenCalledTimes(1)
+    expect(getProviderHistory).toHaveBeenCalledWith('github', 7, 'p-1')
+  })
+})
+
+// W10 INT-04: the Integration Health page's read, `?scope=all`.
+describe('useIntegrationStatusAll', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('asks getAllStatus("all") once when enabled', async () => {
+    const { getAllStatus } = await import('@/services/integrationHealthService')
+    const PROJECT_ROW = { ...STATUS, provider: 'github', kind: 'project', scope_key: 'p-1', project_id: 'p-1', probed: false }
+    ;(getAllStatus as ReturnType<typeof vi.fn>).mockResolvedValue([STATUS, PROJECT_ROW])
+
+    const { useIntegrationStatusAll } = await import('./useIntegrationHealth')
+    const { result } = renderHook(() => useIntegrationStatusAll(true), { wrapper })
+
+    await waitFor(() => expect(result.current.statuses).toEqual([STATUS, PROJECT_ROW]))
+    expect(getAllStatus).toHaveBeenCalledTimes(1)
+    expect(getAllStatus).toHaveBeenCalledWith('all')
+    expect(result.current.isError).toBe(false)
+  })
+
+  it('asks nothing when disabled (below QA lead)', async () => {
+    const { getAllStatus } = await import('@/services/integrationHealthService')
+
+    const { useIntegrationStatusAll } = await import('./useIntegrationHealth')
+    const { result } = renderHook(() => useIntegrationStatusAll(false), { wrapper })
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    expect(getAllStatus).not.toHaveBeenCalled()
+    expect(result.current.statuses).toEqual([])
+  })
+
+  it('keeps its own cache: the deployment-wide read beside it is a separate request', async () => {
+    const { getAllStatus } = await import('@/services/integrationHealthService')
+    ;(getAllStatus as ReturnType<typeof vi.fn>).mockImplementation(async (scope?: unknown) => (scope === 'all' ? [STATUS, STATUS] : [STATUS]))
+
+    const { useIntegrationStatus, useIntegrationStatusAll } = await import('./useIntegrationHealth')
+    const { result } = renderHook(() => ({ global: useIntegrationStatus(), all: useIntegrationStatusAll(true) }), { wrapper })
+
+    await waitFor(() => expect(result.current.all.statuses).toHaveLength(2))
+    await waitFor(() => expect(result.current.global.statuses).toHaveLength(1))
+    expect(getAllStatus).toHaveBeenCalledTimes(2)
+    // The global hook still hands SWR's key array (never the string 'all').
+    expect((getAllStatus as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0])).toContainEqual(['integration-health-status'])
+  })
 })

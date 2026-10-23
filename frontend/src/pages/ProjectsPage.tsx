@@ -21,8 +21,17 @@ import { useProjectStore } from '@/store/projectStore'
 import { usePermissions } from '@/hooks/usePermissions'
 import type { Project, ProjectUpdate } from '@/types/projects'
 import { fromNow } from '@/utils/formatters'
+import { fieldErrorsFrom } from '@/utils/fieldErrors'
 import toast from 'react-hot-toast'
 import { helpTopicParam } from '@/components/help/helpTopics'
+import {
+  EDIT_PROJECT_ERROR_FIELDS,
+  NEW_PROJECT_ERROR_FIELDS,
+  OCP_NAMESPACE_HELP,
+  SPLUNK_INDEX_HELP,
+  carriesValidatedIntegrationField,
+  saveFailureMessage,
+} from './projectIntegrationFields'
 
 const HELP_TOPIC = helpTopicParam('/projects')
 
@@ -47,6 +56,26 @@ function fmtDate(iso: string | null | undefined) {
   return iso.slice(0, 10)
 }
 
+/** W10: the server's 422 sentence for one field, under its input (the input names it in aria-describedby). */
+function FieldError({ id, field, message }: { id: string; field: string; message?: string }) {
+  if (!message) return null
+  return <p id={id} role="alert" data-field-error={field} className="text-xs text-[var(--ui-danger-ink)] mt-1">{message}</p>
+}
+
+/** The ids an input is described by: its help line (always) and its error line (when shown). */
+function describedBy(...ids: Array<string | false | null | undefined>): string | undefined {
+  const list = ids.filter(Boolean)
+  return list.length ? list.join(' ') : undefined
+}
+
+/** A copy of `errors` without `field` (the reader is editing it again). */
+function withoutError(errors: Record<string, string>, field: string): Record<string, string> {
+  if (!(field in errors)) return errors
+  const next = { ...errors }
+  delete next[field]
+  return next
+}
+
 type ProjectForm = 'new' | `edit:${string}`
 
 export default function ProjectsPage() {
@@ -58,6 +87,8 @@ export default function ProjectsPage() {
   const [confirmingArchive, setConfirmingArchive] = useState<string | null>(null)
   const [form, setForm] = useState<NewProjectForm>(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
+  // W10: a field-level 422 on create, shown under its field.
+  const [newErrors, setNewErrors] = useState<Record<string, string>>({})
   const setActiveProject = useProjectStore(s => s.setActiveProject)
   const refreshProjects = useProjectStore(s => s.refreshProjects)
   const { isAdmin, isQaLead } = usePermissions()
@@ -73,12 +104,14 @@ export default function ProjectsPage() {
 
   const handleNameChange = (name: string) => {
     setForm(f => ({ ...f, name, slug: slugify(name) }))
+    setNewErrors(e => withoutError(withoutError(e, 'name'), 'slug'))
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!form.name.trim() || !form.slug.trim()) return
     setSaving(true)
+    setNewErrors({})
     try {
       const payload: Record<string, string> = { name: form.name, slug: form.slug }
       if (form.description) payload.description = form.description
@@ -92,8 +125,11 @@ export default function ProjectsPage() {
       // then make the new project the active selection.
       await load()
       if (created?.id) setActiveProject(created)
-    } catch {
-      toast.error('Failed to create project')
+    } catch (err) {
+      // W10 INT-03: a field-level 422 (an OpenShift namespace that is not a DNS label) shows under its field.
+      const errors = fieldErrorsFrom(err, NEW_PROJECT_ERROR_FIELDS)
+      if (errors) setNewErrors(errors)
+      else toast.error('Failed to create project')
     } finally {
       setSaving(false)
     }
@@ -119,6 +155,7 @@ export default function ProjectsPage() {
               // In the page the button stays reachable while the form is open: never wipe what is typed there.
               if (slot.openKey === 'new') return
               setForm(EMPTY_FORM)
+              setNewErrors({})
               slot.open('new')
             }}>
             <Plus className="h-4 w-4" /> New Project
@@ -149,28 +186,38 @@ export default function ProjectsPage() {
             <div>
               <label htmlFor="np-name" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Project Name *</label>
               <input id="np-name" type="text" className="input" placeholder="e.g. Payment Gateway API"
-                value={form.name} onChange={e => handleNameChange(e.target.value)} required autoFocus />
+                value={form.name} onChange={e => handleNameChange(e.target.value)} required autoFocus
+                aria-describedby={describedBy(newErrors.name && 'np-name-error')} />
+              <FieldError id="np-name-error" field="name" message={newErrors.name} />
             </div>
             <div>
               <label htmlFor="np-slug" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Slug *</label>
               <input id="np-slug" type="text" className="input font-mono text-sm" placeholder="e.g. payment-gateway-api"
-                value={form.slug} onChange={e => setForm(f => ({ ...f, slug: slugify(e.target.value) }))} required />
+                value={form.slug} onChange={e => { setForm(f => ({ ...f, slug: slugify(e.target.value) })); setNewErrors(x => withoutError(x, 'slug')) }} required
+                aria-describedby={describedBy(newErrors.slug && 'np-slug-error')} />
+              <FieldError id="np-slug-error" field="slug" message={newErrors.slug} />
             </div>
             <div>
               <label htmlFor="np-desc" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Description</label>
               <textarea id="np-desc" className="input resize-none" rows={2} placeholder="Optional"
-                value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+                value={form.description} onChange={e => { setForm(f => ({ ...f, description: e.target.value })); setNewErrors(x => withoutError(x, 'description')) }}
+                aria-describedby={describedBy(newErrors.description && 'np-desc-error')} />
+              <FieldError id="np-desc-error" field="description" message={newErrors.description} />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label htmlFor="np-jira" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Jira Project Key</label>
                 <input id="np-jira" type="text" className="input font-mono text-sm" placeholder="e.g. PAY"
-                  value={form.jira_project_key} onChange={e => setForm(f => ({ ...f, jira_project_key: e.target.value.toUpperCase() }))} />
+                  value={form.jira_project_key} onChange={e => { setForm(f => ({ ...f, jira_project_key: e.target.value.toUpperCase() })); setNewErrors(x => withoutError(x, 'jira_project_key')) }}
+                  aria-describedby={describedBy(newErrors.jira_project_key && 'np-jira-error')} />
+                <FieldError id="np-jira-error" field="jira_project_key" message={newErrors.jira_project_key} />
               </div>
-              <div>
+              <div className="min-w-0">
                 <label htmlFor="np-ocp" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">OCP Namespace</label>
                 <input id="np-ocp" type="text" className="input text-sm" placeholder="e.g. qa-testing"
-                  value={form.ocp_namespace} onChange={e => setForm(f => ({ ...f, ocp_namespace: e.target.value }))} />
+                  value={form.ocp_namespace} onChange={e => { setForm(f => ({ ...f, ocp_namespace: e.target.value })); setNewErrors(x => withoutError(x, 'ocp_namespace')) }}
+                  aria-describedby={describedBy(newErrors.ocp_namespace && 'np-ocp-error')} />
+                <FieldError id="np-ocp-error" field="ocp_namespace" message={newErrors.ocp_namespace} />
               </div>
             </div>
           </div>
@@ -272,26 +319,30 @@ function EditProjectModal({ project, onClose, onSaved, slot }: { project: Projec
   const [jiraKey, setJiraKey] = useState(project.jira_project_key ?? '')
   const [splunkIndex, setSplunkIndex] = useState(project.splunk_index ?? '')
   const [ocpNamespace, setOcpNamespace] = useState(project.ocp_namespace ?? '')
-  const [jenkinsPattern, setJenkinsPattern] = useState(project.jenkins_job_pattern ?? '')
   const [startDate, setStartDate] = useState(fmtDate(project.start_date))
   const [endDate, setEndDate] = useState(fmtDate(project.end_date))
   const [tagsInput, setTagsInput] = useState((project.tags ?? []).join(', '))
   // W28 TCM-02: the project's "Require review before Active" setting (an older server sends nothing: off).
   const [requireCaseReview, setRequireCaseReview] = useState(project.require_case_review ?? false)
   const [saving, setSaving] = useState(false)
+  // W10 INT-03: the server's 422 sentence per field, shown under it.
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  const clearError = (field: string) => setErrors(prev => withoutError(prev, field))
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
     if (!name.trim()) { toast.error('Name is required'); return }
     setSaving(true)
+    setErrors({})
     try {
       const updates: ProjectUpdate = {}
       if (name !== project.name) updates.name = name.trim()
       if (description !== (project.description ?? '')) updates.description = description || null
       if (jiraKey !== (project.jira_project_key ?? '')) updates.jira_project_key = jiraKey.toUpperCase() || null
-      if (splunkIndex !== (project.splunk_index ?? '')) updates.splunk_index = splunkIndex || null
-      if (ocpNamespace !== (project.ocp_namespace ?? '')) updates.ocp_namespace = ocpNamespace || null
-      if (jenkinsPattern !== (project.jenkins_job_pattern ?? '')) updates.jenkins_job_pattern = jenkinsPattern || null
+      // A cleared index / namespace is sent as "" (a null was dropped by the PUT, so it could not be cleared);
+      // a stored "" reads as unset, handing the key back to the deployment's value.
+      if (splunkIndex !== (project.splunk_index ?? '')) updates.splunk_index = splunkIndex
+      if (ocpNamespace !== (project.ocp_namespace ?? '')) updates.ocp_namespace = ocpNamespace
       if (startDate !== fmtDate(project.start_date)) updates.start_date = startDate ? new Date(startDate).toISOString() : null
       if (endDate !== fmtDate(project.end_date)) updates.end_date = endDate ? new Date(endDate).toISOString() : null
       const newTags = tagsInput.split(',').map(t => t.trim()).filter(Boolean)
@@ -306,12 +357,19 @@ function EditProjectModal({ project, onClose, onSaved, slot }: { project: Projec
         return
       }
 
-      await projectsService.update(project.id, updates)
+      // A PUT carrying the Splunk index or the OpenShift namespace (the fields the server validates with fixed
+      // sentences) asks for no global toast: its 422 shows under the field. Any other edit is today's call.
+      if (carriesValidatedIntegrationField(updates)) {
+        await projectsService.update(project.id, updates, { suppressToast: true })
+      } else {
+        await projectsService.update(project.id, updates)
+      }
       toast.success('Project updated')
       onSaved()
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      toast.error(msg || 'Failed to update project')
+      const fieldErrors = fieldErrorsFrom(err, EDIT_PROJECT_ERROR_FIELDS)
+      if (fieldErrors) setErrors(fieldErrors)
+      else toast.error(saveFailureMessage(err, 'Failed to update project'))
     } finally {
       setSaving(false)
     }
@@ -338,7 +396,9 @@ function EditProjectModal({ project, onClose, onSaved, slot }: { project: Projec
         <div className="max-w-2xl space-y-4">
           <div>
             <label htmlFor="ep-name" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Project Name *</label>
-            <input id="ep-name" type="text" className="input" value={name} onChange={e => setName(e.target.value)} required />
+            <input id="ep-name" type="text" className="input" value={name} onChange={e => { setName(e.target.value); clearError('name') }} required
+              aria-describedby={describedBy(errors.name && 'ep-name-error')} />
+            <FieldError id="ep-name-error" field="name" message={errors.name} />
           </div>
           <div>
             <label htmlFor="ep-slug" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Slug</label>
@@ -348,7 +408,9 @@ function EditProjectModal({ project, onClose, onSaved, slot }: { project: Projec
           <div>
             <label htmlFor="ep-desc" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Description</label>
             <textarea id="ep-desc" className="input resize-none" rows={3} value={description}
-              onChange={e => setDescription(e.target.value)} placeholder="Project description" />
+              onChange={e => { setDescription(e.target.value); clearError('description') }} placeholder="Project description"
+              aria-describedby={describedBy(errors.description && 'ep-desc-error')} />
+            <FieldError id="ep-desc-error" field="description" message={errors.description} />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -384,26 +446,33 @@ function EditProjectModal({ project, onClose, onSaved, slot }: { project: Projec
 
           <div className="border-t border-[var(--color-border)] pt-4">
             <p className="text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider mb-3">Integrations</p>
+            {/* W10 D22: no Jenkins Job Pattern (nothing read it; a stored value is kept). The other two say what
+                they drive; each help / error line wraps under its input inside its column. */}
             <div className="grid grid-cols-2 gap-3">
-              <div>
+              <div className="min-w-0">
                 <label htmlFor="ep-jira" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Jira Project Key</label>
                 <input id="ep-jira" type="text" className="input font-mono text-sm" value={jiraKey}
-                  onChange={e => setJiraKey(e.target.value.toUpperCase())} placeholder="PAY" />
+                  onChange={e => { setJiraKey(e.target.value.toUpperCase()); clearError('jira_project_key') }} placeholder="PAY"
+                  aria-describedby={describedBy(errors.jira_project_key && 'ep-jira-error')} />
+                <FieldError id="ep-jira-error" field="jira_project_key" message={errors.jira_project_key} />
               </div>
-              <div>
+              <div className="min-w-0">
                 <label htmlFor="ep-splunk" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Splunk Index</label>
                 <input id="ep-splunk" type="text" className="input text-sm" value={splunkIndex}
-                  onChange={e => setSplunkIndex(e.target.value)} placeholder="main" />
+                  onChange={e => { setSplunkIndex(e.target.value); clearError('splunk_index') }} placeholder="main"
+                  aria-describedby={describedBy('ep-splunk-help', errors.splunk_index && 'ep-splunk-error')}
+                  aria-invalid={errors.splunk_index ? true : undefined} />
+                <p id="ep-splunk-help" className="text-xs text-[var(--color-text-faint)] mt-1">{SPLUNK_INDEX_HELP}</p>
+                <FieldError id="ep-splunk-error" field="splunk_index" message={errors.splunk_index} />
               </div>
-              <div>
+              <div className="min-w-0">
                 <label htmlFor="ep-ocp" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">OCP Namespace</label>
                 <input id="ep-ocp" type="text" className="input text-sm" value={ocpNamespace}
-                  onChange={e => setOcpNamespace(e.target.value)} placeholder="qa-testing" />
-              </div>
-              <div>
-                <label htmlFor="ep-jenkins" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Jenkins Job Pattern</label>
-                <input id="ep-jenkins" type="text" className="input text-sm" value={jenkinsPattern}
-                  onChange={e => setJenkinsPattern(e.target.value)} placeholder="**/payment-*" />
+                  onChange={e => { setOcpNamespace(e.target.value); clearError('ocp_namespace') }} placeholder="qa-testing"
+                  aria-describedby={describedBy('ep-ocp-help', errors.ocp_namespace && 'ep-ocp-error')}
+                  aria-invalid={errors.ocp_namespace ? true : undefined} />
+                <p id="ep-ocp-help" className="text-xs text-[var(--color-text-faint)] mt-1">{OCP_NAMESPACE_HELP}</p>
+                <FieldError id="ep-ocp-error" field="ocp_namespace" message={errors.ocp_namespace} />
               </div>
             </div>
           </div>

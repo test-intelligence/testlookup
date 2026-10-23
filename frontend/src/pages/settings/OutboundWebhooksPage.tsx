@@ -31,6 +31,23 @@ import {
   type WebhookSubscriptionWrite,
 } from '@/services/outboundWebhookService'
 import { formatCompactDateTime } from '@/utils/formatters'
+import {
+  BREAKER_HELP,
+  BREAKER_HELP_LEAD,
+  DEFAULT_BREAKER_THRESHOLD,
+  MAX_BREAKER_THRESHOLD,
+  MIN_BREAKER_THRESHOLD,
+  PAUSED_CHIP,
+  REENABLED_TOAST,
+  REENABLE_LABEL,
+  THRESHOLD_INVALID,
+  THRESHOLD_LABEL,
+  isPaused,
+  pausedLine,
+  reenableBody,
+  streakLabel,
+  validThreshold,
+} from './webhookBreakerModel'
 
 const EMPTY_FORM: WebhookSubscriptionWrite = {
   name: '',
@@ -38,6 +55,8 @@ const EMPTY_FORM: WebhookSubscriptionWrite = {
   events: [],
   enabled: true,
   max_retries: 5,
+  // W10 INT-07: pause after this many deliveries in a row end failed.
+  breaker_threshold: DEFAULT_BREAKER_THRESHOLD,
 }
 
 const HELP_TOPIC = helpTopicParam('/settings/webhooks')
@@ -108,6 +127,10 @@ export default function OutboundWebhooksPage() {
       toast.error('Name, target URL, and at least one event type are required')
       return
     }
+    if (!validThreshold(form.breaker_threshold)) {
+      toast.error(THRESHOLD_INVALID)
+      return
+    }
     try {
       await outboundWebhookService.create(activeProjectId, form)
       setShowCreate(false)
@@ -132,6 +155,17 @@ export default function OutboundWebhooksPage() {
       await refresh()
     } catch (err) {
       toast.error(`Failed to update: ${(err as Error).message}`)
+    }
+  }
+
+  /** W10 INT-07: a paused row's Re-enable — the full row back with `enabled: true` (the server resets the counter). */
+  async function reenable(sub: WebhookSubscriptionRead) {
+    try {
+      await outboundWebhookService.update(sub.id, reenableBody(sub))
+      await refresh()
+      toast.success(REENABLED_TOAST)
+    } catch (err) {
+      toast.error(`Could not re-enable the webhook: ${(err as Error).message}`)
     }
   }
 
@@ -249,7 +283,10 @@ export default function OutboundWebhooksPage() {
       )}
 
       <div className="space-y-2">
-        {subs.map((sub) => (
+        {subs.map((sub) => {
+          const paused = isPaused(sub)
+          const streak = streakLabel(sub)
+          return (
           <div
             key={sub.id}
             className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-card)]"
@@ -283,22 +320,35 @@ export default function OutboundWebhooksPage() {
               </div>
               <span className="ml-auto flex items-center gap-2 text-[11px] text-[var(--color-text-faint)]">
                 <span title={`Delivered ${sub.total_delivered} · Failed ${sub.failure_count}`}>
-                  ✓ {sub.total_delivered} · ✗ {sub.failure_count}
+                  ✓ {sub.total_delivered} · ✗ {sub.failure_count}{streak && <span data-webhook-streak=""> · {streak}</span>}
                 </span>
                 <button
                   type="button"
                   onClick={() => toggleEnabled(sub)}
                   disabled={!canEdit}
+                  data-webhook-state={paused ? 'paused' : sub.enabled ? 'enabled' : 'disabled'}
                   className={`text-[10px] px-2 py-0.5 rounded border ${
                     sub.enabled
                       ? 'border-[var(--status-passed-bd)]/40 text-[var(--status-passed)] bg-[var(--status-passed-bg)]/10'
-                      : 'border-[var(--color-border)] text-[var(--color-text-muted)]'
+                      : paused
+                        ? 'border-[var(--ui-danger-bd)] text-[var(--ui-danger-ink)] bg-[var(--ui-danger-bg)]'
+                        : 'border-[var(--color-border)] text-[var(--color-text-muted)]'
                   }`}
                 >
-                  {sub.enabled ? 'ENABLED' : 'DISABLED'}
+                  {sub.enabled ? 'ENABLED' : paused ? PAUSED_CHIP : 'DISABLED'}
                 </button>
                 {canEdit && (
                   <>
+                    {paused && (
+                      <button
+                        type="button"
+                        onClick={() => { void reenable(sub) }}
+                        data-webhook-reenable=""
+                        className="btn-secondary btn-sm"
+                      >
+                        {REENABLE_LABEL}
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => test(sub)}
@@ -331,7 +381,12 @@ export default function OutboundWebhooksPage() {
               </div>
             )}
 
-            {sub.last_error && (
+            {/* W10 INT-07: a paused row says why (its last error included) instead of the plain Last error line. */}
+            {paused ? (
+              <div data-webhook-paused="" className="px-3 pb-2 text-xs text-[var(--ui-danger-ink)] [overflow-wrap:anywhere]">
+                {pausedLine(sub)}
+              </div>
+            ) : sub.last_error && (
               <div className="px-3 pb-2 text-[11px] text-[var(--status-broken)]">
                 Last error: {sub.last_error}
               </div>
@@ -344,7 +399,8 @@ export default function OutboundWebhooksPage() {
               />
             )}
           </div>
-        ))}
+          )
+        })}
       </div>
 
       <section className="text-xs text-[var(--color-text-muted)] space-y-1">
@@ -365,6 +421,9 @@ export default function OutboundWebhooksPage() {
           <strong>Offline mode:</strong> when <code>AI_OFFLINE_MODE=true</code>{' '}
           the whole subsystem is a silent no-op regardless of the{' '}
           <code>outbound_webhooks</code> feature flag.
+        </p>
+        <p data-webhook-breaker-help="">
+          <strong>{BREAKER_HELP_LEAD}</strong> {BREAKER_HELP}
         </p>
       </section>
     </div>
@@ -397,7 +456,7 @@ function CreateForm({
   return (
     <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-card)] p-4 space-y-3">
       <h3 className="text-sm font-semibold text-[var(--color-text)]">New webhook subscription</h3>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-3">
         <label className="text-xs block">
           <span className="text-[var(--color-text-muted)]">Name</span>
           <input
@@ -416,6 +475,19 @@ function CreateForm({
             max={10}
             value={form.max_retries}
             onChange={(e) => onChange({ ...form, max_retries: Number(e.target.value) })}
+            className="mt-1 w-full px-2 py-1.5 text-sm bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded"
+          />
+        </label>
+        <label className="text-xs block">
+          <span className="text-[var(--color-text-muted)]">{THRESHOLD_LABEL}</span>
+          <input
+            type="number"
+            min={MIN_BREAKER_THRESHOLD}
+            max={MAX_BREAKER_THRESHOLD}
+            step={1}
+            value={form.breaker_threshold ?? DEFAULT_BREAKER_THRESHOLD}
+            onChange={(e) => onChange({ ...form, breaker_threshold: Number(e.target.value) })}
+            data-webhook-threshold=""
             className="mt-1 w-full px-2 py-1.5 text-sm bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded"
           />
         </label>

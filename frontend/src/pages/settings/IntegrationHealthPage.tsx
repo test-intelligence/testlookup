@@ -7,13 +7,24 @@ import Disclosure from '@/components/ui/Disclosure';
 import { buildIntegrationHealthWorkflow } from '@/components/workflow/workflowPresets';
 import {
   useHealthTrends,
-  useIntegrationStatus,
+  useIntegrationStatusAll,
   useProviderHistory,
   refreshIntegrationHealth,
 } from '@/hooks/useIntegrationHealth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { triggerProbe } from '../../services/integrationHealthService';
 import { formatCompactDateTime } from '@/utils/formatters'
 import { helpTopicParam } from '@/components/help/helpTopics'
+import IntegrationHealthProjectRows from './IntegrationHealthProjectRows';
+import {
+  ROLE_LINE,
+  globalRows,
+  historyOptionLabel,
+  historyOptionValue,
+  historyRows,
+  parseHistoryOption,
+  rowKey,
+} from './integrationHealthModel';
 
 const HELP_TOPIC = helpTopicParam('/settings/integration-health')
 
@@ -34,21 +45,32 @@ const STATUS_COLORS: Record<string, string> = {
 type Tab = 'status' | 'trends' | 'history';
 
 export default function IntegrationHealthPage() {
+  // W10 INT-04 (D-14): every /integration-health route is QA lead and above, so
+  // below that the page says so and asks nothing (it used to toast 403s).
+  const { canAccessManagement: allowed } = usePermissions();
   const [tab, setTab] = useState<Tab>('status');
+  // The History select's value: a provider (deployment-wide) or `provider:projectId`.
   const [selectedProvider, setSelectedProvider] = useState<string>('');
   const [probing, setProbing] = useState(false);
+  const selected = parseHistoryOption(selectedProvider);
 
-  const { statuses, isLoading: statusLoading } = useIntegrationStatus();
-  const { trends, isLoading: trendsLoading } = useHealthTrends(tab === 'trends');
-  const { history, isLoading: historyLoading } = useProviderHistory(selectedProvider, tab === 'history');
+  // `?scope=all`: the deployment-wide rows, each project's GitHub / GitLab row, the paused webhooks.
+  const { statuses, isLoading: statusLoading } = useIntegrationStatusAll(allowed);
+  const { trends, isLoading: trendsLoading } = useHealthTrends(allowed && tab === 'trends');
+  const { history, isLoading: historyLoading } = useProviderHistory(selected.provider, allowed && tab === 'history', 7, selected.projectId);
+  const globals = useMemo(() => globalRows(statuses), [statuses]);
+  const historyChoices = useMemo(() => historyRows(statuses), [statuses]);
+  const selectedLabel = historyChoices.find(r => historyOptionValue(r) === selectedProvider);
 
   const loading =
     tab === 'status' ? statusLoading : tab === 'trends' ? trendsLoading : historyLoading;
 
-  const handleProbe = async (provider?: string) => {
+  const handleProbe = async (provider?: string, projectId?: string) => {
     setProbing(true);
     try {
-      await triggerProbe(provider);
+      // A project row probes that project's integration only; otherwise today's call.
+      if (projectId) await triggerProbe(provider, projectId);
+      else await triggerProbe(provider);
       toast.success(provider ? `Probed ${provider}` : 'All integrations probed');
       refreshIntegrationHealth();
     } catch { toast.error('Probe failed'); }
@@ -61,10 +83,25 @@ export default function IntegrationHealthPage() {
     { key: 'history', label: 'Probe History' },
   ];
 
+  // The workflow timeline is the deployment-wide picture: global rows (and a global history) only.
   const workflow = useMemo(
-    () => buildIntegrationHealthWorkflow(statuses, history, selectedProvider),
-    [statuses, history, selectedProvider],
+    () => buildIntegrationHealthWorkflow(globals, selected.projectId ? [] : history, selected.projectId ? '' : selected.provider),
+    [globals, history, selected.projectId, selected.provider],
   );
+
+  if (!allowed) {
+    return (
+      <div className="space-y-4">
+        <PageHeader
+          compact
+          title="Integration Health"
+          subtitle="Active health probes for Jira, Splunk, GitHub, Slack, Teams, SMTP, and more."
+          helpTopic={HELP_TOPIC}
+        />
+        <p data-health-role-line="" className="text-sm text-[var(--color-text-muted)]">{ROLE_LINE}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -94,10 +131,11 @@ export default function IntegrationHealthPage() {
         <>
           {/* Current Status */}
           {tab === 'status' && (
+            <div className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {statuses.length === 0 && <div className="col-span-full text-center py-8 text-[var(--color-text-muted)]">No health data yet. Click "Probe All Now" to start.</div>}
-              {statuses.map(s => (
-                <div key={s.provider} className="bg-[var(--color-bg-secondary)] rounded-lg p-4">
+              {globals.map(s => (
+                <div key={rowKey(s)} className="bg-[var(--color-bg-secondary)] rounded-lg p-4">
                   <div className="flex justify-between items-center mb-2">
                     <span className="text-[var(--color-text)] font-medium capitalize">{s.provider}</span>
                     <span className={clsx('px-2 py-0.5 rounded text-xs font-medium', STATUS_COLORS[s.status] || STATUS_COLORS.unknown)}>
@@ -118,6 +156,9 @@ export default function IntegrationHealthPage() {
                   </button>
                 </div>
               ))}
+            </div>
+            {/* W10 INT-04: each project's GitHub / GitLab integration, then the paused webhooks. */}
+            <IntegrationHealthProjectRows rows={statuses} probing={probing} onProbe={(provider, projectId) => { void handleProbe(provider, projectId) }} />
             </div>
           )}
 
@@ -152,11 +193,11 @@ export default function IntegrationHealthPage() {
                 <select value={selectedProvider} onChange={e => setSelectedProvider(e.target.value)}
                   className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm">
                   <option value="">Select provider...</option>
-                  {statuses.map(s => <option key={s.provider} value={s.provider}>{s.provider}</option>)}
+                  {historyChoices.map(s => <option key={rowKey(s)} value={historyOptionValue(s)}>{historyOptionLabel(s)}</option>)}
                 </select>
               </div>
               {!selectedProvider && <div className="text-center py-8 text-[var(--color-text-muted)]">Select a provider to view probe history.</div>}
-              {selectedProvider && history.length === 0 && <div className="text-center py-8 text-[var(--color-text-muted)]">No history for {selectedProvider}.</div>}
+              {selectedProvider && history.length === 0 && <div className="text-center py-8 text-[var(--color-text-muted)]">No history for {selectedLabel ? historyOptionLabel(selectedLabel) : selected.provider}.</div>}
               {history.map(h => (
                 <div key={h.id} className="bg-[var(--color-bg-secondary)] rounded px-3 py-2 flex justify-between items-center text-sm">
                   <div className="flex items-center gap-3">

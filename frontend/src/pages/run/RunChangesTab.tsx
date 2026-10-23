@@ -7,29 +7,30 @@
  * Mounted only while the tab is open, so the diff is asked for then and not
  * at page load (the same rule the collapsed card had). The same holds for the
  * duration regressions under it (EXEC-05, `DurationRegressionsCard`).
+ *
+ * W10 FAIL-09: the commits are the project's GitHub / GHE range (the Suspects
+ * panel's); when there are none the tab says why (`commit_range_status`). A
+ * server without that status renders exactly the markup from before.
  */
 import { Link } from 'react-router-dom'
 import { GitCommit, GitCompare } from 'lucide-react'
-import useSWR from 'swr'
 import { clsx } from 'clsx'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import ScopedLink from '@/components/ui/ScopedLink'
 import DurationRegressionsCard from '@/components/runs/DurationRegressionsCard'
-import { api } from '@/services/api'
+import { useRegressionDiff } from '@/hooks/useRegressionDiff'
+import { usePermissions } from '@/hooks/usePermissions'
+import type { CommitRangeStatus } from '@/types/regressionDiff'
 import type { TestRun } from '@/types/runs'
 import { buildCompareWithPreviousHref } from '@/utils/runComparisons'
-
-interface RegressionDiff {
-  baseline_available: boolean
-  baseline_run_id?: string
-  baseline_build_number?: string
-  pass_rate?: number
-  baseline_pass_rate?: number
-  pass_rate_delta?: number
-  new_failing_tests?: Array<{ test_name: string; suite_name: string | null }>
-  new_failing_count?: number
-  resolved_count?: number
-  commit_range?: Array<{ sha: string; message: string; author: string; timestamp: string }>
-}
+import {
+  SUPPLIED_LINE,
+  WEAK_ANCHOR_LINE,
+  commitsHeading,
+  reasonLine,
+  reasonLink,
+  safeCommitHref,
+} from './commitRangeReasons'
 
 const LINK = 'inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] px-2.5 py-1.5 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]'
 
@@ -43,11 +44,10 @@ export default function RunChangesTab({
   /** Opens Compare against the previous run of the same suite (the header's action). */
   onCompareWithPrevious: () => void
 }) {
-  const { data, isLoading, error } = useSWR<RegressionDiff>(
-    `regression-diff-${runId}`,
-    () => api.get(`/api/v1/runs/${runId}/regression-diff`).then(r => r.data),
-    { revalidateOnFocus: false },
-  )
+  const { data, isLoading, error } = useRegressionDiff(runId)
+  const { isAdmin } = usePermissions()
+  const status = data?.commit_range_status
+  const commits = data?.commit_range ?? []
 
   // The baseline the diff measured against, on the left of Compare.
   const baselineHref = data?.baseline_available && data.baseline_run_id
@@ -107,20 +107,37 @@ export default function RunChangesTab({
               </div>
             )}
 
-            {(data.commit_range?.length ?? 0) > 0 && (
+            {status && !status.available && <CommitRangeReason status={status} isAdmin={isAdmin} />}
+
+            {commits.length > 0 && (
               <div>
                 <p className="eyebrow uppercase text-[var(--color-text-muted)] mb-1.5">
-                  Commits since baseline ({data.commit_range?.length})
+                  {status ? commitsHeading(status, commits.length) : `Commits since baseline (${commits.length})`}
                 </p>
+                {status && !status.base_anchor_is_strong && (
+                  <p data-commit-range-weak-anchor="" className="text-xs text-[var(--color-text-muted)] mb-1.5">{WEAK_ANCHOR_LINE}</p>
+                )}
+                {status?.source === 'supplied' && (
+                  <p data-commit-range-supplied="" className="text-xs text-[var(--color-text-muted)] mb-1.5">{SUPPLIED_LINE}</p>
+                )}
                 <ul className="space-y-1">
-                  {data.commit_range?.slice(0, 5).map((c) => (
+                  {commits.slice(0, 5).map((c) => {
+                    // A link only to the server-built http(s) URL; a sha, message and author are text.
+                    const href = safeCommitHref(c.commit_url)
+                    return (
                     <li key={c.sha} className="flex items-start gap-2 text-xs text-[var(--color-text-muted)]">
                       <GitCommit className="h-3.5 w-3.5 text-[var(--color-text-faint)] flex-shrink-0 mt-0.5" />
-                      <span className="font-mono text-[var(--color-text)] mr-1">{c.sha}</span>
+                      {href ? (
+                        <a href={href} target="_blank" rel="noopener noreferrer" data-commit-link=""
+                          className="font-mono text-[var(--color-text)] mr-1 hover:underline">{c.sha}</a>
+                      ) : (
+                        <span className="font-mono text-[var(--color-text)] mr-1">{c.sha}</span>
+                      )}
                       <span>{c.message}</span>
-                      <span className="text-[var(--color-text-faint)]">— {c.author}</span>
+                      {(!status || c.author) && <span className="text-[var(--color-text-faint)]">— {c.author}</span>}
                     </li>
-                  ))}
+                    )
+                  })}
                 </ul>
               </div>
             )}
@@ -157,5 +174,22 @@ export default function RunChangesTab({
         </Link>
       </section>
     </div>
+  )
+}
+
+/** W10 FAIL-09: why the commit list is empty, and where to fix it when somewhere can. */
+function CommitRangeReason({ status, isAdmin }: { status: CommitRangeStatus; isAdmin: boolean }) {
+  const link = reasonLink(status.reason, isAdmin)
+  const linkClass = 'text-[var(--color-accent)] hover:underline'
+  return (
+    <p data-commit-range-reason={status.reason ?? ''} className="text-sm text-[var(--color-text-muted)]">
+      {reasonLine(status)}
+      {link && ' '}
+      {link && (link.scoped ? (
+        <ScopedLink to={link.to} className={linkClass}>{link.label}</ScopedLink>
+      ) : (
+        <Link to={link.to} className={linkClass}>{link.label}</Link>
+      ))}
+    </p>
   )
 }
