@@ -69,7 +69,7 @@ function RowsTable({ items }: { items: readonly RowsItem[] }) {
                 {item.test_name}
               </ScopedLink>
               {/* W27b: secondary, not muted: in the page the table is audited at every impact, and the muted
-                  tone misses 4.5:1 on the card in the lab theme (the fixed panel was never audited). */}
+                  tone missed 4.5:1 on the card in the lab theme then (5.78 since W29c; the fixed panel was never audited). */}
               {item.error_line && (
                 <span className="mt-0.5 block break-words text-[var(--color-text-secondary)]">{item.error_line}</span>
               )}

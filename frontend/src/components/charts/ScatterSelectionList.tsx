@@ -43,7 +43,7 @@ const BUTTON =
 /**
  * The header cells: the Wave 3 tables' header (ChartTable, the failure groups table), not the
  * letter-spaced uppercase `.th` (F-08), in the table's secondary text colour, not `.th`'s muted one,
- * which is 4.15:1 on the lab theme (under AA for 12 px text; B0's axe run). Existing classes only.
+ * which was 4.15:1 on the lab theme (under AA for 12 px text; B0's axe run; 5.78 since W29c). Existing classes only.
  */
 const HEADER =
   'sticky top-0 border-b border-[var(--color-border)] bg-[var(--color-bg-card)] px-2 py-1 font-semibold text-[var(--color-text-secondary)]'

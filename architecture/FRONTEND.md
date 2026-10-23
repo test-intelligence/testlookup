@@ -160,8 +160,8 @@ proportions, not type, and stay.
 section kickers): `--text-2xs` (11 px, 16 in presentation mode), a 16 px line,
 600, UPPERCASE, `--tracking-label`, `--color-text-muted` — a colour utility on
 the same element wins (`@layer utilities`), which is how the KPI label and the
-table header read `--color-text-secondary` (muted is under 4.5:1 on Lab's card
-and its sunken rows).
+table header read `--color-text-secondary` (chosen when muted was under 4.5:1 on
+Lab's card; W29c raised Lab's muted to 5.78:1 on the card and 4.75:1 on hover).
 
 **One table** — `components/ui/Table.tsx` applies the look that lives in
 `index.css`, so a table written with the classes directly (`.th`, `.td`,

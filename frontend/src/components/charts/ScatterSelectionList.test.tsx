@@ -65,7 +65,7 @@ describe('ScatterSelectionList', () => {
     expect(onViewRows).toHaveBeenCalledWith(1)
   })
 
-  // B0's axe run (lab theme): `.th`'s muted colour is 4.15:1 there, under AA for 12 px text.
+  // B0's axe run (lab theme): `.th`'s muted colour was 4.15:1 there, under AA for 12 px text (5.78 since W29c).
   it('draws every visible column header in the secondary text colour, not the muted one', () => {
     render(<ScatterSelectionList chart={chart} indices={[0, 1]} />)
     const headers = screen.getAllByRole('columnheader').filter((th) => th.textContent?.trim())

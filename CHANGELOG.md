@@ -376,6 +376,15 @@ locally by default.
 
 ### Changed
 
+- **Lab is easier to read, and stays white** (owner request 2026-10-17, wave
+  W29c, UIX-12). Muted text (labels, hints, captions) is darker and now reads
+  at least 4.5:1 on every Lab surface (5.78:1 on cards, 4.75:1 on hover; it was
+  3.4-4.15:1); the broken and skipped status colours are darker, so their text
+  passes on the grey wells and stays distinct from failed; the olive chart
+  colour no longer looks like the gold one beside it; cards and menus cast a
+  soft, cool shadow instead of the dark themes' black one. Cards, the page,
+  body text and the blue accent are unchanged, and no other theme changes.
+
 - **The UI standard reaches the analysis pages and the charts** (owner
   request 2026-10-17, wave W29b, UIX-04b, 05, 06, 09). Failures, Runs, Run
   analysis, Flaky, My failures, Defects, Deep investigation, Coverage and
@@ -848,6 +857,10 @@ locally by default.
   `retention_activation_nudge`.
 
 ### Security
+
+- **DOMPurify 3.4.17.** The frontend's and the Mermaid check's DOMPurify
+  override moves from 3.4.16 to 3.4.17 (GHSA-cg2g-xh64-v4q7, critical: a
+  SAFE_FOR_TEMPLATES bypass; GHSA-mrv2-3pqr-j5jr, high: IN_PLACE hook removal).
 
 - **aiohttp 3.14.4 and follow-redirects 1.16.1.** The backend's aiohttp
   (CVE-2026-111064, CVE-2026-111066: denial of service) and the frontend's

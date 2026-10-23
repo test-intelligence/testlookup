@@ -156,10 +156,11 @@ describe.each(THEME_IDS)('%s', (theme) => {
   }
 })
 
-describe('Paper (OR-06)', () => {
-  it('muted text reads >= 4.5:1 on all four surfaces', () => {
-    const resolve = resolver('paper')
-    for (const surface of SURFACES) {
+// W29a OR-06 (Paper) and W29c UIX-12 (Lab, the audit's Story 12): muted text is body text in every light theme.
+describe.each(THEME_IDS.filter((id) => LIGHT_THEMES.has(id)))('%s (light): muted text', (theme) => {
+  it('reads >= 4.5:1 on the card, the page, the secondary well, the input and the hover surface', () => {
+    const resolve = resolver(theme)
+    for (const surface of [...SURFACES, '--color-bg-input'] as const) {
       expect(contrast(resolve('var(--color-text-muted)'), resolve(`var(${surface})`)), surface).toBeGreaterThanOrEqual(TEXT_FLOOR)
     }
   })
@@ -174,5 +175,9 @@ describe('the measure is real (positive control)', () => {
   it('the bare failed hue on its tint misses 4.5:1 in Slate (why the ink exists)', () => {
     const resolve = resolver('slate')
     expect(contrast(resolve('var(--status-failed)'), resolve('var(--status-failed-bg)'))).toBeLessThan(TEXT_FLOOR)
+  })
+
+  it("Lab's pre-W29c muted on its hover surface was under 4.5:1 (what the light-theme muted case guards)", () => {
+    expect(contrast(rgbOfHex('#767d89'), rgbOfHex('#e6e9ee'))).toBeLessThan(TEXT_FLOOR)
   })
 })
