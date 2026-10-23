@@ -265,6 +265,110 @@ async def test_offline_is_refused_before_any_other_check(fake, monkeypatch):
     assert fake.requests == []
 
 
+# ── Refused BEFORE the approval policy stages anything (W10 follow-up) ──────
+#
+# The local offline pass found the route answering 200 ``pending_review``: the
+# human-approval policy staged a pending defect (the approval queue's item)
+# before the availability check, so an offline / disabled / unconfigured /
+# blocked-host Jira still got a defect row and an approval that could only fail
+# later. The REAL policy runs here (it asks for approval by default) over an
+# in-memory defects table, counted before and after.
+
+
+class _DefectStore:
+    """The ``defects`` table, in memory: rows land on commit."""
+
+    def __init__(self):
+        self.rows: list = []
+
+    def approvals(self) -> int:
+        return sum(1 for row in self.rows if getattr(row, "approval_status", None) == ActionStatus.PENDING_REVIEW.value)
+
+
+class _StagingSession(_RequestSession):
+    def __init__(self, tc: CaseRow, saved: dict, store: _DefectStore):
+        super().__init__(tc, saved)
+        self.store, self.pending, self.commits, self.flushes = store, [], 0, 0
+
+    async def execute(self, stmt, *args, **kwargs):
+        tables = {t.name for t in stmt.get_final_froms()}
+        if tables == {"defects"}:
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(first=lambda: None))
+        return await super().execute(stmt, *args, **kwargs)
+
+    def add(self, obj):
+        self.pending.append(obj)
+        self.new.append(obj)
+
+    async def flush(self):
+        self.flushes += 1
+        for obj in self.pending:
+            if getattr(obj, "id", None) is None:
+                obj.id = uuid.uuid4()
+
+    async def commit(self):
+        self.commits += 1
+        self.store.rows.extend(self.pending)
+        self.pending.clear()
+        self.new.clear()
+
+
+async def _post_with_the_real_policy(monkeypatch, state: FakeState, store: _DefectStore, saved: dict):
+    tc = CaseRow(id=uuid.uuid4(), test_run_id=uuid.uuid4(), test_name="test_checkout", status="FAILED",
+                 error_message="AssertionError: expected 200, got 503")
+    session = _StagingSession(tc, saved, store)
+    monkeypatch.setattr(integrations_router, "resolve_project_scope", AsyncMock())
+    monkeypatch.setattr("app.services.cache_service.bump_analytics_epoch", AsyncMock())
+    async with AsyncClient(transport=ASGITransport(app=_app(session)), base_url="http://test") as client:
+        response = await client.post("/api/v1/integrations/jira", json={
+            "project_key": "QA", "test_case_id": str(tc.id), "test_name": tc.test_name,
+            "run_id": str(tc.test_run_id), "ai_summary": "Checkout fails with a 503",
+            "recommended_action": "Fix the gateway timeout",
+        })
+    return response, session
+
+
+@pytest.mark.asyncio
+async def test_control_an_available_jira_stages_the_pending_defect(fake, monkeypatch):
+    """The recorder sees staging when it happens: the approval policy holds the ticket."""
+    monkeypatch.setattr(settings, "AI_OFFLINE_MODE", False)
+    store = _DefectStore()
+    response, session = await _post_with_the_real_policy(monkeypatch, fake, store, _saved(fake))
+
+    assert response.status_code == 200, response.text
+    assert response.json()["approval_status"] == "pending_review"
+    assert (len(store.rows), store.approvals()) == (1, 1)
+    assert fake.requests == [], "a held ticket does not reach Jira"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case,reason", [
+    ("offline", "offline_mode"),
+    ("disabled", "disabled"),
+    ("unconfigured", "not_configured"),
+    ("blocked", "target_not_allowed"),
+])
+async def test_an_unavailable_jira_is_refused_before_anything_is_staged(fake, monkeypatch, case, reason):
+    monkeypatch.setattr(settings, "AI_OFFLINE_MODE", case == "offline")
+    saved = _saved(fake)
+    if case == "disabled":
+        saved["jira_enabled"] = False
+    elif case == "unconfigured":
+        saved["jira_email"] = None
+    elif case == "blocked":
+        saved["jira_domain"] = "localhost"
+    store = _DefectStore()
+    before = (len(store.rows), store.approvals())
+
+    response, session = await _post_with_the_real_policy(monkeypatch, fake, store, saved)
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == LEGACY_JIRA_REASON_TEXT[reason]
+    assert (len(store.rows), store.approvals()) == before == (0, 0)
+    assert session.pending == [] and session.commits == 0 and session.flushes == 0
+    assert fake.requests == []
+
+
 # ── The triage stage ────────────────────────────────────────────────────────
 
 

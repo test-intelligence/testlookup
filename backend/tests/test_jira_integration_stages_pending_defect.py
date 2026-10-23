@@ -80,7 +80,11 @@ def _test_case() -> CaseRow:
 
 async def _call(session, tc):
     with patch.object(integrations_router, "resolve_project_scope", AsyncMock()) as scope, \
-            patch("app.services.cache_service.bump_analytics_epoch", AsyncMock()) as bump:
+            patch("app.services.cache_service.bump_analytics_epoch", AsyncMock()) as bump, \
+            patch.object(integrations_router, "resolve_jira_config", AsyncMock(return_value={
+                "enabled": True, "domain": "jira.example.test", "email": "bot@example.test",
+                "api_token": "t", "default_project_key": "QA"})), \
+            patch.object(integrations_router, "jira_unavailable_reason", AsyncMock(return_value=None)):
         response = await integrations_router.create_jira_defect(
             _request(tc), db=session, current_user=SimpleNamespace(id=uuid.uuid4(), role="QA_ENGINEER"),
         )

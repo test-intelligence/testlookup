@@ -17,7 +17,12 @@ from app.services.action_policy import (
 )
 from app.services.defect_jira_service import resolve_jira_config
 from app.services.defect_status import ACTIVE_STATUSES
-from app.services.jira_client import JiraUnavailable, create_jira_issue
+from app.services.jira_client import (
+    LEGACY_JIRA_REASON_TEXT,
+    JiraUnavailable,
+    create_jira_issue,
+    jira_unavailable_reason,
+)
 
 router = APIRouter(prefix="/api/v1/integrations", tags=["Integrations"])
 
@@ -54,6 +59,16 @@ async def create_jira_defect(
     if owning_project_id is None:
         raise HTTPException(status_code=404, detail="Test case not found")
     await resolve_project_scope(db, current_user, str(owning_project_id))
+
+    # W10 INT-01 (D-7): the Jira saved in Settings > Integrations, read on this
+    # request's session. Refused BEFORE the approval policy: an offline,
+    # disabled, unconfigured or blocked-host Jira answers 503 with its sentence
+    # and writes nothing -- a pending defect staged for a Jira that cannot be
+    # reached is an approval that can only fail later.
+    jira_cfg = await resolve_jira_config(db)
+    unavailable = await jira_unavailable_reason(jira_cfg)
+    if unavailable is not None:
+        raise HTTPException(status_code=503, detail=LEGACY_JIRA_REASON_TEXT[unavailable])
 
     ai_result = await db.execute(
         select(AIAnalysis).where(AIAnalysis.test_case_id == tc.id)
@@ -99,10 +114,8 @@ async def create_jira_defect(
     dashboard_link = f"{settings.public_base_url}/runs/{request.run_id}/tests/{tc.id}"
     test_name = tc.test_name
 
-    # W10 INT-01 (D-7): the Jira saved in Settings > Integrations, read on
-    # this request's session; the connection is then handed back (nothing is
-    # pending on this branch), so no pooled connection waits on Jira.
-    jira_cfg = await resolve_jira_config(db)
+    # Nothing is pending on this branch: the request's connection is handed
+    # back, so no pooled connection waits on Jira.
     await release_read_connection(db)
 
     try:

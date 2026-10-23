@@ -54,6 +54,26 @@ def env_jira_config() -> dict:
     }
 
 
+async def jira_unavailable_reason(cfg: dict) -> Optional[str]:
+    """Why the legacy path must not reach Jira with ``cfg`` (``None`` = it may).
+
+    ``offline_mode`` (checked FIRST, read live) | ``disabled`` |
+    ``not_configured`` (``defect_jira_service.availability_reason``) |
+    ``target_not_allowed`` (the egress guard on ``https://{domain}``). Keys of
+    ``LEGACY_JIRA_REASON_TEXT``. No credential is sent by this check.
+    """
+    from app.services.defect_jira_service import availability_reason
+
+    reason = availability_reason(cfg)
+    if reason is not None:
+        return reason
+    block = await egress_block_reason(f"https://{str(cfg['domain']).strip()}")
+    if block is not None:
+        logger.info("Legacy Jira refused before sending credentials: %s", block)
+        return "target_not_allowed"
+    return None
+
+
 def _auth_header(cfg: Optional[dict] = None) -> str:
     cfg = cfg if cfg is not None else env_jira_config()
     raw = f"{cfg.get('email')}:{cfg.get('api_token')}"
@@ -115,17 +135,11 @@ async def create_jira_issue(
     any request when offline mode is on (checked first), the integration is
     disabled or unconfigured, or the host is not allowed.
     """
-    from app.services.defect_jira_service import availability_reason
-
     cfg = cfg if cfg is not None else env_jira_config()
-    reason = availability_reason(cfg)
+    reason = await jira_unavailable_reason(cfg)
     if reason is not None:
         raise JiraUnavailable(reason)
     domain = str(cfg["domain"]).strip()
-    block = await egress_block_reason(f"https://{domain}")
-    if block is not None:
-        logger.info("Legacy Jira create refused before sending credentials: %s", block)
-        raise JiraUnavailable("target_not_allowed")
 
     url = f"https://{domain}/rest/api/3/issue"
     headers = {
