@@ -3,24 +3,132 @@ Regression diff service — extracted from runs router (P3-9).
 
 Computes a "What changed since last good run?" comparison between
 the current test run and the most recent passing baseline.
+
+The commit list (W10 FAIL-09) is the run's STORED per-project commit range --
+the one the Suspects panel shows, resolved through the project's GitHub /
+GitHub Enterprise integration by ``commit_attribution_service`` -- read here
+read-only: no HTTP and no write, so a GET never writes on every view and the
+deep stage that calls this inside its session makes no call either. The env
+``GITHUB_TOKEN`` / ``GITHUB_REPO`` are not read (they bypassed the egress guard
+and the offline gate). When no commits are listed, ``commit_range_status``
+says why, in the vocabulary of ``COMMIT_RANGE_REASONS``.
 """
 import logging
+import uuid
+from typing import Any, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.postgres import TestCase, TestRun
+from app.models.schemas import CommitRangeStatus, RegressionDiffCommit
 
 logger = logging.getLogger("services.regression_diff")
+
+#: Why the Changes tab lists no commits, in the order decided. The first six
+#: are ``github_target.GITHUB_UNAVAILABLE_REASONS``.
+COMMIT_RANGE_REASONS = (
+    "offline_mode", "github_checks_off", "no_integration", "integration_disabled", "repo_mismatch",
+    "no_token", "no_commit_hash", "no_baseline_commit", "not_resolved", "fetch_failed", "no_commits",
+)
+
+#: At most this many commits are listed (the count is the stored range's).
+_LISTED_COMMITS = 50
+
+
+def _uuid_or_none(value: Any) -> Optional[uuid.UUID]:
+    if not value:
+        return None
+    try:
+        return value if isinstance(value, uuid.UUID) else uuid.UUID(str(value))
+    except ValueError:
+        return None
+
+
+async def commit_range_status(db: AsyncSession, run: TestRun, serialized: dict) -> CommitRangeStatus:
+    """Why the run's stored commit range lists commits, or why it does not.
+
+    Read-only, and the PAT is never decrypted (``github_target_status`` reads
+    ``has_pat``). ``reason``, in order: listed -> None; an empty range
+    the CI supplied itself -> ``no_commits``; offline mode ->
+    ``offline_mode``; the run has no commit hash -> ``no_commit_hash``; the
+    project's GitHub target is unavailable -> its reason (``github_checks_off``,
+    ``no_integration``, ``integration_disabled``, ``repo_mismatch``,
+    ``no_token``); never resolved -> ``not_resolved``; no earlier run carries a
+    commit -> ``no_baseline_commit``; base == head -> ``no_commits``; an
+    ``unavailable`` row -> ``fetch_failed``; else ``no_commits``.
+    """
+    from app.services.github_target import github_target_status
+
+    base_run_id = _uuid_or_none(serialized.get("base_run_id"))
+    base_build_number: Optional[str] = None
+    if base_run_id is not None:
+        base_build_number = (
+            await db.execute(select(TestRun.build_number).where(TestRun.id == base_run_id))
+        ).scalar_one_or_none()
+
+    available = bool(serialized.get("available"))
+    reason: Optional[str] = None
+    if not available:
+        if serialized.get("source") == "supplied":
+            # The CI supplied the range itself (no GitHub call): it was empty.
+            reason = "no_commits"
+        elif settings.AI_OFFLINE_MODE:
+            reason = "offline_mode"
+        elif not run.commit_hash:
+            reason = "no_commit_hash"
+        else:
+            target_reason, _api_base = await github_target_status(db, run.project_id, ci_repo=run.ci_repo)
+            if target_reason:
+                reason = target_reason
+            elif not serialized.get("resolved_at"):
+                reason = "not_resolved"
+            elif not serialized.get("base_commit"):
+                reason = "no_baseline_commit"
+            elif serialized.get("base_commit") == serialized.get("head_commit"):
+                reason = "no_commits"
+            elif serialized.get("source") == "unavailable":
+                reason = "fetch_failed"
+            else:
+                reason = "no_commits"
+
+    return CommitRangeStatus(
+        available=available,
+        source=str(serialized.get("source") or "unavailable"),
+        base_source=str(serialized.get("base_source") or "unavailable"),
+        base_anchor_is_strong=bool(serialized.get("base_anchor_is_strong")),
+        base_run_id=base_run_id,
+        base_build_number=base_build_number,
+        reason=reason,
+        commit_count=len(serialized.get("commits") or []),
+        resolved_at=serialized.get("resolved_at"),
+    )
+
+
+def _listed(commits: list[dict]) -> list[dict]:
+    return [
+        RegressionDiffCommit(
+            sha=str(c.get("sha") or "")[:8],
+            message=c.get("message") or "",
+            author=c.get("author"),
+            timestamp=c.get("committed_at"),
+            full_sha=c.get("sha"),
+            commit_url=c.get("commit_url"),
+        ).model_dump()
+        for c in commits[:_LISTED_COMMITS]
+    ]
 
 
 async def compute_regression_diff(run: TestRun, db: AsyncSession) -> dict:
     """Compare a test run against its most recent passing baseline.
 
     Returns a dict with new failing tests, resolved count, pass rate delta,
-    and optionally a commit range from GitHub.
+    the run's stored commit range (``commit_range``, ``commit_count``) and
+    ``commit_range_status`` saying why no commits are listed. Read-only.
     """
+    from app.services import commit_attribution_service
+
     run_id = run.id
 
     # Find last passing baseline run (pass_rate >= threshold * 0.85) before this run
@@ -74,19 +182,11 @@ async def compute_regression_diff(run: TestRun, db: AsyncSession) -> dict:
     resolved_count = len(baseline_failed_fps - set(current_failed_fps.keys()))
     pass_rate_delta = round((run.pass_rate or 0) - (baseline.pass_rate or 0), 2)
 
-    # Fetch commit range from GitHub API if configured
-    commits: list[dict] = []
-    if settings.GITHUB_TOKEN and settings.GITHUB_REPO and run.start_time and baseline.end_time:
-        try:
-            from app.tools.fetch_build_changes import _fetch_github_commits
-            commits = await _fetch_github_commits(
-                repo=settings.GITHUB_REPO,
-                since=baseline.end_time.isoformat(),
-                until=run.start_time.isoformat(),
-                token=settings.GITHUB_TOKEN,
-            )
-        except Exception:
-            pass  # Commit range is nice-to-have
+    # The stored per-project commit range (what the Suspects panel shows) and
+    # why it lists nothing when it does not. No HTTP, no write.
+    serialized = await commit_attribution_service.get_commit_range(db, run)
+    status = await commit_range_status(db, run, serialized)
+    commits = list(serialized.get("commits") or [])
 
     return {
         "run_id": str(run_id),
@@ -100,6 +200,9 @@ async def compute_regression_diff(run: TestRun, db: AsyncSession) -> dict:
         "new_failing_tests": new_failing,
         "new_failing_count": len(new_failing),
         "resolved_count": resolved_count,
-        "commit_range": commits,
+        "commit_range": _listed(commits),
+        # The stored range's count, not the listed length (a top-N length is
+        # not a count).
         "commit_count": len(commits),
+        "commit_range_status": status.model_dump(mode="json"),
     }

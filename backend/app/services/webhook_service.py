@@ -30,6 +30,15 @@ Supported event types (the authoritative list — keep in sync with the
 Every public entry point is gated by the ``outbound_webhooks`` feature
 flag AND by ``AI_OFFLINE_MODE``. Both off → egress goes through; either
 on (flag off OR offline mode on) → the whole subsystem is a silent no-op.
+
+Circuit breaker (W10 INT-07): a subscription is paused after
+``breaker_threshold`` deliveries in a row END failed (FAILED / DLQ with its
+bookkeeping; a retried attempt counts once, when its retries are spent). The
+counting rule and the trip live in ``webhook_breaker``; the trip runs inside
+``_transition_processing_delivery``'s existing transaction. A host named in
+``OUTBOUND_WEBHOOK_PRIVATE_ALLOWED_HOSTS`` (exact names, empty by default)
+skips the public-only check at create / update and at delivery and is posted
+through the shared client; every other host behaves exactly as before.
 """
 from __future__ import annotations
 
@@ -41,6 +50,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from collections.abc import Awaitable, Callable
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 import structlog
 from sqlalchemy import and_, func, or_, select, update
@@ -48,9 +58,10 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.http_client import get_public_http_client
+from app.core.http_client import get_http_client, get_public_http_client
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import Project, User, WebhookDelivery, WebhookSubscription
+from app.services import webhook_breaker
 # SSRF guard lives in the shared ``url_safety`` module (reused by the URL
 # knowledge connector). Aliased to the historical private name so the
 # create/update/delivery call sites + their regression tests stay stable.
@@ -131,8 +142,40 @@ def _secret_key(subscription_id: uuid.UUID | str) -> str:
 # ── SSRF guard ───────────────────────────────────────────────────────────────
 
 
+def _private_subscription_host_listed(url: str | None) -> bool:
+    """Whether the operator named the URL's host in ``OUTBOUND_WEBHOOK_PRIVATE_ALLOWED_HOSTS``.
+
+    Exact host match only (case and a trailing dot aside): no wildcard, no
+    address range -- any QA lead's subscription may then reach the host on the
+    private network. Separate from ``WEBHOOK_PRIVATE_ALLOWED_HOSTS`` (the chat
+    servers) on purpose. Pure string work: no DNS."""
+    try:
+        host = (urlsplit(url or "").hostname or "").strip().lower().rstrip(".")
+    except ValueError:
+        return False
+    if not host:
+        return False
+    listed = {
+        entry.strip().lower().rstrip(".")
+        for entry in (settings.OUTBOUND_WEBHOOK_PRIVATE_ALLOWED_HOSTS or "").split(",")
+    }
+    listed.discard("")
+    return host in listed
+
+
 async def _assert_safe_target_url(target_url: str) -> None:
-    """Raise 422 when ``target_url`` is unsafe (SSRF guard at registration)."""
+    """Raise 422 when ``target_url`` is unsafe (SSRF guard at registration).
+
+    A host the operator named in ``OUTBOUND_WEBHOOK_PRIVATE_ALLOWED_HOSTS``
+    skips the public-only check (http / https is still required)."""
+    if _private_subscription_host_listed(target_url):
+        if urlsplit(target_url).scheme.lower() not in ("http", "https"):
+            from fastapi import HTTPException, status as _s
+            raise HTTPException(
+                status_code=_s.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Webhook target URL rejected: only http and https URLs are allowed",
+            )
+        return
     safe, reason = await asyncio.to_thread(_is_safe_public_url, target_url)
     if not safe:
         from fastapi import HTTPException, status as _s
@@ -215,7 +258,12 @@ async def _mark_delivery_failed(
     error: str,
     subscription_id: uuid.UUID | None = None,
 ) -> bool:
-    """Token-fence a terminal failure and its subscription diagnostics."""
+    """Token-fence a terminal failure and its subscription diagnostics.
+
+    With a ``subscription_id`` (the egress refusal, the unreadable signing
+    secret) the failure is the subscription's and counts toward the circuit
+    breaker; without one (missing / disabled subscription, webhooks gated or
+    offline) nothing is written to the subscription and nothing counts."""
     now_failed = datetime.now(timezone.utc)
     return await _transition_processing_delivery(
         db,
@@ -230,14 +278,11 @@ async def _mark_delivery_failed(
         },
         subscription_id=subscription_id,
         subscription_values=(
-            {
-                "last_failure_at": now_failed,
-                "last_error": error[:2000],
-                "failure_count": WebhookSubscription.failure_count + 1,
-            }
+            webhook_breaker.terminal_failure_values(error, now_failed)
             if subscription_id is not None
             else None
         ),
+        breaker="failure" if subscription_id is not None else None,
     )
 
 
@@ -250,6 +295,7 @@ async def _transition_processing_delivery(
     subscription_id: uuid.UUID | None = None,
     subscription_values: dict[str, Any] | None = None,
     before_commit: Callable[[AsyncSession], Awaitable[None]] | None = None,
+    breaker: Optional[str] = None,
 ) -> bool:
     """Commit an attempt outcome only while this worker still owns its lease.
 
@@ -257,6 +303,12 @@ async def _transition_processing_delivery(
     after the processing lease expires, so every outcome must compare the
     original token as well as the PROCESSING state. Subscription counters are
     updated in the same transaction only when that compare-and-set succeeds.
+
+    ``breaker="failure"`` marks a TERMINAL failure attributable to the
+    subscription (W10 INT-07): after the counter's increment, the circuit
+    breaker's guarded trip runs in this same transaction (exactly once under
+    concurrency) and stages its activity row and notifications; the trip is
+    counted on the dashboard only after the commit.
     """
     result = await db.execute(
         update(WebhookDelivery)
@@ -270,15 +322,31 @@ async def _transition_processing_delivery(
     if int(getattr(result, "rowcount", 0) or 0) != 1:
         await db.rollback()
         return False
+    trip: Optional[webhook_breaker.BreakerTrip] = None
     if subscription_id is not None and subscription_values:
         await db.execute(
             update(WebhookSubscription)
             .where(WebhookSubscription.id == subscription_id)
             .values(**subscription_values)
         )
+        if breaker == "failure":
+            trip = await webhook_breaker.trip_if_due(
+                db, subscription_id, now=datetime.now(timezone.utc),
+            )
+            if trip is not None:
+                await webhook_breaker.stage_circuit_opened(db, trip)
     if before_commit is not None:
         await before_commit(db)
     await db.commit()
+    if trip is not None:
+        webhook_breaker.count_trip()
+        logger.info(
+            "webhook_circuit_opened",
+            subscription_id=str(trip.subscription_id),
+            project_id=str(trip.project_id),
+            consecutive_failures=trip.consecutive_failures,
+            breaker_threshold=trip.breaker_threshold,
+        )
     return True
 
 
@@ -323,6 +391,7 @@ async def create_subscription(
     enabled: bool,
     max_retries: int,
     secret: Optional[str],
+    breaker_threshold: Optional[int] = None,
 ) -> WebhookSubscription:
     validate_events(events)
     await _assert_safe_target_url(target_url)  # SSRF guard
@@ -345,8 +414,14 @@ async def create_subscription(
         events=list(events),
         enabled=enabled,
         max_retries=max_retries,
+        breaker_threshold=breaker_threshold or webhook_breaker.DEFAULT_BREAKER_THRESHOLD,
+        consecutive_failures=0,
         updated_by_user_id=actor.id,
     )
+    if not enabled:
+        # Created switched off: a person's choice, not the breaker's.
+        row.disabled_reason = webhook_breaker.MANUAL
+        row.disabled_at = datetime.now(timezone.utc)
     db.add(row)
     # Flush so ``row.id`` (used to compute the secret key + audit row key)
     # is populated without committing. The caller (get_db dependency)
@@ -377,12 +452,23 @@ async def update_subscription(
     enabled: Optional[bool],
     max_retries: Optional[int],
     secret: Optional[str],
+    breaker_threshold: Optional[int] = None,
 ) -> WebhookSubscription:
+    """Apply a subscription write (stage-only; the router's ``get_db`` commits).
+
+    Circuit breaker (W10 INT-07): ``enabled=True`` on a disabled row is the
+    Re-enable -- the consecutive-failure count starts again and
+    ``disabled_reason`` / ``disabled_at`` are cleared; ``enabled=False`` on an
+    enabled row is a person's pause (``disabled_reason="manual"``, the count
+    kept). ``breaker_threshold`` None keeps the stored value; lowering it below
+    the current count does not trip by itself (the next counted failure does).
+    """
     from fastapi import HTTPException, status as _s
     row = await get_subscription(db, subscription_id)
     if row is None:
         raise HTTPException(status_code=_s.HTTP_404_NOT_FOUND, detail="Subscription not found")
 
+    now = datetime.now(timezone.utc)
     if name is not None:
         row.name = name
     if target_url is not None:
@@ -392,11 +478,20 @@ async def update_subscription(
         validate_events(events)
         row.events = list(events)
     if enabled is not None:
+        was_enabled = bool(getattr(row, "enabled", True))
+        if enabled and not was_enabled:
+            for key, value in webhook_breaker.reenable_values().items():
+                setattr(row, key, value)
+        elif not enabled and was_enabled:
+            row.disabled_reason = webhook_breaker.MANUAL
+            row.disabled_at = now
         row.enabled = enabled
     if max_retries is not None:
         row.max_retries = max_retries
+    if breaker_threshold is not None:
+        row.breaker_threshold = breaker_threshold
     row.updated_by_user_id = actor.id
-    row.updated_at = datetime.now(timezone.utc)
+    row.updated_at = now
 
     if secret is not None:
         from app.services import secret_service
@@ -992,15 +1087,28 @@ async def deliver(
             )
         ).scalar_one_or_none()
         if subscription is None or not subscription.enabled:
+            # Not the receiver's fault: no subscription bookkeeping, not counted
+            # by the circuit breaker. A paused subscription says so (the
+            # delivery stays FAILED and replayable after Re-enable).
+            paused = (
+                subscription is not None
+                and getattr(subscription, "disabled_reason", None) == webhook_breaker.CIRCUIT_OPEN
+            )
+            error = (
+                "subscription paused after "
+                f"{int(getattr(subscription, 'consecutive_failures', 0) or 0)} consecutive failures"
+                if paused
+                else "subscription missing or disabled"
+            )
             changed = await _mark_delivery_failed(
                 db,
                 delivery_id=delivery.id,
                 dispatch_token=active_dispatch_token,
-                error="subscription missing or disabled",
+                error=error,
             )
             if not changed:
                 return {"skipped": "stale_dispatch_token"}
-            return {"error": "subscription missing or disabled"}
+            return {"error": error}
 
         # Feature flag / offline re-check — an admin may have disabled
         # webhooks between enqueue and delivery (for this subscription's
@@ -1040,9 +1148,14 @@ async def deliver(
         # SSRF guard at the egress boundary. create/update validate too, but a
         # hostname can rebind to an internal IP between registration and
         # delivery, and pre-existing rows predate the create-time check — so
-        # re-validate here, where the actual request is made.
-        safe, reason = await asyncio.to_thread(
-            _is_safe_public_url, subscription.target_url
+        # re-validate here, where the actual request is made. A host the
+        # operator named in OUTBOUND_WEBHOOK_PRIVATE_ALLOWED_HOSTS skips it and
+        # is posted through the shared client below.
+        private_listed = _private_subscription_host_listed(subscription.target_url)
+        safe, reason = (
+            (True, "listed private host")
+            if private_listed
+            else await asyncio.to_thread(_is_safe_public_url, subscription.target_url)
         )
         if not safe:
             changed = await _mark_delivery_failed(
@@ -1137,7 +1250,8 @@ async def deliver(
             return {"skipped": "stale_dispatch_token"}
 
         try:
-            resp = await get_public_http_client().post(
+            client = get_http_client() if private_listed else get_public_http_client()
+            resp = await client.post(
                 subscription.target_url,
                 content=body,
                 headers=headers,
@@ -1158,6 +1272,8 @@ async def deliver(
                 if should_retry
                 else None
             )
+            # A retried attempt is not a failure yet (a timeout is not a failure
+            # until its retries are spent); FAILED / DLQ count once.
             changed = await _transition_processing_delivery(
                 db,
                 delivery_id=delivery.id,
@@ -1172,11 +1288,12 @@ async def deliver(
                     "next_dispatch_at": next_dispatch_at,
                 },
                 subscription_id=subscription.id,
-                subscription_values={
-                    "last_failure_at": now_failed,
-                    "last_error": error[:2000],
-                    "failure_count": WebhookSubscription.failure_count + 1,
-                },
+                subscription_values=(
+                    webhook_breaker.retry_failure_values(error, now_failed)
+                    if should_retry
+                    else webhook_breaker.terminal_failure_values(error, now_failed)
+                ),
+                breaker=None if should_retry else "failure",
             )
             if not changed:
                 return {"skipped": "stale_dispatch_token"}
@@ -1228,6 +1345,7 @@ async def deliver(
                     "last_error": None,
                     "last_failure_at": None,
                     "total_delivered": WebhookSubscription.total_delivered + 1,
+                    **webhook_breaker.SUCCESS_RESET,
                 },
                 before_commit=_stage_distribution_audit,
             )
@@ -1267,11 +1385,12 @@ async def deliver(
                 ),
             },
             subscription_id=subscription.id,
-            subscription_values={
-                "last_failure_at": now_failed,
-                "last_error": error[:2000],
-                "failure_count": WebhookSubscription.failure_count + 1,
-            },
+            subscription_values=(
+                webhook_breaker.retry_failure_values(error, now_failed)
+                if should_retry
+                else webhook_breaker.terminal_failure_values(error, now_failed)
+            ),
+            breaker=None if should_retry else "failure",
         )
         if not changed:
             return {"skipped": "stale_dispatch_token"}

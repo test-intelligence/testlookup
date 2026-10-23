@@ -12,7 +12,10 @@ Endpoints (both project/run-guarded via ``require_run_access``):
       Deterministic suspect ranking for a newly-failing cluster/test — ranked
       commits with the overlapping-files rationale and the monorepo caveat.
 
-All logic lives in ``services/commit_attribution_service``.
+All logic lives in ``services/commit_attribution_service``. The one write --
+the lazy resolve -- lives HERE (``lazy_resolve_commit_range``) because the
+service is stage-only and the services' commit allow-list is at its bound; the
+run's Changes tab (``GET /runs/{id}/regression-diff``) calls the same helper.
 """
 import uuid
 from typing import Any, Optional
@@ -21,8 +24,9 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 
+from app.core.config import settings
 from app.core.deps import require_run_access
-from app.db.postgres import AsyncSessionLocal, get_db
+from app.db.postgres import AsyncSessionLocal, get_db, release_read_connection
 from app.models.postgres import TestRun
 from app.services import commit_attribution_service as svc
 
@@ -39,19 +43,33 @@ async def _load_run(db: Any, run_id: uuid.UUID) -> TestRun:
     return run
 
 
-async def _lazy_resolve(run_id: uuid.UUID) -> None:
-    """One-shot resolve on a dedicated write session so the GET handler's own
-    transaction stays read-only (mirrors the run_intelligence cache-populate
-    pattern). The service stages the row; this write session owns the commit.
-    Best-effort — a resolution failure must not fail the read."""
+async def lazy_resolve_commit_range(db: Any, run: TestRun) -> None:
+    """Resolve a run's commit range at most once per cooldown, on its own session.
+
+    Reads the stored range on the request's session; only when it
+    ``needs_resolution`` (no row yet, or an ``unavailable`` row older than the
+    6 h cooldown) and offline mode is off does it hand the request session's
+    read connection back (``release_read_connection``) and run
+    ``resolve_commit_range`` on a dedicated write session that it commits -- so
+    a GET never holds two connections and never writes on every view. The
+    service does its own reads on a short session and its GitHub calls with no
+    session open. Best-effort: a failure is logged and the read goes on.
+    Offline: nothing (no row is written, no call is made)."""
+    if settings.AI_OFFLINE_MODE:
+        return
+    serialized = await svc.get_commit_range(db, run)
+    if not svc.needs_resolution(serialized):
+        return
+    await release_read_connection(db)
     try:
         async with AsyncSessionLocal() as write_db:
-            await svc.resolve_commit_range(write_db, run_id)
+            await svc.resolve_commit_range(write_db, run.id)
             await write_db.commit()
     except Exception as exc:
         logger.warning(
             "commit_range_lazy_resolve_failed",
-            run_id=str(run_id),
+            run_id=str(run.id),
+            error_type=type(exc).__name__,
             error=str(exc),
         )
 
@@ -71,11 +89,8 @@ async def get_run_commit_range(
     means repeated GETs on a range-less run do NOT re-run the connector.
     """
     run = await _load_run(db, run_id)
-    result = await svc.get_commit_range(db, run)
-    if svc.needs_resolution(result):
-        await _lazy_resolve(run_id)
-        result = await svc.get_commit_range(db, run)
-    return result
+    await lazy_resolve_commit_range(db, run)
+    return await svc.get_commit_range(db, run)
 
 
 @router.get("/{run_id}/suspects")
@@ -99,9 +114,7 @@ async def get_run_suspects(
     # Resolve the range on demand so suspects work even before finalize ran
     # the connector path (mirrors the commit-range endpoint's lazy resolve,
     # including its re-resolve cooldown gate).
-    existing = await svc.get_commit_range(db, run)
-    if svc.needs_resolution(existing):
-        await _lazy_resolve(run_id)
+    await lazy_resolve_commit_range(db, run)
     return await svc.rank_suspects(
         db, run, cluster_id=cluster_id, fingerprint=fingerprint,
     )

@@ -108,6 +108,7 @@ async def create_webhook_subscription(
         enabled=payload.enabled,
         max_retries=payload.max_retries,
         secret=payload.secret,
+        breaker_threshold=payload.breaker_threshold,
     )
 
 
@@ -151,6 +152,7 @@ async def update_webhook_subscription(
         enabled=payload.enabled,
         max_retries=payload.max_retries,
         secret=payload.secret,
+        breaker_threshold=payload.breaker_threshold,
     )
 
 

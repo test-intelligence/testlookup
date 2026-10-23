@@ -765,7 +765,7 @@ async def stage_explicit_notification_deliveries(
     db,
     *,
     project_id: uuid.UUID,
-    run_id: uuid.UUID,
+    run_id: Optional[uuid.UUID],
     delivery_scope: str,
     deliveries: list[dict[str, Any]],
 ) -> None:

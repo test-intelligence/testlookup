@@ -45,6 +45,7 @@ Design notes (mirrors GitHub)
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 from urllib.parse import quote
@@ -292,6 +293,73 @@ def _headers(pat: str) -> dict[str, str]:
         "Accept": "application/json",
         "User-Agent": "TestLookup/1.0",
     }
+
+
+# ── Per-project target (W10 INT-04) ──────────────────────────────────────────
+
+#: Why a project's GitLab target is unavailable, in the order decided.
+GITLAB_UNAVAILABLE_REASONS = (
+    "offline_mode", "no_integration", "integration_disabled", "no_project_path", "no_token",
+)
+
+
+@dataclass(frozen=True)
+class GitLabTargetResolution:
+    """A project's GitLab coordinates as plain values (no session, no HTTP).
+
+    ``pat`` is set only when the target resolves (``reason`` None); it is kept
+    out of ``repr`` so it never reaches a log line or an exception message."""
+
+    project_id: str
+    base_url: Optional[str]
+    project_path: Optional[str]
+    pat: Optional[str] = field(default=None, repr=False)
+    reason: Optional[str] = None  # GITLAB_UNAVAILABLE_REASONS when unavailable
+
+
+async def load_gitlab_target(
+    db: AsyncSession,
+    project_id: uuid.UUID | str,
+    *,
+    require_enabled: bool = True,
+) -> GitLabTargetResolution:
+    """The project's GitLab target, or the reason there is none. DB reads only.
+
+    In order: ``AI_OFFLINE_MODE`` -> ``offline_mode`` (no read); no row ->
+    ``no_integration``; ``require_enabled`` and the row disabled ->
+    ``integration_disabled``; an empty project path -> ``no_project_path``; no
+    stored PAT -> ``no_token``. Reads through this module's ``get_integration``
+    and ``secret_service.read_secret`` (the names its tests patch). The
+    ``gitlab`` feature flag is NOT asked: a health probe checks the
+    configuration whether or not the posts are switched on (as
+    ``test_connection`` does). Used by the Integration Health probes; W19
+    INT-05 wraps it in ``github_target.resolve_git_host_target``.
+    """
+    pid = str(project_id)
+    if settings.AI_OFFLINE_MODE:
+        return GitLabTargetResolution(pid, None, None, reason="offline_mode")
+    key: Any = project_id
+    if isinstance(project_id, str):
+        try:
+            key = uuid.UUID(project_id)
+        except ValueError:
+            key = project_id
+    row = await get_integration(db, key)
+    if row is None:
+        return GitLabTargetResolution(pid, None, None, reason="no_integration")
+    base_url = _normalize_base_url(row.base_url)
+    project_path = (row.project_path or "").strip()
+    if require_enabled and not row.enabled:
+        return GitLabTargetResolution(pid, base_url, project_path or None, reason="integration_disabled")
+    if not project_path:
+        return GitLabTargetResolution(pid, base_url, None, reason="no_project_path")
+
+    from app.services import secret_service
+
+    pat = await secret_service.read_secret(db, SECRET_SCOPE, _secret_key(pid))
+    if not pat:
+        return GitLabTargetResolution(pid, base_url, project_path, reason="no_token")
+    return GitLabTargetResolution(pid, base_url, project_path, pat=pat)
 
 
 # ── Connection test ──────────────────────────────────────────────────────────
