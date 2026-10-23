@@ -63,7 +63,6 @@
 2 app/services/flaky_score_service.py
 1 app/services/flaky_step_analysis.py
 1 app/services/flaky_step_flip.py
-1 app/services/github_checks_service.py
 34 app/services/gitlab_integration_service.py
 2 app/services/ingestion_dlq.py
 3 app/services/ingestion_pipeline.py

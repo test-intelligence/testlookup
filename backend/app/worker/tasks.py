@@ -4552,6 +4552,7 @@ def enrich_run_ocp_metadata(self, run_id: str):
             return False
         enriched_run_id, meta = result
         async with AsyncSessionLocal() as db:
+            # analytics-epoch: none — sets ocp_metadata only (pod phase / events for the AI evidence); analytics reads ocp_namespace, which the ingest stored and bumped
             await stage_ocp_metadata(db, enriched_run_id, meta)
             await db.commit()
         return True
