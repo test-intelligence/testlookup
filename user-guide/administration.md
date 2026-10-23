@@ -19,6 +19,7 @@ Some pages show a button to a QA lead that the API then refuses (for example **S
 ## People & projects
 
 - **Projects** (`/projects`) — create, edit and archive. Each project is the tenancy boundary: its own runs, owners, policies, API keys and caches. Creating a project makes the creator a member and auto-provisions the project's default QA-lead user (see [Test catalog governance and ownership](test-management.md#the-default-qa-lead)). **Archive** is a soft delete that also revokes the project's credentials; there is no un-archive in the app.
+- **A project's integration fields** (Edit Project, `PUT /api/v1/projects/{id}`): **Splunk Index** (`splunk_index`) is the index the AI's Splunk look-ups search for this project, ahead of the deployment's `SPLUNK_INDEX`; **OCP Namespace** (`ocp_namespace`) is used for a run that names a pod but no namespace, ahead of the saved **Default Namespace** and `OCP_DEFAULT_NAMESPACE`. Both are checked when saved: an index of letters, digits, `_` and `-` (1-80 characters, starting with a letter or digit, so nothing else can reach the search), a namespace that is a DNS label (lowercase letters, digits and `-`, at most 63). A refused value answers `422` with the rule, shown under the field. An empty value clears the field (the deployment's value applies). A value stored before this check that breaks it is refused when used, not rewritten. **Jenkins Job Pattern** left the form: no code ever read it; the column, the API field and the MCP `create_project` parameter stay for older clients, and a stored value is kept.
 - **Users** (`/users`) — QA leads see the list; administrators **Add User** (a temporary password, shown once, that must be changed at first sign-in), change roles inline, edit, and activate or deactivate accounts. Roles gate what pages show: only administrators get **All Projects**, and only QA leads and administrators get the team scope in the Inbox.
 - **Members & access** (`/users?tab=project-members`) — per-project membership and roles, and the project's default QA lead. Administrators add, change and remove members; QA leads can reset the default QA lead's password.
 - **Self-registration** is off by default (`REGISTRATION_ENABLED=false`): the sign-in page hides **Register** and `POST /api/v1/auth/register` answers 403. Turn it on only if everyone who can reach the instance may have an account. A self-registered account is a `VIEWER` in no project and must change its password at first sign-in; it sees no data until you add it to a project. The endpoint is rate-limited to 5 a minute.
@@ -149,19 +150,38 @@ TOTP seeds are encrypted with a key derived from `APP_SECRET_KEY`. If that key i
 
 ## Connecting to your world
 
-Everything outbound — Jira, Slack, Teams, email to an outside relay, outbound webhooks, GitHub, GitLab, a hosted LLM — is **subordinate to `AI_OFFLINE_MODE`**, which defaults to `true`: in a default install these are inert regardless of their own settings. Turn outbound mode on deliberately, or use the narrow allow-lists (`OFFLINE_NOTIFICATION_ALLOWED_HOSTS` for the deployment-wide Slack, Teams and SMTP destinations; `OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS` for email recipients). Every outbound client honours a corporate CA bundle (`HTTP_CA_BUNDLE`). The environment variables for each integration are in the [integrations reference](../docs/operations/integrations.md).
+Everything outbound — Jira, Splunk, OpenShift, Slack, Teams, email to an outside relay, outbound webhooks, GitHub, GitLab, a hosted LLM — is **subordinate to `AI_OFFLINE_MODE`**, which defaults to `true`: in a default install these are inert regardless of their own settings. Turn outbound mode on deliberately, or use the narrow allow-lists (`OFFLINE_NOTIFICATION_ALLOWED_HOSTS` for the deployment-wide Slack, Teams and SMTP destinations; `OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS` for email recipients). Every outbound client honours a corporate CA bundle (`HTTP_CA_BUNDLE`). The environment variables for each integration are in the [integrations reference](../docs/operations/integrations.md).
 
 ### Integrations (`/settings/integrations`)
 
-One card per integration; QA leads can read, administrators save. Tokens and webhook URLs are stored encrypted; a value saved here wins over the environment variable, and an empty secret field clears the stored one so the environment value applies again.
+One card per integration; QA leads can read, administrators save. Tokens and webhook URLs are stored encrypted and never returned (the page shows **(set)**). **Save Integrations** sends only the fields the reader changed, and the server stores the saved row plus those changes, never the environment's values.
 
 | Integration | Fields | Used for |
 |---|---|---|
-| **Jira** | Domain, Email, Default Project Key, API Token | One-click issues, recurrence notes, status sync-back. See [Issue trackers and defect automation](defects.md) |
-| **Splunk** | Base URL, API Token | Log evidence for the analysis pipeline |
-| **OpenShift / Kubernetes** | API URL, Default Namespace, Service Account Token | Pod and event evidence for the analysis pipeline |
-| **Slack** | Webhook URL, Default Channel | The shared notification channel and digests |
+| **Jira** | Domain, Email, Default Project Key, API Token | One-click issues, recurrence notes, status sync-back, the tickets the triage stage, defect promotion and `POST /api/v1/integrations/jira` file. See [Issue trackers and defect automation](defects.md) |
+| **Splunk** | Base URL, API Token | Log evidence for the AI analysis (the Splunk look-ups) |
+| **OpenShift / Kubernetes** | API URL, Default Namespace, Service Account Token | Pod and event evidence for the AI analysis, and a sentinel run's pod metadata |
+| **Slack** | Webhook URL | The shared notification channel and digests |
 | **Microsoft Teams** | Webhook URL | The shared notification channel and digests |
+
+**Which value applies** (the same rule for every runtime path, the health probes included; first match wins):
+
+| Key | Order |
+|---|---|
+| any outbound call | `AI_OFFLINE_MODE=true` refuses it (read live, never cached) |
+| Splunk index | the project's **Splunk Index** (non-empty) → `SPLUNK_INDEX` |
+| OpenShift namespace of a run | the run's own namespace → the project's **OCP Namespace** → the saved **Default Namespace** → `OCP_DEFAULT_NAMESPACE` |
+| every other text field or switch | the value saved here (a non-empty text, any saved switch) → the environment variable |
+| every token | the stored secret → the environment variable (clearing a token hands it back to the environment) |
+| GitHub / GitLab | per project only (`/settings/github`, `/settings/gitlab`); `GITHUB_TOKEN` feeds only the deployment-wide GitHub row of Integration health |
+
+A text field saved empty counts as never saved, so the environment applies again; a saved switch always counts (saved off beats `SPLUNK_ENABLED=true`). `GET /api/v1/settings/integrations` lists in `environment_fields` the fields whose shown value comes from the environment (never the value), and the page writes **From the deployment environment** under each (a token: **(set in the environment)**). A save reaches every worker within 30 seconds (each process caches the resolved configuration that long; the saving process at once).
+
+> **Upgrading.** Before this release the page re-sent every field it showed, so the first save of an install copied the environment's values into the stored row, and a later change to the environment never reached them. Such a copy does not show **From the deployment environment**. To hand a field back to the environment, empty it and save.
+
+**Targets are checked.** A Splunk base URL, an OpenShift API URL or `https://<Jira domain>` that resolves to a loopback, link-local (`169.254.169.254` included) or unspecified address is refused at save (`422`, `Target host is not allowed`, nothing stored) and again before every call, before a token is sent. RFC 1918 addresses are allowed (on-premises Splunk and OpenShift), and so is a host that does not resolve yet. A URL must be `http://` or `https://` with a host and no user name or password; the Jira domain is a host name (optionally `:port`) without a scheme or path; the Default Namespace is a DNS label.
+
+**Slack's channel** is the one the incoming webhook was created for: the former **Default Channel** field changed nothing and is gone. The API still accepts `slack_default_channel` and ignores it (it is never stored); the read still returns it, marked deprecated. Route a team's alerts to another channel in **Team channels** (below).
 
 There is no test button on this page; **Integration health** probes each connection.
 
@@ -190,11 +210,13 @@ For each team named in the ownership rules, a Slack webhook, Teams webhook or em
 
 Per-project subscriptions that POST events to your own HTTPS endpoints.
 
-> **Off by default.** Delivery needs the `outbound_webhooks` feature flag (ships **off**) and `AI_OFFLINE_MODE=false`. The page does not show a banner when the flag is off: **Test** answers "No delivery enqueued — check that outbound_webhooks is enabled, AI_OFFLINE_MODE is off…" and **Replay** answers `503`.
+> **On for new installs.** Delivery needs the `outbound_webhooks` feature flag and `AI_OFFLINE_MODE=false`. Migration 0224 turns the flag on for a new install only; an upgraded install keeps its stored value (off unless an administrator turned it on: `PATCH /api/v1/feature-flags/outbound_webhooks {"enabled_global": true}` or **Feature flags**). The page does not show a banner when the flag is off: **Test** answers "No delivery enqueued — check that outbound_webhooks is enabled, AI_OFFLINE_MODE is off…" and **Replay** answers `503`.
 
 - **Events**: `run.completed`, `defect.promoted`, `defect.create_requested` (the Jira form's fallback, see [defects.md](defects.md#no-jira-use-the-webhook-fallback)), `release.decided`, `flaky.quarantined`, `quota.exceeded`.
 - **Headers**: `X-TestLookup-Event` (the event type), `X-TestLookup-Delivery` (a delivery id), and, when the subscription has a secret, `X-TestLookup-Signature`: the hex HMAC-SHA256 of the raw request body, keyed with the secret. Verify it before trusting a payload.
 - **Retries**: 408, 425, 429, 5xx and network errors are retried with backoff up to **Max retries** (default 5, at most 10); other 4xx responses fail at once. **Recent deliveries** lists the last 20 attempts, with **Replay** for failed ones.
+- **Circuit breaker**: a subscription is paused after `breaker_threshold` deliveries in a row end `FAILED` or `DLQ` (**Pause after** on the form; 1-100, default 10). A delivery counts once, at its terminal status: a retried attempt does not count until its retries are spent (a read timeout is not a failure until then), while a refused or private target, a missing signing secret and a non-retryable 4xx count at once. "Webhooks disabled", "offline mode" and the relay's own dispatch errors never count (not the receiver's fault). A `SUCCESS` sets `consecutive_failures` to 0; `failure_count` still counts every failed attempt (the "✗ n" on the row). The pause writes `enabled = false`, `disabled_reason = "circuit_open"` and `disabled_at` in the delivery's own transaction, exactly once however many workers fail at the same moment; it emails the subscription's last editor and the project's QA leads (their bell lists it), records `webhook.circuit_opened` in the activity log ("Webhook … paused after N consecutive failures") and counts `testlookup_webhook_circuit_opened_total`. **Re-enable** (`PATCH /api/v1/webhooks/{id}` with the full body and `enabled: true`) sets the count to 0 and clears `disabled_*`; turning a subscription off yourself writes `disabled_reason = "manual"` and keeps the count. Events meanwhile create no delivery; failed deliveries can be replayed after Re-enable.
+- **Private test receivers**: an outbound subscription must target a public address (checked at create, update and every delivery). `OUTBOUND_WEBHOOK_PRIVATE_ALLOWED_HOSTS` (exact host names, comma-separated, empty by default) lets a named private or loopback host through, reached through the shared client (`HTTP_CA_BUNDLE` honoured). Every QA lead of every project may then point a subscription at it: name a test receiver or a trusted internal endpoint only. It is separate from `WEBHOOK_PRIVATE_ALLOWED_HOSTS`, which covers chat servers, and offline mode still refuses every delivery.
 - Creating, editing, testing and replaying need `QA_LEAD`.
 
 ### Digests (`/settings/digests`)
@@ -218,6 +240,11 @@ Each edition composes the week's **top 5 failures** (ranked by count × severity
 
 The status board for everything above: Jira, Splunk, GitHub, OpenShift, Slack, Teams, SMTP, the local model server and the vector store, probed every 15 minutes (**Probe All Now** to probe at once). Check here first when "the webhook didn't fire", then the audit dashboard.
 
+- **Per-project rows.** Every enabled per-project GitHub / GitHub Enterprise and GitLab integration is probed with that project's own API base and token (`GET {api_base}/repos/{owner}/{name}`, `GET {base}/api/v4/projects/{path}`; at most 5 at a time; the target is checked as above before the token is sent). A row is keyed `(provider, scope_key)`, the scope being the project id, so two projects on different GitHub Enterprise hosts get two rows. A row never probed reads **Not probed yet** (`probed: false`, status `unknown`), never healthy. A project without a stored token reads `auth_error` "No token is stored for this project's GitHub integration." without a request. The 15-minute beat probes them all and prunes the rows of integrations removed or turned off.
+- **Paused webhooks** lists the subscriptions the circuit breaker paused (above), with their streak, threshold and last error.
+- **Who sees what.** An administrator sees every project; a QA lead who is not an administrator sees the deployment-wide rows and the rows of their own projects, and gets `403` for a probe or a history read of another project's id (`project_id` is checked before anything is read). Roles below QA lead are not offered the page.
+- **API.** `GET /api/v1/integration-health/status` answers the deployment-wide rows (as before); `?scope=all` adds the project and paused-webhook rows. `POST /api/v1/integration-health/probe?provider=github&project_id=<id>` (or `gitlab`) probes one project; GitLab is probed per project only. `GET /history/{provider}?project_id=<id>` reads one project's history; `/trends` and the `testlookup_integration_health` gauge stay deployment-wide, and `testlookup_integration_project_health{provider,status}` counts the project rows per status (never a project label).
+
 ### GitHub (`/settings/github`)
 
 Per-project: one repo (`owner/name` + API base URL for GitHub Enterprise), one PAT (stored encrypted; needs `repo` scope or fine-grained `checks:write` + `issues:write`). Gated by the `github_checks` feature flag (ships **off**) and, as always, `AI_OFFLINE_MODE`. Two outbound surfaces:
@@ -225,7 +252,9 @@ Per-project: one repo (`owner/name` + API base URL for GitHub Enterprise), one P
 - **Check runs** — every ingested run with a full 40-character commit SHA posts a check run (pass/fail counts + a deep link to the run's Analysis tab) next to the commit's CI results. The check carries up to **50 per-test annotations** (GitHub's per-request cap — overflow is noted in the check text): newly failed tests first, then remaining failures by cluster size, with known-flaky failures annotated at `warning` level instead of `failure`. File/line locations are parsed from stack traces where possible (Python and JS/TS traces with repo-relative paths resolve; Java surefire frames carry only a bare file name, so those failures are listed in the check's text instead). **Flaky-aware conclusion:** a run whose failures are *all* known-flaky or quarantined concludes `neutral` ("N failures — all known-flaky/quarantined") instead of `failure`, mirroring `testlookup ci-verdict`; any real failure still concludes `failure`.
 - **PR summary comment** — when a run arrives with PR context (repo + PR number, [auto-detected by the SDKs/CLI in CI](getting-results-in.md#ci-context-prs)) matching the configured repo, TestLookup keeps **one sticky comment** on that PR: **newly failed** tests vs the baseline run (latest completed run on `main`/`master`, falling back to the latest run on another branch), **known flaky** failures (labelled as likely not caused by the PR), and tests the PR **fixed**, plus a still-failing-on-baseline count. Re-runs update the same comment. The **PR summary comment** mode selector: `off`, `failures_only` (default — a PR that went red→green still gets its existing comment updated), or `always`.
 
-Delivery problems land in the page's **Last error** banner and on Integration health.
+Delivery problems land in the page's **Last error** banner and on Integration health, where each project's integration is probed with its own base URL and PAT (see above).
+
+The same integration is the only source of a run's **commits** on the run page's **Changes** tab and for the build-changes agent tool: the range between the baseline's commit and the run's, read from the stored commit range (the **Suspects** panel's), resolved lazily when the tab opens (at most once per run every 6 hours, never offline). The instance-wide `GITHUB_TOKEN` / `GITHUB_REPO` are no longer read for commits: they bypassed the egress check and offline mode. When no list can be shown the tab names the reason (`offline_mode`, `github_checks_off`, `no_integration`, `integration_disabled`, `repo_mismatch`, `no_token`, `no_commit_hash`, `no_baseline_commit`, `not_resolved`, `fetch_failed`, `no_commits`: `commit_range_status.reason` in `GET /api/v1/runs/{id}/regression-diff`).
 
 ### GitLab (`/settings/gitlab`)
 
@@ -239,7 +268,7 @@ An MR IID is project-scoped, so a run's `ci_repo` must equal the configured proj
 ## Operating the instance
 
 - **AI configuration, AI evaluation, LLM cost budget** — see [AI configuration](ai-features.md).
-- **Feature flags** (`/settings/feature-flags`, administrators) — every flag row, with a global switch, rollout percentage and optional project and role lists. Values are cached for about 30 seconds. Several workflows ship **off** — `flaky_auto_quarantine`, `outbound_webhooks`, `github_checks`, `gitlab` — while `manual_upload` (dashboard upload), `ask_ai_chat`, `llm_cost_budget`, `release_phase_gate_enforcement` (a reason is asked for when a phase is completed over a failing gate or skipped) and `release_compliance_pack` ship **on** for a new install. An instance upgraded from a release where one of these was seeded off keeps that value; turn it on here. The full list and evaluation rules: [feature-flag reference](../docs/operations/feature-flags.md).
+- **Feature flags** (`/settings/feature-flags`, administrators) — every flag row, with a global switch, rollout percentage and optional project and role lists. Values are cached for about 30 seconds. Several workflows ship **off** — `flaky_auto_quarantine`, `github_checks`, `gitlab` — while `manual_upload` (dashboard upload), `ask_ai_chat`, `llm_cost_budget`, `release_phase_gate_enforcement` (a reason is asked for when a phase is completed over a failing gate or skipped), `release_compliance_pack` and `outbound_webhooks` ship **on** for a new install. An instance upgraded from a release where one of these was seeded off keeps that value; turn it on here. The full list and evaluation rules: [feature-flag reference](../docs/operations/feature-flags.md).
 - **Audit dashboard** (`/settings/audit`) — who did what, when: gate overrides, quarantine decisions, settings and identity changes, report exports. Filter by category and 7/30/90 days. **Export CSV** needs an administrator.
 - **Activity log** (`/activity`) — the per-project event ledger (runs, analysis, releases, configuration, membership, integrations, agents), searchable and filterable by actor type, with a before/after diff per event. **Export CSV** needs `QA_LEAD` on the project.
 - **Data & storage** (`/settings/storage`) — connection status for PostgreSQL, MongoDB and the cache, the object-storage target (endpoint, bucket, SSL) and the vector store (host, port, collection). Values saved here override the environment defaults; QA leads read, administrators save.
@@ -278,7 +307,7 @@ When enabled, the Fixer proposes a test-code-only patch and validates it by **re
 
 ## Commit attribution & TIA readiness
 
-Every run can carry a **commit range** — the commits that landed between a baseline and the run's own commit. It powers suspect ranking on a failure (**Suspects** on the Failures page), and it is the raw material for any future test-impact analysis.
+Every run can carry a **commit range** — the commits that landed between a baseline and the run's own commit. It powers suspect ranking on a failure (**Suspects** on the Failures page) and the commit list of the run's **Changes** tab, and it is the raw material for any future test-impact analysis.
 
 **Where the range comes from** (`source`):
 

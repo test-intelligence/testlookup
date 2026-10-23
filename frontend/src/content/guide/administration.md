@@ -55,7 +55,14 @@ A key carries the permissions of the user who created it, narrowed by its scopes
 
 ### Projects
 
-**Projects** (`/projects`, `QA_LEAD` and above): **New Project** asks for a name, a slug (fixed after creation), and optionally a description, Jira project key and OpenShift namespace. The creator becomes a member, and the project gets a default QA-lead account that failures fall back to. Edit a project for its dates, tags, Jira key, Splunk index, OpenShift namespace and Jenkins job pattern, and for **Require review before a test case becomes Active**: when it is on, a test case needs an approved review before it can be made Active (a QA lead or administrator can approve their own case with a reason). It is off by default for every project, so cases move straight between Draft and Active; see [Test management](/docs/test-management#authored-test-cases-and-reviews).
+**Projects** (`/projects`, `QA_LEAD` and above): **New Project** asks for a name, a slug (fixed after creation), and optionally a description, Jira project key and OpenShift namespace. The creator becomes a member, and the project gets a default QA-lead account that failures fall back to. Edit a project for its dates, tags and Jira key, its two integration fields, and **Require review before a test case becomes Active**: when it is on, a test case needs an approved review before it can be made Active (a QA lead or administrator can approve their own case with a reason). It is off by default for every project, so cases move straight between Draft and Active; see [Test management](/docs/test-management#authored-test-cases-and-reviews).
+
+The two integration fields decide what the AI's log and cluster look-ups ask for in this project:
+
+- **Splunk Index**: the index the Splunk look-ups search for this project's failures. Empty uses the deployment's index. Letters, digits, `_` and `-` only (1-80 characters).
+- **OCP Namespace**: the OpenShift namespace used when a run names a pod but no namespace. Empty uses the deployment's default namespace (**Default Namespace** under [Integrations](#jira-splunk-openshift-slack-and-teams)). It must be a DNS label: lowercase letters, digits and `-`, at most 63 characters.
+
+A value that breaks its rule is refused with the reason under the field, and nothing is saved. To clear a field, empty it and **Save Changes**. **Jenkins Job Pattern** is no longer on the form: TestLookup never used it, and a value saved earlier is kept.
 
 **Archive** hides a project without deleting it, and revokes its credentials. **Archiving is a soft delete** — rows remain but the project disappears from listings and its runs stop appearing in run lists. There is no un-archive in the app.
 
@@ -136,17 +143,32 @@ Everything here that reaches outside the deployment is **switched off by offline
 
 ### Jira, Splunk, OpenShift, Slack and Teams
 
-**Integrations** (`/settings/integrations`): QA leads can read it; administrators change it and **Save Integrations**. One card per integration, each with **Enabled**: **Jira** (domain, email, default project key, API token), **Splunk** (base URL, API token), **OpenShift / Kubernetes** (API URL, default namespace, service-account token), **Slack** (webhook URL, default channel) and **Microsoft Teams** (webhook URL). Tokens are stored encrypted and shown only as **(set)**. A value saved here overrides the deployment's environment setting. Use **Integration health** to check a connection.
+**Integrations** (`/settings/integrations`): QA leads can read it; administrators change it and **Save Integrations**. One card per integration, each with **Enabled**: **Jira** (domain, email, default project key, API token), **Splunk** (base URL, API token), **OpenShift / Kubernetes** (API URL, default namespace, service-account token), **Slack** (webhook URL) and **Microsoft Teams** (webhook URL). Tokens are stored encrypted and shown only as **(set)**. **Save Integrations** sends only the fields you changed; with nothing changed it says `No changes to save` and sends nothing. Use **Integration health** to check a connection.
+
+**Which value applies**, first rule that fits:
+
+1. **Offline mode** refuses every outbound call, whatever is saved here.
+2. A **project's own value** comes before the deployment's: the project's **Splunk Index**, and for OpenShift the run's own namespace, then the project's **OCP Namespace** (see [Projects](#projects)).
+3. A **value saved here** comes before the deployment's environment setting. A switch (**Enabled**) once saved always counts, so saving it off turns the integration off even when the environment turns it on.
+4. The **environment** applies to a field never saved here, or saved empty. Such a field says **From the deployment environment** under it, and a token reads **(set in the environment)** instead of **(set)**. To hand a field back to the environment, empty it and save.
+
+The Splunk and OpenShift look-ups of the AI analysis, the Jira tickets the pipeline files, and **Integration health** all read these values. A save reaches the rest of the deployment within 30 seconds. GitHub and GitLab are set per project instead ([below](#github-and-gitlab)).
+
+A **Base URL**, **API URL** or Jira **Domain** that points at the server itself (`localhost`, `127.0.0.1`) or at a link-local address (`169.254.x.x`, where cloud metadata lives) is refused with `Target host is not allowed` under the field, and nothing is saved; the same check runs again before every call, before a token is sent. An address on your own network is allowed. A URL must start with `http://` or `https://`; the Jira domain is a host name such as `your-company.atlassian.net`, without `https://`.
+
+**Slack** has one field: an incoming webhook always posts to the channel it was created for. The line under it says so, with a link to **Team channels**, where a team's alerts go to the team's own channel.
 
 ### GitHub and GitLab
 
-**GitHub** (`/settings/github`) and **GitLab** (`/settings/gitlab`), per project: a repository and an access token, after which runs carrying pull-request (or merge-request) context get a single sticky comment with newly failed, known-flaky and fixed tests, and commits get a check run (GitHub) or commit status (GitLab). Both are off by default (`github_checks` and `gitlab` feature flags). Setup and token scopes are in the operator guide in the repository (`user-guide/administration.md`).
+**GitHub** (`/settings/github`) and **GitLab** (`/settings/gitlab`), per project: a repository and an access token, after which runs carrying pull-request (or merge-request) context get a single sticky comment with newly failed, known-flaky and fixed tests, and commits get a check run (GitHub) or commit status (GitLab). Both are off by default (`github_checks` and `gitlab` feature flags). Setup and token scopes are in the operator guide in the repository (`user-guide/administration.md`). Each project's connection has its own row on [Integration health](#integration-health), and a run's **Changes** tab lists its commits through the project's GitHub integration (see [Runs and run detail](/docs/runs#changes)).
 
 ### Outbound webhooks
 
-**Outbound webhooks** (`/settings/webhooks`, one project) send events to your own HTTPS endpoints: `run.completed`, `defect.promoted`, `defect.create_requested`, `release.decided`, `flaky.quarantined` and `quota.exceeded`. **New webhook**: a name, the target URL, an HMAC secret (deliveries are then signed in the `X-TestLookup-Signature` header) and the events. Each subscription shows delivered and failed counts, its last error, **Test**, and **Recent deliveries** with **Replay** for failed ones. Failed deliveries are retried with backoff up to **Max retries** (5 by default). Creating and changing subscriptions needs `QA_LEAD`.
+**Outbound webhooks** (`/settings/webhooks`, one project) send events to your own HTTPS endpoints: `run.completed`, `defect.promoted`, `defect.create_requested`, `release.decided`, `flaky.quarantined` and `quota.exceeded`. **New webhook**: a name, the target URL, an HMAC secret (deliveries are then signed in the `X-TestLookup-Signature` header), the events, **Max retries** and **Pause after (consecutive failed deliveries)**. Each subscription shows delivered and failed counts, its last error, **Test**, and **Recent deliveries** with **Replay** for failed ones. Failed deliveries are retried with backoff up to **Max retries** (5 by default). Creating and changing subscriptions needs `QA_LEAD`.
 
-> **Off by default.** Outbound webhooks are switched by the `outbound_webhooks` feature flag, which ships **off**, and by offline mode. The page does not say when the flag is off; **Test** answers "No delivery enqueued" until both allow delivery. See the feature-flag reference in the repository docs (`docs/operations/feature-flags.md`).
+**The circuit breaker.** A subscription is paused after **Pause after** deliveries in a row end failed (1-100, 10 by default). A delivery counts **once**, when it ends: after its last retry, or at once for a refused or private target, a missing signing secret or a 4xx answer. A retry still pending does not count, and a successful delivery sets the count back to zero. The row then reads **PAUSED**, with `Paused after 10 consecutive failures (a refused or unreachable target counts too). Last error: …` and **Re-enable**, which turns it back on and sets the count to zero. While it is paused, events are not sent to it; **Test** says no delivery was enqueued, and earlier failed deliveries can be replayed once it is re-enabled. The subscription's last editor and the project's QA leads are notified when it pauses, the activity log records `Webhook <name> paused after 10 consecutive failures`, and **Integration health** lists it under **Paused webhooks**. An enabled row that has started failing shows how far it is (`✓ 4 · ✗ 6 · 2/10 in a row`). Turning a subscription off yourself is not a pause: its count is kept.
+
+> **On for new installs.** Outbound webhooks are switched by the `outbound_webhooks` feature flag, on for a new install since W10 and off on an install upgraded with it off until an administrator turns it on, and by offline mode. The page does not say when the flag is off; **Test** answers "No delivery enqueued" until both allow delivery. See the feature-flag reference in the repository docs (`docs/operations/feature-flags.md`).
 
 ### Email (SMTP) and channels
 
@@ -178,6 +200,8 @@ A **Daily** or **Weekly** digest can use a saved view (**Saved view (optional)**
 ### Integration health
 
 **Integration health** (`/settings/integration-health`): whether each connection works — Jira, Splunk, GitHub, OpenShift, Slack, Teams, SMTP, the local model server and the vector store — as **healthy**, **degraded**, **down**, **auth error**, **timeout**, **unknown** or **skipped**, with latency. Tabs: **Current Status**, **Trends (7d)** (uptime and failure counts) and **Probe History**. Connections are probed every 15 minutes; **Probe All Now** or **Probe now** on one card checks immediately. Start here when "the webhook didn't fire".
+
+Under the deployment-wide cards, **Current Status** has one row per project integration: each project's **GitHub** (or GitHub Enterprise) and **GitLab** connection, titled with the project (`GitHub · Payment Service`) and the API it reaches (`ghe.corp.example.com/api/v3`), probed with that project's own token. A row never probed yet reads **Not probed yet**, not healthy. **Probe now** checks that one project; **Open GitHub settings** (or **Open GitLab settings**) switches to the project and opens its settings. **Paused webhooks** lists every outbound webhook the circuit breaker paused, how many failures in a row paused it, its last error and **Open Outbound webhooks**. An administrator sees every project; a QA lead sees the projects they are a member of. **Probe History** offers the project rows too; **Trends (7d)** covers the deployment-wide connections only.
 
 ## AI
 
@@ -265,7 +289,7 @@ A flag is evaluated as: **the global switch is the master switch**, then the pro
 
 > **Note.** Setting only the project list does nothing — with the global switch off the flag is off everywhere. To enable a flag for one project you need all three: global on, that project listed, rollout 100.
 
-A flag with no record at all evaluates **off**, except for a few older flags that a deployment setting can still switch on. Several workflows ship **off** and say so on their page: quarantine proposals (`flaky_auto_quarantine`), outbound webhooks (`outbound_webhooks`), GitHub (`github_checks`) and GitLab (`gitlab`). **Upload report** (`manual_upload`) and Ask AI (`ask_ai_chat`) ship on; so do, on a new install, LLM cost budgets (`llm_cost_budget`), release phase enforcement (`release_phase_gate_enforcement`: completing a phase over a failing gate, or skipping one, asks for a reason) and compliance packs (`release_compliance_pack`). An upgraded install keeps the values it had. The full list is the feature-flag reference in the repository docs (`docs/operations/feature-flags.md`). Changes can take up to about 30 seconds to reach every page.
+A flag with no record at all evaluates **off**, except for a few older flags that a deployment setting can still switch on. Several workflows ship **off** and say so on their page: quarantine proposals (`flaky_auto_quarantine`), GitHub (`github_checks`) and GitLab (`gitlab`). **Upload report** (`manual_upload`) and Ask AI (`ask_ai_chat`) ship on; so do, on a new install, LLM cost budgets (`llm_cost_budget`), release phase enforcement (`release_phase_gate_enforcement`: completing a phase over a failing gate, or skipping one, asks for a reason), compliance packs (`release_compliance_pack`) and outbound webhooks (`outbound_webhooks`). An upgraded install keeps the values it had. The full list is the feature-flag reference in the repository docs (`docs/operations/feature-flags.md`). Changes can take up to about 30 seconds to reach every page.
 
 ### `defect_commander`
 
