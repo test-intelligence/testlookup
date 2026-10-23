@@ -48,14 +48,17 @@ const activeProjectId = (page: Page) =>
 
 /**
  * `#main-content` fits, and every row card's numbers are printed: its min-content slack and how many px of its title
- * the `truncate` hides (contract §4.1: the title truncates, its full text in `title`; > 0 means cut on these fonts).
+ * are hidden. The title wraps (W10 follow-up: a cut provider · project name hid what the row is for), so nothing of
+ * it may be cut on these fonts.
  */
 async function expectRowsFit(page: Page, width: number, what: string) {
   await expectMainFits(page, `${what} @${width}`)
   const numbers: Record<string, number> = {}
   for (const [i, card] of (await page.locator('[data-health-row]').all()).entries()) {
     numbers[`row${i}.slack`] = await minContentSlack(card)
-    numbers[`row${i}.titleCut`] = await card.locator('span[title]').first().evaluate((el: HTMLElement) => el.scrollWidth - el.clientWidth)
+    const titleCut = await card.locator('[data-health-title]').first().evaluate((el: HTMLElement) => el.scrollWidth - el.clientWidth)
+    numbers[`row${i}.titleCut`] = titleCut
+    expect(titleCut, `${what}: row ${i}'s title is not cut`).toBeLessThanOrEqual(0)
     expect(await ownOverflow(card), `${what}: row ${i} does not overflow its card`).toBeLessThanOrEqual(0)
   }
   inPageLine(`/settings/integration-health ${what}`, width, numbers)

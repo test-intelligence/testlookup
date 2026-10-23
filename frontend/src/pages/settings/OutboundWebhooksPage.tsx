@@ -301,9 +301,11 @@ export default function OutboundWebhooksPage() {
                 ) : (
                   <ChevronRight className="h-3 w-3" />
                 )}
-                <span className="text-sm font-semibold">{sub.name}</span>
+                <span className="text-sm font-semibold whitespace-nowrap">{sub.name}</span>
               </button>
-              <span className="font-mono text-[10px] text-[var(--color-text-faint)] truncate max-w-[240px]">
+              {/* The URL is what gives way when the row is narrow (min-w-0 lets truncate work in the flex row); the
+                  name, the counts and the actions never break mid-word. */}
+              <span className="min-w-0 font-mono text-[10px] text-[var(--color-text-faint)] truncate max-w-[240px]" title={sub.target_url}>
                 {sub.target_url}
               </span>
               <div className="flex flex-wrap gap-1 ml-2">
@@ -316,7 +318,7 @@ export default function OutboundWebhooksPage() {
                   </span>
                 ))}
               </div>
-              <span className="ml-auto flex items-center gap-2 text-[11px] text-[var(--color-text-faint)]">
+              <span className="ml-auto flex shrink-0 items-center gap-2 whitespace-nowrap text-[11px] text-[var(--color-text-faint)]">
                 <span title={`Delivered ${sub.total_delivered} · Failed ${sub.failure_count}`}>
                   ✓ {sub.total_delivered} · ✗ {sub.failure_count}{streak && <span data-webhook-streak=""> · {streak}</span>}
                 </span>
