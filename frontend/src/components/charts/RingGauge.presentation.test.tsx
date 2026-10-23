@@ -69,7 +69,7 @@ describe('RingGauge in presentation mode (R1-5)', () => {
     expect(px(getByText('Risk Score'))).toBe('')
   })
 
-  it('presentation: the ring and both texts grow x2 — 240 px, 40 px value, 20 px caption', () => {
+  it('presentation: the ring and both texts grow x2 — 240 px, 40 px value, 22 px caption (the 11 px caption, W29b)', () => {
     usePresentationStore.setState({ enabled: true })
     layOut()
     measured.em = 0.5
@@ -79,7 +79,7 @@ describe('RingGauge in presentation mode (R1-5)', () => {
     expect(box(container).width).toBe('240px')
     expect(box(container).height).toBe('240px')
     expect(px(getByText('37'))).toBe('40px')
-    expect(px(getByText('Risk Score'))).toBe('20px')
+    expect(px(getByText('Risk Score'))).toBe('22px')
     // Still the same named meter.
     expect(getByRole('meter', { name: 'Risk Score' })).toHaveAttribute('aria-valuetext', '37')
   })

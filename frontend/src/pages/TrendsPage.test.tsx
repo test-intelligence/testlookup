@@ -693,7 +693,7 @@ describe('TrendsPage on the chart kit', () => {
     const { trend } = await windowFixture()
     await renderWindow(trend)
     openTab('By suite')
-    const suites = screen.getByRole('heading', { name: 'Suite pass rates — last 14 days' }).closest('div.rounded-xl') as HTMLElement
+    const suites = screen.getByRole('heading', { name: 'Suite pass rates — last 14 days' }).closest('div.card') as HTMLElement
     const row = within(suites).getByRole('link', { name: 'Payments' }).closest('div.grid') as HTMLElement
     expect(row).toHaveTextContent('50%')
     expect(row.querySelectorAll('i')).toHaveLength(0)
@@ -1025,7 +1025,7 @@ describe('TrendsPage P2: no stubs, no invented values', () => {
     }))
     await renderWith(await daysWithRuns([1, 2, 3]), suites)
     openTab('By suite')
-    const card = screen.getByRole('heading', { name: /^Suite pass rates/ }).closest('div.rounded-xl') as HTMLElement
+    const card = screen.getByRole('heading', { name: /^Suite pass rates/ }).closest('div.card') as HTMLElement
     const rows = within(card).getAllByText(/^S\d$/)
     expect(rows).toHaveLength(6)
     expect(card).toHaveTextContent(`${rows.length} of 8 suites`)
@@ -1368,7 +1368,7 @@ describe('TrendsPage W08', () => {
       expect(screen.getByRole('meter', { name: 'Trend confidence' })).toHaveAttribute('aria-valuetext', '77 of 100, High')
       const verdict = screen.getByRole('region', { name: 'Trend verdict' })
       expect(verdict).toHaveTextContent('9 active days · pass rate steady')
-      expect(within(verdict).getByText('Data coverage').closest('div.rounded-sm')).toHaveTextContent('64')
+      expect(within(verdict).getByText('Data coverage').closest('[data-metric-card]')).toHaveTextContent('64')
       // The page asked for its window and scope.
       expect(trendSummary.calls[trendSummary.calls.length - 1]).toEqual([14, null])
     })
@@ -1416,6 +1416,41 @@ describe('TrendsPage W08', () => {
       expect(document.querySelector('[data-cadence-gap]')).toHaveTextContent('9-day silence')
     })
 
+    it('W29b: the cadence card is a Panel with an h3; the callout stats and the dimensions are sm tiles, no sheen', async () => {
+      const { utcDayIso } = await import('@/utils/calendarDay')
+      trendSummary.override = await summaryOf({
+        days_with_runs: 5,
+        gap: { silent_days: 9, start: await dayBack(8), end: utcDayIso(), ongoing: true, expected_runs_missed: 9 },
+        confidence: {
+          score: 40,
+          verdict: 'MIXED',
+          band: 'Moderate',
+          dimensions: [
+            { id: 'data_coverage', label: 'Data coverage', score: 30, weight: 0.4 },
+            { id: 'sample_size', label: 'Sample size', score: 90, weight: 0.6 },
+          ],
+        },
+      })
+      await renderPage('/trends', [0, 1, 2, 3, 4])
+      const cadence = screen.getByRole('heading', { level: 3, name: /^Run cadence — last/ })
+      expect(cadence.closest('[data-panel]')).toHaveClass('card')
+      expect(cadence).toHaveAttribute('title', expect.stringMatching(/^Each cell is one day/))
+      // The callout's two stats: in-panel tiles in the danger ink, never a page-made 20 px number.
+      const callout = screen.getByRole('heading', { name: 'Schedule appears paused' }).closest('section') as HTMLElement
+      const stats = [...callout.querySelectorAll('[data-metric-card="stat"]')]
+      expect(stats.map((t) => t.querySelector('p')?.textContent)).toEqual(['Silent days', 'Expected runs missed'])
+      for (const stat of stats) expect(stat.querySelector('p.tabular-nums')).toHaveClass('text-[var(--ui-danger-ink)]')
+      // The two dimensions: sm tiles with their weight and bar, on the sunken well.
+      openScore()
+      const verdict = screen.getByRole('region', { name: 'Trend verdict' })
+      const tiles = [...verdict.querySelectorAll('[data-metric-card="stat"]')]
+      expect(tiles.map((t) => t.querySelector('p')?.textContent)).toEqual(['Data coverage40%', 'Sample size60%'])
+      expect(tiles.map((t) => t.querySelector('p.tabular-nums')?.className.match(/text-\[var\(--ui-\w+-ink\)\]/)?.[0]))
+        .toEqual(['text-[var(--ui-danger-ink)]', 'text-[var(--ui-success-ink)]'])
+      for (const tile of tiles) expect(tile.querySelector('[data-metric-bar]')).not.toBeNull()
+      expect(verdict.innerHTML).not.toMatch(/rgba\(/)
+    })
+
     it('a past gap (not ongoing) is "Run gap in this window"', async () => {
       trendSummary.override = await summaryOf({
         gap: { silent_days: 7, start: await dayBack(12), end: await dayBack(6), ongoing: false, expected_runs_missed: 7 },
@@ -1431,7 +1466,7 @@ describe('TrendsPage W08', () => {
     it('draws a row’s line from the shared request; a suite outside the 7 busiest reads "—" with the reason', async () => {
       sparklines.lines = { checkout: [80, null, 90, 85] }
       await renderPage('/trends?tab=by-suite')
-      const card = screen.getByRole('heading', { name: 'Suite pass rates — last 14 days' }).closest('div.rounded-xl') as HTMLElement
+      const card = screen.getByRole('heading', { name: 'Suite pass rates — last 14 days' }).closest('div.card') as HTMLElement
       const checkout = within(card).getByRole('link', { name: 'Checkout' }).closest('div.grid') as HTMLElement
       // The sparkline is a lazy module (section-only request code stays out of the page chunk).
       await waitFor(() => expect(checkout.querySelector('[data-sparkline]')).not.toBeNull())
@@ -1449,7 +1484,7 @@ describe('TrendsPage W08', () => {
     it('an unavailable series is "—" on every row, and the card still renders', async () => {
       sparklines.state = 'unavailable'
       await renderPage('/trends?tab=by-suite')
-      const card = screen.getByRole('heading', { name: 'Suite pass rates — last 14 days' }).closest('div.rounded-xl') as HTMLElement
+      const card = screen.getByRole('heading', { name: 'Suite pass rates — last 14 days' }).closest('div.card') as HTMLElement
       await waitFor(() => expect(card.querySelectorAll('[data-sparkline-missing]')).toHaveLength(2))
       expect(card.querySelector('[data-sparkline]')).toBeNull()
       expect(card).toHaveTextContent('80%')

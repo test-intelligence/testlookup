@@ -67,7 +67,7 @@ import { useFramePlotLayoutHeight } from './framePlotHeight'
 import { COLUMN_SIDES, TIP_GAP, bandGap, columnMark } from './tipPlacement'
 import ChartResponsive from './ChartResponsive'
 import { formatChange, formatRatePoints, tipContent, type TooltipContent } from './tooltip'
-import { CHART_VARS, RECHARTS_AXIS_TICK } from './tokens'
+import { CHART_VARS, RECHARTS_AXIS_TICK, RECHARTS_AXIS_TITLE, RECHARTS_GRID } from './tokens'
 import { utcDayLabel } from './chartText'
 import { useChartAnimation } from './motion'
 import { useTextMeasure } from './textMeasure'
@@ -572,7 +572,7 @@ export default function MultiSeriesChart({
             margin={{ top: 16, right: labelsFit && shown.length > 0 ? DIRECT_LABEL_GUTTER : NO_GUTTER, left: 0, bottom: 0 }}
             accessibilityLayer={false}
           >
-            <CartesianGrid strokeDasharray="3 3" stroke={CHART_VARS.grid} vertical={false} />
+            <CartesianGrid {...RECHARTS_GRID} vertical={false} />
             <XAxis
               dataKey="x"
               axisLine={false}
@@ -587,7 +587,7 @@ export default function MultiSeriesChart({
               interval={xTicks ? 'equidistantPreserveStart' : undefined}
               tickFormatter={xTicks ? undefined : utcDayLabel}
               height={44}
-              label={{ value: model.xTitle, position: 'insideBottom', fill: CHART_VARS.axis, fontSize: 11 }}
+              label={{ value: model.xTitle, position: 'insideBottom', ...RECHARTS_AXIS_TITLE }}
             />
             <YAxis
               domain={model.yAxis.domain}
@@ -600,7 +600,7 @@ export default function MultiSeriesChart({
               tickFormatter={(value: number) => formatNumber(value, { maximumFractionDigits: 2 })}
               // `offset` keeps the rotated title inside the svg: at Recharts' default 5 its
               // first pixels sit left of x = 0 and are clipped.
-              label={{ value: model.metric.title, angle: -90, position: 'insideLeft', offset: 14, fill: CHART_VARS.axis, fontSize: 11 }}
+              label={{ value: model.metric.title, angle: -90, position: 'insideLeft', offset: 14, ...RECHARTS_AXIS_TITLE }}
             />
             <Tooltip
               key={cursor.tipKey}

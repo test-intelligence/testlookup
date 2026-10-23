@@ -55,7 +55,7 @@ export function InlineConfirm({
       aria-labelledby={messageId}
       data-inline-confirm=""
       data-testid={testId}
-      className="flex flex-wrap items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-[12.5px]"
+      className="flex flex-wrap items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm"
     >
       <p id={messageId} className="m-0 min-w-0 flex-1">
         {message}

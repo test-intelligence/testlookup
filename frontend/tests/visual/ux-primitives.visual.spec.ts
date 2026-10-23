@@ -5,7 +5,11 @@
  *
  * Three themes: `signal` (dark, the default), `lab` (light) and `paper` (the
  * soft light theme, W29a OR-06). The W29a sections `buttons`, `badges` and
- * `states` are the reading surface of the UI standard (UIX-01/02/03/07/08/11).
+ * `states` are the reading surface of the UI standard (UIX-01/02/03/07/08/11);
+ * the W29b sections `type-scale` (every step of the scale, the `.eyebrow`
+ * label, the stat and display numbers: UIX-04b), `table` (the one table at
+ * each density, sortable headers, a number column, a selected row: UIX-06)
+ * and `panel` (the panel header over md and sm KPI tiles: UIX-09) continue it.
  * Baselines are generated on CI (`visual-baselines.yml`), never committed
  * from a developer machine.
  */
@@ -22,6 +26,9 @@ const SECTIONS = [
   'buttons',
   'badges',
   'states',
+  'type-scale',
+  'table',
+  'panel',
 ] as const
 
 test.use({ viewport: { width: 1280, height: 1600 } })

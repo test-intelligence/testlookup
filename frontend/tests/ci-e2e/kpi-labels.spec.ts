@@ -89,6 +89,27 @@ function readTiles(page: Page) {
   }, LABEL_MARGIN_PX)
 }
 
+/**
+ * W29b fix-kpi: each change line's figure (the direction word and the number with its unit, `[data-change-head]`)
+ * when it is cut or runs out of its tile. One truncating span drew "Down 1.6 p… (worse)" at 1280 px on CI and
+ * "Down … (worse)" in presentation mode; only the context after the figure may take the ellipsis.
+ */
+function readFigures(page: Page) {
+  return page.evaluate(() =>
+    Array.from(document.querySelectorAll('#main-content [data-metric-card="compact"] [data-change-head]'), (head) => {
+      const card = head.closest('[data-metric-card]') as HTMLElement
+      const style = getComputedStyle(card)
+      const inner = card.getBoundingClientRect().right - parseFloat(style.paddingRight) - parseFloat(style.borderRightWidth)
+      const judgement = head.parentElement?.querySelector('[data-trend-judgement]')
+      const right = Math.max(head.getBoundingClientRect().right, judgement?.getBoundingClientRect().right ?? 0)
+      return {
+        figure: (head.textContent ?? '').trim(),
+        cut: head.scrollWidth > head.clientWidth + 0.5 || right > inner + 0.5,
+      }
+    }),
+  )
+}
+
 for (const width of [1280, 1440]) {
   for (const [path, open] of Object.entries(PAGES)) {
     test(`${path} at ${width} px: every KPI label whole, every value and sparkline inside its tile`, async ({ page }) => {
@@ -105,6 +126,35 @@ for (const width of [1280, 1440]) {
       // At the desk a tile is one line of value: an aside that drops a line grows
       // the strip (Trends 100 -> 132 px on CI's font with a 4rem floor).
       expect(tiles.filter((t) => t.asideBelow).map((t) => t.label), 'asides dropped under their value').toEqual([])
+      const figures = await readFigures(page)
+      console.log(`KPI-FIGURES ${path} ${width} ${JSON.stringify(figures)}`)
+      expect(figures.filter((f) => f.cut).map((f) => f.figure), 'change figures cut short').toEqual([])
+    })
+  }
+}
+
+// W29b fix-kpi: in presentation mode the tile's label (`.eyebrow`) and change line (`text-xs`) are 16 px. Five
+// 186 px tiles at 1280 cut "TOTAL EXECU…", "NEW FAILURE…" and "Down … (worse)" on CI's fonts: the strip's floor
+// grows with the room size (`--kpi-tile-min`), so every label stays whole and every change keeps its figure. (In
+// the room an aside may drop under its value: the 40 px value leaves it no room.)
+for (const width of [1280, 1440]) {
+  for (const [path, open] of Object.entries(PAGES)) {
+    test(`${path} at ${width} px in presentation mode: every KPI label whole, every change figure whole`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 })
+      await page.addInitScript(() =>
+        localStorage.setItem('testlookup-presentation', JSON.stringify({ state: { enabled: true }, version: 0 })),
+      )
+      await open(page)
+      await expect(page.locator('html')).toHaveAttribute('data-presentation', 'on')
+      await expect(page.locator('#main-content [data-metric-card="compact"]').first()).toBeVisible()
+      await page.evaluate(() => document.fonts.ready)
+      const tiles = await readTiles(page)
+      const figures = await readFigures(page)
+      console.log(`KPI-ROOM ${path} ${width} ${JSON.stringify({ tiles, figures })}`)
+      expect(tiles.length, 'a strip of tiles').toBeGreaterThan(0)
+      expect(tiles.filter((t) => t.cut).map((t) => t.label), 'labels cut short').toEqual([])
+      expect(tiles.filter((t) => t.valueOut || t.asideOut).map((t) => t.label), 'tiles drawing outside themselves').toEqual([])
+      expect(figures.filter((f) => f.cut).map((f) => f.figure), 'change figures cut short').toEqual([])
     })
   }
 }

@@ -33,7 +33,7 @@ function testLabel(spike: DurationSpike): string {
 
 function NewBadge() {
   return (
-    <span className="rounded border border-[var(--status-flaky)] px-1 text-[10px] font-medium uppercase tracking-wide text-[var(--status-flaky)]">
+    <span className="eyebrow rounded border border-[var(--status-flaky)] px-1 uppercase text-[var(--status-flaky)]">
       New
     </span>
   )
@@ -123,7 +123,7 @@ export default function DurationRegressionsCard({
           )}
           {data.spikes.length > 0 && (
             <div>
-              <p className="mb-1.5 text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
+              <p className="mb-1.5 eyebrow uppercase text-[var(--color-text-muted)]">
                 Slower than baseline ({data.spike_count})
               </p>
               <ul className="space-y-1">
@@ -134,7 +134,7 @@ export default function DurationRegressionsCard({
           )}
           {data.suites.length > 0 && (
             <div>
-              <p className="mb-1.5 text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
+              <p className="mb-1.5 eyebrow uppercase text-[var(--color-text-muted)]">
                 Suites slower than their history ({data.suite_regression_count})
               </p>
               <ul className="space-y-1">

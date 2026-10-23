@@ -216,6 +216,19 @@ for (const file of walk(SRC_DIR)) {
 //           Object.assign/defineProperty route around that; no `rich:`
 //           without an allow-list reason. Test files are not scanned for the
 //           option rules; they mock formatters.
+//    c. (W29b UIX-05) ONE font table: every size a chart draws reads CHART_FONT
+//       in components/charts/tokens.ts. Anywhere else under
+//       src/components/charts/** (non-test .ts / .tsx) a NUMERIC font size
+//       fails: `fontSize` followed by `:` / `=` / `={` and a digit
+//       (`fontSize: 11`, `fontSize={11}`, `fontSize: '12px'`), a ternary with a
+//       digit branch (`fontSize={compact ? 10 : 11}`), a `const ...FONT...` set
+//       to a number (`HEATMAP_FONT_SIZE = 12`, `LABEL_FONT = 11`) and a
+//       `text-[Npx]` class. Clean: `fontSize: CHART_FONT.tick`,
+//       `Math.round(CHART_FONT.tick * textScale)`, `= CHART_FONT.tick`, a
+//       `fontSize: number` type, a `style.fontSize || ...` read.
+//    d. (W29b UIX-05) Gridlines are solid: a `<CartesianGrid` opening tag (read
+//       whole, multi-line) that sets `strokeDasharray` fails (spread
+//       RECHARTS_GRID). Every non-test source in src/.
 //
 // Every rule runs a SELF-TEST first, against planted violations held in
 // memory: a matcher that silently stopped matching would otherwise turn this
@@ -235,6 +248,62 @@ function chartColourViolations(rel, text) {
   for (const pattern of COLOUR_LITERAL) {
     for (const m of text.matchAll(pattern)) {
       out.push(`${rel}:${lineOf(text, m.index)} has colour literal "${m[0].trim()}" — chart colours come from components/charts/tokens.ts (CHART_VARS / useChartTokens)`)
+    }
+  }
+  return out
+}
+
+// 6c. A numeric font size in the kit outside tokens.ts (comments blanked first).
+const CHART_TOKENS_FILE = 'src/components/charts/tokens.ts'
+const CHART_FONT_RULES = [
+  // fontSize: 11 / fontSize={11} / fontSize: '12px' / fontSize="11" (never `===`)
+  /\bfontSize\s*(?::|=(?!=))\s*\{?\s*['"`]?\d[\d.]*(?:px)?/g,
+  // a ternary (or ??) with a digit branch: fontSize={compact ? 10 : 11}
+  /\bfontSize\s*(?::|=(?!=))\s*\{?(?=[^,;}\n]*\?)[^,;}\n]*?[?:]\s*['"`]?\d[\d.]*(?:px)?/g,
+  // const LABEL_FONT = 11 / export const HEATMAP_FONT_SIZE = 12 / const X_FONT_PX: number = 10
+  /\bconst\s+\w*FONT\w*\s*(?::[^=\n]+)?=\s*['"`]?\d[\d.]*/g,
+  // a fixed-px Tailwind size in the kit's HTML
+  /(?<![\w-])text-\[\d+(?:\.\d+)?px\]/g,
+]
+function chartFontViolations(rel, text) {
+  if (rel === CHART_TOKENS_FILE) return []
+  const code = blankComments(text)
+  const out = []
+  const seen = new Set()
+  for (const pattern of CHART_FONT_RULES) {
+    for (const m of code.matchAll(pattern)) {
+      if (seen.has(m.index)) continue
+      seen.add(m.index)
+      out.push(`${rel}:${lineOf(code, m.index)} numeric font size "${m[0].trim()}" — every chart size reads CHART_FONT (components/charts/tokens.ts); the kit's HTML text takes the page scale (text-2xs 11 / text-xs 12 / text-sm 13)`)
+    }
+  }
+  return out
+}
+
+/** The JSX opening tag that starts at `code[start] === '<'`, up to and including its closing `>`. */
+function jsxOpenTag(code, start) {
+  for (let i = start + 1; i < code.length; i++) {
+    const c = code[i]
+    if (c === '"' || c === "'") {
+      const close = code.indexOf(c, i + 1)
+      i = close === -1 ? code.length : close
+      continue
+    }
+    if (c === '{') { i = skipExpression(code, i + 1) - 1; continue }
+    if (c === '>') return code.slice(start, i + 1)
+  }
+  return code.slice(start)
+}
+
+// 6d. A dashed CartesianGrid (the tag read whole, so a multi-line tag is one site).
+const CARTESIAN_GRID = /<CartesianGrid\b/g
+const DASHED = /\sstrokeDasharray\s*=/
+function dashedGridViolations(rel, text) {
+  const code = blankComments(text)
+  const out = []
+  for (const m of code.matchAll(CARTESIAN_GRID)) {
+    if (DASHED.test(jsxOpenTag(code, m.index))) {
+      out.push(`${rel}:${lineOf(code, m.index)} a dashed <CartesianGrid> — gridlines are solid 1 px on the value axis: <CartesianGrid {...RECHARTS_GRID} vertical={false} /> (components/charts/tokens.ts)`)
     }
   }
   return out
@@ -278,6 +347,34 @@ let selfTestCount = 0
   expectToken('space before the colon', '{ --status-passed : #00FF00; }', 'status-passed', '#00ff00')
   expectToken('compact declaration', '{ --status-passed:#0f0; }', 'status-passed', '#0f0')
   expectToken('a longer token name first', '{ --status-passeds: red; --status-passed: blue; }', 'status-passed', 'blue')
+  // 6c (W29b): the planted sizes caught, the clean forms passed.
+  expectHit('6c numeric fontSize in an object', chartFontViolations('src/components/charts/X.tsx', "label={{ value: 'Tests', fill: CHART_VARS.axis, fontSize: 11 }}"))
+  expectHit('6c numeric fontSize attribute', chartFontViolations('src/components/charts/X.tsx', '<text x={x} fontSize={11}>a</text>'))
+  expectHit('6c px string fontSize', chartFontViolations('src/components/charts/tooltip.ts', "body: { display: 'grid', fontSize: '12px' }"))
+  expectHit('6c a ternary of digits', chartFontViolations('src/components/charts/BarChart.tsx', '<text fontSize={compact ? 10 : 11}>v</text>'))
+  expectHit('6c a ternary with one digit branch', chartFontViolations('src/components/charts/X.tsx', 'el.style.fontSize = big ? CHART_FONT.legend : 11'))
+  expectHit('6c a FONT constant', chartFontViolations('src/components/charts/engines/echarts/heatmapOption.ts', 'export const HEATMAP_FONT_SIZE = 12'))
+  expectHit('6c a FONT_PX constant', chartFontViolations('src/components/charts/gaugeBar.model.ts', 'export const GAUGE_TICK_FONT_PX = 10'))
+  expectHit('6c a typed FONT constant', chartFontViolations('src/components/charts/X.ts', 'const LABEL_FONT: number = 11'))
+  expectHit('6c a text-[10px] class', chartFontViolations('src/components/charts/DayStrip.tsx', 'className="mt-2.5 text-[10px] text-[var(--color-text-secondary)]"'))
+  expectClean('6c sizes from CHART_FONT, types, reads, comments and tokens.ts', [
+    ...chartFontViolations('src/components/charts/X.tsx', [
+      'const a = { fill: CHART_VARS.axis, fontSize: CHART_FONT.tick }',
+      'const b = <text fontSize={Math.round(CHART_FONT.tick * textScale)}>t</text>',
+      'export const HEATMAP_FONT_SIZE = CHART_FONT.tick',
+      'function f(text: string, fontSize: number = DIRECT_LABEL_FONT_SIZE): number { return fontSize }',
+      'const font = `${style.fontWeight || 400} ${style.fontSize || CHART_FONT.legend}px`',
+      "const c = fontSize === undefined ? { color: tokens.axis } : { color: tokens.axis, fontSize }",
+      'const VALUE_FONT = { px: 20, weight: 700 }',
+      "const d = 'text-2xs text-[var(--color-text-secondary)]'",
+      '// the old fontSize: 11 and text-[10px] lived here',
+    ].join('\n')),
+    ...chartFontViolations(CHART_TOKENS_FILE, 'export const RECHARTS_AXIS_TICK = { fill: CHART_VARS.axis, fontSize: 11 } as const'),
+  ])
+  // 6d (W29b): a dashed grid across lines caught; the solid one passed.
+  expectHit('6d a dashed CartesianGrid across lines', dashedGridViolations('src/components/charts/X.tsx', '<CartesianGrid\n  stroke={CHART_VARS.grid}\n  strokeDasharray="3 3"\n  vertical={false}\n/>'))
+  expectHit('6d a dashed CartesianGrid after an arrow', dashedGridViolations('src/components/charts/X.tsx', '<CartesianGrid horizontal={() => a > b} strokeDasharray="4 2" />'))
+  expectClean('6d the solid grid and a dashed line', dashedGridViolations('src/components/charts/X.tsx', '<CartesianGrid {...RECHARTS_GRID} vertical={false} />\n<Line strokeDasharray="4 2" />\n{/* <CartesianGrid strokeDasharray="3 3" /> */}'))
   const engine = runSelfTest()
   selfTestCount += engine.count
   selfTest.push(...engine.problems)
@@ -289,6 +386,7 @@ let selfTestCount = 0
 }
 
 let chartFiles = 0
+let fontFiles = 0
 let engineFiles = 0
 let boundaryFiles = 0
 let optionFiles = 0
@@ -311,7 +409,12 @@ for (const file of walkAll(SRC_DIR)) {
   if (inCharts) {
     chartFiles += 1
     fail.push(...chartColourViolations(rel, text))
+    if (!isTest && /\.(ts|tsx)$/.test(rel)) {
+      fontFiles += 1
+      fail.push(...chartFontViolations(rel, text))
+    }
   }
+  if (!isTest) fail.push(...dashedGridViolations(rel, text))
   if (inEngineDir(rel)) engineFiles += 1
   if (!isTest && (inCharts || inEngineDir(rel) || ENGINE_IMPORT.test(text))) {
     optionFiles += 1
@@ -319,6 +422,7 @@ for (const file of walkAll(SRC_DIR)) {
   }
 }
 if (chartFiles === 0) fail.push('scanned 0 files under src/components/charts — the chart-kit guard is measuring nothing')
+if (fontFiles === 0) fail.push('rule 6c scanned 0 non-test .ts / .tsx files under src/components/charts — it is measuring nothing')
 if (rechartsFiles === 0) fail.push(`scanned 0 files outside ${RECHARTS_DIRS.join(', ')} — the recharts boundary is measuring nothing`)
 if (engineFiles === 0) fail.push(`scanned 0 files under ${ENGINE_DIRS.join(', ')} — ENGINE_DIRS no longer matches the tree, so the import boundary allows nothing and guards nothing`)
 
@@ -475,43 +579,27 @@ function rule9Violations(rel, text) {
 }
 
 // 10 (UIX-13). No colour literal in a string of a non-test source outside the
-// picker swatches, the Mermaid fallbacks and the chart kit (rule 6a). The ten
-// stat-tile sheens are W29b's (UIX-09): tolerated up to these counts, which may
-// only fall.
+// picker swatches, the Mermaid fallbacks and the chart kit (rule 6a). W29b
+// (UIX-09) deleted W29a's pending list: the stat-tile sheen
+// rgba(255,255,255,0.025) is an ordinary hit (a score / facet tile is
+// MetricCard size="sm", on the sunken --color-bg-secondary well).
 const RULE10_EXEMPT = new Set(['src/store/themeStore.ts', 'src/components/guide/mermaidConfig.ts'])
-const PENDING_W29B_SHEEN = 'rgba(255,255,255,0.025)'
-const PENDING_W29B = {
-  'src/pages/CoveragePage.tsx': 1,
-  'src/pages/DefectsPage.tsx': 1,
-  'src/pages/FailureAnalysisPage.tsx': 2,
-  'src/pages/RunsPage.tsx': 1,
-  'src/pages/TrendsPage.tsx': 1,
-  'src/pages/RunIntelligencePage.tsx': 3,
-  'src/pages/DeepInvestigationPage.tsx': 1,
-}
+const STAT_TILE_SHEEN = /rgba\(\s*255\s*,\s*255\s*,\s*255\s*,\s*0?\.025\s*\)/
 const STRING_COLOUR = [
   /(?<![\w&])#(?:[0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{3,4})(?![\w-])/gi,
   /\b(?:rgba?|hsla?|oklch)\s*\(/gi,
 ]
-function rule10Violations(rel, text, pending = PENDING_W29B) {
+function rule10Violations(rel, text) {
   if (RULE10_EXEMPT.has(rel) || rel.startsWith('src/components/charts/')) return []
   const out = []
   const code = blankComments(text)
-  let sheens = 0
   for (const [index, body] of stringLiterals(code)) {
-    // A pending sheen is taken out of the string first, so it is counted once, as a sheen.
-    const parts = body.split(PENDING_W29B_SHEEN)
-    sheens += parts.length - 1
-    const rest = parts.join(' ')
+    const hint = STAT_TILE_SHEEN.test(body) ? ' — the stat-tile sheen: a score / facet tile is MetricCard size="sm" (components/ui/MetricCard)' : ''
     for (const pattern of STRING_COLOUR) {
-      for (const m of rest.matchAll(pattern)) {
-        out.push(`${rel}:${lineOf(code, index)} colour literal "${m[0].trim()}" in a string; use a theme token (var(--name), or color-mix(in srgb, var(--name) N%, transparent))`)
+      for (const m of body.matchAll(pattern)) {
+        out.push(`${rel}:${lineOf(code, index)} colour literal "${m[0].trim()}" in a string; use a theme token (var(--name), or color-mix(in srgb, var(--name) N%, transparent))${hint}`)
       }
     }
-  }
-  const allowed = pending[rel] ?? 0
-  if (sheens > allowed) {
-    out.push(`${rel} has ${sheens} stat-tile sheens "${PENDING_W29B_SHEEN}" (pending W29b UIX-09: ${allowed}); the count may only fall`)
   }
   return out
 }
@@ -539,8 +627,9 @@ function rule11Violations(rel, text, defined) {
   return out
 }
 
-// 12 (families). The derived :root defines the W29a token families, and the
-// light override (the solid destructive button) names exactly the light themes.
+// 12 (families). The derived :root defines the W29a token families (+ W29b's
+// measure pair), and the light override (the solid destructive button; since
+// W29b it also holds `color-scheme: light`) names exactly the light themes.
 const FAMILY_TOKENS = [
   'status-passed-ink', 'status-failed-ink', 'status-broken-ink', 'status-skipped-ink', 'status-flaky-ink',
   'ui-danger', 'ui-danger-bg', 'ui-danger-bd', 'ui-danger-ink',
@@ -549,6 +638,8 @@ const FAMILY_TOKENS = [
   'ui-info', 'ui-info-bg', 'ui-info-bd', 'ui-info-ink',
   'state-quarantined', 'state-quarantined-bd', 'color-text-on-status',
   'color-btn-danger-bg', 'color-btn-danger-bd', 'color-btn-danger-text', 'color-btn-danger-hover',
+  // W29b UIX-05: the one-measure colour and its tint.
+  'chart-measure', 'chart-measure-tint',
 ]
 
 /** `{ selector, body }` of every innermost rule of a stylesheet. */
@@ -598,8 +689,9 @@ function rule12Violations(css, light = LIGHT) {
   expectClean('rule 9 conditional warning', rule9Violations('p.tsx', "  conditional: { fg: 'var(--status-broken-ink)' },\n  skipped: 'var(--status-skipped)',\n// conditional was --status-skipped once"))
   expectHit('rule 10 hex in a string', rule10Violations('src/main.tsx', "style: { background: '#1e293b' }"))
   expectHit('rule 10 rgba in a JSX attribute', rule10Violations('src/pages/X.tsx', '<div style={{ boxShadow: "0 8px 28px rgba(0,0,0,0.25)" }} />'))
-  expectHit('rule 10 a pending sheen over its count', rule10Violations('src/pages/X.tsx', "const a = 'rgba(255,255,255,0.025)'", { 'src/pages/X.tsx': 0 }))
-  expectClean('rule 10 a comment, a token and a pending sheen', rule10Violations('src/pages/X.tsx', "// see #588 and rgba(0,0,0,0.5)\nconst a = 'var(--shadow-md)'; const b = 'rgba(255,255,255,0.025)'", { 'src/pages/X.tsx': 1 }))
+  expectHit('rule 10 a stat-tile sheen in a string (no pending list since W29b)', rule10Violations('src/pages/X.tsx', "const a = 'rgba(255,255,255,0.025)'"))
+  expectHit('rule 10 a sheen in a style object beside a comment and a token', rule10Violations('src/pages/X.tsx', "// see #588 and rgba(0,0,0,0.5)\nconst a = 'var(--shadow-md)'; const b = { background: 'rgba(255,255,255,0.025)' }"))
+  expectClean('rule 10 a comment and a token', rule10Violations('src/pages/X.tsx', "// see #588 and rgba(0,0,0,0.5)\nconst a = 'var(--shadow-md)'; const b = 'bg-[var(--color-bg-secondary)]'"))
   expectClean('rule 10 the picker swatches', rule10Violations('src/store/themeStore.ts', "swatch: ['#eae8e2', '#f5f4f0', '#2f5fb3']"))
   const planted = definedTokens(':root { --status-failed: #b3352c; --ui-danger: var(--status-failed); }')
   expectHit('rule 11 undefined token', rule11Violations('p.tsx', "const c = 'text-[var(--color-danger)]'", planted))
@@ -608,6 +700,8 @@ function rule12Violations(css, light = LIGHT) {
   expectHit('rule 12 a missing family token', rule12Violations(':root { --status-passed-bg: x; }\n[data-theme="lab"] { --color-btn-danger-bg: y; }', ['lab']))
   expectHit('rule 12 a light rule naming a dark theme', rule12Violations(`${complete}\n[data-theme="lab"], [data-theme="signal"] { --color-btn-danger-bg: y; }`, ['lab']))
   expectClean('rule 12 complete families', rule12Violations(`${complete}\n[data-theme="lab"], [data-theme="paper"] { --color-btn-danger-bg: y; }`, ['lab', 'paper']))
+  expectClean('rule 12 the light rule holding color-scheme', rule12Violations(`${complete}\n[data-theme="lab"], [data-theme="paper"] { --color-btn-danger-bg: y; color-scheme: light; }`, ['lab', 'paper']))
+  expectHit('rule 12 a missing measure token', rule12Violations(`:root { --status-passed-bg: x; ${FAMILY_TOKENS.filter((n) => n !== 'chart-measure-tint').map((n) => `--${n}: v;`).join(' ')} }\n[data-theme="lab"] { --color-btn-danger-bg: y; }`, ['lab']))
   if (selfTest.length) {
     console.error('Theme token check FAILED (W29a rules 7-12 self-test: the guard itself is broken):')
     for (const f of selfTest) console.error(`  - ${f}`)
@@ -640,9 +734,10 @@ if (fail.length) {
 console.log(`OK — ${ALL.length} themes (${ALL.join(', ')}): status hues unified across ${DARK.length} dark themes, ` +
   `light palettes (${LIGHT.join(', ')}) distinct, system fonts only, no remote font origins, picker swatches match their tokens; ` +
   `W29a rules over ${standardFiles} files: no white border or white text on a tint (7), no --cat-/--kind- (8), ` +
-  `conditional never skipped-gold (9), no colour literal in a string outside the swatches / Mermaid / chart kit (10), ` +
+  `conditional never skipped-gold (9), no colour literal in a string outside the swatches / Mermaid / chart kit, no stat-tile sheen (10), ` +
   `every var(--…) defined (11), the token families and the light override (12); ` +
-  `chart kit (${chartFiles} files): no colour literals; engine packages value-imported only under ` +
+  `chart kit (${chartFiles} files): no colour literals; font sizes only from CHART_FONT (6c, ${fontFiles} files); ` +
+  `solid CartesianGrid (6d); engine packages value-imported only under ` +
   `${ENGINE_DIRS.join(', ')} (${boundaryFiles} files checked, ${engineFiles} inside); ` +
   (RECHARTS_BOUNDARY_ENFORCED
     ? `recharts value-imported only under ${RECHARTS_DIRS.join(', ')} (${rechartsFiles} files outside checked); `

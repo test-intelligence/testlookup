@@ -4,9 +4,15 @@
  * Full screen (and, with B5's presentation mode, the page-level preference)
  * scales every Recharts drawing through `usePresentationScale()`. The heatmap
  * is a canvas: scaling it as a picture would blur it, so its axis and ramp
- * text are SIZED from the same hook instead. Unscaled, the option must be
- * exactly what it was, because the committed heatmap baselines were drawn
- * from it.
+ * text are SIZED from the same hook instead. Unscaled, the insets must be
+ * exactly what they were.
+ *
+ * W29b UIX-05 (deliberate): the unscaled text is no longer ECharts' own
+ * default (12 px, "Microsoft YaHei" on Windows, sans-serif elsewhere) but the
+ * kit's: every label carries the page's font at `HEATMAP_FONT_SIZE` (11 px,
+ * `CHART_FONT.tick`), and full screen (15/11) reaches the kit's full-screen
+ * floor of 15 px, as every Recharts drawing does (11 x 15/11). The heatmap
+ * baselines are re-shot for it (W29b contract §6.5).
  */
 import { render, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -52,12 +58,13 @@ const tokens = readChartTokens()
 
 interface AxisLabel {
   fontSize?: number
+  fontFamily?: string
   width: number
 }
 interface Built {
   xAxis: { axisLabel: AxisLabel }
   yAxis: { axisLabel: AxisLabel }
-  visualMap: { id?: string; textStyle?: { fontSize?: number } }[]
+  visualMap: { id?: string; textStyle?: { fontSize?: number; fontFamily?: string } }[]
   grid: typeof HEATMAP_GRID
 }
 
@@ -72,24 +79,24 @@ describe('heatmap canvas text scale (K5)', () => {
     engine.instance.setOption.mockClear()
   })
 
-  it('unscaled: the option is exactly the pre-K5 option (no font size, the same insets)', () => {
+  it('unscaled: the kit’s 11 px in the page’s font, and the pre-K5 insets', () => {
     const plain = buildHeatmapOption({ data, tokens, description: 'd', chartWidth: 640 })
     const one = buildHeatmapOption({ data, tokens, description: 'd', chartWidth: 640, textScale: 1 })
     expect(JSON.stringify(one)).toBe(JSON.stringify(plain))
     const built = build(1)
-    expect(built.xAxis.axisLabel).not.toHaveProperty('fontSize')
-    expect(built.yAxis.axisLabel).not.toHaveProperty('fontSize')
-    expect(built.visualMap[0].textStyle).not.toHaveProperty('fontSize')
+    expect(built.xAxis.axisLabel).toMatchObject({ fontSize: HEATMAP_FONT_SIZE, fontFamily: tokens.fontSans })
+    expect(built.yAxis.axisLabel).toMatchObject({ fontSize: HEATMAP_FONT_SIZE, fontFamily: tokens.fontSans })
+    expect(built.visualMap[0].textStyle).toMatchObject({ fontSize: HEATMAP_FONT_SIZE, fontFamily: tokens.fontSans })
     // This matrix has a hatched cell, so the bottom inset also holds the
     // "No data" key's row (R2-18); every other inset is the pre-K5 one.
     expect(built.grid).toEqual({ ...HEATMAP_GRID, bottom: HEATMAP_GRID.bottom + HEATMAP_NO_DATA_KEY_ROW })
   })
 
-  it('full screen (15/11) draws axis and ramp text at 16 px or more', () => {
+  it('full screen (15/11) draws axis and ramp text at the full-screen floor, 15 px or more', () => {
     const built = build(15 / 11)
-    expect(built.xAxis.axisLabel.fontSize).toBeGreaterThanOrEqual(16)
-    expect(built.yAxis.axisLabel.fontSize).toBeGreaterThanOrEqual(16)
-    expect(built.visualMap[0].textStyle?.fontSize).toBeGreaterThanOrEqual(16)
+    expect(built.xAxis.axisLabel.fontSize).toBeGreaterThanOrEqual(15)
+    expect(built.yAxis.axisLabel.fontSize).toBeGreaterThanOrEqual(15)
+    expect(built.visualMap[0].textStyle?.fontSize).toBeGreaterThanOrEqual(15)
   })
 
   it('presentation mode (16/11) is larger still, and the label insets grow with the text', () => {
@@ -117,11 +124,11 @@ describe('heatmap canvas text scale (K5)', () => {
     expect(option.yAxis.axisLabel.fontSize).toBeGreaterThanOrEqual(16)
   })
 
-  it('HeatmapChart unscaled hands the engine no font size at all', async () => {
+  it('HeatmapChart unscaled hands the engine the kit’s 11 px', async () => {
     engine.load.mockResolvedValue({ init: engine.init })
     render(<HeatmapChart data={data} description="Two suites." />)
     await waitFor(() => expect(engine.instance.setOption).toHaveBeenCalled())
     const option = engine.instance.setOption.mock.calls[0][0] as unknown as Built
-    expect(option.yAxis.axisLabel).not.toHaveProperty('fontSize')
+    expect(option.yAxis.axisLabel.fontSize).toBe(HEATMAP_FONT_SIZE)
   })
 })

@@ -63,7 +63,7 @@ import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { suiteHrefByName } from '@/routing/suiteHref'
 import {
-  BarChart3, Calendar, Download, GitCompare, Layers, ListChecks, ShieldCheck, TestTube, TrendingUp,
+  Download, GitCompare, Layers, ListChecks, ShieldCheck,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
@@ -452,12 +452,12 @@ function ScoreDetails({
     >
       <div className="flex flex-col gap-3.5 min-w-0">
         <div>
-          <h2 className="text-[15px] font-semibold m-0 mb-1.5 text-[var(--color-text)]">
+          <h2 className="text-md font-semibold m-0 mb-1.5 text-[var(--color-text)]">
             <span style={{ color: t.gate }}>{t.label}</span>
             <span className="text-[var(--color-text-muted)] mx-2">·</span>
             <span>{verdictAction(verdict, model)}</span>
           </h2>
-          <p className="text-[13px] m-0 max-w-[64ch]" style={{ color: 'var(--color-text-secondary)' }}>
+          <p className="text-sm m-0 max-w-[64ch]" style={{ color: 'var(--color-text-secondary)' }}>
             {lede}
           </p>
         </div>
@@ -504,9 +504,10 @@ export function CoverageComparisonStrip({
   const daysWithRunsDelta = current.daysWithRuns - prior.daysWithRuns
 
   // ``deltaColour`` returns CSS values rather than Tailwind classes so the
-  // direction-vs-good logic stays explicit at each call site.
-  const RED   = 'var(--status-failed)'
-  const GREEN = 'var(--status-passed)'
+  // direction-vs-good logic stays explicit at each call site. Better / worse
+  // are UI meanings, in their legible inks (12 px text on the tile's well).
+  const RED   = 'var(--ui-danger-ink)'
+  const GREEN = 'var(--ui-success-ink)'
   const NEUTRAL = 'var(--color-text-muted)'
   const colourForRateDelta = (delta: number): string =>
     Math.abs(delta) < 0.01 ? NEUTRAL : (delta > 0 ? GREEN : RED)
@@ -528,14 +529,14 @@ export function CoverageComparisonStrip({
       }}
     >
       <div className="flex items-center justify-between mb-2">
-        <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">
+        <h3 className="text-sm font-semibold m-0 text-[var(--color-text)]">
           Compare to previous window
         </h3>
-        <span className="text-[11px] text-[var(--color-text-muted)]">
+        <span className="text-2xs text-[var(--color-text-muted)]">
           last {windowDays}d vs prior {windowDays}d
         </span>
       </div>
-      <p className="m-0 mb-3 text-[12px] text-[var(--color-text-muted)]" style={{ lineHeight: 1.5 }}>
+      <p className="m-0 mb-3 text-xs text-[var(--color-text-muted)]" style={{ lineHeight: 1.5 }}>
         Aggregated from daily trends. Prior window = the {prior.days} days immediately before this window.
       </p>
       <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
@@ -565,6 +566,7 @@ export function CoverageComparisonStrip({
   )
 }
 
+/** One compared metric: the one KPI tile at `sm` (W29b UIX-09) — this window's value, the change and the prior value. */
 function CoverageCompareCell({
   label, currentText, deltaText, priorText, deltaColor,
 }: {
@@ -575,16 +577,12 @@ function CoverageCompareCell({
   deltaColor: string
 }) {
   return (
-    <div
-      className="rounded-md border"
-      style={{ padding: '10px 12px', background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
-    >
-      <div className="text-[11px] text-[var(--color-text-muted)] uppercase tracking-wider">{label}</div>
-      <div className="mt-1 text-[18px] font-semibold text-[var(--color-text)]">{currentText}</div>
-      <div className="mt-0.5 text-[11.5px]" style={{ color: deltaColor }}>
-        {deltaText} <span className="text-[var(--color-text-muted)]">{priorText}</span>
-      </div>
-    </div>
+    <MetricCard
+      size="sm"
+      title={label}
+      metric={{ value: currentText }}
+      caption={<><span style={{ color: deltaColor }}>{deltaText}</span> <span className="text-[var(--color-text-muted)]">{priorText}</span></>}
+    />
   )
 }
 
@@ -593,7 +591,7 @@ function HealthMeter({ model, verdict }: { model: ReturnType<typeof computeHealt
   const score = model.composite
   return (
     <div>
-      <div className="text-[11px] uppercase font-medium text-[var(--color-text-muted)] mb-1.5" style={{ letterSpacing: 'var(--tracking-wider)' }}>
+      <div className="eyebrow uppercase mb-1.5 text-[var(--color-text-muted)]">
         Coverage health score
       </div>
       <div className="flex items-end justify-between">
@@ -601,10 +599,10 @@ function HealthMeter({ model, verdict }: { model: ReturnType<typeof computeHealt
           <span className="font-bold tabular-nums leading-none" style={{ fontSize: 'var(--text-display-lg)', color: t.meter, letterSpacing: '-0.02em' }}>
             {verdict === 'PENDING' ? '—' : score}
           </span>
-          <span className="text-[13px] text-[var(--color-text-muted)] ml-1">/ 100</span>
+          <span className="text-sm text-[var(--color-text-muted)] ml-1">/ 100</span>
         </div>
         <span
-          className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold"
+          className="inline-flex items-center px-2.5 py-1 rounded-full text-2xs font-semibold"
           style={{ background: t.pillBg, border: `1px solid ${t.pillBd}`, color: t.pillFg }}
         >
           {t.label}
@@ -639,30 +637,17 @@ function DimensionGrid({ dimensions }: { dimensions: DimensionScore[] }) {
   )
 }
 
+/** A weighted dimension: the one KPI tile at `sm` (W29b UIX-09) — its weight, its score in its tone, the score's bar. */
 function DimensionTile({ dim }: { dim: DimensionScore }) {
-  const valueColor = dim.tone === 'bad' ? 'var(--status-failed)' : dim.tone === 'warn' ? 'var(--status-broken)' : 'var(--status-passed)'
-  const barColor   = dim.tone === 'bad' ? 'var(--status-failed)' : dim.tone === 'warn' ? 'var(--status-broken)' : 'var(--status-passed)'
   return (
-    <div
-      className="rounded-sm px-2.5 py-2 border"
-      style={{ background: 'rgba(255,255,255,0.025)', borderColor: 'var(--color-border)' }}
-    >
-      <div
-        className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] flex justify-between"
-        style={{ letterSpacing: 'var(--tracking-wider)' }}
-      >
-        <span>{dim.label}</span>
-        <span className="text-[var(--color-text-faint)] font-medium">{Math.round(dim.weight * 100)}%</span>
-      </div>
-      <div className="flex items-center gap-2 mt-1.5">
-        <span className="text-[14px] font-semibold tabular-nums min-w-[40px]" style={{ color: valueColor }}>
-          {Math.round(dim.score)}
-        </span>
-        <div className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: 'var(--color-bg-secondary)' }}>
-          <i className="block h-full rounded-full" style={{ width: `${dim.score}%`, background: barColor }} />
-        </div>
-      </div>
-    </div>
+    <MetricCard
+      size="sm"
+      title={dim.label}
+      note={`${Math.round(dim.weight * 100)}%`}
+      metric={{ value: Math.round(dim.score) }}
+      tone={dim.tone}
+      bar={dim.score}
+    />
   )
 }
 
@@ -722,8 +707,8 @@ function SuiteBreakdown({
     >
       <div className="flex items-center justify-between gap-2.5 flex-wrap mb-3.5">
         {/* h2: the page's primary content, the first heading under the title (P3). */}
-        <h2 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">Suite coverage breakdown</h2>
-        <div className="flex items-center gap-3 text-[11.5px] text-[var(--color-text-muted)]">
+        <h2 className="text-sm font-semibold m-0 text-[var(--color-text)]">Suite coverage breakdown</h2>
+        <div className="flex items-center gap-3 text-xs text-[var(--color-text-muted)]">
           <Legend color="var(--status-passed)" label="Passed" />
           <Legend color="var(--status-failed)" label="Failed" />
           <Legend color="var(--status-broken)" label="Skipped" />
@@ -753,7 +738,7 @@ function SuiteBreakdown({
         style={{ gridTemplateColumns: flagColumn ? `${SUITE_ROWS_COLUMNS[layout]} auto` : SUITE_ROWS_COLUMNS[layout], columnGap: 16 }}
       >
         {visible.length === 0 && (
-          <div className="text-[12.5px] text-[var(--color-text-muted)] py-6 text-center" style={{ gridColumn: '1 / -1' }}>
+          <div className="text-sm text-[var(--color-text-muted)] py-6 text-center" style={{ gridColumn: '1 / -1' }}>
             No suite data for the selected window.
           </div>
         )}
@@ -771,7 +756,7 @@ function SuiteBreakdown({
         ))}
       </div>
 
-      <div className="flex items-center justify-between gap-2.5 mt-3.5 pt-3 text-[11.5px] text-[var(--color-text-muted)]" style={{ borderTop: '1px solid var(--color-border)' }}>
+      <div className="flex items-center justify-between gap-2.5 mt-3.5 pt-3 text-xs text-[var(--color-text-muted)]" style={{ borderTop: '1px solid var(--color-border)' }}>
         <span>
           Showing {tagged.length} suite{tagged.length === 1 ? '' : 's'}
           {untagged.length > 0 && <> + {untagged.length} untagged group{untagged.length === 1 ? '' : 's'}</>}
@@ -851,12 +836,11 @@ function SuiteRow({
       }}
     >
       {/* Suite name + count (stacked: a line of its own, over the bar and the pass rate) */}
-      <div role="cell" className="flex items-center gap-1.5 min-w-0" style={{
+      <div role="cell" className="flex items-center gap-1.5 min-w-0 text-sm" style={{
         ...(stacked ? { gridColumn: '1 / -1', minWidth: 0 } : { minWidth: SUITE_NAME_MIN_WIDTH }),
         color: untagged ? 'var(--color-text-muted)' : (suite.failed > 0 && !untagged ? 'var(--status-failed)' : 'var(--color-text)'),
         fontFamily: untagged ? 'var(--font-sans)' : 'var(--font-mono)',
         fontStyle: untagged ? 'italic' : 'normal',
-        fontSize: 12.5,
       }}>
         {untagged ? (
           <span className="truncate">Untagged</span>
@@ -866,9 +850,11 @@ function SuiteRow({
             {suite.suite_name}
           </Link>
         )}
+        {/* leading-tight (with the last-run chip's): at the label's 16 px line the 22 px chip made every row 1.75 px
+            taller than the old 9.5 px one (the primary +6 px, fold-budget); 13 px keeps the row under its old height. */}
         <span
-          className="text-[9.5px] uppercase font-sans border rounded-sm px-1 py-0.5 flex-none"
-          style={{ color: 'var(--color-text-faint)', borderColor: 'var(--color-border)', letterSpacing: 'var(--tracking-wide)' }}
+          className="eyebrow uppercase font-sans border rounded-sm px-1 py-0.5 flex-none leading-tight"
+          style={{ color: 'var(--color-text-faint)', borderColor: 'var(--color-border)' }}
         >
           {suite.unique_tests} test{suite.unique_tests === 1 ? '' : 's'}
         </span>
@@ -879,7 +865,7 @@ function SuiteRow({
       <div role="cell" ref={barRef} className="relative rounded-sm overflow-hidden flex" style={{ height: 18, background: 'var(--color-bg-secondary)' }}>
         {untagged ? (
           <div
-            className="h-full flex items-center justify-center text-[10.5px] font-semibold tabular-nums"
+            className="h-full flex items-center justify-center text-2xs font-semibold tabular-nums"
             style={{
               flex: total,
               background: 'repeating-linear-gradient(45deg, var(--color-text-faint), var(--color-text-faint) 4px, var(--color-bg-hover) 4px, var(--color-bg-hover) 8px)',
@@ -900,7 +886,7 @@ function SuiteRow({
 
       {/* Total (only in the full layout: under 400 px the bar needs the room, F-18) */}
       {layout === 'full' && (
-        <div role="cell" className="text-[13px] tabular-nums text-right" style={{ color: 'var(--color-text-secondary)' }}>
+        <div role="cell" className="text-sm tabular-nums text-right" style={{ color: 'var(--color-text-secondary)' }}>
           {total} run{total === 1 ? '' : 's'}
         </div>
       )}
@@ -908,7 +894,7 @@ function SuiteRow({
       {/* Pass-rate (the screen-reader total sits in this cell: a row owns cells only; sr-only takes no room) */}
       <div
         role="cell"
-        className="text-[13px] font-semibold tabular-nums text-right"
+        className="text-sm font-semibold tabular-nums text-right"
         style={{ color: passRateColor }}
         title={!untagged && passRate === null ? 'No pass rate: every execution was skipped' : undefined}
       >
@@ -923,7 +909,7 @@ function SuiteRow({
             <span
               data-suite-gap={gap.tone}
               title={gap.title}
-              className="inline-flex items-center whitespace-nowrap rounded-full border px-1.5 py-0.5 text-[10.5px] font-semibold"
+              className="inline-flex items-center whitespace-nowrap rounded-full border px-1.5 py-0.5 text-2xs font-semibold"
               style={gap.tone === 'bad'
                 ? { color: 'var(--status-failed)', borderColor: 'color-mix(in srgb, var(--status-failed) 30%, transparent)', background: 'color-mix(in srgb, var(--status-failed) 8%, transparent)' }
                 : { color: 'var(--status-broken)', borderColor: 'var(--gate-conditional-border)', background: 'var(--gate-conditional-bg-soft)' }}
@@ -946,7 +932,7 @@ function LastRunChip({ chip }: { chip: NonNullable<ReturnType<typeof lastRunChip
   const style = chip.amber
     ? { color: 'var(--status-broken)', borderColor: 'var(--gate-conditional-border)', background: 'var(--gate-conditional-bg-soft)' }
     : { color: 'var(--color-text-faint)', borderColor: 'var(--color-border)' }
-  const className = 'text-[9.5px] font-sans border rounded-sm px-1 py-0.5 flex-none whitespace-nowrap not-italic'
+  const className = 'text-2xs leading-tight font-sans border rounded-sm px-1 py-0.5 flex-none whitespace-nowrap not-italic'
   return chip.href ? (
     <Link
       to={chip.href}
@@ -996,8 +982,8 @@ const SUITE_ROWS_COLUMNS: Record<SuiteRowsLayout, string> = {
   stacked: 'minmax(0, 1fr) 76px',
 }
 
-/** The segment count's font size, px, and the room a count needs around it, px a side. */
-const SEGMENT_FONT_PX = 10.5
+/** The segment count's font size, px (`text-2xs`, W29b: it was 10.5), and the room a count needs around it, px a side. */
+const SEGMENT_FONT_PX = 11
 const SEGMENT_PAD_PX = 3
 /**
  * A bold digit's width, em: an OVER-estimate (DejaVu Sans Bold, the Linux
@@ -1025,7 +1011,7 @@ function StackSegment({ count, status, color, fits }: { count: number; status: '
     <div
       data-suite-segment={status}
       title={`${count} ${status}`}
-      className="h-full min-w-0 overflow-hidden flex items-center justify-center text-[10.5px] font-semibold tabular-nums"
+      className="h-full min-w-0 overflow-hidden flex items-center justify-center text-2xs font-semibold tabular-nums"
       style={{ flex: count, background: color, color: 'var(--color-text-on-status)' }}
     >
       {fits ? count : null}
@@ -1064,11 +1050,11 @@ function UntaggedCallout({
       }}
     >
       <div className="flex items-start justify-between gap-2 mb-1">
-        <h3 className="text-[13px] font-semibold m-0 flex items-center gap-2 text-[var(--color-text)]">
+        <h3 className="text-sm font-semibold m-0 flex items-center gap-2 text-[var(--color-text)]">
           Untagged executions
           <span
-            className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full uppercase"
-            style={{ background: 'color-mix(in srgb, var(--status-broken) 16%, transparent)', color: 'var(--status-broken)', letterSpacing: 'var(--tracking-wide)' }}
+            className="eyebrow uppercase px-1.5 py-0.5 rounded-full"
+            style={{ background: 'color-mix(in srgb, var(--ui-warning) 16%, transparent)', color: 'var(--ui-warning-ink)' }}
           >
             Data quality
           </span>
@@ -1081,17 +1067,17 @@ function UntaggedCallout({
             disabled={fixTagging.disabled}
             title={fixTagging.disabled ? FIX_TAGGING_PICK_PROJECT : undefined}
             onClick={fixTagging.onOpen}
-            // 18 px line + 2 px border: no taller than the heading's own row (the fold budget).
-            className="flex-none rounded border border-[var(--color-border-light)] px-2 py-0 text-[11px] leading-[18px] text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+            // 16 px line + 2 px border: no taller than the heading's own row (the fold budget).
+            className="flex-none rounded border border-[var(--color-border-light)] px-2 py-0 text-2xs leading-4 text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] disabled:cursor-not-allowed disabled:opacity-60"
           >
             Fix tagging
           </button>
         )}
       </div>
-      <p className="text-[12.5px] m-0 mb-3 max-w-[70ch]" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+      <p className="text-sm m-0 mb-3 max-w-[70ch]" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
         {untaggedRuns} of {totalRuns} executions ({pct}%) didn't carry a suite label, so they appear as{' '}
         <em>Unknown Suite</em>. These tests can't be assigned ownership, prioritized, or trended without a tag.
-        The most common cause is a missing <code className="font-mono text-[11.5px]">@suite</code> annotation in
+        The most common cause is a missing <code className="font-mono text-xs">@suite</code> annotation in
         the test runner config.
       </p>
 
@@ -1102,13 +1088,13 @@ function UntaggedCallout({
             className="grid items-center gap-3 rounded-sm border px-2.5 py-2"
             style={{ gridTemplateColumns: '1fr auto', background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
           >
-            <div className="font-mono text-[11.5px] text-[var(--color-text)]">
+            <div className="font-mono text-xs text-[var(--color-text)]">
               {g.suite_name || 'Unknown Suite'}
-              <span className="ml-2.5 italic font-sans text-[11px] text-[var(--color-text-muted)]">
+              <span className="ml-2.5 italic font-sans text-2xs text-[var(--color-text-muted)]">
                 {g.unique_tests} test{g.unique_tests === 1 ? '' : 's'} in group
               </span>
             </div>
-            <div className="text-[11px] tabular-nums text-[var(--color-text-muted)]">
+            <div className="text-2xs tabular-nums text-[var(--color-text-muted)]">
               {g.passed + g.failed + g.skipped} run{g.passed + g.failed + g.skipped === 1 ? '' : 's'}
             </div>
           </div>
@@ -1178,10 +1164,10 @@ function CoverageGaps({ gaps }: { gaps: GapRow[] }) {
       className="rounded-xl"
       style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', padding: '14px 16px' }}
     >
-      <h3 className="text-[13px] font-semibold m-0 mb-1 text-[var(--color-text)]">Coverage gaps</h3>
-      <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-3">Missing or stale signals that affect the score.</p>
+      <h3 className="text-sm font-semibold m-0 mb-1 text-[var(--color-text)]">Coverage gaps</h3>
+      <p className="text-xs text-[var(--color-text-muted)] m-0 mb-3">Missing or stale signals that affect the score.</p>
       {gaps.length === 0 ? (
-        <p className="text-[12.5px] text-[var(--color-text-muted)] py-2 text-center m-0">
+        <p className="text-sm text-[var(--color-text-muted)] py-2 text-center m-0">
           No coverage gaps detected — every signal is up-to-date.
         </p>
       ) : (
@@ -1193,8 +1179,8 @@ function CoverageGaps({ gaps }: { gaps: GapRow[] }) {
               style={{ padding: '8px 10px', background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
             >
               <span aria-hidden className="inline-block w-2 h-2 rounded-sm flex-none" style={{ background: g.tone === 'bad' ? 'var(--status-failed)' : 'var(--status-broken)' }} />
-              <div className="flex-1 text-[12.5px] text-[var(--color-text)] leading-[1.35] gap-body">{g.body}</div>
-              <span className="text-[10.5px] tabular-nums text-[var(--color-text-faint)]">{g.ago}</span>
+              <div className="flex-1 text-sm text-[var(--color-text)] leading-[1.35] gap-body">{g.body}</div>
+              <span className="text-2xs tabular-nums text-[var(--color-text-faint)]">{g.ago}</span>
             </div>
           ))}
         </div>
@@ -1260,11 +1246,11 @@ function CadenceHeatmap({ trend, days }: { trend: TrendPoint[]; days: number }) 
       {/* P3: the explainer paragraph under the title is its tooltip now
           (spec §2: explanatory text is never a paragraph on the page). */}
       <h3
-        className="text-[13px] font-semibold m-0 mb-2.5 flex justify-between items-center text-[var(--color-text)]"
+        className="text-sm font-semibold m-0 mb-2.5 flex justify-between items-center text-[var(--color-text)]"
         title="Each cell is a day, shaded by its executions. An empty cell: no run landed that day."
       >
         Run cadence
-        <span className="text-[11px] font-medium text-[var(--color-text-muted)]">
+        <span className="text-2xs font-medium text-[var(--color-text-muted)]">
           last {days > CADENCE_MAX_CELLS ? `${CADENCE_MAX_CELLS} of ` : ''}{days} days
         </span>
       </h3>
@@ -1530,15 +1516,11 @@ export default function CoveragePage() {
           <section aria-label="Coverage metrics">
             <KpiStrip>
               <MetricCard
-                compact
                 title="Unique tests"
-                icon={<TestTube className="h-4 w-4" />}
                 metric={{ value: summary.unique_tests ?? 0 }}
               />
               <MetricCard
-                compact
                 title="Test suites"
-                icon={<Layers className="h-4 w-4" />}
                 metric={{
                   value: summary.suite_count ?? 0,
                   trend_direction: 'none',
@@ -1549,15 +1531,11 @@ export default function CoveragePage() {
                 }}
               />
               <MetricCard
-                compact
                 title="Total executions"
-                icon={<BarChart3 className="h-4 w-4" />}
                 metric={{ value: summary.total_executions ?? 0, ...executionsChange }}
               />
               <MetricCard
-                compact
                 title="Pass rate"
-                icon={<TrendingUp className="h-4 w-4" />}
                 metric={{
                   value: `${(summary.avg_pass_rate ?? 0).toFixed(1)}%`,
                   trend_direction: 'none',
@@ -1569,14 +1547,15 @@ export default function CoveragePage() {
                   })(),
                 }}
               />
+              {/* "N / D" without the word "days": at the room size (40 px) "12 / 14 days" drew past a four-column
+                  tile at 1440 px (kpi-labels, CI); the change line names the days instead. */}
               <MetricCard
-                compact
                 title="Run cadence"
-                icon={<Calendar className="h-4 w-4" />}
+                hint="Days with at least one run, of the days in the window"
                 metric={{
-                  value: `${model.daysWithRuns} / ${days} days`,
+                  value: `${model.daysWithRuns} / ${days}`,
                   trend_direction: 'none',
-                  trend_text: cadencePaused ? '⚠ Schedule may be paused' : `${Math.round((model.daysWithRuns / days) * 100)}% of window`,
+                  trend_text: cadencePaused ? '⚠ Schedule may be paused' : `${Math.round((model.daysWithRuns / days) * 100)}% of ${days} days`,
                 }}
               />
             </KpiStrip>
@@ -1599,11 +1578,11 @@ export default function CoveragePage() {
                   marginBottom: 14,
                 }}
               >
-                <div className="flex items-center justify-between text-[12.5px] text-[var(--color-text-muted)]">
+                <div className="flex items-center justify-between text-sm text-[var(--color-text-muted)]">
                   <span>Compare to previous window</span>
                   <span>last {days}d vs prior {days}d</span>
                 </div>
-                <p className="m-0 mt-2 text-[12.5px] text-[var(--color-text-muted)]">
+                <p className="m-0 mt-2 text-sm text-[var(--color-text-muted)]">
                   Not enough trend data to compare against the prior window yet.
                 </p>
               </section>
@@ -1658,7 +1637,7 @@ export default function CoveragePage() {
       )}
 
       {/* Below lg the two-column layout is cramped: say so rather than hide it. */}
-      <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-[12px] text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
+      <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-xs text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
         Wider screen needed for the full coverage layout. Some sections may overflow on narrow viewports.
       </div>
     </PageShell>

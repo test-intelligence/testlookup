@@ -17,12 +17,19 @@
  * `npm run check:theme` fails on any hex / rgb / hsl literal anywhere under
  * `components/charts/`, so a colour cannot bypass this module.
  *
+ * It is also the kit's one text, grid and measure style (W29b UIX-05):
+ * `CHART_FONT` (every size a chart draws; rule 6c fails a numeric font size
+ * anywhere else in the kit), `RECHARTS_GRID` (solid, value axis only; rule 6d
+ * fails a dashed `CartesianGrid`), `CHART_VARS.measure` (the one-measure
+ * colour) and the `echarts*` text helpers (the page's font on the canvas).
+ *
  * Status is never colour-only: each of the five statuses has a fixed icon, a
  * fixed decal (canvas) / pattern id (SVG) and a text label. "Flaky" is an
  * attribute drawn ON TOP of a status (`FLAKY_MARKER`), never a sixth status.
  */
 import { useSyncExternalStore } from 'react'
 import { VIZ_STATUSES, type VizStatus } from '@/lib/viz/contracts'
+import { STATUS_ENCODING, type DecalKind } from './statusEncoding'
 
 export const SERIES_COUNT = 8
 export const SEQ_COUNT = 7
@@ -74,6 +81,48 @@ export const CHART_VARS = {
   card: cssVar('--color-bg-card'),
   border: cssVar('--color-border-light'),
   text: cssVar('--color-text'),
+  /**
+   * W29b UIX-05: the ONE colour of a mark that shows a single quantity — a
+   * ranked bar that is not a change, the duration histogram, the slowest
+   * tests, the executions bars, the catalogue bars, an uncategorised cluster
+   * bubble. `--chart-measure` is series-2 (already every theme's executions
+   * colour), so a mark that was series-2 does not move; one that borrowed a
+   * diverging or another series slot now reads the same blue as the rest.
+   */
+  measure: cssVar('--chart-measure'),
+  /** The measure taken toward the card: the fill of a one-measure AREA that carries a label (`--color-text` on it ≥ 6.9:1). */
+  measureTint: cssVar('--chart-measure-tint'),
+} as const
+
+/**
+ * The kit's ONE font table (W29b UIX-05). Every size a chart draws reads it —
+ * Recharts ticks and axis titles, the kit's own SVG text, the canvas engines'
+ * labels — and check-theme-tokens rule 6c fails a numeric font size anywhere
+ * else under `components/charts/**`. These are DESK sizes: presentation mode
+ * and full screen scale the drawing (`usePresentationScale`, the ECharts
+ * builders' `textScale`), never these numbers. The kit's HTML text (a gauge's
+ * caption, a legend row) takes the page's type scale instead (`text-2xs` 11,
+ * `text-xs` 12, `text-sm` 13), which presentation mode raises on its own.
+ */
+export const CHART_FONT = {
+  /** Axis ticks, category labels, the heatmap / scatter / treemap / sankey labels, gauge ticks. */
+  tick: 11,
+  /** A value or category axis's title (a Recharts `<Label>`, an ECharts axis `name`). */
+  axisTitle: 11,
+  /** A value printed on or beside a mark (ranked-bar values, donut slice labels, bubble labels). */
+  dataLabel: 11,
+  /** Release-marker labels, timeline-note labels, a lane's count. */
+  annotation: 11,
+  /** A legend row; a chart's own key under the plot. */
+  legend: 12,
+  /**
+   * The tooltip box (`RECHARTS_TOOLTIP_STYLE`, `TIP_STYLE`). Named `tip`, not
+   * `tooltip`: the chart guard (`scripts/chart-guard.mjs`) reads any `tooltip`
+   * key in the kit as an ECharts option and refuses a value it cannot see into.
+   */
+  tip: 12,
+  /** The donut's centre value: the one large in-chart number. */
+  centre: 20,
 } as const
 
 /** A theme-following tooltip surface for Recharts' `contentStyle`. */
@@ -82,10 +131,22 @@ export const RECHARTS_TOOLTIP_STYLE = {
   border: `1px solid ${CHART_VARS.border}`,
   borderRadius: '8px',
   color: CHART_VARS.text,
-  fontSize: '12px',
+  fontSize: `${CHART_FONT.tip}px`,
 } as const
 
-export const RECHARTS_AXIS_TICK = { fill: CHART_VARS.axis, fontSize: 11 } as const
+/** A Recharts axis's tick text: the axis colour at the kit's tick size. */
+export const RECHARTS_AXIS_TICK = { fill: CHART_VARS.axis, fontSize: CHART_FONT.tick } as const
+
+/** A Recharts axis's title: spread into every `label={{ value, angle, position, ...RECHARTS_AXIS_TITLE }}`. */
+export const RECHARTS_AXIS_TITLE = { fill: CHART_VARS.axis, fontSize: CHART_FONT.axisTitle } as const
+
+/**
+ * The ONE gridline (W29b UIX-05): a SOLID 1 px hairline in the grid colour, on
+ * the value axis only — `<CartesianGrid {...RECHARTS_GRID} vertical={false} />`
+ * (or `horizontal={false}` on a horizontal-bar layout). No `strokeDasharray`:
+ * check-theme-tokens rule 6d fails a dashed grid. ECharts' twin is `echartsSplitLine`.
+ */
+export const RECHARTS_GRID = { stroke: CHART_VARS.grid, strokeWidth: 1 } as const
 
 /** Resolved values, for canvas (ECharts). */
 export interface ChartTokens {
@@ -102,6 +163,14 @@ export interface ChartTokens {
   border: string
   text: string
   textMuted: string
+  /** `--chart-measure`: the one-measure colour (`CHART_VARS.measure`, resolved). */
+  measure: string
+  /**
+   * `--font-sans`: the page's own font stack, so a canvas draws its text in the
+   * font the HTML around it uses (ECharts' default is "Microsoft YaHei" on
+   * Windows and `sans-serif` elsewhere).
+   */
+  fontSans: string
 }
 
 let cache: { root: Element; theme: string; presentation: string; tokens: ChartTokens } | null = null
@@ -136,9 +205,54 @@ export function readChartTokens(root: Element = document.documentElement): Chart
     border: read('--color-border-light'),
     text: read('--color-text'),
     textMuted: read('--color-text-muted'),
+    measure: read('--chart-measure'),
+    fontSans: read('--font-sans'),
   }
   cache = { root, theme, presentation, tokens }
   return tokens
+}
+
+// ── The ECharts text style (W29b UIX-05) ──────────────────────────────────────
+
+/** A desk size at `textScale` (presentation mode, full screen): never smaller than the desk size, never NaN. */
+function scaledFont(px: number, textScale: number): number {
+  return Number.isFinite(textScale) && textScale > 1 ? Math.round(px * textScale) : px
+}
+
+/** An ECharts text style: a font family, a size and a colour, every key spelled out. */
+export interface EchartsText {
+  fontFamily: string
+  fontSize: number
+  color: string
+}
+
+/**
+ * The ECharts text style: the page's font, the kit's tick size, the axis
+ * colour. Every option builder sets `textStyle: echartsBaseText(tokens)` at the
+ * option ROOT — ECharts' global default for every text it draws (a label with
+ * no size of its own, the tooltip box's family) — AND builds each axisLabel /
+ * nameTextStyle / label / legend.textStyle / visualMap.textStyle through these
+ * helpers, so a label that sets its own size keeps the family (ECharts' axis
+ * and legend defaults carry their own 12 px). `textScale` is the builder's
+ * presentation / full-screen scale (1 on the page).
+ */
+export function echartsBaseText(tokens: Pick<ChartTokens, 'fontSans' | 'axis'>, textScale = 1): EchartsText {
+  return { fontFamily: tokens.fontSans, fontSize: scaledFont(CHART_FONT.tick, textScale), color: tokens.axis }
+}
+
+/** An axis's tick labels and its name (`axisLabel`, `nameTextStyle`): `echartsBaseText`'s values. */
+export function echartsAxisLabel(tokens: Pick<ChartTokens, 'fontSans' | 'axis'>, textScale = 1): EchartsText {
+  return { fontFamily: tokens.fontSans, fontSize: scaledFont(CHART_FONT.tick, textScale), color: tokens.axis }
+}
+
+/** A legend's text: the page's font at the kit's legend size, in the text colour. */
+export function echartsLegendText(tokens: Pick<ChartTokens, 'fontSans' | 'text'>, textScale = 1): EchartsText {
+  return { fontFamily: tokens.fontSans, fontSize: scaledFont(CHART_FONT.legend, textScale), color: tokens.text }
+}
+
+/** A value axis's gridline: the one solid 1 px hairline (`RECHARTS_GRID`'s twin). */
+export function echartsSplitLine(tokens: Pick<ChartTokens, 'grid'>): { lineStyle: { color: string; width: 1; type: 'solid' } } {
+  return { lineStyle: { color: tokens.grid, width: 1, type: 'solid' } }
 }
 
 /** Test seam: forget the memo (the next read hits `getComputedStyle`). */
@@ -170,30 +284,9 @@ export function useChartTokens(): ChartTokens {
 
 // ── Status encodings: colour + icon + decal + label, fixed per status ─────────
 
-export type DecalKind = 'solid' | 'diagonal' | 'crosshatch' | 'dashes' | 'dots'
-
-export interface StatusEncoding {
-  label: string
-  /** lucide-react icon name. */
-  icon: string
-  /**
-   * `<pattern id>` suffix for SVG fills (Recharts). Each chart prefixes it with
-   * its own id (`patterns.tsx`), so two charts on a page never share a pattern.
-   */
-  patternId: string
-  /** Decal id; `echartsDecal()` turns it into an ECharts decal object, `patterns.tsx` into an SVG pattern. */
-  decal: DecalKind
-  /** `stroke-dasharray` for a line drawn in this status; `undefined` = solid. */
-  dash: string | undefined
-}
-
-export const STATUS_ENCODING: Record<VizStatus, StatusEncoding> = {
-  passed: { label: 'Passed', icon: 'CircleCheck', patternId: 'chart-pattern-passed', decal: 'solid', dash: undefined },
-  failed: { label: 'Failed', icon: 'CircleX', patternId: 'chart-pattern-failed', decal: 'diagonal', dash: '7 3' },
-  broken: { label: 'Broken', icon: 'CircleAlert', patternId: 'chart-pattern-broken', decal: 'crosshatch', dash: '9 3 2 3' },
-  skipped: { label: 'Skipped', icon: 'CircleSlash', patternId: 'chart-pattern-skipped', decal: 'dashes', dash: '2 3' },
-  unknown: { label: 'Unknown', icon: 'CircleHelp', patternId: 'chart-pattern-unknown', decal: 'dots', dash: '1 4' },
-}
+// The label / icon / decal maps live in `statusEncoding.ts`, so the eager status vocabulary can read them without
+// this module; re-exported here for the kit.
+export { FLAKY_MARKER, STATUS_ENCODING, type DecalKind, type StatusEncoding } from './statusEncoding'
 
 /**
  * The edge a NON-TEXT mark is drawn with where it must be told from the card
@@ -228,14 +321,6 @@ export const STATUS_STACK_ORDER: readonly VizStatus[] = VIZ_STATUSES
 export function statusStackRank(status: VizStatus): number {
   return STATUS_STACK_ORDER.indexOf(status)
 }
-
-/** Flaky is an attribute marker over a status, not a status. */
-export const FLAKY_MARKER = {
-  label: 'Flaky',
-  icon: 'Shuffle',
-  patternId: 'chart-pattern-flaky-marker',
-  token: '--status-flaky',
-} as const
 
 /** The subset of ECharts' `DecalObject` this kit uses (kept structural: no echarts import here). */
 export interface ChartDecal {

@@ -289,6 +289,38 @@ describe('SlowestTests', () => {
   })
 })
 
+// ── W29b UIX-05: one quantity, the one-measure colour ───────────────────────
+
+describe('the duration charts that show ONE quantity read --chart-measure (UIX-05)', () => {
+  it('the histogram: every ordinary bucket is filled with it, the overflow one hatched and edged in it', () => {
+    reset()
+    render(<DurationHistogram model={buildDurationHistogram([0.4, 3, 12, 12, 40, 99, 900, 3_600_000])} />)
+    expect(captured.cells.length).toBeGreaterThan(1)
+    for (const cell of captured.cells) {
+      if (cell['data-overflow'] === 'true') {
+        expect(String(cell.fill)).toMatch(/^url\(#/)
+        expect(cell.stroke).toBe('var(--chart-measure)')
+      } else {
+        expect(cell.fill).toBe('var(--chart-measure)')
+      }
+    }
+    // The overflow hatch's own tile and the tooltip swatch name it too; no series slot is borrowed.
+    const html = document.body.innerHTML
+    expect(html).toContain('var(--chart-measure)')
+    expect(html).not.toContain('--chart-series-3')
+  })
+
+  it('the slowest tests: every ranked bar is drawn in it', () => {
+    render(<SlowestTests model={rankSlowestTests([{ name: 'a', p95: 900, runs: 4 }, { name: 'b', p95: 300, runs: 2 }])} />)
+    const bars = screen.getAllByTestId('ranked-bar')
+    expect(bars).toHaveLength(2)
+    for (const bar of bars) {
+      expect(bar.getAttribute('style')).toContain('var(--chart-measure)')
+      expect(bar.getAttribute('style')).not.toContain('--chart-series-5')
+    }
+  })
+})
+
 // ── Inside the frame ─────────────────────────────────────────────────────────
 
 describe('DurationChartFrame', () => {

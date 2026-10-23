@@ -132,7 +132,7 @@ Every change is recorded in the [activity log](/docs/administration#activity-log
 3. **Run Deep Analysis** (or **Run on all N failures**) starts it. It needs the `QA_ENGINEER` role, and analysis in **Auto**, **LLM** or **ML** mode (not **Rules**).
 4. **Proposed clusters** fills in as it works: for each cluster, the failure count, a likely severity, and when an AI finding exists, the suggested root cause with its confidence and where it came from (**the deep-analysis pipeline**, or **seeded demo data** on a demo install). A cluster without one says "No AI finding recorded for this cluster yet."
 
-**Recent runs** lists past investigations with their clusters, findings, average confidence, cost and status. The page also shows the KPIs **Eligible failures**, **Likely clusters**, **Last analysis**, **Avg cluster confidence** and **Spend MTD**.
+**Recent runs** lists past investigations with their clusters, findings, average confidence, cost and status. The page also shows five KPIs: **Eligible** (eligible failures), **Clusters** (likely clusters), **Analyzed** (the last analysis), **Confidence** (average cluster confidence) and **Spend MTD**. Hover a label to see its full name.
 
 The same clusters, for one run, are on that run's **Analysis** tab (**Analyze failures**), which is where old `/deep-investigate/<run id>` links open. To turn a cluster into a defect, use **File defect** there.
 

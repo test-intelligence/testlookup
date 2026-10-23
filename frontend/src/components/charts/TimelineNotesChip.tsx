@@ -30,7 +30,7 @@ export interface TimelineNotesChipProps {
 
 const CHIP =
   'inline-flex items-center gap-1 rounded border border-[var(--color-border-light)] bg-[var(--color-bg-card)] px-2 py-1 text-xs text-[var(--color-text)] hover:bg-[var(--color-bg-hover)]'
-const ACTION = 'rounded px-1.5 py-0.5 text-[11px] font-medium hover:bg-[var(--color-bg-hover)] disabled:opacity-50'
+const ACTION = 'rounded px-1.5 py-0.5 text-2xs font-medium hover:bg-[var(--color-bg-hover)] disabled:opacity-50'
 
 export const notesChipLabel = (count: number) => `Notes (${count})`
 
@@ -80,7 +80,7 @@ export default function TimelineNotesChip({ notes, onEdit, allowDelete = true, t
                   {note.suite_name ? <span> · {note.suite_name}</span> : null}
                   <span> · {note.created_by_name ?? 'Unknown'}</span>
                 </p>
-                <p className="m-0 mt-0.5 break-words text-[13px] text-[var(--color-text)]">{note.text}</p>
+                <p className="m-0 mt-0.5 break-words text-sm text-[var(--color-text)]">{note.text}</p>
                 {note.can_edit && (onEdit || allowDelete) ? (
                   <div className="mt-1.5 flex items-center gap-1">
                     {onEdit ? (
@@ -130,7 +130,7 @@ export default function TimelineNotesChip({ notes, onEdit, allowDelete = true, t
           })}
         </ul>
         {truncated ? (
-          <p className="m-0 border-t border-[var(--color-border)] px-3 py-1.5 text-[11px] text-[var(--color-text-secondary)]">
+          <p className="m-0 border-t border-[var(--color-border)] px-3 py-1.5 text-2xs text-[var(--color-text-secondary)]">
             Showing the first {notes.length} notes of this window.
           </p>
         ) : null}

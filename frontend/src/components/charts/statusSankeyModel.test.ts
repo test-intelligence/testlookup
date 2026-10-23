@@ -20,7 +20,7 @@ const FLOWS: StatusTransition[] = [
 ]
 
 const TOKENS = {
-  theme: '', series: [], seq: [], div: [], grid: 'tok-grid', axis: 'tok-axis', card: 'tok-card', border: 'tok-border', text: 'tok-text', textMuted: 'tok-muted', flaky: 'tok-flaky',
+  theme: '', series: [], seq: [], div: [], grid: 'tok-grid', axis: 'tok-axis', card: 'tok-card', border: 'tok-border', text: 'tok-text', textMuted: 'tok-muted', measure: 'tok-measure', fontSans: 'tok-font', flaky: 'tok-flaky',
   status: { passed: 'tok-passed', failed: 'tok-failed', broken: 'tok-broken', skipped: 'tok-skipped', unknown: 'tok-unknown' },
 } as ChartTokens
 

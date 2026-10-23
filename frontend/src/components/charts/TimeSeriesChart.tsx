@@ -96,6 +96,7 @@ import { PinnedTip, useColumnMark } from './ChartTooltip'
 import { useTextMeasure, type TextMeasure } from './textMeasure'
 import {
   MARKER_LABEL_FONT_SIZE,
+  MARKER_LABEL_OFFSET,
   MARKER_LABEL_ROW_HEIGHT,
   layoutMarkerLabels,
   markerLabelText,
@@ -121,7 +122,7 @@ import {
   trendOverlayHaloWidth,
 } from './TimeSeriesChartOverlayStyle'
 import { formatNumber } from '@/utils/formatters'
-import { CHART_VARS, RECHARTS_AXIS_TICK, useChartTokens, type ChartTokens } from './tokens'
+import { CHART_FONT, CHART_VARS, RECHARTS_AXIS_TICK, RECHARTS_AXIS_TITLE, RECHARTS_GRID, useChartTokens, type ChartTokens } from './tokens'
 import { NO_VALUE, utcDayLabel } from './chartText'
 import { useChartAnimation } from './motion'
 import { ChartLegend, type LegendEntry } from './patterns'
@@ -303,7 +304,7 @@ export function dayTipContent(
   input: Omit<TimeSeriesTooltipInput, 'tokens'>,
   overlay: readonly TrendDayRow[] = [],
 ): TooltipContent {
-  const base = timeSeriesTooltipContent({ ...input, tokens: { series: CHART_VARS.series, axis: CHART_VARS.axis } })
+  const base = timeSeriesTooltipContent({ ...input, tokens: { series: CHART_VARS.series, axis: CHART_VARS.axis, measure: CHART_VARS.measure } })
   return tipContent(base.title, [
     ...base.rows,
     ...overlay.map((row) => ({
@@ -348,8 +349,6 @@ export function TimeSeriesTooltip({
 
 /** The plot's top margin: room for one row of release labels, and one more when a label is raised. */
 const PLOT_MARGIN_TOP = 16
-/** Recharts' own offset of a `position: 'top'` label above its line. */
-const LABEL_OFFSET = 5
 
 /**
  * Reads where the release markers fall on the x axis (inside the chart, where
@@ -391,7 +390,8 @@ function MarkerLabelLayout({
 export const NOTE_BAND_FILL = `color-mix(in srgb, ${CHART_VARS.axis} 12%, transparent)`
 /** A one-day note's dash: shorter than a release marker's `5 3`, so the two differ in shape. */
 export const NOTE_LINE_DASH = '2 3'
-const NOTE_LABEL_FONT_SIZE = 10
+/** A note's label size: an annotation (the kit's one font table; it was 10 px, under the 11 px floor). */
+const NOTE_LABEL_FONT_SIZE = CHART_FONT.annotation
 /** The note label's inset from the band / line, px. */
 const NOTE_LABEL_INSET = 3
 
@@ -441,11 +441,11 @@ function NoteLine({ note, x1, y1, x2, y2 }: NoteShapeProps) {
   )
 }
 
-/** The label prop for one marker: as it always was on the first row, raised one row, or none. */
+/** The label prop for one marker: on the first row, raised one row, or none. */
 function markerLabel(marker: TimeSeriesModel['markers'][number], row: MarkerLabelRow) {
   if (row === null) return undefined
-  const label = { value: markerLabelText(marker), position: 'top' as const, fill: CHART_VARS.axis, fontSize: MARKER_LABEL_FONT_SIZE }
-  return row === 1 ? { ...label, offset: LABEL_OFFSET + MARKER_LABEL_ROW_HEIGHT } : label
+  const offset = row === 1 ? MARKER_LABEL_OFFSET + MARKER_LABEL_ROW_HEIGHT : MARKER_LABEL_OFFSET
+  return { value: markerLabelText(marker), position: 'top' as const, offset, fill: CHART_VARS.axis, fontSize: MARKER_LABEL_FONT_SIZE }
 }
 
 function SvgTimeSeries({
@@ -490,7 +490,8 @@ function SvgTimeSeries({
     // A line with a dot when some days are drawn as lone dots: the legend
     // shows the marks the plot has, and a plain line matches none of them (R2 F7).
     { key: 'rate', label: RATE_AXIS_TITLE, stroke: CHART_VARS.series[0], dot: showDots },
-    { key: 'executions', label: EXECUTIONS_AXIS_TITLE, fill: CHART_VARS.series[1] },
+    // One quantity per day: the one-measure colour (W29b UIX-05; = series-2, no pixel moves).
+    { key: 'executions', label: EXECUTIONS_AXIS_TITLE, fill: CHART_VARS.measure },
   ]
   // The hatch is a mark like any other, so it gets a legend entry like any
   // other: an undescribed texture is a second thing the reader has to guess.
@@ -561,7 +562,7 @@ function SvgTimeSeries({
           axis shares the rate axis's interval count, so its ticks sit on these
           same lines.
         */}
-        <CartesianGrid strokeDasharray="3 3" stroke={CHART_VARS.grid} vertical={false} yAxisId="rate" />
+        <CartesianGrid {...RECHARTS_GRID} vertical={false} yAxisId="rate" />
         {/*
           The kit's one short day label ("Mar 5", `utcDayLabel`), as the stacked
           columns draw it: SuiteDetail and Trends put the two charts over the
@@ -584,7 +585,7 @@ function SvgTimeSeries({
           tick={RECHARTS_AXIS_TICK}
           // `offset: 14`, as `MultiSeriesChart`: at the default 5 the rotated
           // title's line box overhung the svg's left edge by 3.1 px.
-          label={{ value: RATE_AXIS_TITLE, angle: -90, position: 'insideLeft', offset: 14, fill: CHART_VARS.axis, fontSize: 11 }}
+          label={{ value: RATE_AXIS_TITLE, angle: -90, position: 'insideLeft', offset: 14, ...RECHARTS_AXIS_TITLE }}
         />
         <YAxis
           yAxisId="executions"
@@ -598,7 +599,7 @@ function SvgTimeSeries({
           axisLine={false}
           tickLine={false}
           tick={RECHARTS_AXIS_TICK}
-          label={{ value: EXECUTIONS_AXIS_TITLE, angle: 90, position: 'insideRight', fill: CHART_VARS.axis, fontSize: 11 }}
+          label={{ value: EXECUTIONS_AXIS_TITLE, angle: 90, position: 'insideRight', ...RECHARTS_AXIS_TITLE }}
         />
         {/* Pinned beside its day (`PinnedTip`): a fixed origin, no slide. */}
         <Tooltip key={cursor.tipKey} content={tooltip} position={{ x: 0, y: 0 }} isAnimationActive={false} {...cursor.tipProps} />
@@ -620,9 +621,9 @@ function SvgTimeSeries({
               // back where the data is: the hatch tile is mostly card colour,
               // so the still-filling bar carries visibly less ink than a
               // finished one while staying distinct by TEXTURE, not by hue.
-              fill={row.partial ? `url(#${patternId})` : CHART_VARS.series[1]}
+              fill={row.partial ? `url(#${patternId})` : CHART_VARS.measure}
               fillOpacity={1}
-              stroke={row.partial ? CHART_VARS.series[1] : undefined}
+              stroke={row.partial ? CHART_VARS.measure : undefined}
               strokeDasharray={row.partial ? '4 2' : undefined}
             />
           ))}
@@ -939,7 +940,7 @@ export default function TimeSeriesChart({
         <defs>
           <pattern id={patternId} width={6} height={6} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
             <rect width={6} height={6} fill={CHART_VARS.card} />
-            <rect width={2.5} height={6} fill={CHART_VARS.series[1]} />
+            <rect width={2.5} height={6} fill={CHART_VARS.measure} />
           </pattern>
         </defs>
       </svg>

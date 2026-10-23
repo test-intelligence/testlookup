@@ -22,14 +22,11 @@
     "frontend/src/components/runs/UploadReportModal.tsx": 1,
     "frontend/src/components/testManagement/EvidenceGapLists.tsx": 2,
     "frontend/src/components/testManagement/LifecyclePanel.tsx": 3,
-    "frontend/src/components/ui/ExperimentalBadge.tsx": 1,
-    "frontend/src/components/ui/MetricCard.tsx": 4,
     "frontend/src/components/workflow/WorkflowTimeline.tsx": 8,
     "frontend/src/pages/AgentStatusPage.tsx": 8,
     "frontend/src/pages/CanonicalDetailPage.tsx": 8,
-    "frontend/src/pages/FlakyCoachPage.tsx": 3,
     "frontend/src/pages/LiveExecutionPage.tsx": 3,
-    "frontend/src/pages/MyFailuresPage.tsx": 4,
+    "frontend/src/pages/MyFailuresPage.tsx": 2,
     "frontend/src/pages/OwnershipEditorPage.tsx": 3,
     "frontend/src/pages/PolicyEditorPage.tsx": 5,
     "frontend/src/pages/ProjectMembersTab.tsx": 5,
@@ -72,6 +69,6 @@
     "frontend/src/pages/test-management/CaseEditForm.tsx": 2,
     "frontend/src/pages/test-management/CaseStatusControl.tsx": 1,
     "frontend/src/pages/test-management/DuplicatesTab.tsx": 4,
-    "frontend/src/pages/test-management/format.ts": 8
+    "frontend/src/pages/test-management/format.ts": 5
   }
 }

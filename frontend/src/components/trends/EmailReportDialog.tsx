@@ -191,7 +191,7 @@ export default function EmailReportDialog({
       slot={slot}
       dataAttributes={{ 'data-email-report-dialog': '' }}
       description={
-        <p data-email-report-summary="" className="m-0 text-[13px] text-[var(--color-text-secondary)] break-words">
+        <p data-email-report-summary="" className="m-0 text-sm text-[var(--color-text-secondary)] break-words">
           {reportSummaryLine(days, suiteLabel, shownRelease)}
         </p>
       }
@@ -226,7 +226,7 @@ export default function EmailReportDialog({
             Checking the mail relay…
           </p>
         ) : blockedReason ? (
-          <p role="status" data-email-availability="blocked" className="mt-3 rounded-md border border-[var(--gate-conditional-border)] bg-[var(--gate-conditional-bg-soft)] px-3 py-2 text-[13px] text-[var(--color-text)] break-words">
+          <p role="status" data-email-availability="blocked" className="mt-3 rounded-md border border-[var(--gate-conditional-border)] bg-[var(--gate-conditional-bg-soft)] px-3 py-2 text-sm text-[var(--color-text)] break-words">
             {blockedReason}
             {isAdmin && notConfigured ? (
               <>
@@ -255,7 +255,7 @@ export default function EmailReportDialog({
             <ul data-email-members="" className="m-0 flex max-h-56 list-none flex-col gap-1 overflow-y-auto p-0">
               {members.map((member) => (
                 <li key={member.user_id}>
-                  <label className="flex items-center gap-2 text-[13px] text-[var(--color-text)]">
+                  <label className="flex items-center gap-2 text-sm text-[var(--color-text)]">
                     <input
                       type="checkbox"
                       data-email-member={member.user_id}

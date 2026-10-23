@@ -260,7 +260,7 @@ export default function TopBar({ navToggle = null }: { navToggle?: TopBarNavTogg
         {!searchVal && (
           <kbd
             aria-hidden="true"
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none hidden sm:inline-flex items-center justify-center h-5 min-w-[1.25rem] px-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[11px] font-mono text-[var(--color-text-muted)]"
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none hidden sm:inline-flex items-center justify-center h-5 min-w-[1.25rem] px-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-2xs font-mono text-[var(--color-text-muted)]"
           >
             /
           </kbd>
@@ -315,7 +315,7 @@ export default function TopBar({ navToggle = null }: { navToggle?: TopBarNavTogg
         >
           <Bell className="w-5 h-5" />
           {unreadCount > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-[var(--status-failed)] text-[var(--color-text-on-status)] text-[11px] font-bold rounded-full flex items-center justify-center px-1">
+            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-[var(--status-failed)] text-[var(--color-text-on-status)] text-2xs font-bold rounded-full flex items-center justify-center px-1">
               {unreadCount > 99 ? '99+' : unreadCount}
             </span>
           )}

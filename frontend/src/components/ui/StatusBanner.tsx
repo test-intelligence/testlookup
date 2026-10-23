@@ -65,20 +65,38 @@ export default function StatusBanner({
     <div
       data-status-banner={state}
       className={clsx(
-        'flex min-h-11 flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border px-4 py-2 text-[13px]',
+        'flex min-h-11 flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border px-4 py-2 text-sm',
         className,
       )}
       style={{ borderColor: `color-mix(in srgb, ${hue} 40%, var(--color-border))`, background: `color-mix(in srgb, ${hue} 8%, var(--color-bg-card))` }}
     >
       <span
         data-banner-pill=""
-        className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11.5px] font-semibold tracking-wide"
+        className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-semibold tracking-wide"
         style={{ color: bannerInk(hue), background: `color-mix(in srgb, ${hue} 14%, transparent)` }}
       >
         <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full" style={{ background: hue }} />
         {word}
       </span>
-      {title && <span className="font-medium text-[var(--color-text)]">{title}</span>}
+      {/* A string title gives way before the link wraps: its flex basis is 17em, so the row breaks as if the title
+          were at most that wide, and the title then grows back to its own width where the line has room. On
+          /releases at 1280 px "2026.11 is blocked — was due Wednesday" left the banner ~2 px on CI's fonts; the
+          W29b 12 px pill took them and "Open 2026.11 →" wrapped to a second line (+15 px). Now the title loses
+          its last letters (the whole of it is the hover text) and the banner keeps one line. A title of 17em or
+          less never truncates, so the banners whose link already wraps (Overview, Failures, Runs) keep their
+          lines; a node title is the page's own layout and is drawn as before. */}
+      {title &&
+        (typeof title === 'string' ? (
+          <span
+            data-banner-title=""
+            title={title}
+            className="min-w-0 max-w-max flex-[1_1_17em] truncate font-medium text-[var(--color-text)]"
+          >
+            {title}
+          </span>
+        ) : (
+          <span className="font-medium text-[var(--color-text)]">{title}</span>
+        ))}
       {facts.slice(0, MAX_FACTS).map((fact) => (
         <span key={fact.label} data-banner-fact="" className="text-[var(--color-text-secondary)]">
           {fact.label} <span className="font-semibold tabular-nums text-[var(--color-text)]">{fact.value}</span>

@@ -32,6 +32,7 @@ import { clsx } from 'clsx'
 import { appMutate } from '@/utils/swrCacheMutate'
 import StatusBadge from '@/components/ui/StatusBadge'
 import SortableHeader from '@/components/ui/SortableHeader'
+import { Th } from '@/components/ui/Table'
 import Pagination from '@/components/ui/Pagination'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import MasterDetail from '@/components/ui/inPage/MasterDetail'
@@ -106,7 +107,7 @@ function statusChips(run: TestRun): StatusChip[] {
   return chips
 }
 
-const CHIP = 'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12.5px] font-medium tabular-nums transition-colors'
+const CHIP = 'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-sm font-medium tabular-nums transition-colors'
 
 export default function RunTestsTab({
   runId,
@@ -374,7 +375,7 @@ export default function RunTestsTab({
                         <SortableHeader label="Status" sortKey="status" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
                         <SortableHeader label="Duration" sortKey="duration_ms" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
                         <SortableHeader label="Category" sortKey="failure_category" currentKey={sortKey} dir={sortDir} onSort={toggleSort} />
-                        <th className="th" />
+                        <Th />
                       </tr>
                     </thead>
                     <tbody>
@@ -395,7 +396,7 @@ export default function RunTestsTab({
                               {typeof tc.step_count === 'number' && tc.step_count > 0 && (
                                 <span
                                   title={`${tc.step_count} captured step${tc.step_count === 1 ? '' : 's'} — open to view the step tree`}
-                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] flex-shrink-0 tabular-nums"
+                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs font-medium bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] flex-shrink-0 tabular-nums"
                                 >
                                   <ListTree className="h-3 w-3" />
                                   {tc.step_count}
@@ -414,7 +415,7 @@ export default function RunTestsTab({
                               {retryAttempts(tc) > 1 && (
                                 <span
                                   title={`Passed on attempt ${retryAttempts(tc)} — this test needed ${retryAttempts(tc) - 1} retry${retryAttempts(tc) === 2 ? '' : 'ies'} to reach its final status`}
-                                  className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium tabular-nums flex-shrink-0 bg-[var(--color-bg-secondary)] text-[var(--status-flaky)]"
+                                  className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-2xs font-medium tabular-nums flex-shrink-0 bg-[var(--color-bg-secondary)] text-[var(--status-flaky)]"
                                 >
                                   <RotateCcw className="h-3 w-3" />
                                   attempt {retryAttempts(tc)}

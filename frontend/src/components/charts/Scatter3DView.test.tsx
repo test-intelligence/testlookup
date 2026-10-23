@@ -71,6 +71,8 @@ const tokensIn = (failed: string): ChartTokens =>
     border: 'silver',
     text: 'black',
     textMuted: 'gray',
+    measure: 'teal',
+    fontSans: 'sans-serif',
   }) as ChartTokens
 
 const lastCallbacks = () => engine.calls[engine.calls.length - 1].callbacks as Scatter3DCallbacks

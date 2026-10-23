@@ -26,10 +26,11 @@
  * reopens it. A value that is neither a UUID nor a test of this answer is never
  * handed to `TestCaseBody` (so never to a request path).
  */
-import { useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ExternalLink, Timer } from 'lucide-react'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { Table, Td, Th, Tr } from '@/components/ui/Table'
 import MasterDetail from '@/components/ui/inPage/MasterDetail'
 import DetailPane from '@/components/ui/inPage/DetailPane'
 import { useDetailParam } from '@/components/ui/inPage/useDetailParam'
@@ -55,8 +56,6 @@ import {
 
 const SECTION_TITLE = 'm-0 text-sm font-semibold text-[var(--color-text)]'
 const NOTE = 'text-xs text-[var(--color-text-muted)]'
-const TH = 'px-2 py-1.5 text-left text-[10px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]'
-const TD = 'px-2 py-1.5 text-[13px] text-[var(--color-text-secondary)] tabular-nums'
 
 /** A block the server could not measure: its reason, as plain text. */
 function Unmeasured({ block, reason, extra }: { block: string; reason: string | null | undefined; extra?: string }) {
@@ -83,7 +82,7 @@ function Kpi({ id, label, value, hint }: { id: string; label: string; value: str
       >
         {value}
       </p>
-      {hint && <p className="m-0 mt-0.5 text-[11px] text-[var(--color-text-faint)]">{hint}</p>}
+      {hint && <p className="m-0 mt-0.5 text-2xs text-[var(--color-text-faint)]">{hint}</p>}
     </div>
   )
 }
@@ -157,7 +156,7 @@ function Phases({ phases, testCount }: { phases: RunTimingPhases; testCount: num
               })}
             </div>
           )}
-          <ul className="m-0 flex list-none flex-wrap gap-x-5 gap-y-1 p-0 text-[13px] text-[var(--color-text-secondary)]">
+          <ul className="m-0 flex list-none flex-wrap gap-x-5 gap-y-1 p-0 text-sm text-[var(--color-text-secondary)]">
             {PHASES.map((phase) => (
               <li key={phase.key} data-timing-phase-total={phase.key} className="flex items-center gap-1.5">
                 <span aria-hidden="true" className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: phase.color }} />
@@ -203,16 +202,8 @@ function TimelineSection({
   )
 }
 
-function Table({ head, children, label }: { head: ReactNode; children: ReactNode; label: string }) {
-  return (
-    <div className="mt-3 overflow-x-auto">
-      <table aria-label={label} className="w-full border-collapse">
-        <thead className="border-b border-[var(--color-border)]">{head}</thead>
-        <tbody>{children}</tbody>
-      </table>
-    </div>
-  )
-}
+// The three tables are the ONE table at `compact` density (W29b UIX-06): the px-2 py-1.5 cells this tab already
+// used; a number column is `numeric` (right-aligned, tabular figures) in its header and its cells.
 
 function Workers({ timing }: { timing: RunTiming }) {
   const { workers } = timing
@@ -223,32 +214,34 @@ function Workers({ timing }: { timing: RunTiming }) {
         <Unmeasured block="workers" reason={workers.reason} />
       ) : (
         <>
-          <Table
-            label="Workers"
-            head={
-              <tr>
-                <th className={TH}>Worker</th>
-                <th className={TH}>Tests</th>
-                <th className={TH}>Busy</th>
-                <th className={TH}>Span</th>
-                <th className={TH}>Busy share</th>
-              </tr>
-            }
-          >
-            {workers.lanes.map((lane, index) => (
-              <tr key={`${lane.worker_id ?? 'none'}:${index}`} data-timing-worker={lane.worker_id ?? ''} className="border-b border-[var(--color-border)]/50">
-                <td className={TD}>{lane.worker_id ?? 'No worker reported'}</td>
-                <td className={TD}>{formatNumber(lane.test_count)}</td>
-                <td className={TD}>{msText(lane.busy_ms)}</td>
-                <td className={TD}>{msText(lane.span_ms)}</td>
-                <td className={TD}>
-                  {lane.busy_ms != null && lane.span_ms != null && lane.span_ms > 0
-                    ? formatPercent(lane.busy_ms / lane.span_ms, { from: 'ratio' })
-                    : NOT_REPORTED}
-                </td>
-              </tr>
-            ))}
-          </Table>
+          <div className="mt-3 overflow-x-auto">
+            <Table density="compact" aria-label="Workers">
+              <thead className="border-b border-[var(--color-border)]">
+                <tr>
+                  <Th>Worker</Th>
+                  <Th numeric>Tests</Th>
+                  <Th numeric>Busy</Th>
+                  <Th numeric>Span</Th>
+                  <Th numeric>Busy share</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {workers.lanes.map((lane, index) => (
+                  <Tr key={`${lane.worker_id ?? 'none'}:${index}`} data-timing-worker={lane.worker_id ?? ''} interactive={false}>
+                    <Td>{lane.worker_id ?? 'No worker reported'}</Td>
+                    <Td numeric>{formatNumber(lane.test_count)}</Td>
+                    <Td numeric>{msText(lane.busy_ms)}</Td>
+                    <Td numeric>{msText(lane.span_ms)}</Td>
+                    <Td numeric>
+                      {lane.busy_ms != null && lane.span_ms != null && lane.span_ms > 0
+                        ? formatPercent(lane.busy_ms / lane.span_ms, { from: 'ratio' })
+                        : NOT_REPORTED}
+                    </Td>
+                  </Tr>
+                ))}
+              </tbody>
+            </Table>
+          </div>
           {workers.truncated && (
             <p className={`${NOTE} mt-2`}>
               Showing {formatNumber(workers.lanes.length)} of {formatNumber(workers.total)} workers (most tests first).
@@ -269,43 +262,45 @@ function Suites({ timing }: { timing: RunTiming }) {
         <Unmeasured block="suites" reason={suites.reason} />
       ) : (
         <>
-          <Table
-            label="Suites"
-            head={
-              <tr>
-                <th className={TH}>Suite</th>
-                <th className={TH}>Wall clock</th>
-                <th className={TH}>Summed</th>
-                <th className={TH}>Parallelism</th>
-                <th className={TH}>Tests</th>
-                <th className={TH}>Failed</th>
-                <th className={TH}>Source</th>
-              </tr>
-            }
-          >
-            {suites.items.map((suite) => (
-              <tr key={suite.suite_key} data-timing-suite={suite.suite_key} className="border-b border-[var(--color-border)]/50">
-                <td className={`${TD} max-w-[18rem] truncate text-[var(--color-text)]`} title={suite.suite_name}>
-                  {suite.suite_name}
-                </td>
-                <td className={TD}>{msText(suite.wall_ms)}</td>
-                <td className={TD}>{msText(suite.summed_ms)}</td>
-                <td className={TD}>{ratioText(suite.parallelism)}</td>
-                <td className={TD}>
-                  {formatNumber(suite.test_count)}
-                  {suite.timed_count !== suite.test_count && (
-                    <span className="text-[var(--color-text-muted)]"> ({formatNumber(suite.timed_count)} timed)</span>
-                  )}
-                </td>
-                <td className={TD}>{formatNumber(suite.failed + suite.broken)}</td>
-                <td className={TD}>
-                  <span data-timing-suite-source={suite.source} className="rounded border border-[var(--color-border-light)] px-1.5 py-0.5 text-[11px]">
-                    {SUITE_SOURCE_LABEL[suite.source] ?? suite.source}
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </Table>
+          <div className="mt-3 overflow-x-auto">
+            <Table density="compact" aria-label="Suites">
+              <thead className="border-b border-[var(--color-border)]">
+                <tr>
+                  <Th>Suite</Th>
+                  <Th numeric>Wall clock</Th>
+                  <Th numeric>Summed</Th>
+                  <Th numeric>Parallelism</Th>
+                  <Th numeric>Tests</Th>
+                  <Th numeric>Failed</Th>
+                  <Th>Source</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {suites.items.map((suite) => (
+                  <Tr key={suite.suite_key} data-timing-suite={suite.suite_key} interactive={false}>
+                    <Td className="max-w-[18rem] truncate text-[var(--color-text)]" title={suite.suite_name}>
+                      {suite.suite_name}
+                    </Td>
+                    <Td numeric>{msText(suite.wall_ms)}</Td>
+                    <Td numeric>{msText(suite.summed_ms)}</Td>
+                    <Td numeric>{ratioText(suite.parallelism)}</Td>
+                    <Td numeric>
+                      {formatNumber(suite.test_count)}
+                      {suite.timed_count !== suite.test_count && (
+                        <span className="text-[var(--color-text-muted)]"> ({formatNumber(suite.timed_count)} timed)</span>
+                      )}
+                    </Td>
+                    <Td numeric>{formatNumber(suite.failed + suite.broken)}</Td>
+                    <Td>
+                      <span data-timing-suite-source={suite.source} className="rounded border border-[var(--color-border-light)] px-1.5 py-0.5 text-2xs">
+                        {SUITE_SOURCE_LABEL[suite.source] ?? suite.source}
+                      </span>
+                    </Td>
+                  </Tr>
+                ))}
+              </tbody>
+            </Table>
+          </div>
           {suites.truncated && (
             <p className={`${NOTE} mt-2`}>
               Showing {formatNumber(suites.items.length)} of {formatNumber(suites.total)} suites.
@@ -358,62 +353,64 @@ function Slowest({ timing, onSelect }: { timing: RunTiming; onSelect: (testId: s
         <Unmeasured block="slowest" reason={slowest.reason} />
       ) : (
         <>
-          <Table
-            label="Slowest tests"
-            head={
-              <tr>
-                <th className={TH}>#</th>
-                <th className={TH}>Test</th>
-                <th className={TH}>Status</th>
-                <th className={TH}>Duration</th>
-                <th className={TH}>Against baseline</th>
-                <th className={TH}>Setup · test · teardown</th>
-                <th className={TH}>Worker</th>
-              </tr>
-            }
-          >
-            {slowest.items.map((test, index) => (
-              <tr key={test.test_id} data-timing-slow-test={test.test_id} className="border-b border-[var(--color-border)]/50">
-                <td className={TD}>{index + 1}</td>
-                <td className={`${TD} max-w-[22rem]`}>
-                  <button
-                    type="button"
-                    onClick={() => onSelect(test.test_id)}
-                    className="block max-w-full truncate text-left text-[var(--color-text)] hover:text-[var(--color-accent)] hover:underline"
-                    title={test.test_name}
-                  >
-                    {test.test_name}
-                  </button>
-                  {test.suite_name && <span className="block truncate text-[11px] text-[var(--color-text-muted)]">{test.suite_name}</span>}
-                </td>
-                <td className={TD}>
-                  <StatusBadge status={test.status} />
-                </td>
-                <td className={TD}>
-                  <span className="mr-2 text-[var(--color-text)]">{msText(test.duration_ms)}</span>
-                  <DurationBar test={test} max={max} />
-                </td>
-                <td className={TD} data-timing-baseline={test.baseline ? 'yes' : 'no'}>
-                  {test.baseline ? (
-                    <>
-                      <span className={test.baseline_ratio != null && test.baseline_ratio >= 1.5 ? 'font-medium text-[var(--status-failed)]' : undefined}>
-                        {test.baseline_ratio != null ? `${ratioText(test.baseline_ratio)} baseline` : NOT_REPORTED}
-                      </span>
-                      <span className="block text-[11px] text-[var(--color-text-muted)]">{baselineText(test.baseline)}</span>
-                    </>
-                  ) : (
-                    <span className="text-[var(--color-text-muted)]">no baseline yet</span>
-                  )}
-                </td>
-                <td className={TD}>
-                  {test.setup_ms == null && test.call_ms == null && test.teardown_ms == null
-                    ? NOT_REPORTED
-                    : `${msText(test.setup_ms)} · ${msText(test.call_ms)} · ${msText(test.teardown_ms)}`}
-                </td>
-                <td className={TD}>{test.worker_id ?? NOT_REPORTED}</td>
-              </tr>
-            ))}
-          </Table>
+          <div className="mt-3 overflow-x-auto">
+            <Table density="compact" aria-label="Slowest tests">
+              <thead className="border-b border-[var(--color-border)]">
+                <tr>
+                  <Th numeric>#</Th>
+                  <Th>Test</Th>
+                  <Th>Status</Th>
+                  <Th numeric>Duration</Th>
+                  <Th>Against baseline</Th>
+                  <Th numeric>Setup · test · teardown</Th>
+                  <Th>Worker</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {slowest.items.map((test, index) => (
+                  <Tr key={test.test_id} data-timing-slow-test={test.test_id} interactive={false}>
+                    <Td numeric>{index + 1}</Td>
+                    <Td className="max-w-[22rem]">
+                      <button
+                        type="button"
+                        onClick={() => onSelect(test.test_id)}
+                        className="block max-w-full truncate text-left text-[var(--color-text)] hover:text-[var(--color-accent)] hover:underline"
+                        title={test.test_name}
+                      >
+                        {test.test_name}
+                      </button>
+                      {test.suite_name && <span className="block truncate text-2xs text-[var(--color-text-muted)]">{test.suite_name}</span>}
+                    </Td>
+                    <Td>
+                      <StatusBadge status={test.status} />
+                    </Td>
+                    <Td numeric>
+                      <span className="mr-2 text-[var(--color-text)]">{msText(test.duration_ms)}</span>
+                      <DurationBar test={test} max={max} />
+                    </Td>
+                    <Td data-timing-baseline={test.baseline ? 'yes' : 'no'}>
+                      {test.baseline ? (
+                        <>
+                          <span className={test.baseline_ratio != null && test.baseline_ratio >= 1.5 ? 'font-medium text-[var(--status-failed)]' : undefined}>
+                            {test.baseline_ratio != null ? `${ratioText(test.baseline_ratio)} baseline` : NOT_REPORTED}
+                          </span>
+                          <span className="block text-2xs text-[var(--color-text-muted)]">{baselineText(test.baseline)}</span>
+                        </>
+                      ) : (
+                        <span className="text-[var(--color-text-muted)]">no baseline yet</span>
+                      )}
+                    </Td>
+                    <Td numeric>
+                      {test.setup_ms == null && test.call_ms == null && test.teardown_ms == null
+                        ? NOT_REPORTED
+                        : `${msText(test.setup_ms)} · ${msText(test.call_ms)} · ${msText(test.teardown_ms)}`}
+                    </Td>
+                    <Td>{test.worker_id ?? NOT_REPORTED}</Td>
+                  </Tr>
+                ))}
+              </tbody>
+            </Table>
+          </div>
           <p className={`${NOTE} mt-2`}>
             The {formatNumber(slowest.items.length)} longest of {formatNumber(slowest.total)}{' '}
             {slowest.total === 1 ? 'test' : 'tests'} with a duration. The tick on each bar is the test's baseline mean

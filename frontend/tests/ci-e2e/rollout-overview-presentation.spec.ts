@@ -98,9 +98,11 @@ for (const width of [640, 1280, 1920]) {
       expect(m.asides, 'the fixture draws three sparklines').toBe(3)
       expect(m.collisions, 'no sparkline over its value or out of its tile').toEqual([])
       expect(new Set(m.rowHeights).size, `one height per row: ${m.rowHeights}`).toBe(1)
-      // One row of five on a desktop page; at 640 px the room-sized tiles
-      // cannot fit five across, so the strip wraps (and nothing scrolls sideways).
-      if (width >= 1280) expect(m.columns, 'one row of five tiles').toBe(5)
+      // W29b fix-kpi: a tile's floor follows the room size (`--kpi-tile-min`, 16.5rem): the 16 px label and change
+      // line cut "TOTAL EXECU…" and "Down … (worse)" in five 186 px tiles at 1280. One row of five where the strip
+      // is wide enough (1920), three columns at 1280, fewer than five at 640 (and nothing scrolls sideways).
+      if (width >= 1920) expect(m.columns, 'one row of five tiles').toBe(5)
+      else if (width >= 1280) expect(m.columns, 'three columns of room-sized tiles').toBe(3)
       else expect(m.columns, 'fewer columns when five cannot fit').toBeLessThan(5)
       await expectNoHorizontalOverflow(page, `Overview, presentation, ${width}`)
     })

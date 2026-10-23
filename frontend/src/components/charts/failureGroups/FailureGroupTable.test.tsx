@@ -24,7 +24,7 @@ describe('FailureGroupTable', () => {
       within(rows[0])
         .getAllByRole('cell')
         .map((c) => c.textContent),
-    ).toEqual(['1', '400', expect.stringMatching(/%$/), '57', '133', '2026-09-01', '2026-09-07', 'Product bug', ''])
+    ).toEqual(['1', '400', expect.stringMatching(/%$/), '57', '133', 'Sep 1, 2026', 'Sep 7, 2026', 'Product bug', ''])
     expect(within(rows[0]).getByRole('img', { name: /^Failures per day, group 1/ })).toBeInTheDocument()
   })
 
@@ -139,7 +139,7 @@ describe('FailureGroupPanel', () => {
     expect(panel.querySelector('script')).toBeNull()
     expect(panel).toHaveTextContent('2 different first lines share this signature: two causes may have been grouped together.')
     expect(panel).toHaveTextContent('Failures400')
-    expect(panel).toHaveTextContent('First seen (UTC)2026-09-01')
+    expect(panel).toHaveTextContent('First seen (UTC)Sep 1, 2026')
     expect(within(panel).getByRole('img', { name: /^Failures per day/ })).toBeInTheDocument()
     expect(panel.querySelectorAll('[data-group-top-test]')).toHaveLength(2)
     expect(panel.querySelector('[data-group-top-test]')).toHaveTextContent('<script>window.__xss=1</script>test_a (200)')

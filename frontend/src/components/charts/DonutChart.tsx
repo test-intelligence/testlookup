@@ -51,7 +51,7 @@ import {
   type PatternDecal,
   type PatternSpec,
 } from './patterns'
-import { CHART_VARS, STATUS_ENCODING, type DecalKind } from './tokens'
+import { CHART_FONT, CHART_VARS, STATUS_ENCODING, type DecalKind } from './tokens'
 import { useTextMeasure, type TextMeasure } from './textMeasure'
 import {
   fitDonut,
@@ -329,11 +329,11 @@ export function DonutPlot({
     const { x: cx, y: cy } = centre
     return (
       <text data-donut-centre="" x={cx} y={cy} textAnchor="middle" fill={CHART_VARS.text}>
-        <tspan x={cx} dy="-0.1em" fontSize={20} fontWeight={600}>
+        <tspan x={cx} dy="-0.1em" fontSize={CHART_FONT.centre} fontWeight={600}>
           {formatNumber(model.total)}
         </tspan>
         {centreCaption && (
-          <tspan x={cx} dy="1.4em" fontSize={11} fill={CHART_VARS.axis}>
+          <tspan x={cx} dy="1.4em" fontSize={CHART_FONT.annotation} fill={CHART_VARS.axis}>
             {centreCaption}
           </tspan>
         )}

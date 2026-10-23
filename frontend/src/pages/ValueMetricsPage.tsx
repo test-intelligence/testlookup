@@ -627,38 +627,28 @@ export default function ValueMetricsPage() {
           whole at 1280 px (`kpi-labels.spec.ts`); the full names are hints. */}
       <KpiStrip>
         <MetricCard
-          compact
-          icon={null}
           title="Defects grouped"
           hint="Defects auto-grouped"
           metric={{ value: counter(metrics.defects_auto_grouped) }}
           sparkline={<CounterNote>{metrics.tests_grouped} tests · {metrics.defects_promoted} promoted to Jira</CounterNote>}
         />
         <MetricCard
-          compact
-          icon={null}
           title="Duplicates avoided"
           metric={{ value: counter(metrics.duplicate_tickets_avoided) }}
           sparkline={<CounterNote>tickets prevented</CounterNote>}
         />
         <MetricCard
-          compact
-          icon={null}
           title="Flaky tests found"
           metric={{ value: counter(metrics.flaky_tests_identified) }}
           sparkline={<CounterNote>{metrics.quarantine_recommended} recommended for quarantine</CounterNote>}
         />
         <MetricCard
-          compact
-          icon={null}
           title="Releases blocked"
           hint="Risky releases blocked"
           metric={{ value: counter(metrics.risky_releases_blocked) }}
           sparkline={<CounterNote>{metrics.releases_conditional} conditional · {metrics.release_overrides} overridden</CounterNote>}
         />
         <MetricCard
-          compact
-          icon={null}
           title="AI reports"
           hint="Intelligence reports"
           metric={{ value: counter(metrics.intelligence_reports_generated) }}
@@ -683,19 +673,15 @@ export default function ValueMetricsPage() {
           persistKey="value-metrics.model-breakdown"
         >
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5" data-testid="model-breakdown">
-            <MetricCard compact icon={null} title="Auto-triaged failures" metric={{ value: counter(monthlyTotals.auto_triaged) }} />
-            <MetricCard compact icon={null} title="Clustered failures" metric={{ value: counter(monthlyTotals.clustered_failures) }} />
-            <MetricCard compact icon={null} title="Duplicate failures absorbed" metric={{ value: counter(monthlyTotals.duplicates_absorbed) }} />
+            <MetricCard title="Auto-triaged failures" metric={{ value: counter(monthlyTotals.auto_triaged) }} />
+            <MetricCard title="Clustered failures" metric={{ value: counter(monthlyTotals.clustered_failures) }} />
+            <MetricCard title="Duplicate failures absorbed" metric={{ value: counter(monthlyTotals.duplicates_absorbed) }} />
             <MetricCard
-              compact
-              icon={null}
               title="Quarantine-suppressed failures"
               metric={{ value: counter(monthlyTotals.quarantine_suppressed_failures) }}
             />
             <div title="Proxy estimate — derived from quarantine suppressions and the blocked-run wait assumption, not directly measured.">
               <MetricCard
-                compact
-                icon={null}
                 title="Runs unblocked (estimate)"
                 metric={{ value: counter(monthlyTotals.runs_unblocked_proxy), trend_direction: 'none', trend_text: 'Proxy estimate' }}
               />

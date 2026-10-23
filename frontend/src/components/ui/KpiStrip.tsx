@@ -3,8 +3,11 @@ import { clsx } from 'clsx'
 
 export const KPI_STRIP_MAX = 5
 
-/** The strip's columns: as many 10rem-or-wider tracks as fit, the tiles sharing the width. */
-export const KPI_STRIP_COLUMNS = 'repeat(auto-fit, minmax(10rem, 1fr))'
+/**
+ * The strip's columns: as many tracks as fit at the tile's narrowest width (`--kpi-tile-min`: 10rem at the desk,
+ * 16.5rem in presentation mode, `index.css`), the tiles sharing the width.
+ */
+export const KPI_STRIP_COLUMNS = 'repeat(auto-fit, minmax(var(--kpi-tile-min, 10rem), 1fr))'
 
 /**
  * At most five compact `MetricCard`s in one row (UX redesign P0), above a
@@ -16,10 +19,11 @@ export default function KpiStrip({ children, className }: { children: ReactNode[
   if (import.meta.env.DEV && tiles.length > KPI_STRIP_MAX) {
     console.warn(`KpiStrip: ${tiles.length} tiles given; it shows at most ${KPI_STRIP_MAX}.`)
   }
-  // One row while every tile gets at least 10rem (a 40 px presentation-mode
-  // value such as "8m 32s" needs ~144 px); fewer columns only when the strip
-  // is narrower than that. A fixed `repeat(5, …)` overflowed the page
-  // sideways at 640 px in presentation mode. `auto-fit` collapses the unused
+  // One row while every tile gets at least `--kpi-tile-min`; fewer columns only when the strip is narrower than
+  // that. At the desk that is 10rem (five tiles in one row at 1280 px). In presentation mode the tile's label and
+  // change line are 16 px (W29b: the `.eyebrow` and `text-xs` tokens grow), so five 186 px tiles cut "TOTAL
+  // EXECU…" and "Down …": the floor grows to 16.5rem there, three columns at 1280 px and four at 1440. A fixed
+  // `repeat(5, …)` overflowed the page sideways at 640 px in presentation mode. `auto-fit` collapses the unused
   // tracks, so three tiles still share the full width.
   return (
     <div data-kpi-strip="" className={clsx('grid gap-3', className)} style={{ gridTemplateColumns: KPI_STRIP_COLUMNS }}>

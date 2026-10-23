@@ -1,21 +1,17 @@
 /**
- * MetricCard accessibility (VIZ-302 follow-up): the two defects axe found in
- * the report-context gallery, pinned here so they cannot come back through a
- * page that happens not to be in that gallery.
+ * MetricCard accessibility (VIZ-302 follow-up; W29b: the ONE tile): the two defects axe found in the report-context
+ * gallery, pinned here so they cannot come back through a page that happens not to be in that gallery.
  *
- *  1. The loading placeholder was a role-less `<div aria-label="Loading">`.
- *     `aria-label` is PROHIBITED on an element with no role (axe
- *     `aria-prohibited-attr`, serious): most screen readers ignore it, so the
- *     busy state was announced as nothing at all.
- *  2. Text contrast is measured against the real theme tokens in
- *     `src/index.css`, in all six themes, for every piece of TEXT the card
- *     renders (title, trend line — in each trend colour) on the card
- *     background. `lab` failed: the title was `--color-text-muted` (4.15:1)
- *     and a flat trend line likewise; the status hues at 12 px are below 4.5:1
- *     in four dark themes (`--status-failed` 3.94:1 on slate).
+ *  1. The loading placeholder was a role-less `<div aria-label="Loading">`. `aria-label` is PROHIBITED on an
+ *     element with no role (axe `aria-prohibited-attr`, serious): most screen readers ignore it, so the busy state
+ *     was announced as nothing at all.
+ *  2. Text contrast is measured against the real theme tokens in `src/index.css`, in every theme of the registry,
+ *     for every piece of TEXT the tile renders (the label, the change words, the judgement) on its surface: the card
+ *     for the strip tile, the sunken --color-bg-secondary well for the in-panel stat. `lab` failed once: the label
+ *     was `--color-text-muted` (4.15:1 on its card); the status hues at 12 px are below 4.5:1 in four dark themes,
+ *     so they paint only the (decorative) icon.
  */
 import { render, screen } from '@testing-library/react'
-import { BarChart3 } from 'lucide-react'
 import { beforeAll, describe, expect, it } from 'vitest'
 import MetricCard from './MetricCard'
 import { readSourceFile } from '@/test/readSourceFile'
@@ -25,9 +21,6 @@ let CSS = ''
 beforeAll(async () => {
   CSS = await readSourceFile('src/index.css')
 })
-
-// Every theme of the registry (W29a: seven, Paper included).
-const THEMES = THEME_IDS
 
 /** `--token: #rrggbb` pairs declared in one `[data-theme="x"] { ... }` block. */
 function themeTokens(theme: string): Map<string, string> {
@@ -50,8 +43,8 @@ function contrast(a: string, b: string): number {
   return (hi + 0.05) / (lo + 0.05)
 }
 
-/** The colour token an element's OWN text is painted with: the nearest
- *  `text-[var(--x)]` class on it or an ancestor inside the card. */
+/** The colour token an element's OWN text is painted with: the nearest `text-[var(--x)]` class on it or an
+ *  ancestor inside the tile. */
 function textToken(el: Element | null): string {
   for (let node = el; node; node = node.parentElement) {
     const m = /(?:^|\s)text-\[var\((--[\w-]+)\)\]/.exec(node.getAttribute('class') ?? '')
@@ -61,39 +54,38 @@ function textToken(el: Element | null): string {
 }
 
 describe('MetricCard accessibility', () => {
-  it('the loading placeholder puts no aria-label on a role-less element, and still says "Loading"', () => {
-    const { container } = render(<MetricCard title="Pass Rate" icon={<BarChart3 />} loading />)
+  it.each(['md', 'sm'] as const)('(%s) the loading placeholder puts no aria-label on a role-less element, and still says "Loading"', (size) => {
+    const { container } = render(<MetricCard size={size} title="Pass Rate" loading />)
     for (const el of container.querySelectorAll('[aria-label]')) {
       // aria-label is only allowed where the element has a role that takes a name.
       expect(el.getAttribute('role'), `aria-label on a role-less <${el.tagName.toLowerCase()}>`).not.toBeNull()
     }
     // The busy state is still exposed to assistive tech, as text.
     expect(screen.getByText('Loading')).toBeInTheDocument()
-    // ...and not as a live region (the card must never announce itself).
+    // ...and not as a live region (the tile must never announce itself).
     expect(container.querySelector('[aria-live],[role="status"]')).toBeNull()
   })
 
-  const cases: Array<[label: string, direction: 'up' | 'down' | 'flat', positive: 'up' | 'down']> = [
-    ['good trend', 'up', 'up'],
-    ['bad trend', 'up', 'down'],
-    ['flat trend', 'flat', 'up'],
+  // The change words are two spans (W29b fix-kpi): the figure, which never truncates, and the context after it.
+  const cases: Array<[label: string, direction: 'up' | 'down' | 'flat', positive: 'up' | 'down', figure: string]> = [
+    ['good trend', 'up', 'up', 'Up 3%'],
+    ['bad trend', 'up', 'down', 'Up 3%'],
+    ['flat trend', 'flat', 'up', 'No change 3%'],
   ]
 
-  for (const [label, direction, positive] of cases) {
-    it(`title and trend text reach 4.5:1 on the card in every theme (${label})`, () => {
-      render(
-        <MetricCard
-          title="Pass Rate"
-          metric={{ value: '98%', trend: 3, trend_direction: direction }}
-          icon={<BarChart3 />}
-          positiveDirection={positive}
-        />,
-      )
-      const texts = {
-        title: textToken(screen.getByText('Pass Rate')),
-        trend: textToken(screen.getByText('3% vs prev period')),
+  for (const [label, direction, positive, figure] of cases) {
+    it(`the label and the change words reach 4.5:1 on the card in every theme (${label})`, () => {
+      render(<MetricCard title="Pass Rate" metric={{ value: '98%', trend: 3, trend_direction: direction }} positiveDirection={positive} />)
+      const texts: Record<string, string> = {
+        label: textToken(screen.getByText('Pass Rate')),
+        change: textToken(screen.getByText(figure)),
+        context: textToken(screen.getByText('vs prev period')),
+        value: textToken(screen.getByText('98%')),
       }
-      for (const theme of THEMES) {
+      const judgement = document.querySelector('[data-trend-judgement]')
+      if (judgement) texts.judgement = textToken(judgement)
+      expect(texts.label).toBe('--color-text-secondary')
+      for (const theme of THEME_IDS) {
         const tokens = themeTokens(theme)
         const card = tokens.get('--color-bg-card')
         expect(card, `${theme} --color-bg-card`).toBeDefined()
@@ -106,4 +98,24 @@ describe('MetricCard accessibility', () => {
       }
     })
   }
+
+  it('the in-panel stat (sm): the label and a neutral value reach 4.5:1 on the sunken well in every theme', () => {
+    render(<MetricCard size="sm" title="Time to fix" metric={{ value: 74 }} caption="median, 30 days" />)
+    const texts = {
+      label: textToken(screen.getByText('Time to fix')),
+      value: textToken(screen.getByText('74')),
+      caption: textToken(screen.getByText('median, 30 days')),
+    }
+    for (const theme of THEME_IDS) {
+      const tokens = themeTokens(theme)
+      const well = tokens.get('--color-bg-secondary')
+      expect(well, `${theme} --color-bg-secondary`).toBeDefined()
+      for (const [what, token] of Object.entries(texts)) {
+        const fg = tokens.get(token)
+        expect(fg, `${theme}: ${what} token ${token} is not a theme colour`).toBeDefined()
+        const ratio = contrast(fg as string, well as string)
+        expect(ratio, `${theme}: ${what} (${token}) ${ratio.toFixed(2)}:1 on the well`).toBeGreaterThanOrEqual(4.5)
+      }
+    }
+  })
 })

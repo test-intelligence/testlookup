@@ -17,7 +17,8 @@
  * `severity.ts` are the only places outside the chart kit allowed to name the
  * failed / broken hues directly (quality gate `frontend.status-hue-semantics`).
  */
-import { FLAKY_MARKER, STATUS_ENCODING } from '@/components/charts/tokens'
+// The kit's label module, not `tokens`: this file is on every page from the first render (eager bundle budget).
+import { FLAKY_MARKER, STATUS_ENCODING } from '@/components/charts/statusEncoding'
 
 export type ResultStatus = 'passed' | 'failed' | 'broken' | 'skipped' | 'unknown'
 

@@ -45,6 +45,7 @@ import {
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { CSS2DObject, CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js'
 import { QUADRANTS, type Quadrant } from '../../testScatter.model'
+import { CHART_FONT } from '../../tokens'
 import { QUADRANT_SYMBOLS, SCATTER_ALPHA } from '../echarts/scatterOption'
 import type {
   Scatter3DAxis,
@@ -133,7 +134,8 @@ function label(text: string, at: Vec3, kind: 'tick' | 'title'): CSS2DObject {
   el.setAttribute(kind === 'title' ? 'data-scatter-3d-title' : 'data-scatter-3d-tick', '')
   el.style.pointerEvents = 'none'
   el.style.whiteSpace = 'nowrap'
-  el.style.fontSize = kind === 'title' ? '12px' : '11px'
+  // The kit's one font table (W29b UIX-05): an axis title and a tick, both 11 px, as on the 2D scatter.
+  el.style.fontSize = `${kind === 'title' ? CHART_FONT.axisTitle : CHART_FONT.tick}px`
   el.style.color = kind === 'title' ? 'var(--color-text-secondary)' : 'var(--chart-axis)'
   const object = new CSS2DObject(el)
   object.position.set(...at)

@@ -376,6 +376,26 @@ locally by default.
 
 ### Changed
 
+- **The UI standard reaches the analysis pages and the charts** (owner
+  request 2026-10-17, wave W29b, UIX-04b, 05, 06, 09). Failures, Runs, Run
+  analysis, Flaky, My failures, Defects, Deep investigation, Coverage and
+  Trends, and the shared components, use the type scale: no text under 11 px
+  there. Charts share one text style in the page's font across every chart
+  engine, solid gridlines and one colour for a single-measure bar; the
+  failure-cluster bubbles are readable in Paper, and the failure groups'
+  dates read "Sep 12, 2026". Tables share one look: sortable headers that keep
+  their case, numbers right-aligned, a grey row hover. Panels share one
+  header and every KPI is one tile (12 px card corners, no white sheens).
+  Checkboxes and radios follow the theme. The test-management priority pill
+  uses the one severity scale, the gate explanation says "No-Go floor", and
+  the run-analysis banner states its decision once ("Overridden · proceed
+  with mitigation"). On Deep investigation, labels that did not fit at
+  1280 px are shorter, with the full name on hover (**Eligible**,
+  **Sources**, **Pre-scan**, **Clusters**, **Analyzed**, **Confidence**).
+  Two new count guards (hand-styled table headers, hand-made card surfaces)
+  and two chart rules (font sizes only from the chart tokens, solid grids)
+  keep it so. No API answer changes.
+
 - **What W29a changes on screen.** Buttons have 8 px corners (they were
   pills); "NO GO" / "No-go" / "CONDITIONAL" read "No-Go" / "Conditional" and
   statuses read "Failed" rather than "FAILED"; a release's or a run's
@@ -577,6 +597,14 @@ locally by default.
   changed nothing.
 
 ### Fixed
+
+- On `/runs`, picking a branch and then an AI verdict before the list
+  refreshed dropped the branch filter; both filters stay now (W29b).
+
+- The homelab deploy's registry-mirror precheck and the registry prune's
+  garbage collection failed on a Windows build host: Git Bash rewrote their
+  in-container paths, so every node was reported "missing" and the deploy
+  stopped. Both run as one `sh -c` string now (OPS-03).
 
 - In the light theme the loading spinner's moving arc was white on white,
   destructive buttons were white text on a pale pink (1.26:1) and avatar
@@ -820,6 +848,11 @@ locally by default.
   `retention_activation_nudge`.
 
 ### Security
+
+- **aiohttp 3.14.4 and follow-redirects 1.16.1.** The backend's aiohttp
+  (CVE-2026-111064, CVE-2026-111066: denial of service) and the frontend's
+  follow-redirects under axios (CVE-2026-111755, CVE-2026-111756: information
+  disclosure) move to their fixed releases; aiohttp 3.14.4 needs yarl 1.25.1.
 
 - **Digest subscriptions check every id they are given** (W09). Creating or
   editing a subscription accepted any `saved_view_id`, and editing accepted

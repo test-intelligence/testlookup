@@ -29,7 +29,7 @@ import {
   YAxis,
 } from 'recharts'
 import { formatDuration, formatNumber } from '@/utils/formatters'
-import { CHART_VARS, RECHARTS_AXIS_TICK } from './tokens'
+import { CHART_FONT, CHART_VARS, RECHARTS_AXIS_TICK, RECHARTS_AXIS_TITLE, RECHARTS_GRID } from './tokens'
 import { useChartAnimation } from './motion'
 import { cursorPoint, useChartCursor, type ChartCursorPoint } from './ChartCursor'
 import { PinnedTip, useColumnMark } from './ChartTooltip'
@@ -144,7 +144,7 @@ export const DURATION_TREND_CURVE = 'linear' as const
  */
 function DurationTick({ x, y, payload, axis }: { x?: number; y?: number; payload?: { value?: number }; axis: NiceScale | null }) {
   return (
-    <text x={x} y={y} dy={4} textAnchor="end" fill={CHART_VARS.axis} fontSize={11}>
+    <text x={x} y={y} dy={4} textAnchor="end" fill={CHART_VARS.axis} fontSize={CHART_FONT.tick}>
       {durationTickLabel(payload?.value ?? 0, axis)}
     </text>
   )
@@ -230,7 +230,7 @@ export default function DurationTrend({
           margin={{ top: 8, right: brushRoom ? PLOT_MARGIN_RIGHT_WITH_BRUSH : PLOT_MARGIN_RIGHT, left: 8, bottom: 8 }}
           accessibilityLayer={false}
         >
-          <CartesianGrid strokeDasharray="3 3" stroke={CHART_VARS.grid} vertical={false} />
+          <CartesianGrid {...RECHARTS_GRID} vertical={false} />
           <XAxis
             dataKey="x"
             axisLine={false}
@@ -242,7 +242,7 @@ export default function DurationTrend({
             tickFormatter={utcDayLabel}
             dy={8}
             height={48}
-            label={{ value: DURATION_TREND_X_AXIS, position: 'insideBottom', fill: CHART_VARS.axis, fontSize: 11 }}
+            label={{ value: DURATION_TREND_X_AXIS, position: 'insideBottom', ...RECHARTS_AXIS_TITLE }}
           />
           <YAxis
             // From zero to a nice top over the window's maximum — a zoomed
@@ -254,7 +254,7 @@ export default function DurationTrend({
             tickLine={false}
             tick={<DurationTick axis={axis} />}
             width={78}
-            label={{ value: DURATION_TREND_Y_AXIS, angle: -90, position: 'insideLeft', fill: CHART_VARS.axis, fontSize: 11 }}
+            label={{ value: DURATION_TREND_Y_AXIS, angle: -90, position: 'insideLeft', ...RECHARTS_AXIS_TITLE }}
           />
           {/* Pinned beside its day (`PinnedTip`): a fixed origin, no slide. */}
           <Tooltip

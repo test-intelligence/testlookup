@@ -308,10 +308,14 @@ test.describe('Failure groups (1280 x 4000)', () => {
 })
 
 // P3 moved the groups up (the default tab, right under the Top failing table, where the verdict card,
-// the body cards and nothing else used to sit): at 1280 x 600 their placeholder still starts beyond the
-// near margin at load, so the proof is unchanged (`proveLazyMount` asserts that precondition itself).
-test.describe('Failure groups, a short screen (1280 x 600)', () => {
-  test.use({ viewport: { ...SHORT_VIEWPORT }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
+// the body cards and nothing else used to sit). W29b's compact Top failing table (66 px shorter at 1280)
+// moved them up again: at the 600 px short screen their placeholder starts 203 px below the fold, inside
+// the 200 px margin plus the proof's 50 px, so it would be near at load and the proof would mean nothing.
+// 480 px puts it ~323 px below the fold: the same proof, with room (`proveLazyMount` asserts it itself).
+const SHORTER_VIEWPORT = { width: SHORT_VIEWPORT.width, height: 480 } as const
+
+test.describe('Failure groups, a short screen (1280 x 480)', () => {
+  test.use({ viewport: { ...SHORTER_VIEWPORT }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
   test('lazy: no failure-groups read until the section is near, and it goes out before it is visible', async ({ page }) => {
     const { api, errors } = await open(page)

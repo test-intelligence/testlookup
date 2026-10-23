@@ -27,6 +27,11 @@
  * ring — a real browser at a small size only; at the gallery's 320 px nothing
  * overruns, and jsdom measures nothing. The last block below covers it.)
  *
+ * ONE deliberate change since (W29b UIX-04b): the caption is `text-2xs` (11 px,
+ * the page scale's floor) instead of `text-[10px]`; the snapshot diff is that
+ * class and only that, and the `pass-rate-gauge*` / `ring-gauge-*` baselines
+ * change with it, on purpose.
+ *
  * Before this file was committed, a one-off sweep also compared the
  * refactored `PassRateGauge` against the ORIGINAL file (`git show
  * d55c6ce1:…/PassRateGauge.tsx`) over 216 renders — sizes 60/120/200/320 x

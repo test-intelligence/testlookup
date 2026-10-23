@@ -34,6 +34,8 @@ const tokens: ChartTokens = {
   border: 'border',
   text: 'text',
   textMuted: 'muted',
+  measure: 'measure',
+  fontSans: 'sans-serif',
 }
 
 const WIDTH = 640

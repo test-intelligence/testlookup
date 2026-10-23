@@ -21,8 +21,18 @@
  * so the pass holds on a Linux runner's DejaVu Sans as on Segoe UI. Pure.
  */
 
-/** The labels' size, px: what the plot has always drawn them at. */
-export const MARKER_LABEL_FONT_SIZE = 10
+import { CHART_FONT } from './tokens'
+
+/** The labels' size, px: an annotation in the kit's one font table (W29b UIX-05; it was 10 px, under the 11 px floor). */
+export const MARKER_LABEL_FONT_SIZE = CHART_FONT.annotation
+/**
+ * How far a first-row label's baseline sits above the plot's top edge, px:
+ * Recharts' `offset` for a `position: 'top'` label. 4, one under Recharts'
+ * default 5: at 11 px a label's text box (15 px tall on Segoe UI) would rise
+ * 1 px out of the plot's 16 px top margin, and the svg would cut its top
+ * (`chart-fullscreen-text.spec.ts`). W29b UIX-05.
+ */
+export const MARKER_LABEL_OFFSET = 4
 /** One row's height, px: a raised label sits this much above the first row. */
 export const MARKER_LABEL_ROW_HEIGHT = 12
 /** The least clear space between two labels on a row, px. Less reads as one string. */

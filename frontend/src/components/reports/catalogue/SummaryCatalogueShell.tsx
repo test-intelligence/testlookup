@@ -54,7 +54,7 @@ import {
 const FRAME = 'flex min-w-0 flex-col gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)] p-4'
 const HEADER = 'flex flex-wrap items-start gap-3'
 const TITLE_COLUMN = 'min-w-0 flex-[1_1_8rem]'
-const HEADING = 'line-clamp-2 break-words text-sm font-semibold text-[var(--color-text)]'
+const HEADING = 'line-clamp-2 break-words m-0 text-base font-semibold leading-tight text-[var(--color-text)]'
 const TAKEAWAY = 'mt-0.5 text-sm text-[var(--color-text-secondary)]'
 const TOOLBAR = 'flex max-w-full shrink-0 flex-wrap items-center gap-1'
 const BODY = 'min-w-0 transition-opacity focus:outline-none'

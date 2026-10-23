@@ -33,6 +33,7 @@ import WindowPicker from '@/components/ui/WindowPicker'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import Pagination from '@/components/ui/Pagination'
+import { Table, Td, Th, Tr } from '@/components/ui/Table'
 import { useTabParam } from '@/components/ui/useTabParam'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import { formatRunWhen } from '@/utils/formatters'
@@ -76,8 +77,6 @@ function severityDot(severity: string | null | undefined): string | null {
   const level = severityLevel(severity)
   return level ? SEVERITY_STYLE[level].dot : null
 }
-
-const TH = 'px-4 py-2.5 text-left text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider whitespace-nowrap'
 
 export default function MyFailuresPage() {
   const navigate = useNavigate()
@@ -208,7 +207,7 @@ export default function MyFailuresPage() {
               </>
             )}
             {data?.unresolved_total !== undefined && (
-              <span className="ml-auto text-[12px] text-[var(--color-text-muted)]">
+              <span className="ml-auto text-xs text-[var(--color-text-muted)]">
                 {data.unresolved_total === 0
                   ? (effectiveScope === 'team' ? 'Nothing unresolved' : 'Nothing assigned')
                   : <><strong className="text-[var(--color-text)] tabular-nums">{data.unresolved_total}</strong> {effectiveScope === 'team' ? 'unresolved' : 'assigned'}</>}
@@ -241,21 +240,25 @@ export default function MyFailuresPage() {
               />
             ) : (
               <div className="rounded-xl border border-[var(--color-border)] overflow-hidden">
-                <table className="w-full text-sm" aria-label="Assigned failures">
-                  <thead className="bg-[var(--color-bg-secondary)]/80">
+                {/* The ONE table at `dense` density (W29b UIX-06): 4 px less side padding per cell and a 4 px
+                    shorter header than before; a two-line row stays under 56 px (fold-inbox). The header row's
+                    sunken surface is the `.th` cells'. */}
+                <Table density="dense" aria-label="Assigned failures">
+                  <thead>
                     <tr>
-                      <th className={clsx(TH, 'w-2')}>{/* severity dot */}</th>
-                      <th className={TH}>Test</th>
-                      <th className={TH}>Test Suite</th>
-                      <th className={TH}>Run</th>
-                      <th
-                        className={clsx(TH, '!text-right')}
+                      <Th className="w-2 whitespace-nowrap">{/* severity dot */}</Th>
+                      <Th className="whitespace-nowrap">Test</Th>
+                      <Th className="whitespace-nowrap">Test Suite</Th>
+                      <Th className="whitespace-nowrap">Run</Th>
+                      <Th
+                        numeric
+                        className="whitespace-nowrap"
                         title={`Failures of this test in the last ${days === 1 ? '24 hours' : `${days} days`}`}
                       >
                         Failures
-                      </th>
-                      <th className={TH}>Age</th>
-                      <th className={clsx(TH, 'w-4')}>{/* open */}</th>
+                      </Th>
+                      <Th className="whitespace-nowrap">Age</Th>
+                      <Th className="w-4 whitespace-nowrap">{/* open */}</Th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--color-border)]">
@@ -320,7 +323,7 @@ export default function MyFailuresPage() {
                       )
                     })}
                   </tbody>
-                </table>
+                </Table>
               </div>
             )}
 
@@ -357,11 +360,12 @@ function FailureRow({
   const windowLabel = windowDays === 1 ? '24h' : `${windowDays}d`
   // Visual emphasis scales with repetition — a single failure stays neutral,
   // 2-4 is amber, 5+ is red so repeat offenders pop without screen-real-estate cost.
+  // The count's words on its tint read the hue's -ink (>= 4.5:1 in every theme, W29a UIX-03).
   const countTone =
     count >= 5
-      ? 'bg-[var(--status-failed-bg)]/40 text-[var(--status-failed)]'
+      ? 'bg-[var(--status-failed-bg)]/40 text-[var(--status-failed-ink)]'
       : count >= 2
-      ? 'bg-[var(--status-broken-bg)]/30 text-[var(--status-broken)]'
+      ? 'bg-[var(--status-broken-bg)]/30 text-[var(--status-broken-ink)]'
       : 'bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)]'
   // The second line: what failed, where, and why it is the reader's. Each
   // part keeps its own element (and the whole line its title) so a long
@@ -374,11 +378,9 @@ function FailureRow({
   const when = formatRunWhen(item.created_at)
   return (
     <>
-    <tr
-      onClick={onOpen}
-      className="cursor-pointer hover:bg-[var(--color-bg-secondary)]/60 transition-colors"
-    >
-      <td className="px-4 py-2">
+    {/* The rows' lines are the body's `divide-y` (none under the last row, inside the box's own edge). */}
+    <Tr onClick={onOpen} className="border-b-0">
+      <Td>
         <span
           data-testid="severity-dot"
           data-severity={dot ? (item.severity || '').toLowerCase() : 'unknown'}
@@ -389,18 +391,18 @@ function FailureRow({
           title={dot ? `Severity: ${item.severity}` : 'Severity unknown'}
           aria-hidden
         />
-      </td>
+      </Td>
       {/* The Test cell takes the room the other columns leave (`w-full`) and
           never asks for more (`max-w-0`), so its two lines cut off at the
           cell's edge. With a fixed 460 px cap the table was 1,168 px wide in a
           1,134 px card at 1440 (974 at 1280): the card's `overflow-hidden`
           cut off the row actions (P6 fold budget, `fold-budget.spec.ts`). */}
-      <td className="px-4 py-2 w-full max-w-0" data-col="test">
+      <Td className="w-full max-w-0" data-col="test">
         <div className="text-[var(--color-text)] font-medium truncate" title={item.test_name}>
           {item.test_name}
         </div>
         {detail && (
-          <div className="text-[11px] text-[var(--color-text-muted)] truncate" title={detail} data-row-detail="">
+          <div className="text-2xs text-[var(--color-text-muted)] truncate" title={detail} data-row-detail="">
             {item.error_message && <span className="font-mono">{item.error_message}</span>}
             {item.last_failure_step && (
               <span className="text-[var(--color-text-faint)]">
@@ -416,15 +418,15 @@ function FailureRow({
             )}
           </div>
         )}
-      </td>
-      <td className="px-4 py-2 text-xs text-[var(--color-text-secondary)] align-middle">
+      </Td>
+      <Td className="text-xs align-middle">
         {item.suite_name ? (
           <span className="truncate max-w-[200px] inline-block align-middle" title={item.suite_name}>{item.suite_name}</span>
         ) : (
           <span className="text-[var(--color-text-faint)]">—</span>
         )}
-      </td>
-      <td className="px-4 py-2 text-[var(--color-text-secondary)] font-mono text-xs whitespace-nowrap">
+      </Td>
+      <Td className="font-mono text-xs whitespace-nowrap">
         {/* Project name is omitted because the user selects it in the global
             project dropdown — surfacing it again per-row is redundant. Run
             identifier is the human-readable, per-(project, suite) incremental
@@ -440,34 +442,34 @@ function FailureRow({
           <span className="text-[var(--color-text-faint)]">—</span>
         )}
         {(when || item.test_run_id) && (
-          <div className="text-[10px] text-[var(--color-text-faint)] tabular-nums">
+          <div className="text-2xs text-[var(--color-text-faint)] tabular-nums">
             {when && <span>{when}</span>}
             {item.test_run_id && <span>{when ? ' · ' : ''}{item.test_run_id.slice(0, 8)}</span>}
           </div>
         )}
-      </td>
-      <td className="px-4 py-2 text-right">
+      </Td>
+      <Td numeric>
         <span
-          className={clsx('inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium tabular-nums', countTone)}
+          className={clsx('inline-flex items-center gap-1 px-2 py-0.5 rounded text-2xs font-medium tabular-nums', countTone)}
           title={`Failed ${count} time${count === 1 ? '' : 's'} in the last ${windowLabel}`}
         >
           × {count}
         </span>
-      </td>
-      <td className="px-4 py-2 text-[var(--color-text-muted)] text-xs whitespace-nowrap">
+      </Td>
+      <Td className="text-[var(--color-text-muted)] text-xs whitespace-nowrap">
         <span className="inline-flex items-center gap-1">
           <Clock className="h-3 w-3" />
           {relativeAge(item.created_at)}
         </span>
-      </td>
-      <td className="px-4 py-2 text-right whitespace-nowrap">
+      </Td>
+      <Td className="text-right whitespace-nowrap">
         {/* Triage-status button — visible to anyone (the row is in their
             inbox, so they ARE the assignee). The backend independently
             enforces the assignee-or-manager rule. */}
         <button
           type="button"
           onClick={e => { e.stopPropagation(); onTriage() }}
-          className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 mr-1.5 rounded border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]"
+          className="inline-flex items-center gap-1 text-2xs px-1.5 py-0.5 mr-1.5 rounded border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]"
           title="Update triage status (drops the row off your inbox)"
         >
           <CheckSquare className="h-3 w-3" /> Update status
@@ -478,15 +480,15 @@ function FailureRow({
             // ``stopPropagation`` so the row's ``onOpen`` (which navigates
             // to the test-detail page) doesn't fire from the same click.
             onClick={e => { e.stopPropagation(); onReassign() }}
-            className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 mr-1.5 rounded border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]"
+            className="inline-flex items-center gap-1 text-2xs px-1.5 py-0.5 mr-1.5 rounded border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]"
             title="Reassign to the suite owner or a QA Engineer"
           >
             <UserCog className="h-3 w-3" /> Reassign
           </button>
         )}
         <ExternalLink className="h-3.5 w-3.5 text-[var(--color-text-faint)] inline-block" />
-      </td>
-    </tr>
+      </Td>
+    </Tr>
     {/* Across all seven columns; its content can never widen the table (InlineRowSection). */}
     {below ? <InlineRowSection colSpan={7}>{below}</InlineRowSection> : null}
     </>
@@ -567,7 +569,7 @@ function ReassignModal({
         <>
           <p className="text-xs text-[var(--color-text-muted)] m-0 truncate">{failure.test_name}</p>
           {failure.suite_name && (
-            <p className="text-[11px] text-[var(--color-text-faint)] mt-0.5 mb-0 truncate">
+            <p className="text-2xs text-[var(--color-text-faint)] mt-0.5 mb-0 truncate">
               Suite: {failure.suite_name}
             </p>
           )}
@@ -718,7 +720,7 @@ function TriageStatusModal({
       description={
         <>
           <p className="text-xs text-[var(--color-text-muted)] m-0 truncate">{failure.test_name}</p>
-          <p className="text-[11px] text-[var(--color-text-faint)] mt-0.5 mb-0">
+          <p className="text-2xs text-[var(--color-text-faint)] mt-0.5 mb-0">
             Anything other than &quot;Pending review&quot; removes this row from your inbox.
           </p>
         </>
@@ -768,13 +770,13 @@ function TriageStatusModal({
               />
               <div className="flex-1 min-w-0">
                 <div className="text-xs text-[var(--color-text)]">{choice.label}</div>
-                <div className="text-[11px] text-[var(--color-text-muted)]">{choice.description}</div>
+                <div className="text-2xs text-[var(--color-text-muted)]">{choice.description}</div>
               </div>
             </label>
           ))}
         </div>
 
-        <label htmlFor="myfail-field-0" className="block text-[11px] text-[var(--color-text-muted)] mb-1">
+        <label htmlFor="myfail-field-0" className="block text-2xs text-[var(--color-text-muted)] mb-1">
           Notes <span className="text-[var(--color-text-faint)]">(optional — defect link, rationale)</span>
         </label>
         <textarea id="myfail-field-0"
@@ -827,9 +829,9 @@ function ReassignChoice({
         <div className="text-xs text-[var(--color-text)] truncate">
           {option.full_name || option.username}
         </div>
-        <div className="text-[11px] text-[var(--color-text-muted)] truncate">{option.email}</div>
+        <div className="text-2xs text-[var(--color-text-muted)] truncate">{option.email}</div>
       </div>
-      <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] px-1.5 py-0.5 rounded bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
+      <span className="eyebrow uppercase text-[var(--color-text-muted)] px-1.5 py-0.5 rounded bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
         {badge}
       </span>
     </label>

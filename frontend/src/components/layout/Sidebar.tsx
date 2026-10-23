@@ -59,7 +59,7 @@ function InboxBadge({ collapsed }: { collapsed: boolean }) {
     <span
       data-nav-badge=""
       className={clsx(
-        'rounded-full text-[10px] font-medium tabular-nums',
+        'rounded-full text-2xs font-medium tabular-nums',
         collapsed ? 'absolute right-1 top-0.5 px-1 leading-4' : 'ml-auto px-1.5 py-0.5',
       )}
       style={{
@@ -162,7 +162,7 @@ export default function Sidebar({ drawer = null }: { drawer?: SidebarDrawer | nu
         className={clsx('py-5 border-b flex items-center justify-center max-lg:relative', collapsed ? 'px-2' : 'px-4')}
         style={{ borderColor: 'var(--color-border)' }}
       >
-        <AppLogo glyph={collapsed} className="text-[20px]" />
+        <AppLogo glyph={collapsed} className="text-xl" />
         {drawerOpen && (
           <button
             type="button"
@@ -188,7 +188,7 @@ export default function Sidebar({ drawer = null }: { drawer?: SidebarDrawer | nu
                 ) : (
                   <div
                     data-nav-section={item.section}
-                    className="px-3 pb-1 pt-4 text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]"
+                    className="eyebrow px-3 pb-1 pt-4 uppercase text-[var(--color-text-muted)]"
                   >
                     {item.section}
                   </div>

@@ -79,6 +79,8 @@ import type { OverflowItem } from '@/components/ui/OverflowMenu'
 import StatusBanner, { type BannerFact, type BannerState } from '@/components/ui/StatusBanner'
 import KpiStrip from '@/components/ui/KpiStrip'
 import MetricCard from '@/components/ui/MetricCard'
+import { Panel } from '@/components/ui/PanelHeader'
+import { Table, Td, Th, Tr } from '@/components/ui/Table'
 import Tabs, { type TabItem } from '@/components/ui/Tabs'
 import { useTabParam } from '@/components/ui/useTabParam'
 import Disclosure from '@/components/ui/Disclosure'
@@ -406,14 +408,12 @@ function TimeToFixTile({ data, isLoading, failed }: { data: TimeToFixResponse | 
   return (
     <div data-time-to-fix={data ? (measured ? 'measured' : 'not-measured') : failed ? 'failed' : 'loading'} className="min-w-0 h-full">
       <MetricCard
-        compact
-        icon={null}
         title="Median time to fix"
         hint={hint}
         loading={!data && !failed && isLoading}
         metric={metric}
         sparkline={measured ? (
-          <span data-time-to-fix-fixed="" className="block text-right text-[11px] leading-tight text-[var(--color-text-muted)]">
+          <span data-time-to-fix-fixed="" className="block text-right text-2xs leading-tight text-[var(--color-text-muted)]">
             {data.fixed} fixed
           </span>
         ) : undefined}
@@ -560,7 +560,7 @@ function StabilityMeter({ model, verdict }: { model: StabilityModel; verdict: Ve
   const score = model.composite
   return (
     <div>
-      <div className="text-[11px] uppercase font-medium text-[var(--color-text-muted)] mb-1.5" style={{ letterSpacing: 'var(--tracking-wider)' }}>
+      <div className="eyebrow uppercase text-[var(--color-text-muted)] mb-1.5">
         Stability score
       </div>
       <div className="flex items-end justify-between">
@@ -568,10 +568,10 @@ function StabilityMeter({ model, verdict }: { model: StabilityModel; verdict: Ve
           <span className="font-bold tabular-nums leading-none" style={{ fontSize: 'var(--text-display-lg)', color: t.meter, letterSpacing: '-0.02em' }}>
             {verdict === 'PENDING' ? '—' : score}
           </span>
-          <span className="text-[13px] text-[var(--color-text-muted)] ml-1">/ 100</span>
+          <span className="text-sm text-[var(--color-text-muted)] ml-1">/ 100</span>
         </div>
         <span
-          className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold"
+          className="inline-flex items-center px-2.5 py-1 rounded-full text-2xs font-semibold"
           style={{ background: t.pillBg, border: `1px solid ${t.pillBd}`, color: t.pillFg }}
         >
           {t.label}
@@ -606,34 +606,26 @@ function DimensionGrid({ dimensions }: { dimensions: DimensionScore[] }) {
   )
 }
 
+/**
+ * One weighted dimension: the KPI tile's in-panel size (W29b UIX-09: MetricCard sm, the sunken well; it replaced
+ * a hand-made tile on an invisible white sheen). Not measured: "—" and an empty bar, never a 0; the label's hover
+ * says the score is re-weighted without it.
+ */
 function DimensionTile({ dim }: { dim: DimensionScore }) {
   const measured = dim.measured !== false
-  const valueColor = !measured ? 'var(--color-text-muted)' : dim.tone === 'bad' ? 'var(--status-failed)' : dim.tone === 'warn' ? 'var(--status-broken)' : 'var(--status-passed)'
-  const barColor   = dim.tone === 'bad' ? 'var(--status-failed)' : dim.tone === 'warn' ? 'var(--status-broken)' : 'var(--status-passed)'
   return (
-    <div
+    <MetricCard
+      size="sm"
+      title={dim.label}
+      hint={measured ? undefined : 'Not measured: left out of the stability score, which is re-weighted over the other dimensions.'}
+      note={`${Math.round(dim.weight * 100)}%`}
+      metric={{ value: measured ? Math.round(dim.score) : '—' }}
+      tone={measured ? dim.tone : 'neutral'}
+      bar={measured ? dim.score : null}
       data-dimension={dim.id}
       data-measured={measured ? 'true' : 'false'}
-      className="rounded-sm px-2.5 py-2 border"
-      style={{ background: 'rgba(255,255,255,0.025)', borderColor: 'var(--color-border)' }}
-      title={measured ? undefined : 'Not measured: left out of the stability score, which is re-weighted over the other dimensions.'}
-    >
-      <div
-        className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] flex justify-between"
-        style={{ letterSpacing: 'var(--tracking-wider)' }}
-      >
-        <span>{dim.label}</span>
-        <span className="text-[var(--color-text-faint)] font-medium">{Math.round(dim.weight * 100)}%</span>
-      </div>
-      <div className="flex items-center gap-2 mt-1.5">
-        <span data-dimension-value="" className="text-[14px] font-semibold tabular-nums min-w-[40px]" style={{ color: valueColor }}>
-          {measured ? Math.round(dim.score) : '—'}
-        </span>
-        <div className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: 'var(--color-bg-secondary)' }}>
-          {measured && <i className="block h-full rounded-full" style={{ width: `${dim.score}%`, background: barColor }} />}
-        </div>
-      </div>
-    </div>
+      valueData={{ 'data-dimension-value': '' }}
+    />
   )
 }
 
@@ -668,30 +660,26 @@ function SuiteFailureBreakdown({ topFailing }: { topFailing: TopFailingItem[] })
       }
     : null
 
+  // A list in a sunken well (W29b: the well the KPI tile's in-panel size uses; it was an invisible white sheen).
   return (
-    <div
-      className="rounded-sm px-2.5 py-2 border"
-      style={{ background: 'rgba(255,255,255,0.025)', borderColor: 'var(--color-border)' }}
-    >
-      <div
-        className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] flex justify-between mb-1.5"
-        style={{ letterSpacing: 'var(--tracking-wider)' }}
-      >
+    <div className="rounded-sm px-2.5 py-2 border border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
+      <div className="eyebrow uppercase text-[var(--color-text-muted)] flex justify-between mb-1.5">
         <span>Suites with failures</span>
-        <span className="text-[var(--color-text-faint)] font-medium">{rows.length}</span>
+        <span className="text-[var(--color-text-faint)]">{rows.length}</span>
       </div>
       <ul className="m-0 p-0 list-none space-y-1">
         {head.map(r => {
           const pct = totalFailures > 0 ? Math.round((r.failures / totalFailures) * 100) : 0
           return (
-            <li key={r.suite} className="flex items-center gap-2 text-[11.5px]">
+            <li key={r.suite} className="flex items-center gap-2 text-xs">
               <span className="truncate flex-1 text-[var(--color-text-secondary)]" title={r.suite}>
                 {r.suite}
               </span>
               <span className="tabular-nums text-[var(--color-text-muted)]">
                 {r.tests} test{r.tests === 1 ? '' : 's'}
               </span>
-              <div className="w-12 h-1 rounded-full overflow-hidden" style={{ background: 'var(--color-bg-secondary)' }}>
+              {/* The track is the border hue: the well itself is --color-bg-secondary (the KPI tile's bar track). */}
+              <div className="w-12 h-1 rounded-full overflow-hidden" style={{ background: 'var(--color-border)' }}>
                 <i className="block h-full rounded-full" style={{ width: `${pct}%`, background: 'var(--status-failed)' }} />
               </div>
               <span className="tabular-nums font-semibold text-[var(--color-text)] min-w-[28px] text-right">
@@ -701,7 +689,7 @@ function SuiteFailureBreakdown({ topFailing }: { topFailing: TopFailingItem[] })
           )
         })}
         {tailRow && (
-          <li className="flex items-center gap-2 text-[11.5px] text-[var(--color-text-faint)]">
+          <li className="flex items-center gap-2 text-xs text-[var(--color-text-faint)]">
             <span className="flex-1 truncate italic">{tailRow.suite}</span>
             <span className="tabular-nums">{tailRow.tests} tests</span>
             <span className="w-12" aria-hidden />
@@ -883,7 +871,7 @@ function TopFailingTable({
   const { fail: failedCells, pass: passedCells, none: notRunCells } = countTones(cells)
   const runStrip = (
     <div className="flex items-center gap-2 px-4 py-2" style={{ borderBottom: '1px solid var(--color-border)' }}>
-      <span className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
+      <span className="eyebrow uppercase text-[var(--color-text-muted)]">
         Last 14 days
       </span>
       {/* Fail is `--status-failed` (it was `--gate-no-go`, which index.css
@@ -898,7 +886,7 @@ function TopFailingTable({
         legend={false}
         text={RUN_STRIP_TEXT}
       />
-      <span className="text-[10.5px] tabular-nums text-[var(--color-text-faint)]">
+      <span className="text-2xs tabular-nums text-[var(--color-text-faint)]">
         {failedCells} fail · {notRunCells} idle · {passedCells} pass
       </span>
     </div>
@@ -906,14 +894,14 @@ function TopFailingTable({
 
   if (rows.length === 0) {
     return (
-      <CardShell
+      <Panel
         title="Top failing tests"
-        rightSlot={perTestRowsMissing ? <Pill tone="warn">Per-test data pending</Pill> : <Pill tone="good">No failures</Pill>}
+        actions={perTestRowsMissing ? <Pill tone="warn">Per-test data pending</Pill> : <Pill tone="good">No failures</Pill>}
       >
         {perTestRowsMissing ? (
           <div className="px-4 py-6 flex flex-col items-center text-center">
             <TriangleAlert className="h-8 w-8 mb-2" style={{ color: 'var(--status-broken)' }} />
-            <p className="text-[13px] text-[var(--color-text-secondary)] m-0 max-w-md">
+            <p className="text-sm text-[var(--color-text-secondary)] m-0 max-w-md">
               <strong style={{ color: 'var(--color-text)' }}>{failingExecutions}</strong>{' '}
               failing execution{failingExecutions === 1 ? '' : 's'} detected in this window,
               but per-test rows haven&apos;t been persisted yet — common right after a
@@ -923,20 +911,20 @@ function TopFailingTable({
         ) : (
           <div className="px-4 py-6 flex flex-col items-center text-center">
             <ShieldCheck className="h-8 w-8 mb-2" style={{ color: 'var(--status-passed)' }} />
-            <p className="text-[13px] text-[var(--color-text-secondary)] m-0">
+            <p className="text-sm text-[var(--color-text-secondary)] m-0">
               No failing tests in this window — every recent run passed.
             </p>
           </div>
         )}
-      </CardShell>
+      </Panel>
     )
   }
 
   const shown = showAll ? rows : rows.slice(0, TABLE_PAGE_ROWS)
   return (
-    <CardShell
+    <Panel
       title="Top failing tests"
-      rightSlot={
+      actions={
         <>
           {perTestRowsMissing && <Pill tone="warn">Per-test data pending</Pill>}
           <span>
@@ -946,16 +934,21 @@ function TopFailingTable({
       }
     >
       {runStrip}
+      {/* The ONE table (W29b UIX-06) at `compact` density, not the `dense` px-3 py-2 it had: the type scale's floor
+          widened the kind badge, the names and the row actions (+36 px of min-content at 1280), and the Failures
+          column, the only one that wraps, paid for all of it: every failure-rate line went to two lines and the
+          table grew 45 px at a 1280 px window. Compact (px-2 py-1.5) gives the 48 px back, so the rate lines fit
+          on one line again (measured: the table 393 -> 354 px at 1280, shorter at 1440 too). */}
       <div className="overflow-x-auto">
-        <table aria-label="Top failing tests" className="w-full text-[12.5px]">
-          <thead>
-            <tr style={{ background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)' }}>
-              <Th label="Test" />
-              <Th label="Kind" />
-              <Th label="Failures" />
-              <Th label="Signal" />
-              <Th label="Last failed" />
-              <Th label="Actions" align="right" />
+        <Table density="compact" aria-label="Top failing tests">
+          <thead className="border-b border-[var(--color-border)]">
+            <tr>
+              <Th className="whitespace-nowrap">Test</Th>
+              <Th className="whitespace-nowrap">Kind</Th>
+              <Th numeric className="whitespace-nowrap">Failures</Th>
+              <Th className="whitespace-nowrap">Signal</Th>
+              <Th className="whitespace-nowrap">Last failed</Th>
+              <Th className="whitespace-nowrap text-right">Actions</Th>
             </tr>
           </thead>
           <tbody>
@@ -971,36 +964,16 @@ function TopFailingTable({
               />
             ))}
           </tbody>
-        </table>
+        </Table>
       </div>
       {rows.length > TABLE_PAGE_ROWS && (
-        <div className="px-4 py-2 text-[12px]" style={{ borderTop: '1px solid var(--color-border)' }}>
+        <div className="px-4 py-2 text-xs" style={{ borderTop: '1px solid var(--color-border)' }}>
           <button type="button" onClick={() => setShowAll(v => !v)} className="text-[var(--color-accent)] hover:underline">
             {showAll ? `Show the first ${TABLE_PAGE_ROWS}` : `Show all ${rows.length}`}
           </button>
         </div>
       )}
-    </CardShell>
-  )
-}
-
-function Th({ label, align }: { label: string; align?: 'right' }) {
-  return (
-    <th
-      scope="col"
-      className="whitespace-nowrap"
-      style={{
-        padding: '8px 12px',
-        textAlign: align ?? 'left',
-        color: 'var(--color-text-muted)',
-        fontWeight: 500,
-        fontSize: 10.5,
-        textTransform: 'uppercase',
-        letterSpacing: 'var(--tracking-wider)',
-      }}
-    >
-      {label}
-    </th>
+    </Panel>
   )
 }
 
@@ -1033,9 +1006,9 @@ function FailingRowEl({
   const suite = [test.suite_name, test.class_name].filter(Boolean).join(' · ')
   return (
     <>
-    <tr data-failing-row="" style={{ borderBottom: '1px solid var(--color-border)' }} className="hover:bg-[var(--color-bg-hover)]">
+    <Tr data-failing-row="" interactive={false}>
       {/* 204 + the 16 px toggle = the 220 px the cell had before W07 FAIL-01 (fold-failures holds the table's width at 1280). */}
-      <td style={{ padding: '8px 12px', minWidth: 204 }}>
+      <Td style={{ minWidth: 204 }}>
         <div className="flex items-start min-w-0">
           <button
             type="button"
@@ -1052,45 +1025,47 @@ function FailingRowEl({
             <Link
               to={testSearchHref(test.test_name)}
               title="Find this test's runs"
-              className="font-mono text-[12.5px] font-medium truncate hover:underline"
+              className="font-mono text-sm font-medium truncate hover:underline"
               style={{ color: 'var(--status-failed)' }}
             >
               {test.test_name}
             </Link>
-            {suite && <span className="text-[10.5px] text-[var(--color-text-muted)] truncate">{suite}</span>}
+            {suite && <span className="text-2xs text-[var(--color-text-muted)] truncate">{suite}</span>}
             {test.failure_step && (
-              <span className="text-[10.5px] text-[var(--color-text-muted)] truncate" title={`Failed at step: ${test.failure_step}`}>
+              <span className="text-2xs text-[var(--color-text-muted)] truncate" title={`Failed at step: ${test.failure_step}`}>
                 failed at: <span className="font-mono" style={{ color: 'var(--status-failed)' }}>{test.failure_step}</span>
               </span>
             )}
           </div>
         </div>
-      </td>
-      <td style={{ padding: '8px 12px' }}>
+      </Td>
+      <Td>
         {kind
           ? <KindBadgeWithEvidence kind={kind} testFingerprint={test.test_fingerprint} compact />
           : <span className="text-[var(--color-text-faint)]">—</span>}
-      </td>
-      <td style={{ padding: '8px 12px' }}>
-        <div className="text-[13px] font-semibold tabular-nums" style={{ color: 'var(--status-failed)' }}>{test.fail_count}</div>
+      </Td>
+      <Td numeric>
+        <div className="text-sm font-semibold tabular-nums" style={{ color: 'var(--status-failed)' }}>{test.fail_count}</div>
         {/* Wraps: on one line this cell pushed the table past its card at
             1280 px and the Jira / Suspects row actions off-screen. */}
-        <div data-failure-rate="" className="text-[11px] text-[var(--color-text-muted)]">
+        <div data-failure-rate="" className="text-2xs text-[var(--color-text-muted)]">
           {measured
             ? <><strong>{fmtPct((measured.fail_count / measured.total_runs) * 100)} failure rate</strong> · failed {measured.fail_count} of {measured.total_runs} executions</>
             : sharePct !== null
               ? <>failed {test.fail_count} time{test.fail_count === 1 ? '' : 's'} — <strong>{fmtPct(sharePct)}</strong> of failures here</>
               : null}
         </div>
-      </td>
-      <td style={{ padding: '8px 12px' }}>
+      </Td>
+      <Td>
         <SignalCell row={row} />
-      </td>
-      <td className="whitespace-nowrap text-[11.5px] tabular-nums text-[var(--color-text-secondary)]" style={{ padding: '8px 12px' }} title={test.last_failed ?? undefined}>
+      </Td>
+      <Td className="whitespace-nowrap text-xs tabular-nums" title={test.last_failed ?? undefined}>
         {test.last_failed ? shortAgo(test.last_failed) : '—'}
-      </td>
-      <td style={{ padding: '8px 12px' }}>
-        <div className="flex justify-end gap-1.5">
+      </Td>
+      <Td>
+        {/* gap-1 and the buttons' px-1.5 (were gap-1.5, px-2): the 11.5 -> 12 px labels and the wider kind badge left
+            the table 36 px of min-content slack at 1280 on a DejaVu-width font; this gives back 16. */}
+        <div className="flex justify-end gap-1">
           <RowAction
             label={`Mute test ${test.test_name}`}
             title={muteReason ?? 'Propose quarantine for this test with a documented reason'}
@@ -1117,8 +1092,8 @@ function FailingRowEl({
             <GitCommit className="h-3 w-3" aria-hidden="true" /> Suspects
           </RowAction>
         </div>
-      </td>
-    </tr>
+      </Td>
+    </Tr>
     {/* Across all six columns; its content can never widen the table (InlineRowSection). */}
     {below ? <InlineRowSection colSpan={6}>{below}</InlineRowSection> : null}
     {open && (
@@ -1140,11 +1115,11 @@ function FailingRowEl({
  */
 function FailureDetail({ test }: { test: TopFailingItem }) {
   if (test.detail_available === false) {
-    return <p className="m-0 text-[12px] text-[var(--color-text-muted)]">Select a project to see failure detail.</p>
+    return <p className="m-0 text-xs text-[var(--color-text-muted)]">Select a project to see failure detail.</p>
   }
   if (test.detail_available !== true) {
     // A flaky-list-only row (or an older payload) carries no failing row of its own.
-    return <p className="m-0 text-[12px] text-[var(--color-text-muted)]">No failure detail recorded for this test in this window.</p>
+    return <p className="m-0 text-xs text-[var(--color-text-muted)]">No failure detail recorded for this test in this window.</p>
   }
   const at = test.latest_failed_at ?? test.last_failed ?? null
   const runHref = test.latest_run_id && test.latest_test_case_id
@@ -1153,7 +1128,7 @@ function FailureDetail({ test }: { test: TopFailingItem }) {
   const owner = ownerChipText(test)
   return (
     <div className="min-w-0">
-      <div className="flex items-baseline justify-between gap-3 text-[11.5px] text-[var(--color-text-muted)]">
+      <div className="flex items-baseline justify-between gap-3 text-xs text-[var(--color-text-muted)]">
         <span title={at ?? undefined}>
           Latest failure{at ? ` ${shortAgo(at)}` : ''}{test.last_failed_build ? ` · build ${test.last_failed_build}` : ''}
         </span>
@@ -1166,33 +1141,33 @@ function FailureDetail({ test }: { test: TopFailingItem }) {
       {test.latest_error ? (
         <pre
           data-failure-error=""
-          className="m-0 mt-1.5 whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-[11.5px]"
+          className="m-0 mt-1.5 whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-xs"
           style={{ color: 'var(--status-failed)' }}
         >
           {test.latest_error}
         </pre>
       ) : (
-        <p data-failure-error-none="" className="m-0 mt-1.5 text-[11.5px] text-[var(--color-text-muted)]">No message recorded</p>
+        <p data-failure-error-none="" className="m-0 mt-1.5 text-xs text-[var(--color-text-muted)]">No message recorded</p>
       )}
       {test.latest_stack_head && (
         <div className="mt-2">
           <pre
             data-failure-stack=""
-            className="m-0 max-h-[200px] overflow-y-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-[11px] text-[var(--color-text-secondary)]"
+            className="m-0 max-h-[200px] overflow-y-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-2xs text-[var(--color-text-secondary)]"
           >
             {test.latest_stack_head}
           </pre>
-          <span className="text-[10.5px] text-[var(--color-text-faint)]">first 20 lines</span>
+          <span className="text-2xs text-[var(--color-text-faint)]">first 20 lines</span>
         </div>
       )}
-      <div className="mt-2 flex items-center gap-2 text-[11.5px]">
-        <span className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
+      <div className="mt-2 flex items-center gap-2 text-xs">
+        <span className="eyebrow uppercase text-[var(--color-text-muted)]">
           Owner
         </span>
         {owner ? (
           <span
             data-failure-owner=""
-            className="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)]"
+            className="inline-flex items-center rounded-full border px-2 py-0.5 text-2xs text-[var(--color-text-secondary)]"
             style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-secondary)' }}
           >
             {owner}
@@ -1220,9 +1195,9 @@ function SignalCell({ row }: { row: FailingRow }) {
       <div className="flex flex-col gap-0.5">
         <span className="inline-flex items-center gap-1.5">
           <Pill tone="warn" title="Intermittent pass/fail on the same SHA: re-runs won't fix it — investigate the race or fixture.">Flaky</Pill>
-          <span className="text-[11px] tabular-nums" style={{ color: 'var(--status-broken)' }}>{Math.round(flaky.failure_rate_pct)}% flake</span>
+          <span className="text-2xs tabular-nums" style={{ color: 'var(--status-broken)' }}>{Math.round(flaky.failure_rate_pct)}% flake</span>
         </span>
-        {flaky.likely_cause && <span className="text-[10.5px] text-[var(--color-text-muted)] leading-tight">{flaky.likely_cause}</span>}
+        {flaky.likely_cause && <span className="text-2xs text-[var(--color-text-muted)] leading-tight">{flaky.likely_cause}</span>}
       </div>
     )
   }
@@ -1240,7 +1215,7 @@ function RowAction({
       title={title}
       disabled={disabled}
       onClick={onClick}
-      className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-0.5 text-[11.5px] text-[var(--color-text-secondary)] hover:border-[var(--color-border-light)] hover:text-[var(--color-text)] disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+      className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-1.5 py-0.5 text-xs text-[var(--color-text-secondary)] hover:border-[var(--color-border-light)] hover:text-[var(--color-text)] disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
     >
       {children}
     </button>
@@ -1268,9 +1243,9 @@ export function SuspectsPanel({
   const source = ranking?.source
   return (
     <div id={panelId} data-testid="suspects-panel">
-      <CardShell
+      <Panel
         title="Who / what changed"
-        rightSlot={
+        actions={
           <>
             <GitCommit className="h-3.5 w-3.5" />
             <Pill tone="neutral">Suspects</Pill>
@@ -1279,18 +1254,18 @@ export function SuspectsPanel({
       >
         <div className="px-4 py-3.5">
           {isLoading ? (
-            <p className="text-[12.5px] text-[var(--color-text-muted)] m-0">
+            <p className="text-sm text-[var(--color-text-muted)] m-0">
               Resolving the commit range…
             </p>
           ) : !available || suspects.length === 0 ? (
-            <div className="text-[12.5px] text-[var(--color-text-muted)]">
+            <div className="text-sm text-[var(--color-text-muted)]">
               <p className="m-0">
                 No commit range available for this failure yet
                 {source === 'unavailable'
                   ? ' — no GitHub connector is configured and no commit list was supplied on ingest.'
                   : '.'}
               </p>
-              <p className="mt-1.5 mb-0 text-[11.5px] text-[var(--color-text-faint)]">
+              <p className="mt-1.5 mb-0 text-xs text-[var(--color-text-faint)]">
                 Configure the GitHub integration, or have your CI push the commit
                 range on ingest, to see ranked suspects here.
               </p>
@@ -1298,12 +1273,12 @@ export function SuspectsPanel({
           ) : (
             <>
               {/* Suspects-not-culprits + monorepo caveat, surfaced verbatim. */}
-              <p className="m-0 mb-2.5 text-[11.5px] text-[var(--color-text-faint)] flex items-start gap-1.5">
+              <p className="m-0 mb-2.5 text-xs text-[var(--color-text-faint)] flex items-start gap-1.5">
                 <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
                 <span>{caveat}</span>
               </p>
               {!hasLocationSignal && (
-                <p className="m-0 mb-2.5 text-[11.5px] text-[var(--color-text-faint)]">
+                <p className="m-0 mb-2.5 text-xs text-[var(--color-text-faint)]">
                   No source location was derivable for this test — commits are
                   ordered by recency, not path overlap. Read as a range to inspect.
                 </p>
@@ -1318,31 +1293,31 @@ export function SuspectsPanel({
                     <div className="flex items-start justify-between gap-2 px-3 py-2">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="text-[11px] tabular-nums text-[var(--color-text-faint)]">#{i + 1}</span>
+                          <span className="text-2xs tabular-nums text-[var(--color-text-faint)]">#{i + 1}</span>
                           {s.commit_url ? (
                             <a
                               href={s.commit_url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="font-mono text-[12.5px] font-medium text-[var(--color-accent)] hover:underline"
+                              className="font-mono text-sm font-medium text-[var(--color-accent)] hover:underline"
                             >
                               {(s.sha || '').slice(0, 8)}
                             </a>
                           ) : (
-                            <span className="font-mono text-[12.5px] font-medium text-[var(--color-text)]">
+                            <span className="font-mono text-sm font-medium text-[var(--color-text)]">
                               {(s.sha || '').slice(0, 8)}
                             </span>
                           )}
-                          <span className="text-[12px] text-[var(--color-text-muted)] truncate">
+                          <span className="text-xs text-[var(--color-text-muted)] truncate">
                             {s.author ?? 'unknown author'}
                           </span>
                         </div>
-                        <div className="text-[12px] text-[var(--color-text-secondary)] truncate mt-0.5">
+                        <div className="text-xs text-[var(--color-text-secondary)] truncate mt-0.5">
                           {s.message || '(no message)'}
                         </div>
                       </div>
                       <span
-                        className="shrink-0 tabular-nums text-[12px] font-semibold px-2 py-0.5 rounded"
+                        className="shrink-0 tabular-nums text-xs font-semibold px-2 py-0.5 rounded"
                         title="Suspect score (0–100): path overlap dominates, recency breaks ties"
                         style={{ background: 'var(--color-bg-card)', color: 'var(--color-text)' }}
                       >
@@ -1351,10 +1326,10 @@ export function SuspectsPanel({
                     </div>
                     {/* Every ranking is inspectable — which files overlapped. */}
                     <details className="px-3 pb-2">
-                      <summary className="text-[11.5px] text-[var(--color-text-muted)] cursor-pointer select-none">
+                      <summary className="text-xs text-[var(--color-text-muted)] cursor-pointer select-none">
                         Why this suspect
                       </summary>
-                      <div className="mt-1.5 text-[11.5px] text-[var(--color-text-faint)] flex flex-col gap-1">
+                      <div className="mt-1.5 text-xs text-[var(--color-text-faint)] flex flex-col gap-1">
                         <div>
                           Recency rank {s.rationale.recency_rank} · overlap score{' '}
                           {s.rationale.overlap_score.toFixed(2)} ·{' '}
@@ -1369,7 +1344,7 @@ export function SuspectsPanel({
                             <span className="text-[var(--color-text-muted)]">Overlapping files:</span>
                             <ul className="list-none m-0 mt-1 p-0 flex flex-col gap-0.5">
                               {s.rationale.overlapping_files.map(f => (
-                                <li key={f} className="font-mono text-[11px] truncate">{f}</li>
+                                <li key={f} className="font-mono text-2xs truncate">{f}</li>
                               ))}
                             </ul>
                           </div>
@@ -1384,7 +1359,7 @@ export function SuspectsPanel({
             </>
           )}
         </div>
-      </CardShell>
+      </Panel>
     </div>
   )
 }
@@ -1426,11 +1401,11 @@ function KindFilterChips({
       className="flex items-center gap-2 flex-wrap rounded-xl"
       style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', padding: '10px 16px', marginBottom: 14 }}
     >
-      <span className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
+      <span className="eyebrow uppercase text-[var(--color-text-muted)]">
         Failure kind
       </span>
       <span
-        className="text-[10px] text-[var(--color-text-faint)]"
+        className="text-2xs text-[var(--color-text-faint)]"
         title="Kinds are derived by the failure analyzer from its category verdict and the failure shape — corrections feed the training loop."
       >
         AI-classified
@@ -1445,7 +1420,7 @@ function KindFilterChips({
             aria-pressed={active}
             onClick={() => onChange(chip.id)}
             className={clsx(
-              'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[12px] font-medium border transition-colors',
+              'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors',
               active ? 'text-[var(--color-text)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
             )}
             style={{
@@ -1461,7 +1436,7 @@ function KindFilterChips({
               <span aria-hidden className="inline-block w-2 h-2 rounded-sm" style={{ background: chip.color }} />
             )}
             {chip.label}
-            <span className="tabular-nums text-[11px]" style={{ color: active ? 'var(--color-text)' : 'var(--color-text-faint)' }}>
+            <span className="tabular-nums text-2xs" style={{ color: active ? 'var(--color-text)' : 'var(--color-text-faint)' }}>
               {chip.count}
             </span>
           </button>
@@ -1565,9 +1540,9 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCo
   const stacked = gridWidth > 0 && labelMin > 0 && gridWidth < labelMin + CATEGORY_FIXED_WIDTH
 
   return (
-    <CardShell
+    <Panel
       title="Failure category distribution"
-      rightSlot={
+      actions={
         <div className="flex items-center gap-2">
           {onOpenHints && (
             <button
@@ -1575,7 +1550,7 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCo
               data-testid="open-classification-hints"
               onClick={onOpenHints}
               title="Rules that classify new failures before the AI does"
-              className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-0.5 text-[11.5px] text-[var(--color-text-secondary)] hover:border-[var(--color-border-light)] hover:text-[var(--color-text)] whitespace-nowrap"
+              className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-0.5 text-xs text-[var(--color-text-secondary)] hover:border-[var(--color-border-light)] hover:text-[var(--color-text)] whitespace-nowrap"
             >
               <Tags className="h-3 w-3" aria-hidden="true" /> Classification hints
             </button>
@@ -1586,7 +1561,7 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCo
       }
     >
       <div className="px-4 py-3.5">
-        <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-3" style={{ lineHeight: 1.5 }}>
+        <p className="text-xs text-[var(--color-text-muted)] m-0 mb-3" style={{ lineHeight: 1.5 }}>
           Categories computed by the failure-analyzer{kindFilter !== 'all' && (
             <> — filtered to AI-classified <em>{kindDef(kindFilter).label.toLowerCase()}</em> failures</>
           )}. Empty buckets are kept visible — the page
@@ -1595,7 +1570,7 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCo
 
         {uncategorizedPct >= 50 && (
           <div
-            className="flex items-start gap-2 rounded-md p-2.5 mb-3 text-[12px]"
+            className="flex items-start gap-2 rounded-md p-2.5 mb-3 text-xs"
             style={{ background: 'color-mix(in srgb, var(--status-broken) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--status-broken) 28%, transparent)', color: 'var(--color-text-secondary)' }}
           >
             <AlertTriangle className="h-3.5 w-3.5 flex-none mt-0.5" style={{ color: 'var(--status-broken)' }} />
@@ -1663,7 +1638,7 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCo
                 }}
               >
                 <div
-                  className="flex items-center min-w-0 text-[12.5px] text-[var(--color-text)]"
+                  className="flex items-center min-w-0 text-sm text-[var(--color-text)]"
                   style={{ flexWrap: 'wrap', columnGap: 8, rowGap: 4, gridColumn: stacked ? '1 / -1' : undefined }}
                 >
                   <span data-category-name="" className="inline-flex items-center gap-2 flex-none whitespace-nowrap">
@@ -1685,11 +1660,11 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCo
                     }}
                   />
                 </div>
-                <div className="text-[12px] tabular-nums text-right text-[var(--color-text-secondary)]">
+                <div className="text-xs tabular-nums text-right text-[var(--color-text-secondary)]">
                   {count > 0 ? `${count} of ${total}` : '0'}
                 </div>
                 <div
-                  className={clsx('text-[13px] font-semibold tabular-nums text-right', empty && 'text-[var(--color-text-muted)]')}
+                  className={clsx('text-sm font-semibold tabular-nums text-right', empty && 'text-[var(--color-text-muted)]')}
                   style={empty ? undefined : { color: c.id === 'unknown' ? 'var(--ui-warning)' : 'var(--color-text)' }}
                 >
                   {empty ? '—' : `${pct}%`}
@@ -1699,7 +1674,7 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCo
           })}
         </div>
       </div>
-    </CardShell>
+    </Panel>
   )
 }
 
@@ -1743,15 +1718,15 @@ function ComparisonStrip({
     : `last ${current.days}d (of ${windowDays}d) vs prior ${prior.days}d`
 
   return (
-    <CardShell
+    <Panel
       title="Compare to previous window"
-      rightSlot={<span>{actualLabel}</span>}
+      actions={<span>{actualLabel}</span>}
     >
       <div className="px-4 py-3.5">
-        <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-3" style={{ lineHeight: 1.5 }}>
+        <p className="text-xs text-[var(--color-text-muted)] m-0 mb-3" style={{ lineHeight: 1.5 }}>
           {suiteName ? (
             <>
-              Filtered to suite <code className="font-mono text-[11px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1 py-px rounded-sm">{suiteName}</code>.
+              Filtered to suite <code className="font-mono text-2xs bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1 py-px rounded-sm">{suiteName}</code>.
               {' '}Aggregated from daily trends; prior window = the {prior.days} day{prior.days === 1 ? '' : 's'} immediately before this window.
             </>
           ) : (
@@ -1787,7 +1762,7 @@ function ComparisonStrip({
           />
         </div>
       </div>
-    </CardShell>
+    </Panel>
   )
 }
 
@@ -1802,17 +1777,19 @@ function ComparisonCell({
   formatter: (n: number) => string
 }) {
   const arrow = delta === 0 ? '—' : (delta > 0 ? '↑' : '↓')
+  // The KPI tile's in-panel size (W29b UIX-09: MetricCard sm, 18 px value); the change against the prior window
+  // is its caption, in the direction's colour.
   return (
-    <div
-      className="rounded-md border"
-      style={{ padding: '10px 12px', background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
-    >
-      <div className="text-[11px] text-[var(--color-text-muted)] uppercase tracking-wider">{label}</div>
-      <div className="mt-1 text-[18px] font-semibold text-[var(--color-text)]">{formatter(current)}</div>
-      <div className="mt-0.5 text-[11.5px]" style={{ color: deltaColor }}>
-        {arrow} {formatter(Math.abs(delta))} <span className="text-[var(--color-text-muted)]">vs prior {formatter(prior)}</span>
-      </div>
-    </div>
+    <MetricCard
+      size="sm"
+      title={label}
+      metric={{ value: formatter(current) }}
+      caption={
+        <span style={{ color: deltaColor }}>
+          {arrow} {formatter(Math.abs(delta))} <span className="text-[var(--color-text-muted)]">vs prior {formatter(prior)}</span>
+        </span>
+      }
+    />
   )
 }
 
@@ -1869,7 +1846,7 @@ function FailureTimeline({ trend, days }: { trend: TrendPoint[]; days: number })
 
   return (
     <div data-failure-timeline="">
-      <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-3" style={{ lineHeight: 1.5 }}>
+      <p className="text-xs text-[var(--color-text-muted)] m-0 mb-3" style={{ lineHeight: 1.5 }}>
         Repeat-failure events vs total runs in this window. Each cell = 1 day.
       </p>
       <DayStrip cells={cells} mode="status" label={failureTimelineLabel(cells)} title="Failure timeline" text={RUN_STRIP_TEXT} />
@@ -1877,38 +1854,21 @@ function FailureTimeline({ trend, days }: { trend: TrendPoint[]; days: number })
   )
 }
 
-// ── Shared shell + pill ───────────────────────────────────────────────────
-function CardShell({
-  title, rightSlot, children,
-}: { title: string; rightSlot?: React.ReactNode; children?: React.ReactNode }) {
-  return (
-    <div
-      className="overflow-hidden rounded-xl"
-      style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
-    >
-      <div
-        className="flex items-center justify-between gap-2.5 px-4 py-3"
-        style={{ borderBottom: '1px solid var(--color-border)' }}
-      >
-        <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">{title}</h3>
-        {rightSlot && <div className="flex items-center gap-2.5 text-[12px] text-[var(--color-text-muted)]">{rightSlot}</div>}
-      </div>
-      {children}
-    </div>
-  )
-}
-
+// ── Pill ──────────────────────────────────────────────────────────────────
+// Every card of the page is the ONE panel (W29b UIX-09: `Panel`, a `.card` root and an h3 title; `actions` is the
+// old right slot), which replaced the page-local CardShell.
 function Pill({ children, tone, title }: { children: React.ReactNode; tone: 'good' | 'warn' | 'bad' | 'neutral'; title?: string }) {
+  // The words on a status tint read the hue's -ink (>= 4.5:1 in every theme, W29a UIX-03).
   const palette = {
-    good:    { bg: 'color-mix(in srgb, var(--status-passed) 15%, transparent)',      bd: 'color-mix(in srgb, var(--status-passed) 30%, transparent)', fg: 'var(--status-passed)' },
-    warn:    { bg: 'color-mix(in srgb, var(--status-broken) 15%, transparent)',     bd: 'color-mix(in srgb, var(--status-broken) 30%, transparent)', fg: 'var(--status-broken)' },
-    bad:     { bg: 'var(--status-failed-soft)', bd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)', fg: 'var(--status-failed)' },
+    good:    { bg: 'color-mix(in srgb, var(--status-passed) 15%, transparent)',      bd: 'color-mix(in srgb, var(--status-passed) 30%, transparent)', fg: 'var(--status-passed-ink)' },
+    warn:    { bg: 'color-mix(in srgb, var(--status-broken) 15%, transparent)',     bd: 'color-mix(in srgb, var(--status-broken) 30%, transparent)', fg: 'var(--status-broken-ink)' },
+    bad:     { bg: 'var(--status-failed-soft)', bd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)', fg: 'var(--status-failed-ink)' },
     neutral: { bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)', fg: 'var(--color-text-muted)' },
   }[tone]
   return (
     <span
-      className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold uppercase whitespace-nowrap"
-      style={{ background: palette.bg, border: `1px solid ${palette.bd}`, color: palette.fg, letterSpacing: 'var(--tracking-wide)' }}
+      className="eyebrow inline-flex items-center px-1.5 py-0.5 rounded-full uppercase whitespace-nowrap"
+      style={{ background: palette.bg, border: `1px solid ${palette.bd}`, color: palette.fg }}
       title={title}
     >
       {children}
@@ -1984,8 +1944,8 @@ function MuteTestModal({
     <InlineFormSection
       title="Mute test (propose quarantine)"
       description={
-        <span className="text-[12.5px]">
-          Proposes <code className="font-mono text-[11.5px] [overflow-wrap:anywhere]">{test.test_name}</code> for
+        <span className="text-sm">
+          Proposes <code className="font-mono text-xs [overflow-wrap:anywhere]">{test.test_name}</code> for
           quarantine. A QA Lead approves or rejects the proposal on /quarantine —
           nothing is muted until then.
         </span>
@@ -2001,7 +1961,7 @@ function MuteTestModal({
             type="button"
             onClick={onClose}
             disabled={submitting}
-            className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 disabled:opacity-50"
+            className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 disabled:opacity-50"
           >
             Cancel
           </button>
@@ -2019,7 +1979,7 @@ function MuteTestModal({
     >
       <div className="max-w-2xl">
         <div
-          className="rounded-md border px-3 py-2 text-[12px]"
+          className="rounded-md border px-3 py-2 text-xs"
           style={{ background: 'var(--color-bg)', borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}
         >
           {flakyEntry ? (
@@ -2033,14 +1993,14 @@ function MuteTestModal({
           )}
         </div>
 
-        <label className="block mt-3 text-[12px] font-medium text-[var(--color-text)]">
+        <label className="block mt-3 text-xs font-medium text-[var(--color-text)]">
           Reason <span style={{ color: 'var(--status-failed)' }}>*</span>
           <textarea
             value={reason}
             onChange={e => setReason(e.target.value)}
             rows={3}
             placeholder="Why should this test stop gating runs? (goes to the quarantine audit trail)"
-            className="mt-1 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 text-[12.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]"
+            className="mt-1 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]"
           />
         </label>
       </div>
@@ -2352,7 +2312,7 @@ export default function FailureAnalysisPage() {
         >
           {/* HON-05: name the run the commits are attributed against — this
               test's own last failure, not the project's newest failed run. */}
-          <p className="m-0 mb-3 text-[12px] text-[var(--color-text-muted)]" data-testid="suspects-run">
+          <p className="m-0 mb-3 text-xs text-[var(--color-text-muted)]" data-testid="suspects-run">
             Commits leading up to this test&apos;s last failure, in run{' '}
             <Link
               to={`/runs/${encodeURIComponent(runId)}`}
@@ -2575,7 +2535,7 @@ export default function FailureAnalysisPage() {
             <Link
               to={`/runs?days=${days}`}
               title="Open the triage queue filtered to this window"
-              className="btn-primary inline-flex items-center gap-1 !px-3 !py-1.5 text-[13px]"
+              className="btn-primary inline-flex items-center gap-1 !px-3 !py-1.5 text-sm"
             >
               Open triage queue <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
             </Link>
@@ -2601,7 +2561,7 @@ export default function FailureAnalysisPage() {
         <InlineFormSection
           title="Classify uncategorised failures"
           description={
-            <span className="text-[12.5px]">
+            <span className="text-sm">
               Every failing test in the last <strong>{days}</strong> day{days === 1 ? '' : 's'}
               {suiteLabel && <> in <code className="font-mono">{suiteLabel}</code></>} that
               has no category yet will be tagged with the selected category.
@@ -2619,7 +2579,7 @@ export default function FailureAnalysisPage() {
               type="button"
               onClick={() => closePageSection('classify')}
               disabled={classifying}
-              className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 disabled:opacity-50"
+              className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 disabled:opacity-50"
             >
               Cancel
             </button>
@@ -2634,8 +2594,8 @@ export default function FailureAnalysisPage() {
                 onClick={() => handleClassify(c.id)}
                 className="w-full text-left px-3 py-2.5 rounded-md border border-[var(--color-border)] hover:border-[var(--color-accent)] hover:bg-[var(--color-bg-hover)]/40 transition-colors disabled:opacity-50"
               >
-                <div className="text-[13px] font-medium text-[var(--color-text)]">{c.label}</div>
-                <div className="text-[11.5px] text-[var(--color-text-muted)] mt-0.5">{c.desc}</div>
+                <div className="text-sm font-medium text-[var(--color-text)]">{c.label}</div>
+                <div className="text-xs text-[var(--color-text-muted)] mt-0.5">{c.desc}</div>
               </button>
             ))}
           </div>
@@ -2664,16 +2624,14 @@ export default function FailureAnalysisPage() {
       <section aria-label="Failure metrics">
         <KpiStrip>
           {[
-            <MetricCard key="repeat" compact icon={null} title="Repeat failures" metric={{ value: model.repeatCount }} />,
-            <MetricCard key="flaky" compact icon={null} title="Flaky tests" metric={{ value: model.flakyCount }} />,
+            <MetricCard key="repeat" title="Repeat failures" metric={{ value: model.repeatCount }} />,
+            <MetricCard key="flaky" title="Flaky tests" metric={{ value: model.flakyCount }} />,
             <MetricCard
               key="uncategorized"
-              compact
-              icon={null}
               title="Uncategorized"
               metric={{ value: model.totalCategorised === 0 ? '—' : `${Math.round(model.uncategorizedPct)}%` }}
             />,
-            <MetricCard key="executions" compact icon={null} title="Total executions" metric={{ value: model.totalRuns }} />,
+            <MetricCard key="executions" title="Total executions" metric={{ value: model.totalRuns }} />,
             <TimeToFixTile key="time-to-fix" data={timeToFix.data} isLoading={timeToFix.isLoading} failed={Boolean(timeToFix.error)} />,
           ]}
         </KpiStrip>
@@ -2699,13 +2657,13 @@ export default function FailureAnalysisPage() {
             suiteName={suiteLabel || null}
           />
         ) : (
-          <CardShell title="Compare to previous window" rightSlot={<span>last {days}d vs prior {days}d</span>}>
-            <div className="px-4 py-3.5 text-[12.5px] text-[var(--color-text-muted)]">
+          <Panel title="Compare to previous window" actions={<span>last {days}d vs prior {days}d</span>}>
+            <div className="px-4 py-3.5 text-sm text-[var(--color-text-muted)]">
               {compareLoading
                 ? 'Loading prior-window data…'
                 : 'Not enough trend data to compare against the prior window yet.'}
             </div>
-          </CardShell>
+          </Panel>
         )
       )}
 
@@ -2766,7 +2724,7 @@ export default function FailureAnalysisPage() {
         <FailureTimeline trend={trend} days={days} />
       </Disclosure>
 
-      <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-[12px] text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
+      <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-xs text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
         Wider screen needed for the full layout. Some sections may overflow on narrow viewports.
       </div>
     </PageShell>

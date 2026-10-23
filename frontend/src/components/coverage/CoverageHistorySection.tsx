@@ -30,7 +30,7 @@ export const HISTORY_UNAVAILABLE = 'Coverage history is not available'
 export const HISTORY_FIRST_SNAPSHOT = 'No coverage snapshot yet: the first is taken at 00:05 UTC.'
 export const HISTORY_PICK_PROJECT = 'Pick a project to see its coverage history'
 
-const MESSAGE = 'rounded-xl border px-4 py-6 text-center text-[12.5px] text-[var(--color-text-muted)]'
+const MESSAGE = 'rounded-xl border px-4 py-6 text-center text-sm text-[var(--color-text-muted)]'
 
 export interface CoverageHistorySectionProps {
   days: number

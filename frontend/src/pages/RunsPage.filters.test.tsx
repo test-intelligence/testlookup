@@ -4,7 +4,7 @@
  * restores the view; the search asks once per pause, not once per key; the
  * branch select lists one project's branches and is absent in All Projects.
  */
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { SWRConfig } from 'swr'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -198,5 +198,22 @@ describe('RunsPage — the toolbar filters (FAIL-05)', () => {
     expect(screen.getByText(/Page 2 of 2/)).toBeInTheDocument()
     fireEvent.change(verdictSelect(), { target: { value: 'GO' } })
     await waitFor(() => expect(screen.getByText(/Page 1 of 2/)).toBeInTheDocument())
+  })
+
+  // W29b G-C: react-router hands a functional setSearchParams the params of the last RENDER, and its navigations
+  // are transitions. Branch then AI verdict picked before the first change rendered (runs-list-filters.spec under
+  // load) asked with the verdict alone: the branch was lost.
+  it('two filter changes before a render keep both (the second does not overwrite the first)', async () => {
+    renderPage()
+    await waitFor(() => expect(Array.from(branchSelect()?.options ?? [], (o) => o.textContent)).toContain('main'))
+    act(() => {
+      fireEvent.change(branchSelect() as HTMLSelectElement, { target: { value: 'main' } })
+      fireEvent.change(verdictSelect(), { target: { value: 'NO_GO' } })
+    })
+    await waitFor(() => {
+      expect(url().get('branch')).toBe('main')
+      expect(url().get('verdict')).toBe('NO_GO')
+      expect(lastParams()).toMatchObject({ branch: 'main', recommendation: 'NO_GO' })
+    })
   })
 })

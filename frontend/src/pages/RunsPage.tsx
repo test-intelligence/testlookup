@@ -44,7 +44,7 @@
  * existing agentService calls. UX redesign P2: a control renders only when it
  * does something real.
  */
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   GitBranch, GitCompare, Layers, Search, Stethoscope, Upload, Zap,
@@ -61,6 +61,9 @@ import type { OverflowItem } from '@/components/ui/OverflowMenu'
 import StatusBanner, { type BannerFact, type BannerState } from '@/components/ui/StatusBanner'
 import { DECISION_LABEL } from '@/components/ui/statusVocabulary'
 import Disclosure from '@/components/ui/Disclosure'
+import MetricCard from '@/components/ui/MetricCard'
+import { Panel } from '@/components/ui/PanelHeader'
+import { Table, Td, Th, ThSort, Tr } from '@/components/ui/Table'
 import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
 import WindowPicker, { DEFAULT_WINDOW_OPTIONS } from '@/components/ui/WindowPicker'
 import SuiteBadge from '@/components/ui/SuiteBadge'
@@ -464,7 +467,7 @@ function GhostBtn({
   asChildLink?: string
   disabled?: boolean
 }) {
-  const cls = 'inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors disabled:opacity-50'
+  const cls = 'inline-flex items-center gap-1.5 px-2.5 py-1.5 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors disabled:opacity-50'
   if (asChildLink) {
     return <Link to={asChildLink} className={cls} style={{ borderColor: 'var(--color-border)' }} title={title}>{children}</Link>
   }
@@ -519,7 +522,7 @@ function GhostSelect<T extends string | number>({
         const next = options.find(o => String(o.value) === e.target.value)?.value
         if (next != null) onChange(next as T)
       }}
-      className={clsx('text-[13px] px-2.5 py-1.5 rounded-md cursor-pointer', className)}
+      className={clsx('text-sm px-2.5 py-1.5 rounded-md cursor-pointer', className)}
       style={{
         background: 'var(--color-bg-secondary)',
         border: '1px solid var(--color-border)',
@@ -581,7 +584,7 @@ export function VerdictDetails({ model, verdict }: { model: PipelineModel; verdi
       <div className="flex min-w-0 flex-col gap-2.5">
         <DimensionGrid dimensions={model.dimensions} />
         {model.hasMissingMetadata && (
-          <p className="m-0 text-[12.5px] leading-[1.45] text-[var(--color-text-secondary)]">
+          <p className="m-0 text-sm leading-[1.45] text-[var(--color-text-secondary)]">
             Branch, release, and duration absent on {Math.round(100 - model.metadataCoveragePct)}% of rows — the Jenkins reporter isn't sending these fields.
             {' '}<span className="text-[var(--color-text-muted)]">Cannot tell which feature branch broke things.</span>
           </p>
@@ -612,7 +615,7 @@ export function HealthMeter({ model, verdict }: { model: PipelineModel; verdict:
   const pillLabel = score >= 66 ? 'Stable' : score >= 33 ? 'At risk' : 'Blocked'
   return (
     <div>
-      <div className="text-[11px] uppercase font-medium text-[var(--color-text-muted)] mb-1.5" style={{ letterSpacing: 'var(--tracking-wider)' }}>
+      <div className="eyebrow uppercase text-[var(--color-text-muted)] mb-1.5">
         Pipeline health
       </div>
       <div className="flex items-end justify-between">
@@ -620,10 +623,10 @@ export function HealthMeter({ model, verdict }: { model: PipelineModel; verdict:
           <span className="font-bold tabular-nums leading-none" style={{ fontSize: 'var(--text-display-lg)', color: t.meter, letterSpacing: '-0.02em' }}>
             {verdict === 'PENDING' ? '—' : score}
           </span>
-          <span className="text-[13px] text-[var(--color-text-muted)] ml-1">/ 100</span>
+          <span className="text-sm text-[var(--color-text-muted)] ml-1">/ 100</span>
         </div>
         <span
-          className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold"
+          className="inline-flex items-center px-2.5 py-1 rounded-full text-2xs font-semibold"
           style={{ background: t.pillBg, border: `1px solid ${t.pillBd}`, color: t.pillFg }}
         >
           {pillLabel}
@@ -654,35 +657,26 @@ function DimensionGrid({ dimensions }: { dimensions: DimensionScore[] }) {
   )
 }
 
+/**
+ * One weighted dimension: the KPI tile's in-panel size (W29b UIX-09: MetricCard sm, the sunken well; it replaced
+ * a hand-made tile on an invisible white sheen). Not measured: "—" and an empty bar, never a 0 (the composite
+ * leaves it out); the label's hover says so.
+ */
 function DimensionTile({ dim }: { dim: DimensionScore }) {
-  const toneColor = dim.tone === 'bad' ? 'var(--status-failed)' : dim.tone === 'warn' ? 'var(--status-broken)' : 'var(--status-passed)'
-  // Not measured: "—" and an empty bar, never a 0 (the composite leaves it out).
-  const valueColor = dim.score === null ? 'var(--color-text-muted)' : toneColor
-  const barColor   = toneColor
+  const measured = dim.score !== null
   return (
-    <div
-      className="rounded-sm px-2.5 py-2 border"
-      style={{ background: 'rgba(255,255,255,0.025)', borderColor: 'var(--color-border)' }}
+    <MetricCard
+      size="sm"
+      title={dim.label}
+      hint={measured ? undefined : `${dim.label}: not measured, left out of the score`}
+      note={`${Math.round(dim.weight * 100)}%`}
+      metric={{ value: dim.score === null ? '—' : Math.round(dim.score) }}
+      tone={measured ? dim.tone : 'neutral'}
+      bar={dim.score}
       data-dimension={dim.id}
       data-dimension-measured={dim.measured ? 'true' : 'false'}
-      title={dim.score === null ? `${dim.label}: not measured, left out of the score` : undefined}
-    >
-      <div
-        className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] flex justify-between"
-        style={{ letterSpacing: 'var(--tracking-wider)' }}
-      >
-        <span>{dim.label}</span>
-        <span className="text-[var(--color-text-faint)] font-medium">{Math.round(dim.weight * 100)}%</span>
-      </div>
-      <div className="flex items-center gap-2 mt-1.5">
-        <span className="text-[14px] font-semibold tabular-nums min-w-[40px]" style={{ color: valueColor }} data-dimension-value="">
-          {dim.score === null ? '—' : Math.round(dim.score)}
-        </span>
-        <div className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: 'var(--color-bg-secondary)' }}>
-          {dim.score !== null && <i className="block h-full rounded-full" style={{ width: `${dim.score}%`, background: barColor }} />}
-        </div>
-      </div>
-    </div>
+      valueData={{ 'data-dimension-value': '' }}
+    />
   )
 }
 
@@ -691,13 +685,6 @@ function DimensionTile({ dim }: { dim: DimensionScore }) {
 const PASS_RATE_DOMAIN = [0, 100] as const
 
 type Tone = 'good' | 'warn' | 'bad' | 'neutral'
-
-const TONE_COLOR: Record<Tone, string> = {
-  good:    'var(--status-passed)',
-  warn:    'var(--status-broken)',
-  bad:     'var(--status-failed)',
-  neutral: 'var(--color-text)',
-}
 
 /**
  * The window's average pass rate and the line it is the average of. Owner
@@ -718,22 +705,16 @@ export function BuildPassRate({ model }: { model: PipelineModel }) {
     : model.failedRuns === model.totalRuns ? 'misleading — every build still failed'
     : model.measuredRuns < model.totalRuns ? `${model.measuredRuns} of ${model.totalRuns} builds measured`
     : `${model.passedRuns} pass · ${model.failedRuns} fail`
+  // The KPI tile (W29b UIX-09: MetricCard md): the value, the per-build line as its aside, the meta line as its
+  // caption. The section keeps the cell's name ("Average pass rate") for the tests and the region readers.
   return (
-    <section
-      aria-label="Average pass rate"
-      className="flex flex-col gap-1 rounded-xl border px-4 py-3"
-      style={{ background: 'var(--color-bg-card)', borderColor: 'var(--color-border)' }}
-    >
-      <div className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
-        Avg pass rate
-      </div>
-      <div className="font-bold tabular-nums leading-[1.1]" style={{ fontSize: 'var(--text-stat-lg)', letterSpacing: '-0.01em', color: TONE_COLOR[tone] }}>
-        {avg === null ? '—' : avg.toFixed(1)}
-        {avg !== null && <span className="text-[14px] font-medium text-[var(--color-text-muted)] ml-1">%</span>}
-      </div>
-      <div className="text-[10.5px] text-[var(--color-text-muted)]">{meta}</div>
-      {hasTrend && (
-        <div className="mt-1.5">
+    <section aria-label="Average pass rate" className="min-w-0">
+      <MetricCard
+        title="Avg pass rate"
+        metric={{ value: avg === null ? '—' : `${avg.toFixed(1)}%` }}
+        tone={tone}
+        caption={meta}
+        sparkline={hasTrend ? (
           <Sparkline
             series={model.passRateSeries}
             label="Pass rate per build, oldest first"
@@ -741,9 +722,10 @@ export function BuildPassRate({ model }: { model: PipelineModel }) {
             format={(v) => `${v.toFixed(1)}%`}
             tone={tone}
             height={24}
+            className="w-24"
           />
-        </div>
-      )}
+        ) : undefined}
+      />
     </section>
   )
 }
@@ -788,14 +770,14 @@ export function SignatureClusters({
 
   if (model.failedRuns === 0) {
     return (
-      <p className="m-0 py-6 text-center text-[13px] text-[var(--color-text-secondary)]">
+      <p className="m-0 py-6 text-center text-sm text-[var(--color-text-secondary)]">
         No failures in this window — nothing to group.
       </p>
     )
   }
   if (failed) {
     return (
-      <p className="m-0 py-6 text-center text-[13px] text-[var(--color-text-secondary)]" data-signatures-unavailable="">
+      <p className="m-0 py-6 text-center text-sm text-[var(--color-text-secondary)]" data-signatures-unavailable="">
         Signatures unavailable: the request failed.
       </p>
     )
@@ -803,7 +785,7 @@ export function SignatureClusters({
   const primary = model.groups[0]
   if (!primary) {
     return (
-      <p className="m-0 py-6 text-center text-[13px] text-[var(--color-text-muted)]" aria-busy="true">
+      <p className="m-0 py-6 text-center text-sm text-[var(--color-text-muted)]" aria-busy="true">
         Grouping the failed builds by their error…
       </p>
     )
@@ -824,7 +806,7 @@ export function SignatureClusters({
 
   return (
     <div className="flex flex-col gap-3" data-signature-clusters="">
-      <p className="m-0 text-[12.5px] text-[var(--color-text-secondary)]" data-signature-lead="">
+      <p className="m-0 text-sm text-[var(--color-text-secondary)]" data-signature-lead="">
         {groups.length} signature{s(groups.length)} across {groupedRuns} failed build{s(groupedRuns)}
         {groupedRuns < failedRuns && ` · grouped over the newest ${groupedRuns} of ${failedRuns} failed builds`}
       </p>
@@ -847,7 +829,7 @@ export function SignatureClusters({
               {startsGroup && <SignatureGroupHeader group={group} isPrimary={isPrimary} />}
               <ClusterRow run={run} isPrimary={isPrimary} onClick={() => onJumpToRow(run)} />
               {item?.capped && (
-                <p className="m-0 -mt-1 pl-2.5 text-[11px] text-[var(--color-text-muted)]" data-signature-capped="">
+                <p className="m-0 -mt-1 pl-2.5 text-2xs text-[var(--color-text-muted)]" data-signature-capped="">
                   (grouped over {item.read} of {item.failing_tests} failing tests)
                 </p>
               )}
@@ -856,7 +838,7 @@ export function SignatureClusters({
         })}
       </div>
       {groups.length > 1 && (
-        <p className="text-[11.5px] m-0 italic" style={{ color: 'var(--color-text-muted)', lineHeight: 1.5 }}>
+        <p className="text-xs m-0 italic" style={{ color: 'var(--color-text-muted)', lineHeight: 1.5 }}>
           {otherCount} failed build{s(otherCount)} carr{otherCount === 1 ? 'ies' : 'y'} a different error. Open {otherCount === 1 ? 'it' : 'them'} before counting {otherCount === 1 ? 'it' : 'them'} as a separate incident.
         </p>
       )}
@@ -879,22 +861,22 @@ function SignatureGroupHeader({ group, isPrimary }: { group: SignatureGroup; isP
     <div className="mt-1.5 first:mt-0" data-signature-group={isPrimary ? 'primary' : 'other'}>
       <div className="flex items-baseline justify-between gap-2">
         <code
-          className="min-w-0 font-mono text-[12px] [overflow-wrap:anywhere]"
+          className="min-w-0 font-mono text-xs [overflow-wrap:anywhere]"
           title={group.key}
           style={{ color: isPrimary ? 'var(--status-failed)' : 'var(--status-broken)' }}
         >
           {group.title}
         </code>
-        <span className="shrink-0 text-[11.5px] tabular-nums text-[var(--color-text-muted)]">
+        <span className="shrink-0 text-xs tabular-nums text-[var(--color-text-muted)]">
           {n} build{n === 1 ? '' : 's'}
         </span>
       </div>
       {shared ? (
-        <p className="m-0 mt-0.5 text-[12px] text-[var(--color-text-secondary)]" data-signature-shared="">
+        <p className="m-0 mt-0.5 text-xs text-[var(--color-text-secondary)]" data-signature-shared="">
           {shared} fails with this error in all {n} builds.
         </p>
       ) : n >= 2 ? (
-        <p className="m-0 mt-0.5 text-[12px] text-[var(--color-text-secondary)]">
+        <p className="m-0 mt-0.5 text-xs text-[var(--color-text-secondary)]">
           {n} builds fail with this error.
         </p>
       ) : null}
@@ -944,26 +926,25 @@ function ClusterRow({
         background: isPrimary ? 'transparent' : 'color-mix(in srgb, var(--status-broken) 5%, transparent)',
       }}
     >
-      <span className="text-[12px] tabular-nums truncate text-[var(--color-text-secondary)]">
+      <span className="text-xs tabular-nums truncate text-[var(--color-text-secondary)]">
         <strong className="text-[var(--color-text)]">#{String(run.build_number)}</strong>
-        <span className="ml-1.5 font-mono text-[11px]">{run.id.slice(0, 8)}</span>
+        <span className="ml-1.5 font-mono text-2xs">{run.id.slice(0, 8)}</span>
       </span>
       <div className="flex h-3.5 rounded-sm overflow-hidden" style={{ background: 'var(--color-bg-secondary)' }}>
         {passFlex > 0 && <span style={{ flex: passFlex, background: 'var(--status-passed)' }} />}
         {failFlex > 0 && <span style={{ flex: failFlex, background: 'var(--status-failed)' }} />}
       </div>
       <span
-        className="text-[12.5px] font-semibold tabular-nums text-right"
+        className="text-sm font-semibold tabular-nums text-right"
         style={{ color: pct === null ? 'var(--color-text-muted)' : isPrimary ? passRateColor(pct) : 'var(--status-broken)' }}
       >
         {pct === null ? '—' : `${pct.toFixed(1)}%`}
       </span>
       <span
-        className="text-[10.5px] uppercase font-semibold text-center px-1.5 py-0.5 rounded-full justify-self-end"
+        className="eyebrow uppercase text-center px-1.5 py-0.5 rounded-full justify-self-end"
         style={{
           background: isPrimary ? 'color-mix(in srgb, var(--status-failed) 15%, transparent)' : 'color-mix(in srgb, var(--status-broken) 16%, transparent)',
-          color:      isPrimary ? 'var(--status-failed)' : 'var(--status-broken)',
-          letterSpacing: 'var(--tracking-wide)',
+          color:      isPrimary ? 'var(--status-failed-ink)' : 'var(--status-broken-ink)',
         }}
       >
         {isPrimary ? 'primary' : 'other'}
@@ -984,6 +965,8 @@ function SignatureChip({
   label, title, isOutlier, onOpen,
 }: { label: string; title: string; isOutlier: boolean; onOpen: () => void }) {
   const hue = isOutlier ? 'var(--status-broken)' : 'var(--status-failed)'
+  // The words on the chip's own tint read the hue's -ink (>= 4.5:1 in every theme, W29a UIX-03).
+  const ink = isOutlier ? 'var(--status-broken-ink)' : 'var(--status-failed-ink)'
   return (
     <button
       type="button"
@@ -992,13 +975,13 @@ function SignatureChip({
       aria-label={`Signature ${label}: show the failure signatures`}
       data-signature-chip=""
       className={clsx(
-        'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10.5px] whitespace-nowrap hover:underline',
+        'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-2xs whitespace-nowrap hover:underline',
         isOutlier && 'italic',
       )}
       style={{
         background: `color-mix(in srgb, ${hue} 10%, transparent)`,
         border: `1px solid color-mix(in srgb, ${hue} 25%, transparent)`,
-        color: hue,
+        color: ink,
       }}
     >
       <i aria-hidden style={{ width: 6, height: 6, borderRadius: 999, background: 'currentColor' }} />
@@ -1007,15 +990,14 @@ function SignatureChip({
   )
 }
 
-
 /**
- * A runs-table cell's padding. 10 px a side, not 12 (P4): the AI-verdict
- * column took the room, and the 36 px this gives back keeps the Tests bar
- * drawn (its 24 px floor) while the table still fits its card at a 1280 px
- * window.
+ * The runs table is the ONE table (W29b UIX-06) at `compact` density: 8 px a
+ * side, 6 px top and bottom. P4 had cut its cells to 10 px a side to keep the
+ * Tests bar drawn (its 24 px floor) while the table fits its card at a 1280 px
+ * window; compact gives back 4 px more per column, which the 13 px body and
+ * the 11 px verdict chip of the type scale take (`fold-runs.spec.ts` holds the
+ * table inside its card at 1280 and 1440).
  */
-const CELL_PAD = '8px 10px'
-
 function RunsTable({
   runs, signatures, signatureRequest, verdictOf, verdictsLoading,
   selectedIds, setSelectedIds, onTrigger, onDeep,
@@ -1073,11 +1055,11 @@ function RunsTable({
   }
 
   return (
-    <CardShell
-      title={<>Runs <span className="text-[11.5px] text-[var(--color-text-muted)] font-normal ml-2"><strong>{total}</strong> in window · sorted by Started {datetimeSortDir === 'desc' ? '↓' : '↑'} · showing {runs.length} on this page</span></>}
-      rightSlot={
+    <Panel
+      title={<>Runs <span className="text-xs text-[var(--color-text-muted)] font-normal ml-2"><strong>{total}</strong> in window · sorted by Started {datetimeSortDir === 'desc' ? '↓' : '↑'} · showing {runs.length} on this page</span></>}
+      actions={
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[11.5px]">{selectedCount} selected</span>
+          <span className="text-xs">{selectedCount} selected</span>
           <GhostBtn
             disabled={selectedCount === 0 || !isQaEngineer}
             onClick={() => onTrigger('__bulk__')}
@@ -1095,19 +1077,19 @@ function RunsTable({
         </div>
       }
     >
-      {/* Wide table (10 cols) — a min width so horizontal scroll kicks in
+      {/* Wide table (9 cols) — a min width so horizontal scroll kicks in
           cleanly on narrow viewports instead of columns getting squeezed and
           clipped. P4 (the AI verdict came in, the "Intel" link went): the
-          columns' min-content width is 955 px on the visual fixtures (Build
-          and the signature chip no longer wrap; `CELL_PAD`), under the card's
-          974 px at a 1280 px window; `fold-runs.spec.ts` holds the table
-          inside its card at 1280 and 1440. It was 980: 6 px of sideways
-          scroll at 1280. */}
+          columns' min-content width is under the card's 974 px at a 1280 px
+          window (Build and the signature chip do not wrap; compact density);
+          `fold-runs.spec.ts` holds the table inside its card at 1280 and
+          1440. It was 980: 6 px of sideways scroll at 1280. The header row's
+          sunken surface is the `.th` cells' (W29b UIX-06). */}
       <div className="overflow-x-auto" data-runs-table-scroller="">
-        <table className="text-[12.5px]" style={{ minWidth: 960, width: '100%' }}>
-          <thead>
-            <tr style={{ background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)' }}>
-              <th style={{ width: 32, padding: CELL_PAD }}>
+        <Table density="compact" style={{ minWidth: 960 }}>
+          <thead className="border-b border-[var(--color-border)]">
+            <tr>
+              <Th className="w-8">
                 <input
                   type="checkbox"
                   checked={allSelected}
@@ -1115,23 +1097,27 @@ function RunsTable({
                   onChange={toggleAll}
                   aria-label="Select all visible runs"
                 />
-              </th>
+              </Th>
               {/* The suite is under the run number ("Run #60" counts per
                   suite): a column of its own put the table 66 px past its
-                  card at 1280 px on CI's font, the row actions off-screen. */}
-              <ThSort label="Build" />
-              <Th label="Signature" />
-              <Th label="Status" />
-              <Th label="AI verdict" />
-              <Th label="Tests" />
-              <ThSort label="Pass rate" />
+                  card at 1280 px on CI's font, the row actions off-screen.
+                  Build and Pass rate do not sort (no handler): plain headers,
+                  no inert arrow. */}
+              <Th>Build</Th>
+              <Th>Signature</Th>
+              <Th>Status</Th>
+              <Th>AI verdict</Th>
+              <Th numeric>Tests</Th>
+              <Th numeric>Pass rate</Th>
               <ThSort
                 label="Timing"
-                sortDir={datetimeSortDir === 'desc' ? '↓' : '↑'}
-                active
-                onClick={onToggleDatetimeSort}
+                sortKey="timing"
+                currentKey="timing"
+                dir={datetimeSortDir}
+                onSort={onToggleDatetimeSort}
+                numeric
               />
-              <Th label="Actions" align="right" />
+              <Th className="text-right">Actions</Th>
             </tr>
           </thead>
           <tbody>
@@ -1157,28 +1143,27 @@ function RunsTable({
                 </td>
               </tr>
             )}
-            {runs.map((r, i) => {
+            {runs.map((r) => {
               const sigCell = signatureCellOf(r, signatures, signatureRequest)
               const isOutlier = sigCell.kind === 'chip' && sigCell.isOutlier
               const failed = isFailed(r.status)
               return (
-                <tr
+                // The outlier tint is the row's DATA (its build carries a different error) and stays; the zebra's
+                // even rows were the card's own colour (no pixel), and as an inline style they blocked the hover.
+                <Tr
                   id={`run-row-${r.id}`}
                   key={r.id}
-                  style={{
-                    background: isOutlier ? 'color-mix(in srgb, var(--status-broken) 3%, transparent)' : (i % 2 === 0 ? 'var(--color-bg-card)' : 'transparent'),
-                    borderBottom: '1px solid var(--color-border)',
-                  }}
-                  className="transition-colors hover:bg-[var(--color-bg-hover)]"
+                  interactive={false}
+                  style={isOutlier ? { background: 'color-mix(in srgb, var(--status-broken) 3%, transparent)' } : undefined}
                 >
-                  <td style={{ padding: CELL_PAD }}>
+                  <Td>
                     <input
                       type="checkbox"
                       checked={selectedIds.has(r.id)}
                       onChange={() => toggleOne(r.id)}
                       aria-label={`Select #${r.build_number}`}
                     />
-                  </td>
+                  </Td>
                   {/* Build column links to the run detail page. Header
                       label is "Build" for historical continuity, but the
                       VALUE is the human-readable, per-(project, suite)
@@ -1186,7 +1171,7 @@ function RunsTable({
                       over the partition. Falls back to the raw SDK
                       build_number for legacy rows that pre-date the
                       run_seq field. */}
-                  <td className="font-mono text-[12.5px] font-semibold whitespace-nowrap" style={{ padding: CELL_PAD }}>
+                  <Td className="font-mono text-sm font-semibold whitespace-nowrap">
                     {/* The job and branch the retired `/intelligence` rows
                         printed under the build (P4): on hover here, where
                         the table has no width left for a second line. */}
@@ -1199,7 +1184,7 @@ function RunsTable({
                     </Link>
                     {r.ingestion_source === 'upload' && (
                       <span
-                        className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[9.5px] font-medium align-middle"
+                        className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-2xs font-medium align-middle"
                         style={{
                           background: 'var(--ui-info-bg)',
                           border: '1px solid var(--ui-info-bd)',
@@ -1217,8 +1202,8 @@ function RunsTable({
                         linkTo={name => `/test-management?tab=Test+Suites&suite=${encodeURIComponent(name)}`}
                       />
                     </div>
-                  </td>
-                  <td style={{ padding: CELL_PAD }} data-run-signature="">
+                  </Td>
+                  <Td data-run-signature="">
                     {sigCell.kind === 'chip' ? (
                       <SignatureChip
                         label={sigCell.group.chipLabel}
@@ -1229,49 +1214,51 @@ function RunsTable({
                     ) : (
                       <span className="text-[var(--color-text-muted)]" title={sigCell.title} data-signature-none="">—</span>
                     )}
-                  </td>
-                  <td style={{ padding: CELL_PAD }}>
+                  </Td>
+                  <Td>
                     <span
-                      className="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-semibold"
+                      className="inline-flex items-center px-2 py-0.5 rounded-full text-2xs font-semibold"
                       style={{
                         background: failed ? 'color-mix(in srgb, var(--status-failed) 15%, transparent)' : isPassed(r.status) ? 'color-mix(in srgb, var(--status-passed) 15%, transparent)' : 'var(--color-bg-secondary)',
-                        color:      failed ? 'var(--status-failed)' : isPassed(r.status) ? 'var(--status-passed)' : 'var(--color-text-muted)',
+                        color:      failed ? 'var(--status-failed-ink)' : isPassed(r.status) ? 'var(--status-passed-ink)' : 'var(--color-text-muted)',
                       }}
                     >
                       {(r.status || '—').replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase())}
                     </span>
-                  </td>
-                  <td style={{ padding: CELL_PAD }} data-ai-verdict-cell="">
+                  </Td>
+                  <Td data-ai-verdict-cell="">
                     <AiVerdictCell run={r} verdict={verdictOf(r)} isLoading={verdictsLoading && !isRunInProgress(r.status)} />
-                  </td>
-                  <td style={{ padding: CELL_PAD }}>
-                    <div className="flex items-center gap-2">
+                  </Td>
+                  <Td numeric>
+                    <div className="flex items-center justify-end gap-2">
                       <div className="flex h-3 rounded-sm overflow-hidden flex-1 min-w-[24px] max-w-[80px]" style={{ background: 'var(--color-bg-secondary)' }}>
                         {r.passed_tests > 0 && <span style={{ flex: r.passed_tests, background: 'var(--status-passed)' }} />}
                         {r.failed_tests > 0 && <span style={{ flex: r.failed_tests, background: 'var(--status-failed)' }} />}
                       </div>
                       {/* Two groups that wrap between them when the column is
                           tight (passed · failed over the total), never inside one. */}
-                      <span className="text-[10.5px] leading-tight tabular-nums text-[var(--color-text-muted)]" data-run-tests-counts="">
+                      <span className="text-2xs leading-tight tabular-nums text-[var(--color-text-muted)]" data-run-tests-counts="">
                         <span className="whitespace-nowrap">
                           <span style={{ color: 'var(--status-passed)' }}>{r.passed_tests}</span> · <span style={{ color: 'var(--status-failed)' }}>{r.failed_tests}</span> ·
                         </span>{' '}
                         <span className="whitespace-nowrap">{r.total_tests} total</span>
                       </span>
                     </div>
-                  </td>
-                  <td style={{ padding: CELL_PAD }} className="font-semibold tabular-nums" data-run-pass-rate="">
+                  </Td>
+                  <Td numeric className="font-semibold" data-run-pass-rate="">
                     <RunPassRateValue run={r} />
-                  </td>
+                  </Td>
                   {/* EXEC-04b: the wall clock when the run reported one, else the
-                      summed test time, each labelled; both in the tooltip. */}
+                      summed test time, each labelled; both in the tooltip. The
+                      cell's own padding is the table's compact one. */}
                   <TimingCell
                     started={r.start_time ?? r.created_at}
                     end={r.end_time}
                     durationMs={r.duration_ms}
                     wallClockMs={r.wall_clock_ms ?? null}
+                    className="!px-2 !py-1.5"
                   />
-                  <td style={{ padding: CELL_PAD, textAlign: 'right' }}>
+                  <Td className="text-right">
                     {/* P4: no separate "Intel" link — the AI verdict cell opens
                         the run's Analysis tab (`/runs/:id?tab=analysis`). */}
                     <div className="inline-flex items-center gap-1.5">
@@ -1310,57 +1297,15 @@ function RunsTable({
                         <GitCompare className="h-3 w-3" />
                       </button>
                     </div>
-                  </td>
-                </tr>
+                  </Td>
+                </Tr>
               )
             })}
           </tbody>
-        </table>
+        </Table>
       </div>
       <Pagination page={page} pages={pages} total={total} onChange={onPageChange} />
-    </CardShell>
-  )
-}
-
-function Th({ label, align }: { label: string; align?: 'right' }) {
-  return (
-    <th
-      style={{
-        padding: CELL_PAD,
-        textAlign: align ?? 'left',
-        color: 'var(--color-text-muted)',
-        fontWeight: 500,
-        fontSize: 10.5,
-        textTransform: 'uppercase',
-        letterSpacing: 'var(--tracking-wider)',
-      }}
-    >
-      {label}
-    </th>
-  )
-}
-
-function ThSort({
-  label, sortDir, active, onClick,
-}: { label: string; sortDir?: '↑' | '↓'; active?: boolean; onClick?: () => void }) {
-  return (
-    <th
-      aria-sort={active ? (sortDir === '↑' ? 'ascending' : 'descending') : undefined}
-      onClick={onClick}
-      style={{
-        padding: CELL_PAD,
-        textAlign: 'left',
-        color: active ? 'var(--color-text)' : 'var(--color-text-muted)',
-        fontWeight: 500,
-        fontSize: 10.5,
-        textTransform: 'uppercase',
-        letterSpacing: 'var(--tracking-wider)',
-        cursor: onClick ? 'pointer' : 'default',
-        userSelect: 'none',
-      }}
-    >
-      {label} <span aria-hidden className="ml-1">{sortDir ?? '↕'}</span>
-    </th>
+    </Panel>
   )
 }
 
@@ -1383,23 +1328,24 @@ function LastGreenCallout({ model, onBisect }: { model: PipelineModel; onBisect:
       }}
     >
       <div className="flex items-center justify-between gap-2 mb-1">
-        <h3 id="lastgreen" className="text-[13px] font-semibold m-0 text-[var(--color-text)]">Last green build</h3>
+        <h3 id="lastgreen" className="text-sm font-semibold m-0 text-[var(--color-text)]">Last green build</h3>
         <span
-          className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold uppercase"
-          style={{ background: 'color-mix(in srgb, var(--status-passed) 15%, transparent)', color: 'var(--status-passed)', letterSpacing: 'var(--tracking-wide)' }}
+          className="eyebrow inline-flex items-center px-1.5 py-0.5 rounded-full uppercase"
+          style={{ background: 'color-mix(in srgb, var(--status-passed) 15%, transparent)', color: 'var(--status-passed-ink)' }}
         >
           Bisect target
         </span>
       </div>
-      <p className="text-[12.5px] m-0 mt-1.5" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
-        The last green Jenkins run is <code className="font-mono text-[11.5px]">#{model.lastGreen.build_number}</code>{' '}
-        at SHA <code className="font-mono text-[11.5px]">{sha}</code>, {hours} hour{hours === 1 ? '' : 's'} ago.
+      <p className="text-sm m-0 mt-1.5" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+        The last green Jenkins run is <code className="font-mono text-xs">#{model.lastGreen.build_number}</code>{' '}
+        at SHA <code className="font-mono text-xs">{sha}</code>, {hours} hour{hours === 1 ? '' : 's'} ago.
         {' '}{model.failedRuns} build{model.failedRuns === 1 ? '' : 's'} since{' '}
         {model.failedRuns === 1 ? 'has failed' : 'have all failed'}. Bisect or revert from that SHA.
       </p>
+      {/* The two callout stats are the KPI tile's in-panel size (W29b UIX-09). */}
       <div className="grid gap-2 mt-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
-        <CalloutStat label="Last green" value={<span className="font-mono">{sha}</span>} tone="good" />
-        <CalloutStat label="Hours ago" value={hours} tone="neutral" />
+        <MetricCard size="sm" title="Last green" metric={{ value: sha }} tone="good" />
+        <MetricCard size="sm" title="Hours ago" metric={{ value: hours }} />
       </div>
       <div className="flex flex-wrap gap-2 mt-3">
         <PrimaryBtn onClick={onBisect}>
@@ -1409,28 +1355,13 @@ function LastGreenCallout({ model, onBisect }: { model: PipelineModel; onBisect:
   )
 }
 
-function CalloutStat({ label, value, tone }: { label: string; value: React.ReactNode; tone: 'good' | 'bad' | 'neutral' }) {
-  const fg = tone === 'good' ? 'var(--status-passed)' : tone === 'bad' ? 'var(--status-failed)' : 'var(--color-text)'
-  return (
-    <div
-      className="rounded-md border px-3 py-2.5"
-      style={{ background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
-    >
-      <div className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
-        {label}
-      </div>
-      <div className="text-[16px] font-bold tabular-nums mt-0.5" style={{ color: fg }}>{value}</div>
-    </div>
-  )
-}
-
 // ── Build velocity card ──────────────────────────────────────────────────
 export function BuildVelocityCard({ cells, redStreak }: { cells: DayStripCell[]; redStreak: number }) {
   const n = countTones(cells)
   return (
-    <CardShell title="Build velocity · 14d" rightSlot={<span>{redStreak} reds in a row</span>}>
+    <Panel title="Build velocity · 14d" actions={<span>{redStreak} reds in a row</span>}>
       <div className="px-4 pt-1 pb-3.5">
-        <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-2.5" style={{ lineHeight: 1.5 }}>
+        <p className="text-xs text-[var(--color-text-muted)] m-0 mb-2.5" style={{ lineHeight: 1.5 }}>
           Each cell is one build, oldest left.
         </p>
         <DayStrip
@@ -1444,28 +1375,7 @@ export function BuildVelocityCard({ cells, redStreak }: { cells: DayStripCell[];
           text={{ none: 'No build', today: 'Latest build' }}
         />
       </div>
-    </CardShell>
-  )
-}
-
-// ── Shared shell ─────────────────────────────────────────────────────────
-function CardShell({
-  title, rightSlot, children,
-}: { title: React.ReactNode; rightSlot?: React.ReactNode; children?: React.ReactNode }) {
-  return (
-    <div
-      className="overflow-hidden rounded-xl"
-      style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
-    >
-      <div
-        className="flex items-center justify-between gap-2.5 px-4 py-3"
-        style={{ borderBottom: '1px solid var(--color-border)' }}
-      >
-        <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">{title}</h3>
-        {rightSlot && <div className="flex items-center gap-2.5 text-[12px] text-[var(--color-text-muted)]">{rightSlot}</div>}
-      </div>
-      {children}
-    </div>
+    </Panel>
   )
 }
 
@@ -1533,16 +1443,27 @@ export default function RunsPage() {
   const branchFilter = isAllProjects ? '' : urlFilters.branch
   const verdictFilter = urlFilters.verdict as VerdictFilter
   const filtersActive = Boolean(urlQ || branchFilter || verdictFilter)
-  const writeFilters = (values: Partial<Record<'q' | 'branch' | 'verdict', string>>) => {
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev)
-      for (const [name, value] of Object.entries(values)) {
-        if (value) next.set(name, value)
-        else next.delete(name)
-      }
-      return next
-    }, { replace: true })
-  }
+  // react-router hands a functional setSearchParams the params of the last RENDER, and its navigations are
+  // transitions: a Branch and an AI verdict picked before the first one rendered asked with the verdict alone
+  // (runs-list-filters.spec, under load). Each filter write starts from the newest query this page wrote, until
+  // a render shows that query (or a URL from elsewhere: back, a link).
+  const latestQuery = useRef(searchParams)
+  const pendingQueries = useRef<string[]>([])
+  useEffect(() => {
+    const at = pendingQueries.current.indexOf(searchParams.toString())
+    pendingQueries.current = at === -1 ? [] : pendingQueries.current.slice(at + 1)
+    if (pendingQueries.current.length === 0) latestQuery.current = searchParams
+  }, [searchParams])
+  const writeFilters = useCallback((values: Partial<Record<'q' | 'branch' | 'verdict', string>>) => {
+    const next = new URLSearchParams(latestQuery.current)
+    for (const [name, value] of Object.entries(values)) {
+      if (value) next.set(name, value)
+      else next.delete(name)
+    }
+    latestQuery.current = next
+    pendingQueries.current.push(next.toString())
+    setSearchParams(next, { replace: true })
+  }, [setSearchParams])
   // An unknown `verdict` is ignored, and dropped from the URL.
   const rawVerdict = searchParams.get('verdict') ?? ''
   const verdictIsUnknown = rawVerdict !== '' && !isVerdictFilter(rawVerdict)
@@ -1570,15 +1491,10 @@ export default function RunsPage() {
     if (pendingQ === null) return
     const timer = window.setTimeout(() => {
       setPendingQ(null)
-      setSearchParams((prev) => {
-        const next = new URLSearchParams(prev)
-        if (pendingQ) next.set('q', pendingQ)
-        else next.delete('q')
-        return next
-      }, { replace: true })
+      writeFilters({ q: pendingQ })
     }, SEARCH_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
-  }, [pendingQ, setSearchParams])
+  }, [pendingQ, writeFilters])
   const clearSearch = () => {
     setSearchText('')
     setPendingQ(null)
@@ -1902,7 +1818,7 @@ export default function RunsPage() {
               >
                 <Layers className="h-3.5 w-3.5" />
                 Failure signatures
-                <span className="ml-1 px-1.5 py-px rounded font-mono text-[10.5px]" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}>
+                <span className="ml-1 px-1.5 py-px rounded font-mono text-2xs" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}>
                   {signatureCount}
                 </span>
               </GhostBtn>
@@ -1977,7 +1893,7 @@ export default function RunsPage() {
               clearSearch()
             }
           }}
-          className="w-[180px] text-[13px] px-2.5 py-1.5 rounded-md"
+          className="w-[180px] text-sm px-2.5 py-1.5 rounded-md"
           style={{
             background: 'var(--color-bg-secondary)',
             border: '1px solid var(--color-border)',
@@ -2074,7 +1990,7 @@ export default function RunsPage() {
         </div>
       </Disclosure>
 
-      <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-[12px] text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
+      <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-xs text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
         Wider screen needed for the full layout. Some sections may overflow on narrow viewports.
       </div>
     </PageShell>

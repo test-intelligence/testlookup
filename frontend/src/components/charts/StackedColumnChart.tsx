@@ -58,7 +58,7 @@ import {
 } from './stackedColumnModel'
 import { useTextMeasure, type TextMeasure } from './textMeasure'
 import { COLUMN_SIDES, type TipRect } from './tipPlacement'
-import { CHART_VARS, RECHARTS_AXIS_TICK } from './tokens'
+import { CHART_VARS, RECHARTS_AXIS_TICK, RECHARTS_AXIS_TITLE, RECHARTS_GRID } from './tokens'
 
 export interface StackedColumnChartProps {
   model: StackedColumnModel
@@ -540,7 +540,7 @@ export default function StackedColumnChart({
             // `accessibilityLayer={false}` — explicitly; see `ChartCursor`.
             <BarChart data={rows} layout="vertical" margin={BARS_MARGIN} accessibilityLayer={false}>
               <defs>{renderPatterns(patterns)}</defs>
-              <CartesianGrid strokeDasharray="3 3" stroke={CHART_VARS.grid} horizontal={false} />
+              <CartesianGrid {...RECHARTS_GRID} horizontal={false} />
               <XAxis
                 type="number"
                 domain={model.axis.domain}
@@ -552,7 +552,7 @@ export default function StackedColumnChart({
                 tick={RECHARTS_AXIS_TICK}
                 height={BARS_VALUE_AXIS_HEIGHT}
                 tickFormatter={(value: number) => model.format(value)}
-                label={{ value: model.valueTitle, position: 'insideBottom', offset: -4, fill: CHART_VARS.axis, fontSize: 11 }}
+                label={{ value: model.valueTitle, position: 'insideBottom', offset: -4, ...RECHARTS_AXIS_TITLE }}
               />
               {/* Every name, beside its bar: a category is never left unlabelled. */}
               <YAxis
@@ -574,7 +574,7 @@ export default function StackedColumnChart({
             // `accessibilityLayer={false}` — explicitly; see `ChartCursor`.
             <BarChart data={rows} margin={plotMargin} accessibilityLayer={false}>
               <defs>{renderPatterns(patterns)}</defs>
-              <CartesianGrid strokeDasharray="3 3" stroke={CHART_VARS.grid} vertical={false} />
+              <CartesianGrid {...RECHARTS_GRID} vertical={false} />
               <XAxis
                 dataKey="key"
                 axisLine={false}
@@ -606,7 +606,7 @@ export default function StackedColumnChart({
                 tickFormatter={(value: number) => model.format(value)}
                 // `offset: 14`, as the time series' rate title: at the default 5
                 // the rotated title's line box overhung the svg's left edge.
-                label={{ value: model.valueTitle, angle: -90, position: 'insideLeft', offset: 14, fill: CHART_VARS.axis, fontSize: 11 }}
+                label={{ value: model.valueTitle, angle: -90, position: 'insideLeft', offset: 14, ...RECHARTS_AXIS_TITLE }}
               />
               {tooltip}
               {legendNode}

@@ -29,7 +29,7 @@ const DIMENSION_ICON: Record<ScopeDimension, LucideIcon> = {
 }
 
 const SCOPE_BADGE_CLASS =
-  'inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-text-secondary)] whitespace-nowrap focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-ring)]'
+  'inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 py-0.5 text-2xs font-medium text-[var(--color-text-secondary)] whitespace-nowrap focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-ring)]'
 
 /** "Not filtered by release". */
 function scopeBadgeText(dimension: ScopeDimension): string {

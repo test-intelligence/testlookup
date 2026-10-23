@@ -1030,12 +1030,45 @@ describe('RunIntelligenceBody — the page template (P4)', () => {
     expect(screen.getByRole('heading', { name: 'Recommended actions' })).toBeInTheDocument()
   })
 
+  // W29b UIX-09: the ONE panel and the ONE KPI tile.
+  it('its cards are Panels with an h3; the dimensions are the in-panel tile and the outcome a KPI strip, no white sheen', () => {
+    const intelligence = structuredClone(MOCK_INTELLIGENCE)
+    // Two scored dimensions; the grid pads to four with the dimmed placeholder tile.
+    intelligence.failure_clusters[0].dimension_scores = [
+      { name: 'user_impact', label: 'User Impact', score: 80, weight: 0.2, contribution: 16 },
+      { name: 'reproducibility', label: 'Reproducibility', score: 45, weight: 0.3, contribution: 13.5 },
+    ] as unknown as typeof intelligence.failure_clusters[0]['dimension_scores']
+    mockHooks({ intelligence })
+    renderBody()
+    const whatFailed = screen.getByRole('heading', { level: 3, name: 'What failed' }).closest('[data-panel]') as HTMLElement
+    expect(whatFailed).toHaveClass('card')
+    openScore()
+    const tiles = Array.from(document.querySelectorAll<HTMLElement>('[data-metric-card="stat"]'))
+    expect(tiles).toHaveLength(4)
+    for (const tile of tiles) expect(tile.outerHTML).not.toMatch(/rgba\(/)
+    // The inverted risk tone: 80 is bad, 45 a warning; the placeholders are dimmed.
+    expect(within(tiles[0]).getByText('80')).toHaveClass('text-[var(--ui-danger-ink)]')
+    expect(within(tiles[1]).getByText('45')).toHaveClass('text-[var(--ui-warning-ink)]')
+    expect(tiles[2]).toHaveClass('opacity-50')
+    // The composite risk score is the hero size, a token (it grows in presentation mode), never a literal.
+    const score = screen.getByText('Composite risk score').parentElement?.querySelector('span.tabular-nums') as HTMLElement
+    expect(score.style.fontSize).toBe('var(--text-display-lg)')
+    openEvidence()
+    const outcome = screen.getByRole('heading', { level: 3, name: 'Test outcome' }).closest('[data-panel]') as HTMLElement
+    const strip = outcome.querySelector('[data-kpi-strip]') as HTMLElement
+    expect(strip.querySelectorAll('[data-metric-card="compact"]')).toHaveLength(5)
+    for (const name of ['Recommended actions', 'AI confidence', 'Failure category']) {
+      expect(screen.getByRole('heading', { level: 3, name }).closest('[data-panel]'), name).not.toBeNull()
+    }
+  })
+
   it('states the verdict in the banner: gate and action, risk, blockers, confidence, and the first blocker by name', () => {
     mockHooks({ intelligence: MOCK_INTELLIGENCE })
     renderBody()
     const verdict = screen.getByRole('region', { name: 'Release verdict' })
-    // The banner's pill and the gate in its title both say "No-Go" (W29a: one decision vocabulary).
-    expect(within(verdict).getAllByText('No-Go')).toHaveLength(2)
+    // The banner's pill says "No-Go" (W29a: one decision vocabulary), and only the pill: the title is the action
+    // (W29b F3: the title repeated the decision word).
+    expect(within(verdict).getAllByText('No-Go')).toHaveLength(1)
     expect(verdict.querySelector('[data-banner-pill]')).toHaveTextContent('No-Go')
     expect(within(verdict).getByText('ship blocked')).toBeInTheDocument()
     const facts = Array.from(verdict.querySelectorAll('[data-banner-fact]')).map((f) => f.textContent)
@@ -1298,7 +1331,7 @@ describe('RunIntelligenceBody — Hold / Approve with conditions / Override (GAT
     const { container } = renderBody()
     // The intelligence payload still says NO_GO; the stored override wins.
     expect(container.querySelector('[data-status-banner]')).toHaveAttribute('data-status-banner', 'conditional')
-    expect(screen.getByText('Conditional (overridden)')).toBeInTheDocument()
+    expect(screen.getByText('Overridden · proceed with mitigation')).toBeInTheDocument()
     const line = container.querySelector('[data-verdict-override]') as HTMLElement
     expect(line).toHaveTextContent(/^Overridden to Conditional by priya · perf soak pending · Oct 2, \d\d:15$/)
   })

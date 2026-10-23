@@ -5184,3 +5184,135 @@ def test_load_error_wording_passes_the_owners_comments_and_tests(monkeypatch, tm
     """)
     _write(src / "pages" / "Quiet.test.tsx", "expect('Failed to load runs').toBeTruthy()\n")
     assert qg._frontend_load_error_wording() == []
+
+
+# ── W29b UI standard: two more count ratchets (UIX-06, UIX-09) ───────────────
+#
+# Same helper and JSON shape as W29a's four. frontend.table-headers reads each
+# <th> tag whole (a multi-line tag counts once; Th / ThSort never count);
+# frontend.adhoc-card-surfaces counts the card colour written as a class or a
+# style value outside the primitives, the shell and the chart kit. Comments are
+# blanked first for both.
+
+
+_W29B_COUNT_GUARDS = ("frontend.table-headers", "frontend.adhoc-card-surfaces")
+
+
+def test_table_headers_counts_hand_styled_th_tags_once_per_tag(monkeypatch, tmp_path) -> None:
+    src = _ui_repo(monkeypatch, tmp_path)
+    _write(src / "pages" / "Grid.tsx", """
+        export function Grid({ sort }: { sort: (k: string) => boolean }) {
+          return (
+            <table>
+              <thead className="bg-[var(--color-bg-secondary)]">
+                <tr>
+                  <th className="px-3 py-2 text-left">Name</th>
+                  <th
+                    scope="col"
+                    onClick={() => sort('a') && 1 > 0}
+                    style={{ padding: '8px 10px' }}
+                  >
+                    Age
+                  </th>
+                  <th>Plain</th>
+                  <th scope="col" aria-sort="none">Bare</th>
+                  <Th className="w-8">Primitive</Th>
+                  <ThSort label="Key" sortKey="k" currentKey={null} dir="asc" onSort={sort} />
+                  {/* <th className="old">Gone</th> */}
+                </tr>
+              </thead>
+            </table>
+          )
+        }
+        // <th className="x"> in a comment
+        const Cell = ({ w }: { w: number }) => <th className={`th ${w > 2 ? 'w-8' : ''}`} />
+    """)
+    _write(src / "components" / "ui" / "Table.tsx", "export const Th = () => <th className=\"th\" />\n")
+    _write(src / "components" / "charts" / "ChartTable.tsx", "export const H = () => <th className=\"px-2\">x</th>\n")
+    _write(src / "pages" / "Grid.test.tsx", "const t = <th className=\"x\" />\n")
+    _write(src / "utils" / "outside.tsx", "export const u = <th className=\"x\" />\n")
+    assert qg._table_header_counts() == {
+        "frontend/src/pages/Grid.tsx": 3,                      # className, the multi-line style tag, Cell
+        "frontend/src/components/charts/ChartTable.tsx": 1,    # the kit's tables are counted (not adopted, D-17)
+    }
+
+
+def test_table_headers_a_rise_fails_naming_the_file_and_a_move_to_th_lowers_it(monkeypatch, tmp_path, capsys) -> None:
+    src = _ui_repo(monkeypatch, tmp_path)
+    page = src / "pages" / "Runs.tsx"
+    _write(page, "export const H = () => <tr><th className=\"px-2\">A</th><th style={{ padding: 4 }}>B</th></tr>\n")
+    guard = qg.GUARD_BY_NAME["frontend.table-headers"]
+    assert guard.baseline_path.name == "frontend__table-headers.counts.json"
+    assert qg.run_guard(guard, update_baseline=True) is True
+    assert _ui_counts("frontend.table-headers")["counts"] == {"frontend/src/pages/Runs.tsx": 2}
+
+    _write(page, "export const H = () => <tr><th className=\"a\">A</th><th className=\"b\">B</th><th className=\"c\">C</th></tr>\n")
+    violations = guard.check()
+    assert [(v.relpath, v.message.split(" — ")[0]) for v in violations] == [
+        ("frontend/src/pages/Runs.tsx", "3 hand-styled table headers (<th className= / style=) (baseline 2)"),
+    ]
+    assert "components/ui/Table" in violations[0].message
+
+    _write(page, "export const H = () => <tr><Th>A</Th><ThSort label=\"B\" sortKey=\"b\" currentKey={null} dir=\"asc\" onSort={f} /></tr>\n")
+    capsys.readouterr()
+    assert qg.run_guard(guard, update_baseline=False) is True
+    assert "note: frontend.table-headers: 2 fewer in 1 file" in capsys.readouterr().out
+
+
+def test_adhoc_card_surfaces_counts_classes_and_style_values_outside_the_primitives(monkeypatch, tmp_path) -> None:
+    src = _ui_repo(monkeypatch, tmp_path)
+    _write(src / "pages" / "Tiles.tsx", """
+        export const A = () => <div className="rounded-xl border bg-[var(--color-bg-card)] hover:bg-[var(--color-bg-card)]">a</div>
+        export const B = () => <div style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}>b</div>
+        export const C = () => <div style={{ backgroundColor: "var(--color-bg-card)" }}>c</div>
+        export const D = () => <div className="card bg-[var(--color-bg-secondary)] bg-[var(--color-bg-card-hover)]">d</div>
+        export const E = () => <div className="bg-[color-mix(in_srgb,var(--color-bg-card)_80%,transparent)]">e</div>
+        // a comment naming bg-[var(--color-bg-card)] is not a surface
+        export const F = () => <div>{/* background: 'var(--color-bg-card)' */}f</div>
+    """)
+    for folder in ("ui", "layout", "charts"):
+        _write(src / "components" / folder / "Surface.tsx", "export const S = 'bg-[var(--color-bg-card)]'\n")
+    _write(src / "components" / "releases" / "KpiStrip.tsx", "export const K = { background: `var(--color-bg-card)` }\n")
+    _write(src / "pages" / "Tiles.test.tsx", "const t = 'bg-[var(--color-bg-card)]'\n")
+    _write(src / "hooks" / "useSurface.ts", "export const h = 'bg-[var(--color-bg-card)]'\n")
+    assert qg._adhoc_card_surface_counts() == {
+        "frontend/src/components/releases/KpiStrip.tsx": 1,
+        "frontend/src/pages/Tiles.tsx": 4,                     # two classes (A), two style values (B, C)
+    }
+
+
+def test_adhoc_card_surfaces_a_rise_fails_and_a_move_to_panel_lowers_it(monkeypatch, tmp_path, capsys) -> None:
+    src = _ui_repo(monkeypatch, tmp_path)
+    page = src / "pages" / "Shell.tsx"
+    _write(page, "export const S = () => <div className=\"rounded-xl bg-[var(--color-bg-card)]\">x</div>\n")
+    guard = qg.GUARD_BY_NAME["frontend.adhoc-card-surfaces"]
+    assert guard.baseline_path.name == "frontend__adhoc-card-surfaces.counts.json"
+    qg.run_guard(guard, update_baseline=True)
+    _write(page, (
+        "export const S = () => <div className=\"rounded-xl bg-[var(--color-bg-card)]\">x</div>\n"
+        "export const T = () => <div style={{ background: 'var(--color-bg-card)' }}>y</div>\n"
+    ))
+    assert [v.message.split(" — ")[0] for v in guard.check()] == [
+        "2 hand-made card surfaces (bg-[var(--color-bg-card)] / background: 'var(--color-bg-card)') (baseline 1)",
+    ]
+    _write(page, "export const S = () => <Panel title=\"Runs\">x</Panel>\n")
+    capsys.readouterr()
+    assert qg.run_guard(guard, update_baseline=False) is True
+    assert "note: frontend.adhoc-card-surfaces: 1 fewer in 1 file" in capsys.readouterr().out
+    qg.run_guard(guard, update_baseline=True)
+    assert _ui_counts("frontend.adhoc-card-surfaces")["counts"] == {}
+
+
+def test_committed_baselines_of_the_w29b_count_guards_are_count_json() -> None:
+    """Runs against the REAL baselines: each W29b count guard has its JSON (the
+    A0 tree's counts, generated before the page sweeps), never a *.txt."""
+    for name in _W29B_COUNT_GUARDS:
+        guard = qg.GUARD_BY_NAME[name]
+        assert guard.update is not None, name
+        assert guard.baseline_path.suffixes[-2:] == [".counts", ".json"], name
+        assert guard.baseline_path.exists(), name
+        data = _ui_counts(name)
+        assert data["counts"] and all(n > 0 for n in data["counts"].values()), name
+        assert list(data["counts"]) == sorted(data["counts"]), name
+        assert "W29b" in data["_comment"], name
+        assert not (qg.BASELINE_DIR / f"{name.replace('.', '__')}.txt").exists(), name

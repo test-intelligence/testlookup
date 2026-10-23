@@ -6,6 +6,7 @@
 import { formatNumber, formatPercent } from '@/utils/formatters'
 import type { DonutSlice } from './DonutChart.model'
 import type { TipSide } from './tipPlacement'
+import { CHART_FONT } from './tokens'
 
 /**
  * Where a slice's tooltip may go: beside the ring, right or left, else the
@@ -17,8 +18,8 @@ import type { TipSide } from './tipPlacement'
  */
 export const DONUT_TIP_SIDES: readonly TipSide[] = ['right', 'left']
 
-/** The slice labels' size, in chart (layout) px. */
-export const SLICE_LABEL_FONT_SIZE = 11
+/** The slice labels' size, in chart (layout) px: a data label in the kit's one font table. */
+export const SLICE_LABEL_FONT_SIZE = CHART_FONT.dataLabel
 /** How far outside the ring a slice label is anchored. */
 export const SLICE_LABEL_OFFSET = 14
 /** Half a slice label's height (it is vertically centred on its anchor). */

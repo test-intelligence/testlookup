@@ -262,11 +262,13 @@ export default function DayStrip({
         // is under 4.5:1 on the light theme (4.15), which the gallery's axe gate caught.
         <div
           data-day-strip-legend=""
-          className="mt-2.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[10px] text-[var(--color-text-secondary)]"
+          // One row whose two ends never move: on a narrow strip only the middle key wraps (inside its own span),
+          // so the end label stays under the newest cell (a wrapping row dropped "Today" under the oldest one).
+          className="mt-2.5 flex items-center justify-between gap-x-3 gap-y-1 text-2xs text-[var(--color-text-secondary)]"
         >
-          <span>{startLabel ?? defaultStartLabel(count, unit, model.text.today)}</span>
+          <span className="shrink-0 whitespace-nowrap">{startLabel ?? defaultStartLabel(count, unit, model.text.today)}</span>
           {mode === 'intensity' ? (
-            <span className="inline-flex flex-wrap items-center gap-1">
+            <span className="inline-flex min-w-0 flex-wrap items-center gap-1">
               {model.text.less}
               {model.legend
                 .filter((item) => item.key.startsWith('level-'))
@@ -284,7 +286,7 @@ export default function DayStrip({
                 ))}
             </span>
           ) : (
-            <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="inline-flex min-w-0 flex-wrap items-center justify-center gap-x-2 gap-y-1">
               {model.legend.map((item) => (
                 <span key={item.key} data-legend-tone={item.key} className="inline-flex items-center gap-1">
                   <Swatch face={item.face} />
@@ -293,7 +295,7 @@ export default function DayStrip({
               ))}
             </span>
           )}
-          <span>{endLabel ?? model.text.today}</span>
+          <span className="shrink-0 whitespace-nowrap">{endLabel ?? model.text.today}</span>
         </div>
       )}
       {/* The sr-only box is a DIV around the table, not the table itself: a table

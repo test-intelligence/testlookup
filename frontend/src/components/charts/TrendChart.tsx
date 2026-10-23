@@ -2,7 +2,7 @@ import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Legend, Line, LineChart,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
-import { CHART_VARS, RECHARTS_AXIS_TICK, RECHARTS_TOOLTIP_STYLE, STATUS_ENCODING, STATUS_STACK_ORDER } from './tokens'
+import { CHART_VARS, RECHARTS_AXIS_TICK, RECHARTS_GRID, RECHARTS_TOOLTIP_STYLE, STATUS_ENCODING, STATUS_STACK_ORDER } from './tokens'
 import { useChartAnimation } from './motion'
 import {
   ChartLegend,
@@ -76,7 +76,7 @@ export default function TrendChart({ data, type = 'line', height = 280, animate:
             </linearGradient>
             {renderPatterns(statusPatternSpecs(prefix, ['passed']))}
           </defs>
-          <CartesianGrid strokeDasharray="3 3" stroke={CHART_VARS.grid} vertical={false} />
+          <CartesianGrid {...RECHARTS_GRID} vertical={false} />
           <XAxis dataKey="date" axisLine={false} tickLine={false} tick={AXIS_TICK} dy={8} />
           <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK} />
           <Tooltip contentStyle={TOOLTIP_STYLE} />
@@ -99,7 +99,7 @@ export default function TrendChart({ data, type = 'line', height = 280, animate:
       <ResponsiveContainer width="100%" height={height}>
         <BarChart {...common} barSize={18} accessibilityLayer>
           <defs>{renderPatterns(statusPatternSpecs(prefix, BAR_STATUSES))}</defs>
-          <CartesianGrid strokeDasharray="3 3" stroke={CHART_VARS.grid} vertical={false} />
+          <CartesianGrid {...RECHARTS_GRID} vertical={false} />
           <XAxis dataKey="date" axisLine={false} tickLine={false} tick={AXIS_TICK} dy={8} />
           <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK} />
           <Tooltip contentStyle={TOOLTIP_STYLE} />
@@ -132,7 +132,7 @@ export default function TrendChart({ data, type = 'line', height = 280, animate:
   return (
     <ResponsiveContainer width="100%" height={height}>
       <LineChart {...common} accessibilityLayer>
-        <CartesianGrid strokeDasharray="3 3" stroke={CHART_VARS.grid} vertical={false} />
+        <CartesianGrid {...RECHARTS_GRID} vertical={false} />
         <XAxis dataKey="date" axisLine={false} tickLine={false} tick={AXIS_TICK} dy={8} />
         <YAxis axisLine={false} tickLine={false} tick={AXIS_TICK} />
         <Tooltip contentStyle={TOOLTIP_STYLE} />

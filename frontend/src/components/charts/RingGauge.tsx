@@ -43,9 +43,13 @@ const RING_COLOR: Record<RingTone, string> = {
   bad: CHART_VARS.status.failed,
 }
 
-/** The value's font size (`text-xl`) and weight; the caption's (`text-[10px]`). */
+/**
+ * The value's font size (`text-xl`, 20 px) and weight; the caption's (`text-2xs`,
+ * 11 px: W29b UIX-04b, it was 10 px, under the kit's 11 px floor). The fit
+ * measures at these, so each matches its class.
+ */
 const VALUE_FONT = { px: 20, weight: 700 }
-const CAPTION_FONT = { px: 10, weight: 400 }
+const CAPTION_FONT = { px: 11, weight: 400 }
 
 /**
  * Presentation mode (R1-5): the ring, its number and its caption grow by this
@@ -185,7 +189,7 @@ export function RingGaugeView({
         <span ref={valueRef} className="text-xl font-bold text-[var(--color-text)]" style={fontSize(valuePx, valueFont)}>
           {text}
         </span>
-        <span ref={captionRef} className="text-[10px] text-[var(--color-text-muted)]" style={fontSize(captionPx, captionFont)}>
+        <span ref={captionRef} className="text-2xs text-[var(--color-text-muted)]" style={fontSize(captionPx, captionFont)}>
           {caption}
         </span>
       </div>

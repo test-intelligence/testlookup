@@ -54,6 +54,7 @@ import {
 } from 'react'
 import { Maximize2, Minimize2 } from 'lucide-react'
 import { IgnoredFilterBadges } from '@/components/ui/ScopeBadge'
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 import type { AnyChartSeries, ChartSeries } from '@/lib/viz/contracts'
 // `totalsLine` is shared with the export so the footer and an exported file
 // can never state the scope differently.
@@ -611,11 +612,8 @@ const ChartFrame = forwardRef<HTMLDivElement, ChartFrameProps>(function ChartFra
             always was, to the pixel. */}
         <div className="flex flex-wrap items-start gap-3">
           <div className={isFullscreen ? 'min-w-0 flex-[1_1_12rem]' : `min-w-0 ${TITLE_MIN_WIDTH}`}>
-            <Heading
-              id={titleId}
-              title={title}
-              className="line-clamp-2 break-words text-sm font-semibold text-[var(--color-text)]"
-            >
+            {/* The one panel title (W29b UIX-09): 14 px / 600 in a tight line, as every `PanelHeader`. */}
+            <Heading id={titleId} title={title} className={`line-clamp-2 break-words ${PANEL_TITLE_CLASS}`}>
               {title}
             </Heading>
             {takeaway && (

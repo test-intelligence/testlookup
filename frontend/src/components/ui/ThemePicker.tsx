@@ -13,8 +13,8 @@ export default function ThemePicker() {
 
   return (
     <div data-theme-picker="">
-      <div className="mb-1.5 flex items-baseline justify-between text-[11px]">
-        <span className="font-medium uppercase tracking-wider text-[var(--color-text-muted)]">Theme</span>
+      <div className="mb-1.5 flex items-baseline justify-between text-2xs">
+        <span className="eyebrow uppercase text-[var(--color-text-muted)]">Theme</span>
         <span className="text-[var(--color-text-secondary)]">{active.label}</span>
       </div>
       {/* gap-1: seven 28 px chips = 220 px in the account menu's 230 px row (W29a §0.29). */}

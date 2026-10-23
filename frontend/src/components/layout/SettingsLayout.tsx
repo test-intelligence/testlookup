@@ -23,7 +23,7 @@ import { clsx } from 'clsx'
 import { usePermissions } from '@/hooks/usePermissions'
 import { activeSettingsItem, SETTINGS_ROOT, settingsGroupsFor, settingsItemHref } from './settingsNav'
 
-const LINK = 'block truncate rounded-md px-2 py-1 text-[13px] transition-colors'
+const LINK = 'block truncate rounded-md px-2 py-1 text-sm transition-colors'
 const LINK_CURRENT = 'bg-[var(--color-bg-secondary)] font-medium text-[var(--color-text)]'
 const LINK_IDLE = 'text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]'
 
@@ -52,7 +52,7 @@ export default function SettingsLayout({ children }: { children: ReactNode }) {
           )}
           {groups.map((group) => (
             <div key={group.id} data-settings-group={group.id}>
-              <p className="mb-1 px-2 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+              <p className="eyebrow mb-1 px-2 uppercase text-[var(--color-text-muted)]">
                 {group.label}
               </p>
               <ul className="space-y-px">

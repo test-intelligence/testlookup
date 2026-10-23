@@ -98,7 +98,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import toast from 'react-hot-toast'
 import {
-  BarChart3, Calendar, Clock, Download, GitCompare, Layers, Mail, Search, StickyNote, TrendingUp,
+  Download, GitCompare, Mail, Search, StickyNote,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import EmptyState from '@/components/ui/EmptyState'
@@ -112,6 +112,7 @@ import type { OverflowItem } from '@/components/ui/OverflowMenu'
 import WindowPicker from '@/components/ui/WindowPicker'
 import KpiStrip from '@/components/ui/KpiStrip'
 import MetricCard from '@/components/ui/MetricCard'
+import { Panel } from '@/components/ui/PanelHeader'
 import Disclosure from '@/components/ui/Disclosure'
 import Tabs from '@/components/ui/Tabs'
 import { useTabParam } from '@/components/ui/useTabParam'
@@ -427,12 +428,12 @@ function ScoreDetails({
       className="grid gap-6 grid-cols-1 lg:grid-cols-[1.45fr_1fr]"
     >
       <div className="min-w-0">
-        <h2 className="text-[15px] font-semibold m-0 mb-1.5 text-[var(--color-text)]">
+        <h2 className="text-md font-semibold m-0 mb-1.5 text-[var(--color-text)]">
           <span aria-label={`Verdict: ${t.label}`} style={{ color: t.gateText }}>{t.label}</span>
           <span className="text-[var(--color-text-muted)] mx-2">·</span>
           <span>{headline}</span>
         </h2>
-        <p className="text-[13px] m-0 max-w-[64ch]" style={{ color: 'var(--color-text-secondary)' }}>
+        <p className="text-sm m-0 max-w-[64ch]" style={{ color: 'var(--color-text-secondary)' }}>
           {lede}
         </p>
       </div>
@@ -466,7 +467,7 @@ function ConfidenceMeter({ score, verdict }: { score: number; verdict: Verdict }
   const pillLabel = score >= 66 ? 'High' : score >= 33 ? 'Moderate' : 'Low'
   return (
     <div>
-      <div className="text-[11px] uppercase font-medium text-[var(--color-text-muted)] mb-1.5" style={{ letterSpacing: 'var(--tracking-wider)' }}>
+      <div className="eyebrow uppercase mb-1.5 text-[var(--color-text-muted)]">
         Trend confidence
       </div>
       <div className="flex items-end justify-between">
@@ -474,10 +475,10 @@ function ConfidenceMeter({ score, verdict }: { score: number; verdict: Verdict }
           <span className="font-bold tabular-nums leading-none" style={{ fontSize: 'var(--text-display-lg)', color: t.meter, letterSpacing: '-0.02em' }}>
             {verdict === 'PENDING' ? '—' : score}
           </span>
-          <span className="text-[13px] text-[var(--color-text-muted)] ml-1">/ 100</span>
+          <span className="text-sm text-[var(--color-text-muted)] ml-1">/ 100</span>
         </div>
         <span
-          className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold"
+          className="inline-flex items-center px-2.5 py-1 rounded-full text-2xs font-semibold"
           style={{ background: t.pillBg, border: `1px solid ${t.pillBd}`, color: t.pillFg }}
         >
           {pillLabel}
@@ -508,32 +509,17 @@ function DimensionGrid({ dimensions }: { dimensions: readonly TrendSummaryDimens
   )
 }
 
+/** A weighted dimension: the one KPI tile at `sm` (W29b UIX-09) — its weight, its score in its tone, the score's bar. */
 function DimensionTile({ dim }: { dim: TrendSummaryDimension }) {
-  const tone = toneFor(dim.score)
-  const valueColor = tone === 'bad' ? 'var(--status-failed)' : tone === 'warn' ? 'var(--status-broken)' : 'var(--status-passed)'
-  const barColor   = valueColor
-  const width = Math.max(0, Math.min(100, dim.score))
   return (
-    <div
-      className="rounded-sm px-2.5 py-2 border"
-      style={{ background: 'rgba(255,255,255,0.025)', borderColor: 'var(--color-border)' }}
-    >
-      <div
-        className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] flex justify-between"
-        style={{ letterSpacing: 'var(--tracking-wider)' }}
-      >
-        <span>{dim.label}</span>
-        <span className="text-[var(--color-text-faint)] font-medium">{Math.round(dim.weight * 100)}%</span>
-      </div>
-      <div className="flex items-center gap-2 mt-1.5">
-        <span className="text-[14px] font-semibold tabular-nums min-w-[40px]" style={{ color: valueColor }}>
-          {Math.round(dim.score)}
-        </span>
-        <div className="flex-1 h-1 rounded-full overflow-hidden" style={{ background: 'var(--color-bg-secondary)' }}>
-          <i className="block h-full rounded-full" style={{ width: `${width}%`, background: barColor }} />
-        </div>
-      </div>
-    </div>
+    <MetricCard
+      size="sm"
+      title={dim.label}
+      note={`${Math.round(dim.weight * 100)}%`}
+      metric={{ value: Math.round(dim.score) }}
+      tone={toneFor(dim.score)}
+      bar={dim.score}
+    />
   )
 }
 
@@ -626,10 +612,10 @@ function CadenceHeatmap({
   // paragraph on the page). TRND-04: `Pin a note` sits in the header's right
   // slot, so the card grows no taller.
   return (
-    <CardShell
+    <Panel
       title={`Run cadence — last ${model.windowDays} days`}
       titleHint={onSelectRange ? `${CADENCE_HINT} Drag across days to pin a note on them.` : CADENCE_HINT}
-      rightSlot={
+      actions={
         <>
           <span>{activeCount} day{activeCount === 1 ? '' : 's'} with runs · {emptyCount} empty</span>
           {onPin ? (
@@ -654,7 +640,7 @@ function CadenceHeatmap({
         {gap && (
           <div
             data-cadence-gap=""
-            className="mt-3 grid items-center gap-2.5 rounded-md text-[12px]"
+            className="mt-3 grid items-center gap-2.5 rounded-md text-xs"
             style={{
               gridTemplateColumns: 'auto 1fr',
               padding: '10px 12px',
@@ -664,18 +650,18 @@ function CadenceHeatmap({
             }}
           >
             <span
-              className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[10.5px] font-semibold uppercase"
-              style={{ background: 'var(--gate-conditional-bg)', color: 'var(--status-broken)', letterSpacing: 'var(--tracking-wide)' }}
+              className="eyebrow uppercase inline-flex items-center px-1.5 py-0.5 rounded-sm"
+              style={{ background: 'var(--gate-conditional-bg)', color: 'var(--ui-warning-ink)' }}
             >
               Gap
             </span>
             <span>
-              {gap.silent_days}-day silence between <code className="font-mono text-[11px]">{shortDate(gap.start)}</code> and <code className="font-mono text-[11px]">{shortDate(gap.end)}</code>.
+              {gap.silent_days}-day silence between <code className="font-mono text-2xs">{shortDate(gap.start)}</code> and <code className="font-mono text-2xs">{shortDate(gap.end)}</code>.
             </span>
           </div>
         )}
       </div>
-    </CardShell>
+    </Panel>
   )
 }
 
@@ -695,11 +681,12 @@ function pinRequestKey(request: PinRequest): string {
 
 /**
  * A small header button (the cadence card's `Pin a note`, the callout's). 18 px
- * tall, under the header's own 19.5 px text line, so the card grows no taller
+ * tall, the height of the header's own text line (the panel title's 16.8 px
+ * line, the callout heading's 18.6 px), so the card grows no taller
  * (`fold-budget`: /trends has 35 px of headroom).
  */
 const PIN_BUTTON =
-  'inline-flex h-[18px] items-center gap-1 rounded border border-[var(--color-border-light)] bg-[var(--color-bg-card)] px-1.5 text-[11.5px] font-medium leading-none text-[var(--color-text)] hover:bg-[var(--color-bg-hover)]'
+  'inline-flex h-[18px] items-center gap-1 rounded border border-[var(--color-border-light)] bg-[var(--color-bg-card)] px-1.5 text-xs font-medium leading-none text-[var(--color-text)] hover:bg-[var(--color-bg-hover)]'
 
 function shortDate(iso: string): string {
   return formatDayIso(iso)
@@ -906,7 +893,7 @@ function SchedulePausedCallout({ gap, onPin }: { gap: TrendSummaryGap | null; on
       }}
     >
       <div className="flex items-center justify-between gap-2 mb-1">
-        <h3 id="schedpaused" className="text-[13px] font-semibold m-0 text-[var(--color-text)]">
+        <h3 id="schedpaused" className="text-sm font-semibold m-0 text-[var(--color-text)]">
           {ongoing ? 'Schedule appears paused' : 'Run gap in this window'}
         </h3>
         <div className="flex items-center gap-2">
@@ -918,18 +905,18 @@ function SchedulePausedCallout({ gap, onPin }: { gap: TrendSummaryGap | null; on
           ) : null}
           {ongoing && (
             <span
-              className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold uppercase"
-              style={{ background: 'var(--gate-conditional-bg)', color: 'var(--status-broken)', letterSpacing: 'var(--tracking-wide)' }}
+              className="eyebrow uppercase inline-flex items-center px-1.5 py-0.5 rounded-full"
+              style={{ background: 'var(--gate-conditional-bg)', color: 'var(--ui-warning-ink)' }}
             >
               Action needed
             </span>
           )}
         </div>
       </div>
-      <p className="text-[12.5px] m-0 mt-1.5" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+      <p className="text-sm m-0 mt-1.5" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
         {ongoing
-          ? <>No executions have landed since <code className="font-mono text-[11.5px]">{shortDate(gap.start)}</code>.</>
-          : <>No executions landed from <code className="font-mono text-[11.5px]">{shortDate(gap.start)}</code> to <code className="font-mono text-[11.5px]">{shortDate(gap.end)}</code>.</>}
+          ? <>No executions have landed since <code className="font-mono text-xs">{shortDate(gap.start)}</code>.</>
+          : <>No executions landed from <code className="font-mono text-xs">{shortDate(gap.start)}</code> to <code className="font-mono text-xs">{shortDate(gap.end)}</code>.</>}
       </p>
       <div className="grid gap-2 mt-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
         <CalloutStat label="Silent days" value={gap.silent_days} />
@@ -939,18 +926,9 @@ function SchedulePausedCallout({ gap, onPin }: { gap: TrendSummaryGap | null; on
   )
 }
 
-function CalloutStat({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div
-      className="rounded-md border px-3 py-2.5"
-      style={{ background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
-    >
-      <div className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
-        {label}
-      </div>
-      <div className="text-[20px] font-bold tabular-nums mt-0.5" style={{ color: 'var(--status-failed)' }}>{value}</div>
-    </div>
-  )
+/** A callout's stat: the one KPI tile at `sm` (W29b UIX-09), in the danger ink (a silence is the bad news here). */
+function CalloutStat({ label, value }: { label: string; value: string | number }) {
+  return <MetricCard size="sm" title={label} metric={{ value }} tone="bad" />
 }
 
 // ── Suite pass rates ──────────────────────────────────────────────────────
@@ -1004,14 +982,14 @@ function SuitePassRatesCard({
   const filtered = withRuns.slice(0, SUITE_ROWS_SHOWN)
   return (
     <div data-trends-suite-rates="">
-      <CardShell
+      <Panel
         title={`Suite pass rates — last ${days === 1 ? '24 hours' : `${days} days`}`}
         titleHint="Passed of evaluated executions per suite across the window; skips are excluded. The line is the suite's daily pass rate."
-        rightSlot={withRuns.length > filtered.length ? <span>{filtered.length} of {withRuns.length} suites</span> : undefined}
+        actions={withRuns.length > filtered.length ? <span>{filtered.length} of {withRuns.length} suites</span> : undefined}
       >
         <div className="px-4 pt-2 pb-4">
           {filtered.length === 0 ? (
-            <p className="text-[12.5px] text-[var(--color-text-muted)] py-2 text-center m-0">No suite data for the selected window.</p>
+            <p className="text-sm text-[var(--color-text-muted)] py-2 text-center m-0">No suite data for the selected window.</p>
           ) : (
             <div className="flex flex-col">
               {filtered.map((s, i) => (
@@ -1027,7 +1005,7 @@ function SuitePassRatesCard({
             </div>
           )}
         </div>
-      </CardShell>
+      </Panel>
     </div>
   )
 }
@@ -1058,7 +1036,7 @@ function SuiteRow({
           {/* The suite's own page (UX redesign P4): its tests, runs and charts. */}
           <Link
             to={suiteHrefByName(suite.suite_name)}
-            className="font-mono text-[12.5px] truncate hover:underline"
+            className="font-mono text-sm truncate hover:underline"
             title={suite.suite_name}
             style={{ color: tone === 'bad' ? 'var(--status-failed)' : 'var(--color-text)' }}
           >
@@ -1083,36 +1061,9 @@ function SuiteRow({
         </div>
       </div>
       <span className="text-right">
-        <span className="text-[12.5px] font-semibold tabular-nums" style={{ color: pctColor }}>{pct}%</span>
-        <div className="text-[10.5px] text-[var(--color-text-muted)] tabular-nums">{suite.passed} / {evaluated} evaluated</div>
+        <span className="text-sm font-semibold tabular-nums" style={{ color: pctColor }}>{pct}%</span>
+        <div className="text-2xs text-[var(--color-text-muted)] tabular-nums">{suite.passed} / {evaluated} evaluated</div>
       </span>
-    </div>
-  )
-}
-
-// ── Shared shell ──────────────────────────────────────────────────────────
-function CardShell({
-  title, titleHint, rightSlot, children,
-}: {
-  title: string
-  /** How to read the card, as the title's tooltip (never a paragraph on the page, spec §2). */
-  titleHint?: string
-  rightSlot?: React.ReactNode
-  children?: React.ReactNode
-}) {
-  return (
-    <div
-      className="overflow-hidden rounded-xl"
-      style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
-    >
-      <div
-        className="flex items-center justify-between gap-2.5 px-4 py-3"
-        style={{ borderBottom: '1px solid var(--color-border)' }}
-      >
-        <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]" title={titleHint}>{title}</h3>
-        {rightSlot && <div className="flex items-center gap-2.5 text-[12px] text-[var(--color-text-muted)]">{rightSlot}</div>}
-      </div>
-      {children}
     </div>
   )
 }
@@ -1495,9 +1446,7 @@ export default function TrendsPage() {
       <section aria-label="Trend metrics">
         <KpiStrip>
           <MetricCard
-            compact
             title="Pass rate"
-            icon={<TrendingUp className="h-4 w-4" />}
             metric={{ value: `${model.passRate.toFixed(1)}%`, ...passRateChange }}
             sparkline={
               <KpiSpark>
@@ -1512,9 +1461,7 @@ export default function TrendsPage() {
             }
           />
           <MetricCard
-            compact
             title="Days with runs"
-            icon={<Calendar className="h-4 w-4" />}
             metric={{
               value: `${model.daysWithRuns} / ${model.windowDays}`,
               trend_direction: 'none',
@@ -1524,9 +1471,7 @@ export default function TrendsPage() {
             }}
           />
           <MetricCard
-            compact
             title="Executions"
-            icon={<BarChart3 className="h-4 w-4" />}
             metric={{
               value: model.totalExecutions,
               trend_direction: 'none',
@@ -1546,9 +1491,7 @@ export default function TrendsPage() {
             }
           />
           <MetricCard
-            compact
             title="Suites"
-            icon={<Layers className="h-4 w-4" />}
             metric={{
               value: suites.length,
               trend_direction: 'none',
@@ -1560,13 +1503,13 @@ export default function TrendsPage() {
             }}
           />
           <MetricCard
-            compact
             title="Last run"
-            icon={<Clock className="h-4 w-4" />}
             metric={{
               value: lastRunRel,
               trend_direction: 'none',
-              trend_text: previousRunRel ? `previous run was ${previousRunGapDays}d prior` : 'no prior run in window',
+              // "previous run was 1d prior" lost its last letters in the 12 px change line at 1280 px on CI's fonts
+              // (W29b fix-kpi): the same words without "was" fit.
+              trend_text: previousRunRel ? `previous run ${previousRunGapDays}d prior` : 'no prior run in window',
             }}
           />
         </KpiStrip>
@@ -1595,7 +1538,7 @@ export default function TrendsPage() {
         {summary && verdict ? (
           <ScoreDetails summary={summary} verdict={verdict} headline={headline} lede={lede} />
         ) : (
-          <p data-score-unavailable="" className="m-0 text-[13px] text-[var(--color-text-secondary)]">
+          <p data-score-unavailable="" className="m-0 text-sm text-[var(--color-text-secondary)]">
             {SCORE_NOT_AVAILABLE}: the trend summary could not be read. The charts and the KPIs above are unaffected.
           </p>
         )}

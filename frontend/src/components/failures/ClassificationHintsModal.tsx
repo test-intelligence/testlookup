@@ -132,7 +132,7 @@ export default function ClassificationHintsModal({
     <InlineFormSection
       title="Classification hints"
       description={
-        <span className="text-[12.5px]">
+        <span className="text-sm">
           Hints classify new failures before the AI does. A failure that matches several uses the oldest hint.
           Existing analyses are not changed.
         </span>
@@ -147,25 +147,25 @@ export default function ClassificationHintsModal({
       <div className="max-w-2xl">
         <section aria-label="Hints" className="mt-1">
           {isLoading && !data ? (
-            <p className="m-0 text-[12.5px] text-[var(--color-text-muted)]">Loading hints…</p>
+            <p className="m-0 text-sm text-[var(--color-text-muted)]">Loading hints…</p>
           ) : error && !data ? (
-            <p className="m-0 text-[12.5px]" style={{ color: 'var(--status-failed)' }}>Could not load the hints.</p>
+            <p className="m-0 text-sm" style={{ color: 'var(--status-failed)' }}>Could not load the hints.</p>
           ) : hints.length === 0 ? (
-            <p className="m-0 text-[12.5px] text-[var(--color-text-muted)]" data-hints-empty="">No hints yet.</p>
+            <p className="m-0 text-sm text-[var(--color-text-muted)]" data-hints-empty="">No hints yet.</p>
           ) : (
             <ul className="m-0 p-0 list-none space-y-2">
               {hints.map(hint => (
                 <li
                   key={hint.id}
                   data-hint-row={hint.id}
-                  className="rounded-md border border-[var(--color-border)] px-3 py-2 text-[12.5px]"
+                  className="rounded-md border border-[var(--color-border)] px-3 py-2 text-sm"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <span className="min-w-0 [overflow-wrap:anywhere] text-[var(--color-text)]" data-hint-sentence="">
                       {hintSentence(hint)}
                     </span>
                     <div className="flex flex-none items-center gap-3">
-                      <label className="inline-flex items-center gap-1.5 text-[12px] text-[var(--color-text-secondary)]">
+                      <label className="inline-flex items-center gap-1.5 text-xs text-[var(--color-text-secondary)]">
                         <input
                           type="checkbox"
                           checked={hint.enabled}
@@ -184,7 +184,7 @@ export default function ClassificationHintsModal({
                         disabled={busy}
                         onClick={() => setConfirmingDelete(hint.id)}
                         aria-label={`Delete hint: ${hintSentence(hint)}`}
-                        className="text-[12px] text-[var(--status-failed)] hover:underline disabled:opacity-50"
+                        className="text-xs text-[var(--status-failed)] hover:underline disabled:opacity-50"
                       >
                         Delete
                       </button>
@@ -203,10 +203,10 @@ export default function ClassificationHintsModal({
                     </div>
                   )}
                   {hint.note && (
-                    <p className="m-0 mt-1 text-[11.5px] text-[var(--color-text-muted)] [overflow-wrap:anywhere]">{hint.note}</p>
+                    <p className="m-0 mt-1 text-xs text-[var(--color-text-muted)] [overflow-wrap:anywhere]">{hint.note}</p>
                   )}
                   {hint.created_by_name && (
-                    <p className="m-0 mt-0.5 text-[11px] text-[var(--color-text-faint)]">set by {hint.created_by_name}</p>
+                    <p className="m-0 mt-0.5 text-2xs text-[var(--color-text-faint)]">set by {hint.created_by_name}</p>
                   )}
                 </li>
               ))}
@@ -220,39 +220,39 @@ export default function ClassificationHintsModal({
           onSubmit={e => { e.preventDefault(); void addHint() }}
         >
           <div className="grid grid-cols-2 gap-2.5">
-            <label className="flex flex-col gap-1 text-[12px] text-[var(--color-text-secondary)]">
+            <label className="flex flex-col gap-1 text-xs text-[var(--color-text-secondary)]">
               Field
               <select
                 value={field}
                 onChange={e => setField(e.target.value)}
-                className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 py-1.5 text-[12.5px] text-[var(--color-text)]"
+                className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 py-1.5 text-sm text-[var(--color-text)]"
               >
                 {HINT_FIELDS.map(f => <option key={f.id} value={f.id}>{f.option}</option>)}
               </select>
             </label>
-            <label className="flex flex-col gap-1 text-[12px] text-[var(--color-text-secondary)]">
+            <label className="flex flex-col gap-1 text-xs text-[var(--color-text-secondary)]">
               Category
               <select
                 value={category}
                 onChange={e => setCategory(e.target.value)}
-                className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 py-1.5 text-[12.5px] text-[var(--color-text)]"
+                className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 py-1.5 text-sm text-[var(--color-text)]"
               >
                 {HINT_CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
               </select>
             </label>
           </div>
-          <label className="flex flex-col gap-1 text-[12px] text-[var(--color-text-secondary)]">
+          <label className="flex flex-col gap-1 text-xs text-[var(--color-text-secondary)]">
             Contains
             <input
               value={pattern}
               maxLength={PATTERN_MAX}
               onChange={e => setPattern(e.target.value)}
               placeholder="ECONNREFUSED"
-              className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 py-1.5 font-mono text-[12.5px] text-[var(--color-text)]"
+              className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 py-1.5 font-mono text-sm text-[var(--color-text)]"
             />
           </label>
           {showPreview && (
-            <div data-hint-preview="" aria-live="polite" className="text-[12px] text-[var(--color-text-secondary)]">
+            <div data-hint-preview="" aria-live="polite" className="text-xs text-[var(--color-text-secondary)]">
               {preview.data ? (
                 preview.data.sampled === 0 ? (
                   <p className="m-0">No failure in the last {preview.data.lookback_days} days to test against.</p>
@@ -260,7 +260,7 @@ export default function ClassificationHintsModal({
                   <>
                     <p className="m-0">{preview.data.matched} of the last {preview.data.sampled} failures match</p>
                     {preview.data.examples.length > 0 && (
-                      <ul className="m-0 mt-1 p-0 list-none space-y-0.5 text-[11.5px] text-[var(--color-text-muted)]">
+                      <ul className="m-0 mt-1 p-0 list-none space-y-0.5 text-xs text-[var(--color-text-muted)]">
                         {preview.data.examples.slice(0, 5).map((ex, i) => (
                           <li key={i} className="font-mono [overflow-wrap:anywhere]">{ex.test_name}: {ex.value}</li>
                         ))}
@@ -275,13 +275,13 @@ export default function ClassificationHintsModal({
               )}
             </div>
           )}
-          <label className="flex flex-col gap-1 text-[12px] text-[var(--color-text-secondary)]">
+          <label className="flex flex-col gap-1 text-xs text-[var(--color-text-secondary)]">
             Note (optional)
             <input
               value={note}
               maxLength={NOTE_MAX}
               onChange={e => setNote(e.target.value)}
-              className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 py-1.5 text-[12.5px] text-[var(--color-text)]"
+              className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2 py-1.5 text-sm text-[var(--color-text)]"
             />
           </label>
           <div className="flex items-center justify-end gap-2 pt-1">
@@ -289,14 +289,14 @@ export default function ClassificationHintsModal({
               type="button"
               onClick={onClose}
               disabled={busy}
-              className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 disabled:opacity-50"
+              className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 disabled:opacity-50"
             >
               Close
             </button>
             <button
               type="submit"
               disabled={!canAdd}
-              className="btn-primary !px-3 !py-1.5 text-[13px] disabled:opacity-50 disabled:cursor-not-allowed"
+              className="btn-primary !px-3 !py-1.5 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Add hint
             </button>

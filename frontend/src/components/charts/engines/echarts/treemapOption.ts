@@ -32,7 +32,15 @@
 import type { ComposeOption } from 'echarts/core'
 import type { TreemapSeriesOption } from 'echarts/charts'
 import type { AriaComponentOption, TooltipComponentOption } from 'echarts/components'
-import { decalOf, seriesColor, SERIES_COUNT, type ChartDecal, type ChartTokens } from '../../tokens'
+import {
+  CHART_FONT,
+  decalOf,
+  echartsBaseText,
+  seriesColor,
+  SERIES_COUNT,
+  type ChartDecal,
+  type ChartTokens,
+} from '../../tokens'
 import { domTooltipFormatter } from '../../tooltip'
 import { canvasSafeText } from './canvasText'
 import { echartsTipPosition, type EchartsMarkOf } from '../../tipPlacement'
@@ -50,8 +58,8 @@ import {
 
 export type TreemapOption = ComposeOption<TreemapSeriesOption | TooltipComponentOption | AriaComponentOption>
 
-/** ECharts' own label size, px, at text scale 1. */
-export const TREEMAP_FONT_SIZE = 12
+/** The label size, px, at text scale 1: the kit's tick size (W29b UIX-05; it was ECharts' own 12 px). */
+export const TREEMAP_FONT_SIZE = CHART_FONT.tick
 
 /** Every node's border, px: the keyboard ring's width (spike S1: emphasis draws at this width). */
 export const TREEMAP_BORDER_WIDTH = 2
@@ -155,6 +163,8 @@ export function buildTreemapOption({ children, colorBy, tokens, animate = false,
       color: tokens.text,
       textBorderColor: tokens.card,
       textBorderWidth: 3,
+      // The page's font at the kit's size, grown with the canvas text (W29b UIX-05).
+      fontFamily: tokens.fontSans,
       fontSize: treemapFontSize(textScale),
       overflow: 'truncate',
       ellipsis: '…',
@@ -178,6 +188,8 @@ export function buildTreemapOption({ children, colorBy, tokens, animate = false,
     animation: animate,
     // Off: the wrapper names the chart (once) and the frame's summary describes it.
     aria: { enabled: false },
+    // ECharts' global default for every text it draws (the tooltip box's family too).
+    textStyle: echartsBaseText(tokens, textScale),
     tooltip: {
       trigger: 'item',
       // The same box the Recharts tooltips draw (`TIP_BOX_STYLE`).

@@ -305,6 +305,35 @@ describe('MyFailuresPage', () => {
     expect(await screen.findByText(/[×x]\s*7/i)).toBeInTheDocument()
   })
 
+  // W29b UIX-06: the ONE table at dense density; Failures is a number column in its header and cells.
+  it('is the dense Table: Failures right-aligned in its header and cells, the empty columns keep their widths', async () => {
+    mockList.mockResolvedValue(makeResponse([
+      {
+        id: 'cc1', test_name: 'test_login_failed',
+        suite_name: 'AuthSuite',
+        status: 'FAILED', severity: 'major',
+        error_message: null,
+        created_at: new Date().toISOString(),
+        test_run_id: 'run-1', build_number: null,
+        project_id: 'p1', project_name: 'P1',
+        navigation_url: '/runs/run-1/tests/cc1',
+        class_name: null, failure_category: null, duration_ms: null,
+        failure_count: 7,
+      },
+    ]))
+    renderPage()
+    const badge = await screen.findByText(/[×x]\s*7/i)
+    const table = screen.getByRole('table', { name: 'Assigned failures' })
+    expect(table).toHaveAttribute('data-density', 'dense')
+    const headers = within(table).getAllByRole('columnheader')
+    expect(headers.every((th) => th.classList.contains('th'))).toBe(true)
+    expect(within(table).getByRole('columnheader', { name: 'Failures' })).toHaveClass('th-num')
+    expect(headers[0]).toHaveClass('w-2')
+    expect(headers[headers.length - 1]).toHaveClass('w-4')
+    expect(badge.closest('td')).toHaveClass('td', 'td-num')
+    expect(badge.closest('tr')).toHaveClass('table-row')
+  })
+
   it('navigates via the backend-provided navigation_url on row click', async () => {
     mockList.mockResolvedValue(makeResponse([
       {

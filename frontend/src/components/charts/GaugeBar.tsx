@@ -296,7 +296,7 @@ export default function GaugeBar({
         .join(' ')}
     >
       {showLabel && (
-        <div id={labelId} className="text-[11px] text-[var(--color-text-secondary)] mb-1">
+        <div id={labelId} className="text-2xs text-[var(--color-text-secondary)] mb-1">
           {label}
           {/* `aria-labelledby` replaces `aria-label`, so the unmeasured state is said here. */}
           {!model.measured && <span className="sr-only">: {NOT_MEASURED}</span>}
@@ -368,7 +368,7 @@ export default function GaugeBar({
           <span
             aria-hidden="true"
             data-gauge-not-measured=""
-            className="absolute left-2 top-1/2 -translate-y-1/2 px-1 text-[11px] leading-none text-[var(--color-text-secondary)]"
+            className="absolute left-2 top-1/2 -translate-y-1/2 px-1 text-2xs leading-none text-[var(--color-text-secondary)]"
             style={{ background: CHART_VARS.card }}
           >
             {notMeasuredText}
@@ -406,7 +406,7 @@ export default function GaugeBar({
         )}
       </div>
       {showValue && (
-        <span data-gauge-value className="text-[11.5px] tabular-nums text-[var(--color-text-secondary)]">
+        <span data-gauge-value className="text-xs tabular-nums text-[var(--color-text-secondary)]">
           {model.value === null ? notMeasuredText : format(model.value)}
         </span>
       )}

@@ -449,8 +449,8 @@ export default function ReleaseGatePage() {
             published `verdict_driver` in `input_snapshot` all along and no code
             read it — the value-nothing-consumes pattern. */}
         {hasEvidence && floorApplied && (
-          <p className="text-xs text-[var(--status-broken)] mt-3">
-            Risk score raised to the NO-GO floor because the pass rate is below{' '}
+          <p className="text-xs text-[var(--ui-warning)] mt-3">
+            Risk score raised to the No-Go floor because the pass rate is below{' '}
             {floorPct != null ? `${floorPct}%` : 'the floor'} — not derived from the
             dimension breakdown in Why.
           </p>

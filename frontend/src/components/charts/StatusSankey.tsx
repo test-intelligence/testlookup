@@ -14,7 +14,7 @@ import { useCallback, useMemo } from 'react'
 import { canvasSafeText } from './engines/echarts/canvasText'
 import { useEChart } from './engines/useEChart'
 import type { FlowStatus, StatusSankeyModel } from './statusSankeyModel'
-import { useChartTokens, type ChartTokens } from './tokens'
+import { CHART_FONT, echartsBaseText, useChartTokens, type ChartTokens } from './tokens'
 
 export const SANKEY_HEIGHT = 320
 
@@ -26,6 +26,8 @@ function statusColor(status: FlowStatus, tokens: ChartTokens): string {
 export function sankeyOption(model: StatusSankeyModel, tokens: ChartTokens): object {
   return {
     animation: false,
+    // W29b UIX-05: ECharts' global text default — the page's font at the kit's 11 px.
+    textStyle: echartsBaseText(tokens),
     tooltip: { trigger: 'item' },
     series: [
       {
@@ -39,7 +41,8 @@ export function sankeyOption(model: StatusSankeyModel, tokens: ChartTokens): obj
         layoutIterations: 0,
         draggable: false,
         emphasis: { focus: 'adjacency' },
-        label: { color: tokens.text, fontSize: 12 },
+        // Every key spelled out (the chart guard reads a label's keys).
+        label: { fontFamily: tokens.fontSans, fontSize: CHART_FONT.tick, color: tokens.text },
         data: model.nodes.map((node) => ({
           name: canvasSafeText(node.name),
           value: node.total,

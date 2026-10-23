@@ -185,10 +185,10 @@ function RunPickerPanel({
           <RunSearchPage key={i + 1} q={q} suiteName={suiteName} page={i + 1} onSelect={onSelect} />
         ))}
         {first.data && total === 0 && (
-          <p className="m-0 px-2 py-3 text-[12px] text-[var(--color-text-muted)]">No runs match.</p>
+          <p className="m-0 px-2 py-3 text-xs text-[var(--color-text-muted)]">No runs match.</p>
         )}
       </div>
-      <div className="flex items-center justify-between gap-2 text-[11.5px] text-[var(--color-text-muted)]">
+      <div className="flex items-center justify-between gap-2 text-xs text-[var(--color-text-muted)]">
         <span data-run-picker-count="">Showing {loaded} of {total} · all releases</span>
         {loaded < total && (
           <button
@@ -224,7 +224,7 @@ function RunPickerPanel({
           </button>
         </div>
         {pasteError && (
-          <p className="m-0 mt-1 text-[11.5px] text-[var(--status-failed)]" data-run-picker-error="">
+          <p className="m-0 mt-1 text-xs text-[var(--status-failed)]" data-run-picker-error="">
             {pasteError}
           </p>
         )}
@@ -244,7 +244,7 @@ function RunSearchPage({
 }) {
   const { data, isLoading } = useRunSearch({ q, suiteName, page, enabled: true })
   if (isLoading && !data) {
-    return <p className="m-0 px-2 py-2 text-[12px] text-[var(--color-text-muted)]">Loading runs…</p>
+    return <p className="m-0 px-2 py-2 text-xs text-[var(--color-text-muted)]">Loading runs…</p>
   }
   return (
     <>
@@ -254,7 +254,7 @@ function RunSearchPage({
           type="button"
           onClick={() => onSelect(run.id)}
           data-run-option={run.id}
-          className="block w-full truncate rounded px-2 py-1.5 text-left font-mono text-[12px] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]"
+          className="block w-full truncate rounded px-2 py-1.5 text-left font-mono text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]"
         >
           {formatRunOption(run)}
         </button>

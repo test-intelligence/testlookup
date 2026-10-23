@@ -56,6 +56,8 @@ const GIVEN: ChartTokens = {
   border: given('border'),
   text: given('text'),
   textMuted: given('text-muted'),
+  measure: given('measure'),
+  fontSans: given('font-sans'),
 }
 
 const stats = (over: Partial<TreeNodeStats> = {}): TreeNodeStats => ({

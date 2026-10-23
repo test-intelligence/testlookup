@@ -40,7 +40,7 @@ export default function WindowPicker({
             aria-checked={active}
             data-window={option}
             onClick={() => setDays(option)}
-            className="inline-flex items-center rounded-full border px-2.5 py-1 text-[12.5px] transition-colors"
+            className="inline-flex items-center rounded-full border px-2.5 py-1 text-sm transition-colors"
             style={{
               background: active ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',
               borderColor: active ? 'color-mix(in srgb, var(--color-accent) 30%, transparent)' : 'var(--color-border)',

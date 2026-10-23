@@ -37,11 +37,7 @@ export default function ChipFilter<T extends string>({
   return (
     <div className={clsx('inline-flex items-center gap-2', className)}>
       {label && (
-        <span
-          aria-hidden={ariaLabel ? undefined : true}
-          className="text-[10.5px] font-medium uppercase text-[var(--color-text-muted)]"
-          style={{ letterSpacing: 'var(--tracking-wider)' }}
-        >
+        <span aria-hidden={ariaLabel ? undefined : true} className="eyebrow uppercase text-[var(--color-text-muted)]">
           {label}
         </span>
       )}
@@ -58,7 +54,7 @@ export default function ChipFilter<T extends string>({
               title={option.title}
               onClick={() => onChange(option.id)}
               className={clsx(
-                'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12.5px] transition-colors',
+                'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-sm transition-colors',
                 optionClassName,
               )}
               style={{
@@ -74,7 +70,7 @@ export default function ChipFilter<T extends string>({
               {/* A space for the accessible name ("AI reports 3", not "AI reports3"); a flex container drops it from the layout. */}
               {option.count !== undefined && ' '}
               {option.count !== undefined && (
-                <span className="tabular-nums text-[11px] opacity-80" data-chip-count="">
+                <span className="tabular-nums text-2xs opacity-80" data-chip-count="">
                   {option.count}
                 </span>
               )}

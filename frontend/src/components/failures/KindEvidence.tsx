@@ -27,10 +27,9 @@ export function FailureKindBadge({ kind, compact }: { kind: string | null | unde
   const d = kindDef(kind)
   return (
     <span
-      className="inline-flex items-center gap-1 rounded-full font-semibold uppercase whitespace-nowrap"
+      // The label style (W29b UIX-04b: .eyebrow, 11 px / 600 / uppercase; the badge was 9.5 / 10 px).
+      className="eyebrow inline-flex items-center gap-1 rounded-full uppercase whitespace-nowrap"
       style={{
-        fontSize: compact ? 9.5 : 10,
-        letterSpacing: 'var(--tracking-wide)',
         padding: compact ? '1px 6px' : '2px 8px',
         background: `color-mix(in srgb, ${d.color} 14%, transparent)`,
         border: `1px solid color-mix(in srgb, ${d.color} 35%, transparent)`,
@@ -66,19 +65,19 @@ function EvidenceCheckRow({ row }: { row: KindEvidenceCheck }) {
     <li className="flex items-start gap-2 py-1" data-testid={`kind-check-${row.check}`}>
       <span
         aria-label={style.label}
-        className="w-4 text-center font-bold shrink-0"
-        style={{ color: style.color, fontSize: 11 }}
+        className="w-4 text-center text-2xs font-bold shrink-0"
+        style={{ color: style.color }}
       >
         {style.symbol}
       </span>
       <span className="min-w-0">
-        <span className="text-[11px] font-semibold text-[var(--color-text)]">
+        <span className="text-2xs font-semibold text-[var(--color-text)]">
           {KIND_CHECK_LABELS[row.check] ?? row.check}
         </span>
-        <span className="text-[10.5px]" style={{ color: style.color, marginLeft: 6 }}>
+        <span className="text-2xs" style={{ color: style.color, marginLeft: 6 }}>
           {style.label}
         </span>
-        <p className="text-[11px] text-[var(--color-text-muted)] m-0 mt-0.5">{row.detail}</p>
+        <p className="text-2xs text-[var(--color-text-muted)] m-0 mt-0.5">{row.detail}</p>
       </span>
     </li>
   )
@@ -175,11 +174,11 @@ export function KindBadgeWithEvidence({
           }}
         >
           {isLoading && (
-            <p className="text-[11px] text-[var(--color-text-muted)] m-0">Loading evidence…</p>
+            <p className="text-2xs text-[var(--color-text-muted)] m-0">Loading evidence…</p>
           )}
           {!isLoading && data?.kind_evidence && <KindEvidencePanel evidence={data.kind_evidence} />}
           {!isLoading && data && !data.kind_evidence && (
-            <p className="text-[11px] text-[var(--color-text-muted)] m-0">
+            <p className="text-2xs text-[var(--color-text-muted)] m-0">
               No analysis evidence recorded for this failure yet — the kind shown is derived
               from the stored category only (AI-classified).
             </p>

@@ -54,12 +54,13 @@ export default function AiVerdictCell({
       title={review ? `${label}: ${REVIEW_TITLE[review]}. Open the run's analysis.` : `${label}. Open the run's analysis.`}
       className="inline-flex flex-col items-start gap-0.5 whitespace-nowrap hover:underline"
     >
-      {/* W29a UIX-03: the one decision chip (its tint, border and legible ink). The cell keeps the
-          table's 10.5 px (a later utility than the chip's text-xs, so it wins): the verdict column
-          stays as narrow as before, which is what fits the table at 1280 px. */}
-      <DecisionChip decision={verdict.recommendation} className="text-[10.5px]" />
+      {/* W29a UIX-03: the one decision chip (its tint, border and legible ink). The cell takes the
+          type scale's floor, 11 px (W29b UIX-04b): the verdict column stays narrow, which is what fits
+          the table at 1280 px. `!` because the chip's own text-xs is emitted after text-2xs, so a
+          plain text-2xs here would lose (measured: 12 px). */}
+      <DecisionChip decision={verdict.recommendation} className="!text-2xs" />
       {review && (
-        <span data-ai-verdict-review={review} className="pl-2 text-[10.5px] leading-none text-[var(--color-text-muted)]">
+        <span data-ai-verdict-review={review} className="pl-2 text-2xs leading-none text-[var(--color-text-muted)]">
           {review}
         </span>
       )}

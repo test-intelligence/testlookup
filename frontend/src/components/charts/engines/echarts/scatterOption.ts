@@ -35,7 +35,7 @@ import type {
   TooltipComponentOption,
 } from 'echarts/components'
 import type { PointsAxis, PointsChart } from '@/lib/viz/contracts'
-import type { ChartTokens } from '../../tokens'
+import { CHART_FONT, echartsAxisLabel, echartsBaseText, echartsSplitLine, type ChartTokens, type EchartsText } from '../../tokens'
 import { domTooltipFormatter } from '../../tooltip'
 import { canvasSafeText } from './canvasText'
 import { echartsTipPosition, type EchartsMarkOf } from '../../tipPlacement'
@@ -175,14 +175,13 @@ function axisExtent(axis: PointsAxis, values: readonly number[]) {
 
 /**
  * An axis' tick labels, every key spelled out (the chart guard reads them; no
- * formatter of any kind): the axis colour, the presentation size (`undefined`
- * = ECharts' own), and a moved edge's label hidden (`undefined` = ECharts'
- * own rule for an unmoved one).
+ * formatter of any kind): the page's font, the axis colour and the kit's
+ * size grown with the canvas text (W29b UIX-05: `echartsAxisLabel`), and a
+ * moved edge's label hidden (`undefined` = ECharts' own rule for an unmoved one).
  */
-function tickLabels(color: string, fontSize: number | undefined, edges: PaddedExtent) {
+function tickLabels(text: EchartsText, edges: PaddedExtent) {
   return {
-    color,
-    fontSize,
+    ...text,
     showMinLabel: edges.showMinLabel ? undefined : false,
     showMaxLabel: edges.showMaxLabel ? undefined : false,
   }
@@ -193,9 +192,10 @@ export function axisName(axis: PointsAxis): string {
   return axis.scale === 'log' ? `${axis.label}, log scale` : axis.label
 }
 
-/** ECharts' own default label size, px. */
-export const SCATTER_FONT_SIZE = 12
+/** The scatter's label size, px, unscaled: the kit's tick size (W29b UIX-05; it was ECharts' own 12 px default). */
+export const SCATTER_FONT_SIZE = CHART_FONT.tick
 
+/** The scaled label size; `undefined` at 1 (the text is not SCALED: the insets stay as they are). */
 function fontSizeFor(textScale: number): number | undefined {
   if (!Number.isFinite(textScale) || textScale <= 1) return undefined
   return Math.round(SCATTER_FONT_SIZE * textScale)
@@ -249,17 +249,17 @@ export interface ScatterOptionInput {
 }
 
 export function buildScatterOption({ data, tokens, animate = false, textScale = 1, brushing = false }: ScatterOptionInput): ScatterOption {
-  const fontSize = fontSizeFor(textScale)
   const dense = data.points.length > SCATTER_DENSE_POINTS
   let maxSize = 0
   for (const point of data.points) if (point.size > maxSize) maxSize = point.size
   const medians = data.medians
 
-  const textStyle = fontSize === undefined ? { color: tokens.axis } : { color: tokens.axis, fontSize }
+  // The axis names and ticks: the page's font at the kit's 11 px, grown with the canvas text (W29b UIX-05).
+  const textStyle = echartsAxisLabel(tokens, textScale)
   // Each axis line at the plot's edge, never at the other axis' zero: with
   // room below 0% the x axis would otherwise cut through the stable tests.
   const axisLine = { onZero: false, lineStyle: { color: tokens.grid } }
-  const splitLine = { lineStyle: { color: tokens.grid } }
+  const splitLine = echartsSplitLine(tokens)
   const x = axisExtent(data.x, data.points.map((p) => p.x))
   const y = axisExtent(data.y, data.points.map((p) => p.y))
 
@@ -299,6 +299,8 @@ export function buildScatterOption({ data, tokens, animate = false, textScale = 
     animation: animate,
     // Off: the wrapper names the chart (once) and the frame's summary describes it.
     aria: { enabled: false },
+    // ECharts' global default for every text it draws (the tooltip box's family too).
+    textStyle: echartsBaseText(tokens, textScale),
     grid: scatterGrid(textScale),
     tooltip: {
       trigger: 'item',
@@ -325,7 +327,7 @@ export function buildScatterOption({ data, tokens, animate = false, textScale = 
       nameLocation: 'middle',
       nameGap: xNameGap(textScale),
       nameTextStyle: textStyle,
-      axisLabel: tickLabels(tokens.axis, fontSize, x.padded),
+      axisLabel: tickLabels(textStyle, x.padded),
       axisLine,
       splitLine,
     },
@@ -335,7 +337,7 @@ export function buildScatterOption({ data, tokens, animate = false, textScale = 
       nameLocation: 'end',
       // From the axis line rightward: centred on it, a long name would run off the chart's left edge.
       nameTextStyle: { ...textStyle, align: 'left' },
-      axisLabel: tickLabels(tokens.axis, fontSize, y.padded),
+      axisLabel: tickLabels(textStyle, y.padded),
       axisLine,
       splitLine,
     },

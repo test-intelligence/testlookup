@@ -19,6 +19,8 @@ import { readTooltip } from './tooltipTestUtils'
 
 /** Every `<Tooltip>` a plot asked Recharts for, so its `content` can be rendered as Recharts would. */
 const tips = vi.hoisted(() => ({ props: [] as Record<string, unknown>[] }))
+/** Every `<CartesianGrid>` a plot asked Recharts for (W29b UIX-05: the one solid grid). */
+const grids = vi.hoisted(() => ({ props: [] as Record<string, unknown>[] }))
 
 vi.mock('recharts', () => ({
   // `ChartTooltip`'s column geometry; bars place their tooltip by `useXAxisScale` instead.
@@ -49,7 +51,10 @@ vi.mock('recharts', () => ({
     />
   ),
   YAxis: ({ type, dataKey }: { type?: string; dataKey?: string }) => <g data-yaxis={type} data-datakey={dataKey} />,
-  CartesianGrid: () => null,
+  CartesianGrid: (props: Record<string, unknown>) => {
+    grids.props.push(props)
+    return null
+  },
   ReferenceLine: ({ x }: { x?: number }) => <line data-reference-x={String(x)} />,
   Tooltip: (props: Record<string, unknown>) => {
     tips.props.push(props)
@@ -372,6 +377,59 @@ describe('BarChart — ranked', () => {
     const { container } = render(<BarChart title="Top failing tests" state={ready(categorySeries([]))} variant="ranked" />)
     expect(container.querySelector('[data-chart-frame]')?.getAttribute('data-chart-state')).toBe('filtered-empty')
     expect(container.querySelector('[data-bar-chart]')).toBeNull()
+  })
+})
+
+/**
+ * W29b UIX-05: one gridline and one measure colour across the kit. A ranking
+ * shows ONE quantity, so its bars are the one-measure colour every such bar
+ * reads; only a CHANGE chart keeps the diverging rise / fall pair.
+ */
+describe('BarChart — the one grid and the one-measure colour (UIX-05)', () => {
+  /** The colour and decal of the pattern a ranked plot's rise / fall bars are filled with. */
+  function barPatterns(container: HTMLElement) {
+    const look = (suffix: string) => {
+      const pattern = container.querySelector(`pattern[id$="-chart-pattern-${suffix}"]`)
+      return { color: pattern?.querySelector('rect')?.getAttribute('fill') ?? null, decal: pattern?.getAttribute('data-chart-pattern') ?? null }
+    }
+    return { rise: look('rise'), fall: look('fall') }
+  }
+
+  it('a ranking (no negative value) draws its bars in --chart-measure, solid', () => {
+    const { container } = render(<BarChart title="Top failing tests" state={ready(RANKED)} variant="ranked" animate={false} />)
+    expect(barPatterns(container).rise).toEqual({ color: 'var(--chart-measure)', decal: 'solid' })
+    // Every bar the plot draws is filled with that pattern.
+    const rise = container.querySelector('pattern[id$="-chart-pattern-rise"]')?.getAttribute('id')
+    const cells = [...container.querySelectorAll('[data-cell]')].map((cell) => cell.getAttribute('fill'))
+    expect(cells).toHaveLength(4)
+    for (const fill of cells) expect(fill).toBe(`url(#${rise})`)
+    // No bar of a ranking borrows the diverging RISE colour (the purple it used to be).
+    expect(container.innerHTML).not.toContain('--chart-div-7')
+  })
+
+  it('a change chart (a negative value) keeps the diverging pair: the rise solid, the fall diagonal', () => {
+    const change = categorySeries([
+      ['up', 5],
+      ['down', -8],
+    ])
+    const { container } = render(<BarChart title="Change" state={ready(change)} variant="ranked" animate={false} />)
+    expect(barPatterns(container)).toEqual({
+      rise: { color: 'var(--chart-div-7)', decal: 'solid' },
+      fall: { color: 'var(--chart-div-1)', decal: 'diagonal' },
+    })
+    expect(container.innerHTML).not.toContain('--chart-measure')
+  })
+
+  it('every grid it asks for is the one solid hairline, on the value axis only (no stroke-dasharray)', () => {
+    grids.props.length = 0
+    render(<BarChart title="Top failing tests" state={ready(RANKED)} variant="ranked" animate={false} />)
+    render(<BarChart title="Results by suite" state={ready(statusSeries([['auth', { passed: 8, failed: 2 }]]))} variant="stacked" animate={false} />)
+    // Both plots asked (once per render); every one of them is the solid hairline.
+    expect(grids.props.length).toBeGreaterThanOrEqual(2)
+    for (const grid of grids.props) {
+      expect(grid).not.toHaveProperty('strokeDasharray')
+      expect(grid).toMatchObject({ stroke: 'var(--chart-grid)', strokeWidth: 1, horizontal: false })
+    }
   })
 })
 

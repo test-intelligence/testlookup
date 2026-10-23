@@ -60,7 +60,11 @@ function MetaRow({ label, value }: { label: string; value?: string | null }) {
   if (!value) return null;
   return (
     <div className="flex items-baseline justify-between gap-3 py-1">
-      <span className="shrink-0 text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
+      {/* leading-tight: on the shared baseline, the 11 px label's own 16 px line reached 1 px further below it than
+          the 12 px value's on CI's DejaVu Sans (an odd 3 px leading: 11 above / 5 below vs 12 / 4), so each row
+          stood 25 px where main's was 24 (8 rows, +8 px: the fold budget of /runs/:id/tests/:testId). The value's
+          line sets the row; the label's glyphs stay on the same baseline. */}
+      <span className="shrink-0 eyebrow uppercase leading-tight text-[var(--color-text-muted)]">
         {label}
       </span>
       <span className="truncate text-right text-xs text-[var(--color-text-secondary)]">
@@ -112,7 +116,8 @@ function DurationHistorySection({
       className="space-y-1.5"
     >
       <details data-duration-history-disclosure="" className="group">
-        <summary className="cursor-pointer select-none text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
+        {/* leading-tight: as MetaRow's label — the 12 px summary's line sets the line (17 -> 16 px on CI). */}
+        <summary className="cursor-pointer select-none eyebrow uppercase leading-tight text-[var(--color-text-muted)]">
           Duration across runs{" "}
           <span
             data-duration-history-summary=""
@@ -256,7 +261,10 @@ export default function TestHistoryPanel({
       {/* Pass/fail timeline (most-recent-first → render reversed so oldest is left) */}
       {history.length > 0 ? (
         <div className="space-y-1.5">
-          <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
+          {/* leading-tight: the label's 10 -> 11 px (the floor) in the label style's 16 px line was a 1 px taller
+              History tab than the 15 px line it inherited (fold budget, /runs/:id/tests/:testId); a ratio, so
+              presentation mode still scales it. */}
+          <p className="eyebrow uppercase leading-tight text-[var(--color-text-muted)]">
             Recent runs (oldest → newest)
           </p>
           <div className="flex flex-wrap items-center gap-1.5">

@@ -54,7 +54,7 @@ export default function SuiteRateSparkline({ days, suiteFilter, suiteName, tone,
   }
   const reason = oneDay ? ONE_DAY_SUITES_REASON : sparks.state === 'unavailable' ? SPARKLINE_UNAVAILABLE : NOT_AMONG_BUSIEST
   return (
-    <span data-sparkline-missing="" title={reason} className="text-[11px] text-[var(--color-text-muted)]" style={{ lineHeight: `${height}px` }}>
+    <span data-sparkline-missing="" title={reason} className="text-2xs text-[var(--color-text-muted)]" style={{ lineHeight: `${height}px` }}>
       —
     </span>
   )

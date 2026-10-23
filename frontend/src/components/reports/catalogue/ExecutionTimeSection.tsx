@@ -60,6 +60,7 @@ import type {
   SuiteRegressionItem,
   TestRegressionItem,
 } from '@/types/executionMetrics'
+import { Table, Td, Th, Tr } from '@/components/ui/Table'
 import { formatNumber } from '@/utils/formatters'
 import { clampCatalogueDays } from './catalogueScope'
 import {
@@ -99,13 +100,9 @@ export const EXECUTION_SECTION_MIN_HEIGHT = 1_400
 const PER_DAY_HEIGHT = 240
 const SIDE_HEIGHT = 260
 
-const CARD = 'flex min-w-0 flex-col gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)] p-4'
-/**
- * The table's own cells: the global `.th` is the muted token, under 4.5:1 on
- * the card in the lab theme (axe, every impact, runs over this section).
- */
-const TH = 'px-3 py-2 text-xs font-medium uppercase tracking-wider text-[var(--color-text-secondary)]'
-const TD = 'px-3 py-2 text-sm'
+/** A panel of this section: the `.card` surface (12 px corners, the card's background and border, 16 px padding). */
+const CARD = 'card flex min-w-0 flex-col gap-2'
+/** The ONE table (W29b UIX-06, `components/ui/Table`): its header is --color-text-secondary (the axe gate on Lab). */
 const MUTED = 'text-xs text-[var(--color-text-secondary)]'
 /**
  * A change's hue is a DOT beside its words, never the words' colour: the
@@ -122,7 +119,7 @@ const TONE_DOT = {
 function Stat({ label, value, detail, testId }: { label: string; value: string; detail: string; testId: string }) {
   return (
     <div data-execution-stat={testId} className="min-w-0 rounded-md border border-[var(--color-border)] px-3 py-2">
-      <dt className="text-[11px] font-medium uppercase text-[var(--color-text-secondary)]">{label}</dt>
+      <dt className="eyebrow uppercase text-[var(--color-text-secondary)]">{label}</dt>
       <dd className="m-0 mt-0.5 text-lg font-semibold tabular-nums text-[var(--color-text)]">{value}</dd>
       <dd className={clsx('m-0', MUTED)}>{detail}</dd>
     </div>
@@ -193,19 +190,19 @@ function ExecutionTotals({ data, windowDays, onExport }: { data: ExecutionMetric
 function ChangeCell({ value, pct, previous }: { value: string; pct: number | null; previous: string }) {
   const tone = changeTone(pct)
   return (
-    <td className={clsx(TD, 'text-right tabular-nums')}>
+    <Td numeric>
       <span className={value === NOT_REPORTED ? 'text-[var(--color-text-secondary)]' : 'text-[var(--color-text)]'}>{value}</span>
       <span
         data-change-tone={tone}
         title={changeTitle(pct, previous)}
-        className="ml-1.5 inline-flex items-center gap-1 text-[11px] text-[var(--color-text-secondary)]"
+        className="ml-1.5 inline-flex items-center gap-1 text-2xs text-[var(--color-text-secondary)]"
       >
         {tone !== 'none' ? (
           <span aria-hidden="true" className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: TONE_DOT[tone] }} />
         ) : null}
         {changeText(pct)}
       </span>
-    </td>
+    </Td>
   )
 }
 
@@ -224,34 +221,34 @@ function SuitesTable({ data, windowDays }: { data: ExecutionMetrics; windowDays:
         <p className={clsx('m-0', MUTED)}>No suite ran in this window.</p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <Table density="dense">
             <thead>
               <tr>
-                <th className={clsx(TH, 'text-left')}>Suite</th>
-                <th className={clsx(TH, 'text-right')}>Runs</th>
-                <th className={clsx(TH, 'text-right')}>{WALL_CLOCK_LABEL} p50</th>
-                <th className={clsx(TH, 'text-right')}>{WALL_CLOCK_LABEL} p95</th>
-                <th className={clsx(TH, 'text-right')}>Test time p50</th>
-                <th className={clsx(TH, 'text-right')}>Test time p95</th>
+                <Th>Suite</Th>
+                <Th numeric>Runs</Th>
+                <Th numeric>{WALL_CLOCK_LABEL} p50</Th>
+                <Th numeric>{WALL_CLOCK_LABEL} p95</Th>
+                <Th numeric>Test time p50</Th>
+                <Th numeric>Test time p95</Th>
               </tr>
             </thead>
             <tbody>
               {suites.items.map((row: ExecutionSuiteRow) => (
-                <tr key={row.suite_key} data-execution-suite={row.suite_key} className="border-t border-[var(--color-border)]">
-                  <td className={clsx(TD, 'max-w-[240px] truncate')}>
+                <Tr key={row.suite_key} data-execution-suite={row.suite_key} interactive={false}>
+                  <Td className="max-w-[240px] truncate">
                     <Link to={suiteHrefByName(row.suite_name)} title={row.suite_name} className="text-[var(--color-text)] hover:underline">
                       {row.suite_name}
                     </Link>
-                  </td>
-                  <td className={clsx(TD, 'text-right tabular-nums text-[var(--color-text-secondary)]')}>{formatNumber(row.current.runs)}</td>
+                  </Td>
+                  <Td numeric>{formatNumber(row.current.runs)}</Td>
                   <ChangeCell value={percentileText(row.current.wall, 'p50_ms')} pct={row.wall_p50_change_pct} previous={previous} />
                   <ChangeCell value={percentileText(row.current.wall, 'p95_ms')} pct={row.wall_p95_change_pct} previous={previous} />
                   <ChangeCell value={percentileText(row.current.summed, 'p50_ms')} pct={row.summed_p50_change_pct} previous={previous} />
                   <ChangeCell value={percentileText(row.current.summed, 'p95_ms')} pct={row.summed_p95_change_pct} previous={previous} />
-                </tr>
+                </Tr>
               ))}
             </tbody>
-          </table>
+          </Table>
         </div>
       )}
       {suites.truncated ? (

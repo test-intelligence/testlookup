@@ -6,7 +6,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /overvi
     "Skip to main content"
   <aside class="flex-shrink-0 border-r flex flex-col transition-[width] duration-150 w-56" data-sidebar="expanded" style="background: var(--color-bg-card); border-color: var(--color-border);">
     <div class="py-5 border-b flex items-center justify-center px-4" style="border-color: var(--color-border);">
-      <span aria-label="testlookup" class="inline-flex items-baseline leading-none text-[20px]" role="img">
+      <span aria-label="testlookup" class="inline-flex items-baseline leading-none text-xl" role="img">
         <span style="font-family: var(--font-mono); font-weight: 500; color: var(--color-accent); font-size: 1.45em;">
           "["
         <span style="font-family: var(--font-sans); font-weight: 400; color: var(--color-text); letter-spacing: -0.02em;">
@@ -32,10 +32,10 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /overvi
             <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z">
           <span class="truncate">
             "Inbox"
-          <span aria-label="3 assigned failures" class="rounded-full text-[10px] font-medium tabular-nums ml-auto px-1.5 py-0.5" data-nav-badge="" style="background: color-mix(in srgb, var(--status-failed) 18%, transparent); color: var(--status-failed); border: 1px solid color-mix(in srgb, var(--status-failed) 30%, transparent);">
+          <span aria-label="3 assigned failures" class="rounded-full text-2xs font-medium tabular-nums ml-auto px-1.5 py-0.5" data-nav-badge="" style="background: color-mix(in srgb, var(--status-failed) 18%, transparent); color: var(--status-failed); border: 1px solid color-mix(in srgb, var(--status-failed) 30%, transparent);">
             "3"
       <div class="mt-0.5">
-        <div class="px-3 pb-1 pt-4 text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]" data-nav-section="INVESTIGATE">
+        <div class="eyebrow px-3 pb-1 pt-4 uppercase text-[var(--color-text-muted)]" data-nav-section="INVESTIGATE">
           "INVESTIGATE"
         <a class="sidebar-link relative" data-discover="true" data-nav-id="runs" href="/runs">
           <svg aria-hidden="true" class="lucide lucide-git-branch h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
@@ -69,7 +69,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /overvi
           <span class="truncate">
             "Flaky tests"
       <div class="mt-0.5">
-        <div class="px-3 pb-1 pt-4 text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]" data-nav-section="QUALITY">
+        <div class="eyebrow px-3 pb-1 pt-4 uppercase text-[var(--color-text-muted)]" data-nav-section="QUALITY">
           "QUALITY"
         <a class="sidebar-link relative" data-discover="true" data-nav-id="trends" href="/trends">
           <svg aria-hidden="true" class="lucide lucide-trending-up h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
@@ -108,7 +108,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /overvi
           <span class="truncate">
             "Reports"
       <div class="mt-0.5">
-        <div class="px-3 pb-1 pt-4 text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]" data-nav-section="RELEASE">
+        <div class="eyebrow px-3 pb-1 pt-4 uppercase text-[var(--color-text-muted)]" data-nav-section="RELEASE">
           "RELEASE"
         <a class="sidebar-link relative" data-discover="true" data-nav-id="release-gate" href="/release-gate">
           <svg aria-hidden="true" class="lucide lucide-shield h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
@@ -145,7 +145,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /overvi
           <path d="m21 21-4.34-4.34">
           <circle cx="11" cy="11" r="8">
         <input class="input pl-9 pr-9 h-9 text-sm" placeholder="Search tests, runs, defects… (Enter)" type="text" value="">
-        <kbd aria-hidden="true" class="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none hidden sm:inline-flex items-center justify-center h-5 min-w-[1.25rem] px-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[11px] font-mono text-[var(--color-text-muted)]">
+        <kbd aria-hidden="true" class="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none hidden sm:inline-flex items-center justify-center h-5 min-w-[1.25rem] px-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-2xs font-mono text-[var(--color-text-muted)]">
           "/"
       <select aria-label="Select project" class="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]">
         <option value="">
@@ -167,7 +167,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /overvi
           <svg aria-hidden="true" class="lucide lucide-bell w-5 h-5" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
             <path d="M10.268 21a2 2 0 0 0 3.464 0">
             <path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326">
-          <span class="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-[var(--status-failed)] text-[var(--color-text-on-status)] text-[11px] font-bold rounded-full flex items-center justify-center px-1">
+          <span class="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-[var(--status-failed)] text-[var(--color-text-on-status)] text-2xs font-bold rounded-full flex items-center justify-center px-1">
             "2"
       <div class="relative border-l pl-4 h-full flex items-center" style="border-color: var(--color-border);">
         <button aria-expanded="false" aria-haspopup="menu" aria-label="Account menu" class="flex items-center gap-3 h-full rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]" type="button">
@@ -192,7 +192,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /settin
     "Skip to main content"
   <aside class="flex-shrink-0 border-r flex flex-col transition-[width] duration-150 w-56" data-sidebar="expanded" style="background: var(--color-bg-card); border-color: var(--color-border);">
     <div class="py-5 border-b flex items-center justify-center px-4" style="border-color: var(--color-border);">
-      <span aria-label="testlookup" class="inline-flex items-baseline leading-none text-[20px]" role="img">
+      <span aria-label="testlookup" class="inline-flex items-baseline leading-none text-xl" role="img">
         <span style="font-family: var(--font-mono); font-weight: 500; color: var(--color-accent); font-size: 1.45em;">
           "["
         <span style="font-family: var(--font-sans); font-weight: 400; color: var(--color-text); letter-spacing: -0.02em;">
@@ -218,10 +218,10 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /settin
             <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z">
           <span class="truncate">
             "Inbox"
-          <span aria-label="3 assigned failures" class="rounded-full text-[10px] font-medium tabular-nums ml-auto px-1.5 py-0.5" data-nav-badge="" style="background: color-mix(in srgb, var(--status-failed) 18%, transparent); color: var(--status-failed); border: 1px solid color-mix(in srgb, var(--status-failed) 30%, transparent);">
+          <span aria-label="3 assigned failures" class="rounded-full text-2xs font-medium tabular-nums ml-auto px-1.5 py-0.5" data-nav-badge="" style="background: color-mix(in srgb, var(--status-failed) 18%, transparent); color: var(--status-failed); border: 1px solid color-mix(in srgb, var(--status-failed) 30%, transparent);">
             "3"
       <div class="mt-0.5">
-        <div class="px-3 pb-1 pt-4 text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]" data-nav-section="INVESTIGATE">
+        <div class="eyebrow px-3 pb-1 pt-4 uppercase text-[var(--color-text-muted)]" data-nav-section="INVESTIGATE">
           "INVESTIGATE"
         <a class="sidebar-link relative" data-discover="true" data-nav-id="runs" href="/runs">
           <svg aria-hidden="true" class="lucide lucide-git-branch h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
@@ -255,7 +255,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /settin
           <span class="truncate">
             "Flaky tests"
       <div class="mt-0.5">
-        <div class="px-3 pb-1 pt-4 text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]" data-nav-section="QUALITY">
+        <div class="eyebrow px-3 pb-1 pt-4 uppercase text-[var(--color-text-muted)]" data-nav-section="QUALITY">
           "QUALITY"
         <a class="sidebar-link relative" data-discover="true" data-nav-id="trends" href="/trends">
           <svg aria-hidden="true" class="lucide lucide-trending-up h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
@@ -294,7 +294,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /settin
           <span class="truncate">
             "Reports"
       <div class="mt-0.5">
-        <div class="px-3 pb-1 pt-4 text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]" data-nav-section="RELEASE">
+        <div class="eyebrow px-3 pb-1 pt-4 uppercase text-[var(--color-text-muted)]" data-nav-section="RELEASE">
           "RELEASE"
         <a class="sidebar-link relative" data-discover="true" data-nav-id="release-gate" href="/release-gate">
           <svg aria-hidden="true" class="lucide lucide-shield h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
@@ -331,7 +331,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /settin
           <path d="m21 21-4.34-4.34">
           <circle cx="11" cy="11" r="8">
         <input class="input pl-9 pr-9 h-9 text-sm" placeholder="Search tests, runs, defects… (Enter)" type="text" value="">
-        <kbd aria-hidden="true" class="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none hidden sm:inline-flex items-center justify-center h-5 min-w-[1.25rem] px-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[11px] font-mono text-[var(--color-text-muted)]">
+        <kbd aria-hidden="true" class="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none hidden sm:inline-flex items-center justify-center h-5 min-w-[1.25rem] px-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-2xs font-mono text-[var(--color-text-muted)]">
           "/"
       <select aria-label="Select project" class="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]">
         <option value="">
@@ -353,7 +353,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /settin
           <svg aria-hidden="true" class="lucide lucide-bell w-5 h-5" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
             <path d="M10.268 21a2 2 0 0 0 3.464 0">
             <path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326">
-          <span class="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-[var(--status-failed)] text-[var(--color-text-on-status)] text-[11px] font-bold rounded-full flex items-center justify-center px-1">
+          <span class="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-[var(--status-failed)] text-[var(--color-text-on-status)] text-2xs font-bold rounded-full flex items-center justify-center px-1">
             "2"
       <div class="relative border-l pl-4 h-full flex items-center" style="border-color: var(--color-border);">
         <button aria-expanded="false" aria-haspopup="menu" aria-label="Account menu" class="flex items-center gap-3 h-full rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]" type="button">
@@ -369,137 +369,137 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /settin
         <div class="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]" data-settings-layout="">
           <nav aria-label="Settings" class="lg:sticky lg:top-0 lg:self-start lg:max-h-[calc(100vh-5rem)] lg:overflow-y-auto">
             <div class="space-y-4">
-              <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="index" href="/settings">
+              <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="index" href="/settings">
                 "All settings"
               <div data-settings-group="account">
-                <p class="mb-1 px-2 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                <p class="eyebrow mb-1 px-2 uppercase text-[var(--color-text-muted)]">
                   "Account"
                 <ul class="space-y-px">
                   <li>
-                    <a aria-current="page" class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors bg-[var(--color-bg-secondary)] font-medium text-[var(--color-text)]" data-discover="true" data-settings-item="profile" href="/settings/profile">
+                    <a aria-current="page" class="block truncate rounded-md px-2 py-1 text-sm transition-colors bg-[var(--color-bg-secondary)] font-medium text-[var(--color-text)]" data-discover="true" data-settings-item="profile" href="/settings/profile">
                       "Profile"
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="my-notifications" href="/settings/my-notifications">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="my-notifications" href="/settings/my-notifications">
                       "My notifications"
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="my-api-keys" href="/settings/my-api-keys">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="my-api-keys" href="/settings/my-api-keys">
                       "My API keys"
               <div data-settings-group="project">
-                <p class="mb-1 px-2 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                <p class="eyebrow mb-1 px-2 uppercase text-[var(--color-text-muted)]">
                   "Project"
                 <ul class="space-y-px">
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="projects" href="/projects">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="projects" href="/projects">
                       "Projects"
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="members" href="/users?tab=project-members">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="members" href="/users?tab=project-members">
                       "Members & access"
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="ownership" href="/ownership">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="ownership" href="/ownership">
                       "Ownership"
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="team-channels" href="/settings/team-channels">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="team-channels" href="/settings/team-channels">
                       "Team channels"
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="api-keys" href="/settings/api-keys">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="api-keys" href="/settings/api-keys">
                       "Streaming API keys"
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="retention" href="/settings/retention">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="retention" href="/settings/retention">
                       "Retention & purge"
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="project-data" href="/settings/project-data">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="project-data" href="/settings/project-data">
                       "Project data"
               <div data-settings-group="release-governance">
-                <p class="mb-1 px-2 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                <p class="eyebrow mb-1 px-2 uppercase text-[var(--color-text-muted)]">
                   "Release governance"
                 <ul class="space-y-px">
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="policies" href="/policies">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="policies" href="/policies">
                       "Gate policies"
               <div data-settings-group="integrations">
-                <p class="mb-1 px-2 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                <p class="eyebrow mb-1 px-2 uppercase text-[var(--color-text-muted)]">
                   "Integrations"
                 <ul class="space-y-px">
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="integrations" href="/settings/integrations">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="integrations" href="/settings/integrations">
                       "Jira, Splunk, OCP, Slack, Teams"
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="github" href="/settings/github">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="github" href="/settings/github">
                       "GitHub"
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="gitlab" href="/settings/gitlab">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="gitlab" href="/settings/gitlab">
                       "GitLab"
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="webhooks" href="/settings/webhooks">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="webhooks" href="/settings/webhooks">
                       "Outbound webhooks"
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="email" href="/settings/notifications">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="email" href="/settings/notifications">
                       "Email (SMTP) & channels"
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="digests" href="/settings/digests">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="digests" href="/settings/digests">
                       "Digests & views"
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="integration-health" href="/settings/integration-health">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="integration-health" href="/settings/integration-health">
                       "Integration health"
               <div data-settings-group="ai">
-                <p class="mb-1 px-2 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                <p class="eyebrow mb-1 px-2 uppercase text-[var(--color-text-muted)]">
                   "AI"
                 <ul class="space-y-px">
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="ai-config" href="/settings/ai">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="ai-config" href="/settings/ai">
                       "AI configuration"
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="ai-agents" href="/settings/ai-agents">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="ai-agents" href="/settings/ai-agents">
                       "AI agents"
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="workflows" href="/agents/workflows">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="workflows" href="/agents/workflows">
                       "Workflow editor"
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="pipeline-runs" href="/agents">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="pipeline-runs" href="/agents">
                       "Pipeline runs"
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="agent-activity" href="/settings/agent-activity">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="agent-activity" href="/settings/agent-activity">
                       "Agent activity"
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="ai-eval" href="/settings/ai-eval">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="ai-eval" href="/settings/ai-eval">
                       "AI evaluation"
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="billing" href="/settings/billing">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="billing" href="/settings/billing">
                       "LLM cost budget"
               <div data-settings-group="security">
-                <p class="mb-1 px-2 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                <p class="eyebrow mb-1 px-2 uppercase text-[var(--color-text-muted)]">
                   "Security & access"
                 <ul class="space-y-px">
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="users" href="/users">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="users" href="/users">
                       "Users"
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="sso" href="/settings/sso">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="sso" href="/settings/sso">
                       "SSO & identity"
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="mfa-policy" href="/settings/mfa-policy">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="mfa-policy" href="/settings/mfa-policy">
                       "MFA & lockout"
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="audit" href="/settings/audit">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="audit" href="/settings/audit">
                       "Audit dashboard"
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="activity" href="/activity">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="activity" href="/activity">
                       "Activity log"
               <div data-settings-group="system">
-                <p class="mb-1 px-2 text-[10.5px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                <p class="eyebrow mb-1 px-2 uppercase text-[var(--color-text-muted)]">
                   "System"
                 <ul class="space-y-px">
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="storage" href="/settings/storage">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="storage" href="/settings/storage">
                       "Data & storage"
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="performance" href="/settings/performance">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="performance" href="/settings/performance">
                       "Performance"
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="feature-flags" href="/settings/feature-flags">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="feature-flags" href="/settings/feature-flags">
                       "Feature flags"
                   <li>
-                    <a class="block truncate rounded-md px-2 py-1 text-[13px] transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="seed-data" href="/settings/seed-data">
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="seed-data" href="/settings/seed-data">
                       "Seed data"
           <div class="min-w-0" data-settings-content="">
             <div>
@@ -514,7 +514,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /trends
     "Skip to main content"
   <aside class="flex-shrink-0 border-r flex flex-col transition-[width] duration-150 w-56" data-sidebar="expanded" style="background: var(--color-bg-card); border-color: var(--color-border);">
     <div class="py-5 border-b flex items-center justify-center px-4" style="border-color: var(--color-border);">
-      <span aria-label="testlookup" class="inline-flex items-baseline leading-none text-[20px]" role="img">
+      <span aria-label="testlookup" class="inline-flex items-baseline leading-none text-xl" role="img">
         <span style="font-family: var(--font-mono); font-weight: 500; color: var(--color-accent); font-size: 1.45em;">
           "["
         <span style="font-family: var(--font-sans); font-weight: 400; color: var(--color-text); letter-spacing: -0.02em;">
@@ -540,10 +540,10 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /trends
             <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z">
           <span class="truncate">
             "Inbox"
-          <span aria-label="3 assigned failures" class="rounded-full text-[10px] font-medium tabular-nums ml-auto px-1.5 py-0.5" data-nav-badge="" style="background: color-mix(in srgb, var(--status-failed) 18%, transparent); color: var(--status-failed); border: 1px solid color-mix(in srgb, var(--status-failed) 30%, transparent);">
+          <span aria-label="3 assigned failures" class="rounded-full text-2xs font-medium tabular-nums ml-auto px-1.5 py-0.5" data-nav-badge="" style="background: color-mix(in srgb, var(--status-failed) 18%, transparent); color: var(--status-failed); border: 1px solid color-mix(in srgb, var(--status-failed) 30%, transparent);">
             "3"
       <div class="mt-0.5">
-        <div class="px-3 pb-1 pt-4 text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]" data-nav-section="INVESTIGATE">
+        <div class="eyebrow px-3 pb-1 pt-4 uppercase text-[var(--color-text-muted)]" data-nav-section="INVESTIGATE">
           "INVESTIGATE"
         <a class="sidebar-link relative" data-discover="true" data-nav-id="runs" href="/runs">
           <svg aria-hidden="true" class="lucide lucide-git-branch h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
@@ -577,7 +577,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /trends
           <span class="truncate">
             "Flaky tests"
       <div class="mt-0.5">
-        <div class="px-3 pb-1 pt-4 text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]" data-nav-section="QUALITY">
+        <div class="eyebrow px-3 pb-1 pt-4 uppercase text-[var(--color-text-muted)]" data-nav-section="QUALITY">
           "QUALITY"
         <a aria-current="page" class="sidebar-link relative active" data-discover="true" data-nav-id="trends" href="/trends">
           <svg aria-hidden="true" class="lucide lucide-trending-up h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
@@ -616,7 +616,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /trends
           <span class="truncate">
             "Reports"
       <div class="mt-0.5">
-        <div class="px-3 pb-1 pt-4 text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]" data-nav-section="RELEASE">
+        <div class="eyebrow px-3 pb-1 pt-4 uppercase text-[var(--color-text-muted)]" data-nav-section="RELEASE">
           "RELEASE"
         <a class="sidebar-link relative" data-discover="true" data-nav-id="release-gate" href="/release-gate">
           <svg aria-hidden="true" class="lucide lucide-shield h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
@@ -653,7 +653,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /trends
           <path d="m21 21-4.34-4.34">
           <circle cx="11" cy="11" r="8">
         <input class="input pl-9 pr-9 h-9 text-sm" placeholder="Search tests, runs, defects… (Enter)" type="text" value="">
-        <kbd aria-hidden="true" class="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none hidden sm:inline-flex items-center justify-center h-5 min-w-[1.25rem] px-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[11px] font-mono text-[var(--color-text-muted)]">
+        <kbd aria-hidden="true" class="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none hidden sm:inline-flex items-center justify-center h-5 min-w-[1.25rem] px-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-2xs font-mono text-[var(--color-text-muted)]">
           "/"
       <select aria-label="Select project" class="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]">
         <option value="">
@@ -675,7 +675,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /trends
           <svg aria-hidden="true" class="lucide lucide-bell w-5 h-5" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
             <path d="M10.268 21a2 2 0 0 0 3.464 0">
             <path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326">
-          <span class="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-[var(--status-failed)] text-[var(--color-text-on-status)] text-[11px] font-bold rounded-full flex items-center justify-center px-1">
+          <span class="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-[var(--status-failed)] text-[var(--color-text-on-status)] text-2xs font-bold rounded-full flex items-center justify-center px-1">
             "2"
       <div class="relative border-l pl-4 h-full flex items-center" style="border-color: var(--color-border);">
         <button aria-expanded="false" aria-haspopup="menu" aria-label="Account menu" class="flex items-center gap-3 h-full rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]" type="button">
@@ -690,11 +690,11 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /trends
       <div class="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 xl:px-10">
         <div class="mb-4" data-section-tabs="trends">
           <nav aria-label="Trends pages" class="flex items-end gap-1 border-b border-[var(--color-border)]" data-route-tabs="">
-            <a aria-current="page" class="-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-[13px] leading-5 font-medium transition-colors border-[var(--color-accent)] text-[var(--color-text)]" data-discover="true" data-route-tab="/trends" href="/trends">
+            <a aria-current="page" class="-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm leading-5 font-medium transition-colors border-[var(--color-accent)] text-[var(--color-text)]" data-discover="true" data-route-tab="/trends" href="/trends">
               "Trends"
-            <a class="-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-[13px] leading-5 font-medium transition-colors border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]" data-discover="true" data-route-tab="/coverage" href="/coverage">
+            <a class="-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm leading-5 font-medium transition-colors border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]" data-discover="true" data-route-tab="/coverage" href="/coverage">
               "Coverage"
-            <a class="-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-[13px] leading-5 font-medium transition-colors border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]" data-discover="true" data-route-tab="/explore" href="/explore">
+            <a class="-mb-px inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm leading-5 font-medium transition-colors border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]" data-discover="true" data-route-tab="/explore" href="/explore">
               "Explorer"
         <div>
           "Page"

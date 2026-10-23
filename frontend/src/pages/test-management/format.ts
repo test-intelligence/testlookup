@@ -17,11 +17,18 @@ export const STATUS_COLORS: Record<string, string> = {
   archived:         'bg-[var(--color-bg-secondary)] text-[var(--color-text-faint)] border border-[var(--color-border)]',
 }
 
+/**
+ * A test case's priority pill (W29b, the W29a follow-up): the ONE severity map's
+ * P0-P3 look (`components/ui/severity.ts` `SEVERITY_STYLE`) as class strings —
+ * critical P0 danger, high P1 warning, medium P2 INFO (never the skipped gold),
+ * low P3 neutral; the tint 15 %, the border 30 %, the text the legible `-ink`.
+ * Read by the case view, ApprovalsTab and StrategyTab through `StatusPill`.
+ */
 export const PRIORITY_COLORS: Record<string, string> = {
-  critical: 'bg-[var(--status-failed-bg)] text-[var(--status-failed)] border border-[var(--status-failed-bd)]',
-  high:     'bg-[var(--status-broken-bg)] text-[var(--status-broken)] border border-[var(--status-broken-bd)]',
-  medium:   'bg-[var(--status-skipped-bg)] text-[var(--status-skipped)] border border-[var(--status-skipped-bd)]',
-  low:      'bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] border border-[var(--color-border-light)]',
+  critical: 'bg-[color-mix(in_srgb,var(--ui-danger)_15%,transparent)] text-[var(--ui-danger-ink)] border border-[color-mix(in_srgb,var(--ui-danger)_30%,transparent)]',
+  high:     'bg-[color-mix(in_srgb,var(--ui-warning)_15%,transparent)] text-[var(--ui-warning-ink)] border border-[color-mix(in_srgb,var(--ui-warning)_30%,transparent)]',
+  medium:   'bg-[color-mix(in_srgb,var(--ui-info)_15%,transparent)] text-[var(--ui-info-ink)] border border-[color-mix(in_srgb,var(--ui-info)_30%,transparent)]',
+  low:      'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)]',
 }
 
 /** A day, "Sep 18, 2026" (the one date format, W29a UIX-10); "—" when there is none. */

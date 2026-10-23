@@ -60,7 +60,7 @@ export default function AppVersionBadge() {
       title={hoverTitle}
       aria-label={`Running build v${version}. Click to copy full build details for a bug report.`}
       data-testid="app-version-badge"
-      className="flex w-full items-center gap-1 px-3 pt-1 text-left text-[10.5px] text-[var(--color-text-faint)] tabular-nums hover:text-[var(--color-text-muted)] transition-colors"
+      className="flex w-full items-center gap-1 px-3 pt-1 text-left text-2xs text-[var(--color-text-faint)] tabular-nums hover:text-[var(--color-text-muted)] transition-colors"
     >
       <span className="truncate select-all">
         v{version}
