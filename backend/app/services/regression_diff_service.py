@@ -46,6 +46,33 @@ def _uuid_or_none(value: Any) -> Optional[uuid.UUID]:
         return None
 
 
+async def never_reached_the_connector(db: AsyncSession, run: TestRun, serialized: dict) -> bool:
+    """Whether a stored ``unavailable`` range was decided without ever asking GitHub.
+
+    ``resolve_commit_range`` anchors the range (picks the base run) only when
+    the run has a head commit and the ``github_checks`` gate is open. A row
+    written while the gate was shut (the flag off, offline, a resolve that saw
+    no head yet) therefore carries NO base commit even though a baseline run
+    exists -- it does not mean "no earlier run carries a commit". Such a row is
+    a gated outcome, not a fact about the run: it reads ``not_resolved`` and
+    the lazy resolve re-resolves it as soon as the target is available, instead
+    of showing a wrong reason for the 6 h cooldown.
+
+    True when the row is ``unavailable`` with no base commit, the run has a
+    commit hash, and a base anchor exists NOW (``resolve_base_anchor``: DB
+    reads only). A row whose anchor still does not exist is a real
+    ``no_baseline_commit``; a row WITH a base commit reached the connector (a
+    fetch failure keeps its cooldown)."""
+    from app.services.commit_attribution_service import resolve_base_anchor
+
+    if serialized.get("available") or serialized.get("source") != "unavailable":
+        return False
+    if not serialized.get("resolved_at") or serialized.get("base_commit") or not run.commit_hash:
+        return False
+    base_run, _base_source = await resolve_base_anchor(db, run)
+    return base_run is not None and bool(getattr(base_run, "commit_hash", None))
+
+
 async def commit_range_status(db: AsyncSession, run: TestRun, serialized: dict) -> CommitRangeStatus:
     """Why the run's stored commit range lists commits, or why it does not.
 
@@ -55,9 +82,10 @@ async def commit_range_status(db: AsyncSession, run: TestRun, serialized: dict) 
     ``offline_mode``; the run has no commit hash -> ``no_commit_hash``; the
     project's GitHub target is unavailable -> its reason (``github_checks_off``,
     ``no_integration``, ``integration_disabled``, ``repo_mismatch``,
-    ``no_token``); never resolved -> ``not_resolved``; no earlier run carries a
-    commit -> ``no_baseline_commit``; base == head -> ``no_commits``; an
-    ``unavailable`` row -> ``fetch_failed``; else ``no_commits``.
+    ``no_token``); never resolved, or resolved only while the gate was shut
+    (``never_reached_the_connector``) -> ``not_resolved``; no earlier run
+    carries a commit -> ``no_baseline_commit``; base == head -> ``no_commits``;
+    an ``unavailable`` row -> ``fetch_failed``; else ``no_commits``.
     """
     from app.services.github_target import github_target_status
 
@@ -85,7 +113,8 @@ async def commit_range_status(db: AsyncSession, run: TestRun, serialized: dict) 
             elif not serialized.get("resolved_at"):
                 reason = "not_resolved"
             elif not serialized.get("base_commit"):
-                reason = "no_baseline_commit"
+                stale = await never_reached_the_connector(db, run, serialized)
+                reason = "not_resolved" if stale else "no_baseline_commit"
             elif serialized.get("base_commit") == serialized.get("head_commit"):
                 reason = "no_commits"
             elif serialized.get("source") == "unavailable":

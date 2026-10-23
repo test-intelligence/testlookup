@@ -22,12 +22,12 @@ from typing import Any, Optional
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.core.config import settings
 from app.core.deps import require_run_access
 from app.db.postgres import AsyncSessionLocal, get_db, release_read_connection
-from app.models.postgres import TestRun
+from app.models.postgres import RunCommitRange, TestRun
 from app.services import commit_attribution_service as svc
 
 logger = structlog.get_logger("routers.commit_attribution")
@@ -46,23 +46,51 @@ async def _load_run(db: Any, run_id: uuid.UUID) -> TestRun:
 async def lazy_resolve_commit_range(db: Any, run: TestRun) -> None:
     """Resolve a run's commit range at most once per cooldown, on its own session.
 
-    Reads the stored range on the request's session; only when it
-    ``needs_resolution`` (no row yet, or an ``unavailable`` row older than the
-    6 h cooldown) and offline mode is off does it hand the request session's
-    read connection back (``release_read_connection``) and run
-    ``resolve_commit_range`` on a dedicated write session that it commits -- so
-    a GET never holds two connections and never writes on every view. The
-    service does its own reads on a short session and its GitHub calls with no
-    session open. Best-effort: a failure is logged and the read goes on.
-    Offline: nothing (no row is written, no call is made)."""
-    if settings.AI_OFFLINE_MODE:
+    A GET never persists a GATED outcome. Offline, a run without a commit
+    hash, or a project whose GitHub target is unavailable right now
+    (``github_target_status``: the ``github_checks`` flag off, no or a disabled
+    integration, a repository mismatch, no token -- read without decrypting
+    anything) -> nothing is written and no call is made; the Changes tab then
+    shows that reason, and the first view after the admin fixes it resolves.
+
+    Otherwise, reads the stored range on the request's session and resolves
+    only when it ``needs_resolution`` (no row yet, or an ``unavailable`` row
+    older than the 6 h cooldown) or the row ``never_reached_the_connector``
+    (written while the gate was shut: no base commit although a baseline run
+    exists). It then hands the request session's read connection back
+    (``release_read_connection``) and works on a dedicated write session: a
+    gated row is deleted first (committed, so the service's own read session
+    no longer sees it and its cooldown does not keep the stale answer), then
+    ``resolve_commit_range`` runs and is committed -- so a GET never holds two
+    connections and never writes on every view. A row that reached the
+    connector (a fetch failure: base commit set) keeps the 6 h cooldown.
+    Best-effort: a failure is logged and the read goes on."""
+    from app.services.github_target import github_target_status
+    from app.services.regression_diff_service import never_reached_the_connector
+
+    if settings.AI_OFFLINE_MODE or not run.commit_hash:
         return
     serialized = await svc.get_commit_range(db, run)
-    if not svc.needs_resolution(serialized):
+    if serialized.get("available"):
+        return
+    reason, _api_base = await github_target_status(db, run.project_id, ci_repo=run.ci_repo)
+    if reason:
+        return
+    stale = await never_reached_the_connector(db, run, serialized)
+    if not stale and not svc.needs_resolution(serialized):
         return
     await release_read_connection(db)
     try:
         async with AsyncSessionLocal() as write_db:
+            if stale:
+                await write_db.execute(
+                    delete(RunCommitRange).where(
+                        RunCommitRange.run_id == run.id,
+                        RunCommitRange.source == svc.SOURCE_UNAVAILABLE,
+                        RunCommitRange.base_commit.is_(None),
+                    )
+                )
+                await write_db.commit()
             await svc.resolve_commit_range(write_db, run.id)
             await write_db.commit()
     except Exception as exc:

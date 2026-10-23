@@ -22,7 +22,13 @@ What these pin:
   api.github.com);
 * the lazy resolve: within the 6 h cooldown a GET resolves nothing; past it,
   the request's read connection is handed back BEFORE the write session opens,
-  and offline nothing is resolved at all.
+  and offline nothing is resolved at all;
+* (follow-up, found in the local demo) a GET never persists a gated outcome:
+  while the project's GitHub target is unavailable, or the run has no commit
+  hash, a view writes no row; a row written while the gate was shut (no base
+  commit although a baseline run exists) reads ``not_resolved`` -- not
+  ``no_baseline_commit`` -- and the first view after the gate opens resolves
+  it; a row that reached the connector (base commit set) keeps its cooldown.
 """
 from __future__ import annotations
 
@@ -76,6 +82,8 @@ class _DiffSession:
             return _Rows(w.base_run.build_number if params["id_1"] == w.base_run.id else None)
         if "FROM test_runs" in sql and "test_runs.pass_rate >=" in sql:
             return _Rows(w.baseline)
+        if "FROM test_runs" in sql and "coalesce(test_runs.end_time, test_runs.created_at) <" in sql:
+            return _Rows(w.anchor)  # resolve_base_anchor: the run a range would start after
         if "FROM test_runs" in sql:
             return _Rows(w.run if params["id_1"] == w.run.id else None)
         if "FROM test_cases" in sql:
@@ -115,7 +123,7 @@ def world(monkeypatch):
     baseline = SimpleNamespace(id=base_run.id, pass_rate=100.0, build_number="41", end_time=NOW - timedelta(hours=1))
     w = SimpleNamespace(
         project=project, run=run, base_run=base_run, baseline=baseline, failing=["fp-1"], events=[],
-        row=None, flag=True,
+        row=None, flag=True, anchor=None,
         integration=SimpleNamespace(project_id=project, enabled=True, api_base_url=GHE, repo_owner="acme",
                                     repo_name="payments", has_pat=True),
     )
@@ -143,7 +151,15 @@ def world(monkeypatch):
     proxy = types.SimpleNamespace(**{k: getattr(httpx, k) for k in dir(httpx) if not k.startswith("_")})
     proxy.AsyncClient = routed_client
 
-    resolve = AsyncMock(return_value={"source": "connector"})
+    async def resolved(_write_db, _run_id):
+        # What resolve_commit_range stores once the gate is open: the
+        # connector's range (the PostgreSQL test runs the real one).
+        if w.row is None:
+            w.row = _row(commits=_commits(), base_commit=demo_sha("acme/payments", 0), head=run.commit_hash,
+                         base_run_id=base_run.id)
+        return {"source": "connector"}
+
+    resolve = AsyncMock(side_effect=resolved)
 
     class _WriteSession:
         async def __aenter__(self):
@@ -152,6 +168,14 @@ def world(monkeypatch):
 
         async def __aexit__(self, *_exc):
             return False
+
+        async def execute(self, stmt):
+            sql = str(stmt.compile(dialect=postgresql.dialect()))
+            assert sql.startswith("DELETE FROM run_commit_ranges"), sql
+            assert "run_commit_ranges.base_commit IS NULL" in sql and "run_commit_ranges.source = " in sql
+            w.events.append("gated-row-deleted")
+            if w.row is not None and w.row.source == "unavailable" and w.row.base_commit is None:
+                w.row = None
 
         async def commit(self):
             w.events.append("write-session-committed")
@@ -281,13 +305,109 @@ async def test_the_env_github_token_and_repo_change_nothing(world, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_within_the_cooldown_a_get_resolves_nothing(world):
+    """(c) A row that reached the connector (a base commit was anchored and the
+    fetch failed) keeps the 6 h cooldown, even with a baseline run present."""
+    world.anchor = world.baseline
+    world.anchor.commit_hash = demo_sha("acme/payments", 0)
     world.row = _unavailable(base_commit="a" * 40, head="b" * 40, resolved_at=NOW - timedelta(hours=1))
 
-    await _get(world)
+    first, _db = await _get(world)
     await _get(world)
 
     world.resolve.assert_not_awaited()
     assert world.events == []
+    assert first["commit_range_status"]["reason"] == "fetch_failed"
+
+
+# ── Follow-up: a GET never persists a gated outcome ─────────────────────────
+
+GATED = {
+    "github_checks_off": lambda w: setattr(w, "flag", False),
+    "no_integration": lambda w: setattr(w, "integration", None),
+    "integration_disabled": lambda w: setattr(w.integration, "enabled", False),
+    "repo_mismatch": lambda w: setattr(w.run, "ci_repo", "acme/checkout"),
+    "no_token": lambda w: setattr(w.integration, "has_pat", False),
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reason", sorted(GATED))
+async def test_a_view_while_the_target_is_unavailable_writes_no_row(world, reason):
+    """(a) The view used to run resolve_commit_range, which staged an
+    ``unavailable`` row that then read ``no_baseline_commit`` for 6 h after the
+    admin fixed the integration."""
+    world.row = None
+    world.anchor = world.baseline
+    GATED[reason](world)
+
+    diff, _db = await _get(world)
+
+    world.resolve.assert_not_awaited()
+    assert world.events == [], "a gated view opened a write session"
+    assert world.row is None
+    assert diff["commit_range_status"]["reason"] == reason
+
+
+@pytest.mark.asyncio
+async def test_a_view_of_a_run_without_a_commit_hash_writes_no_row(world):
+    world.row = None
+    world.run.commit_hash = None
+
+    diff, _db = await _get(world)
+
+    world.resolve.assert_not_awaited()
+    assert world.events == [] and diff["commit_range_status"]["reason"] == "no_commit_hash"
+
+
+def _gated_row():
+    """What a view or finalize stored while the gate was shut: no base, no head."""
+    return _unavailable(base_commit=None, head=None, resolved_at=NOW - timedelta(minutes=5))
+
+
+@pytest.mark.asyncio
+async def test_a_gated_row_reads_not_resolved_not_no_baseline_commit(world):
+    world.anchor = world.baseline
+    world.anchor.commit_hash = demo_sha("acme/payments", 0)
+    world.row = _gated_row()
+
+    diff = await regression_diff_service.compute_regression_diff(world.run, world.session())
+
+    assert diff["commit_range_status"]["reason"] == "not_resolved"
+
+
+@pytest.mark.asyncio
+async def test_once_the_gate_opens_the_next_view_resolves_a_gated_row(world):
+    """(b) Within the cooldown, but the row never reached the connector: it is
+    deleted (committed, so the service's own read no longer sees it) and the
+    range is resolved; the tab lists the commits."""
+    world.anchor = world.baseline
+    world.anchor.commit_hash = demo_sha("acme/payments", 0)
+    world.row = _gated_row()
+
+    diff, _db = await _get(world)
+
+    world.resolve.assert_awaited_once()
+    assert world.events == [
+        "request-connection-released", "write-session-opened", "gated-row-deleted",
+        "write-session-committed", "write-session-committed",
+    ]
+    assert diff["commit_range_status"]["reason"] is None
+    assert [c["full_sha"] for c in diff["commit_range"]] == [demo_sha("acme/payments", n) for n in (1, 2, 3)]
+
+
+@pytest.mark.asyncio
+async def test_a_genuine_no_baseline_row_is_left_alone_within_the_cooldown(world):
+    """No anchor exists: the row's ``no_baseline_commit`` is true, and a view
+    must not rewrite it on every request."""
+    world.anchor = None
+    world.row = _gated_row()
+
+    diff, _db = await _get(world)
+    await _get(world)
+
+    world.resolve.assert_not_awaited()
+    assert world.events == []
+    assert diff["commit_range_status"]["reason"] == "no_baseline_commit"
 
 
 @pytest.mark.asyncio
