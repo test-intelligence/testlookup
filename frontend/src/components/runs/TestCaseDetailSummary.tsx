@@ -9,14 +9,17 @@ function Value({ value }: { value?: string | null }) {
 function Row({ label, value }: { label: string; value?: string | null }) {
   return (
     <div className="flex items-baseline justify-between gap-3 py-1">
-      <span className="shrink-0 eyebrow uppercase text-[var(--color-text-muted)]">{label}</span>
+      {/* leading-tight: on the shared baseline, the 11 px label's 16 px line reached 1 px below the 12 px value's on
+          CI's DejaVu Sans, so each row stood 25 px where main's was 24 (as TestHistoryPanel's MetaRow, W29b). */}
+      <span className="shrink-0 eyebrow uppercase leading-tight text-[var(--color-text-muted)]">{label}</span>
       <Value value={value} />
     </div>
   )
 }
 
 function SectionTitle({ children }: { children: string }) {
-  return <p className="mb-1 eyebrow uppercase text-[var(--color-text-muted)]">{children}</p>
+  // leading-tight: the 10 px title's 15 px line became the eyebrow's 16; a label line, not a paragraph.
+  return <p className="mb-1 eyebrow uppercase leading-tight text-[var(--color-text-muted)]">{children}</p>
 }
 
 export default function TestCaseDetailSummary({ detail }: { detail: NormalizedTestCaseDetail }) {
@@ -58,7 +61,7 @@ export default function TestCaseDetailSummary({ detail }: { detail: NormalizedTe
           <Row label="Service" value={classification?.service ? `${classification.service.name}${classification.service.source ? ` · ${classification.service.source}` : ''}` : null} />
           {components.length > 0 && (
             <div className="flex items-baseline justify-between gap-3 py-1">
-              <span className="shrink-0 eyebrow uppercase text-[var(--color-text-muted)]">Components</span>
+              <span className="shrink-0 eyebrow uppercase leading-tight text-[var(--color-text-muted)]">Components</span>
               <span className="flex flex-wrap justify-end gap-1">
                 {components.map(component => <span key={`${component.name}-${component.source ?? ''}`} className="badge">{component.name}</span>)}
               </span>
