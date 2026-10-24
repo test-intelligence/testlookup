@@ -284,6 +284,23 @@ def test_parsed_block_renders_notes_in_the_contract_order():
     assert block["notes"][4] == 'No release named "9.9" in your projects.'
 
 
+def test_parsed_block_condenses_a_key_several_kinds_could_not_apply():
+    parsed = _parse("status:failed branch:main checkout")
+    by_kind = {
+        "suite": ["status"], "defect": ["status", "branch"], "flaky_test": ["status"],
+        "release": ["status", "branch"],
+    }
+    block = parsed_block(parsed, unsupported_by=by_kind, searched=["test_case", "test_run"], release_unresolved=None)
+    assert block["unsupported_by"] == {
+        "suite": ["status"], "defect": ["status", "branch"], "flaky_test": ["status"],
+        "release": ["status", "branch"],
+    }
+    assert block["notes"] == [
+        "status: applies only to Tests and Runs, so suites, defects, flaky tests and releases were not searched.",
+        "branch: applies only to Tests, Runs, Suites and Flaky, so defects and releases were not searched.",
+    ]
+
+
 def test_semantic_mode_words_the_test_result_sentence():
     block = parsed_block(
         _parse("checkout branch:main"), unsupported_by={"test_case": ["branch"]}, searched=[],

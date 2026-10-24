@@ -66,7 +66,15 @@ export default function EmbeddingIndexStatus({
       )}
       <div data-embedding-index="" data-state={lines.kind} className="space-y-1 border-t border-[var(--color-border)] pt-3">
         <p className={`text-sm break-words ${lines.kind === 'failed' ? 'text-[var(--ui-danger-ink)]' : 'text-[var(--color-text)]'}`}>
-          {lines.lead}
+          {/* Each embedder name is one unit: a narrow card moves it to the next line whole, never splits it at a
+              hyphen (`nomic-embed-` / `text:v1.5`). The parts join to exactly `lines.lead`. */}
+          {lines.leadParts.map((part, i) =>
+            part.nowrap ? (
+              <span key={i} className="whitespace-nowrap" data-embedder-name="">{part.text}</span>
+            ) : (
+              part.text
+            ),
+          )}
         </p>
         {lines.since && <p className="text-xs text-[var(--color-text-muted)]">{lines.since}</p>}
         {lines.families && <p className="text-xs text-[var(--color-text-muted)] break-words">{lines.families}</p>}

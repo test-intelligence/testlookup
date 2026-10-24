@@ -64,6 +64,19 @@ describe('SearchableDataCard — the rail (moved)', () => {
     expect(within(line()).getByLabelText('Semantic index: Ready')).toBeInTheDocument()
     expect(line()).toHaveTextContent(/140 docs · last indexed/)
   })
+
+  it('the summary sits UNDER the one-line title (side by side both wrapped at ~360 px)', () => {
+    renderCard()
+    const title = screen.getByRole('heading', { name: 'Searchable data' })
+    expect(title.className).toContain('whitespace-nowrap')
+    const summary = screen.getByTestId('searchable-data-summary')
+    const under = summary.parentElement as HTMLElement
+    // The title's next sibling, in the same block: stacked, not beside it.
+    expect(title.nextElementSibling).toBe(under)
+    expect(under.className).toContain('text-xs')
+    expect(under.className).toContain('truncate')
+    expect(title.parentElement?.contains(summary)).toBe(true)
+  })
 })
 
 describe('SearchableDataCard — Re-index now', () => {

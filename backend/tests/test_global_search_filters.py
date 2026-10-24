@@ -425,10 +425,47 @@ async def test_status_failed_over_all_searches_tests_and_runs_only():
     result = await gs.global_search(db, "", parsed=_parse("status:failed"))
     block = result["parsed"]
     assert block["searched_entity_types"] == ["test_case", "test_run"]
-    assert set(block["unsupported_by"]) == {"suite", "defect", "flaky_test", "release"}
+    assert block["unsupported_by"] == {
+        "suite": ["status"], "defect": ["status"], "flaky_test": ["status"], "release": ["status"],
+    }, "unsupported_by stays per kind"
+    assert block["notes"] == [
+        "status: applies only to Tests and Runs, so suites, defects, flaky tests and releases were not searched."
+    ], "one condensed sentence, not four"
     assert len(db.statements) == 2
     # One test-case filter, so the adapter's per-type cap is the fan-out one (two kinds searched).
     assert result["counts_are_exact"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("q", "project_id", "unsupported_by", "notes"),
+    [
+        ("status:failed", str(PROJECT),
+         {"suite": ["status"], "defect": ["status"], "flaky_test": ["status"], "release": ["status"]},
+         ["status: applies only to Tests and Runs, so suites, defects, flaky tests and releases were not searched."]),
+        ("branch:main", None, {"defect": ["branch"], "release": ["branch"]},
+         ["branch: applies only to Tests, Runs, Suites and Flaky, so defects and releases were not searched."]),
+        ("owner:x", None,
+         {"test_run": ["owner"], "suite": ["owner"], "flaky_test": ["owner"], "release": ["owner"]},
+         ["owner: applies only to Tests and Defects, so runs, suites, flaky tests and releases were not searched."]),
+        ("status:error", None,
+         {"test_run": ["status"], "suite": ["status"], "defect": ["status"], "flaky_test": ["status"],
+          "release": ["status"]},
+         ["status: applies only to Tests, so runs, suites, defects, flaky tests and releases were not searched."]),
+    ],
+    ids=["status_failed_in_a_project", "branch", "owner", "status_error"],
+)
+async def test_a_key_several_kinds_cannot_apply_is_one_note(q, project_id, unsupported_by, notes):
+    result = await gs.global_search(_RecordingDB(), q, project_id=project_id, parsed=_parse(q))
+    assert result["parsed"]["unsupported_by"] == unsupported_by
+    assert result["parsed"]["notes"] == notes
+
+
+@pytest.mark.asyncio
+async def test_a_single_kind_not_searched_keeps_its_own_sentence():
+    result = await gs.global_search(_RecordingDB(), "x", entity_types={"test_case", "defect"},
+                                    parsed=_parse("branch:main x"))
+    assert result["parsed"]["notes"] == ["branch: is not supported for Defects, so no defects were searched."]
 
 
 @pytest.mark.asyncio

@@ -156,6 +156,69 @@ def test_unsupported_sentence():
     assert unsupported_sentence("defect", []) == ""
 
 
+# ── Condensed per key (several kinds not searched) ───────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("key", "kinds", "sentence"),
+    [
+        ("branch", ["defect", "release"],
+         "branch: applies only to Tests, Runs, Suites and Flaky, so defects and releases were not searched."),
+        ("owner", ["test_run", "suite", "release"],
+         "owner: applies only to Tests and Defects, so runs, suites and releases were not searched."),
+        ("status", ["suite", "defect", "flaky_test", "release"],
+         "status: applies only to Tests and Runs, so suites, defects, flaky tests and releases were not searched."),
+        # status:error cannot apply to runs either: it then applies only to Tests.
+        ("status", ["release", "test_run"],
+         "status: applies only to Tests, so runs and releases were not searched."),
+    ],
+    ids=["2_kinds", "3_kinds", "4_kinds", "kept_out_of_a_supporting_kind"],
+)
+def test_unsupported_key_sentence(key, kinds, sentence):
+    assert v.unsupported_key_sentence(key, kinds) == sentence
+    assert v.unsupported_key_sentence(key, []) == ""
+
+
+def test_unsupported_notes_condense_a_key_shared_by_several_kinds():
+    by_kind = {kind: ["status"] for kind in ("suite", "defect", "flaky_test", "release")}
+    assert v.unsupported_notes(by_kind) == [
+        "status: applies only to Tests and Runs, so suites, defects, flaky tests and releases were not searched."
+    ]
+
+
+def test_unsupported_notes_keep_the_single_kind_sentence_verbatim():
+    assert v.unsupported_notes({"defect": ["branch"]}) == [
+        "branch: is not supported for Defects, so no defects were searched."
+    ]
+    assert v.unsupported_notes({"defect": ["env", "branch"]}) == [
+        "branch: and env: are not supported for Defects, so no defects were searched."
+    ]
+    assert v.unsupported_notes({"test_case": ["branch"]}, semantic_mode=True) == [
+        "branch: works in Keyword mode only, so no semantic search was run."
+    ]
+    assert v.unsupported_notes({}) == [] and v.unsupported_notes({"defect": []}) == []
+
+
+def test_unsupported_notes_mix_condensed_and_per_kind_sentences_in_key_order():
+    # status kept out four kinds (condensed); branch kept out defects AND releases (condensed);
+    # owner kept out only runs, env only suites (per kind).
+    by_kind = {
+        "release": ["status", "branch"], "test_run": ["owner"], "defect": ["branch", "status"],
+        "suite": ["status", "env"], "flaky_test": ["status"],
+    }
+    assert v.unsupported_notes(by_kind) == [
+        "status: applies only to Tests and Runs, so suites, defects, flaky tests and releases were not searched.",
+        "branch: applies only to Tests, Runs, Suites and Flaky, so defects and releases were not searched.",
+        "env: is not supported for Suites, so no suites were searched.",
+        "owner: is not supported for Runs, so no runs were searched.",
+    ]
+    # Two keys that each kept out the SAME single kind read as one per-kind sentence.
+    assert v.unsupported_notes({"defect": ["branch", "env"], "suite": ["owner"]}) == [
+        "branch: and env: are not supported for Defects, so no defects were searched.",
+        "owner: is not supported for Suites, so no suites were searched.",
+    ]
+
+
 # ── quote_term ───────────────────────────────────────────────────────────────
 
 

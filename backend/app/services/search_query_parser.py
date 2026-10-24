@@ -41,7 +41,7 @@ from app.core.search_vocab import (
     STATUS_VALUES,
     TYPE_VALUES,
     ignored_message,
-    unsupported_sentence,
+    unsupported_notes,
 )
 
 #: A filter candidate: a 2-20 letter key, a colon, a non-empty value.
@@ -282,10 +282,14 @@ def parsed_block(
     """The ``parsed`` block of ``GET /search`` and ``GET /search/global`` (a ``SearchParsed`` dict).
 
     ``notes`` are rendered here, in order: the ignored tokens' messages (source
-    order), one unsupported sentence per entity type that was NOT searched
-    (``ENTITY_TYPES`` order; ``semantic_mode`` words the test-result sentence
-    for ``GET /search`` in Semantic / Hybrid), ``extra_notes`` (the ``type:``
-    outside-scope sentence), then the release sentence.
+    order), the sentences for the entity types that were NOT searched
+    (``core/search_vocab.unsupported_notes``: one kind -> its own sentence;
+    several -> ONE sentence per key that kept two or more of them out, e.g.
+    ``status: applies only to Tests and Runs, so suites, defects, flaky tests
+    and releases were not searched.``; ``semantic_mode`` words the
+    test-result sentence for ``GET /search`` in Semantic / Hybrid),
+    ``extra_notes`` (the ``type:`` outside-scope sentence), then the release
+    sentence. ``unsupported_by`` stays per kind.
     """
     unsupported = {
         entity: _ordered_keys(keys)
@@ -307,10 +311,7 @@ def parsed_block(
         for token in parsed.ignored
     ]
     notes = [entry["message"] for entry in ignored_tokens]
-    notes += [
-        unsupported_sentence(entity, keys, semantic_mode=semantic_mode and entity == "test_case")
-        for entity, keys in unsupported.items()
-    ]
+    notes += unsupported_notes(unsupported, semantic_mode=semantic_mode)
     notes += [note for note in extra_notes if note]
     if release_unresolved is not None:
         notes.append(RELEASE_UNRESOLVED_TEXT.format(value=_clip(release_unresolved)))

@@ -9,6 +9,7 @@ import type { EmbeddingGeneration, EmbeddingIndex } from '@/services/appSettings
 import {
   DEFAULT_EMBEDDING_MODEL,
   EMBEDDING_STATE_UNREADABLE,
+  NOWRAP_MAX_CHARS,
   OPENAI_OFFLINE_REFUSED,
   embedderChanged,
   embedderKey,
@@ -166,6 +167,44 @@ describe('statusLines', () => {
     expect(lines.kind).toBe('unreadable')
     expect(lines.lead).toBe(EMBEDDING_STATE_UNREADABLE)
     expect(lines.action).toBeNull()
+  })
+})
+
+describe('embedder names are one unbreakable unit in every sentence', () => {
+  const units = (lines: ReturnType<typeof statusLines>) => lines.leadParts.filter((p) => p.nowrap).map((p) => p.text)
+  const STATES: [string, EmbeddingIndex][] = [
+    ['in sync', index()],
+    ['not applied', index({ configured: NOMIC, in_sync: false })],
+    ['building', index({ configured: NOMIC, in_sync: false, status: 'building', target: NOMIC, processed: 1, total: 2 })],
+    ['stalled', index({ configured: NOMIC, in_sync: false, status: 'building', target: NOMIC, stalled: true })],
+    ['failed', index({ configured: NOMIC, in_sync: false, status: 'failed', target: NOMIC, last_error: 'ConnectError' })],
+    ['a prefix change', index({ configured: gen('default', 'all-MiniLM-L6-v2', 'demo'), in_sync: false })],
+  ]
+
+  it.each(STATES)('%s: the parts join to the lead, text unchanged', (_label, state) => {
+    const lines = statusLines(state)
+    expect(lines.leadParts.map((p) => p.text).join('')).toBe(lines.lead)
+  })
+
+  it('names the units: in use, configured, target and the provider still in use', () => {
+    expect(units(statusLines(STATES[0][1]))).toEqual(['Bundled MiniLM (all-MiniLM-L6-v2)'])
+    expect(units(statusLines(STATES[1][1]))).toEqual(['Bundled MiniLM (all-MiniLM-L6-v2)', 'Ollama · nomic-embed-text:v1.5'])
+    expect(units(statusLines(STATES[2][1]))).toEqual(['Ollama · nomic-embed-text:v1.5', 'Bundled MiniLM'])
+    expect(units(statusLines(STATES[3][1]))).toEqual(['Ollama · nomic-embed-text:v1.5', 'Bundled MiniLM'])
+    expect(units(statusLines(STATES[4][1]))).toEqual(['Ollama · nomic-embed-text:v1.5', 'Bundled MiniLM'])
+    // The prefix words wrap like any text; only the name is held together.
+    expect(units(statusLines(STATES[5][1]))).toEqual(['Bundled MiniLM (all-MiniLM-L6-v2)', 'Bundled MiniLM · all-MiniLM-L6-v2'])
+  })
+
+  it(`a name longer than ${NOWRAP_MAX_CHARS} characters may wrap (one unit wider than the card would scroll)`, () => {
+    const long = gen('ollama', 'hf.co/someone/a-very-long-embedding-model-GGUF:Q4_K_M')
+    const lines = statusLines(index({ configured: long, in_sync: false }))
+    expect(lines.lead).toContain('Ollama · hf.co/someone/a-very-long-embedding-model-GGUF:Q4_K_M')
+    expect(units(lines)).toEqual(['Bundled MiniLM (all-MiniLM-L6-v2)'])
+  })
+
+  it('the unreadable sentence is one plain part', () => {
+    expect(statusLines(null).leadParts).toEqual([{ text: EMBEDDING_STATE_UNREADABLE, nowrap: false }])
   })
 })
 

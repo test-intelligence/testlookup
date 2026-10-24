@@ -66,6 +66,29 @@ describe('RecentSearchesCard (W12 SRCH-03)', () => {
     expect(screen.getByText(RECENT_LOAD_ERROR)).toBeInTheDocument()
   })
 
+  it('each part truncates inside its own width: a token chip keeps its outline (its own max-w-full truncate)', () => {
+    const { container } = render(<HighlightedQuery q={'checkout status:failed suite:"API Regression"'} />)
+    const root = container.querySelector('[data-highlighted-query]') as HTMLElement
+    expect(root.className).toContain('overflow-hidden')
+    const codes = Array.from(root.querySelectorAll('code'))
+    expect(codes.map((c) => c.textContent)).toEqual(['status:failed', 'suite:"API Regression"'])
+    for (const code of codes) {
+      expect(code.className).toContain('max-w-full')
+      expect(code.className).toContain('truncate')
+      expect(code.className).toContain('flex-none')
+      // Every part after the first sits in a shrinking flex box of the width left for it.
+      const box = code.parentElement as HTMLElement
+      expect(box.className).toContain('min-w-0')
+      expect(box.className).toContain('flex-1')
+      expect(box.className).toContain('overflow-hidden')
+    }
+    // The spaces between the words and the tokens are kept.
+    const first = root.firstElementChild as HTMLElement
+    expect(first.textContent).toBe('checkout ')
+    expect(first.className).toContain('whitespace-pre')
+    expect(root).toHaveTextContent('checkout status:failed suite:"API Regression"')
+  })
+
   it('queries are text with their filter tokens as code, never markup', () => {
     const { container } = render(<HighlightedQuery q={'status:failed suite:"API Regression" <img src=x onerror=alert(1)>'} />)
     expect(Array.from(container.querySelectorAll('code')).map((c) => c.textContent)).toEqual(['status:failed', 'suite:"API Regression"'])

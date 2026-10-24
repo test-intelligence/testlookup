@@ -9,7 +9,8 @@
  *    row with · 3 runs — and the footer);
  *  - `/search` Semantic on Tests with the index down: `search-semantic-fallback` (the warning banner);
  *  - `/search` with `status:failed since:7d foo:bar checkout`: `search-syntax-chips` (the command bar with the
- *    Filters row, two chips, the muted ignored-token note and four warning notes; Syntax closed);
+ *    Filters row, two chips, the muted ignored-token note and the condensed warning note for the four kinds
+ *    `status:` kept out; Syntax closed);
  *  - `/runs/:run/tests/:test?tab=similar`: `test-similar-failures` (the fourth tab's five links);
  *  - `/settings/ai` (an admin, a re-embed in progress): `ai-config-embedding-card`;
  *  - `/settings/storage` (an admin, prefix `demo` in use): `storage-chroma-card`.
@@ -104,7 +105,7 @@ for (const theme of THEMES_WITH_PAPER) {
   test(`/search with filters, an ignored token and unsupported kinds: the command bar's chips and notes — ${theme}`, async ({ page }) => {
     const world = searchWorld({ global: syntaxGlobal() })
     const { api, errors } = await open(page, `/search?q=${encodeURIComponent(SYNTAX_REGION_QUERY)}&scope=all`, theme, world.handlers, world.user, h1('Search'))
-    await expect(page.locator('[data-search-notes] li')).toHaveCount(5)
+    await expect(page.locator('[data-search-notes] li')).toHaveCount(2)
     await expect(page.locator('[data-search-chip]')).toHaveCount(2)
     await networkQuiet(page, api)
     await blur(page)

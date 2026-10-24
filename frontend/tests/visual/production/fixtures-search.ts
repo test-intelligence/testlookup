@@ -602,7 +602,7 @@ export const SYNTAX_PARSED: Record<string, Record<string, unknown>> = {
     release_unresolved: null,
     notes: ['flaky is not a status: use type:flaky'],
   },
-  // The region's query (All): two chips, one ignored token (muted) and four unsupported sentences (warning ink).
+  // The region's query (All): two chips, one ignored token (muted) and the condensed unsupported sentence (warning ink).
   [SYNTAX_REGION_QUERY]: {
     text: 'foo:bar checkout',
     filters: [
@@ -613,13 +613,22 @@ export const SYNTAX_PARSED: Record<string, Record<string, unknown>> = {
     unsupported_by: { suite: ['status'], defect: ['status'], flaky_test: ['status'], release: ['status'] },
     searched_entity_types: ['test_case', 'test_run'],
     release_unresolved: null,
+    // G-B's condensed rule: ONE sentence per key that keeps two or more searched kinds out (`unsupported_by` stays
+    // per kind).
     notes: [
       'unknown filter foo: searched as text',
-      'status: is not supported for Suites, so no suites were searched.',
-      'status: is not supported for Defects, so no defects were searched.',
-      'status: is not supported for Flaky, so no flaky tests were searched.',
-      'status: is not supported for Releases, so no releases were searched.',
+      'status: applies only to Tests and Runs, so suites, defects, flaky tests and releases were not searched.',
     ],
+  },
+  // `status:failed` on All (G-B's exact block, "## NOTES CONDENSED"): one condensed sentence for four kinds.
+  'status:failed': {
+    text: '',
+    filters: [{ key: 'status', value: 'failed', raw: 'status:failed', start: 0, end: 13 }],
+    ignored_tokens: [],
+    unsupported_by: { suite: ['status'], defect: ['status'], flaky_test: ['status'], release: ['status'] },
+    searched_entity_types: ['test_case', 'test_run'],
+    release_unresolved: null,
+    notes: ['status: applies only to Tests and Runs, so suites, defects, flaky tests and releases were not searched.'],
   },
 }
 

@@ -215,6 +215,29 @@ describe('the status lines', () => {
   })
 })
 
+describe('an embedder name never splits across lines', () => {
+  const names = (card: HTMLElement) =>
+    Array.from(block(card).querySelectorAll('[data-embedder-name]')).map((el) => ({
+      text: el.textContent,
+      nowrap: el.classList.contains('whitespace-nowrap'),
+    }))
+
+  it.each([
+    ['in sync', index(), LINE.inSync, ['Bundled MiniLM (all-MiniLM-L6-v2)']],
+    ['configured ≠ in use', NOT_APPLIED, LINE.notApplied, ['Bundled MiniLM (all-MiniLM-L6-v2)', 'Ollama · nomic-embed-text:v1.5']],
+    ['building', BUILDING, LINE.building, ['Ollama · nomic-embed-text:v1.5', 'Bundled MiniLM']],
+    ['stalled', { ...BUILDING, stalled: true }, LINE.building, ['Ollama · nomic-embed-text:v1.5', 'Bundled MiniLM']],
+    ['failed', FAILED, LINE.failed, ['Ollama · nomic-embed-text:v1.5', 'Bundled MiniLM']],
+  ] as [string, EmbeddingIndex, string, string[]][])(
+    '%s: each name is one whitespace-nowrap unit, and the sentence reads exactly as before',
+    async (_label, state, sentence, expected) => {
+      const card = await renderPage(config({ embedding_index: state }))
+      expect(names(card)).toEqual(expected.map((text) => ({ text, nowrap: true })))
+      expect((block(card).querySelector('p') as HTMLElement).textContent).toBe(sentence)
+    },
+  )
+})
+
 describe('a stalled build (its worker died or never claimed it)', () => {
   const STALLED_LINE = 'Stalled — the re-embed stopped before it finished. Re-embed now to resume.'
   const STALLED = { ...BUILDING, stalled: true }

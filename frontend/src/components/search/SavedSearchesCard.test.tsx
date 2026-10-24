@@ -93,6 +93,23 @@ describe('SavedSearchesCard — rows', () => {
     expect(stop.parentElement?.className).toContain('flex-none')
   })
 
+  it('the query chip carries its own max-w-full truncate (border, padding, ellipsis) as the meta line\'s last flex item', () => {
+    renderCard()
+    const chip = row('a').querySelector('[data-saved-search-query]') as HTMLElement
+    expect(chip.tagName).toBe('CODE')
+    expect(chip).toHaveTextContent('status:failed checkout')
+    for (const cls of ['max-w-full', 'truncate', 'min-w-0', 'border', 'px-1']) expect(chip.classList.contains(cls), cls).toBe(true)
+    // Nothing inside the chip that a truncation could cut through (no nested outlined tokens).
+    expect(chip.children).toHaveLength(0)
+    // The chip shrinks in a flex line after a non-shrinking "scope · mode · ".
+    const line = chip.parentElement as HTMLElement
+    expect(line.className).toContain('flex')
+    expect(line.className).toContain('min-w-0')
+    expect(line.lastElementChild).toBe(chip)
+    expect(line.firstElementChild?.className).toContain('flex-none')
+    expect(line.firstElementChild?.textContent).toBe('tests · hybrid · ')
+  })
+
   it('the shortcuts are the first three runnable rows, in the server order', () => {
     expect(shortcutSearches([view('x', { filters: { kind: 'search', q: '', scope: 'all', mode: 'keyword' } }), ...VIEWS]).map((s) => s.q))
       .toEqual(['status:failed checkout', 'query b', 'query c'])

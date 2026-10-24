@@ -18,7 +18,7 @@ import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
 import { useInlineSlot, type InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import { createSavedSearch, deleteSavedSearch, updateSavedSearch } from '@/hooks/useSavedSearches'
 import type { SavedView } from '@/services/savedViewsService'
-import { HighlightedQuery, Kbd, SearchCardShell, SearchListRow } from './RecentSearchesCard'
+import { Kbd, QUERY_CHIP, SearchCardShell, SearchListRow } from './RecentSearchesCard'
 import { errorSentence } from './searchModel'
 import {
   SAVED_SEARCH_PAGE, SAVE_NAME_MAX, SHORTCUT_SLOTS, defaultSaveName, readSavedSearch, savedSearchFilters,
@@ -265,16 +265,14 @@ export default function SavedSearchesCard({
                 </span>
               ) : undefined}
               metaTitle={`${search.scope} · ${search.mode} · ${search.q}`}
+              // The query chip is the line's last flex item and carries its own
+              // `max-w-full truncate`: its border, padding and ellipsis stay
+              // whole (a parent's overflow used to cut its outline at 1280).
               meta={
-                <>
-                  {search.scope}
-                  {' · '}
-                  {search.mode}
-                  {' · '}
-                  <code className="rounded-sm border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-1 font-mono text-2xs">
-                    <HighlightedQuery q={search.q} />
-                  </code>
-                </>
+                <span className="flex min-w-0 items-center">
+                  <span className="flex-none whitespace-pre">{`${search.scope} · ${search.mode} · `}</span>
+                  <code className={QUERY_CHIP} data-saved-search-query="">{search.q}</code>
+                </span>
               }
               trailing={index < SHORTCUT_SLOTS ? <Kbd>⌘{index + 1}</Kbd> : null}
               actions={mine ? (

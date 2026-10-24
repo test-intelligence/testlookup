@@ -67,9 +67,35 @@ export function providerLabel(provider: string): string {
   return EMBEDDING_PROVIDER_LABELS[normaliseProvider(provider)] ?? provider
 }
 
+/**
+ * A piece of a status sentence. `nowrap`: an embedder's name (`Ollama · nomic-embed-text:v1.5`), which the card
+ * renders as one unit (`whitespace-nowrap`) so a narrow card moves it to the next line whole instead of breaking
+ * it at a hyphen (`nomic-embed-` / `text:v1.5`). The text itself is unchanged: the parts join to `lead`.
+ */
+export interface TextPart {
+  text: string
+  nowrap: boolean
+}
+
+/** Longer names may wrap: one unbreakable unit wider than the ≈ 360 px card would scroll it sideways. */
+export const NOWRAP_MAX_CHARS = 40
+
+const plain = (text: string): TextPart => ({ text, nowrap: false })
+const unit = (text: string): TextPart => ({ text, nowrap: text.length <= NOWRAP_MAX_CHARS })
+const joinParts = (parts: TextPart[]) => parts.map((p) => p.text).join('')
+
 /** `Bundled MiniLM (all-MiniLM-L6-v2)`: the generation in use. */
 export function inUseName(gen: EmbeddingGeneration): string {
   return `${providerLabel(gen.provider)} (${gen.model})`
+}
+
+/** `Ollama · nomic-embed-text:v1.5` as one unit, then its prefix when it differs from the one in use. */
+function generationParts(gen: EmbeddingGeneration, active?: EmbeddingGeneration): TextPart[] {
+  const parts = [unit(`${providerLabel(gen.provider)} · ${gen.model}`)]
+  if (active && (gen.prefix ?? '') !== (active.prefix ?? '')) {
+    parts.push(plain(gen.prefix ? ` with prefix “${gen.prefix}”` : ' with no prefix'))
+  }
+  return parts
 }
 
 /**
@@ -77,9 +103,7 @@ export function inUseName(gen: EmbeddingGeneration): string {
  * differs from the generation in use (a prefix change keeps the embedder).
  */
 export function generationName(gen: EmbeddingGeneration, active?: EmbeddingGeneration): string {
-  const base = `${providerLabel(gen.provider)} · ${gen.model}`
-  if (!active || (gen.prefix ?? '') === (active.prefix ?? '')) return base
-  return gen.prefix ? `${base} with prefix “${gen.prefix}”` : `${base} with no prefix`
+  return joinParts(generationParts(gen, active))
 }
 
 /** `24 Oct 2026 14:05 UTC`, or null for a missing or unparseable time. */
@@ -111,6 +135,8 @@ export interface EmbeddingStatusLines {
   kind: 'unreadable' | 'idle' | 'building' | 'failed'
   /** The `text-sm` line. */
   lead: string
+  /** `lead` in pieces: the card renders each embedder name as one unbreakable unit. */
+  leadParts: TextPart[]
   /** `In use since 24 Oct 2026 14:05 UTC.` once a generation was switched to (idle only). */
   since: string | null
   /** The per-family progress (building only). */
@@ -140,20 +166,24 @@ const lastError = (text: string | null | undefined) => (text ?? '').trim().repla
 export function statusLines(index: EmbeddingIndex | null | undefined): EmbeddingStatusLines {
   if (!index || !index.active || !index.configured) {
     return {
-      kind: 'unreadable', lead: EMBEDDING_STATE_UNREADABLE, since: null, families: null, note: null, stalled: null,
-      action: null,
+      kind: 'unreadable', lead: EMBEDDING_STATE_UNREADABLE, leadParts: [plain(EMBEDDING_STATE_UNREADABLE)], since: null,
+      families: null, note: null, stalled: null, action: null,
     }
   }
   const { active, configured } = index
   const note = index.configured_note || null
   const target = index.target ?? configured
+  const inUse = unit(providerLabel(active.provider))
   if (index.status === 'building') {
     const stalled = isStalled(index)
+    const leadParts = [
+      plain('Re-embedding to '), ...generationParts(target, active), plain(`: ${count(index.processed, index.total)}. `),
+      plain('Semantic search uses '), inUse, plain(' until it finishes; cached analyses start empty.'),
+    ]
     return {
       kind: 'building',
-      lead:
-        `Re-embedding to ${generationName(target, active)}: ${count(index.processed, index.total)}. ` +
-        `Semantic search uses ${providerLabel(active.provider)} until it finishes; cached analyses start empty.`,
+      lead: joinParts(leadParts),
+      leadParts,
       since: null,
       families: familiesLine(index.families),
       note,
@@ -163,11 +193,14 @@ export function statusLines(index: EmbeddingIndex | null | undefined): Embedding
   }
   if (index.status === 'failed') {
     const reason = lastError(index.last_error)
+    const leadParts = [
+      plain('Re-embedding to '), ...generationParts(target, active), plain(` failed${reason ? `: ${reason}` : ''}. `),
+      plain('Semantic search still uses '), inUse, plain('.'),
+    ]
     return {
       kind: 'failed',
-      lead:
-        `Re-embedding to ${generationName(target, active)} failed${reason ? `: ${reason}` : ''}. ` +
-        `Semantic search still uses ${providerLabel(active.provider)}.`,
+      lead: joinParts(leadParts),
+      leadParts,
       since: null,
       families: null,
       note,
@@ -177,11 +210,14 @@ export function statusLines(index: EmbeddingIndex | null | undefined): Embedding
   }
   const pending = !index.in_sync && isSupportedProvider(configured.provider)
   const since = formatUtc(index.switched_at)
+  const leadParts = [
+    plain('In use: '), unit(inUseName(active)), plain('.'),
+    ...(pending ? [plain(' Configured '), ...generationParts(configured, active), plain(' is not in use yet.')] : []),
+  ]
   return {
     kind: 'idle',
-    lead:
-      `In use: ${inUseName(active)}.` +
-      (pending ? ` Configured ${generationName(configured, active)} is not in use yet.` : ''),
+    lead: joinParts(leadParts),
+    leadParts,
     since: since ? `In use since ${since}.` : null,
     families: null,
     note,

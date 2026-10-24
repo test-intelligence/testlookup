@@ -7,7 +7,8 @@
  *    Regression`, `since: 7d`, React text); the raw query goes to the API as typed;
  *  - a chip's × removes exactly `q.slice(start, end)` (whitespace collapsed) and re-runs the search;
  *  - every `parsed.notes` line renders verbatim: an unsupported filter (`branch: is not supported for Defects, so no
- *    defects were searched.`), an unknown key (`unknown filter foo: searched as text`), an invalid value
+ *    defects were searched.`; on All, one condensed sentence per key that keeps two or more kinds out:
+ *    `status: applies only to Tests and Runs, so suites, defects, flaky tests and releases were not searched.`), an unknown key (`unknown filter foo: searched as text`), an invalid value
  *    (`flaky is not a status: use type:flaky`), an unresolved release (`No release named "9.9" in your projects.`);
  *  - a plain query has NO chips row (the command bar keeps its height);
  *  - **Syntax** (a closed `Disclosure`, in the page) lists the eight keys with an example and the kinds each applies
@@ -95,6 +96,8 @@ test('a chip\'s × removes exactly its token and re-runs the search', async ({ p
 
 const NOTES: { q: string; scope: string; note: string; chips: string[]; tone: 'warning' | 'muted' }[] = [
   { q: 'branch:main', scope: 'defects', note: 'branch: is not supported for Defects, so no defects were searched.', chips: ['branch: main'], tone: 'warning' },
+  // On All, ONE sentence per key that keeps two or more kinds out (G-B's condensed rule); one kind keeps the line above.
+  { q: 'status:failed', scope: 'all', note: 'status: applies only to Tests and Runs, so suites, defects, flaky tests and releases were not searched.', chips: ['status: failed'], tone: 'warning' },
   { q: 'foo:bar checkout', scope: 'all', note: 'unknown filter foo: searched as text', chips: [], tone: 'muted' },
   { q: 'status:flaky checkout', scope: 'tests', note: 'flaky is not a status: use type:flaky', chips: [], tone: 'muted' },
   { q: 'release:"9.9"', scope: 'tests', note: 'No release named "9.9" in your projects.', chips: ['release: 9.9'], tone: 'warning' },

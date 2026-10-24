@@ -155,7 +155,9 @@ export default function SearchableDataCard({
           Searchable data
         </span>
       }
-      rightSlot={
+      // Under the title, not beside it: at ~360 px (1280, DejaVu) the two side
+      // by side each wrapped to two lines.
+      subtitle={
         <span data-testid="searchable-data-summary">
           {SEARCHABLE_ENTITIES.length} entity types · semantic: {semantic.label.toLowerCase()}
         </span>

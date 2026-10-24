@@ -199,6 +199,87 @@ def unsupported_sentence(entity_type: str, keys: Sequence[str], *, semantic_mode
     return f"{listed} {verb} not supported for {label}, so no {noun} were searched."
 
 
+def _and_list(items: Sequence[str]) -> str:
+    """``a``; ``a and b``; ``a, b and c`` (no Oxford comma)."""
+    distinct = list(dict.fromkeys(items))
+    if len(distinct) <= 1:
+        return "".join(distinct)
+    return ", ".join(distinct[:-1]) + " and " + distinct[-1]
+
+
+def _rank(order: Sequence[str], item: str) -> int:
+    return order.index(item) if item in order else len(order)
+
+
+def unsupported_key_sentence(key: str, not_searched: Sequence[str]) -> str:
+    """ONE note for a key that kept TWO OR MORE kinds from being searched.
+
+    ``"status: applies only to Tests and Runs, so suites, defects, flaky tests
+    and releases were not searched."`` The kinds it applies to are those whose
+    ``FILTER_SUPPORT`` holds the key, minus the ones it kept out (``status:error``
+    cannot apply to runs, so it applies "only to Tests"). Kind labels are
+    ``ENTITY_LABELS``; the kinds not searched are their lower-case plurals, in
+    ``ENTITY_TYPES`` order. No kinds -> ``""``.
+    """
+    excluded = list(dict.fromkeys(not_searched))
+    if not excluded:
+        return ""
+    applies = [
+        ENTITY_LABELS[entity] for entity in ENTITY_TYPES
+        if key in FILTER_SUPPORT.get(entity, frozenset()) and entity not in excluded
+    ]
+    nouns = [
+        _ENTITY_NOUNS.get(entity, f"{entity} results")
+        for entity in sorted(excluded, key=lambda e: _rank(ENTITY_TYPES, e))
+    ]
+    if not applies:
+        return f"{key}: applies to none of these kinds, so {_and_list(nouns)} were not searched."
+    return f"{key}: applies only to {_and_list(applies)}, so {_and_list(nouns)} were not searched."
+
+
+def unsupported_notes(
+    unsupported_by: Mapping[str, Sequence[str]], *, semantic_mode: bool = False,
+) -> list[str]:
+    """The notes for every kind that was NOT searched (``parsed.unsupported_by``), condensed per key.
+
+    One kind not searched: today's sentence for it (``unsupported_sentence``,
+    every key it could not apply in one sentence; ``semantic_mode`` words the
+    test-result one for ``GET /search`` in Semantic / Hybrid). Several kinds:
+    a key that kept two or more of them out gets ONE
+    ``unsupported_key_sentence``; the keys that kept out only one kind are
+    said per kind with ``unsupported_sentence``. Ordered by key
+    (``FILTER_KEYS``), a condensed sentence before a per-kind one.
+    """
+    entities = sorted(
+        (entity for entity, keys in unsupported_by.items() if keys),
+        key=lambda e: _rank(ENTITY_TYPES, e),
+    )
+
+    def ordered(keys: Sequence[str]) -> list[str]:
+        return sorted(dict.fromkeys(keys), key=lambda k: _rank(FILTER_KEYS, k))
+
+    def sentence(entity: str, keys: Sequence[str]) -> str:
+        return unsupported_sentence(entity, keys, semantic_mode=semantic_mode and entity == "test_case")
+
+    if len(entities) == 1:
+        return [sentence(entities[0], ordered(unsupported_by[entities[0]]))]
+    kinds_by_key: dict[str, list[str]] = {}
+    for entity in entities:
+        for key in ordered(unsupported_by[entity]):
+            kinds_by_key.setdefault(key, []).append(entity)
+    ranked: list[tuple[tuple[int, int, int], str]] = []
+    singles: dict[str, list[str]] = {}
+    for key in ordered(list(kinds_by_key)):
+        kinds = kinds_by_key[key]
+        if len(kinds) >= 2:
+            ranked.append(((_rank(FILTER_KEYS, key), 0, 0), unsupported_key_sentence(key, kinds)))
+        else:
+            singles.setdefault(kinds[0], []).append(key)
+    for entity, keys in singles.items():
+        ranked.append(((_rank(FILTER_KEYS, keys[0]), 1, _rank(ENTITY_TYPES, entity)), sentence(entity, keys)))
+    return [text for _, text in sorted(ranked)]
+
+
 #: The note for the first ``release:`` value that named no release in the
 #: caller's scope (unknown, malformed and foreign read the same: no oracle).
 RELEASE_UNRESOLVED_TEXT = 'No release named "{value}" in your projects.'

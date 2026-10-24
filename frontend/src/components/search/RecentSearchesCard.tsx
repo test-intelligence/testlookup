@@ -22,12 +22,26 @@ import { errorSentence, relativeTime } from './searchModel'
 // ── Shared pieces ───────────────────────────────────────────────────────
 
 export function SearchCardShell({
-  title, rightSlot, children, testId,
-}: { title: ReactNode; rightSlot?: ReactNode; children?: ReactNode; testId?: string }) {
+  title, subtitle, rightSlot, children, testId,
+}: {
+  title: ReactNode
+  /** A one-line note UNDER the title (a narrow card: beside it, both wrapped at ~360 px). */
+  subtitle?: ReactNode
+  rightSlot?: ReactNode
+  children?: ReactNode
+  testId?: string
+}) {
   return (
     <div className="card !p-0 overflow-hidden rounded-xl" data-testid={testId}>
       <div className="flex items-center justify-between gap-2.5 border-b border-[var(--color-border)] px-4 py-3">
-        <h3 className="m-0 text-sm font-semibold text-[var(--color-text)]">{title}</h3>
+        {subtitle ? (
+          <div className="min-w-0">
+            <h3 className="m-0 whitespace-nowrap text-sm font-semibold text-[var(--color-text)]">{title}</h3>
+            <div className="mt-0.5 truncate text-xs text-[var(--color-text-muted)]">{subtitle}</div>
+          </div>
+        ) : (
+          <h3 className="m-0 text-sm font-semibold text-[var(--color-text)]">{title}</h3>
+        )}
         {rightSlot && <div className="flex items-center gap-2.5 text-xs text-[var(--color-text-muted)]">{rightSlot}</div>}
       </div>
       {children}
@@ -49,27 +63,68 @@ const TOKEN_STYLE = {
   color: 'var(--color-accent)',
 } as const
 
-/**
- * A query with its `key:value` tokens (and quoted phrases) as inline code —
- * React nodes, never HTML: a query like `<img src=x onerror=…>` is text.
- */
-export function HighlightedQuery({ q }: { q: string }) {
-  const parts: ReactNode[] = []
+/** A query chip's look: its own border, padding and ellipsis (`max-w-full truncate`). */
+export const QUERY_CHIP = 'min-w-0 max-w-full truncate rounded-sm border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-1 font-mono text-2xs'
+
+interface QueryPart {
+  text: string
+  token: boolean
+}
+
+function splitQuery(q: string): QueryPart[] {
+  const parts: QueryPart[] = []
   const re = /(\b[a-z_]+:(?:"[^"]*"|[^\s"]+)|"[^"]+")/gi
   let last = 0
-  let key = 0
   let m: RegExpExecArray | null
   while ((m = re.exec(q)) !== null) {
-    if (m.index > last) parts.push(<span key={key++}>{q.slice(last, m.index)}</span>)
-    parts.push(
-      <code key={key++} className="mx-0.5 rounded-sm px-1 py-px font-mono text-2xs" style={TOKEN_STYLE}>
-        {m[0]}
-      </code>,
-    )
+    if (m.index > last) parts.push({ text: q.slice(last, m.index), token: false })
+    parts.push({ text: m[0], token: true })
     last = m.index + m[0].length
   }
-  if (last < q.length) parts.push(<span key={key}>{q.slice(last)}</span>)
-  return <>{parts}</>
+  if (last < q.length) parts.push({ text: q.slice(last), token: false })
+  return parts
+}
+
+/**
+ * The parts left to right, each ONE flex item capped at the width left for it
+ * (`max-w-full`, its own ellipsis): the first part keeps its width, the rest
+ * share what remains, and a part past the edge gets no width at all. So a
+ * token chip is cut by its OWN ellipsis inside its border, never by a parent's
+ * overflow through its outline (the CI baseline finding, W12).
+ */
+function QueryParts({ parts }: { parts: QueryPart[] }) {
+  if (parts.length === 0) return null
+  const [first, ...rest] = parts
+  const node = first.token ? (
+    <code className="max-w-full flex-none truncate rounded-sm px-1 py-px font-mono text-2xs" style={TOKEN_STYLE}>
+      {first.text}
+    </code>
+  ) : (
+    // whitespace-pre: the spaces between a word and a token are part of the text.
+    <span className="max-w-full flex-none overflow-hidden text-ellipsis whitespace-pre">{first.text}</span>
+  )
+  if (rest.length === 0) return node
+  return (
+    <>
+      {node}
+      <span className="flex min-w-0 flex-1 items-center overflow-hidden">
+        <QueryParts parts={rest} />
+      </span>
+    </>
+  )
+}
+
+/**
+ * A query with its `key:value` tokens (and quoted phrases) as inline code
+ * chips — React nodes, never HTML: a query like `<img src=x onerror=…>` is
+ * text. Truncates part by part inside its own width (see QueryParts).
+ */
+export function HighlightedQuery({ q }: { q: string }) {
+  return (
+    <span className="flex min-w-0 max-w-full items-center overflow-hidden" data-highlighted-query="">
+      <QueryParts parts={splitQuery(q)} />
+    </span>
+  )
 }
 
 export interface SearchListRowProps {

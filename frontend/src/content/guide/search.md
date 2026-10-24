@@ -53,7 +53,7 @@ Nothing is dropped silently. A line under the chips says what happened to each t
 
 - an unknown key stays part of the words searched: *unknown filter foo: searched as text*;
 - a known key with a value it cannot take is left out: *flaky is not a status: use type:flaky*;
-- a kind that cannot apply a filter is **not searched**: *branch: is not supported for Defects, so no defects were searched.*;
+- a kind that cannot apply a filter is **not searched**: *branch: is not supported for Defects, so no defects were searched.* When a filter keeps several kinds out, one line says so for all of them: *status: applies only to Tests and Runs, so suites, defects, flaky tests and releases were not searched.*;
 - a `release:` value is matched against release names and versions in your projects only: *No release named "9.9" in your projects.*
 
 **Semantic** and **Hybrid** apply `status:` (one value), `since:` and `type:` only. With any other filter nothing is searched, and the line says so (*suite: works in Keyword mode only, so no semantic search was run.*): switch to **Keyword** to use it.
