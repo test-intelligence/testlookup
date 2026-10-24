@@ -451,6 +451,14 @@ KNOWN_MYPY_SKEW: dict[str, tuple[int, str]] = {
     "app/services/intelligence_snapshot_service.py": (2, (
         "CI 2, local 0 on main's unchanged file (run 38467961639 vs local ratchet)."
     )),
+    # Found when W12 (SRCH-02) touched it (2026-10-24): CI's ratchet passed with
+    # the baseline's 1 on PR #278 (run 40074018078, the file unchanged since), and
+    # the py3.11 venv's --check-stale on the W12 branch also counts 1; the hook's
+    # Python 3.12 install (older SQLAlchemy / pydantic) reads 0.
+    "app/services/knowledge_chunking_service.py": (1, (
+        "CI 1, local 0 (run 40074018078; .venv311 --check-stale on the W12 branch "
+        "agrees with CI)."
+    )),
 }
 
 
