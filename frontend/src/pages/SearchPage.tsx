@@ -6,76 +6,81 @@
  *             the search topic); the old crumb (workspace · index counts ·
  *             freshness) is its one-line subtitle.
  *   Hero    → SearchCommandBar — large autofocused input + ⌘K kbd + Search
- *             button, with mode chips (only Keyword is available) and
- *             scope chips (All · Tests · Runs · Suites · Defects · Flaky ·
- *             Releases) each carrying an item-count badge.
+ *             button; after a search with filters, the chips row (W12 SRCH-04:
+ *             the applied filters, what was not applied, the Syntax help);
+ *             mode chips (Keyword · Hybrid · Semantic) and scope chips (All ·
+ *             Tests · Runs · Suites · Defects · Flaky · Releases) each carrying
+ *             an item-count badge. Hybrid and Semantic cover test results
+ *             only: choosing one moves the scope to Tests (and another scope
+ *             moves the mode back to Keyword), with one line that says so.
  *   Verdict → "Index ready" tag + headline "N items indexed across K entity
  *             types" + a lede naming exactly which fields are matched, and
- *             the index-freshness stat.
- *   Body    → 1.65fr | 1fr.
- *     Left  → Recent searches · Saved searches (⌘1-⌘3, only when some exist).
- *     Right → Searchable data (per entity, plus the semantic index line).
+ *             the index-freshness stat. Under it, for a QA lead or an admin,
+ *             today's search usage (W12 SRCH-05).
+ *   Body    → 1.65fr | 1fr, while the box is empty.
+ *     Left  → Suggested (one project pinned) · Recent searches · Saved
+ *             searches (⌘1-⌘3, only when the server holds some).
+ *     Right → Searchable data (per entity, plus the semantic index line and
+ *             Re-index now).
  *
- * Global search is a case-insensitive substring match (SQL ILIKE in
- * global_search_service.py). There is no field:value syntax, no ranking
- * model and no query-volume metric, so the page claims none of them.
+ * Keyword search is a case-insensitive substring match (SQL ILIKE in
+ * global_search_service.py) across six kinds, with structured filters
+ * (`status:`, `suite:`, … parsed server-side). Hybrid and Semantic go through
+ * `GET /api/v1/search`, test results only; when the semantic index cannot
+ * answer, the server answers with keyword rows and says why (the banner).
  *
- * Data: deep-links via querystring (`?q=…&mode=…&scope=…`). Every submit
- * goes through `searchService.globalSearch`, narrowed by `entity_types`
- * when a scope chip is picked. Recent + Saved searches persist to
- * localStorage.
+ * Data: deep-links via querystring (`?q=…&mode=…&scope=…`). Every submitted
+ * search goes through ONE imperative path (`runSearch`); everything the page
+ * loads with is an SWR hook. Recent and saved searches live on the server (a
+ * browser's old saved searches are moved there once).
  */
 import {
-  useCallback, useEffect, useMemo, useRef, useState,
+  useCallback, useEffect, useMemo, useRef, useState, type ReactNode,
 } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
-  AlertTriangle, Bookmark, ChevronRight, Database,
-  History as HistoryIcon, Layers, Package,
+  AlertTriangle, Bookmark, ChevronRight, Layers, Package,
   Search as SearchIcon, ShieldCheck, TestTube, X, Zap,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import AllReleasesBadge from '@/components/ui/AllReleasesBadge'
-import InlineConfirm from '@/components/ui/inPage/InlineConfirm'
+import { useInlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import { useNow } from '@/hooks/useNow'
+import { usePermissions } from '@/hooks/usePermissions'
+import { useSearchIndexStatus } from '@/hooks/useSearchIndexStatus'
+import { useRecentSearches, withRecent, withoutRecents } from '@/hooks/useRecentSearches'
+import { createSavedSearch, useSavedSearches } from '@/hooks/useSavedSearches'
+import { useSuggestedSearches } from '@/hooks/useSuggestedSearches'
+import { useSearchUsage } from '@/hooks/useSearchUsage'
 import PageShell from '@/components/layout/PageShell'
 import PageHeader from '@/components/ui/PageHeader'
 import Pagination from '@/components/ui/Pagination'
 import { helpTopicParam } from '@/components/help/helpTopics'
+import RecentSearchesCard, { Kbd, SearchCardShell } from '@/components/search/RecentSearchesCard'
+import SavedSearchesCard, { SaveSearchForm } from '@/components/search/SavedSearchesCard'
+import SearchableDataCard from '@/components/search/SearchableDataCard'
+import SearchChipsRow from '@/components/search/SearchChipsRow'
+import SearchFallbackBanner from '@/components/search/SearchFallbackBanner'
+import SearchUsageStrip from '@/components/search/SearchUsageStrip'
+import SuggestedSearchesCard from '@/components/search/SuggestedSearchesCard'
+import { migrateLegacySavedSearches } from '@/components/search/savedSearchesMigration'
+import { shortcutSearches, type SearchSpec } from '@/components/search/savedSearchesModel'
+import { removeFilter } from '@/components/search/searchChips'
+import {
+  fromSemanticResponse, isSemanticMode, modeAvailability, modeForScope, normalizeMode, parseMode, parseScope,
+  relativeTime, type EntityScope, type ModeOption, type PageSearchResponse, type RetrievalMode,
+} from '@/components/search/searchModel'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import { useAuthStore } from '@/store/authStore'
 import { searchService } from '@/services/searchService'
 import { formatNumber } from '@/utils/formatters'
-import type { SearchType } from '@/services/searchService'
 import type {
-  GlobalSearchResponse, GlobalSearchResult, IndexStatus, SearchEntityType,
+  GlobalSearchResult, IndexStatus, RecentSearch, SearchEntityType, SearchParsedFilter, SearchSuggestion,
 } from '@/types/search'
 
 /** The page's help topic (the header's **?**). */
 const HELP_TOPIC = helpTopicParam('/search')
-
-// ── Types ────────────────────────────────────────────────────────────────
-type RetrievalMode = SearchType                                  // 'hybrid' | 'keyword' | 'semantic'
-type EntityScope = 'all' | 'tests' | 'runs' | 'suites' | 'defects' | 'flaky' | 'releases'
-
-// Global search runs ONE retrieval strategy: SQL ILIKE substring matching
-// (see global_search_service.py -- no BM25, no embeddings, no re-ranker). The
-// Hybrid and Semantic chips never reached the API, so selecting one changed
-// the label and nothing else, while the provenance footer went on naming an
-// embedding model and a ranker version that are not involved. Marked
-// unavailable rather than deleted: /api/v1/search does implement all three,
-// but only over test cases, so pointing this page at it would silently drop
-// runs, suites, defects, flaky tests and releases from every result.
-const MODES: { id: RetrievalMode; label: string; available: boolean; why?: string }[] = [
-  { id: 'keyword',  label: 'Keyword',  available: true },
-  { id: 'hybrid',   label: 'Hybrid',   available: false, why: 'Hybrid retrieval is not available for global search — it spans six entity types and only keyword matching covers all of them.' },
-  { id: 'semantic', label: 'Semantic', available: false, why: 'Semantic retrieval is not available for global search — it spans six entity types and only keyword matching covers all of them.' },
-]
-
-function normalizeRetrievalMode(mode: RetrievalMode | null | undefined): RetrievalMode {
-  const requested = MODES.find(candidate => candidate.id === mode)
-  return requested?.available ? requested.id : 'keyword'
-}
 
 const RESULTS_PAGE_SIZE = 25
 
@@ -88,117 +93,6 @@ const SCOPES: { id: EntityScope; label: string; entityKey: SearchEntityType | nu
   { id: 'flaky',    label: 'Flaky',    entityKey: 'flaky_test' },
   { id: 'releases', label: 'Releases', entityKey: 'release' },
 ]
-
-function normalizeEntityScope(scope: unknown): EntityScope {
-  return typeof scope === 'string' && SCOPES.some(candidate => candidate.id === scope)
-    ? scope as EntityScope
-    : 'all'
-}
-
-interface RecentSearch {
-  id: string
-  query: string
-  mode: RetrievalMode
-  scope: EntityScope
-  resultCount: number
-  ts: number
-}
-
-interface SavedSearch {
-  id: string
-  label: string
-  query: string
-  mode: RetrievalMode
-  scope: EntityScope
-  resultCount?: number
-  slot: 1 | 2 | 3
-}
-
-// ── Local storage keys + helpers ────────────────────────────────────────
-const RECENT_KEY = 'tl.search.recent'
-const SAVED_KEY  = 'tl.search.saved'
-const MAX_RECENT = 8
-
-function isStorageRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
-}
-
-function normalizeRecentSearch(value: unknown): RecentSearch | null {
-  if (!isStorageRecord(value)
-    || typeof value.id !== 'string'
-    || typeof value.query !== 'string'
-    || typeof value.resultCount !== 'number'
-    || !Number.isFinite(value.resultCount)
-    || typeof value.ts !== 'number'
-    || !Number.isFinite(value.ts)) return null
-
-  return {
-    id: value.id,
-    query: value.query,
-    mode: normalizeRetrievalMode(value.mode as RetrievalMode | undefined),
-    scope: normalizeEntityScope(value.scope),
-    resultCount: value.resultCount,
-    ts: value.ts,
-  }
-}
-
-function normalizeSavedSearch(value: unknown): SavedSearch | null {
-  if (!isStorageRecord(value)
-    || typeof value.id !== 'string'
-    || typeof value.query !== 'string'
-    || ![1, 2, 3].includes(value.slot as number)) return null
-
-  const resultCount = typeof value.resultCount === 'number' && Number.isFinite(value.resultCount)
-    ? value.resultCount
-    : undefined
-  return {
-    id: value.id,
-    label: typeof value.label === 'string' ? value.label : value.query,
-    query: value.query,
-    mode: normalizeRetrievalMode(value.mode as RetrievalMode | undefined),
-    scope: normalizeEntityScope(value.scope),
-    resultCount,
-    slot: value.slot as 1 | 2 | 3,
-  }
-}
-
-function readRecents(): RecentSearch[] {
-  try {
-    const raw = localStorage.getItem(RECENT_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw) as unknown
-    if (!Array.isArray(parsed)) return []
-    const normalized = parsed
-      .map(normalizeRecentSearch)
-      .filter((row): row is RecentSearch => row !== null)
-      .slice(0, MAX_RECENT)
-    writeRecents(normalized)
-    return normalized
-  } catch { return [] }
-}
-
-function writeRecents(rs: RecentSearch[]) {
-  try { localStorage.setItem(RECENT_KEY, JSON.stringify(rs.slice(0, MAX_RECENT))) } catch { /* noop */ }
-}
-
-function readSaved(): SavedSearch[] {
-  try {
-    const raw = localStorage.getItem(SAVED_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw) as unknown
-    if (!Array.isArray(parsed)) return []
-    const normalized = parsed
-      .map(normalizeSavedSearch)
-      .filter((row): row is SavedSearch => row !== null)
-      .slice(0, 3)
-    writeSaved(normalized)
-    return normalized
-  } catch { return [] }
-}
-
-function writeSaved(s: SavedSearch[]) {
-  try { localStorage.setItem(SAVED_KEY, JSON.stringify(s.slice(0, 3))) } catch { /* noop */ }
-}
 
 // ── Atoms ────────────────────────────────────────────────────────────────
 function PrimaryBtn({
@@ -217,31 +111,23 @@ function PrimaryBtn({
   )
 }
 
-function Kbd({ children }: { children: React.ReactNode }) {
-  return (
-    <kbd
-      className="font-mono text-[10.5px] inline-flex items-center gap-0.5 px-1.5 py-px rounded-sm whitespace-nowrap"
-      style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
-    >
-      {children}
-    </kbd>
-  )
-}
-
 // ── Search command bar (hero) ───────────────────────────────────────────
 function SearchCommandBar({
-  value, onChange, onSubmit, mode, onModeChange, scope, onScopeChange, scopeCounts,
-  inputRef,
+  value, onChange, onSubmit, modes, mode, onModeChange, scope, onScopeChange, scopeCounts,
+  inputRef, chips,
 }: {
   value: string
   onChange: (v: string) => void
   onSubmit: () => void
+  modes: ModeOption[]
   mode: RetrievalMode
   onModeChange: (m: RetrievalMode) => void
   scope: EntityScope
   onScopeChange: (s: EntityScope) => void
   scopeCounts: Record<EntityScope, number>
   inputRef: React.RefObject<HTMLInputElement | null>
+  /** The applied filters of the last search (absent for a plain query). */
+  chips?: ReactNode
 }) {
   const [focused, setFocused] = useState(false)
   return (
@@ -293,19 +179,16 @@ function SearchCommandBar({
         </PrimaryBtn>
       </form>
 
+      {chips}
+
       {/* Filters row */}
       <div
         className="flex items-center gap-3 flex-wrap mt-3 pt-3"
         style={{ borderTop: '1px solid var(--color-border)' }}
       >
-        <span
-          className="inline-flex items-center gap-1.5 text-[10.5px] uppercase font-medium text-[var(--color-text-muted)]"
-          style={{ letterSpacing: 'var(--tracking-wider)' }}
-        >
-          Mode
-        </span>
+        <span className="eyebrow inline-flex items-center gap-1.5">Mode</span>
         <div role="radiogroup" aria-label="Search mode" className="flex items-center gap-1.5">
-          {MODES.map(m => (
+          {modes.map(m => (
             <Chip
               key={m.id}
               role="radio"
@@ -322,12 +205,7 @@ function SearchCommandBar({
 
         <span className="w-px h-4" style={{ background: 'var(--color-border)' }} aria-hidden />
 
-        <span
-          className="inline-flex items-center gap-1.5 text-[10.5px] uppercase font-medium text-[var(--color-text-muted)]"
-          style={{ letterSpacing: 'var(--tracking-wider)' }}
-        >
-          Scope
-        </span>
+        <span className="eyebrow inline-flex items-center gap-1.5">Scope</span>
         <div role="radiogroup" aria-label="Entity scope" className="flex items-center gap-1.5 flex-wrap">
           {SCOPES.map(s => (
             <Chip
@@ -339,7 +217,7 @@ function SearchCommandBar({
             >
               {s.label}
               <span
-                className="font-mono text-[10.5px] tabular-nums ml-1"
+                className="font-mono text-2xs tabular-nums ml-1"
                 style={{ color: scope === s.id ? 'var(--ui-info-ink)' : 'var(--color-text-faint)' }}
               >
                 {formatNumber(scopeCounts[s.id] ?? 0)}
@@ -390,6 +268,7 @@ function Chip({
 // ── Verdict ribbon ──────────────────────────────────────────────────────
 // The three tiles that used to sit beside freshness (Latency p95, Queries
 // today, Zero-result rate) had no metric behind them and were always "—".
+// W12 SRCH-05 measures them; they are the usage strip under this ribbon.
 function VerdictRibbon({
   totalItems, typeCount, indexStatus,
 }: {
@@ -473,445 +352,42 @@ function VerdictStat({
   )
 }
 
-// ── Lists (recent / saved / suggested) ──────────────────────────────────
-interface ListRowProps {
-  Icon: typeof HistoryIcon
-  iconBg: string
-  iconFg: string
-  query: string
-  meta: React.ReactNode
-  trailing: React.ReactNode
-  onClick: () => void
-  onSecondary?: () => void
-  secondaryLabel?: string
-}
-
-function ListRow({
-  Icon, iconBg, iconFg, query, meta, trailing, onClick, onSecondary, secondaryLabel,
-}: ListRowProps) {
-  return (
-    <div
-      className="grid items-center gap-2.5 transition-colors"
-      style={{
-        gridTemplateColumns: '22px 1fr auto auto',
-        padding: '10px 16px',
-        borderBottom: '1px solid var(--color-border)',
-      }}
-    >
-      <span
-        className="inline-flex items-center justify-center rounded-md flex-none"
-        style={{ width: 22, height: 22, background: iconBg, color: iconFg }}
-      >
-        <Icon className="h-3 w-3" />
-      </span>
-      <button
-        type="button"
-        onClick={onClick}
-        className="text-left min-w-0 hover:bg-[var(--color-bg-hover)] -mx-1 px-1 py-0.5 rounded-sm transition-colors"
-      >
-        <div className="text-[12.5px] text-[var(--color-text)] truncate" title={query}>
-          {renderHighlightedQuery(query)}
-        </div>
-        <div className="text-[10.5px] text-[var(--color-text-muted)] truncate mt-0.5">{meta}</div>
-      </button>
-      <span className="text-[11px] text-[var(--color-text-muted)] tabular-nums">{trailing}</span>
-      {onSecondary ? (
-        <button
-          type="button"
-          onClick={onSecondary}
-          title={secondaryLabel}
-          className="text-[11px] text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] px-1.5 py-0.5 rounded-sm"
-          aria-label={secondaryLabel}
-        >
-          <X className="h-3 w-3" />
-        </button>
-      ) : <span aria-hidden style={{ width: 12 }} />}
-    </div>
-  )
-}
-
-/**
- * Render a query string with `field:value` tokens as inline <code>. This is
- * deliberately minimal — no parser, just a regex tokenizer over the design's
- * canonical syntax tokens.
- */
-function renderHighlightedQuery(q: string): React.ReactNode {
-  const parts: React.ReactNode[] = []
-  // Match: word:value (no spaces), or "phrase" quoted, or word:~fuzzy.
-  const re = /(\b[a-z_]+:[^\s"]+|"[^"]+"|\b[a-z_]+:~[^\s]+)/gi
-  let last = 0
-  let m: RegExpExecArray | null
-  let key = 0
-  while ((m = re.exec(q)) !== null) {
-    if (m.index > last) parts.push(<span key={key++}>{q.slice(last, m.index)}</span>)
-    parts.push(
-      <code
-        key={key++}
-        className="font-mono text-[11px] px-1 py-px rounded-sm mx-0.5"
-        style={{ background: 'color-mix(in srgb, var(--color-accent) 6%, transparent)', border: '1px solid color-mix(in srgb, var(--color-accent) 18%, transparent)', color: 'var(--color-accent)' }}
-      >
-        {m[0]}
-      </code>,
-    )
-    last = m.index + m[0].length
-  }
-  if (last < q.length) parts.push(<span key={key}>{q.slice(last)}</span>)
-  return parts
-}
-
-/**
- * The recent searches card. Clear history asks inside the card, right under its
- * header (W27b: in the page, never the browser's prompt); the strip's Clear is
- * the only control that clears.
- */
-function RecentList({
-  rows, onPick, onClear, confirming, onConfirmClear, onCancelClear,
-}: {
-  rows: RecentSearch[]
-  onPick: (r: RecentSearch) => void
-  onClear: () => void
-  confirming: boolean
-  onConfirmClear: () => void
-  onCancelClear: () => void
-}) {
-  return (
-    <CardShell
-      title={
-        <span className="inline-flex items-center gap-2">
-          <HistoryIcon className="h-3.5 w-3.5 text-[var(--color-text-muted)]" />
-          Recent searches
-        </span>
-      }
-      rightSlot={
-        rows.length > 0 && (
-          <button
-            type="button"
-            onClick={onClear}
-            className="hover:underline"
-            style={{ color: 'var(--color-accent)' }}
-          >
-            Clear history
-          </button>
-        )
-      }
-    >
-      {confirming && rows.length > 0 && (
-        <div className="px-4 pt-3">
-          <InlineConfirm
-            message={`Clear all ${rows.length} recent search${rows.length === 1 ? '' : 'es'}? This can't be undone.`}
-            confirmLabel="Clear"
-            tone="danger"
-            onConfirm={onConfirmClear}
-            onCancel={onCancelClear}
-          />
-        </div>
-      )}
-      {rows.length === 0 ? (
-        <div className="px-4 py-6 text-center">
-          <p className="text-[13px] m-0 mb-2" style={{ color: 'var(--color-text-secondary)' }}>
-            Your queries will appear here.
-          </p>
-          <p className="text-[12px] m-0 text-[var(--color-text-muted)]">
-            Start typing a search above.
-          </p>
-        </div>
-      ) : (
-        <div>
-          {rows.map(r => (
-            <ListRow
-              key={r.id}
-              Icon={HistoryIcon}
-              iconBg="color-mix(in srgb, var(--color-accent) 14%, transparent)"
-              iconFg="var(--color-accent)"
-              query={r.query}
-              meta={
-                <>
-                  <strong className="text-[var(--color-text-secondary)] font-semibold">
-                    {r.resultCount} result{r.resultCount === 1 ? '' : 's'}
-                  </strong>
-                  {' · '}
-                  {relativeTime(r.ts)}
-                  {' · '}
-                  {r.mode}
-                  {' · '}
-                  {r.scope}
-                </>
-              }
-              trailing={<Kbd>↵</Kbd>}
-              onClick={() => onPick(r)}
-            />
-          ))}
-        </div>
-      )}
-    </CardShell>
-  )
-}
-
-// Nothing on this page creates a saved search any more (no bookmark control
-// exists), so the card renders only rows a browser already holds — never an
-// empty state pointing at a button that is not there.
-function SavedList({
-  rows, onPick, onUnsave,
-}: {
-  rows: SavedSearch[]
-  onPick: (r: SavedSearch) => void
-  onUnsave: (id: string) => void
-}) {
-  if (rows.length === 0) return null
-  return (
-    <CardShell
-      title={
-        <span className="inline-flex items-center gap-2">
-          <Bookmark className="h-3.5 w-3.5 text-[var(--color-text-muted)]" />
-          Saved searches
-        </span>
-      }
-    >
-      <div>
-        {rows.map(r => (
-          <ListRow
-            key={r.id}
-            Icon={Bookmark}
-            iconBg="color-mix(in srgb, var(--status-broken) 14%, transparent)"
-            iconFg="var(--status-broken)"
-            query={r.label || r.query}
-            meta={
-              <>
-                <strong className="text-[var(--color-text-secondary)] font-semibold">scope:</strong>{' '}{r.scope}
-                {' · '}
-                <strong className="text-[var(--color-text-secondary)] font-semibold">filter:</strong>{' '}
-                <code className="font-mono text-[11px]" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', borderRadius: 3, padding: '1px 5px' }}>{r.query}</code>
-              </>
-            }
-            trailing={<Kbd>⌘{r.slot}</Kbd>}
-            onClick={() => onPick(r)}
-            onSecondary={() => onUnsave(r.id)}
-            secondaryLabel={`Remove saved search "${r.label || r.query}"`}
-          />
-        ))}
-      </div>
-    </CardShell>
-  )
-}
-
-// ── Right rail ──────────────────────────────────────────────────────────
-// "Searchable data" (HON-08). It was "Index health": ONE vector-index status,
-// plus a 5-minute staleness rule, copied onto all six entity rows, so an
-// install without ChromaDB (or an idle one) showed Tests, Runs, Suites,
-// Defects, Flaky and Releases all "Down". Five of them have no index at all:
-// global search is a SQL keyword match over each table (global_search_service)
-// and answers whenever the API does. Each row says that, with its row count;
-// the ChromaDB collection, which holds test cases only, gets a line of its own,
-// and an index that has not been written to lately is idle, not down.
-interface SearchableEntity {
-  entity: SearchEntityType
-  label: string
-  Icon: typeof TestTube
-  iconBg: string
-  iconFg: string
-}
-
-const SEARCHABLE_ENTITIES: SearchableEntity[] = [
-  { entity: 'test_case',  label: 'Tests',    Icon: TestTube,      iconBg: 'color-mix(in srgb, var(--color-accent) 14%, transparent)', iconFg: 'var(--color-accent)' },
-  { entity: 'test_run',   label: 'Runs',     Icon: Zap,           iconBg: 'color-mix(in srgb, var(--status-passed) 14%, transparent)',  iconFg: 'var(--status-passed)' },
-  { entity: 'suite',      label: 'Suites',   Icon: Layers,        iconBg: 'color-mix(in srgb, var(--status-flaky) 14%, transparent)', iconFg: 'var(--status-flaky)' },
-  { entity: 'defect',     label: 'Defects',  Icon: ShieldCheck,   iconBg: 'var(--color-cyan-soft)',  iconFg: 'var(--color-cyan)' },
-  { entity: 'flaky_test', label: 'Flaky',    Icon: AlertTriangle, iconBg: 'color-mix(in srgb, var(--status-broken) 14%, transparent)', iconFg: 'var(--status-broken)' },
-  { entity: 'release',    label: 'Releases', Icon: Package,       iconBg: 'var(--color-bg-secondary)', iconFg: 'var(--color-text-muted)' },
-]
-
-/**
- * `/search/index-status`'s `status`. The backend also answers
- * `not_configured` (no ChromaDB server at the configured address), which the
- * shared `IndexStatus` type does not list yet.
- */
-type SemanticIndexStatus = IndexStatus['status'] | 'not_configured'
-
-interface SemanticIndexLine {
-  /** Short state for the card header and the pill. */
-  label: 'Ready' | 'Not configured' | 'Unavailable' | 'Unknown' | 'Checking'
-  detail: string
-  tone: 'passed' | 'failed' | 'neutral'
-}
-
-function describeSemanticIndex(indexStatus: IndexStatus | null): SemanticIndexLine {
-  if (!indexStatus) return { label: 'Checking', detail: 'Reading the semantic index status…', tone: 'neutral' }
-  const status = indexStatus.status as SemanticIndexStatus
-  if (status === 'healthy') {
-    const docs = indexStatus.document_count
-    const when = indexStatus.last_indexed_at
-      ? `last indexed ${relativeTime(new Date(indexStatus.last_indexed_at).getTime())}`
-      : 'no indexing time recorded'
-    return {
-      label: 'Ready',
-      detail: `${formatNumber(docs)} doc${docs === 1 ? '' : 's'} · ${when}`,
-      tone: 'passed',
-    }
-  }
-  if (status === 'not_configured') {
-    return {
-      label: 'Not configured',
-      detail: 'No ChromaDB server answers here. Semantic test search falls back to keyword; this page searches by keyword either way.',
-      tone: 'neutral',
-    }
-  }
-  if (status === 'unavailable') {
-    return {
-      label: 'Unavailable',
-      detail: 'ChromaDB answered with an error. Semantic test search falls back to keyword until it recovers.',
-      tone: 'failed',
-    }
-  }
-  return { label: 'Unknown', detail: 'The semantic index status could not be read.', tone: 'neutral' }
-}
-
-const PILL_TONES: Record<SemanticIndexLine['tone'], { bg: string; bd: string; fg: string }> = {
-  passed: { bg: 'color-mix(in srgb, var(--status-passed) 14%, transparent)', bd: 'color-mix(in srgb, var(--status-passed) 30%, transparent)', fg: 'var(--status-passed)' },
-  failed: { bg: 'color-mix(in srgb, var(--status-failed) 14%, transparent)', bd: 'color-mix(in srgb, var(--status-failed) 30%, transparent)', fg: 'var(--status-failed)' },
-  neutral: { bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)', fg: 'var(--color-text-muted)' },
-}
-
-function StatusPill({ label, tone, ariaLabel }: { label: string; tone: SemanticIndexLine['tone']; ariaLabel: string }) {
-  const palette = PILL_TONES[tone]
-  return (
-    <span
-      className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10.5px] font-semibold whitespace-nowrap"
-      aria-label={ariaLabel}
-      style={{ background: palette.bg, border: `1px solid ${palette.bd}`, color: palette.fg }}
-    >
-      {label}
-    </span>
-  )
-}
-
-function SearchableDataCard({
-  totals, indexStatus,
-}: {
-  /** Project-scoped row counts from /search/entity-counts; null until (or unless) they load. */
-  totals: Record<SearchEntityType, number> | null
-  indexStatus: IndexStatus | null
-}) {
-  const semantic = describeSemanticIndex(indexStatus)
-  return (
-    <CardShell
-      title={
-        <span className="inline-flex items-center gap-2">
-          <Database className="h-3.5 w-3.5 text-[var(--color-text-muted)]" />
-          Searchable data
-        </span>
-      }
-      rightSlot={
-        <span data-testid="searchable-data-summary">
-          {SEARCHABLE_ENTITIES.length} entity types · semantic: {semantic.label.toLowerCase()}
-        </span>
-      }
-    >
-      <div className="px-4 py-3 flex flex-col gap-2">
-        {SEARCHABLE_ENTITIES.map(r => {
-          const Icon = r.Icon
-          const count = totals ? Number(totals[r.entity] ?? 0) : null
-          return (
-            <div
-              key={r.entity}
-              className="grid items-center gap-2.5 rounded-md border"
-              style={{ gridTemplateColumns: '24px 1fr auto', padding: '8px 12px', background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
-            >
-              <span className="inline-flex items-center justify-center rounded-full" style={{ width: 24, height: 24, background: r.iconBg, color: r.iconFg }}>
-                <Icon className="h-3 w-3" />
-              </span>
-              <div className="min-w-0">
-                <div className="text-[12.5px] text-[var(--color-text)] font-medium">{r.label}</div>
-                <div className="text-[10.5px] text-[var(--color-text-muted)] truncate">
-                  {count === null ? '— rows' : `${formatNumber(count)} row${count === 1 ? '' : 's'}`} · keyword match
-                </div>
-              </div>
-              <StatusPill label="Keyword" tone="passed" ariaLabel={`${r.label}: keyword search`} />
-            </div>
-          )
-        })}
-        <div
-          className="grid items-start gap-2.5 rounded-md border mt-1"
-          style={{ gridTemplateColumns: '1fr auto', padding: '8px 12px', background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
-          data-testid="semantic-index-line"
-        >
-          <div className="min-w-0">
-            <div className="text-[12.5px] text-[var(--color-text)] font-medium">Semantic index (tests)</div>
-            <div className="text-[10.5px] text-[var(--color-text-muted)]">{semantic.detail}</div>
-          </div>
-          <StatusPill label={semantic.label} tone={semantic.tone} ariaLabel={`Semantic index: ${semantic.label}`} />
-        </div>
-      </div>
-    </CardShell>
-  )
-}
-
-// ── Shared shell ────────────────────────────────────────────────────────
-function CardShell({
-  title, rightSlot, children,
-}: { title: React.ReactNode; rightSlot?: React.ReactNode; children?: React.ReactNode }) {
-  return (
-    <div
-      className="overflow-hidden rounded-xl"
-      style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
-    >
-      <div
-        className="flex items-center justify-between gap-2.5 px-4 py-3"
-        style={{ borderBottom: '1px solid var(--color-border)' }}
-      >
-        <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">{title}</h3>
-        {rightSlot && <div className="flex items-center gap-2.5 text-[12px] text-[var(--color-text-muted)]">{rightSlot}</div>}
-      </div>
-      {children}
-    </div>
-  )
-}
-
-// ── Helpers ─────────────────────────────────────────────────────────────
-function relativeTime(ts: number): string {
-  const ms = Date.now() - ts
-  if (Number.isNaN(ms) || ms < 0) return '—'
-  const s = Math.floor(ms / 1000)
-  if (s < 60) return `${s}s ago`
-  const m = Math.floor(s / 60)
-  if (m < 60) return `${m}m ago`
-  const h = Math.floor(m / 60)
-  if (h < 24) return `${h}h ago`
-  return `${Math.floor(h / 24)}d ago`
-}
-
 // ── Page ────────────────────────────────────────────────────────────────
 export default function SearchPage() {
   const navigate = useNavigate()
   const project = useProjectStore(s => s.activeProject)
   const projects = useProjectStore(s => s.projects)
   const setActiveProject = useProjectStore(s => s.setActiveProject)
+  const userId = useAuthStore(s => s.user?.id ?? null)
+  const { isQaLead } = usePermissions()
+  const now = useNow()
   const [searchParams, setSearchParams] = useSearchParams()
 
-  // URL-driven state (deep-linkable)
-  const [query, setQuery] = useState(() => searchParams.get('q') ?? '')
-  const [mode, setMode] = useState<RetrievalMode>(() =>
-    normalizeRetrievalMode(searchParams.get('mode') as RetrievalMode | null),
-  )
-  const [scope, setScope] = useState<EntityScope>(() => normalizeEntityScope(searchParams.get('scope')))
+  // URL-driven state (deep-linkable). A semantic mode with another scope is
+  // read as Tests (the URL is rewritten by the first search, `replace`).
+  const [initial] = useState(() => {
+    const normalized = normalizeMode(parseScope(searchParams.get('scope')), parseMode(searchParams.get('mode')))
+    return { q: searchParams.get('q') ?? '', ...normalized }
+  })
+  const [query, setQuery] = useState(initial.q)
+  const [mode, setMode] = useState<RetrievalMode>(initial.mode)
+  const [scope, setScope] = useState<EntityScope>(initial.scope)
+  // The one line under the command bar after a mode / scope switch.
+  const [switchNote, setSwitchNote] = useState<string | null>(initial.note)
   const [isSearching, setIsSearching] = useState(false)
-  const [response, setResponse] = useState<GlobalSearchResponse | null>(null)
+  const [response, setResponse] = useState<PageSearchResponse | null>(null)
+  // The search `response` answers (Save search stores it; a chip's × edits it).
+  const [lastSearch, setLastSearch] = useState<SearchSpec | null>(null)
   // 2026-05-15: the Results card previously sliced response.items down
   // to 12 rows and the global_search adapters capped at 50 each, so a
   // user with 84 tests had no way to see anything beyond the first
   // batch. Pagination now flows through runSearch(...,page) and the
   // adapters bump their per-type cap when narrowed.
-  const [indexStatus, setIndexStatus] = useState<IndexStatus | null>(null)
   // Project-scoped totals from /api/v1/search/entity-counts — the
   // fallback for the chip counts (and the Searchable data rows) when no query is
   // active. Without this the chips and rows showed 0 forever even
   // though the data was sitting in Postgres.
   const [totalCounts, setTotalCounts] = useState<Record<SearchEntityType, number> | null>(null)
-  const [recents, setRecents] = useState<RecentSearch[]>(() => readRecents())
-  // Clear history asks in the recent searches card (W27b). The card leaves the
-  // page while a query is typed, and its question goes with it.
-  const [confirmingClear, setConfirmingClear] = useState(false)
-  if (confirmingClear && query.trim() !== '') setConfirmingClear(false)
-  const [saved, setSaved] = useState<SavedSearch[]>(() => readSaved())
 
   const inputRef = useRef<HTMLInputElement>(null)
   const searchRequestIdRef = useRef(0)
@@ -924,15 +400,16 @@ export default function SearchPage() {
   const scopedProjectId = activeProjectId && activeProjectId !== ALL_PROJECTS_ID
     ? activeProjectId
     : undefined
+  const pinnedProjectId = scopedProjectId ?? null
+  const boxEmpty = query.trim() === ''
 
-  // ── Fetch index status on mount + on project change ──────────────────
-  useEffect(() => {
-    let alive = true
-    searchService.getIndexStatus(scopedProjectId)
-      .then(s => { if (alive) setIndexStatus(s) })
-      .catch(() => { if (alive) setIndexStatus({ status: 'unknown', document_count: 0, last_indexed_at: null }) })
-    return () => { alive = false }
-  }, [scopedProjectId])
+  // ── What the page loads with (SWR) ───────────────────────────────────
+  const { indexStatus } = useSearchIndexStatus(pinnedProjectId)
+  const recents = useRecentSearches(true)
+  const saved = useSavedSearches(pinnedProjectId)
+  const suggested = useSuggestedSearches(pinnedProjectId, boxEmpty)
+  const usage = useSearchUsage(pinnedProjectId, isQaLead)
+  const saveSlot = useInlineSlot<'save'>()
 
   // ── Fetch project-scoped entity totals on mount + on project change ──
   useEffect(() => {
@@ -943,23 +420,34 @@ export default function SearchPage() {
     return () => { alive = false }
   }, [scopedProjectId])
 
+  // The recents the page last read, for prepending a recorded search at once
+  // (only onto a list that loaded: a mutation over a read still in flight
+  // would discard that read).
+  const recentsDataRef = useRef(recents.data)
+  useEffect(() => { recentsDataRef.current = recents.data }, [recents.data])
+  const mutateRecents = recents.mutate
+  const closeSave = saveSlot.close
+
   // ── Run a search (or browse the scope when the query is empty) ───────
   // ``page`` is optional so callers that change the query/mode/scope can
   // omit it (they want page 1); the pagination control passes the new
   // page explicitly so a user clicking "page 2" doesn't reset back to 1.
+  // A page-1 search with words is RECORDED (a recent entry and a usage row,
+  // written by the server after its answer); pagination and browsing are not.
   const runSearch = useCallback(async (q: string, m: RetrievalMode, s: EntityScope, page: number = 1) => {
     const requestId = ++searchRequestIdRef.current
     const trimmed = q.trim()
-    const effectiveMode = normalizeRetrievalMode(m)
-    if (effectiveMode !== m) setMode(effectiveMode)
+    const { scope: effectiveScope, mode: effectiveMode } = normalizeMode(s, m)
+    if (effectiveScope !== s) setScope(effectiveScope)
     setSearchParams(prev => {
       const np = new URLSearchParams(prev)
       if (trimmed) np.set('q', trimmed); else np.delete('q')
       np.set('mode', effectiveMode)
-      np.set('scope', s)
+      np.set('scope', effectiveScope)
       selfWrittenSearchParamsRef.current = np.toString()
       return np
     }, { replace: true })
+    if (page === 1) closeSave()
 
     // Empty query: hit the API in browse mode regardless of scope. The
     // backend adapters fall back to "most-recent N" rows when ``q`` is
@@ -967,34 +455,49 @@ export default function SearchPage() {
     // data instead of an empty page. (Pre-2026-05-16 this short-circuited
     // for scope='all', producing the asymmetric behaviour the user
     // reported: Tests/Suites populated but All was blank.)
+    const recordable = trimmed !== '' && page === 1
 
     setIsSearching(true)
     try {
-      const entityKey = s === 'all' ? null : (SCOPES.find(x => x.id === s)?.entityKey ?? null)
-      // `globalSearch` accepts an array of entity types and doesn't expose a
-      // mode parameter: it spans all six entity types with keyword retrieval.
-      // Disabled legacy modes are normalized above until the global endpoint
-      // gains a real server-side mode switch.
-      const data = await searchService.globalSearch({
-        q: trimmed,
-        project_id: scopedProjectId,
-        entity_types: entityKey ? [entityKey] : undefined,
-        page,
-        size: RESULTS_PAGE_SIZE,
-      })
+      let data: PageSearchResponse
+      if (trimmed && isSemanticMode(effectiveMode)) {
+        // Hybrid / Semantic: GET /search, test results only. An outage or an
+        // empty semantic answer comes back as keyword rows with a reason.
+        const answer = await searchService.search({
+          q: trimmed,
+          project_id: scopedProjectId,
+          search_type: effectiveMode,
+          page,
+          size: RESULTS_PAGE_SIZE,
+          ...(recordable ? { record: true } : {}),
+        })
+        data = fromSemanticResponse(answer)
+      } else {
+        const entityKey = effectiveScope === 'all' ? null : (SCOPES.find(x => x.id === effectiveScope)?.entityKey ?? null)
+        data = await searchService.globalSearch({
+          q: trimmed,
+          project_id: scopedProjectId,
+          entity_types: entityKey ? [entityKey] : undefined,
+          page,
+          size: RESULTS_PAGE_SIZE,
+          ...(recordable ? { record: true } : {}),
+        })
+      }
       if (requestId !== searchRequestIdRef.current) return
       setResponse(data)
-      // Only persist real queries to history — browse views (empty q)
-      // shouldn't pollute Recent searches.
-      if (trimmed) {
-        setRecents(prev => {
-          const next: RecentSearch[] = [
-            { id: `${Date.now()}`, query: trimmed, mode: effectiveMode, scope: s, resultCount: data.total, ts: Date.now() },
-            ...prev.filter(r => r.query !== trimmed || r.scope !== s),
-          ].slice(0, MAX_RECENT)
-          writeRecents(next)
-          return next
-        })
+      setLastSearch({ q: trimmed, scope: effectiveScope, mode: effectiveMode })
+      // The server records it after its answer; show it in Recent searches now.
+      if (recordable && recentsDataRef.current) {
+        const entry: RecentSearch = {
+          q: trimmed,
+          scope: effectiveScope,
+          mode: parseMode(data.search_type),
+          project_id: scopedProjectId ?? null,
+          result_count: data.total,
+          counts_exact: data.counts_are_exact !== false,
+          ts: new Date().toISOString(),
+        }
+        void mutateRecents(withRecent(recentsDataRef.current, entry), { revalidate: false })
       }
     } catch {
       if (requestId !== searchRequestIdRef.current) return
@@ -1003,7 +506,7 @@ export default function SearchPage() {
     } finally {
       if (requestId === searchRequestIdRef.current) setIsSearching(false)
     }
-  }, [scopedProjectId, setSearchParams])
+  }, [scopedProjectId, setSearchParams, closeSave, mutateRecents])
 
   // ── URL synchronization + initial search ─────────────────────────────
   // React Router can keep this component mounted when another control
@@ -1023,12 +526,12 @@ export default function SearchPage() {
 
     const params = new URLSearchParams(searchParamsKey)
     const nextQuery = params.get('q') ?? ''
-    const nextMode = normalizeRetrievalMode(params.get('mode') as RetrievalMode | null)
-    const nextScope = normalizeEntityScope(params.get('scope'))
+    const next = normalizeMode(parseScope(params.get('scope')), parseMode(params.get('mode')))
     setQuery(nextQuery)
-    setMode(nextMode)
-    setScope(nextScope)
-    void runSearch(nextQuery, nextMode, nextScope)
+    setMode(next.mode)
+    setScope(next.scope)
+    setSwitchNote(next.note)
+    void runSearch(nextQuery, next.mode, next.scope)
   }, [searchParamsKey, runSearch])
 
   // A project switch must refresh the result rows as well as the counts and
@@ -1041,7 +544,28 @@ export default function SearchPage() {
     void runSearch(query, mode, scope)
   }, [scopedProjectId, query, mode, scope, runSearch])
 
+  // ── The one-time move of this browser's saved searches (SRCH-03) ─────
+  // Once per load, when the server's list answered (or refused: then nothing
+  // is posted and the entries wait). `tl.search.recent` is dropped unread.
+  const migrationRanRef = useRef(false)
+  const savedAnswered = saved.data !== undefined || saved.error !== undefined
+  const savedViews = saved.views
+  const savedData = saved.data
+  const mutateSaved = saved.mutate
+  useEffect(() => {
+    if (migrationRanRef.current || !savedAnswered) return
+    migrationRanRef.current = true
+    void migrateLegacySavedSearches({
+      serverViews: savedData !== undefined ? savedViews : null,
+      projectId: pinnedProjectId,
+      create: createSavedSearch,
+    }).then((result) => {
+      if (result.posted > 0) void mutateSaved()
+    })
+  }, [savedAnswered, savedData, savedViews, pinnedProjectId, mutateSaved])
+
   // ── ⌘K shortcut: focus input (unless user is already typing in another input) ──
+  const shortcuts = useMemo(() => shortcutSearches(savedViews), [savedViews])
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
@@ -1056,35 +580,60 @@ export default function SearchPage() {
         inputRef.current?.select()
         return
       }
-      // ⌘1 / ⌘2 / ⌘3 — fire the saved search in that slot.
+      // ⌘1 / ⌘2 / ⌘3 — run the first three saved searches, in the server's order.
       if ((e.metaKey || e.ctrlKey) && /^[123]$/.test(e.key)) {
-        const slot = Number(e.key) as 1 | 2 | 3
-        const match = saved.find(s => s.slot === slot)
+        const match = shortcuts[Number(e.key) - 1]
         if (match) {
           e.preventDefault()
-          setQuery(match.query)
+          setQuery(match.q)
           setMode(match.mode)
           setScope(match.scope)
-          void runSearch(match.query, match.mode, match.scope)
+          setSwitchNote(null)
+          void runSearch(match.q, match.mode, match.scope)
         }
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [saved, runSearch])
+  }, [shortcuts, runSearch])
 
-  // ── Pick a row from a list → write into input + submit immediately ───
-  const handlePick = (q: string, m: RetrievalMode, s: EntityScope) => {
-    setQuery(q)
-    setMode(m)
-    setScope(s)
-    void runSearch(q, m, s)
+  // ── Mode / scope chips ───────────────────────────────────────────────
+  const handleModeChange = (m: RetrievalMode) => {
+    const next = normalizeMode(scope, m)
+    setMode(next.mode)
+    setScope(next.scope)
+    setSwitchNote(next.note)
+    void runSearch(query, next.mode, next.scope)
   }
 
-  const handleClearHistory = () => {
-    if (recents.length === 0) return
-    setRecents([])
-    writeRecents([])
+  const handleScopeChange = (s: EntityScope) => {
+    const next = modeForScope(s, mode)
+    setScope(s)
+    setMode(next.mode)
+    setSwitchNote(next.note)
+    void runSearch(query, next.mode, s)
+  }
+
+  // ── Pick a row from a list → write into input + submit immediately ───
+  // (in the CURRENT project).
+  const handlePick = (q: string, m: RetrievalMode, s: EntityScope) => {
+    const next = normalizeMode(s, m)
+    setQuery(q)
+    setMode(next.mode)
+    setScope(next.scope)
+    setSwitchNote(null)
+    void runSearch(q, next.mode, next.scope)
+  }
+
+  const handleRemoveChip = (filter: SearchParsedFilter) => {
+    const next = removeFilter(lastSearch?.q ?? query, filter)
+    setQuery(next)
+    void runSearch(next, mode, scope)
+  }
+
+  const handleClearHistory = async () => {
+    await searchService.clearRecent()
+    await mutateRecents(withoutRecents(recents.data), { revalidate: false })
     toast.success('Recent searches cleared')
   }
 
@@ -1096,13 +645,12 @@ export default function SearchPage() {
     navigate(row.navigation_url)
   }
 
-  const handleUnsave = (id: string) => {
-    setSaved(prev => {
-      const next = prev.filter(s => s.id !== id)
-      writeSaved(next)
-      return next
-    })
-  }
+  const projectNames = useMemo(
+    () => Object.fromEntries(projects.map(p => [p.id, p.name])) as Record<string, string>,
+    [projects],
+  )
+
+  const modes = useMemo(() => modeAvailability(scope, indexStatus), [scope, indexStatus])
 
   // ── Scope counts ────────────────────────────────────────────────────
   // Chip-count contract (revised 2026-05-15 to fix the "counts jump
@@ -1179,9 +727,36 @@ export default function SearchPage() {
     `Find tests, runs, suites, defects, releases across ${projectLabel}`,
     `${formatNumber(totalIndexed)} items indexed`,
     indexStatus?.last_indexed_at
-      ? `fresh ${relativeTime(new Date(indexStatus.last_indexed_at).getTime())}`
+      ? `fresh ${relativeTime(new Date(indexStatus.last_indexed_at).getTime(), now)}`
       : null,
   ].filter(Boolean).join(' · ')
+
+  // Save search: after ANY search with words — one that found nothing too (a
+  // "watch" query worth re-running later). The form opens at the top of the
+  // card that answered (Results, or No results).
+  const savable = lastSearch !== null && lastSearch.q !== ''
+  const saveButton = savable ? (
+    <button
+      type="button"
+      className="btn-secondary btn-sm inline-flex items-center gap-1 whitespace-nowrap"
+      onClick={() => saveSlot.open('save')}
+    >
+      <Bookmark aria-hidden="true" className="h-3.5 w-3.5" />
+      Save search
+    </button>
+  ) : null
+  const saveForm = saveSlot.openKey === 'save' && lastSearch && savable ? (
+    <div className="border-b border-[var(--color-border)] p-3">
+      <SaveSearchForm
+        search={lastSearch}
+        projectId={pinnedProjectId}
+        projectName={project?.name ?? null}
+        slot={saveSlot}
+        onClose={saveSlot.close}
+        onSaved={() => { saveSlot.close(); void mutateSaved() }}
+      />
+    </div>
+  ) : null
 
   return (
     <PageShell>
@@ -1190,20 +765,34 @@ export default function SearchPage() {
       <SearchCommandBar
         value={query}
         onChange={setQuery}
-        onSubmit={() => runSearch(query, mode, scope)}
+        onSubmit={() => { void runSearch(query, mode, scope) }}
+        modes={modes}
         mode={mode}
-        onModeChange={(m) => { setMode(m); void runSearch(query, m, scope) }}
+        onModeChange={handleModeChange}
         scope={scope}
-        onScopeChange={(s) => { setScope(s); void runSearch(query, mode, s) }}
+        onScopeChange={handleScopeChange}
         scopeCounts={scopeCounts}
         inputRef={inputRef}
+        chips={<SearchChipsRow parsed={response?.parsed} onRemove={handleRemoveChip} />}
       />
+
+      {switchNote && (
+        <p role="status" data-search-switch-note="" className="-mt-1.5 mb-3 text-xs text-[var(--color-text-secondary)]">
+          {switchNote}
+        </p>
+      )}
 
       <VerdictRibbon
         totalItems={totalIndexed}
         typeCount={6}
         indexStatus={indexStatus}
       />
+
+      {isQaLead && (
+        <SearchUsageStrip usage={usage.data} loading={usage.isLoading} failed={usage.error !== undefined} />
+      )}
+
+      <SearchFallbackBanner reason={response?.fallback_reason} message={response?.fallback_message} />
 
       {response?.result_status === 'partial' && (
         <div
@@ -1220,7 +809,7 @@ export default function SearchPage() {
       {/* Live results — only when a query has been run */}
       {response && response.items.length > 0 && (
         <>
-          <CardShell
+          <SearchCardShell
             title={
               <>
                 Results <span className="text-[11.5px] font-normal text-[var(--color-text-muted)] ml-2">
@@ -1238,17 +827,21 @@ export default function SearchPage() {
               </>
             }
             rightSlot={
-              <span className="font-mono">
-                <code className="text-[11px]">{response.search_type}</code>
-                {' · '}
-                showing {((response.page - 1) * response.size) + 1}–{((response.page - 1) * response.size) + response.items.length} of {response.counts_are_exact === false ? 'at least ' : ''}{response.total}
-              </span>
+              <>
+                {saveButton}
+                <span className="font-mono">
+                  <code className="text-2xs">{response.search_type}</code>
+                  {' · '}
+                  showing {((response.page - 1) * response.size) + 1}–{((response.page - 1) * response.size) + response.items.length} of {response.counts_are_exact === false ? 'at least ' : ''}{response.total}
+                </span>
+              </>
             }
           >
+            {saveForm}
             <div className="flex flex-col">
               {response.items.map(r => <ResultRow key={`${r.entity_type}-${r.entity_id}`} row={r} onOpen={() => handleOpenResult(r)} />)}
             </div>
-          </CardShell>
+          </SearchCardShell>
           {response.pages > 1 && (
             <div className="mt-3">
               <Pagination
@@ -1269,64 +862,74 @@ export default function SearchPage() {
       )}
 
       {response && response.items.length === 0 && (
-        <CardShell title="No results" rightSlot={<span>0 matches</span>}>
-          <div className="px-4 py-8 text-center text-[13px] text-[var(--color-text-secondary)]">
+        <SearchCardShell title="No results" rightSlot={<>{saveButton}<span>0 matches</span></>}>
+          {saveForm}
+          <div className="px-4 py-8 text-center text-sm text-[var(--color-text-secondary)]">
             {query.trim() ? (
               <>
-                <p className="m-0 mb-2">Nothing matched <code className="font-mono text-[12px]">{query}</code>.</p>
-                <p className="text-[12px] m-0 text-[var(--color-text-muted)]">
+                <p className="m-0 mb-2">Nothing matched <code className="font-mono text-xs">{query}</code>.</p>
+                <p className="text-xs m-0 text-[var(--color-text-muted)]">
                   Broaden the scope or try a shorter part of the name.
                 </p>
               </>
             ) : (
               <>
-                <p className="m-0 mb-2">Nothing to browse in <code className="font-mono text-[12px]">{projectLabel}</code> yet.</p>
-                <p className="text-[12px] m-0 text-[var(--color-text-muted)]">
+                <p className="m-0 mb-2">Nothing to browse in <code className="font-mono text-xs">{projectLabel}</code> yet.</p>
+                <p className="text-xs m-0 text-[var(--color-text-muted)]">
                   Ingest a test run or pick a different project from the top bar to populate the index.
                 </p>
               </>
             )}
           </div>
-        </CardShell>
+        </SearchCardShell>
       )}
 
-      {/* Browse-mode helper grid — recent/saved searches + searchable data.
-          Visible whenever no query is active, so a user landing at
-          /search with scope=all (browse mode) still sees Searchable data
-          alongside the auto-loaded results.
+      {/* Browse-mode helper grid — suggested / recent / saved searches +
+          searchable data. Visible whenever no query is active, so a user
+          landing at /search with scope=all (browse mode) still sees
+          Searchable data alongside the auto-loaded results.
           Hidden once the user types a query so the screen focuses on
           their search results. */}
-      {query.trim() === '' && (
-        <div className="grid gap-3.5 mt-3.5" style={{ gridTemplateColumns: 'minmax(0, 1.65fr) minmax(0, 1fr)' }}>
+      {boxEmpty && (
+        <div className="grid grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)] gap-3.5 mt-3.5">
           <div className="flex flex-col gap-3.5 min-w-0">
-            <RecentList
-              rows={recents}
-              onPick={(r) => handlePick(r.query, r.mode, r.scope)}
-              onClear={() => { if (recents.length > 0) setConfirmingClear(true) }}
-              confirming={confirmingClear}
-              onConfirmClear={() => { setConfirmingClear(false); handleClearHistory() }}
-              onCancelClear={() => setConfirmingClear(false)}
+            {pinnedProjectId && (
+              <SuggestedSearchesCard
+                suggestions={suggested.data}
+                failed={suggested.error !== undefined}
+                onPick={(row: SearchSuggestion) => handlePick(row.q, 'keyword', parseScope(row.scope))}
+              />
+            )}
+            <RecentSearchesCard
+              recents={recents.data}
+              loading={recents.isLoading}
+              failed={recents.error !== undefined}
+              projectNames={projectNames}
+              pinnedProjectId={pinnedProjectId}
+              onPick={(r) => handlePick(r.q, parseMode(r.mode), parseScope(r.scope))}
+              onClear={handleClearHistory}
             />
-            <SavedList
-              rows={saved}
-              onPick={(r) => handlePick(r.query, r.mode, r.scope)}
-              onUnsave={handleUnsave}
+            <SavedSearchesCard
+              views={savedViews}
+              userId={userId}
+              onRun={(s) => handlePick(s.q, s.mode, s.scope)}
+              onChanged={() => { void mutateSaved() }}
             />
           </div>
           <div className="flex flex-col gap-3.5 min-w-0">
-            <SearchableDataCard totals={totalCounts} indexStatus={indexStatus} />
+            <SearchableDataCard totals={totalCounts} indexStatus={indexStatus} projectId={pinnedProjectId} />
           </div>
         </div>
       )}
 
       {isSearching && (
-        <div className="fixed bottom-4 right-4 z-20 inline-flex items-center gap-2 px-3 py-2 rounded-md text-[12px] text-[var(--color-text-secondary)] bg-[var(--color-bg-card)] border border-[var(--color-border)] shadow-lg">
+        <div className="fixed bottom-4 right-4 z-20 inline-flex items-center gap-2 px-3 py-2 rounded-md text-xs text-[var(--color-text-secondary)] bg-[var(--color-bg-card)] border border-[var(--color-border)] shadow-lg">
           <LoadingSpinner size="sm" />
           Searching…
         </div>
       )}
 
-      <div className="fixed bottom-4 left-4 lg:hidden text-[12px] text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
+      <div className="fixed bottom-4 left-4 lg:hidden text-xs text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
         Wider screen recommended for the full layout.
       </div>
     </PageShell>
