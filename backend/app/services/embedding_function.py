@@ -25,7 +25,7 @@ Commit-free; imports nothing that touches a database.
 """
 from __future__ import annotations
 
-import hashlib
+import hmac
 import threading
 from dataclasses import dataclass
 from typing import Any, Mapping
@@ -143,14 +143,23 @@ def validate_embedder(
     _policy_refusal("openai", offline=offline, base_url=None)
 
 
-_memo: dict[tuple[str, str, str, bool, str], Any] = {}
+# One entry per (provider, model, base_url, offline): the OpenAI key the function
+# was built with sits BESIDE it and is compared in constant time on a hit, so the
+# key is never hashed and never part of a dict key (a rotated key rebuilds the
+# client, replacing the entry). The built OpenAI client holds the key anyway.
+_memo: dict[tuple[str, str, str, bool], tuple[str, Any]] = {}
 _memo_lock = threading.Lock()
 
 
-def _memo_key(spec: EmbedderSpec, *, offline: bool, base_url: str | None,
-              openai_api_key: str | None) -> tuple[str, str, str, bool, str]:
-    key_digest = hashlib.sha256((openai_api_key or "").encode()).hexdigest()[:16]
-    return (spec.provider, spec.model, str(base_url or ""), bool(offline), key_digest)
+def _memo_key(spec: EmbedderSpec, *, offline: bool, base_url: str | None) -> tuple[str, str, str, bool]:
+    return (spec.provider, spec.model, str(base_url or ""), bool(offline))
+
+
+def _memo_hit(key: tuple[str, str, str, bool], openai_api_key: str | None) -> tuple[bool, Any | None]:
+    entry = _memo.get(key)
+    if entry is not None and hmac.compare_digest(entry[0], openai_api_key or ""):
+        return True, entry[1]
+    return False, None
 
 
 def cached_embedding_function(
@@ -160,11 +169,9 @@ def cached_embedding_function(
     """``(True, ef)`` when this process already built the function, else ``(False, None)``."""
     if spec.provider == "default":
         return True, None
-    key = _memo_key(spec, offline=offline, base_url=ollama_base_url, openai_api_key=openai_api_key)
+    key = _memo_key(spec, offline=offline, base_url=ollama_base_url)
     with _memo_lock:
-        if key in _memo:
-            return True, _memo[key]
-    return False, None
+        return _memo_hit(key, openai_api_key)
 
 
 def clear_embedding_function_cache() -> None:
@@ -206,7 +213,8 @@ def get_chroma_embedding_function(
 
     ``None`` means: pass NO ``embedding_function`` (ChromaDB's default, still
     behind the offline weight guard). Memoised per process per
-    ``(provider, model, base_url, offline)`` (and the OpenAI key's digest).
+    ``(provider, model, base_url, offline)``; an OpenAI function is reused only
+    for the key it was built with (compared in constant time, never hashed).
     Raises :class:`EmbedderRefused` for anything this deployment refuses.
     """
     if spec.provider == "default":
@@ -262,7 +270,7 @@ def get_chroma_embedding_function(
             warnings.simplefilter("ignore", DeprecationWarning)
             ef = OpenAIEmbeddingFunction(api_key=openai_api_key, model_name=spec.model)
 
-    key = _memo_key(spec, offline=offline, base_url=ollama_base_url, openai_api_key=openai_api_key)
+    key = _memo_key(spec, offline=offline, base_url=ollama_base_url)
     with _memo_lock:
-        _memo[key] = ef
+        _memo[key] = (openai_api_key or "", ef)
     return ef

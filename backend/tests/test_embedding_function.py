@@ -226,7 +226,7 @@ def test_the_function_is_memoised_per_provider_model_base_url_and_offline(events
     assert len({id(first), id(other_mode), id(other_url), id(other_model)}) == 4
     openai = get_chroma_embedding_function(OPENAI, offline=False, ollama_base_url=None, openai_api_key="sk-a")
     assert get_chroma_embedding_function(OPENAI, offline=False, ollama_base_url=None, openai_api_key="sk-a") is openai
-    # A rotated key is a different client (the memo keys on the key's digest, never the key).
+    # A rotated key is a different client (the key sits beside the entry, compared in constant time; never hashed, never a dict key).
     rotated = get_chroma_embedding_function(OPENAI, offline=False, ollama_base_url=None, openai_api_key="sk-b")
     assert rotated is not openai
     assert all("sk-a" not in repr(key) for key in ef_mod._memo)
