@@ -241,7 +241,10 @@ export const releasesService = {
    * the reader can see. Rejects on failure; the page says so.
    */
   exportSchedule: async (format: 'ics' | 'csv', projectId: string | null): Promise<void> => {
-    const response = await api.get<Blob>(`/api/v1/releases/schedule.${format}`, {
+    // Two literal paths (not `schedule.${format}`): the SPA wire-contract test resolves every service path to a
+    // real backend route, and a template it cannot read is reported as a 404.
+    const url = format === 'ics' ? '/api/v1/releases/schedule.ics' : '/api/v1/releases/schedule.csv'
+    const response = await api.get<Blob>(url, {
       responseType: 'blob',
       params: projectId ? { project_id: projectId } : {},
       suppressToast: true,
