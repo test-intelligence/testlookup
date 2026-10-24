@@ -172,6 +172,35 @@ describe('DraftPhasesForm — the preview and Create', () => {
     expect(toast.success).toHaveBeenCalledWith('Created 3 phases from the draft.')
   })
 
+  it('stacks each row for the narrow pane: the Name alone on the first line, labelled fields, no shared header', async () => {
+    const { form } = await draftFrom('## Smoke')
+    const rowsBox = form().querySelector('[data-draft-rows]') as HTMLElement
+    const cards = Array.from(rowsBox.children)
+    expect(cards.every(c => c.hasAttribute('data-draft-row')), 'no header row beside the cards').toBe(true)
+    const first = cards[0] as HTMLElement
+    const lines = Array.from(first.children)
+    // Line 1: the Name input, full width, with its own label; line 2: Type, Days, Remove; line 3: the description.
+    const name = within(first).getByRole('textbox', { name: 'Name of phase 1' })
+    expect(lines[0].contains(name)).toBe(true)
+    expect(lines[0].querySelectorAll('input, select, textarea, button')).toHaveLength(1)
+    expect(name).toHaveClass('w-full')
+    expect(within(lines[0] as HTMLElement).getByText('Name')).toBeInTheDocument()
+    expect(lines[1].contains(within(first).getByRole('combobox', { name: 'Type of phase 1' }))).toBe(true)
+    expect(lines[1].contains(within(first).getByRole('spinbutton', { name: 'Days of phase 1' }))).toBe(true)
+    expect(lines[1].contains(within(first).getByRole('button', { name: 'Remove phase 1' }))).toBe(true)
+    expect(lines[2].contains(within(first).getByRole('textbox', { name: 'Description of phase 1' }))).toBe(true)
+    expect(form().querySelector('[data-draft-badge]')?.className).not.toMatch(/\bm-0\b/)
+  })
+
+  it('the footer wraps whole buttons, never their words', async () => {
+    const { form } = await draftFrom('## Smoke')
+    for (const label of ['Cancel', 'Back to the text', 'Create 3 phases']) {
+      const button = within(form()).getByRole('button', { name: label })
+      expect(button, label).toHaveClass('whitespace-nowrap')
+      expect(button.parentElement, label).toHaveClass('flex-wrap', 'w-full')
+    }
+  })
+
   it('a repeated name blocks Create, with the reason as text', async () => {
     const { form } = await draftFrom('## Smoke')
     fireEvent.change(within(form()).getByRole('textbox', { name: 'Name of phase 2' }), { target: { value: 'smoke TESTING' } })

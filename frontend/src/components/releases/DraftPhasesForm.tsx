@@ -98,29 +98,32 @@ export default function DraftPhasesForm({ release, slot, onDone, onCancel }: Dra
     setRows(current => current.map(row => (row.key === key ? { ...row, ...patch } : row)))
   }
 
+  // The footers are ONE wrapping row each: in the ~380 px pane a button that does not fit moves to the next line
+  // whole (`whitespace-nowrap`), never "Back to the / text". `w-full`: the section's footer is itself a flex row, in
+  // which a content-sized child would overflow instead of wrapping.
   const inputFooter = (
-    <>
-      <button type="button" onClick={onCancel} disabled={busy} className="btn-secondary btn-sm">Cancel</button>
+    <div className="flex w-full flex-wrap justify-end gap-2">
+      <button type="button" onClick={onCancel} disabled={busy} className="btn-secondary btn-sm whitespace-nowrap">Cancel</button>
       <button
         type="button"
         onClick={() => void draft()}
         disabled={busy || (!file && text.trim() === '')}
-        className="btn-primary btn-sm inline-flex items-center gap-2"
+        className="btn-primary btn-sm inline-flex items-center gap-2 whitespace-nowrap"
       >
         {drafting && <LoadingSpinner size="sm" />}
         {drafting ? 'Drafting…' : 'Draft phases'}
       </button>
-    </>
+    </div>
   )
 
   const previewFooter = (
-    <>
-      <button type="button" onClick={onCancel} disabled={busy} className="btn-secondary btn-sm">Cancel</button>
+    <div className="flex w-full flex-wrap justify-end gap-2">
+      <button type="button" onClick={onCancel} disabled={busy} className="btn-secondary btn-sm whitespace-nowrap">Cancel</button>
       <button
         type="button"
         onClick={() => { setResult(null); setRows([]); setError(null) }}
         disabled={busy}
-        className="btn-secondary btn-sm"
+        className="btn-secondary btn-sm whitespace-nowrap"
       >
         Back to the text
       </button>
@@ -128,12 +131,12 @@ export default function DraftPhasesForm({ release, slot, onDone, onCancel }: Dra
         type="button"
         onClick={() => void create()}
         disabled={busy || blocked !== null}
-        className="btn-primary btn-sm inline-flex items-center gap-2"
+        className="btn-primary btn-sm inline-flex items-center gap-2 whitespace-nowrap"
       >
         {creating && <LoadingSpinner size="sm" />}
         {createLabel(rows.length)}
       </button>
-    </>
+    </div>
   )
 
   return (
@@ -180,11 +183,12 @@ export default function DraftPhasesForm({ release, slot, onDone, onCancel }: Dra
         </div>
       ) : (
         <div className="space-y-3">
-          <p data-draft-badge="" className="m-0 inline-flex rounded-md border border-[var(--color-border)] px-2 py-0.5 text-xs font-medium text-[var(--color-text-secondary)]">
+          {/* No `m-0` on the children of this `space-y-3`: it would cancel the gap and the next block sits flush. */}
+          <p data-draft-badge="" className="flex w-fit rounded-md border border-[var(--color-border)] px-2 py-0.5 text-xs font-medium text-[var(--color-text-secondary)]">
             {draftBadge(result)}
           </p>
           {(result.warnings ?? []).length > 0 && (
-            <ul aria-label="Draft warnings" className="m-0 list-none space-y-1 p-0">
+            <ul aria-label="Draft warnings" className="list-none space-y-1 p-0">
               {(result.warnings ?? []).map(w => (
                 <li key={w} className="text-xs text-[var(--ui-warning-ink)]">{w}</li>
               ))}
@@ -193,59 +197,74 @@ export default function DraftPhasesForm({ release, slot, onDone, onCancel }: Dra
           {rows.length === 0 && <p className="text-sm text-[var(--color-text-muted)]">{NO_PHASES_DRAFTED}</p>}
           {rows.length > 0 && (
             <div className="space-y-2" data-draft-rows="">
-              <div aria-hidden="true" className="grid grid-cols-[minmax(0,1fr)_140px_72px_auto] gap-2 text-xs text-[var(--color-text-muted)]">
-                <span>Name</span><span>Type</span><span>Days</span><span />
-              </div>
+              {/* One card a phase, stacked for the ~380 px pane: the Name on its own full-width line, then Type,
+                  Days and Remove, then the description. Every field has its own label. */}
               {rows.map((row, i) => (
-                <div key={row.key} data-draft-row="" className="space-y-1 rounded-md border border-[var(--color-border)] p-2">
-                  <div className="grid grid-cols-[minmax(0,1fr)_140px_72px_auto] items-center gap-2">
+                <div key={row.key} data-draft-row="" className="space-y-2 rounded-md border border-[var(--color-border)] p-2">
+                  <div>
+                    <label htmlFor={`${idBase}-name-${row.key}`} className="mb-1 block text-xs text-[var(--color-text-muted)]">Name</label>
                     <input
+                      id={`${idBase}-name-${row.key}`}
                       aria-label={`Name of phase ${i + 1}`}
                       value={row.name}
                       maxLength={255}
                       onChange={e => update(row.key, { name: e.target.value })}
                       className="input w-full"
                     />
-                    <select
-                      aria-label={`Type of phase ${i + 1}`}
-                      value={row.phaseType}
-                      onChange={e => update(row.key, { phaseType: e.target.value })}
-                      className="input w-full"
-                    >
-                      {PHASE_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                    </select>
-                    <input
-                      aria-label={`Days of phase ${i + 1}`}
-                      type="number"
-                      min={MIN_DAYS}
-                      max={MAX_DAYS}
-                      value={row.days}
-                      onChange={e => update(row.key, { days: e.target.value })}
-                      className="input w-full"
-                    />
+                  </div>
+                  <div className="flex flex-wrap items-end gap-2">
+                    <div className="min-w-[8rem] flex-1">
+                      <label htmlFor={`${idBase}-type-${row.key}`} className="mb-1 block text-xs text-[var(--color-text-muted)]">Type</label>
+                      <select
+                        id={`${idBase}-type-${row.key}`}
+                        aria-label={`Type of phase ${i + 1}`}
+                        value={row.phaseType}
+                        onChange={e => update(row.key, { phaseType: e.target.value })}
+                        className="input w-full"
+                      >
+                        {PHASE_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    </div>
+                    <div className="w-20">
+                      <label htmlFor={`${idBase}-days-${row.key}`} className="mb-1 block text-xs text-[var(--color-text-muted)]">Days</label>
+                      <input
+                        id={`${idBase}-days-${row.key}`}
+                        aria-label={`Days of phase ${i + 1}`}
+                        type="number"
+                        min={MIN_DAYS}
+                        max={MAX_DAYS}
+                        value={row.days}
+                        onChange={e => update(row.key, { days: e.target.value })}
+                        className="input w-full"
+                      />
+                    </div>
                     <button
                       type="button"
                       aria-label={`Remove phase ${i + 1}`}
                       onClick={() => setRows(current => current.filter(r => r.key !== row.key))}
-                      className="btn-secondary btn-sm"
+                      className="btn-secondary btn-sm whitespace-nowrap"
                     >
                       Remove
                     </button>
                   </div>
-                  <textarea
-                    aria-label={`Description of phase ${i + 1}`}
-                    value={row.description}
-                    rows={2}
-                    maxLength={4000}
-                    onChange={e => update(row.key, { description: e.target.value })}
-                    className="input w-full resize-y text-xs"
-                  />
+                  <div>
+                    <label htmlFor={`${idBase}-description-${row.key}`} className="mb-1 block text-xs text-[var(--color-text-muted)]">Description</label>
+                    <textarea
+                      id={`${idBase}-description-${row.key}`}
+                      aria-label={`Description of phase ${i + 1}`}
+                      value={row.description}
+                      rows={2}
+                      maxLength={4000}
+                      onChange={e => update(row.key, { description: e.target.value })}
+                      className="input w-full resize-y text-xs"
+                    />
+                  </div>
                 </div>
               ))}
             </div>
           )}
           <div className="flex flex-wrap items-end justify-between gap-3">
-            <button type="button" onClick={() => setRows(current => [...current, emptyRow()])} className="btn-secondary btn-sm">
+            <button type="button" onClick={() => setRows(current => [...current, emptyRow()])} className="btn-secondary btn-sm whitespace-nowrap">
               Add a row
             </button>
             <div>

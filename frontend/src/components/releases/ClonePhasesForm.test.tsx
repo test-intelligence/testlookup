@@ -72,12 +72,25 @@ describe('ClonePhasesForm', () => {
     const { form } = renderForm()
     expect(within(form).getByLabelText('First phase starts')).toHaveValue('2026-11-03')
     const rows = within(within(form).getByRole('list', { name: 'Phases to copy' })).getAllByRole('listitem')
-    expect(rows.map(r => r.textContent)).toEqual([
-      'Smoke·QA Testing·5 days2026-11-03 → 2026-11-07',
-      'UAT·QA Testing·13 days2026-11-10 → 2026-11-22',
+    // Two lines a phase: the name · type · days, then the moved dates.
+    expect(rows.map(r => Array.from(r.children).map(line => line.textContent))).toEqual([
+      ['Smoke · QA Testing · 5 days', '2026-11-03 → 2026-11-07'],
+      ['UAT · QA Testing · 13 days', '2026-11-10 → 2026-11-22'],
     ])
     fireEvent.change(within(form).getByLabelText('First phase starts'), { target: { value: '2026-12-01' } })
     expect(rows[0]).toHaveTextContent('2026-12-01 → 2026-12-05')
+  })
+
+  it('a phase name is shown whole (it wraps in the narrow pane, never truncated), its title the full name', () => {
+    const long = 'Regression across every payment provider and every market we ship to'
+    const source = rel('2026.10', { phases: [phase(long, 0, '2026-09-01T00:00:00Z', '2026-09-05T00:00:00Z')] })
+    const { form } = renderForm([TARGET, source])
+    const name = within(form).getByTitle(long)
+    expect(name).toHaveTextContent(long)
+    expect(name.className).not.toMatch(/truncate/)
+    expect(name.closest('[data-clone-preview-row]')?.querySelector('.truncate')).toBeNull()
+    // The note keeps the section's gap under the list: the list carries no margin reset.
+    expect(within(form).getByRole('list', { name: 'Phases to copy' }).className).not.toMatch(/\bm-0\b/)
   })
 
   it('an undated source asks for no start and sends shift_to null', async () => {

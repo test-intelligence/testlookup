@@ -103,18 +103,19 @@ export default function ClonePhasesForm({ release, releases, slot, onDone, onCan
       busy={saving}
       dataAttributes={{ 'data-clone-phases-form': release.id }}
       footer={(
-        <>
-          <button type="button" onClick={onCancel} disabled={saving} className="btn-secondary btn-sm">Cancel</button>
+        // One wrapping row: a button that does not fit moves to the next line whole, never breaking its text.
+        <div className="flex w-full flex-wrap justify-end gap-2">
+          <button type="button" onClick={onCancel} disabled={saving} className="btn-secondary btn-sm whitespace-nowrap">Cancel</button>
           <button
             type="button"
             onClick={() => void copy()}
             disabled={saving || !source || (dated && !firstStart)}
-            className="btn-primary btn-sm inline-flex items-center gap-2"
+            className="btn-primary btn-sm inline-flex items-center gap-2 whitespace-nowrap"
           >
             {saving && <LoadingSpinner size="sm" />}
             Copy phases
           </button>
-        </>
+        </div>
       )}
     >
       {sources.length === 0 ? (
@@ -144,22 +145,20 @@ export default function ClonePhasesForm({ release, releases, slot, onDone, onCan
               />
             </div>
           )}
-          <ol aria-label="Phases to copy" className="m-0 list-none space-y-1 p-0 text-xs">
+          {/* Two lines a phase: the FULL name (it wraps, never truncates: the pane is ~380 px) with its type and
+              days, then the moved dates. No `m-0` here: it would cancel the section's gap under the list. */}
+          <ol aria-label="Phases to copy" className="list-none space-y-1.5 p-0 text-xs">
             {preview.map(row => (
-              <li key={row.id} data-clone-preview-row="" className="flex min-w-0 items-center gap-2 text-[var(--color-text-secondary)]">
-                <span className="min-w-0 truncate font-medium text-[var(--color-text)]" title={row.name}>{row.name}</span>
-                <span aria-hidden="true">·</span>
-                <span className="shrink-0">{typeLabel(row.phaseType)}</span>
-                {row.days != null && (
-                  <>
-                    <span aria-hidden="true">·</span>
-                    <span className="shrink-0">{row.days} day{row.days === 1 ? '' : 's'}</span>
-                  </>
-                )}
+              <li key={row.id} data-clone-preview-row="" className="min-w-0 text-[var(--color-text-secondary)]">
+                <div className="min-w-0 break-words">
+                  <span className="font-medium text-[var(--color-text)]" title={row.name}>{row.name}</span>
+                  <span> · {typeLabel(row.phaseType)}</span>
+                  {row.days != null && <span> · {row.days} day{row.days === 1 ? '' : 's'}</span>}
+                </div>
                 {(row.start || row.end) && (
-                  <span className="ml-auto shrink-0 tabular-nums text-[var(--color-text-muted)]">
+                  <div data-clone-preview-dates="" className="tabular-nums text-[var(--color-text-muted)]">
                     {row.start ?? '?'} → {row.end ?? '?'}
-                  </span>
+                  </div>
                 )}
               </li>
             ))}
