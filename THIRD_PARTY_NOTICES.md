@@ -101,6 +101,7 @@ same family of permissive licenses (MIT, BSD, Apache-2.0, PSF, ISC, MPL-2.0).
 | `celery` | BSD-3-Clause | backend |
 | `chromadb` | Apache-2.0 | backend |
 | `click` | BSD-3-Clause | backend |
+| `cryptography` | Apache-2.0 OR BSD-3-Clause | cli |
 | `defusedxml` | PSF-2.0 | backend |
 | `email-validator` | Unlicense | backend |
 | `factory-boy` | MIT | backend |

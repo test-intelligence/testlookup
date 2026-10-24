@@ -67,7 +67,7 @@
     "frontend/src/pages/CanonicalDetailPage.tsx": 2,
     "frontend/src/pages/DocsPage.tsx": 12,
     "frontend/src/pages/FlakyTestsPage.tsx": 1,
-    "frontend/src/pages/LiveExecutionPage.tsx": 21,
+    "frontend/src/pages/LiveExecutionPage.tsx": 20,
     "frontend/src/pages/LoginPage.tsx": 1,
     "frontend/src/pages/NotFoundPage.tsx": 3,
     "frontend/src/pages/OnboardingPage.tsx": 1,

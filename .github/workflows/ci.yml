@@ -879,6 +879,12 @@ jobs:
           tests/integration/test_integration_health_scope_postgres.py
           tests/integration/test_webhook_circuit_breaker_postgres.py
           tests/integration/test_regression_diff_lazy_resolve_postgres.py
+          tests/integration/test_migration_0225_postgres.py
+          tests/integration/test_compliance_pack_signing_postgres.py
+          tests/integration/test_release_phase_bulk_postgres.py
+          tests/integration/test_release_portfolio_postgres.py
+          tests/integration/test_digest_release_verdict_postgres.py
+          tests/integration/test_attribution_preview_postgres.py
           tests/integration/test_every_get_route_answers_without_500_postgres.py
           tests/integration/test_key_mint_revoke_race_postgres.py
           tests/integration/test_migration_index_leftovers_postgres.py

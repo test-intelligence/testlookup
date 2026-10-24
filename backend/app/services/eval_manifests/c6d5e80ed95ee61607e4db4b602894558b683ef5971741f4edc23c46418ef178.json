@@ -1,0 +1,139 @@
+{
+  "attested_at": "2026-10-24T01:03:00.198397+00:00",
+  "change_id": "W11-REL-07",
+  "eval_gate_run_id": null,
+  "eval_manifest_checksum": "c6d5e80ed95ee61607e4db4b602894558b683ef5971741f4edc23c46418ef178",
+  "gate_results": [
+    {
+      "agent_name": "AnalysisAgent",
+      "metrics": {
+        "accuracy": 0.8333,
+        "f1_score": 0.9013,
+        "total": 12
+      },
+      "rule_results": [
+        {
+          "detail": "Accuracy 0.8333 (no baseline \u2014 using 0.70 default)",
+          "passed": true,
+          "rule": "default_min_accuracy"
+        },
+        {
+          "detail": "Dataset has 12 items",
+          "passed": true,
+          "rule": "sufficient_data"
+        }
+      ],
+      "status": "pass",
+      "task_type": "classification"
+    },
+    {
+      "agent_name": "AnalysisAgent",
+      "metrics": {
+        "accuracy": 0.8,
+        "f1_score": 0.8,
+        "total": 5
+      },
+      "rule_results": [
+        {
+          "detail": "Accuracy 0.8000 (no baseline \u2014 using 0.70 default)",
+          "passed": true,
+          "rule": "default_min_accuracy"
+        },
+        {
+          "detail": "Dataset has 5 items",
+          "passed": true,
+          "rule": "sufficient_data"
+        }
+      ],
+      "status": "pass",
+      "task_type": "root_cause"
+    },
+    {
+      "agent_name": "DefectPromotionAgent",
+      "metrics": {
+        "accuracy": 0.5,
+        "f1_score": 0.0,
+        "total": 6
+      },
+      "rule_results": [
+        {
+          "detail": "Accuracy 0.5000 (no baseline \u2014 using 0.70 default)",
+          "passed": false,
+          "rule": "default_min_accuracy"
+        },
+        {
+          "detail": "Dataset has 6 items",
+          "passed": true,
+          "rule": "sufficient_data"
+        }
+      ],
+      "status": "insufficient_samples",
+      "task_type": "duplicate_detection"
+    },
+    {
+      "agent_name": "ReleaseRiskAgent",
+      "metrics": {
+        "accuracy": 1.0,
+        "f1_score": 1.0,
+        "total": 6
+      },
+      "rule_results": [
+        {
+          "detail": "Accuracy 1.0000 (no baseline \u2014 using 0.70 default)",
+          "passed": true,
+          "rule": "default_min_accuracy"
+        },
+        {
+          "detail": "Dataset has 6 items",
+          "passed": true,
+          "rule": "sufficient_data"
+        }
+      ],
+      "status": "pass",
+      "task_type": "release_decision"
+    }
+  ],
+  "manifest_digest": "14c5c5160beb05ea0781605191647f1acd20600733a61e702ccd2320b73ea59e",
+  "mode": "source_review",
+  "notes": "W11 REL-07 registers ONE new prompt, release_phase_draft v1, used only by the release-phase PRD drafter (services/release_phase_generator.py) through the real BudgetedLLM; its output is a draft the user edits before anything is saved, and the heading parser runs first and always. No existing prompt text, model choice, routing or watched source changed. No scored task uses the new prompt, so the gate results below are the real offline golden run over the existing tasks (classification, root_cause, release_decision pass; duplicate_detection insufficient_samples as on origin/main \u2014 prompt-independent offline scorer). Offline golden verdict as computed: insufficient_samples.",
+  "prompt_versions": {
+    "anomaly_narrative": "v1:0298a3b5009f",
+    "chat_compression": "v1:68e08a32dff5",
+    "chat_system": "v4:fe1dec9d3a30",
+    "defect_promotion_ticket": "v1:45d88cc4d33b",
+    "fast_classifier_system": "v1:9d46ffbbed7b",
+    "finetune_reasoning_system": "v1:3ea37c087b6b",
+    "fixer_generate_patch": "v1:a9267b59f0a0",
+    "investigator_hypothesis_weigh": "v1:44a0c89134b9",
+    "investigator_synthesis_narrative": "v1:f7d92dd09981",
+    "react_triage": "v3:e71c26f0ad74",
+    "regression_watchman_classify": "v1:2ac1510063fd",
+    "release_phase_draft": "v1:07af895ba929",
+    "release_risk_reasoning": "v1:a152fb254091",
+    "reviewer_claim_extraction": "v1:657326161d7b",
+    "reviewer_second_model": "v1:7714b62aff2c",
+    "run_compare_report": "v1:5272dd391090",
+    "run_compare_system": "v1:bbba41240c3f",
+    "summary_action_plan": "v2:a554d240b844",
+    "summary_evidence_pack": "v2:531118f798af",
+    "summary_executive": "v1:9885ab3d7268",
+    "summary_incident_view": "v2:674423db4627",
+    "summary_renderer_developer": "v1:58d153d90e99",
+    "summary_renderer_manager": "v1:fb02a6a74429",
+    "summary_renderer_system": "v1:42fc12956d2f",
+    "summary_system": "v1:3b2f2b5fde10",
+    "test_case_coverage": "v1:16988c2ae516",
+    "test_case_generate": "v1:fb6a09db0b78",
+    "test_case_plan_optimizer": "v1:97d09e4d78eb",
+    "test_case_review": "v1:43f1dfbc6c86",
+    "test_case_strategy": "v1:2070533050ae"
+  },
+  "schema_version": 1,
+  "verdict": "pass",
+  "watched_sources": {
+    "backend/app/agents/reviewer_agent.py": "9a68e8508d3fbd78620bf1f290482438618bc66676a21fc31bae797ab222bf47",
+    "backend/app/services/agent_capability_registry.py": "cd7574054793b43c875b2210535005fe93eaf662fd2deb40b165dbd724922438",
+    "backend/app/services/llm_factory.py": "f411d4b6bed6f9d55a2b2e2a10cd3033b026dc6948ac989e9af24ff2f659d615",
+    "backend/app/services/model_router.py": "65048cdf67c973ca7413acf0c7e4be61282476d657d9c3ce38036911ba8ac87d"
+  }
+}
