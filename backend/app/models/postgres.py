@@ -753,6 +753,14 @@ class SemanticReindexJob(Base):
     fence_token: Mapped[int] = mapped_column(
         BigInteger, nullable=False, default=1, server_default="1"
     )
+    # Which embedding generation the job builds (migration 0226, W12 SRCH-02).
+    # A legacy-generation rebuild of test_case_search (scope "global" /
+    # "project:<id>") writes collection "test_case_search" with embedder
+    # "default" (backfilled on every row older than 0226); a build of a NEW
+    # generation reuses this keyset job under scope_key "generation:<tag>" and
+    # sets both when it claims the row. None = a row written before 0226.
+    collection: Mapped[Optional[str]] = mapped_column(String(63))      # the physical collection this job writes
+    embedder_key: Mapped[Optional[str]] = mapped_column(String(200))   # "default" | "ollama:<model>" | "openai:<model>"
     last_error: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -4986,6 +4994,36 @@ class SavedView(Base):
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)  # auto-load on page visit
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+
+class SearchQueryEvent(Base):
+    """One search a person ran on the /search page (migration 0227, W12 SRCH-05). NO query text: q_hash is an
+    HMAC-SHA256 keyed from APP_SECRET_KEY over the normalised query (search_usage_service.query_hash), so a
+    database reader cannot dictionary-reverse it; no user id (no per-person trail). Kept 30 days
+    (USAGE_RETENTION_DAYS), deleted nightly by purge_search_usage_events and by a project's retention purge."""
+    __tablename__ = "search_query_events"
+    __table_args__ = (
+        Index("ix_search_query_events_project_created", "project_id", text("created_at DESC")),
+        Index("ix_search_query_events_created", "created_at"),
+        CheckConstraint("q_length >= 0 AND word_count >= 0 AND filter_count >= 0 AND result_count >= 0 "
+                        "AND latency_ms >= 0", name="ck_search_query_events_nonnegative"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True
+    )
+    q_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    q_length: Mapped[int] = mapped_column(SmallInteger, nullable=False)          # characters of the stripped query (≤ 500)
+    word_count: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0")   # free-text words
+    filter_count: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0, server_default="0")
+    entity_scope: Mapped[str] = mapped_column(String(20), nullable=False)        # SEARCH_SCOPES
+    mode_requested: Mapped[str] = mapped_column(String(10), nullable=False)      # SEARCH_MODES
+    mode_used: Mapped[str] = mapped_column(String(10), nullable=False)
+    fallback_reason: Mapped[Optional[str]] = mapped_column(String(30))           # FALLBACK_REASONS
+    result_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    counts_exact: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("true"))
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
 class ReleaseGateDecision(Base):

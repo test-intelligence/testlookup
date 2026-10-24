@@ -46,6 +46,12 @@ class                   what it covers
                         ``retention_expires_at`` + their MinIO ZIPs).
 ======================  =====================================================
 
+Plus one class on a FIXED clock (W12 SRCH-05): ``search_usage_rows``, the
+project's ``search_query_events`` older than 30 days (``USAGE_RETENTION_DAYS``;
+rows hold no query text). The nightly ``purge_search_usage_events`` task
+deletes those deployment-wide; the preview counts and execute deletes the
+project's own, so the dry run lists every class the purge removes.
+
 NEVER purged: ``settings_audit_log`` (it has no project scope and holds the
 purge-audit records themselves — ``setting_key = "retention_purge:{id}"``),
 and compliance packs before their ``retention_expires_at``.
@@ -107,6 +113,7 @@ from app.models.postgres import (
     Project,
     ProjectRetentionPolicy,
     ReportShareLink,
+    SearchQueryEvent,
     SettingsAuditLog,
     TestCase,
     ProjectActivityEvent,
@@ -114,6 +121,7 @@ from app.models.postgres import (
     TestRun,
 )
 from app.services import ai_history_retention, deletion_job_service
+from app.services.search_usage_service import usage_cutoff
 from app.services.ai_history_core import (
     CAP_MAX,
     CAP_MIN,
@@ -859,6 +867,15 @@ async def run_purge(
         AgentMemoryEntry.expires_at.is_not(None),
         AgentMemoryEntry.expires_at <= now,
     )
+    # W12 SRCH-05. Search usage rows (no query text) ride a FIXED 30-day window,
+    # not the audit clock (whose floor is 365 days): the nightly
+    # purge_search_usage_events task covers every row deployment-wide, and this
+    # class makes a project's purge preview list -- and its execute delete --
+    # the project's rows past that window.
+    search_usage_where = (
+        SearchQueryEvent.project_id == project_id,
+        SearchQueryEvent.created_at < usage_cutoff(now),
+    )
     memory_expired_ids = list(
         (
             await db.execute(
@@ -989,6 +1006,7 @@ async def run_purge(
                 + ai_cascaded
                 + ai_plan.total
             ),
+            "search_usage_rows": await _count(SearchQueryEvent.id, search_usage_where),
         }
         return {
             "mode": "preview",
@@ -1014,6 +1032,12 @@ async def run_purge(
         search_index_documents=search_index_documents,
         now=now,
     )
+    # W12 SRCH-05: beside the audit-class deletes, the project's search usage
+    # rows past the fixed 30-day window -- the class the preview counted. Kept
+    # out of execute_candidates on purpose: that executor is shared with the
+    # per-run delete, which must never take project-wide rows.
+    usage_result = await db.execute(delete(SearchQueryEvent).where(*search_usage_where))
+    counts["postgres"]["search_usage_rows"] = int(getattr(usage_result, "rowcount", 0) or 0)
     # The cap sweep runs on the SURVIVING runs, so after the run delete; it
     # deletes exactly ``ai_plan`` (the object the preview counted).
     over_cap = await ai_history_retention.execute_over_cap(db, mongo, ai_plan)

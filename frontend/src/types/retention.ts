@@ -99,6 +99,11 @@ export interface RetentionPreviewCandidates {
    * Absent on an older server: render "not measured", never 0.
    */
   ai_history_versions?: number
+  /**
+   * W12 SRCH-05: the project's search usage rows (no query text) older than
+   * the fixed 30-day window. Absent on an older server: render "not measured", never 0.
+   */
+  search_usage_rows?: number
 }
 
 export interface RetentionPreview {

@@ -129,6 +129,8 @@ const CANDIDATE_ROWS: Array<{
   // cascades, and every version over a cap. Absent on an older server, which
   // the `== null` render below shows as "not measured".
   { key: 'ai_history_versions', label: 'AI history versions' },
+  // W12 SRCH-05: a FIXED 30-day window, not one of the clocks above.
+  { key: 'search_usage_rows', label: 'Search usage rows (kept 30 days)' },
 ]
 
 /** Editable form shape — counts as strings so typing is never fought. */

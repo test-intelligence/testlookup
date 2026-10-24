@@ -75,7 +75,10 @@ def test_the_chain_is_linear_with_0225_the_only_head():
     parents = [p for p in revisions.values() if p]
     assert parents.count("0224") == 1, "nothing else forks off 0224"
     heads = sorted(r for r in revisions if r not in set(parents))
-    assert heads == ["0225"]
+    # One head, at or after 0225 (W12's 0226 / 0227 chain onto it), as the
+    # 0221-0224 tests assert.
+    assert len(heads) == 1, heads
+    assert heads[0] >= "0225"
 
 
 def test_it_imports_no_application_code():
