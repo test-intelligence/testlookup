@@ -415,6 +415,28 @@ def parse_pytest_failures(output: str) -> list[str]:
     return ids
 
 
+# A summary ERROR line names a test file or a test id. Captured log lines also
+# begin with "ERROR" but pad the level name ("ERROR    app.x:x.py:12 ..."), so the
+# node must follow a SINGLE space and look like a path to a .py file.
+_ERROR_NODE = re.compile(r"^[^\s:][^:]*\.py(?:::.+)?$")
+
+
+def parse_pytest_errors(output: str) -> list[str]:
+    """Node ids of the tests that ERRORED (setup / teardown / collection), forward-slashed.
+
+    An error is a failure CI also reports. Read alone, ``FAILED`` lines let any
+    number of errors ride along whenever a known failure made the run red (13
+    setup errors went unreported that way on 2026-10-24).
+    """
+    ids = []
+    for line in output.splitlines():
+        if line.startswith("ERROR ") and not line.startswith("ERROR  "):
+            node = line[len("ERROR "):].split(" - ")[0].strip().replace("\\", "/")
+            if _ERROR_NODE.match(node):
+                ids.append(node)
+    return ids
+
+
 def _allowlist_key_for(node: str) -> str | None:
     """The allowlist entry covering this failed test, if any.
 
@@ -435,7 +457,8 @@ def _allowlist_key_for(node: str) -> str | None:
 
 
 def backend_failures_are_all_known(output: str) -> tuple[bool, list[str], list[str]]:
-    failed = parse_pytest_failures(output)
+    """Are all of the run's failures AND errors local-only ones (``KNOWN_LOCAL_FAILURES``)?"""
+    failed = parse_pytest_failures(output) + parse_pytest_errors(output)
     if not failed:
         return False, [], []
     known, unknown = [], []
@@ -995,9 +1018,9 @@ def _main() -> int:
                     # ``k`` is a node id; the reason lives on whichever entry
                     # covered it, which may be its file.
                     reason = KNOWN_LOCAL_FAILURES.get(_allowlist_key_for(k) or "", "")
-                    warnings.append(f"{k} failed locally - known: {reason}")
+                    warnings.append(f"{k} failed or errored locally - known: {reason}")
                 continue
-            out += "\n\nUnexpected failures (not in KNOWN_LOCAL_FAILURES):\n  " + \
+            out += "\n\nUnexpected failures or errors (not in KNOWN_LOCAL_FAILURES):\n  " + \
                    "\n  ".join(unknown)
 
         if code == 0:

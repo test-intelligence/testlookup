@@ -217,6 +217,69 @@ class TestParsingPytestOutput:
         ]
 
 
+class TestErrorsAreFailuresToo:
+    """A pytest ERROR (setup / teardown / collection) is red in CI, so the gate must judge it.
+
+    The parser once read only FAILED lines: with one known failure in the run,
+    13 setup errors were tolerated without a word (2026-10-24).
+    """
+
+    def test_an_unknown_error_beside_a_known_failure_still_fails(self):
+        known = next(iter(push_check.KNOWN_LOCAL_FAILURES))
+        out = (
+            f"FAILED {known}::test_something - ImportError\n"
+            "ERROR tests/test_new_feature.py::test_setup_breaks - ModuleNotFoundError: x\n"
+        )
+        all_known, _, unknown = push_check.backend_failures_are_all_known(out)
+        assert all_known is False
+        assert unknown == ["tests/test_new_feature.py::test_setup_breaks"]
+
+    def test_an_errors_only_run_with_an_unknown_error_fails(self):
+        out = "ERROR tests/test_new_feature.py::test_setup_breaks - RuntimeError\n"
+        all_known, _, unknown = push_check.backend_failures_are_all_known(out)
+        assert all_known is False
+        assert unknown == ["tests/test_new_feature.py::test_setup_breaks"]
+
+    def test_a_known_error_is_tolerated_like_a_known_failure(self, monkeypatch):
+        monkeypatch.setattr(push_check, "KNOWN_LOCAL_FAILURES", {
+            "tests/test_needs_chroma.py::test_builds": "needs chromadb",
+        })
+        out = (
+            "ERROR tests/test_needs_chroma.py::test_builds - ImportError\n"
+            "ERROR tests/test_needs_chroma.py::test_builds[case-2] - ImportError\n"
+        )
+        all_known, matched, unknown = push_check.backend_failures_are_all_known(out)
+        assert all_known is True
+        assert unknown == []
+        assert matched == ["tests/test_needs_chroma.py::test_builds",
+                           "tests/test_needs_chroma.py::test_builds[case-2]"]
+
+    def test_a_collection_error_names_the_file_and_a_file_entry_covers_it(self, monkeypatch):
+        assert push_check.parse_pytest_errors("ERROR tests/test_x.py - ImportError: no chromadb") == [
+            "tests/test_x.py"
+        ]
+        monkeypatch.setattr(push_check, "KNOWN_LOCAL_FAILURES", {"tests/test_x.py": "needs chromadb"})
+        all_known, _, unknown = push_check.backend_failures_are_all_known("ERROR tests/test_x.py - ImportError")
+        assert all_known is True and unknown == []
+
+    def test_a_parametrised_id_with_spaces_and_a_windows_path_is_read_whole(self):
+        # Same reading as the FAILED parser: the id runs to the first " - ", backslashes normalised.
+        out = "ERROR tests\\regression\\test_x.py::test_one[a b] - ValueError: bad"
+        assert push_check.parse_pytest_errors(out) == ["tests/regression/test_x.py::test_one[a b]"]
+
+    def test_captured_log_lines_are_not_tests(self):
+        # pytest pads the level name in captured logs; those lines must never be
+        # read as node ids (a run with one ERROR log is not a run with an error).
+        out = (
+            "ERROR    app.services.search:search.py:152 search_usage_write_failed\n"
+            "ERROR  something odd\n"
+            "ERROR: not a summary line\n"
+            "tests/test_y.py::test_logs_an_error PASSED\n"
+        )
+        assert push_check.parse_pytest_errors(out) == []
+        assert push_check.backend_failures_are_all_known(out) == (False, [], [])
+
+
 class TestTheAllowlistCannotHideARegression:
     """The failure mode that matters: passing when CI would fail."""
 
