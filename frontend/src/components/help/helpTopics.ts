@@ -40,6 +40,8 @@ export const HELP_TOPICS: Readonly<Record<string, HelpTopic>> = {
   '/value-metrics': { topic: 'reports', anchor: 'value-metrics' },
   '/release-gate': { topic: 'releases', anchor: 'the-release-gate' },
   '/releases': { topic: 'releases', anchor: 'releases' },
+  // W11 REL-09: the rules page opens the guide's own section.
+  '/releases/attribution-rules': { topic: 'releases', anchor: 'attribution-rules' },
   // Pinned by PolicyEditorPage.test.tsx.
   '/policies': { topic: 'releases', anchor: 'the-decision-rules-in-order' },
   '/search': { topic: 'search' },

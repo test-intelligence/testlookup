@@ -23,15 +23,27 @@ where future runs land, and nobody re-reads it afterwards.
 So a rule can be tried against recent runs before it is saved. Counting matches
 is cheap and it is the one number that distinguishes a useful rule from one that
 captures the whole project.
+
+W11 REL-09: "which release would this run land in"
+--------------------------------------------------
+Matching alone over-promises: the candidate is evaluated ALONE, while at ingest
+an earlier enabled rule that matches the same run wins (rung 3 is a total order),
+and a run that named its release (rung 1) or was matched to a milestone (rung 2)
+never reaches the rules at all. ``POST /preview?detail=true`` therefore answers
+where each matched run would really land — ``rule`` (here), ``earlier_rule``
+(``shadowed``) or ``explicit`` (rungs 1-2 keep it) — whether the target release
+exists yet, and how many of the considered runs have no release at all
+(Unattributed). Without ``detail`` the preview is exactly what it always was:
+one statement and four keys. The ladder itself is not changed (D13).
 """
 from __future__ import annotations
 
 import uuid
-from typing import Optional
+from typing import Any, Optional, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
@@ -42,11 +54,19 @@ from app.core.deps import (
 from app.db.postgres import get_db
 from app.services.activity.service import ActorRef, record as record_activity
 from app.models.postgres import (
+    ASSERTED_LINK_SOURCES,
     AttributionMatchField,
+    Release,
     ReleaseAttributionRule,
+    ReleaseTestRunLink,
     TestRun,
     User,
     UserRole,
+)
+from app.models.schemas import (
+    AttributionPreviewResponse,
+    AttributionRuleField,
+    AttributionRuleFieldsResponse,
 )
 from app.services import release_attribution
 
@@ -61,6 +81,34 @@ router = APIRouter(
 #: random: a rule is written for how the project builds NOW, and a sample from
 #: last year would answer a question nobody asked.
 PREVIEW_RUN_LIMIT = 200
+
+#: Where a matched run would land if the previewed rule were saved (W11 REL-09,
+#: ``AttributionPreviewSample.would_land``), in the ladder's precedence:
+#: ``explicit`` — its primary link is an assertion (rung 1 / 2), a rule never moves it;
+#: ``earlier_rule`` — an enabled saved rule ahead of the candidate matches it first;
+#: ``rule`` — the candidate would claim it.
+PREVIEW_LANDINGS = ("rule", "earlier_rule", "explicit")
+
+#: The page's field labels and help, one entry per ``AttributionMatchField``
+#: value (``GET /fields``; ``frontend/src/types/attributionRules.ts`` keeps a
+#: fallback copy, pinned by ``tests/test_attribution_field_vocab.py``).
+ATTRIBUTION_FIELD_LABELS = {
+    "branch": "Branch",
+    "build_number": "Build number",
+    "environment": "Environment",
+    "tag": "Tag",
+}
+ATTRIBUTION_FIELD_HELP = {
+    "branch": "The run's git branch. Wildcards: * and ?, e.g. release/2.5*.",
+    "build_number": "The run's build label. Wildcards: * and ?, e.g. nightly-*.",
+    "environment": "The run's environment, matched exactly (case does not matter), e.g. staging.",
+    "tag": "Any of the run's tags. Wildcards: * and ?, e.g. rc-*.",
+}
+
+#: A preview sample's tags: the first ten, each clipped to 100 characters.
+_SAMPLE_TAGS = 10
+_SAMPLE_TAG_CHARS = 100
+_SAMPLE_SIZE = 10
 
 
 class AttributionRuleIn(BaseModel):
@@ -178,6 +226,40 @@ async def list_attribution_rules(
         .all()
     )
     return {"items": [_serialize(r) for r in rows], "total": len(rows)}
+
+
+def _field_is_glob(value: str) -> bool:
+    """Whether ``rule_matches`` reads this field with a glob (``*`` / ``?``).
+
+    Read from the evaluator's own set (plus ``tag``, whose list is globbed
+    member by member), so the page's help cannot drift from the matcher.
+    """
+    return value in release_attribution._GLOB_FIELDS or value == AttributionMatchField.TAG.value
+
+
+@router.get("/fields", response_model=AttributionRuleFieldsResponse)
+async def list_attribution_rule_fields(
+    project_id: uuid.UUID,
+    _: User = Depends(get_current_active_user),
+    __: User = Depends(require_project_access()),
+) -> AttributionRuleFieldsResponse:
+    """The fields a rule can match on, with how each one matches (W11 REL-09).
+
+    In ``AttributionMatchField`` declaration order. Static: the vocabulary is
+    the ORM enum, the glob flag the evaluator's own set, so the handler runs
+    no statement (the dependency checks the caller's access to the project).
+    """
+    return AttributionRuleFieldsResponse(
+        fields=[
+            AttributionRuleField(
+                value=f.value,
+                label=ATTRIBUTION_FIELD_LABELS[f.value],
+                glob=_field_is_glob(f.value),
+                help=ATTRIBUTION_FIELD_HELP[f.value],
+            )
+            for f in AttributionMatchField
+        ]
+    )
 
 
 @router.post("", status_code=201)
@@ -317,7 +399,14 @@ async def delete_attribution_rule(
 
 
 # activity: none - dry-run of a rule against recent runs; persists nothing
-@router.post("/preview")
+@router.post(
+    "/preview",
+    response_model=AttributionPreviewResponse,
+    # Without ``detail`` the answer is exactly the pre-W11 four keys (and a
+    # sample of four fields): the new fields' defaults are not claims, so they
+    # are left out rather than reported as measured zeros.
+    response_model_exclude_unset=True,
+)
 async def preview_attribution_rule(
     project_id: uuid.UUID,
     body: AttributionRuleIn,
@@ -325,6 +414,8 @@ async def preview_attribution_rule(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_active_user),
     __: User = Depends(require_project_access()),
+    detail: bool = False,
+    rule_id: Optional[uuid.UUID] = None,
 ):
     """Try a rule against recent runs WITHOUT saving it.
 
@@ -335,6 +426,13 @@ async def preview_attribution_rule(
 
     Evaluated with ``rule_matches`` — the same predicate the ladder uses — on an
     UNSAVED instance, so the preview cannot disagree with the rule it previews.
+
+    ``detail`` (W11 REL-09) adds where each matched run would really land
+    (``_preview_detail``). ``rule_id`` names the rule being edited, so it is not
+    counted as an earlier rule shadowing itself; it is read only inside the
+    PATH project (the access check above), so another project's rule id is
+    simply never found — the answer is the same as without it, no oracle.
+    Plain defaults, not ``Query(...)``: tests call this handler directly.
     """
     _validate_match_field(body.match_field)
 
@@ -362,7 +460,7 @@ async def preview_attribution_rule(
     )
     matched = [r for r in runs if release_attribution.rule_matches(candidate, r)]
 
-    return {
+    out: dict[str, Any] = {
         "considered": len(runs),
         "matched": len(matched),
         # A field most runs do not carry produces a rule that fires rarely and
@@ -380,6 +478,142 @@ async def preview_attribution_rule(
                 "branch": r.branch,
                 "environment": r.environment,
             }
-            for r in matched[:10]
+            for r in matched[:_SAMPLE_SIZE]
         ],
     }
+    if not detail:
+        return out
+    return await _preview_detail(
+        db, project_id=project_id, body=body, rule_id=rule_id, runs=runs, matched=matched, out=out
+    )
+
+
+def _sample_tags(run: TestRun) -> list[str]:
+    """The run's tags as the sample shows them: strings only, ten, each ≤ 100 chars."""
+    tags = run.tags if isinstance(run.tags, list) else []
+    return [t[:_SAMPLE_TAG_CHARS] for t in tags if isinstance(t, str)][:_SAMPLE_TAGS]
+
+
+async def _preview_detail(
+    db: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    body: AttributionRuleIn,
+    rule_id: Optional[uuid.UUID],
+    runs: Sequence[TestRun],
+    matched: Sequence[TestRun],
+    out: dict[str, Any],
+) -> dict[str, Any]:
+    """Where each matched run would land if the candidate were saved (W11 REL-09).
+
+    Three statements after the runs, in order, each confined to the PATH
+    project; nothing is written:
+
+    (a) the project's enabled rules in the ladder's own order (``priority``,
+        ``created_at``, ``id`` — ``match_attribution_rule``'s ORDER BY), plus
+        the edited rule (``rule_id``) whatever its state, so its own position
+        is known. A NEW candidate is placed by ``(priority, created_at = now)``:
+        after every saved rule of the same priority, exactly where saving it
+        would put it. An EDITED one keeps its ``created_at`` and ``id`` (an
+        update moves only its priority) and is not an earlier rule for itself.
+        A run is ``shadowed`` when a saved rule ahead of the candidate matches
+        it, with the ladder's one predicate ``rule_matches``.
+    (b) the matched runs' PRIMARY links with their release names: a link
+        asserted by rung 1 / 2 (``ASSERTED_LINK_SOURCES``) means a rule would
+        never have moved the run (``explicit``); the name is the run's release
+        today (``None`` = Unattributed).
+    (c) whether a release of the project already carries the target name, by
+        the linker's own match (stripped, ``lower(name) = lower(:target)``):
+        when none does, the first matching run creates it.
+
+    Each matched run lands in exactly ONE place, in the ladder's precedence
+    (explicit, then an earlier rule, then the candidate), so ``explicit`` +
+    ``shadowed`` + the runs that land "here" add up to ``matched``.
+    ``unattributed_recent`` counts the considered runs with no primary release
+    (no statement: the runs are loaded).
+    """
+    saved = (
+        await db.execute(
+            select(ReleaseAttributionRule)
+            .where(
+                ReleaseAttributionRule.project_id == project_id,
+                or_(
+                    ReleaseAttributionRule.is_enabled.is_(True),
+                    ReleaseAttributionRule.id == rule_id,
+                )
+                if rule_id is not None
+                else ReleaseAttributionRule.is_enabled.is_(True),
+            )
+            .order_by(
+                ReleaseAttributionRule.priority.asc(),
+                ReleaseAttributionRule.created_at.asc(),
+                ReleaseAttributionRule.id.asc(),
+            )
+        )
+    ).scalars().all()
+
+    editing = next((r for r in saved if rule_id is not None and r.id == rule_id), None)
+    others = [r for r in saved if r is not editing and r.is_enabled]
+    if editing is not None:
+        position = (body.priority, editing.created_at, editing.id)
+        earlier = [r for r in others if (r.priority, r.created_at, r.id) < position]
+    else:
+        # created_at = now: every saved rule of the same priority is older.
+        earlier = [r for r in others if r.priority <= body.priority]
+
+    links: dict[uuid.UUID, tuple[Optional[str], Optional[str]]] = {}
+    if matched:
+        rows = (
+            await db.execute(
+                select(
+                    ReleaseTestRunLink.test_run_id,
+                    ReleaseTestRunLink.link_source,
+                    Release.name,
+                )
+                .join(Release, Release.id == ReleaseTestRunLink.release_id)
+                .where(
+                    ReleaseTestRunLink.test_run_id.in_([r.id for r in matched]),
+                    ReleaseTestRunLink.is_primary.is_(True),
+                    Release.project_id == project_id,
+                )
+            )
+        ).all()
+        links = {row[0]: (row[1], row[2]) for row in rows}
+
+    target = body.target_release_name.strip()
+    target_exists = (
+        await db.execute(
+            select(literal(1))
+            .select_from(Release)
+            .where(
+                Release.project_id == project_id,
+                func.lower(Release.name) == target.lower(),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none() is not None
+
+    def landing(run: TestRun) -> str:
+        source = links.get(run.id, (None, None))[0]
+        if source in ASSERTED_LINK_SOURCES:
+            return "explicit"
+        if any(release_attribution.rule_matches(rule, run) for rule in earlier):
+            return "earlier_rule"
+        return "rule"
+
+    landings = [landing(r) for r in matched]
+    out["shadowed"] = landings.count("earlier_rule")
+    out["explicit"] = landings.count("explicit")
+    out["target_exists"] = target_exists
+    out["unattributed_recent"] = sum(1 for r in runs if r.primary_release_id is None)
+    out["sample"] = [
+        {
+            **row,
+            "tags": _sample_tags(run),
+            "created_at": run.created_at,
+            "current_release_name": links.get(run.id, (None, None))[1],
+            "would_land": where,
+        }
+        for row, run, where in zip(out["sample"], matched, landings)
+    ]
+    return out

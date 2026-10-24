@@ -58,6 +58,8 @@ describe('routeScope', () => {
       // UX redesign P5: ownership rules and team channels are per project;
       // both pages show the picker prompt (they had a line of text).
       '/ownership',
+      // W11 REL-09: a project's attribution rules; the page shows the picker prompt.
+      '/releases/attribution-rules',
       '/settings/api-keys',
       '/settings/github',
       '/settings/gitlab',

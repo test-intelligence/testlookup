@@ -57,6 +57,8 @@ const SINGLE_PROJECT_ROUTES: ReadonlySet<string> = new Set([
   // UX redesign P5: ownership rules and team channels are per project; both
   // pages show the picker prompt in All Projects (they had a line of text).
   '/ownership',
+  // W11 REL-09: a project's attribution rules; All Projects shows the picker prompt.
+  '/releases/attribution-rules',
   '/settings/team-channels',
   '/settings/api-keys',
   '/settings/github',

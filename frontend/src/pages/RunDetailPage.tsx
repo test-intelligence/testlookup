@@ -60,6 +60,9 @@ const HELP_TOPIC = helpTopicParam('/runs')
 const TAB_IDS = ['tests', 'analysis', 'changes', 'evidence', 'timing'] as const
 type RunTab = (typeof TAB_IDS)[number]
 
+const UNATTRIBUTED_TITLE =
+  'No release claims this run: the attribution ladder did not link it. Set its release, or check the attribution rules.'
+
 function ReleaseTag({ releaseName, onSet }: {
   releaseName?: string
   onSet: (name: string) => Promise<void>
@@ -121,13 +124,19 @@ function ReleaseTag({ releaseName, onSet }: {
     )
   }
 
+  // W11 REL-09 (D13): no release after the ladder is a read-time state, not a
+  // link source — the run reads Unattributed (and still offers to set one). A
+  // run no rule matches lands in the cutoff window or the active release, so in
+  // a healthy system this chip is rare: the linker failed on this run.
   return (
     <button
       onClick={() => setEditing(true)}
+      title={UNATTRIBUTED_TITLE}
+      aria-label="Set release (Unattributed)"
       className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border border-dashed border-[var(--color-border-light)] text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] hover:border-[var(--color-border)] transition-colors"
     >
       <Package className="h-3 w-3" />
-      Set release
+      Unattributed
     </button>
   )
 }

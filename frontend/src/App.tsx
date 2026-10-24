@@ -71,6 +71,7 @@ const ReleaseGatePage = lazy(() => import('@/pages/ReleaseGatePage'))
 const TestManagementPage = lazy(() => import('@/pages/TestManagementPage'))
 const LiveExecutionPage = lazy(() => import('@/pages/LiveExecutionPage'))
 const ReleasesPage = lazy(() => import('@/pages/ReleasesPage'))
+const ReleaseAttributionRulesPage = lazy(() => import('@/pages/ReleaseAttributionRulesPage'))
 const UserManagementPage = lazy(() => import('@/pages/UserManagementPage'))
 const FlakyTestsPage = lazy(() => import('@/pages/FlakyTestsPage'))
 const OnboardingPage = lazy(() => import('@/pages/OnboardingPage'))
@@ -166,6 +167,10 @@ const appRoutes: AppRoute[] = [
   { path: 'deep-investigate/:runId', component: DeepInvestigationRunRedirect },
   { path: 'release-gate', component: ReleaseGatePage },
   { path: 'release-gate/:runId', component: ReleaseGatePage },
+  // W11 REL-09: every role READS a project's attribution rules (a QA lead also
+  // writes them), so the page is here rather than with /releases (QA lead+).
+  // React Router ranks this static path above `releases/:releaseId`.
+  { path: 'releases/attribution-rules', component: ReleaseAttributionRulesPage },
   { path: 'flaky', component: FlakyTestsPage },
   { path: 'flaky-coach', component: FlakyCoachRedirect },
   { path: 'quarantine', component: QuarantineRedirect },
