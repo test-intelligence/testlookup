@@ -726,6 +726,8 @@ async def _find_duplicate_semantic(
     try:
         from app.services.storage_config_service import get_effective_storage_config
 
+        from app.services import chroma_collections
+
         chroma_config = await get_effective_storage_config()
         # Per-PROJECT collection: a single shared "open_defects" collection
         # persists across calls and accumulates every project's defects, so a
@@ -733,7 +735,11 @@ async def _find_duplicate_semantic(
         # leaking a foreign duplicate_of FK and suppressing a legitimate Jira
         # ticket. Namespacing by project keeps the dedup tenant-isolated, like
         # the PG and memory layers.
-        _DEFECT_COLLECTION = f"open_defects_{project_id}"
+        #
+        # W12: the ACTIVE generation's name (``open_defects_<project_id>`` on
+        # the legacy generation, exactly as before) and embedding function,
+        # resolved BEFORE the thread (no kwargs on the legacy generation).
+        target = await chroma_collections.resolve("open_defects", project_id=str(project_id))
 
         def _chroma_dedup() -> Optional[str]:
             from app.db.chroma import get_chroma_client
@@ -741,7 +747,7 @@ async def _find_duplicate_semantic(
                 host=str(chroma_config["chroma_host"]),
                 port=int(chroma_config["chroma_port"]),
             )
-            coll = client.get_or_create_collection(_DEFECT_COLLECTION)
+            coll = client.get_or_create_collection(target.name, **target.create_kwargs())
             # Upsert current open defects
             ids = [str(d.id) for d in open_defects if d.title]
             docs = [d.title or d.cluster_id or "" for d in open_defects if d.title]

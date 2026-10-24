@@ -108,10 +108,10 @@ Release phase enforcement (`release_phase_gate_enforcement`) is on: the phase's 
 ## Search
 
 **Search does not find a failure I know exists.**
-Global search matches keywords, not meaning. Search for a distinctive part of the error message, the test name or the build number. See [Search and discovery](/docs/search).
+**Keyword** mode (the default, every kind of record) matches the words themselves, not their meaning: search for a distinctive part of the error message, the test name or the build number. To match by meaning, choose **Semantic** or **Hybrid**; they cover test results only, so the scope moves to **Tests**. When the semantic index cannot answer, a banner above the results says so (for example *Semantic index unavailable — showing keyword results.*) and the rows below are keyword matches. A filter such as `branch:main` that a kind cannot apply means that kind was not searched; the line under the query box says which. See [Search and discovery](/docs/search).
 
 **Recently ingested data is not searchable.**
-The run list reads the database; search reads the index. Indexing lags slightly.
+Keyword search reads the database, so a new result is found at once. Semantic and Hybrid read the semantic index, which takes in new test results every hour; a QA lead or an administrator can press **Re-index now** in **Searchable data** on the Search page to rebuild it for the selected project.
 
 ## Permission and access problems
 

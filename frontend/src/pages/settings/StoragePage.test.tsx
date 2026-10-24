@@ -174,3 +174,96 @@ describe('a failed load is surfaced', () => {
     )
   })
 })
+
+/**
+ * W12 SRCH-02 (contract §2.4): `chroma_collection` is the Collection prefix of every vector collection. The
+ * field shows the prefix the stored value MEANS (the legacy default and an invalid value read as none, with
+ * the server's note), the card says which prefix is in use, an untouched field sends the stored value back,
+ * and an edited one refused with a 422 shows the sentence under the field.
+ */
+describe('the Collection prefix (W12 SRCH-02)', () => {
+  const HELP =
+    "Up to 8 lower-case letters, digits or '-'. Every vector collection's name starts with it, so two deployments " +
+    "can share one ChromaDB. Changing it re-embeds every index into new collections; search keeps the current ones " +
+    'until that finishes.'
+  const INVALID = "A collection prefix is up to 8 lower-case letters, digits or '-', starting with a letter or digit."
+  const w12 = (stored: string, prefix: string, active: string | null, note: string | null = null) =>
+    ({ ...CONFIG, chroma_collection: stored, collection_prefix: prefix, collection_prefix_note: note, active_collection_prefix: active }) as StorageConfigRead
+  const prefixField = () => screen.getByLabelText('Collection prefix') as HTMLInputElement
+  const save = () => fireEvent.click(screen.getByRole('button', { name: /save configuration/i }))
+
+  it('labels the field, shows "none" for no prefix, the help and the prefix in use', async () => {
+    mockGet.mockResolvedValue(w12('', '', ''))
+    renderPage()
+    await screen.findByDisplayValue('minio:9000')
+
+    expect(prefixField().value).toBe('')
+    expect(prefixField().placeholder).toBe('none')
+    expect(screen.getByText(HELP)).toBeInTheDocument()
+    expect(screen.getByText('In use: collections carry no prefix.')).toBeInTheDocument()
+  })
+
+  it('a stored value that is not a valid prefix reads as none, with the note', async () => {
+    const note = "The stored value 'test_failures' is not a valid prefix and is ignored: collections carry no prefix."
+    mockGet.mockResolvedValue(w12('test_failures', '', '', note))
+    renderPage()
+    await screen.findByDisplayValue('minio:9000')
+
+    expect(prefixField().value).toBe('')
+    expect(screen.getByText(note)).toBeInTheDocument()
+  })
+
+  it('says which prefix is in use, and that it could not tell when the state is unreadable', async () => {
+    mockGet.mockResolvedValue(w12('demo', 'demo', 'demo'))
+    const { unmount } = renderPage()
+    await screen.findByDisplayValue('minio:9000')
+    expect(prefixField().value).toBe('demo')
+    expect(screen.getByText('In use: collections start with “demo_”.')).toBeInTheDocument()
+    unmount()
+
+    mockGet.mockResolvedValue(w12('demo', 'demo', null))
+    renderPage()
+    await screen.findByDisplayValue('minio:9000')
+    expect(screen.getByText('Could not read the embedding index state.')).toBeInTheDocument()
+  })
+
+  it('an older server (no prefix fields): the raw value in the field, no "In use" line', async () => {
+    renderPage()
+    await screen.findByDisplayValue('minio:9000')
+    expect(prefixField().value).toBe('test_case_search')
+    expect(screen.queryByText(/^In use: collections/)).toBeNull()
+  })
+
+  it('an untouched field sends the STORED value back (the legacy default is not rewritten)', async () => {
+    mockGet.mockResolvedValue(w12('testlookup_embeddings', '', ''))
+    mockUpdate.mockResolvedValue(w12('testlookup_embeddings', '', ''))
+    renderPage()
+    await screen.findByDisplayValue('minio:9000')
+    expect(prefixField().value).toBe('')
+
+    save()
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(1))
+    expect(mockUpdate.mock.calls[0][0]).toMatchObject({ chroma_collection: 'testlookup_embeddings' })
+  })
+
+  it('an edited prefix is sent; a 422 shows its sentence under the field, not a toast; typing clears it', async () => {
+    mockGet.mockResolvedValue(w12('', '', ''))
+    mockUpdate.mockRejectedValueOnce({ response: { status: 422, data: { detail: INVALID } } })
+    mockUpdate.mockResolvedValueOnce(w12('demo', 'demo', ''))
+    renderPage()
+    await screen.findByDisplayValue('minio:9000')
+
+    fireEvent.change(prefixField(), { target: { value: 'Demo_1' } })
+    save()
+    await waitFor(() => expect(screen.getByText(INVALID)).toBeInTheDocument())
+    expect(mockUpdate.mock.calls[0][0]).toMatchObject({ chroma_collection: 'Demo_1' })
+    expect(mockToastError).not.toHaveBeenCalled()
+
+    fireEvent.change(prefixField(), { target: { value: 'demo' } })
+    expect(screen.queryByText(INVALID)).toBeNull()
+    save()
+    await waitFor(() => expect(mockToastSuccess).toHaveBeenCalled())
+    expect(mockUpdate.mock.calls[1][0]).toMatchObject({ chroma_collection: 'demo' })
+    expect(prefixField().value).toBe('demo')
+  })
+})

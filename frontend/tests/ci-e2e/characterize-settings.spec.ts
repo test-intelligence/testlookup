@@ -12,7 +12,7 @@
  *    (or none), the re-read;
  *  - Y1 Publish → `POST /release-gate-policies/{id}/publish` (no body), `Policy published and activated`, the editor
  *    read-only; Y2 Deactivate → `POST …/{id}/deactivate`, `Policy deactivated`, the list re-read; Y3 Clear history →
- *    no request, `localStorage['tl.search.recent'] = []`, `Recent searches cleared`; Y4 the open conversation's
+ *    `DELETE /search/recent` (W12 SRCH-03: recents live on the server), `Recent searches cleared`; Y4 the open conversation's
  *    delete → `DELETE /chat/sessions/{id}`, the sessions re-read, the welcome view back, no toast;
  *  - R1 Purge now → a wrong name keeps `Queue purge` aria-disabled, the exact name → `POST …/retention-policy/purge`
  *    `{ confirmation_name }`, the toast; R2 Delete by criteria › Preview (`{ older_than_days }`) → Delete n runs → the
@@ -49,7 +49,7 @@ import {
   RECENT_SEARCHES,
   retentionInPageWorld,
   SCIM_TOKEN,
-  SEARCH_PAGE,
+  searchPageWorld,
   SLACK_PREF_ID,
   SSO_ENFORCED,
   SSO_OPTIONAL,
@@ -130,31 +130,30 @@ test('role gating: a QA lead sees the policies with no Deactivate and the draft 
 
 // ── /search, /chat ─────────────────────────────────────────────────────────
 
-test('Y3 Clear history: dismissed keeps both recents; accepted → no request, the storage emptied, the toast, the empty card', async ({ page }) => {
-  await page.addInitScript((recents) => {
-    if (!sessionStorage.getItem('w27b-seeded')) {
-      localStorage.setItem('tl.search.recent', JSON.stringify(recents))
-      sessionStorage.setItem('w27b-seeded', '1')
-    }
-  }, RECENT_SEARCHES)
-  const { api, errors } = await openRollout(page, '/search', { handlers: SEARCH_PAGE, ready: (p) => p.getByTestId('searchable-data-summary') })
-  await expect(page.getByText(RECENT_SEARCHES[0].query, { exact: true })).toBeVisible()
+test('Y3 Clear history: dismissed keeps both recents and sends nothing; accepted → DELETE /search/recent, the toast, the empty card', async ({ page }) => {
+  // W12 SRCH-03 (deliberate edit, contract §6.5): the recents are the server's (`GET /api/v1/search/recent`), so
+  // nothing is seeded in the browser and clearing is ONE `DELETE /api/v1/search/recent` (it was local before).
+  const world = searchPageWorld()
+  const { api, errors } = await openRollout(page, '/search', { handlers: world.handlers, ready: (p) => p.getByTestId('searchable-data-summary') })
+  await expect(page.getByText(RECENT_SEARCHES[0].q, { exact: true })).toBeVisible()
   await networkQuiet(page, api)
   const from = observed(api).length
   const clear = () => page.getByRole('button', { name: 'Clear history' })
 
   const asked = await answerConfirm(page, clear(), 'dismiss')
   expect(asked.message).toBe("Clear all 2 recent searches? This can't be undone.")
-  await expect(page.getByText(RECENT_SEARCHES[1].query, { exact: true })).toBeVisible()
+  await expect(page.getByText(RECENT_SEARCHES[1].q, { exact: true })).toBeVisible()
+  await networkQuiet(page, api)
+  expect(writesSince(api, from), 'dismissed: nothing is sent').toEqual([])
 
   await answerConfirm(page, clear(), 'accept', { confirmLabel: 'Clear' })
   await expect(page.getByText('Recent searches cleared', { exact: true })).toBeVisible()
   await expect(page.getByText('Your queries will appear here.')).toBeVisible()
-  await expect(page.getByText(RECENT_SEARCHES[0].query, { exact: true })).toHaveCount(0)
-  expect(await page.evaluate(() => localStorage.getItem('tl.search.recent'))).toBe('[]')
+  await expect(page.getByText(RECENT_SEARCHES[0].q, { exact: true })).toHaveCount(0)
   await networkQuiet(page, api)
-  expect(observed(api).slice(from), 'clearing is local: nothing is sent').toEqual([])
-  expect(api.unhandled).toEqual([])
+  expect(world.writes, 'accepted: exactly one DELETE of the reader\'s recents').toEqual([{ line: 'DELETE /api/v1/search/recent', body: null }])
+  expect(writesSince(api, from)).toEqual(['DELETE /api/v1/search/recent'])
+  expect(await page.evaluate(() => localStorage.getItem('tl.search.recent')), 'nothing is kept in the browser').toBeNull()
   assertHermetic(api, errors)
 })
 

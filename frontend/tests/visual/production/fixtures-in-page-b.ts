@@ -16,6 +16,7 @@ import { bodyOf, delegate, type RecordedWrite } from './fixtures-in-page'
 import { digestsWorld, notificationsWorld, preference } from './fixtures-notify-flaky'
 import { inboxHandlers, projectMembers, TEST_CASES } from './fixtures-pages'
 import { ownershipWorld } from './fixtures-runs-failures'
+import { INDEX_NOT_CONFIGURED, RECENTS, recentsBody, suggestedAnswer, usageAnswer } from './fixtures-search'
 
 export type { RecordedWrite }
 
@@ -929,21 +930,46 @@ export function policiesInPageWorld() {
   return { handlers, writes, rows }
 }
 
-/** `/search` with nothing typed (the rail's three reads, `search-rail.spec.ts`' shapes). */
-export const SEARCH_PAGE: ApiHandlers = [
-  ['/api/v1/search/index-status', () => ({ status: 'not_configured', document_count: 0, last_indexed_at: null })],
-  ['/api/v1/search/entity-counts', () => ({ test_case: 84, test_run: 32, suite: 12, defect: 5, flaky_test: 3, release: 4 })],
-  ['/api/v1/search/global', ({ url }) => ({
-    items: [], total: 0, query: url.searchParams.get('q') ?? '', search_type: 'keyword',
-    entity_counts: { test_case: 84, test_run: 32, suite: 12, defect: 5, flaky_test: 3, release: 4 }, page: 1, size: 25, pages: 0,
-  })],
-  ...LAYOUT,
-]
-/** Two recent searches as `SearchPage` stores them (`localStorage['tl.search.recent']`). */
-export const RECENT_SEARCHES = [
-  { id: 'r1', query: 'checkout timeout', mode: 'hybrid', scope: 'all', resultCount: 12, ts: Date.parse('2026-09-18T11:00:00Z') },
-  { id: 'r2', query: 'login flaky', mode: 'keyword', scope: 'tests', resultCount: 3, ts: Date.parse('2026-09-18T10:00:00Z') },
-]
+/**
+ * The reader's two recent searches, newest first, as `GET /api/v1/search/recent` answers them (W12 SRCH-03: recents
+ * moved from `localStorage['tl.search.recent']` to the server; `fixtures-search.ts`' `RECENTS`).
+ */
+export const RECENT_SEARCHES = RECENTS
+
+/**
+ * `/search` with nothing typed, as a W12 server answers it (`W12-contract.md` §4.2): the rail's three reads
+ * (`search-rail.spec.ts`' shapes; the index status with SRCH-01's keys: no ChromaDB, so Hybrid / Semantic are
+ * disabled), the reader's two recents (`GET /api/v1/search/recent`), the suggestions (three empty groups: the card
+ * is omitted), the usage tiles a QA lead+ reads (not measured), and `DELETE /api/v1/search/recent` (recorded,
+ * answered 204; the next read is empty). Fresh state per call; `SEARCH_PAGE` is one shared instance for the specs
+ * that never clear (a spec that clears takes its own `searchPageWorld()`).
+ */
+export function searchPageWorld() {
+  const writes: RecordedWrite[] = []
+  let recents = [...RECENT_SEARCHES]
+  const counts = { test_case: 84, test_run: 32, suite: 12, defect: 5, flaky_test: 3, release: 4 }
+  const handlers: ApiHandlers = [
+    ['/api/v1/search/index-status', () => INDEX_NOT_CONFIGURED],
+    ['/api/v1/search/entity-counts', () => counts],
+    ['/api/v1/search/global', ({ url }) => ({
+      items: [], total: 0, query: url.searchParams.get('q') ?? '', search_type: 'keyword',
+      entity_counts: counts, page: 1, size: 25, pages: 0,
+    })],
+    ['/api/v1/search/recent', () => recentsBody(recents)],
+    ['/api/v1/search/recent', (request) => {
+      recordIn(writes, request)
+      recents = []
+      return respond(204)
+    }, 'DELETE'],
+    ['/api/v1/search/suggested', suggestedAnswer()],
+    ['/api/v1/search/usage', usageAnswer()],
+    ...LAYOUT,
+  ]
+  return { handlers, writes }
+}
+
+/** `/search` with nothing typed (`searchPageWorld()`, one shared instance: never cleared through). */
+export const SEARCH_PAGE: ApiHandlers = searchPageWorld().handlers
 
 /** Two conversations of the project (Y4 deletes the open one). */
 export const CHAT_SESSIONS = [

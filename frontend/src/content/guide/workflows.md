@@ -67,7 +67,7 @@ Task recipes. Each names the role it needs and what success looks like.
 2. Open the test and read its **History** tab.
 3. Or ask [Ask AI](/docs/ask-ai) "has this failed before?" — it looks up the test's history and earlier analyses.
 
-**If results look shallow:** global search matches keywords only; try different words from the error. See [Search and discovery](/docs/search).
+**If results look shallow:** keyword search matches the words themselves; on the **Tests** scope choose **Semantic** to match by meaning, or open a failed result's **Similar failures** tab. See [Search and discovery](/docs/search).
 
 ## Promote a failure to a defect
 
@@ -120,14 +120,19 @@ See [Reports and outputs](/docs/reports).
 
 **Role:** `QA_LEAD` or higher for one project; `ADMIN` for every project
 
-The search index rebuilds itself every hour, so a reindex is only needed after bulk changes or when results look stale. There is no button for it; call the API:
+The semantic search index takes in new test results every hour, so a reindex is only needed after bulk changes, after a restore, or when semantic results look stale. Keyword search reads the database and never needs one.
+
+1. Select the project, open **Search** (`/search`) with the query box empty.
+2. In **Searchable data**, on the **Semantic index (tests)** line, press **Re-index now**. The button reads **Queued** and the line says when the rebuild was queued; it updates by itself when the rebuild finishes.
+
+The button is there for QA leads and administrators with one project selected. The same request through the API:
 
 ```bash
 curl -X POST -H "X-API-Key: $TESTLOOKUP_API_KEY" \
-  "$TESTLOOKUP_URL/api/v1/search/reindex?project_id=<your-project-uuid>"
+  "$TESTLOOKUP_URL/api/v1/search/reindex?project_id=<your-project-uuid>&full=true"
 ```
 
-Without `project_id` it reindexes every project, which needs an administrator signed in (not a project-bound key). Reindexing runs in the background; the Search page's **Index freshness** shows when it has caught up.
+Without `project_id` it reindexes every project, which needs an administrator signed in (not a project-bound key); the page offers no button for that. Reindexing runs in the background.
 
 ## Diagnose ingestion or analysis failure
 

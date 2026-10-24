@@ -264,13 +264,38 @@ def _llm_chain_entry(
     }
 
 
-async def build_model_status(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
+def _ollama_embedders(embedding: dict[str, Any]) -> list[tuple[str, bool]]:
+    """``[(model, in_use)]`` for the ACTIVE and TARGET embedders that run on Ollama."""
+    out: list[tuple[str, bool]] = []
+    for role in ("active", "target"):
+        entry = embedding.get(role)
+        if not isinstance(entry, dict):
+            continue
+        provider = str(entry.get("provider") or "").strip().lower()
+        model = str(entry.get("model") or "").strip()
+        if provider == "ollama" and model and model not in [m for m, _ in out]:
+            out.append((model, role == "active"))
+    return out
+
+
+async def build_model_status(
+    cfg: dict[str, Any] | None = None,
+    *,
+    embedding: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Assemble the ``GET /api/v1/settings/ai/model-status`` payload.
 
     ``cfg`` is the effective AI config (DB overrides merged over env, as
     returned by the settings router's ``_load_ai_config``). Every field
     falls back to ``settings`` so a failed DB read degrades to env truth
     instead of a 500. Never raises.
+
+    ``embedding`` (W12 SRCH-02) is ``{"active": {"provider", "model"},
+    "target": {...} | None}`` from the embedding index state. Given, an
+    Ollama embedding model is REQUIRED only when it is the active or the
+    target embedder (``in_use`` true for the active one) -- a configured but
+    unapplied model runs nothing. Left out (every direct caller before W12),
+    the configured ``embedding_provider`` decides, as it always did.
     """
     cfg = dict(cfg or {})
 
@@ -283,7 +308,11 @@ async def build_model_status(cfg: dict[str, Any] | None = None) -> dict[str, Any
     analysis_mode = str(cfg.get("analysis_mode") or settings.ANALYSIS_MODE or "auto").lower()
     base_url = str(cfg.get("base_url") or settings.OLLAMA_BASE_URL or "")
 
-    uses_ollama = provider == "ollama" or embedding_provider == "ollama"
+    ollama_embedders = _ollama_embedders(embedding) if embedding is not None else []
+    if embedding is None:
+        uses_ollama = provider == "ollama" or embedding_provider == "ollama"
+    else:
+        uses_ollama = provider == "ollama" or bool(ollama_embedders)
     if uses_ollama:
         probe = await probe_ollama(base_url)
     else:
@@ -310,8 +339,12 @@ async def build_model_status(cfg: dict[str, Any] | None = None) -> dict[str, Any
     required: list[dict[str, Any]] = []
     if provider == "ollama" and llm_model:
         required.append(_required(llm_model, "llm"))
-    if embedding_provider == "ollama" and embedding_model:
-        required.append(_required(embedding_model, "embedding"))
+    if embedding is None:
+        if embedding_provider == "ollama" and embedding_model:
+            required.append(_required(embedding_model, "embedding"))
+    else:
+        for model, in_use in ollama_embedders:
+            required.append({**_required(model, "embedding"), "in_use": in_use})
     if provider == "ollama" and classifier_model and classifier_model != llm_model:
         required.append(_required(classifier_model, "classifier"))
 

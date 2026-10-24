@@ -59,7 +59,8 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
               "defects",
               "failures",
               "summary_report",
-              "explore"
+              "explore",
+              "search"
             ],
             "type": "string"
           },

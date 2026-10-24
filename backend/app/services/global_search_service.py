@@ -8,18 +8,31 @@ and returns a paginated GlobalSearchResponse.
 Usage:
     from app.services.global_search_service import global_search
     response = await global_search(db, q="payment", project_id=None)
+
+Structured filters (W12 SRCH-04): the router hands ``global_search`` the
+``ParsedQuery`` of ``services/search_query_parser``. Its free text is what the
+adapters match; its filters become one :class:`AdapterFilters`, and each
+adapter ANDs the filters it supports INSIDE its own statement -- inside EACH
+half of the test-case UNION, never as an OR across tables (re-audit H9: a
+cross-table OR defeats every trigram index). With no filter given, every
+statement is byte-identical to the one built before W12. An entity type that
+cannot apply a given filter (``core/search_vocab.FILTER_SUPPORT``) is NOT
+searched, and the ``parsed`` block says so.
 """
 import math
 import uuid
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 from urllib.parse import urlencode
 
 import structlog
-from sqlalchemy import case, cast, func, select, or_, String, Text, union
+from sqlalchemy import any_, bindparam, case, cast, func, select, or_, String, Text, union
+from sqlalchemy.dialects.postgresql import ARRAY, UUID as PG_UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.search_vocab import FILTER_SUPPORT, RUN_STATUS_VALUES
 from app.models.postgres import (
     Defect,
     Project,
@@ -27,6 +40,13 @@ from app.models.postgres import (
     TestCase,
     TestCaseHistory,
     TestRun,
+)
+from app.services.analytics_scope import effective_suite_clause, run_in_suite_scope_clause
+from app.services.search_query_parser import (
+    STATUS_NAME_TO_DB,
+    ParsedQuery,
+    parsed_block,
+    type_outside_scope_note,
 )
 from app.services.sql_utils import like_contains
 logger = structlog.get_logger("services.global_search")
@@ -42,6 +62,126 @@ _DEFAULT_ADAPTER_LIMITS = {
     "release": 10,
 }
 
+#: At most this many releases are read to resolve the ``release:`` values of one query.
+_RELEASE_RESOLVE_LIMIT = 50
+
+
+@dataclass(frozen=True, slots=True)
+class AdapterFilters:
+    """The structured filters one adapter ANDs into its statement (only those given).
+
+    ``statuses`` holds the normalised ``status:`` names (``passed`` /
+    ``failed`` / ``error`` / ``skipped``). ``release_ids`` is ``None`` when no
+    ``release:`` was typed and ``()`` when one was typed but resolved to no
+    release in the caller's scope -- then every adapter that supports it
+    returns ``[]`` without a statement (never a broadened search).
+    """
+
+    statuses: frozenset[str] = frozenset()
+    suites: tuple[str, ...] = ()
+    branches: tuple[str, ...] = ()
+    envs: tuple[str, ...] = ()
+    owners: tuple[str, ...] = ()
+    release_ids: tuple[uuid.UUID, ...] | None = None
+
+    @property
+    def nothing_to_find(self) -> bool:
+        return self.release_ids is not None and not self.release_ids
+
+
+def _filters_from(parsed: ParsedQuery, release_ids: Sequence[uuid.UUID] | None) -> AdapterFilters:
+    resolved: tuple[uuid.UUID, ...] | None = None
+    if parsed.releases:
+        # A release: that the caller did not resolve finds nothing (fail closed).
+        resolved = tuple(dict.fromkeys(release_ids or ()))
+    return AdapterFilters(
+        statuses=parsed.statuses,
+        suites=parsed.suites,
+        branches=parsed.branches,
+        envs=parsed.envs,
+        owners=parsed.owners,
+        release_ids=resolved,
+    )
+
+
+def unsupported_keys(entity_type: str, parsed: ParsedQuery) -> list[str]:
+    """The applied filter keys ``entity_type`` cannot apply (it is then NOT searched)."""
+    keys = set(parsed.keys()) - FILTER_SUPPORT.get(entity_type, frozenset())
+    if entity_type == "test_run" and parsed.statuses - set(RUN_STATUS_VALUES):
+        # LaunchStatus has PASSED / FAILED only: status:error / skipped cannot apply to a run.
+        keys.add("status")
+    return sorted(keys)
+
+
+async def resolve_release_values(
+    db: AsyncSession,
+    values: Sequence[str],
+    *,
+    project_id: uuid.UUID | str | None,
+    allowed_project_ids: set[uuid.UUID] | None,
+) -> tuple[tuple[uuid.UUID, ...], str | None]:
+    """Resolve typed ``release:`` values to release ids INSIDE the caller's resolved scope.
+
+    ONE statement: ``releases`` of active projects in the scope (the pinned
+    project, the caller's memberships, or -- ADMIN -- every project) whose id,
+    name or version (case-insensitive) is one of ``values``; an OR on ONE
+    table. A foreign release id or name matches nothing, so unknown, malformed
+    and foreign values all read the same (no oracle). Returns the matched ids
+    and the first value that matched nothing (``None`` when every value
+    matched). No values, or an empty membership set: no statement.
+    """
+    wanted = [str(v).strip() for v in values if str(v).strip()]
+    if not wanted:
+        return (), None
+    if project_id is None and allowed_project_ids is not None and not allowed_project_ids:
+        return (), wanted[0]
+
+    ids: list[uuid.UUID] = []
+    for value in wanted:
+        try:
+            ids.append(uuid.UUID(value))
+        except ValueError:
+            continue
+    names = list(dict.fromkeys(value.lower() for value in wanted))
+    names_param = bindparam("release_names", value=names, type_=ARRAY(String()))
+    match = [
+        func.lower(Release.name) == any_(names_param),
+        func.lower(Release.version) == any_(names_param),
+    ]
+    if ids:
+        match.insert(0, Release.id == any_(bindparam(
+            "release_ids", value=list(dict.fromkeys(ids)), type_=ARRAY(PG_UUID(as_uuid=True)),
+        )))
+    stmt = (
+        select(Release.id, Release.name, Release.version)
+        .join(Project, Project.id == Release.project_id)
+        .where(Project.is_active.is_(True))
+    )
+    if project_id is not None:
+        stmt = stmt.where(Release.project_id == uuid.UUID(str(project_id)))
+    elif allowed_project_ids is not None:
+        stmt = stmt.where(Release.project_id == any_(bindparam(
+            "release_scope_ids", value=sorted(allowed_project_ids, key=str), type_=ARRAY(PG_UUID(as_uuid=True)),
+        )))
+    stmt = stmt.where(or_(*match)).limit(_RELEASE_RESOLVE_LIMIT)
+
+    rows = (await db.execute(stmt)).all()
+    matched: list[uuid.UUID] = []
+    unresolved: str | None = None
+    for value in wanted:
+        lowered = value.lower()
+        hits = [
+            row.id for row in rows
+            if str(row.id) == lowered
+            or (row.name or "").lower() == lowered
+            or (row.version or "").lower() == lowered
+        ]
+        if hits:
+            matched.extend(hits)
+        elif unresolved is None:
+            unresolved = value
+    return tuple(dict.fromkeys(matched)), unresolved
+
 
 async def global_search(
     db: AsyncSession,
@@ -52,6 +192,10 @@ async def global_search(
     page: int = 1,
     size: int = 20,
     allowed_project_ids: Optional[set[uuid.UUID]] = None,
+    *,
+    parsed: ParsedQuery | None = None,
+    release_ids: Sequence[uuid.UUID] | None = None,
+    release_unresolved: str | None = None,
 ) -> dict[str, Any]:
     """Execute a global search across multiple entity types.
 
@@ -64,6 +208,15 @@ async def global_search(
     An empty ``allowed_project_ids`` set short-circuits to zero results without
     touching the database.
 
+    ``parsed`` (W12 SRCH-04, the router always passes one): its free text is
+    matched instead of ``q``; ``since:`` overrides ``days``; ``type:`` narrows
+    the entity types; every other filter is ANDed by the adapters that
+    support it, and an entity type that cannot apply one is not searched. The
+    result then carries a ``parsed`` block (``SearchParsed``). ``release_ids``
+    are the router's ``resolve_release_values`` answer for ``parsed.releases``
+    (``release_unresolved`` its first unmatched value). ``parsed`` None: the
+    statements and the dict are exactly what they were before W12.
+
     Returns a dict matching GlobalSearchResponse shape.
     """
     # ``None`` means the caller omitted the filter. An explicit empty set
@@ -71,14 +224,44 @@ async def global_search(
     types = ALL_ENTITY_TYPES if entity_types is None else entity_types
     period_start = datetime.now(timezone.utc) - timedelta(days=days) if days else None
 
+    filters: AdapterFilters | None = None
+    match_text = q
+    block: dict[str, Any] | None = None
+    if parsed is not None:
+        match_text = parsed.text
+        if parsed.since is not None:
+            period_start = parsed.since
+        extra_notes: list[str] = []
+        if parsed.types:
+            narrowed = set(types) & set(parsed.types)
+            if not narrowed and entity_types is not None:
+                extra_notes.append(type_outside_scope_note(parsed, sorted(entity_types)))
+            types = narrowed
+        unsupported = {
+            entity: keys for entity in sorted(types) if (keys := unsupported_keys(entity, parsed))
+        }
+        types = {entity for entity in types if entity not in unsupported}
+        filters = _filters_from(parsed, release_ids)
+        empty_scope = project_id is None and allowed_project_ids is not None and not allowed_project_ids
+        block = parsed_block(
+            parsed,
+            unsupported_by=unsupported,
+            searched=[] if empty_scope else sorted(types),
+            release_unresolved=release_unresolved,
+            extra_notes=extra_notes,
+        )
+
     # Short-circuit: non-admin with no project memberships cannot see anything.
     if project_id is None and allowed_project_ids is not None and not allowed_project_ids:
-        return {
+        empty: dict[str, Any] = {
             "items": [], "total": 0, "query": q, "search_type": "keyword",
             "entity_counts": {}, "page": page, "size": size, "pages": 0,
             "result_status": "complete", "failed_entity_types": [],
             "counts_are_exact": True,
         }
+        if block is not None:
+            empty["parsed"] = block
+        return empty
 
     # When the caller narrows to a single entity type (Tests, Runs, …),
     # bump the adapter's per-type cap so the user can paginate through
@@ -90,6 +273,9 @@ async def global_search(
     # was ``_search_test_cases.limit(50)`` capping the dataset under
     # the slice, so pagination had nothing to paginate over.
     narrowed_to_one = entity_types is not None and len(entity_types) == 1
+    if parsed is not None:
+        # A "type:" filter (or a filter only one kind applies) leaves one kind to page through.
+        narrowed_to_one = len(types) == 1
     # Cover up to ``page * size`` with headroom so the last page renders
     # in full. ``min(..., 1000)`` is a sanity guard against pathological
     # callers asking for page 200; if needed, the project is large
@@ -106,10 +292,16 @@ async def global_search(
         adapter = _ADAPTERS.get(entity_type)
         if adapter:
             try:
-                results = await adapter(
-                    db, q, project_id, period_start, allowed_project_ids,
-                    override_limit=adapter_override_limit,
-                )
+                if filters is None:
+                    results = await adapter(
+                        db, q, project_id, period_start, allowed_project_ids,
+                        override_limit=adapter_override_limit,
+                    )
+                else:
+                    results = await adapter(
+                        db, match_text, project_id, period_start, allowed_project_ids,
+                        override_limit=adapter_override_limit, filters=filters,
+                    )
                 all_results.extend(results)
                 effective_limit = adapter_override_limit or _DEFAULT_ADAPTER_LIMITS.get(
                     entity_type
@@ -117,7 +309,9 @@ async def global_search(
                 if effective_limit is not None and len(results) >= effective_limit:
                     capped_entity_types.append(entity_type)
             except Exception as exc:
-                logger.warning("search_adapter_failed", entity_type=entity_type, error=str(exc))
+                # The exception's TYPE only: a database error's text carries the
+                # statement's bound parameters, i.e. the search text (W12).
+                logger.warning("search_adapter_failed", entity_type=entity_type, error_type=type(exc).__name__)
                 failed_entity_types.append(entity_type)
 
     # Sort by relevance descending
@@ -132,7 +326,7 @@ async def global_search(
     page_results = all_results[start:start + size]
     counts_are_exact = not failed_entity_types and not capped_entity_types
 
-    return {
+    result: dict[str, Any] = {
         "items": page_results,
         "total": total,
         "query": q,
@@ -147,6 +341,9 @@ async def global_search(
         "failed_entity_types": failed_entity_types,
         "counts_are_exact": counts_are_exact,
     }
+    if block is not None:
+        result["parsed"] = block
+    return result
 
 
 # ── Entity Adapters ────────────────────────────────────────────────────────
@@ -161,6 +358,50 @@ def _apply_tenant_filter(stmt, column, project_id, allowed_project_ids):
     return stmt
 
 
+def _lowered_in(column, values: Sequence[str]):
+    return func.lower(column).in_(list(dict.fromkeys(v.lower() for v in values)))
+
+
+def _contains_any(column, values: Sequence[str]):
+    """An OR on ONE column: ``column ILIKE %v%`` for each value (bind parameters only)."""
+    return or_(*(column.ilike(like_contains(v), escape="\\") for v in values))
+
+
+def _run_terms(filters: AdapterFilters | None) -> list:
+    """The ``branch:`` / ``env:`` / ``release:`` terms on ``TestRun`` (given ones only)."""
+    if filters is None:
+        return []
+    terms: list[Any] = []
+    if filters.branches:
+        terms.append(_lowered_in(TestRun.branch, filters.branches))
+    if filters.envs:
+        terms.append(_lowered_in(TestRun.environment, filters.envs))
+    if filters.release_ids:
+        terms.append(TestRun.primary_release_id.in_(list(filters.release_ids)))
+    return terms
+
+
+def _test_case_terms(filters: AdapterFilters | None) -> list:
+    """Every filter a test-case row applies, as AND terms (given ones only)."""
+    if filters is None:
+        return []
+    terms: list[Any] = []
+    if filters.statuses:
+        terms.append(TestCase.status.in_(sorted(STATUS_NAME_TO_DB[s] for s in filters.statuses)))
+    suite = effective_suite_clause(filters.suites) if filters.suites else None
+    if suite is not None:
+        terms.append(suite)
+    terms.extend(_run_terms(filters))
+    if filters.owners:
+        terms.append(_contains_any(TestCase.owner, filters.owners))
+    return terms
+
+
+def _with_terms(stmt, terms: list):
+    """AND the given terms into ``stmt``'s WHERE; no terms -> ``stmt`` unchanged (byte-identical SQL)."""
+    return stmt.where(*terms) if terms else stmt
+
+
 async def _search_test_cases(
     db: AsyncSession,
     q: str,
@@ -168,9 +409,14 @@ async def _search_test_cases(
     period_start: Optional[datetime],
     allowed_project_ids: Optional[set] = None,
     override_limit: Optional[int] = None,
+    *,
+    filters: AdapterFilters | None = None,
 ) -> list[dict]:
+    if filters is not None and filters.nothing_to_find:
+        return []
     pattern = like_contains(q)
     limit = override_limit or 50
+    terms = _test_case_terms(filters)
 
     # Re-audit H9. This used to be ONE OR across five predicates, and two of
     # them each defeated the trigram indexes on test_cases (measured on the
@@ -193,6 +439,10 @@ async def _search_test_cases(
     # half keeps a broad term from materialising every match before sorting.
     # Ids only ever come from a filtered half, so the tenant filter cannot be
     # bypassed by the outer query.
+    #
+    # W12 SRCH-04: the structured filters are AND terms of EACH half (after
+    # the match OR, never inside it), so the own-text half stays a one-table
+    # BitmapOr and a filter cannot leak rows in through the other half.
     def _half(match):
         stmt = (
             select(TestCase.id.label("id"), TestCase.created_at.label("created_at"))
@@ -205,6 +455,7 @@ async def _search_test_cases(
         )
         if period_start:
             stmt = stmt.where(TestCase.created_at >= period_start)
+        stmt = _with_terms(stmt, terms)
         return stmt.order_by(TestCase.created_at.desc()).limit(limit)
 
     own_text = _half(or_(
@@ -257,7 +508,11 @@ async def _search_test_runs(
     period_start: Optional[datetime],
     allowed_project_ids: Optional[set] = None,
     override_limit: Optional[int] = None,
+    *,
+    filters: AdapterFilters | None = None,
 ) -> list[dict]:
+    if filters is not None and filters.nothing_to_find:
+        return []
     pattern = like_contains(q)
     stmt = (
         select(TestRun)
@@ -274,6 +529,18 @@ async def _search_test_runs(
     stmt = _apply_tenant_filter(stmt, TestRun.project_id, project_id, allowed_project_ids)
     if period_start:
         stmt = stmt.where(TestRun.created_at >= period_start)
+    if filters is not None:
+        terms: list[Any] = []
+        if filters.statuses:
+            # status:error / skipped never reach here (unsupported_keys): runs are PASSED / FAILED.
+            terms.append(TestRun.status.in_(sorted(
+                RUN_STATUS_VALUES[s] for s in filters.statuses if s in RUN_STATUS_VALUES
+            )))
+        suite = run_in_suite_scope_clause(filters.suites) if filters.suites else None
+        if suite is not None:
+            terms.append(suite)
+        terms.extend(_run_terms(filters))
+        stmt = _with_terms(stmt, terms)
 
     runs = (await db.execute(stmt)).scalars().all()
     return [
@@ -302,7 +569,11 @@ async def _search_suites(
     period_start: Optional[datetime],
     allowed_project_ids: Optional[set] = None,
     override_limit: Optional[int] = None,
+    *,
+    filters: AdapterFilters | None = None,
 ) -> list[dict]:
+    if filters is not None and filters.nothing_to_find:
+        return []
     pattern = like_contains(q)
     # Group by effective suite name — preferring ``tr.primary_suite_name``
     # for live_stream runs so a session label like "API Regression
@@ -346,6 +617,10 @@ async def _search_suites(
     stmt = _apply_tenant_filter(stmt, TestRun.project_id, project_id, allowed_project_ids)
     if period_start:
         stmt = stmt.where(TestCase.created_at >= period_start)
+    if filters is not None:
+        # suite: is ANDed with the ILIKE above on the same effective-suite expression.
+        suite = effective_suite_clause(filters.suites) if filters.suites else None
+        stmt = _with_terms(stmt, ([suite] if suite is not None else []) + _run_terms(filters))
 
     rows = (await db.execute(stmt)).all()
     return [
@@ -375,6 +650,8 @@ async def _search_defects(
     period_start: Optional[datetime],
     allowed_project_ids: Optional[set] = None,
     override_limit: Optional[int] = None,
+    *,
+    filters: AdapterFilters | None = None,
 ) -> list[dict]:
     pattern = like_contains(q)
     stmt = (
@@ -389,6 +666,8 @@ async def _search_defects(
     stmt = _apply_tenant_filter(stmt, Defect.project_id, project_id, allowed_project_ids)
     if period_start:
         stmt = stmt.where(Defect.created_at >= period_start)
+    if filters is not None and filters.owners:
+        stmt = stmt.where(_contains_any(Defect.owner_team, filters.owners))
 
     defects = (await db.execute(stmt)).scalars().all()
     return [
@@ -414,7 +693,11 @@ async def _search_flaky_tests(
     period_start: Optional[datetime],
     allowed_project_ids: Optional[set] = None,
     override_limit: Optional[int] = None,
+    *,
+    filters: AdapterFilters | None = None,
 ) -> list[dict]:
+    if filters is not None and filters.nothing_to_find:
+        return []
     pattern = like_contains(q)
     # Find test fingerprints with intermittent pass/fail that match the query.
     # ``make_test_fingerprint`` is NOT project-salted, so grouping by
@@ -459,6 +742,9 @@ async def _search_flaky_tests(
     stmt = _apply_tenant_filter(stmt, TestRun.project_id, project_id, allowed_project_ids)
     if period_start:
         stmt = stmt.where(TestCaseHistory.created_at >= period_start)
+    if filters is not None:
+        suite = effective_suite_clause(filters.suites) if filters.suites else None
+        stmt = _with_terms(stmt, ([suite] if suite is not None else []) + _run_terms(filters))
 
     rows = (await db.execute(stmt)).all()
     results = []
@@ -488,7 +774,11 @@ async def _search_releases(
     period_start: Optional[datetime],
     allowed_project_ids: Optional[set] = None,
     override_limit: Optional[int] = None,
+    *,
+    filters: AdapterFilters | None = None,
 ) -> list[dict]:
+    if filters is not None and filters.nothing_to_find:
+        return []
     pattern = like_contains(q)
     stmt = (
         select(Release)
@@ -503,6 +793,8 @@ async def _search_releases(
     stmt = _apply_tenant_filter(stmt, Release.project_id, project_id, allowed_project_ids)
     if period_start:
         stmt = stmt.where(Release.created_at >= period_start)
+    if filters is not None and filters.release_ids:
+        stmt = stmt.where(Release.id.in_(list(filters.release_ids)))
 
     releases = (await db.execute(stmt)).scalars().all()
     return [

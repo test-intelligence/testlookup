@@ -26,6 +26,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { expectNoOverlay, opened, openedByHeading, watchNativeDialogs } from '../lib/inPage'
 import { boxOf, clippedTables, expectMainFits, followedBy, inPageLine, minContentSlack, ownOverflow, precedes, tableBox } from '../lib/inPageGeometry'
+import { cardAround } from '../lib/production-pages'
 import { assertHermetic, networkQuiet, openRollout } from '../lib/rollout'
 import { BILLING_PROJECT, billingHandlers } from '../visual/production/fixtures-agents-billing-flags'
 import { PROJECT_ID } from '../visual/production/fixtures'
@@ -401,14 +402,10 @@ for (const width of [1280, 1440]) {
 
     test(`/search @${width}: Clear history asks inside the Recent searches card`, async ({ page }) => {
       watchNativeDialogs(page)
-      await page.addInitScript((recents) => {
-        if (!sessionStorage.getItem('w27b-seeded')) {
-          localStorage.setItem('tl.search.recent', JSON.stringify(recents))
-          sessionStorage.setItem('w27b-seeded', '1')
-        }
-      }, RECENT_SEARCHES)
+      // W12 SRCH-03 (deliberate edit, contract §6.5): the two recents are the server's (`SEARCH_PAGE` answers
+      // `GET /api/v1/search/recent`), so nothing is seeded in the browser; the card is the one around the first row.
       const { api, errors } = await openRollout(page, '/search', { handlers: SEARCH_PAGE, ready: (p) => p.getByTestId('searchable-data-summary') })
-      const recent = page.getByText(RECENT_SEARCHES[0].query, { exact: true }).locator('xpath=ancestor::div[contains(concat(" ", @class, " "), " rounded-xl ")][1]')
+      const recent = cardAround(page.getByText(RECENT_SEARCHES[0].q, { exact: true }))
       await expect(recent).toBeVisible()
       await networkQuiet(page, api)
       await expectStrip(page, '/search clear-history', width, page.getByRole('button', { name: 'Clear history' }), "Clear all 2 recent searches? This can't be undone.",

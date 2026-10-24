@@ -32,6 +32,21 @@ from app.core.integration_values import (
     SPLUNK_INDEX_SENTENCE,
     integration_url_problem,
 )
+# W12 (SRCH-03): the saved-search rules and sentences live with the search
+# vocabulary, which the services, the routers and the tests import too.
+from app.core.search_vocab import (
+    MAX_QUERY_CHARS,
+    SAVED_SEARCH_KEYS,
+    SAVED_SEARCH_KEYS_SENTENCE,
+    SAVED_SEARCH_KIND,
+    SAVED_SEARCH_MODE_SENTENCE,
+    SAVED_SEARCH_PAGE_SENTENCE,
+    SAVED_SEARCH_Q_SENTENCE,
+    SAVED_SEARCH_SCOPE_SENTENCE,
+    SAVED_SEARCH_SHARE_NEEDS_PROJECT,
+    SEARCH_MODES,
+    SEARCH_SCOPES,
+)
 # W03 (AI history): the types live in their own module; the existing models
 # below only gain optional fields of these types.
 from app.models.ai_history_schemas import (
@@ -1794,6 +1809,107 @@ class GlobalSearchResponse(BaseModel):
     page: int = 1
     size: int = 20
     pages: int = 1
+
+
+# ── W12 SRCH-04: the parsed query (the `parsed` block of GET /search and GET /search/global) ──
+# Plain str for every enum-like field; the vocabularies live in core/search_vocab.py.
+
+class SearchParsedFilter(BaseModel):
+    key: str                                   # FILTER_KEYS
+    value: str                                 # unquoted, as typed (≤ MAX_FILTER_VALUE_CHARS)
+    raw: str                                   # the exact source token, e.g. 'suite:"API Regression"'
+    start: int                                 # [start, end) offsets into the STRIPPED q the server parsed
+    end: int
+
+
+class SearchIgnoredToken(BaseModel):
+    token: str                                 # the source token (≤ 200 chars, "…" past that)
+    key: Optional[str] = None                  # the lower-cased key when the token had one
+    reason: str                                # IGNORED_REASONS
+    message: str                               # ignored_message(...) — the page shows it verbatim
+    start: int
+    end: int
+
+
+class SearchParsed(BaseModel):
+    text: str                                  # the free text actually matched (ILIKE) or embedded (semantic)
+    filters: List[SearchParsedFilter] = Field(default_factory=list)          # APPLIED filters, source order
+    ignored_tokens: List[SearchIgnoredToken] = Field(default_factory=list)
+    unsupported_by: Dict[str, List[str]] = Field(default_factory=dict)      # entity_type -> keys it cannot apply;
+                                                                             # that entity type was NOT searched
+    searched_entity_types: List[str] = Field(default_factory=list)          # [] = nothing was searched
+    release_unresolved: Optional[str] = None   # the first release: value that named no release in scope
+    notes: List[str] = Field(default_factory=list)   # every caption, rendered server-side, in this order:
+                                                     # ignored messages, unsupported sentences, the release sentence
+
+# GET /search (existing dict; ADDITIVE keys, no response_model is added):
+#   "requested_search_type": str        # what was asked (keyword | semantic | hybrid)
+#   "fallback_reason": Optional[str]    # FALLBACK_REASONS; None when search_type == requested_search_type
+#   "fallback_message": Optional[str]   # FALLBACK_TEXT[fallback_reason]
+#   "parsed": SearchParsed (as a dict)
+# GET /search/global (existing dict; ADDITIVE): "parsed": SearchParsed (as a dict). result["scope"] / return result unchanged.
+# GET /search/similar/{test_case_id} (existing dict; ADDITIVE): "semantic_status": str   # SIMILAR_SEMANTIC_STATUSES
+# GET /search/index-status (existing dict; ADDITIVE, every key always present):
+#   "collection": Optional[str]          # the ACTIVE test_case_search collection's name (None when unreadable)
+#   "generation": Optional[str]          # the active generation tag ("" = the legacy generation)
+#   "embedder": Optional[dict]           # {"provider": str, "model": str} of the active generation
+#   "embedder_available": Optional[bool] # default embedder: local_embedder_guard.embedder_status()["available"];
+#                                        # ollama / openai: None (not probed on a read)
+#   "reembed": Optional[dict]            # {"status": str, "target_provider": str, "target_model": str,
+#                                        #  "processed": int, "total": Optional[int]} while a build exists, else None
+#   "semantic_available": bool           # semantic_availability(...)[0]
+#   "semantic_reason": Optional[str]     # SEMANTIC_UNAVAILABLE_REASONS; None when available
+#   "semantic_reason_text": Optional[str]   # SEMANTIC_REASON_TEXT[reason]
+
+
+# ── W12 SRCH-03: recents and suggestions ──
+
+class RecentSearchRead(BaseModel):
+    q: str                                     # ≤ MAX_QUERY_CHARS
+    scope: str                                 # SEARCH_SCOPES
+    mode: str                                  # SEARCH_MODES (the mode that ANSWERED: a fallback stores "keyword")
+    project_id: Optional[uuid.UUID] = None     # None = searched in All Projects
+    result_count: int
+    counts_exact: bool = True
+    ts: datetime
+
+
+class RecentSearchesResponse(BaseModel):
+    items: List[RecentSearchRead]              # newest first; ≤ RECENT_MAX; filtered to the reader's CURRENT projects
+    max: int                                   # RECENT_MAX (20)
+    retention_days: int                        # RECENT_TTL_DAYS (30)
+
+
+class SearchSuggestion(BaseModel):
+    kind: str                                  # SUGGESTION_KINDS: failing_test | open_defect | active_release
+    label: str                                 # React text (a test name, a defect key, a release name)
+    q: str                                     # the query this runs (built with quote_term(); ≤ MAX_QUERY_CHARS)
+    scope: str                                 # SEARCH_SCOPES
+    detail: Optional[str] = None               # "12 failures in 7 days" / "Open · HIGH" / "Active release"
+
+
+class SearchSuggestionsResponse(BaseModel):
+    project_id: uuid.UUID
+    window_days: int                           # SUGGESTED_FAILING_DAYS (7)
+    failing_tests: List[SearchSuggestion]      # ≤ SUGGESTED_MAX (5), most failures first (a top-N, not a count)
+    open_defects: List[SearchSuggestion]       # ≤ 5, newest first
+    active_release: Optional[SearchSuggestion] = None
+
+
+# ── W12 SRCH-05: search usage ──
+
+class SearchUsageRead(BaseModel):
+    project_id: Optional[uuid.UUID] = None     # None = every project the caller can see (ADMIN: the deployment)
+    days: int                                  # USAGE_DAYS: 1 (today, UTC) | 7 | 30
+    since: datetime                            # the window's start (00:00 UTC today for days == 1)
+    measured: bool                             # False when no row is in the window: every rate below is None
+    searches: int
+    zero_result_searches: int                  # result_count == 0 AND counts_exact (a search that lost a source is not a zero)
+    zero_result_rate: Optional[float] = None   # 0..1 = zero_result_searches / searches; None when not measured
+    p50_latency_ms: Optional[float] = None     # percentile_cont(0.5)
+    p95_latency_ms: Optional[float] = None     # percentile_cont(0.95)
+    fallback_searches: int = 0                 # semantic / hybrid requests that a keyword search answered
+    retention_days: int                        # USAGE_RETENTION_DAYS (30)
 
 
 # ── Quality Gate Schemas ──────────────────────────────────────
@@ -4349,6 +4465,41 @@ class SmtpTestResult(BaseModel):
     message: str
 
 
+# ── W12 SRCH-02: the embedding index (generations; services/embedding_index_state.py) ──
+# Plain str for every enum-like field (the vocabularies live in G-C's
+# services/embedding_function.py, chroma_collections.py, embedding_index_state.py).
+
+class EmbeddingGenerationRead(BaseModel):
+    provider: str                              # EMBEDDING_PROVIDERS (a stored unsupported value is shown, never applied)
+    model: str
+    prefix: str                                # "" = no prefix
+    key: str                                   # embedder key: "default" | "ollama:<model>" | "openai:<model>"
+    tag: str                                   # "" for the legacy generation, else "e" + 8 hex
+
+
+class EmbeddingFamilyProgress(BaseModel):
+    family: str                                # COLLECTION_FAMILIES[*].base
+    state: str                                 # FAMILY_STATES: pending | running | done | skipped
+    processed: int = 0
+    total: Optional[int] = None                # None = not counted (a copy family's total is its source's count)
+
+
+class EmbeddingIndexRead(BaseModel):
+    active: EmbeddingGenerationRead            # what every read and write uses NOW
+    configured: EmbeddingGenerationRead        # ai_config.embedding_* + the storage prefix
+    in_sync: bool                              # configured.key == active.key and configured.prefix == active.prefix
+    status: str                                # EMBEDDING_INDEX_STATUSES: idle | building | failed
+    target: Optional[EmbeddingGenerationRead] = None
+    families: List[EmbeddingFamilyProgress] = Field(default_factory=list)
+    processed: int = 0
+    total: Optional[int] = None
+    requested_at: Optional[datetime] = None
+    switched_at: Optional[datetime] = None     # when the active generation last changed (None = never: legacy)
+    last_error: Optional[str] = None           # ≤ 300 chars, a sentence (no host, no key, no query text)
+    configured_note: Optional[str] = None      # CONFIGURED_UNSUPPORTED_NOTE / PREFIX_INVALID_NOTE when one applies
+    stalled: Optional[bool] = None             # status == "building" and its worker died / nothing claimed it (build_is_stalled)
+
+
 # ── AI Configuration Schemas ─────────────────────────────────
 
 class AIConfigRead(BaseModel):
@@ -4416,6 +4567,9 @@ class AIConfigRead(BaseModel):
     # The rag_faithfulness_gate flag, on in any scope. Off ⇒ no case is scored
     # and the evaluator choice has no effect.
     rag_faithfulness_gate_enabled: bool = False
+    # W12 SRCH-02: which embedder every index uses NOW, what is configured and
+    # any re-embed in progress. None when the state could not be read: never a guess.
+    embedding_index: Optional[EmbeddingIndexRead] = None
 
 
 class AIConfigUpdate(BaseModel):
@@ -4606,6 +4760,13 @@ class StorageConfigRead(BaseModel):
     chroma_host: str
     chroma_port: int
     chroma_collection: str
+    # W12 SRCH-02: ``chroma_collection`` is the Collection PREFIX. The prefix the
+    # stored value means ("" for "", the legacy default "testlookup_embeddings",
+    # or a value that is not a valid prefix), the note when a stored value is
+    # ignored, and the ACTIVE generation's prefix (None when the state is unreadable).
+    collection_prefix: str = ""
+    collection_prefix_note: Optional[str] = None     # PREFIX_INVALID_NOTE when the stored value is ignored
+    active_collection_prefix: Optional[str] = None
 
 
 class StorageConfigUpdate(BaseModel):
@@ -4613,7 +4774,12 @@ class StorageConfigUpdate(BaseModel):
     storage_backend: Optional[Literal["minio", "s3", "local"]] = None
     chroma_host: Optional[str] = Field(None, min_length=1, max_length=255)
     chroma_port: Optional[int] = Field(None, ge=1, le=65535)
-    chroma_collection: Optional[str] = Field(None, min_length=1, max_length=255)
+    # W12 SRCH-02: LOOSENED only (min_length 1 -> 0, so "" clears the prefix).
+    # Never tighten it: storage_config_service re-validates every STORED row
+    # through this model, and a row that fails drops EVERY storage override to
+    # the env defaults. The prefix rule is checked in PUT /settings/storage on a
+    # change only.
+    chroma_collection: Optional[str] = Field(None, min_length=0, max_length=255)
     minio_endpoint: Optional[str] = Field(None, min_length=1, max_length=500)
     minio_bucket_name: Optional[str] = Field(None, min_length=1, max_length=255)
     minio_use_ssl: Optional[bool] = None
@@ -5715,8 +5881,9 @@ class TeamChannelResponse(BaseModel):
 # VIZ-609: ``summary_report`` and ``explore`` join. Never REMOVE a value: ``page``
 # is an unconstrained String(50) column, and one row carrying a retired value
 # would 422 the whole list endpoint, which declares this Literal as its filter.
+# W12 SRCH-03: ``search`` joins (saved searches). Append-only.
 SAVED_VIEW_PAGES = Literal[
-    "dashboard", "trends", "coverage", "defects", "failures", "summary_report", "explore",
+    "dashboard", "trends", "coverage", "defects", "failures", "summary_report", "explore", "search",
 ]
 MAX_SAVED_VIEW_INSTANCES = 12
 
@@ -5724,9 +5891,10 @@ MAX_SAVED_VIEW_INSTANCES = 12
 #: holds 12 widget instances with room to spare; anything larger is not a view.
 MAX_SAVED_VIEW_FILTERS_BYTES = 32 * 1024
 
-#: The one ``kind`` a named report view carries (the saved-views manager). A
-#: layout row (``useAnalyticsView``) has no kind.
-SAVED_VIEW_KINDS = ("report_view",)
+#: The ``kind`` a named report view carries (the saved-views manager), and
+#: W12 SRCH-03's saved search (``page = "search"``, ``filters = {kind, q,
+#: scope, mode}``). A layout row (``useAnalyticsView``) has no kind. Append-only.
+SAVED_VIEW_KINDS = ("report_view", SAVED_SEARCH_KIND)
 
 #: W08 TRND-10: ``filters.charts`` holds the customised charts of a view's page,
 #: one entry per chart key (``trends.suite-series``, ``trends.compare``) and
@@ -5783,6 +5951,28 @@ def _check_saved_view_charts(filters: dict) -> None:
             )
 
 
+def _validate_saved_search_filters(filters: dict) -> dict:
+    """W12 SRCH-03: a saved search's ``filters`` (``kind == "search"`` ONLY).
+
+    The keys are exactly ``{kind, q, scope, mode}``: ``q`` a string, stripped,
+    1 to ``MAX_QUERY_CHARS`` characters; ``scope`` in ``SEARCH_SCOPES``;
+    ``mode`` in ``SEARCH_MODES``. One sentence per rule (``core/search_vocab``),
+    raised as the error's whole message. The stored ``q`` is the stripped text.
+    """
+    if set(filters) - SAVED_SEARCH_KEYS:
+        raise PydanticCustomError("saved_search", SAVED_SEARCH_KEYS_SENTENCE)
+    q = filters.get("q")
+    if not isinstance(q, str) or not 1 <= len(q.strip()) <= MAX_QUERY_CHARS:
+        raise PydanticCustomError("saved_search", SAVED_SEARCH_Q_SENTENCE)
+    scope = filters.get("scope")
+    if not isinstance(scope, str) or scope not in SEARCH_SCOPES:
+        raise PydanticCustomError("saved_search", SAVED_SEARCH_SCOPE_SENTENCE)
+    mode = filters.get("mode")
+    if not isinstance(mode, str) or mode not in SEARCH_MODES:
+        raise PydanticCustomError("saved_search", SAVED_SEARCH_MODE_SENTENCE)
+    return {"kind": SAVED_SEARCH_KIND, "q": q.strip(), "scope": scope, "mode": mode}
+
+
 def _validate_saved_view_filters(filters: dict) -> dict:
     """Reject malformed analytics layouts while preserving legacy filters.
 
@@ -5803,6 +5993,8 @@ def _validate_saved_view_filters(filters: dict) -> dict:
     kind = filters.get("kind")
     if kind is not None and kind not in SAVED_VIEW_KINDS:
         raise ValueError(f"filters.kind must be one of {', '.join(SAVED_VIEW_KINDS)}")
+    if kind == SAVED_SEARCH_KIND:
+        return _validate_saved_search_filters(filters)
     _check_string_list(filters, "release_ids")
     _check_string_list(filters, "suites")
     window = filters.get("window")
@@ -5853,6 +6045,20 @@ class SavedViewCreate(BaseModel):
     @classmethod
     def validate_filters(cls, value: dict) -> dict:
         return _validate_saved_view_filters(value)
+
+    @model_validator(mode="after")
+    def saved_search_rules(self) -> "SavedViewCreate":
+        """W12 SRCH-03: a saved search (``filters.kind == "search"``) belongs
+        to ``page = "search"``, and one saved for All Projects (no
+        ``project_id``) cannot be shared: ``list_saved_views`` shows a shared
+        row only to members of its project. Every other kind is untouched."""
+        if self.filters.get("kind") != SAVED_SEARCH_KIND:
+            return self
+        if self.page != "search":
+            raise PydanticCustomError("saved_search", SAVED_SEARCH_PAGE_SENTENCE)
+        if self.is_shared and self.project_id is None:
+            raise PydanticCustomError("saved_search", SAVED_SEARCH_SHARE_NEEDS_PROJECT)
+        return self
 
 
 class SavedViewUpdate(BaseModel):
@@ -7786,6 +7992,10 @@ class RetentionPreviewCandidates(BaseModel):
     #: purged runs + ai_analysis_versions their delete cascades + the
     #: over-cap versions of the sweep).
     ai_history_versions: int = 0
+    #: W12 SRCH-05: ``search_query_events`` of the project older than 30 days
+    #: (a FIXED window, ``USAGE_RETENTION_DAYS``, not the audit clock). An
+    #: ``int = 0``: Postgres is always measurable.
+    search_usage_rows: int = 0
 
 
 class RetentionPreviewResponse(BaseModel):

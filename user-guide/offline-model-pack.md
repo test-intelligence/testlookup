@@ -11,12 +11,19 @@ This guide is the **model pack**: which models TestLookup needs, what each one c
 | Purpose | Setting | Default | Why it exists |
 |---|---|---|---|
 | Triage LLM | `LLM_MODEL` | `qwen2.5:7b-instruct` | The ReAct agent behind Deep Investigation, run narratives, and Ask AI |
-| Embeddings | `EMBEDDING_MODEL` | `nomic-embed-text:v1.5` | Semantic search, the semantic analysis cache, and knowledge-base RAG |
+| Embeddings (only when Ollama is the embedder in use) | `EMBEDDING_MODEL` | `nomic-embed-text:v1.5` | Semantic search, the semantic analysis cache, and knowledge-base RAG — once an administrator switches them to Ollama ([below](#embeddings-the-bundled-model-and-ollama)) |
 | Fast classifier (optional) | `CLASSIFIER_MODEL` | unset — reuses `LLM_MODEL` | Single-call classification ahead of the full agent |
 
 These are the defaults in `backend/app/core/config.py` and `.env.example`; the Kubernetes base ConfigMap sets the same `LLM_MODEL`. `make dev-llm` additionally pulls `qwen2.5:14b-instruct-q5_K_M` as the larger LLM tier. Both defaults are licensed **Apache-2.0**, so they are usable commercially.
 
-Both defaults are **served by Ollama**, including the embedding model — TestLookup does not use ChromaDB's bundled ONNX embedder, so ChromaDB alone is not enough to make semantic features work. If your pack contains the LLM but not `nomic-embed-text:v1.5`, triage works and semantic search does not.
+### Embeddings: the bundled model and Ollama
+
+The triage LLM is always served by Ollama. The **embedder** is whichever one **Settings → AI → Embedding** says is **In use**, and on every install that starts as the **bundled MiniLM**: ChromaDB's own `all-MiniLM-L6-v2` ONNX model (~80 MB), run on the CPU inside the API and the workers, not by Ollama. The configured defaults above (`EMBEDDING_PROVIDER=ollama`, `EMBEDDING_MODEL=nomic-embed-text:v1.5`) take effect only when an administrator applies them with **Re-embed now** (or changes the provider or model and saves), which re-embeds every index into new collections first ([Changing the embedder](ai-features.md#changing-the-embedder)). Until then the card reads *Configured Ollama · nomic-embed-text:v1.5 is not in use yet.*
+
+So an air-gapped install needs, for semantic search:
+
+- **with the bundled MiniLM (the default):** its weights on disk, because offline mode forbids ChromaDB from downloading them on first use. Copy an `onnx/` directory holding `model.onnx` (from `~/.cache/chroma/onnx_models/all-MiniLM-L6-v2/` on a connected machine that has used it once) into the directory `CHROMA_ONNX_MODEL_DIR` names, for the API and every worker. The Kubernetes base mounts the `embedder-model-cache` volume there (`/var/cache/testlookup/chroma-onnx`). Without the weights, semantic search falls back to keyword search and says so; the Ollama pack does not help.
+- **with Ollama:** `nomic-embed-text:v1.5` (or the model you chose) in the pack, like the LLM. If your pack contains the LLM but not the embedding model in use, triage works and semantic search falls back to keyword.
 
 **Pull the exact tags.** Model presence is matched on the exact name (see [Verifying it worked](#verifying-it-worked-from-testlookup)). `qwen2.5:7b` and `qwen2.5:7b-instruct` are the same weights on the Ollama registry, but a pack that only contains `qwen2.5:7b` is reported **Missing** for `LLM_MODEL=qwen2.5:7b-instruct`; likewise `nomic-embed-text` (which is `:latest`) does not satisfy `nomic-embed-text:v1.5`.
 
@@ -38,7 +45,7 @@ Disk figures are the Ollama download size at the default quantisation (Q4 unless
 
 > **Not recommended: `qwen2.5:3b` / `qwen2.5:3b-instruct`.** Unlike the other Qwen2.5 sizes, the 3B model is released under the *Qwen Research License*, which does not permit commercial use. It was TestLookup's default before the open-source release; installs that still set `LLM_MODEL=qwen2.5:3b-instruct-q5_K_M` should move to `qwen2.5:7b-instruct` (or `qwen2.5:1.5b-instruct` for a small host).
 
-> **Changing the embedding model is not a drop-in swap.** Vectors written with one embedding model are not comparable to vectors from another. If you switch, existing collections must be re-embedded or dropped, or semantic search silently returns nonsense neighbours. Changing `LLM_MODEL` has no such effect.
+> **Changing the embedding model is not a drop-in swap.** Vectors written with one embedding model are not comparable to vectors from another. TestLookup therefore never mixes them: saving a new embedding provider or model on **Settings → AI** (or pressing **Re-embed now**) builds new collections with the new model on the AI worker, while search keeps using the current ones, and switches only when the build is done; the old collections are dropped 10 minutes later. Pull (or side-load) the new model **before** you save — a build whose model is missing fails, says so on the card, and leaves the model in use as it was. Changing `LLM_MODEL` has no such effect.
 
 Sizing the host as a whole (CPU, RAM, disk growth) is covered in [Sizing & capacity](sizing.md).
 
@@ -145,7 +152,7 @@ Notes that save time:
 **In the UI:** **Settings → AI Configuration → Model Availability & Fallback Chain**. It shows, live:
 
 - whether Ollama is **reachable**, and at which URL;
-- each required model — LLM, embedding, and classifier when configured — as **Installed** or **Missing**, with the exact remedy command for your runtime when one is missing;
+- each required model — the LLM, the classifier when configured, and an Ollama embedding model while it is the one in use (**in use**) or a re-embed is building toward it (a configured model that is not applied yet is not required) — as **Installed** or **Missing**, with the exact remedy command for your runtime when one is missing;
 - the **fallback chain** (ML → LLM → Rules) with each tier marked available or unavailable *and the reason*, plus which tier is currently **Active**.
 
 **Via the API** (QA Lead or higher):

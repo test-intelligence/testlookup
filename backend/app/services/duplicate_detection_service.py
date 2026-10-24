@@ -601,10 +601,24 @@ async def _semantic_neighbours(
     ChromaDB's download chokepoint (``services/local_embedder_guard.py``); when
     it blocks, the ``except`` below returns ``{}`` and the run is
     structural-only, which is the intended degradation.
+
+    W12 SRCH-02: the embedder is the ACTIVE embedding generation's
+    (``chroma_collections.resolve``). On the bundled one nothing above changes.
+    An admin-chosen Ollama embedder passes the provider policy and is pinned
+    on-box offline; an OpenAI embedder (cloud inference) can only be active
+    while offline mode is off, and is refused -- so this degrades to
+    structural-only -- the moment offline mode is turned on.
     """
     if not views:
         return {}
     try:
+        from app.services import chroma_collections
+
+        # W12: only the ACTIVE generation's embedding function (none for the
+        # bundled embedder, so the call is exactly as before); the collection
+        # is in-memory with a random name.
+        ef = (await chroma_collections.resolve("dupdetect")).embedding_function
+
         # Per-project, ephemeral in-memory collection so we never pollute the
         # shared search index and tenant isolation is total by construction.
         def _build_and_query() -> dict[tuple[uuid.UUID, uuid.UUID], float]:
@@ -613,6 +627,7 @@ async def _semantic_neighbours(
             client = chromadb.EphemeralClient()
             coll = client.create_collection(
                 name=f"dupdetect_{uuid.uuid4().hex}",
+                **({"embedding_function": ef} if ef is not None else {}),
             )
             docs = [v.norm_text or v.norm_title or str(v.id) for v in views]
             ids = [str(v.id) for v in views]

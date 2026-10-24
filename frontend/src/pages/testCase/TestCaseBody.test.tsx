@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import TestCaseBody from './TestCaseBody'
 import { useTestCase, useTestCaseHistory, useTestStepFlips, useTestSteps } from '@/hooks/useRuns'
+import { useSimilarFailures } from '@/hooks/useSimilarFailures'
 
 vi.mock('@/hooks/useRuns', () => ({
   useTestCase: vi.fn(),
@@ -25,6 +26,22 @@ vi.mock('@/store/projectStore', () => ({
 // The AI panel fetches its stored analysis; here it only has to be where it belongs.
 vi.mock('@/components/ai/AIAnalysisPanel', () => ({
   default: ({ testCaseId }: { testCaseId: string }) => <div data-testid="ai-panel">AI analysis of {testCaseId}</div>,
+}))
+// W12 SRCH-01: the Similar failures tab's read (asked only while the tab is open).
+vi.mock('@/hooks/useSimilarFailures', () => ({
+  useSimilarFailures: vi.fn(() => ({
+    data: {
+      items: [{
+        test_case_id: 'near-1', test_run_id: 'run-9', test_name: 'checkout total rounds tax', suite_name: 'Checkout',
+        status: 'FAILED', failure_count: 2, last_run_date: '2026-09-18T09:00:00Z', relevance_score: 0.82,
+      }],
+      total: 1,
+      query: 'checkout total includes tax',
+      semantic_status: 'ok',
+    },
+    error: undefined,
+    isLoading: false,
+  })),
 }))
 
 const ERROR = 'AssertionError: expected total 108.00 but was 100.00'
@@ -84,6 +101,7 @@ beforeEach(() => {
   vi.mocked(useTestSteps).mockClear()
   vi.mocked(useTestCaseHistory).mockClear()
   vi.mocked(useTestStepFlips).mockClear()
+  vi.mocked(useSimilarFailures).mockClear()
 })
 
 describe('TestCaseBody — the answer first (P4)', () => {
@@ -230,5 +248,48 @@ describe('TestCaseBody — attachments', () => {
     setCase(failedCase())
     renderBody()
     expect(notice()).toBeNull()
+  })
+})
+
+// W12 SRCH-01: Similar failures is a fourth tab on the FULL page of a FAILED
+// or BROKEN result (`?tab=similar`), mounted only while open — the page's load
+// asks nothing new, and the Run page's compact pane (`run-test-pane`) is
+// unchanged.
+describe('TestCaseBody — Similar failures (W12)', () => {
+  const tabNames = () => within(tablist()).getAllByRole('tab').map((tab) => tab.textContent)
+
+  it.each(['FAILED', 'BROKEN'])('a %s result on the full page has the tab, and asks nothing until it opens', (status) => {
+    setCase(failedCase({ status, execution: { status, error_message: ERROR, stack_trace: TRACE, step_count: 3 } }))
+    renderBody()
+    expect(tabNames()).toEqual(['History', 'Steps3', 'Details', 'Similar failures'])
+    expect(useSimilarFailures).not.toHaveBeenCalled()
+
+    fireEvent.click(within(tablist()).getByRole('tab', { name: 'Similar failures' }))
+    expect(screen.getByTestId('search')).toHaveTextContent('?tab=similar')
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('data-test-case-tab', 'similar')
+    expect(useSimilarFailures).toHaveBeenCalledWith('test-1', true)
+    const link = screen.getByRole('link', { name: 'checkout total rounds tax' })
+    expect(link).toHaveAttribute('href', '/runs/run-9/tests/near-1')
+    expect(screen.getByText(/Checkout · FAILED · rel 0\.82 ·/)).toBeInTheDocument()
+  })
+
+  it('?tab=similar opens it directly on a failed result', () => {
+    renderBody('/runs/run-1/tests/test-1?tab=similar')
+    expect(within(tablist()).getByRole('tab', { name: 'Similar failures' })).toHaveAttribute('aria-selected', 'true')
+    expect(useSimilarFailures).toHaveBeenCalledWith('test-1', true)
+  })
+
+  it('a passed result has no such tab, and ?tab=similar reads as History', () => {
+    setCase(failedCase({ status: 'PASSED', error_message: null, execution: { status: 'PASSED', step_count: 3 } }))
+    renderBody('/runs/run-1/tests/test-1?tab=similar')
+    expect(tabNames()).toEqual(['History', 'Steps3', 'Details'])
+    expect(within(tablist()).getByRole('tab', { name: /History/ })).toHaveAttribute('aria-selected', 'true')
+    expect(useSimilarFailures).not.toHaveBeenCalled()
+  })
+
+  it('the compact pane (the Run page) has no Similar failures tab', () => {
+    renderBody('/runs/run-1/tests/test-1?tab=similar', true)
+    expect(tabNames()).toEqual(['History', 'Steps3', 'Details'])
+    expect(useSimilarFailures).not.toHaveBeenCalled()
   })
 })
