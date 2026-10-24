@@ -5936,6 +5936,202 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## AttributionPreviewResponse
+
+```json
+{
+  "properties": {
+    "considered": {
+      "title": "Considered",
+      "type": "integer"
+    },
+    "explicit": {
+      "default": 0,
+      "title": "Explicit",
+      "type": "integer"
+    },
+    "field_present": {
+      "title": "Field Present",
+      "type": "integer"
+    },
+    "matched": {
+      "title": "Matched",
+      "type": "integer"
+    },
+    "sample": {
+      "items": {
+        "$ref": "#/components/schemas/AttributionPreviewSample"
+      },
+      "title": "Sample",
+      "type": "array"
+    },
+    "shadowed": {
+      "default": 0,
+      "title": "Shadowed",
+      "type": "integer"
+    },
+    "target_exists": {
+      "default": true,
+      "title": "Target Exists",
+      "type": "boolean"
+    },
+    "unattributed_recent": {
+      "default": 0,
+      "title": "Unattributed Recent",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "considered",
+    "matched",
+    "field_present",
+    "sample"
+  ],
+  "title": "AttributionPreviewResponse",
+  "type": "object"
+}
+```
+
+## AttributionPreviewSample
+
+```json
+{
+  "properties": {
+    "branch": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Branch"
+    },
+    "build_number": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Build Number"
+    },
+    "created_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Created At"
+    },
+    "current_release_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Current Release Name"
+    },
+    "environment": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Environment"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "tags": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Tags",
+      "type": "array"
+    },
+    "would_land": {
+      "default": "rule",
+      "title": "Would Land",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id"
+  ],
+  "title": "AttributionPreviewSample",
+  "type": "object"
+}
+```
+
+## AttributionRuleField
+
+```json
+{
+  "properties": {
+    "glob": {
+      "title": "Glob",
+      "type": "boolean"
+    },
+    "help": {
+      "title": "Help",
+      "type": "string"
+    },
+    "label": {
+      "title": "Label",
+      "type": "string"
+    },
+    "value": {
+      "title": "Value",
+      "type": "string"
+    }
+  },
+  "required": [
+    "value",
+    "label",
+    "glob",
+    "help"
+  ],
+  "title": "AttributionRuleField",
+  "type": "object"
+}
+```
+
+## AttributionRuleFieldsResponse
+
+```json
+{
+  "properties": {
+    "fields": {
+      "items": {
+        "$ref": "#/components/schemas/AttributionRuleField"
+      },
+      "title": "Fields",
+      "type": "array"
+    }
+  },
+  "required": [
+    "fields"
+  ],
+  "title": "AttributionRuleFieldsResponse",
+  "type": "object"
+}
+```
+
 ## AttributionRuleIn
 
 ```json
@@ -6647,6 +6843,40 @@ These are the full generated JSON Schema definitions, including required fields,
     "projects"
   ],
   "title": "BillingOverviewResponse",
+  "type": "object"
+}
+```
+
+## Body_draft_release_phases_api_v1_releases__release_id__phases_generate_post
+
+```json
+{
+  "properties": {
+    "file": {
+      "anyOf": [
+        {
+          "format": "binary",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "File"
+    },
+    "text": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Text"
+    }
+  },
+  "title": "Body_draft_release_phases_api_v1_releases__release_id__phases_generate_post",
   "type": "object"
 }
 ```
@@ -8327,6 +8557,51 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## CompliancePackFileCheck
+
+```json
+{
+  "properties": {
+    "actual_sha256": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Actual Sha256"
+    },
+    "expected_sha256": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Expected Sha256"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "status"
+  ],
+  "title": "CompliancePackFileCheck",
+  "type": "object"
+}
+```
+
 ## CompliancePackGenerateRequest
 
 ```json
@@ -8361,6 +8636,32 @@ These are the full generated JSON Schema definitions, including required fields,
     }
   },
   "title": "CompliancePackGenerateRequest",
+  "type": "object"
+}
+```
+
+## CompliancePackKeyRotateRequest
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "confirmation": {
+      "title": "Confirmation",
+      "type": "string"
+    },
+    "reason": {
+      "maxLength": 500,
+      "minLength": 3,
+      "title": "Reason",
+      "type": "string"
+    }
+  },
+  "required": [
+    "confirmation",
+    "reason"
+  ],
+  "title": "CompliancePackKeyRotateRequest",
   "type": "object"
 }
 ```
@@ -8509,6 +8810,17 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Retention Expires At",
       "type": "string"
     },
+    "signing_key_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Signing Key Id"
+    },
     "test_run_id": {
       "anyOf": [
         {
@@ -8533,6 +8845,89 @@ These are the full generated JSON Schema definitions, including required fields,
     "generated_at"
   ],
   "title": "CompliancePackRead",
+  "type": "object"
+}
+```
+
+## CompliancePackSigningKeyRead
+
+```json
+{
+  "properties": {
+    "active": {
+      "title": "Active",
+      "type": "boolean"
+    },
+    "algorithm": {
+      "title": "Algorithm",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "key_id": {
+      "title": "Key Id",
+      "type": "string"
+    },
+    "public_key_pem": {
+      "title": "Public Key Pem",
+      "type": "string"
+    },
+    "retired_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Retired At"
+    }
+  },
+  "required": [
+    "key_id",
+    "algorithm",
+    "public_key_pem",
+    "created_at",
+    "active"
+  ],
+  "title": "CompliancePackSigningKeyRead",
+  "type": "object"
+}
+```
+
+## CompliancePackSigningKeysResponse
+
+```json
+{
+  "properties": {
+    "active_key_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Active Key Id"
+    },
+    "keys": {
+      "items": {
+        "$ref": "#/components/schemas/CompliancePackSigningKeyRead"
+      },
+      "title": "Keys",
+      "type": "array"
+    }
+  },
+  "required": [
+    "keys"
+  ],
+  "title": "CompliancePackSigningKeysResponse",
   "type": "object"
 }
 ```
@@ -8636,6 +9031,85 @@ These are the full generated JSON Schema definitions, including required fields,
     "retired"
   ],
   "title": "CompliancePackSummaryRead",
+  "type": "object"
+}
+```
+
+## CompliancePackVerification
+
+```json
+{
+  "properties": {
+    "chain": {
+      "title": "Chain",
+      "type": "string"
+    },
+    "checked_at": {
+      "format": "date-time",
+      "title": "Checked At",
+      "type": "string"
+    },
+    "files": {
+      "items": {
+        "$ref": "#/components/schemas/CompliancePackFileCheck"
+      },
+      "title": "Files",
+      "type": "array"
+    },
+    "files_checked": {
+      "title": "Files Checked",
+      "type": "integer"
+    },
+    "files_ok": {
+      "title": "Files Ok",
+      "type": "integer"
+    },
+    "manifest_matches_record": {
+      "title": "Manifest Matches Record",
+      "type": "boolean"
+    },
+    "pack_id": {
+      "format": "uuid",
+      "title": "Pack Id",
+      "type": "string"
+    },
+    "result": {
+      "title": "Result",
+      "type": "string"
+    },
+    "signature": {
+      "title": "Signature",
+      "type": "string"
+    },
+    "signing_key_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Signing Key Id"
+    },
+    "summary": {
+      "title": "Summary",
+      "type": "string"
+    }
+  },
+  "required": [
+    "pack_id",
+    "result",
+    "chain",
+    "manifest_matches_record",
+    "signature",
+    "files_checked",
+    "files_ok",
+    "files",
+    "summary",
+    "checked_at"
+  ],
+  "title": "CompliancePackVerification",
   "type": "object"
 }
 ```
@@ -10658,6 +11132,16 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Release Decisions",
       "type": "array"
     },
+    "release_verdict": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/DigestReleaseVerdict"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "scope": {
       "anyOf": [
         {
@@ -10696,6 +11180,61 @@ These are the full generated JSON Schema definitions, including required fields,
     "generated_at"
   ],
   "title": "DigestContentResponse",
+  "type": "object"
+}
+```
+
+## DigestReleaseVerdict
+
+```json
+{
+  "properties": {
+    "blocker_count": {
+      "default": 0,
+      "title": "Blocker Count",
+      "type": "integer"
+    },
+    "decided_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Decided At"
+    },
+    "release_id": {
+      "title": "Release Id",
+      "type": "string"
+    },
+    "release_name": {
+      "title": "Release Name",
+      "type": "string"
+    },
+    "source": {
+      "title": "Source",
+      "type": "string"
+    },
+    "verdict": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Verdict"
+    }
+  },
+  "required": [
+    "release_id",
+    "release_name",
+    "source"
+  ],
+  "title": "DigestReleaseVerdict",
   "type": "object"
 }
 ```
@@ -23358,6 +23897,139 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## PhaseDraft
+
+```json
+{
+  "properties": {
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Description"
+    },
+    "exit_criteria_text": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Exit Criteria Text"
+    },
+    "heading": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Heading"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "phase_type": {
+      "title": "Phase Type",
+      "type": "string"
+    },
+    "planned_days": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Planned Days"
+    }
+  },
+  "required": [
+    "name",
+    "phase_type"
+  ],
+  "title": "PhaseDraft",
+  "type": "object"
+}
+```
+
+## PhaseDraftResponse
+
+```json
+{
+  "properties": {
+    "fallback_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Fallback Reason"
+    },
+    "model_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Model Name"
+    },
+    "phases": {
+      "items": {
+        "$ref": "#/components/schemas/PhaseDraft"
+      },
+      "title": "Phases",
+      "type": "array"
+    },
+    "release_id": {
+      "format": "uuid",
+      "title": "Release Id",
+      "type": "string"
+    },
+    "source": {
+      "title": "Source",
+      "type": "string"
+    },
+    "text_chars": {
+      "title": "Text Chars",
+      "type": "integer"
+    },
+    "warnings": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+    }
+  },
+  "required": [
+    "release_id",
+    "source",
+    "phases",
+    "text_chars"
+  ],
+  "title": "PhaseDraftResponse",
+  "type": "object"
+}
+```
+
 ## PhaseIn
 
 ```json
@@ -26871,6 +27543,17 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Activated By"
     },
+    "activated_by_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Activated By Name"
+    },
     "created_at": {
       "format": "date-time",
       "title": "Created At",
@@ -26880,6 +27563,17 @@ These are the full generated JSON Schema definitions, including required fields,
       "format": "uuid",
       "title": "Created By",
       "type": "string"
+    },
+    "created_by_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Created By Name"
     },
     "description": {
       "anyOf": [
@@ -27178,6 +27872,403 @@ These are the full generated JSON Schema definitions, including required fields,
     "reason"
   ],
   "title": "ReleaseOutcomeIn",
+  "type": "object"
+}
+```
+
+## ReleasePhaseBulkItem
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "description": {
+      "anyOf": [
+        {
+          "maxLength": 4000,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Description"
+    },
+    "exit_criteria": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Exit Criteria"
+    },
+    "name": {
+      "maxLength": 255,
+      "minLength": 1,
+      "title": "Name",
+      "type": "string"
+    },
+    "notes": {
+      "anyOf": [
+        {
+          "maxLength": 4000,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Notes"
+    },
+    "phase_type": {
+      "default": "qa_testing",
+      "maxLength": 50,
+      "title": "Phase Type",
+      "type": "string"
+    },
+    "planned_end": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Planned End"
+    },
+    "planned_start": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Planned Start"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "title": "ReleasePhaseBulkItem",
+  "type": "object"
+}
+```
+
+## ReleasePhasesBulkRequest
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "model_name": {
+      "anyOf": [
+        {
+          "maxLength": 200,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Model Name"
+    },
+    "phases": {
+      "items": {
+        "$ref": "#/components/schemas/ReleasePhaseBulkItem"
+      },
+      "maxItems": 30,
+      "minItems": 1,
+      "title": "Phases",
+      "type": "array"
+    },
+    "source": {
+      "default": "manual",
+      "title": "Source",
+      "type": "string"
+    }
+  },
+  "required": [
+    "phases"
+  ],
+  "title": "ReleasePhasesBulkRequest",
+  "type": "object"
+}
+```
+
+## ReleasePhasesCloneRequest
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "from_release_id": {
+      "format": "uuid",
+      "title": "From Release Id",
+      "type": "string"
+    },
+    "shift_to": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Shift To"
+    }
+  },
+  "required": [
+    "from_release_id"
+  ],
+  "title": "ReleasePhasesCloneRequest",
+  "type": "object"
+}
+```
+
+## ReleasePhasesCreatedResponse
+
+```json
+{
+  "properties": {
+    "created": {
+      "title": "Created",
+      "type": "integer"
+    },
+    "phases": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Phases",
+      "type": "array"
+    },
+    "release_id": {
+      "format": "uuid",
+      "title": "Release Id",
+      "type": "string"
+    },
+    "shifted_by_days": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Shifted By Days"
+    },
+    "source_release_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Source Release Id"
+    }
+  },
+  "required": [
+    "release_id",
+    "created",
+    "phases"
+  ],
+  "title": "ReleasePhasesCreatedResponse",
+  "type": "object"
+}
+```
+
+## ReleasePortfolioTotals
+
+```json
+{
+  "properties": {
+    "conditional_go": {
+      "title": "Conditional Go",
+      "type": "integer"
+    },
+    "evaluated": {
+      "title": "Evaluated",
+      "type": "integer"
+    },
+    "go": {
+      "title": "Go",
+      "type": "integer"
+    },
+    "no_go": {
+      "title": "No Go",
+      "type": "integer"
+    },
+    "not_evaluated": {
+      "title": "Not Evaluated",
+      "type": "integer"
+    },
+    "released": {
+      "title": "Released",
+      "type": "integer"
+    },
+    "released_with_pack": {
+      "title": "Released With Pack",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "evaluated",
+    "go",
+    "conditional_go",
+    "no_go",
+    "not_evaluated",
+    "released",
+    "released_with_pack"
+  ],
+  "title": "ReleasePortfolioTotals",
+  "type": "object"
+}
+```
+
+## ReleasePortfolioTrend
+
+```json
+{
+  "properties": {
+    "approximated": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Approximated",
+      "type": "array"
+    },
+    "blocked": {
+      "items": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "title": "Blocked",
+      "type": "array"
+    },
+    "evaluated_in_week": {
+      "items": {
+        "type": "integer"
+      },
+      "title": "Evaluated In Week",
+      "type": "array"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "title": "Generated At",
+      "type": "string"
+    },
+    "go_in_week": {
+      "items": {
+        "type": "integer"
+      },
+      "title": "Go In Week",
+      "type": "array"
+    },
+    "in_progress": {
+      "items": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "title": "In Progress",
+      "type": "array"
+    },
+    "points_at": {
+      "items": {
+        "format": "date-time",
+        "type": "string"
+      },
+      "title": "Points At",
+      "type": "array"
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Project Id"
+    },
+    "ready_to_ship": {
+      "items": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "title": "Ready To Ship",
+      "type": "array"
+    },
+    "released_30d": {
+      "items": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "title": "Released 30D",
+      "type": "array"
+    },
+    "totals": {
+      "$ref": "#/components/schemas/ReleasePortfolioTotals"
+    },
+    "weeks": {
+      "title": "Weeks",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "weeks",
+    "points_at",
+    "in_progress",
+    "ready_to_ship",
+    "blocked",
+    "released_30d",
+    "evaluated_in_week",
+    "go_in_week",
+    "totals",
+    "approximated",
+    "generated_at"
+  ],
+  "title": "ReleasePortfolioTrend",
   "type": "object"
 }
 ```

@@ -10,7 +10,7 @@ List Releases
 
 
 
-Source: [backend/app/routers/releases.py:189](../../../backend/app/routers/releases.py#L189).
+Source: [backend/app/routers/releases.py:218](../../../backend/app/routers/releases.py#L218).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -127,7 +127,7 @@ Create Release
 
 
 
-Source: [backend/app/routers/releases.py:284](../../../backend/app/routers/releases.py#L284).
+Source: [backend/app/routers/releases.py:420](../../../backend/app/routers/releases.py#L420).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -208,6 +208,370 @@ await release_service.serialize_created_release(db, release)
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
 
+## GET `/api/v1/releases/portfolio-trend`
+
+Get Release Portfolio Trend
+
+The release KPI cards' trend (REL-03): each card's rule at ``weeks`` week ends and now.
+
+``project_id`` is resolved FIRST; without it, every project the caller can
+see. Four statements; a GET that writes and caches nothing (the page asks
+only when the "Release health" disclosure is open).
+
+Source: [backend/app/routers/releases.py:338](../../../backend/app/routers/releases.py#L338).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+project_id: Optional[str]=Query(None), weeks: int=Query(PORTFOLIO_WEEKS_DEFAULT, ge=PORTFOLIO_WEEKS_MIN, le=PORTFOLIO_WEEKS_MAX), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "get_release_portfolio_trend_api_v1_releases_portfolio_trend_get",
+  "parameters": [
+    {
+      "in": "query",
+      "name": "project_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Project Id"
+      }
+    },
+    {
+      "in": "query",
+      "name": "weeks",
+      "required": false,
+      "schema": {
+        "default": 12,
+        "maximum": 26,
+        "minimum": 4,
+        "title": "Weeks",
+        "type": "integer"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/ReleasePortfolioTrend"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+## GET `/api/v1/releases/schedule.csv`
+
+Export Release Schedule Csv
+
+The release schedule as CSV (REL-06): one row per phase, formula-guarded, a BOM.
+
+Scoped exactly like the ICS twin; a cancelled release IS listed, with its
+status. A GET: writes nothing.
+
+Source: [backend/app/routers/releases.py:321](../../../backend/app/routers/releases.py#L321).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+project_id: Optional[str]=Query(None), from_: Optional[date]=Query(None, alias='from'), to: Optional[date]=Query(None), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "export_release_schedule_csv_api_v1_releases_schedule_csv_get",
+  "parameters": [
+    {
+      "in": "query",
+      "name": "project_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Project Id"
+      }
+    },
+    {
+      "in": "query",
+      "name": "from",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "format": "date",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "From"
+      }
+    },
+    {
+      "in": "query",
+      "name": "to",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "format": "date",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "To"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {}
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+Handler return expressions (source excerpts, not an inferred wire schema):
+
+```python
+await _schedule_response('csv', db, scoped, allowed, from_, to)
+```
+
+Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
+
+## GET `/api/v1/releases/schedule.ics`
+
+Export Release Schedule Ics
+
+The release schedule as an iCalendar file (REL-06): download only, no token in any URL.
+
+``project_id`` is resolved FIRST (400 malformed, 403 foreign); without it
+the file covers every project the caller can see. A cancelled release is
+not on the calendar. A GET: writes nothing.
+
+Source: [backend/app/routers/releases.py:303](../../../backend/app/routers/releases.py#L303).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+project_id: Optional[str]=Query(None), from_: Optional[date]=Query(None, alias='from'), to: Optional[date]=Query(None), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "export_release_schedule_ics_api_v1_releases_schedule_ics_get",
+  "parameters": [
+    {
+      "in": "query",
+      "name": "project_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Project Id"
+      }
+    },
+    {
+      "in": "query",
+      "name": "from",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "format": "date",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "From"
+      }
+    },
+    {
+      "in": "query",
+      "name": "to",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "format": "date",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "To"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {}
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+Handler return expressions (source excerpts, not an inferred wire schema):
+
+```python
+await _schedule_response('ics', db, scoped, allowed, from_, to)
+```
+
+Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
+
 ## POST `/api/v1/releases/sync`
 
 Sync Releases From External
@@ -231,7 +595,7 @@ release's phases, criteria, gate policy and run attribution are never
 touched, because those are TestLookup's and neither GitHub nor Jira knows
 anything about them.
 
-Source: [backend/app/routers/releases.py:320](../../../backend/app/routers/releases.py#L320).
+Source: [backend/app/routers/releases.py:456](../../../backend/app/routers/releases.py#L456).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -326,7 +690,7 @@ Delete Release
 
 
 
-Source: [backend/app/routers/releases.py:483](../../../backend/app/routers/releases.py#L483).
+Source: [backend/app/routers/releases.py:619](../../../backend/app/routers/releases.py#L619).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -399,7 +763,7 @@ Get Release
 
 
 
-Source: [backend/app/routers/releases.py:223](../../../backend/app/routers/releases.py#L223).
+Source: [backend/app/routers/releases.py:359](../../../backend/app/routers/releases.py#L359).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`.
 
@@ -485,7 +849,7 @@ Update Release
 
 
 
-Source: [backend/app/routers/releases.py:389](../../../backend/app/routers/releases.py#L389).
+Source: [backend/app/routers/releases.py:525](../../../backend/app/routers/releases.py#L525).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -601,7 +965,7 @@ uuid4, so without it half of all orderings present two active rows to a
 partial unique index. Writing ``is_active`` here instead would route around
 that.
 
-Source: [backend/app/routers/releases.py:594](../../../backend/app/routers/releases.py#L594).
+Source: [backend/app/routers/releases.py:900](../../../backend/app/routers/releases.py#L900).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -703,7 +1067,7 @@ NOT_EVALUATED, which means it WAS evaluated and there was not enough
 evidence to say. Collapsing those two into one response would lose the
 difference between "we have not looked" and "we looked and cannot say".
 
-Source: [backend/app/routers/releases.py:232](../../../backend/app/routers/releases.py#L232).
+Source: [backend/app/routers/releases.py:368](../../../backend/app/routers/releases.py#L368).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`.
 
@@ -801,7 +1165,7 @@ A delta against a release nothing ran in is arithmetically fine and
 completely meaningless, and once it is a number on a scorecard nobody
 re-derives whether it was meaningful.
 
-Source: [backend/app/routers/releases.py:265](../../../backend/app/routers/releases.py#L265).
+Source: [backend/app/routers/releases.py:401](../../../backend/app/routers/releases.py#L401).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`.
 
@@ -896,7 +1260,7 @@ demote of the previous verdict and the insert of the new one land as one
 unit of work — a failure cannot leave a release with two current verdicts or
 none.
 
-Source: [backend/app/routers/releases.py:520](../../../backend/app/routers/releases.py#L520).
+Source: [backend/app/routers/releases.py:656](../../../backend/app/routers/releases.py#L656).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -994,7 +1358,7 @@ Mark Release Outcome
 
 Append a human incident or rollback outcome for later G5 evaluation.
 
-Source: [backend/app/routers/releases.py:452](../../../backend/app/routers/releases.py#L452).
+Source: [backend/app/routers/releases.py:588](../../../backend/app/routers/releases.py#L588).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -1090,7 +1454,7 @@ Add Phase
 
 
 
-Source: [backend/app/routers/releases.py:558](../../../backend/app/routers/releases.py#L558).
+Source: [backend/app/routers/releases.py:694](../../../backend/app/routers/releases.py#L694).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -1180,6 +1544,202 @@ serialize_model(phase)
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
 
+## POST `/api/v1/releases/{release_id}/phases/bulk`
+
+Create Release Phases Bulk
+
+Create a release's first schedule in one request (REL-07's Create; also a manual bulk).
+
+409 when the release already has phases (single phases keep
+``POST /phases``); every name unique in the batch; ``source`` /
+``model_name`` are recorded in the activity row and the metric only.
+
+Source: [backend/app/routers/releases.py:834](../../../backend/app/routers/releases.py#L834).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+release_id: str, body: ReleasePhasesBulkRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.QA_LEAD)), __: User=Depends(require_release_access())
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "create_release_phases_bulk_api_v1_releases__release_id__phases_bulk_post",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "release_id",
+      "required": true,
+      "schema": {
+        "title": "Release Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "requestBody": {
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "#/components/schemas/ReleasePhasesBulkRequest"
+        }
+      }
+    },
+    "required": true
+  },
+  "responses": {
+    "201": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/ReleasePhasesCreatedResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+## POST `/api/v1/releases/{release_id}/phases/clone`
+
+Clone Release Phases
+
+Copy another release's phases into this one (REL-05): dates moved, all Pending.
+
+The BODY id is checked by ONE statement scoped to the target's project
+BEFORE anything else reads it: an unknown, malformed (Pydantic's 422) or
+FOREIGN source is the same 404 text, so the route is no oracle for another
+project's release ids. ``require_release_access`` scopes the path id.
+
+Source: [backend/app/routers/releases.py:716](../../../backend/app/routers/releases.py#L716).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+release_id: str, body: ReleasePhasesCloneRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.QA_LEAD)), __: User=Depends(require_release_access())
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=404, detail=RELEASE_NOT_FOUND)
+HTTPException(status_code=422, detail=SOURCE_IS_TARGET)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "clone_release_phases_api_v1_releases__release_id__phases_clone_post",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "release_id",
+      "required": true,
+      "schema": {
+        "title": "Release Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "requestBody": {
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "#/components/schemas/ReleasePhasesCloneRequest"
+        }
+      }
+    },
+    "required": true
+  },
+  "responses": {
+    "201": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/ReleasePhasesCreatedResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## GET `/api/v1/releases/{release_id}/phases/gate`
 
 Get Release Phase Gate
@@ -1198,7 +1758,7 @@ a release manager to do the wrong one half the time. ``NO_PHASES`` is a
 fourth state and not a pass: phases are optional, so having none is not a
 failure, but nothing was gated either.
 
-Source: [backend/app/routers/releases.py:695](../../../backend/app/routers/releases.py#L695).
+Source: [backend/app/routers/releases.py:1001](../../../backend/app/routers/releases.py#L1001).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`.
 
@@ -1278,13 +1838,114 @@ Handler return expressions (source excerpts, not an inferred wire schema):
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
 
+## POST `/api/v1/releases/{release_id}/phases/generate`
+
+Draft Release Phases
+
+Draft phases from a PRD for the reader to review (REL-07). Persists nothing.
+
+The heading parser always runs; the model is asked only in ``llm`` /
+``auto`` analysis mode, and any model failure is the rules draft with a
+``fallback_reason`` -- never an error. The request's connection is handed
+back BEFORE the config read and the model call, so no connection is held
+while the model runs. The PRD is never stored or logged.
+
+Source: [backend/app/routers/releases.py:797](../../../backend/app/routers/releases.py#L797).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+release_id: str, text: Optional[str]=Form(None), file: Optional[UploadFile]=File(None), db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.QA_LEAD)), __: User=Depends(require_release_access())
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=status_code, detail=str(exc))
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "draft_release_phases_api_v1_releases__release_id__phases_generate_post",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "release_id",
+      "required": true,
+      "schema": {
+        "title": "Release Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "requestBody": {
+    "content": {
+      "multipart/form-data": {
+        "schema": {
+          "$ref": "#/components/schemas/Body_draft_release_phases_api_v1_releases__release_id__phases_generate_post"
+        }
+      }
+    }
+  },
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/PhaseDraftResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## DELETE `/api/v1/releases/{release_id}/phases/{phase_id}`
 
 Delete Phase
 
 
 
-Source: [backend/app/routers/releases.py:746](../../../backend/app/routers/releases.py#L746).
+Source: [backend/app/routers/releases.py:1052](../../../backend/app/routers/releases.py#L1052).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -1366,7 +2027,7 @@ Update Phase
 
 
 
-Source: [backend/app/routers/releases.py:572](../../../backend/app/routers/releases.py#L572).
+Source: [backend/app/routers/releases.py:878](../../../backend/app/routers/releases.py#L878).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -1475,7 +2136,7 @@ Evaluate ONE phase and, by default, record the verdict.
 that table, so writing to it is a deliberate act rather than a side effect
 of looking — which is also why the read endpoint above never records.
 
-Source: [backend/app/routers/releases.py:723](../../../backend/app/routers/releases.py#L723).
+Source: [backend/app/routers/releases.py:1029](../../../backend/app/routers/releases.py#L1029).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -1582,7 +2243,7 @@ Link Test Run
 
 
 
-Source: [backend/app/routers/releases.py:760](../../../backend/app/routers/releases.py#L760).
+Source: [backend/app/routers/releases.py:1066](../../../backend/app/routers/releases.py#L1066).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -1679,7 +2340,7 @@ Unlink Test Run
 
 
 
-Source: [backend/app/routers/releases.py:783](../../../backend/app/routers/releases.py#L783).
+Source: [backend/app/routers/releases.py:1089](../../../backend/app/routers/releases.py#L1089).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 

@@ -137,9 +137,13 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/chat/sessions/{session_id}/messages` | Send Message | [Chat](api/chat.md) |
 | POST | `/api/v1/chat/sessions/{session_id}/messages/stream` | Stream Message | [Chat](api/chat.md) |
 | GET | `/api/v1/compliance-packs` | List Project Compliance Packs | [Compliance Pack](api/compliance-pack.md) |
+| GET | `/api/v1/compliance-packs/signing-keys` | List Compliance Signing Keys | [Compliance Pack](api/compliance-pack.md) |
+| POST | `/api/v1/compliance-packs/signing-keys/rotate` | Rotate Compliance Signing Key | [Compliance Pack](api/compliance-pack.md) |
+| GET | `/api/v1/compliance-packs/signing-keys/{signing_key_id}/pem` | Download Compliance Signing Key | [Compliance Pack](api/compliance-pack.md) |
 | DELETE | `/api/v1/compliance-packs/{pack_id}` | Delete Compliance Pack | [Compliance Pack](api/compliance-pack.md) |
 | GET | `/api/v1/compliance-packs/{pack_id}/download` | Download Compliance Pack | [Compliance Pack](api/compliance-pack.md) |
 | POST | `/api/v1/compliance-packs/{pack_id}/retire` | Retire Compliance Pack | [Compliance Pack](api/compliance-pack.md) |
+| POST | `/api/v1/compliance-packs/{pack_id}/verify` | Verify Compliance Pack | [Compliance Pack](api/compliance-pack.md) |
 | POST | `/api/v1/debug/generate-test-run` | Generate Mock Test Run | [Debug](api/debug.md) |
 | GET | `/api/v1/deep-investigate/defects/pending-review` | List Pending Defects | [Deep Investigation](api/deep-investigation.md) |
 | POST | `/api/v1/deep-investigate/defects/{defect_id}/review` | Review Defect | [Deep Investigation](api/deep-investigation.md) |
@@ -253,6 +257,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/projects/{project_id}/analyses/lookup` | Lookup Latest Analysis | [Feedback & Training](api/feedback-training.md) |
 | GET | `/api/v1/projects/{project_id}/attribution-rules` | List Attribution Rules | [Release Attribution Rules](api/release-attribution-rules.md) |
 | POST | `/api/v1/projects/{project_id}/attribution-rules` | Create Attribution Rule | [Release Attribution Rules](api/release-attribution-rules.md) |
+| GET | `/api/v1/projects/{project_id}/attribution-rules/fields` | List Attribution Rule Fields | [Release Attribution Rules](api/release-attribution-rules.md) |
 | POST | `/api/v1/projects/{project_id}/attribution-rules/preview` | Preview Attribution Rule | [Release Attribution Rules](api/release-attribution-rules.md) |
 | DELETE | `/api/v1/projects/{project_id}/attribution-rules/{rule_id}` | Delete Attribution Rule | [Release Attribution Rules](api/release-attribution-rules.md) |
 | PUT | `/api/v1/projects/{project_id}/attribution-rules/{rule_id}` | Update Attribution Rule | [Release Attribution Rules](api/release-attribution-rules.md) |
@@ -359,6 +364,9 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/release-readiness/{run_id}/override` | Override Release Decision | [Release Readiness](api/release-readiness.md) |
 | GET | `/api/v1/releases` | List Releases | [Releases](api/releases.md) |
 | POST | `/api/v1/releases` | Create Release | [Releases](api/releases.md) |
+| GET | `/api/v1/releases/portfolio-trend` | Get Release Portfolio Trend | [Releases](api/releases.md) |
+| GET | `/api/v1/releases/schedule.csv` | Export Release Schedule Csv | [Releases](api/releases.md) |
+| GET | `/api/v1/releases/schedule.ics` | Export Release Schedule Ics | [Releases](api/releases.md) |
 | POST | `/api/v1/releases/sync` | Sync Releases From External | [Releases](api/releases.md) |
 | DELETE | `/api/v1/releases/{release_id}` | Delete Release | [Releases](api/releases.md) |
 | GET | `/api/v1/releases/{release_id}` | Get Release | [Releases](api/releases.md) |
@@ -371,7 +379,10 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/releases/{release_id}/gate/evaluate` | Evaluate Release Gate | [Releases](api/releases.md) |
 | POST | `/api/v1/releases/{release_id}/outcomes` | Mark Release Outcome | [Releases](api/releases.md) |
 | POST | `/api/v1/releases/{release_id}/phases` | Add Phase | [Releases](api/releases.md) |
+| POST | `/api/v1/releases/{release_id}/phases/bulk` | Create Release Phases Bulk | [Releases](api/releases.md) |
+| POST | `/api/v1/releases/{release_id}/phases/clone` | Clone Release Phases | [Releases](api/releases.md) |
 | GET | `/api/v1/releases/{release_id}/phases/gate` | Get Release Phase Gate | [Releases](api/releases.md) |
+| POST | `/api/v1/releases/{release_id}/phases/generate` | Draft Release Phases | [Releases](api/releases.md) |
 | DELETE | `/api/v1/releases/{release_id}/phases/{phase_id}` | Delete Phase | [Releases](api/releases.md) |
 | PUT | `/api/v1/releases/{release_id}/phases/{phase_id}` | Update Phase | [Releases](api/releases.md) |
 | POST | `/api/v1/releases/{release_id}/phases/{phase_id}/gate/evaluate` | Evaluate Release Phase Gate | [Releases](api/releases.md) |
@@ -617,4 +628,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **608 HTTP operations**, **512 paths**, **86 domain pages**.
+Total: **619 HTTP operations**, **523 paths**, **86 domain pages**.

@@ -121,7 +121,7 @@ Create a new draft policy (ADMIN only).
 A project-bound API key may create drafts for its own project only, never
 for another project or the system default (re-audit N20).
 
-Source: [backend/app/routers/release_gate_policies.py:233](../../../backend/app/routers/release_gate_policies.py#L233).
+Source: [backend/app/routers/release_gate_policies.py:265](../../../backend/app/routers/release_gate_policies.py#L265).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -297,7 +297,7 @@ Get Policy History
 
 Get all policy versions for a project scope, ordered by version desc.
 
-Source: [backend/app/routers/release_gate_policies.py:179](../../../backend/app/routers/release_gate_policies.py#L179).
+Source: [backend/app/routers/release_gate_policies.py:211](../../../backend/app/routers/release_gate_policies.py#L211).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -382,7 +382,7 @@ Simulate Policy
 
 Simulate a draft policy against a past run's decision data.
 
-Source: [backend/app/routers/release_gate_policies.py:427](../../../backend/app/routers/release_gate_policies.py#L427).
+Source: [backend/app/routers/release_gate_policies.py:459](../../../backend/app/routers/release_gate_policies.py#L459).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -470,7 +470,7 @@ Get System Policy History
 
 Get all system default policy versions, ordered by version desc.
 
-Source: [backend/app/routers/release_gate_policies.py:195](../../../backend/app/routers/release_gate_policies.py#L195).
+Source: [backend/app/routers/release_gate_policies.py:227](../../../backend/app/routers/release_gate_policies.py#L227).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -545,7 +545,7 @@ Get Policy
 
 Get a single release gate policy by ID.
 
-Source: [backend/app/routers/release_gate_policies.py:209](../../../backend/app/routers/release_gate_policies.py#L209).
+Source: [backend/app/routers/release_gate_policies.py:241](../../../backend/app/routers/release_gate_policies.py#L241).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -632,7 +632,7 @@ Update Policy
 
 Update a draft policy (ADMIN only). Fails if already published.
 
-Source: [backend/app/routers/release_gate_policies.py:292](../../../backend/app/routers/release_gate_policies.py#L292).
+Source: [backend/app/routers/release_gate_policies.py:324](../../../backend/app/routers/release_gate_policies.py#L324).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -730,7 +730,7 @@ Deactivate Policy
 
 Deactivate a policy (falls back to system default or hardcoded).
 
-Source: [backend/app/routers/release_gate_policies.py:400](../../../backend/app/routers/release_gate_policies.py#L400).
+Source: [backend/app/routers/release_gate_policies.py:432](../../../backend/app/routers/release_gate_policies.py#L432).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -817,7 +817,7 @@ Publish Policy
 
 Publish a draft policy: deactivates any previous active policy for the same scope.
 
-Source: [backend/app/routers/release_gate_policies.py:329](../../../backend/app/routers/release_gate_policies.py#L329).
+Source: [backend/app/routers/release_gate_policies.py:361](../../../backend/app/routers/release_gate_policies.py#L361).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
