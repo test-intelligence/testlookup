@@ -16,6 +16,7 @@ vi.mock('@/hooks/useLiveExecution', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/hooks/useLiveExecution')>()
   return { ...actual, useLiveExecution: live.useLiveExecution }
 })
+vi.mock('@/hooks/useEffectivePassRateBands', async () => { const { readinessBands } = await import('@/utils/passRateBands'); return { useEffectivePassRateBands: () => readinessBands(null) } })
 vi.mock('@/hooks/useSuiteOptions', () => ({ useSuiteOptions: vi.fn(() => ({ options: [], isLoading: false })) }))
 
 import LiveExecutionPage from './LiveExecutionPage'

@@ -12,6 +12,7 @@ export const ROUTE_TEMPLATES: readonly string[] = [
   'coverage', 'coverage/suite', 'suites', 'suites/:suiteId', 'canonical-test-cases/:canonicalId',
   'failures', 'trends', 'explore', 'defects', 'search', 'chat', 'agents', 'agents/run/:runId',
   'agents/workflows', 'deep-investigate', 'deep-investigate/:runId', 'release-gate', 'release-gate/:runId',
+  'releases/attribution-rules',
   'flaky', 'flaky-coach', 'quarantine', 'reviews', 'test-management', 'live', 'my-failures',
   'reports/summary', 'settings/profile', 'settings/my-notifications', 'settings/my-api-keys', 'projects',
   'releases', 'releases/:releaseId', 'activity', 'users', 'settings', 'settings/notifications',

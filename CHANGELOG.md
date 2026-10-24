@@ -52,6 +52,28 @@ locally by default.
 
 ### Added
 
+- **Release planning: copy phases, draft phases from a PRD, the schedule as
+  ICS / CSV and a calendar, a release-health trend, attribution rules** (wave
+  W11, REL-05, REL-07, REL-06, REL-03, REL-09; branch
+  `feat/df-release-planning-policy-20261023`). A release with no phases offers
+  **Copy phases from…** (another release of the project, dates moved to the new
+  start) and **Draft from a PRD…** (paste or upload `.md`, `.txt` or `.docx`:
+  the headings become typed phases you edit before anything is saved; the
+  configured model is tried in LLM / auto analysis mode and the heading parser
+  is always the fallback, with the reason shown). The Releases header exports
+  the schedule as an ICS calendar file or a CSV and switches between List and a
+  month **Calendar** of releases and phases. **Release health · this week**
+  draws 12-week sparklines for in progress, ready to ship, blocked and released,
+  with "GO on X of Y evaluated" and "N of M released with a pack". A new
+  **Attribution rules** page (Releases ⋯) maps a run's branch, build,
+  environment or tag to a release when the run names none, explains the order a
+  run is linked in, previews which recent runs a rule would move, and a run that
+  lands in no release says **Unattributed**. Tests:
+  `test_release_phase_clone.py`, the PRD parser and drafter tests,
+  `test_release_schedule_export.py`, the portfolio buckets, the attribution
+  preview, four `*_postgres.py` suites, and the specs `releases-plan-phases`,
+  `releases-schedule`, `releases-portfolio-trend`, `release-attribution-rules`.
+
 - **Integration health per project, a webhook circuit breaker, and a Changes
   tab that says why** (wave W10, INT-04, INT-07, FAIL-09; branch
   `feat/df-integrations-runtime-20261023`). **Integration Health** lists every
@@ -401,6 +423,23 @@ locally by default.
 
 ### Changed
 
+- **The gate policy's pass-rate bands set the target everywhere, and the
+  pages say which policy decided** (wave W11, GATE-04, GATE-02, GATE-08a,
+  GATE-08b; behaviour change). Trends draws the policy's GO line (95% under the
+  default bands, was a fixed 90%) with the No-Go zone shaded and names the
+  policy; Live follows the bands; Overview's "How this verdict is decided" names
+  the policy and the hard caps that forced No-Go (or the built-in rule when no
+  policy is published); the release gate page names the band policy and
+  version. The policy editor gains **Versions** (with who changed what),
+  **Compare** and **New version from this**, and the simulator picks a run of
+  the policy's project. `/release-gate` follows the release chosen in the top
+  bar and shows that release's recorded verdict ("not evaluated yet" when it has
+  none). Digests carry the release verdict line. Tests:
+  `test_readiness_policy_in_summary.py`, `test_policy_history_names.py`,
+  `test_digest_release_verdict.py` (+ Postgres), `test_email_release_verdict_line.py`,
+  and the specs `policy-bands`, `policy-editor`, `release-gate-follows-release`,
+  `digests-release-verdict`.
+
 - **Integration settings saved in the UI now drive Splunk, OpenShift and
   legacy Jira** (wave W10, INT-01, INT-03; behaviour change for existing
   installs). The rule, everywhere: `AI_OFFLINE_MODE` overrides everything; a
@@ -667,6 +706,12 @@ locally by default.
 
 ### Fixed
 
+- PII redaction no longer masks a run id as a card number. A random run id
+  whose first three groups happen to be all digits
+  (`05982379-5519-4289-a773-…`) read as 16 digits and was stored as
+  `[REDACTED_CC]-a773-…`, breaking the link to the run; a real card number is
+  still redacted. Test: `test_privacy_redaction.py`.
+
 - On `/runs`, picking a branch and then an AI verdict before the list
   refreshed dropped the branch filter; both filters stay now (W29b).
 
@@ -917,6 +962,27 @@ locally by default.
   `retention_activation_nudge`.
 
 ### Security
+
+- **pypdf 6.21.2.** The backend's PDF text extraction (knowledge RAG) moves
+  from 6.19.0 (CVE-2026-115572, CVE-2026-115580, CVE-2026-115585: long runtimes
+  on crafted PDFs).
+
+- **Compliance packs are signed and can be verified** (wave W11, REL-11;
+  owner decision D14). A new pack carries an Ed25519 signature
+  (`signature.json`, outside the manifest) from a deployment key created on the
+  first signed pack; its private key is encrypted at rest and never shown. The
+  pack panel says **Signed · key**, **Verify** re-checks every file and the
+  signature, and **Public key** downloads the PEM. `testlookup compliance-pack
+  verify pack.zip --public-key key.pem [--require-signature]` verifies a pack
+  offline and names any changed file (exit 1); the MCP tool
+  `verify_compliance_pack` does the same. Admins rotate the key through the API;
+  a retired key's public half is kept, so older packs still verify. A pack made
+  before this change, or while the key cannot be read, says "unsigned
+  (tamper-evident only)". Migration `0225`; the CLI now depends on
+  `cryptography`. Tests: `test_compliance_signing.py`,
+  `test_compliance_pack_verify.py`, the routes, the CLI and MCP tests,
+  `test_compliance_pack_signing_postgres.py` (first-key race, rotation), the
+  spec `compliance-pack-verify`.
 
 - **Legacy Jira tickets respect offline mode, and integration hosts are
   checked** (wave W10, INT-01, INT-03). The AI panel's "Create Jira ticket"

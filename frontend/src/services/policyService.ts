@@ -93,6 +93,9 @@ export interface PolicySummary {
   activated_at: string | null;
   created_at: string;
   updated_at: string | null;
+  /** W11 GATE-02: filled by the two history routes only (absent elsewhere). */
+  created_by_name?: string | null;
+  activated_by_name?: string | null;
 }
 
 export interface RuleEvaluation {
@@ -151,6 +154,21 @@ export const DEFAULT_KIND_RULES: PolicyKindRules = {
   enabled: false,
 };
 
+/**
+ * W11 GATE-04: a policy's pass-rate bands, each missing (or non-numeric) key
+ * read from the defaults — the rule the server's classifier applies per key.
+ */
+export function policyBands(
+  source: { rules?: { pass_rate_bands?: Partial<PolicyPassRateBands> | null } | null } | null | undefined,
+): PolicyPassRateBands {
+  const configured = source?.rules?.pass_rate_bands ?? {};
+  const pick = (key: keyof PolicyPassRateBands): number => {
+    const value = configured[key];
+    return typeof value === 'number' && Number.isFinite(value) ? value : DEFAULT_PASS_RATE_BANDS[key];
+  };
+  return { orange_min: pick('orange_min'), yellow_min: pick('yellow_min'), green_min: pick('green_min') };
+}
+
 // ── API ─────────────────────────────────────────────────────────────────────
 
 export async function listPolicies(params?: {
@@ -174,7 +192,8 @@ export async function getEffectivePolicy(projectId: string): Promise<PolicySumma
 export async function createPolicy(payload: {
   project_id?: string | null;
   name: string;
-  description?: string;
+  /** null: a version copied from one with no description ("New version from this"). */
+  description?: string | null;
   rules?: PolicyDocument;
 }): Promise<PolicySummary> {
   const { data } = await api.post<PolicySummary>('/api/v1/release-gate-policies', payload);

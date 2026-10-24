@@ -127,6 +127,27 @@ class TestReferenceDriftAcceptsARealApiChange:
         assert not real
         assert "not CI's file plus this change's delta" in why
 
+    def test_an_upload_field_rendered_by_a_newer_fastapi_is_not_skew(self, monkeypatch, tmp_path):
+        # W11: the change adds an UploadFile field. This hook's FastAPI renders it with contentMediaType, CI's
+        # pinned one (what was committed) with format: binary. That spelling alone must not fail the check...
+        local_head = 'a\nb-local-skew\nc\n"contentMediaType": "application/octet-stream",\nd\n'
+        committed = 'a\nb-ci-form\nc\n"format": "binary",\nd\n'
+        refs = {"origin/main": self.LOCAL_BASE, "HEAD": local_head}
+        monkeypatch.setattr(push_check, "_generate_references_at",
+                            lambda ref, workdir, **_: {p: refs[ref] for p in push_check.SKEWED_REFERENCES})
+        monkeypatch.setattr(push_check, "_git_stdout", lambda *args: (0, self.CI))
+        monkeypatch.setattr(push_check, "REPO", tmp_path)
+        for p in push_check.SKEWED_REFERENCES:
+            (tmp_path / p).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / p).write_text(committed, encoding="utf-8")
+        real, why = push_check.reference_delta_is_real("origin/main")
+        assert real, why
+        # ...while any other difference still does.
+        for p in push_check.SKEWED_REFERENCES:
+            (tmp_path / p).write_text(committed.replace("d\n", "e\n"), encoding="utf-8")
+        real, why = push_check.reference_delta_is_real("origin/main")
+        assert not real and "not CI's file plus this change's delta" in why
+
     def test_a_generation_failure_fails_closed(self, monkeypatch):
         def boom(ref, workdir, **_):
             raise RuntimeError("worktree add failed")

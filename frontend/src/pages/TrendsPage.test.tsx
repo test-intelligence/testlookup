@@ -669,7 +669,7 @@ describe('TrendsPage on the chart kit', () => {
     await renderWindow(trend)
     const { model, rateTarget, title, takeaway } = lastTimeSeries()
     expect(title).toBe('Pass rate trend')
-    expect(rateTarget).toEqual({ value: 90, label: 'Target 90%' })
+    expect(rateTarget).toEqual({ value: 95, label: 'GO ≥ 95%', floor: { value: 90, label: 'No-Go < 90%' } })
     expect(model.points).toHaveLength(14)
     const rate = (iso: string) => model.points.find((pt) => pt.x === iso)?.rate
     expect(rate(day(1))).toBe(57.4)
@@ -677,14 +677,14 @@ describe('TrendsPage on the chart kit', () => {
     expect(rate(day(5))).toBeNull()
     expect(rate(today)).toBeNull()
     // The headline is the WINDOW's rate: 61 of 86 evaluated (skips outside it).
-    expect(takeaway).toBe('70.9% over the last 14 days, 19 pp below the 90% target')
+    expect(takeaway).toBe('70.9% over the last 14 days, 24 pp below the GO line (95%, default bands)')
     expect(screen.getByRole('heading', { name: 'Pass rate trend' })).toBeInTheDocument()
   })
 
   it('says a window with too few measured days has no trend', async () => {
     const { day } = await windowFixture()
     await renderWindow([{ date: day(2), passed: 9, failed: 1, skipped: 0, broken: 0, total: 10, pass_rate: 90 }])
-    expect(lastTimeSeries().takeaway).toBe('90.0% over the last 14 days, at the 90% target · 1 day with data, too few for a trend')
+    expect(lastTimeSeries().takeaway).toBe('90.0% over the last 14 days, 5 pp below the GO line (95%, default bands) · 1 day with data, too few for a trend')
   })
 
   // TRND-06: the fake 6-tick micro-bar never came back; the row now draws the
@@ -802,7 +802,7 @@ describe('TrendsPage rollout (Wave 2.6)', () => {
     const { trendAnalysis, zoom, rateTarget, model } = lastTimeSeries()
     expect(trendAnalysis).toBe(true)
     expect(zoom).toBe(true)
-    expect(rateTarget).toEqual({ value: 90, label: 'Target 90%' })
+    expect(rateTarget).toEqual({ value: 95, label: 'GO ≥ 95%', floor: { value: 90, label: 'No-Go < 90%' } })
     // Released, else planned; an undated release is not drawn.
     expect(model.markers.flatMap((m) => m.names).sort()).toEqual(['R1', 'R2'])
     // 10 days with runs: the overlays are offered and not disabled.

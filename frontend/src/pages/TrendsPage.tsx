@@ -21,7 +21,7 @@
  *             decoration and carry no glyph (VIZ-104, OD-1). The strip keeps
  *             its `Trend metrics` landmark.
  *   Hero    → the Pass rate trend (`data-primary`): kit
- *             `TimeSeriesChartFrame` with the 90 % target line, the trend
+ *             `TimeSeriesChartFrame` with the policy's GO line, the trend
  *             overlays, the range brush, release markers and the window's
  *             timeline notes (TRND-04: a band per range, a dashed line per
  *             day, the `Notes (n)` chip in the frame's toolbar when there are
@@ -145,7 +145,11 @@ import Sparkline from '@/components/charts/Sparkline'
 import StackedColumnChartFrame from '@/components/charts/StackedColumnChartFrame'
 import { buildStackedColumnModel, STATUS_STACK_SERIES, utcDayLabel } from '@/components/charts/stackedColumnModel'
 import TimeSeriesChartFrame from '@/components/charts/TimeSeriesChartFrame'
+import type { TimeSeriesRateTarget } from '@/components/charts/TimeSeriesChart'
 import TimelineNotesChip from '@/components/charts/TimelineNotesChip'
+import {
+  goLineLabel, noGoZoneLabel, readinessBands, versusGoLine, type ReadinessBands,
+} from '@/utils/passRateBands'
 import { buildTimeSeriesModel, timeSeriesFromTrends } from '@/components/charts/timeSeriesModel'
 import { readyState, type ChartState } from '@/components/charts/chartStateCore'
 import type { NoteInput, ReleaseInput, TimeSeriesPoint } from '@/components/charts/timeSeriesModel'
@@ -762,7 +766,19 @@ function DailyBreakdown({
 }
 
 // ── Pass-rate trend ───────────────────────────────────────────────────────
-const PASS_RATE_TARGET = { value: 90, label: 'Target 90%' } as const
+/**
+ * W11 GATE-04: the dashed line is the policy's GO line (`yellow_min`) and the
+ * zone below `orange_min` is shaded — from the summary's `readiness_policy`,
+ * or the default bands (95 / 90), labelled. The legend carries only the two
+ * short labels (it must not wrap); the policy's NAME is in the takeaway.
+ */
+function goLineTarget(bands: ReadinessBands): TimeSeriesRateTarget {
+  return {
+    value: bands.goMin,
+    label: goLineLabel(bands),
+    floor: { value: bands.noGoBelow, label: noGoZoneLabel(bands) },
+  }
+}
 /** The hero's plot height, px (spec §2: the primary chart; it was 240 in the two-column body). */
 const HERO_HEIGHT = 280
 const NO_EVALUATED_DAY = 'no day in this window has an evaluated execution'
@@ -772,8 +788,9 @@ const NO_NOTES: readonly NoteInput[] = []
  * The window's pass rate per day, on the kit's time-series chart: the
  * endpoint's own `pass_rate` (gated on evaluated executions, so a day of only
  * skips is a gap), a gap for a day with no runs, the execution count as bars
- * and the 90 % target as a dashed line with a legend entry. TRND-04: the
- * window's timeline notes travel in the model.
+ * and the GO line as a dashed line with a legend entry (W11 GATE-04: the
+ * No-Go zone shaded under it). TRND-04: the window's timeline notes travel in
+ * the model.
  *
  * The old card's header block — a big number labelled "today", a target pill
  * and a delta — becomes the frame's one-line takeaway: the number was the
@@ -789,7 +806,7 @@ function passRateChart(points: TimeSeriesPoint[], releases?: readonly ReleaseInp
 }
 
 function PassRateTrend({
-  trend, model, days, notes, toolbar,
+  trend, model, days, notes, toolbar, bands,
 }: {
   trend: TrendPoint[]
   model: CadenceModel
@@ -798,6 +815,8 @@ function PassRateTrend({
   notes: readonly NoteInput[]
   /** The frame's toolbar content (the `Notes (n)` chip). */
   toolbar?: React.ReactNode
+  /** W11 GATE-04: the GO line and the No-Go zone (the summary's policy, or the default bands). */
+  bands: ReadinessBands
 }) {
   const points = useMemo(() => {
     const cells = model.cadenceCells
@@ -810,13 +829,13 @@ function PassRateTrend({
   const activeDays = model.daysWithRuns
   let takeaway: string | undefined
   if (model.evaluatedExecutions > 0) {
-    const delta = Math.round(model.passRate - PASS_RATE_TARGET.value)
-    const versus = delta === 0 ? 'at the 90% target' : `${Math.abs(delta)} pp ${delta < 0 ? 'below' : 'above'} the 90% target`
+    const versus = versusGoLine(model.passRate, bands)
     const sparse = activeDays < 3 ? ` · ${activeDays} day${activeDays === 1 ? '' : 's'} with data, too few for a trend` : ''
     takeaway = `${model.passRate.toFixed(1)}% over the last ${days} days, ${versus}${sparse}`
   }
+  const rateTarget = useMemo(() => goLineTarget(bands), [bands])
 
-  return <PassRateTrendAnalysis points={points} takeaway={takeaway} notes={notes} toolbar={toolbar} />
+  return <PassRateTrendAnalysis points={points} takeaway={takeaway} notes={notes} toolbar={toolbar} rateTarget={rateTarget} />
 }
 
 type ReleaseRow = { id: string; name: string; released_at: string | null; planned_date: string | null }
@@ -836,12 +855,14 @@ function releaseMarkerInputs(items: readonly ReleaseRow[]): ReleaseInput[] {
  * flag-off page drew is gone.
  */
 function PassRateTrendAnalysis({
-  points, takeaway, notes, toolbar,
+  points, takeaway, notes, toolbar, rateTarget,
 }: {
   points: TimeSeriesPoint[]
   takeaway: string | undefined
   notes: readonly NoteInput[]
   toolbar?: React.ReactNode
+  /** W11 GATE-04: the GO line with its No-Go floor. */
+  rateTarget: TimeSeriesRateTarget
 }) {
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const { data: releaseList } = useReleases(undefined, { cached: true })
@@ -863,7 +884,7 @@ function PassRateTrendAnalysis({
         height={HERO_HEIGHT}
         model={chart}
         state={state}
-        rateTarget={PASS_RATE_TARGET}
+        rateTarget={rateTarget}
         trendAnalysis
         zoom
         toolbar={toolbar}
@@ -1197,6 +1218,11 @@ export default function TrendsPage() {
   const model = useMemo(() => computeCadenceModel(trend, days), [trend, days])
   const verdict = asVerdict(summary?.confidence.verdict)
   const gap = calloutGap(summary)
+  // W11 GATE-04: the GO line rides the page's existing summary read (no new
+  // request); no `readiness_policy` (no evidence, an old cache entry) = the
+  // default bands, labelled as such.
+  const readinessPolicy = dashSummary?.readiness_policy
+  const bands = useMemo(() => readinessBands(readinessPolicy), [readinessPolicy])
 
   // TRND-04: the window's timeline notes (UTC days, one project only), and
   // only the ones for this page's suite (a project-wide note always shows).
@@ -1521,6 +1547,7 @@ export default function TrendsPage() {
         trend={trend}
         model={model}
         days={days}
+        bands={bands}
         notes={noteInputs}
         toolbar={
           shownNotes.length > 0 ? (

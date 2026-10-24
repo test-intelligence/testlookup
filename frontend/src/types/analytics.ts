@@ -40,6 +40,16 @@ export interface DashboardSummary {
   flaky_test_count?: DashboardMetricValue
   new_failures_24h?: DashboardMetricValue
   avg_duration_ms?: DashboardMetricValue
+  // W11 GATE-04: the policy the verdict above was decided by. null / absent:
+  // no evidence in the window, no policy resolved, or an entry cached before
+  // the deploy — the pages then read the default bands (labelled).
+  readiness_policy?: {
+    id: string
+    name: string
+    version: number
+    level: string
+    bands: { orange_min: number; yellow_min: number; green_min: number }
+  } | null
 }
 
 export interface FlakyTestItem {

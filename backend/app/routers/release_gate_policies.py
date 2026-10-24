@@ -1,7 +1,7 @@
 """Release Gate Policy router — CRUD, publish, deactivate, simulate (ENT-02)."""
 import logging
 import uuid
-from typing import Optional
+from typing import Optional, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select, text
@@ -176,6 +176,38 @@ async def get_effective_policy(
     return policy
 
 
+async def _with_user_names(
+    db: AsyncSession, found_rows: Sequence[ReleaseGatePolicy]
+) -> list[ReleaseGatePolicyResponse]:
+    """W11 GATE-02: each version with the NAMES of who created / activated it.
+
+    ``created_by`` / ``activated_by`` are bare user ids, and ``/users`` is
+    admin-scoped for names while a QA lead also reads the history. ONE
+    ``SELECT id, username FROM users WHERE id IN (...)`` (none when there are
+    no rows); a deleted user reads ``None``.
+    """
+    rows = list(found_rows)
+    if not rows:
+        return []
+    ids = {row.created_by for row in rows if row.created_by is not None}
+    ids |= {row.activated_by for row in rows if row.activated_by is not None}
+    names: dict[uuid.UUID, str] = {}
+    if ids:
+        found = await db.execute(
+            select(User.id, User.username).where(User.id.in_(sorted(ids, key=str)))
+        )
+        names = {user_id: username for user_id, username in found.all()}
+    return [
+        ReleaseGatePolicyResponse.model_validate(row).model_copy(
+            update={
+                "created_by_name": names.get(row.created_by) if row.created_by else None,
+                "activated_by_name": names.get(row.activated_by) if row.activated_by else None,
+            }
+        )
+        for row in rows
+    ]
+
+
 @router.get("/history/{project_id}", response_model=list[ReleaseGatePolicyResponse])
 async def get_policy_history(
     project_id: uuid.UUID,
@@ -189,7 +221,7 @@ async def get_policy_history(
         .where(ReleaseGatePolicy.project_id == project_id)
         .order_by(ReleaseGatePolicy.version.desc())
     )
-    return result.scalars().all()
+    return await _with_user_names(db, result.scalars().all())
 
 
 @router.get("/system-history", response_model=list[ReleaseGatePolicyResponse])
@@ -203,7 +235,7 @@ async def get_system_policy_history(
         .where(ReleaseGatePolicy.project_id.is_(None))
         .order_by(ReleaseGatePolicy.version.desc())
     )
-    return result.scalars().all()
+    return await _with_user_names(db, result.scalars().all())
 
 
 @router.get("/{policy_id}", response_model=ReleaseGatePolicyResponse)

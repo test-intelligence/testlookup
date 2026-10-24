@@ -68,7 +68,7 @@ def _wire_summary(monkeypatch: pytest.MonkeyPatch, *, cur: dict, prev: dict):
 
     monkeypatch.setattr(metrics_service, "_period_stats", _period_stats)
     monkeypatch.setattr(metrics_service, "_count_flaky_tests", AsyncMock(return_value=0))
-    monkeypatch.setattr(metrics_service, "_resolve_policy_for_project", AsyncMock(return_value=None))
+    monkeypatch.setattr(metrics_service, "resolve_readiness_policy", AsyncMock(return_value=None))
     result = MagicMock()
     result.scalar.return_value = 0
     return SimpleNamespace(execute=AsyncMock(return_value=result))

@@ -1,8 +1,8 @@
 {
-  "attested_at": "2026-10-15T19:31:15.651688+00:00",
-  "change_id": "ragas-configured-llm-2026-10-15",
+  "attested_at": "2026-10-24T01:03:00.198397+00:00",
+  "change_id": "W11-REL-07",
   "eval_gate_run_id": null,
-  "eval_manifest_checksum": "db00a7da3b275c87441f2f5c9988a76064fe1798cc2128c8681c87317cd48b06",
+  "eval_manifest_checksum": "c6d5e80ed95ee61607e4db4b602894558b683ef5971741f4edc23c46418ef178",
   "gate_results": [
     {
       "agent_name": "AnalysisAgent",
@@ -91,32 +91,11 @@
       ],
       "status": "pass",
       "task_type": "release_decision"
-    },
-    {
-      "agent_name": "ReviewerAgent",
-      "metrics": {
-        "focused_tests": 262,
-        "mutations_applied_and_killed": 46
-      },
-      "rule_results": [
-        {
-          "detail": "262 workflow, config, compiler, router, replay, and authority-lock regressions passed on the deployed candidate",
-          "passed": true,
-          "rule": "m13_focused_regressions"
-        },
-        {
-          "detail": "all 46 asserted source mutations were killed",
-          "passed": true,
-          "rule": "m13_mutation_check"
-        }
-      ],
-      "status": "pass",
-      "task_type": "workflow_replay_runtime_authority"
     }
   ],
-  "manifest_digest": "e68421b16d89349953083fcd2916273023539a247cab982f43a4c1435eacf268",
+  "manifest_digest": "14c5c5160beb05ea0781605191647f1acd20600733a61e702ccd2320b73ea59e",
   "mode": "source_review",
-  "notes": "llm_factory.py adds BudgetedLLM.as_chat_model() / BudgetedChatModel, a LangChain chat-model adapter whose every generation is one BudgetedLLM.ainvoke, so the Ragas faithfulness judge goes through the budget, cost-cap, breaker and slot gates. No prompt text, model choice or routing changed. Gate results carried from w04-ai-config-2026-10-15. The offline golden run scores duplicate_detection insufficient_samples (accuracy 0.50) on origin/main too.",
+  "notes": "W11 REL-07 registers ONE new prompt, release_phase_draft v1, used only by the release-phase PRD drafter (services/release_phase_generator.py) through the real BudgetedLLM; its output is a draft the user edits before anything is saved, and the heading parser runs first and always. No existing prompt text, model choice, routing or watched source changed. No scored task uses the new prompt, so the gate results below are the real offline golden run over the existing tasks (classification, root_cause, release_decision pass; duplicate_detection insufficient_samples as on origin/main \u2014 prompt-independent offline scorer). Offline golden verdict as computed: insufficient_samples.",
   "prompt_versions": {
     "anomaly_narrative": "v1:0298a3b5009f",
     "chat_compression": "v1:68e08a32dff5",
@@ -129,6 +108,7 @@
     "investigator_synthesis_narrative": "v1:f7d92dd09981",
     "react_triage": "v3:e71c26f0ad74",
     "regression_watchman_classify": "v1:2ac1510063fd",
+    "release_phase_draft": "v1:07af895ba929",
     "release_risk_reasoning": "v1:a152fb254091",
     "reviewer_claim_extraction": "v1:657326161d7b",
     "reviewer_second_model": "v1:7714b62aff2c",

@@ -171,8 +171,9 @@ _PII_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\b(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b"), "[REDACTED_PHONE]"),
     # SSN (xxx-xx-xxxx or xxx xx xxxx)
     (re.compile(r"\b\d{3}[-\s]\d{2}[-\s]\d{4}\b"), "[REDACTED_SSN]"),
-    # Credit card numbers (4 groups of 4 digits)
-    (re.compile(r"\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b"), "[REDACTED_CC]"),
+    # Credit card numbers (4 groups of 4 digits). Not the head of a UUID: a uuid4 whose first three groups happen
+    # to be all digits ("05982379-5519-4289-a773-…") reads as 16 digits, and masking it broke stored run ids.
+    (re.compile(r"\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b(?!-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b)"), "[REDACTED_CC]"),
     # IPv4 addresses
     (re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b"), "[REDACTED_IP]"),
 ]

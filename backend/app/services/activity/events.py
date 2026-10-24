@@ -112,11 +112,10 @@ _ENTITY_ROUTES: Final[Mapping[str, str]] = {
     # nothing: the releases page ignores a ``release`` query parameter.
     "release": "/releases/{id}",
     "policy": "/policies/{id}",
-    # No page renders attribution rules today — the API exists, the UI does
-    # not. An empty route yields href=None, so the feed prints the rule's name
-    # as plain text. Sending the reader to a route that does not exist would
-    # bounce them to /overview, which is worse than not offering a link.
-    "attribution_rule": "",
+    # W11 REL-09: the attribution rules page (one page lists every rule of the
+    # project, so the link carries no id). Before W11 this was "" -- no page
+    # rendered the rules, and a link to a missing route bounces to /overview.
+    "attribution_rule": "/releases/attribution-rules",
     "ownership_rule": "/ownership",
     "quarantine": "/quarantine",
     "defect": "/defects?defect={id}",
@@ -273,6 +272,14 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("release.phase_added", "release", "release", "Phase {phase} was added to release {entity_label}"),
     _spec("release.phase_updated", "release", "release", "Phase {phase} on release {entity_label} changed: {changed}"),
     _spec("release.phase_deleted", "release", "release", "Phase {phase} was removed from release {entity_label}"),
+    # W11 REL-05 / REL-07: a first schedule created in one request -- copied
+    # from another release of the project, or created from a reviewed draft
+    # (``source`` rules | llm | manual). Outcome mode: staged on the request
+    # session and committed by the router with the phases themselves.
+    _spec("release.phases_cloned", "release", "release",
+          "Release {entity_label}: {count} phases copied from {source_release}"),
+    _spec("release.phases_generated", "release", "release",
+          "Release {entity_label}: {count} phases created ({source})"),
     # ── quality ─────────────────────────────────────────────────────────────
     _spec("quarantine.requested", "quality", "quarantine", "Quarantine requested for {entity_label}", "attempt"),
     _spec("quarantine.approved", "quality", "quarantine", "Quarantine approved for {entity_label}", "attempt"),

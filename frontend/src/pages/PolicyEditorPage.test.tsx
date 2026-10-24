@@ -44,9 +44,9 @@
  * NO_GO there, so an operator setting 55 was told 55 would not trip it.
  */
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { SWRConfig } from 'swr'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import PolicyEditorPage from './PolicyEditorPage'
 import { useProjectStore } from '@/store/projectStore'
@@ -67,12 +67,33 @@ vi.mock('react-hot-toast', () => ({
   default: { error: (m: string) => mockToastError(m), success: (m: string) => mockToastSuccess(m) },
 }))
 
+/** W11 GATE-02 (set-up only): the loaded policy, `null` (as every older case saw) unless a case sets one. */
+const policyHook = vi.hoisted(() => ({ policy: null as unknown }))
+
 vi.mock('@/hooks/usePolicyEditor', () => ({
   usePolicies: (enabled: boolean) => {
     listHook.enabledCalls.push(enabled)
     return { policies: listHook.policies, isLoading: false, isError: false, mutate: mockRefreshPolicies }
   },
-  usePolicy: () => ({ policy: null, isLoading: false, isError: false }),
+  usePolicy: () => ({ policy: policyHook.policy, isLoading: false, isError: false }),
+}))
+
+// W11 GATE-02 (set-up only): the simulator's run picker, a stand-in that
+// records what the page binds it to and answers like the old typed field.
+const runPicker = vi.hoisted(() => ({ props: [] as Record<string, unknown>[] }))
+vi.mock('@/components/runs/RunPicker', () => ({
+  default: (props: { label: string; value: string; onChange: (id: string) => void; projectId?: string | null }) => {
+    runPicker.props.push(props)
+    return <input aria-label={props.label} value={props.value} onChange={(e) => props.onChange(e.target.value)} />
+  },
+}))
+// W11 GATE-02 (set-up only): the Versions history, read only once the disclosure opens.
+const history = vi.hoisted(() => ({ rows: [] as unknown[], calls: [] as unknown[][] }))
+vi.mock('@/hooks/usePolicyHistory', () => ({
+  usePolicyHistory: (projectId: unknown, enabled: unknown) => {
+    history.calls.push([projectId, enabled])
+    return { data: history.rows, error: undefined, isLoading: false }
+  },
 }))
 
 vi.mock('@/utils/swrCacheMutate', () => ({
@@ -585,5 +606,101 @@ describe('Publish and Deactivate ask in the page', () => {
     fireEvent.keyDown(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }), { key: 'Escape' })
     expect(strip()).toBeNull()
     expect(mockDeactivatePolicy).not.toHaveBeenCalled()
+  })
+})
+
+// ── W11 GATE-02: versions, New version from this, the run picker (cases ADDED) ──
+describe('a published policy: its versions, a new version from it, the simulator picker (W11 GATE-02)', () => {
+  const DOC_V3 = {
+    schema_version: 1,
+    thresholds: { go_threshold: 20, no_go_threshold: 55, pass_rate_minimum: 90, pass_rate_hard_floor_factor: 0.7 },
+    dimension_weights: {
+      user_impact: 0.25, env_sensitivity: 0.1, reproducibility: 0.15, regression_likely: 0.2,
+      hist_recurrence: 0.1, blast_radius: 0.15, diagnosis_conf: 0.05,
+    },
+    rules: [],
+    pass_rate_bands: { orange_min: 90, yellow_min: 95, green_min: 99 },
+    hard_caps: { max_p0_defects: 0, max_flaky_count: 10, max_new_failures_24h: 20 },
+    kind_rules: { enabled: false },
+  }
+  const DOC_V4 = { ...DOC_V3, pass_rate_bands: { orange_min: 92, yellow_min: 97, green_min: 99 } }
+  const row = (version: number, over: Record<string, unknown> = {}) => ({
+    id: `pol-v${version}`, project_id: 'proj-pay', version, name: 'Payments gate', description: 'Nightly gate',
+    rules: version === 4 ? DOC_V4 : DOC_V3, is_active: false, is_draft: false,
+    created_by: 'u-priya', created_by_name: 'priya', activated_by: null, activated_by_name: null,
+    activated_at: null, created_at: '2026-10-01T09:00:00Z', updated_at: null, ...over,
+  })
+  const V4 = row(4, { is_active: true, activated_by: 'u-omar', activated_by_name: 'omar', activated_at: '2026-10-02T10:00:00Z' })
+  const V3 = row(3)
+
+  function Where() {
+    return <p data-testid="where">{useLocation().pathname}</p>
+  }
+  function renderPolicy(path = '/policies/pol-v4') {
+    return render(
+      <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
+        <MemoryRouter initialEntries={[path]}>
+          <Where />
+          <Routes>
+            <Route path="policies/:policyId" element={<PolicyEditorPage />} />
+          </Routes>
+        </MemoryRouter>
+      </SWRConfig>,
+    )
+  }
+
+  beforeEach(() => {
+    policyHook.policy = V4
+    history.rows = [V3, V4]
+    history.calls.length = 0
+    runPicker.props.length = 0
+    mockCreatePolicy.mockReset()
+    mockToastSuccess.mockReset()
+  })
+  afterEach(() => {
+    policyHook.policy = null
+    history.rows = []
+  })
+
+  it('as ADMIN, New version from this posts the loaded version and opens the draft', async () => {
+    mockCreatePolicy.mockResolvedValue({ ...row(5, { is_draft: true }), id: 'pol-v5' })
+    renderPolicy()
+    expect(screen.getByRole('heading', { name: 'View: Payments gate' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'New version from this' }))
+    await waitFor(() => expect(mockCreatePolicy).toHaveBeenCalledTimes(1))
+    expect(mockCreatePolicy).toHaveBeenCalledWith({
+      project_id: 'proj-pay', name: 'Payments gate', description: 'Nightly gate', rules: DOC_V4,
+    })
+    await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('/policies/pol-v5'))
+    expect(mockToastSuccess).toHaveBeenCalledWith('Draft v5 created from v4.')
+  })
+
+  it('as a QA lead: no New version from this, but Versions and Compare read', () => {
+    useAuthStore.setState({ user: { id: 'lead', role: 'QA_LEAD' } as never })
+    renderPolicy()
+    expect(screen.queryByRole('button', { name: 'New version from this' })).not.toBeInTheDocument()
+    // Closed on load: the history is not read until it is opened.
+    expect(history.calls).toEqual([])
+    fireEvent.click(screen.getByRole('button', { name: /^Versions/ }))
+    expect(history.calls[0]).toEqual(['proj-pay', true])
+    const list = screen.getByRole('list', { name: 'Policy versions' })
+    expect(within(list).getByText('v4 · Active')).toBeInTheDocument()
+    expect(within(list).getByText('v3 · Published')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Compare v3' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Compare v4' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Compare v3 → v4' }))
+    expect(screen.getByRole('list', { name: 'Changed settings' })).toHaveTextContent('Pass-rate band yellow_min 95 → 97')
+  })
+
+  it('the simulator picks a run of the POLICY\'s project', () => {
+    renderPolicy()
+    const last = runPicker.props[runPicker.props.length - 1]
+    expect(last.projectId).toBe('proj-pay')
+  })
+
+  it('the system default simulates against the top bar scope (no project bound)', () => {
+    policyHook.policy = { ...V4, project_id: null }
+    renderPolicy()
+    expect(runPicker.props[runPicker.props.length - 1].projectId).toBeNull()
   })
 })

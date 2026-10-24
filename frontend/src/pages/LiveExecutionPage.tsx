@@ -74,6 +74,8 @@ import { suiteMatchesValue } from '@/utils/suiteFilters'
 import { isActivelyRunning, isStaleRunning } from '@/utils/liveSessionFreshness'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import { copyTextToClipboard } from '@/utils/clipboard'
+import { useEffectivePassRateBands } from '@/hooks/useEffectivePassRateBands'
+import { bandsTitle, liveChip, passRateTone, type LiveTone, type ReadinessBands } from '@/utils/passRateBands'
 import {
   SDK_TABS,
   getAPISnippet,
@@ -84,10 +86,39 @@ import {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function passRateColor(rate: number): string {
-  if (rate >= 90) return 'text-[var(--status-passed)]'
-  if (rate >= 70) return 'text-[var(--status-broken)]'
-  return 'text-[var(--status-failed)]'
+/**
+ * W11 GATE-04: a pass rate's colour follows the selected project's policy
+ * bands — at or above the GO line, between the lines, the No-Go zone — in the
+ * UI inks (a meaning, not a test result's hue).
+ */
+const PASS_RATE_INK: Record<LiveTone, string> = {
+  success: 'text-[var(--ui-success-ink)]',
+  warning: 'text-[var(--ui-warning-ink)]',
+  danger: 'text-[var(--ui-danger-ink)]',
+}
+const PASS_RATE_CHIP: Record<Exclude<LiveTone, 'success'>, string> = {
+  warning: 'bg-[var(--ui-warning-bg)] text-[var(--ui-warning-ink)] border-[var(--ui-warning-bd)]',
+  danger: 'bg-[var(--ui-danger-bg)] text-[var(--ui-danger-ink)] border-[var(--ui-danger-bd)]',
+}
+
+function passRateColor(rate: number, bands: ReadinessBands): string {
+  return PASS_RATE_INK[passRateTone(rate, bands)]
+}
+
+/** The chip beside the pass rate: none at or above the GO line; its title names the bands. */
+function PassRateChip({ rate, bands }: { rate: number; bands: ReadinessBands }) {
+  const text = liveChip(rate, bands)
+  const tone = passRateTone(rate, bands)
+  if (!text || tone === 'success') return null
+  return (
+    <span
+      data-live-pass-rate-chip={tone}
+      title={bandsTitle(bands)}
+      className={clsx('inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border', PASS_RATE_CHIP[tone])}
+    >
+      {text}
+    </span>
+  )
 }
 
 function statusDot(status: string) {
@@ -363,6 +394,9 @@ export default function LiveExecutionPage() {
     // drop matching sessions. The memos below still narrow the WebSocket
     // events, which arrive unfiltered. Flag off: the page-local suite.
   } = useLiveExecution(projectId, suiteFilter, days)
+  // W11 GATE-04: the selected project's effective policy bands (one cached
+  // read per project; All Projects asks nothing and reads the default bands).
+  const passRateBands = useEffectivePassRateBands()
 
   const [sortField, setSortField] = useState<SortField>('started_at')
   const [sortDir,   setSortDir]   = useState<SortDir>('desc')
@@ -665,13 +699,11 @@ export default function LiveExecutionPage() {
           <div>
             <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Pass rate</p>
             <div className="flex items-center gap-2 mt-0.5">
-              <p className={clsx('text-2xl font-semibold tabular-nums', passRateColor(visibleStats.overallPassRate))}>
+              <p className={clsx('text-2xl font-semibold tabular-nums', passRateColor(visibleStats.overallPassRate, passRateBands))}>
                 {visibleStats.overallPassRate}%
               </p>
-              {visibleStats.overallPassRate < 90 && visibleStats.totalTests > 0 && (
-                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border bg-[color-mix(in srgb, var(--status-broken) 8%, transparent)] text-[var(--status-broken)] border-[color-mix(in srgb, var(--status-broken) 30%, transparent)]">
-                  below 90% target
-                </span>
+              {visibleStats.totalTests > 0 && (
+                <PassRateChip rate={visibleStats.overallPassRate} bands={passRateBands} />
               )}
             </div>
           </div>
@@ -880,7 +912,7 @@ export default function LiveExecutionPage() {
                         {s.pass_rate == null ? (
                           <span className="font-medium text-[var(--color-text-faint)]" title="No pass rate: no test has passed or failed yet">—</span>
                         ) : (
-                          <span className={clsx('font-medium tabular-nums', passRateColor(s.pass_rate))}>
+                          <span className={clsx('font-medium tabular-nums', passRateColor(s.pass_rate, passRateBands))}>
                             {s.pass_rate.toFixed(1)}%
                           </span>
                         )}

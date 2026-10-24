@@ -14,7 +14,7 @@ Listed in evaluation order rather than by creation, because which rule wins
 is the whole question when two could match — sorting by anything else would
 show a list that does not explain the outcome.
 
-Source: [backend/app/routers/release_attribution_rules.py:152](../../../backend/app/routers/release_attribution_rules.py#L152).
+Source: [backend/app/routers/release_attribution_rules.py:200](../../../backend/app/routers/release_attribution_rules.py#L200).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -101,7 +101,7 @@ Create Attribution Rule
 
 Create a rule. Rung 3 can fire for this project from the next run on.
 
-Source: [backend/app/routers/release_attribution_rules.py:183](../../../backend/app/routers/release_attribution_rules.py#L183).
+Source: [backend/app/routers/release_attribution_rules.py:265](../../../backend/app/routers/release_attribution_rules.py#L265).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -192,6 +192,91 @@ _serialize(rule)
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
 
+## GET `/api/v1/projects/{project_id}/attribution-rules/fields`
+
+List Attribution Rule Fields
+
+The fields a rule can match on, with how each one matches (W11 REL-09).
+
+In ``AttributionMatchField`` declaration order. Static: the vocabulary is
+the ORM enum, the glob flag the evaluator's own set, so the handler runs
+no statement (the dependency checks the caller's access to the project).
+
+Source: [backend/app/routers/release_attribution_rules.py:240](../../../backend/app/routers/release_attribution_rules.py#L240).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+project_id: uuid.UUID, _: User=Depends(get_current_active_user), __: User=Depends(require_project_access())
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "list_attribution_rule_fields_api_v1_projects__project_id__attribution_rules_fields_get",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Project Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/AttributionRuleFieldsResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## POST `/api/v1/projects/{project_id}/attribution-rules/preview`
 
 Preview Attribution Rule
@@ -206,14 +291,21 @@ apart before the rule starts deciding where real runs land.
 Evaluated with ``rule_matches`` — the same predicate the ladder uses — on an
 UNSAVED instance, so the preview cannot disagree with the rule it previews.
 
-Source: [backend/app/routers/release_attribution_rules.py:320](../../../backend/app/routers/release_attribution_rules.py#L320).
+``detail`` (W11 REL-09) adds where each matched run would really land
+(``_preview_detail``). ``rule_id`` names the rule being edited, so it is not
+counted as an earlier rule shadowing itself; it is read only inside the
+PATH project (the access check above), so another project's rule id is
+simply never found — the answer is the same as without it, no oracle.
+Plain defaults, not ``Query(...)``: tests call this handler directly.
+
+Source: [backend/app/routers/release_attribution_rules.py:402](../../../backend/app/routers/release_attribution_rules.py#L402).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: uuid.UUID, body: AttributionRuleIn, limit: int=Query(PREVIEW_RUN_LIMIT, ge=1, le=PREVIEW_RUN_LIMIT), db: AsyncSession=Depends(get_db), _: User=Depends(get_current_active_user), __: User=Depends(require_project_access())
+project_id: uuid.UUID, body: AttributionRuleIn, limit: int=Query(PREVIEW_RUN_LIMIT, ge=1, le=PREVIEW_RUN_LIMIT), db: AsyncSession=Depends(get_db), _: User=Depends(get_current_active_user), __: User=Depends(require_project_access()), detail: bool=False, rule_id: Optional[uuid.UUID]=None
 ```
 
 ### Declared wire contract
@@ -247,6 +339,33 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
       }
     },
     {
+      "in": "query",
+      "name": "detail",
+      "required": false,
+      "schema": {
+        "default": false,
+        "title": "Detail",
+        "type": "boolean"
+      }
+    },
+    {
+      "in": "query",
+      "name": "rule_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "format": "uuid",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Rule Id"
+      }
+    },
+    {
       "in": "header",
       "name": "X-API-Key",
       "required": false,
@@ -277,7 +396,9 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
     "200": {
       "content": {
         "application/json": {
-          "schema": {}
+          "schema": {
+            "$ref": "#/components/schemas/AttributionPreviewResponse"
+          }
         }
       },
       "description": "Successful Response"
@@ -301,14 +422,6 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 }
 ```
 
-Handler return expressions (source excerpts, not an inferred wire schema):
-
-```python
-{'considered': len(runs), 'matched': len(matched), 'field_present': sum((1 for r in runs if release_attribution._run_value(r, body.match_field))), 'sample': [{'run_id': str(r.id), 'build_number': r.build_number, 'branch': r.branch, 'environment': r.environment} for r in matched[:10]]}
-```
-
-Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
-
 ## DELETE `/api/v1/projects/{project_id}/attribution-rules/{rule_id}`
 
 Delete Attribution Rule
@@ -320,7 +433,7 @@ carries ``link_source=rule_match`` and the release it produced; rewriting
 history because a rule was retired would change what a past gate decision
 was based on, silently.
 
-Source: [backend/app/routers/release_attribution_rules.py:284](../../../backend/app/routers/release_attribution_rules.py#L284).
+Source: [backend/app/routers/release_attribution_rules.py:366](../../../backend/app/routers/release_attribution_rules.py#L366).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -403,7 +516,7 @@ Update Attribution Rule
 
 
 
-Source: [backend/app/routers/release_attribution_rules.py:234](../../../backend/app/routers/release_attribution_rules.py#L234).
+Source: [backend/app/routers/release_attribution_rules.py:316](../../../backend/app/routers/release_attribution_rules.py#L316).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 

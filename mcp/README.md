@@ -1,6 +1,6 @@
 # TestLookup MCP Server
 
-The MCP (Model Context Protocol) server exposes TestLookup to AI assistants, IDEs and CI agents. It ships **73 tools**, **11 resources** and **7 prompts**, over two transports: stdio for a local client and SSE for networked clients. Every tool call becomes a REST call to the TestLookup API, authenticated as a TestLookup user, so the backend's role and project checks apply unchanged.
+The MCP (Model Context Protocol) server exposes TestLookup to AI assistants, IDEs and CI agents. It ships **74 tools**, **11 resources** and **7 prompts**, over two transports: stdio for a local client and SSE for networked clients. Every tool call becomes a REST call to the TestLookup API, authenticated as a TestLookup user, so the backend's role and project checks apply unchanged.
 
 Beyond reads, the server carries **write-path tools** so an agent can close the triage loop: propose and release quarantines, bulk-promote recovered tests, file deduplicated Jira defects (with an optional dry-run preview), correct AI classifications, reassign failures, and manage notification policy. Stdio writes run under the configured login; SSE writes run under each caller's own bearer token. Both are audit-logged with that identity. See the [agent cookbook](../user-guide/agent-cookbook.md) for worked recipes.
 
@@ -141,7 +141,7 @@ Show the LLM cost budget overview: which projects are closest to their cap?
 List open quarantine proposals and approve the one with the highest flip rate
 ```
 
-## Tool reference (73 tools)
+## Tool reference (74 tools)
 
 A `?` marks an optional parameter.
 
@@ -276,7 +276,8 @@ touched a suite whole, so under a suite filter it differs from
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `list_compliance_packs` | `release_id` | Generated audit ZIPs with manifest SHA-256 |
-| `generate_compliance_pack` | `release_id`, `notes?`, `retention_days?` | Generate a tamper-evident audit ZIP: SHA-256 checksum chain, no HMAC or PKI (QA_LEAD+) |
+| `generate_compliance_pack` | `release_id`, `notes?`, `retention_days?` | Generate a tamper-evident audit ZIP: SHA-256 checksum chain, signed since W11 with the deployment's Ed25519 key (`signature.json`) (QA_LEAD+) |
+| `verify_compliance_pack` | `pack_id` | **Read-only** (a POST that writes nothing). Check a stored pack: every file against its manifest, the manifest against the digest recorded at generation, and the signature. Answers `verified`, `tampered` (naming each file that does not match) or `unreadable` (storage could not be read: not a verdict) |
 
 ### Flaky quarantine
 

@@ -601,6 +601,23 @@ def _normalise(text: str) -> str:
     return text.replace("\r\n", "\n")
 
 
+# Spellings this hook's FastAPI renders differently from CI's pinned one INSIDE a change's own delta, where
+# the base/head cancellation cannot remove them. An ``UploadFile`` body field: CI's FastAPI (0.115.x, the
+# requirements pin) writes ``"format": "binary"``; newer FastAPI on a developer's PATH Python writes
+# ``"contentMediaType": "application/octet-stream"`` (W11 REL-07's PRD upload). Compared as equal only;
+# the committed file is still checked against CI's own generator by CI's ``--check``.
+_KNOWN_RENDER_SKEW = (
+    ('"contentMediaType": "application/octet-stream"', '"format": "binary"'),
+)
+
+
+def _canonical(text: str) -> str:
+    text = _normalise(text)
+    for local, ci in _KNOWN_RENDER_SKEW:
+        text = text.replace(local, ci)
+    return text
+
+
 def merged_reference(ci_base: str, local_base: str, local_head: str) -> str | None:
     """CI's committed ``base`` file plus this change's real delta.
 
@@ -695,7 +712,7 @@ def reference_delta_is_real(base: str) -> tuple[bool, str]:
             expected = merged_reference(ci, local_base[path], local_head[path])
             if expected is None:
                 return False, f"{path}: the change's delta conflicts with skewed lines"
-            if _normalise(current) != expected:
+            if _canonical(current) != _canonical(expected):
                 return False, f"{path} is not CI's file plus this change's delta"
         return True, f"each skewed file == {base} + the local {base}->checkout delta"
     finally:

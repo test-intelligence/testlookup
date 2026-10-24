@@ -36,10 +36,15 @@ export interface RunPickerProps {
   testId: string
   /** Which edge the 420 px popover lines up with ('right' for a picker near the page's right edge). */
   align?: 'left' | 'right'
+  /**
+   * W11 GATE-02: list THIS project's runs (the policy simulator's picker, bound
+   * to the policy's project). Absent or null: the top bar's scope, as before.
+   */
+  projectId?: string | null
 }
 
 export default function RunPicker({
-  label, value, onChange, suiteName, open, onOpenChange, testId, align = 'left',
+  label, value, onChange, suiteName, open, onOpenChange, testId, align = 'left', projectId,
 }: RunPickerProps) {
   const [ownOpen, setOwnOpen] = useState(false)
   const isOpen = open ?? ownOpen
@@ -92,6 +97,7 @@ export default function RunPicker({
           label={label}
           align={align}
           suiteName={suiteName ?? null}
+          projectId={projectId}
           onSelect={(runId) => {
             onChange(runId)
             setOpen(false)
@@ -104,11 +110,12 @@ export default function RunPicker({
 
 /** The popover: search, results (paged), the count, and the paste field. Mounted only while open. */
 function RunPickerPanel({
-  label, align, suiteName, onSelect,
+  label, align, suiteName, projectId, onSelect,
 }: {
   label: string
   align: 'left' | 'right'
   suiteName: string | null
+  projectId?: string | null
   onSelect: (runId: string) => void
 }) {
   const [text, setText] = useState('')
@@ -132,8 +139,8 @@ function RunPickerPanel({
 
   // Page 1 carries the total; the last page says how far the list got. Every
   // page in between is full (Load older is offered only while more exist).
-  const first = useRunSearch({ q, suiteName, page: 1, enabled: true })
-  const last = useRunSearch({ q, suiteName, page: pages, enabled: pages > 1 })
+  const first = useRunSearch({ q, suiteName, page: 1, enabled: true, projectId })
+  const last = useRunSearch({ q, suiteName, page: pages, enabled: pages > 1, projectId })
   const total = first.data?.total ?? 0
   const loaded = pages === 1
     ? (first.data?.items.length ?? 0)
@@ -182,7 +189,7 @@ function RunPickerPanel({
       />
       <div className="max-h-[320px] overflow-y-auto" data-run-picker-results="">
         {Array.from({ length: pages }, (_, i) => (
-          <RunSearchPage key={i + 1} q={q} suiteName={suiteName} page={i + 1} onSelect={onSelect} />
+          <RunSearchPage key={i + 1} q={q} suiteName={suiteName} projectId={projectId} page={i + 1} onSelect={onSelect} />
         ))}
         {first.data && total === 0 && (
           <p className="m-0 px-2 py-3 text-xs text-[var(--color-text-muted)]">No runs match.</p>
@@ -235,14 +242,15 @@ function RunPickerPanel({
 
 /** One page of results: its own SWR entry, so the pages already shown stay put. */
 function RunSearchPage({
-  q, suiteName, page, onSelect,
+  q, suiteName, projectId, page, onSelect,
 }: {
   q: string
   suiteName: string | null
+  projectId?: string | null
   page: number
   onSelect: (runId: string) => void
 }) {
-  const { data, isLoading } = useRunSearch({ q, suiteName, page, enabled: true })
+  const { data, isLoading } = useRunSearch({ q, suiteName, page, enabled: true, projectId })
   if (isLoading && !data) {
     return <p className="m-0 px-2 py-2 text-xs text-[var(--color-text-muted)]">Loading runs…</p>
   }

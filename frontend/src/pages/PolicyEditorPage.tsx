@@ -43,6 +43,9 @@ import {
   updatePolicy,
 } from '../services/policyService';
 import { usePolicies, usePolicy } from '@/hooks/usePolicyEditor';
+import RunPicker from '@/components/runs/RunPicker';
+import PolicyVersions from '@/components/policies/PolicyVersions';
+import { POLICY_FIELD_LABELS } from '@/components/policies/policyDiff';
 import { usePermissions } from '@/hooks/usePermissions';
 import { extractErrorMessage } from '@/services/apiErrors';
 import { appMutate } from '@/utils/swrCacheMutate';
@@ -92,6 +95,9 @@ function emptyDocument(): PolicyDocument {
   };
 }
 
+/** The four thresholds, in the form's order (their labels: `POLICY_FIELD_LABELS`). */
+const THRESHOLD_KEYS = ['go_threshold', 'no_go_threshold', 'pass_rate_minimum', 'pass_rate_hard_floor_factor'] as const;
+
 const EXCLUDABLE_KINDS = [
   { key: 'infrastructure', label: 'Infrastructure', hint: 'Environment, network, platform, runner failures' },
   { key: 'test_code', label: 'Test code', hint: 'Broken scripts, bad fixtures, flaky test-side races' },
@@ -116,14 +122,21 @@ const recommendationTone = (recommendation: string) => ({
 /**
  * "What would this policy have said about run X?" — the document as edited
  * (saved or not) against a past run, beside the form at >= 1280 px.
+ *
+ * W11 GATE-02: the run is PICKED (`RunPicker`, its search and its "Paste run
+ * ID" field), from the POLICY's project's runs; the system default searches
+ * the top bar's scope (every visible run in All Projects). The server rule is
+ * unchanged: an admin may simulate any run they can read.
  */
-function PolicySimulator({ doc, canSimulate }: { doc: PolicyDocument; canSimulate: boolean }) {
+function PolicySimulator({
+  doc, canSimulate, projectId,
+}: { doc: PolicyDocument; canSimulate: boolean; projectId: string | null }) {
   const [simRunId, setSimRunId] = useState('');
   const [simResult, setSimResult] = useState<SimulateResponse | null>(null);
   const [simulating, setSimulating] = useState(false);
 
   const handleSimulate = async () => {
-    if (!simRunId.trim()) { toast.error('Enter a run ID'); return; }
+    if (!simRunId.trim()) { toast.error('Choose a run to simulate'); return; }
     setSimulating(true);
     try {
       const result = await simulatePolicy(simRunId.trim(), doc);
@@ -144,10 +157,20 @@ function PolicySimulator({ doc, canSimulate }: { doc: PolicyDocument; canSimulat
       <h2 id="policy-simulator-title" className={SECTION_TITLE}>Policy Simulator</h2>
       <p className="text-xs text-[var(--color-text-muted)]">Test this policy against a past test run to see how the decision would change.</p>
       <div>
-        <label htmlFor="policy-sim-run" className={LABEL}>Run ID</label>
-        <div className="mt-1 flex gap-2">
-          <input id="policy-sim-run" placeholder="Run ID" value={simRunId} onChange={e => setSimRunId(e.target.value)}
-            className="input min-w-0 flex-1" />
+        <div className="flex items-end gap-2">
+          <div className="min-w-0 flex-1">
+            {/* `align="right"`: at >= 1280 px the simulator is the 360 px right
+                column, and a left-aligned 420 px popover would run past the
+                page's right edge; right-aligned it opens over the form. */}
+            <RunPicker
+              label="Run ID"
+              value={simRunId}
+              onChange={setSimRunId}
+              testId="policy-sim-run"
+              projectId={projectId}
+              align="right"
+            />
+          </div>
           <button onClick={handleSimulate} disabled={simulating || !canSimulate}
             title={canSimulate ? undefined : ADMIN_REQUIRED}
             className="shrink-0 px-4 py-2 bg-[var(--status-flaky-bg)] text-[var(--color-text)] rounded-lg hover:bg-[var(--status-flaky-bg)] text-sm disabled:opacity-50">
@@ -320,6 +343,32 @@ export default function PolicyEditorPage() {
     }
   };
 
+  /**
+   * W11 GATE-02: a new DRAFT from a published version — same scope, same name,
+   * this version's `rules` verbatim, its description copied — through the
+   * existing create (the server allocates the next version under the scope
+   * lock). Then the editor opens the draft.
+   */
+  const [branching, setBranching] = useState(false);
+  const handleNewVersion = async () => {
+    if (!loadedPolicy) return;
+    setBranching(true);
+    try {
+      const created = await createPolicy({
+        project_id: loadedPolicy.project_id,
+        name: loadedPolicy.name,
+        description: loadedPolicy.description,
+        rules: loadedPolicy.rules,
+      });
+      toast.success(`Draft v${created.version} created from v${loadedPolicy.version}.`);
+      navigate(`/policies/${created.id}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not create the draft');
+    } finally {
+      setBranching(false);
+    }
+  };
+
   const handleDeactivate = async (id: string) => {
     try {
       await deactivatePolicy(id);
@@ -455,6 +504,8 @@ export default function PolicyEditorPage() {
   const scope = projectId ? `Project: ${projectLabel(projectId)}` : 'System default';
   const state = isNew ? 'New draft' : isDraft ? 'Draft' : 'Published (read-only)';
   const version = loadedPolicy && !isNew ? ` · v${loadedPolicy.version}` : '';
+  // W11 GATE-02: an ADMIN starts the next version from a published one.
+  const canBranch = isAdmin && !isNew && !isDraft && loadedPolicy !== null && loadedPolicy !== undefined;
 
   return (
     <div className="space-y-4">
@@ -475,6 +526,10 @@ export default function PolicyEditorPage() {
               </button>
             )}
           </>
+        ) : canBranch ? (
+          <button type="button" onClick={() => void handleNewVersion()} disabled={branching} className="btn-secondary">
+            {branching ? 'Creating…' : 'New version from this'}
+          </button>
         ) : undefined}
       />
 
@@ -493,6 +548,12 @@ export default function PolicyEditorPage() {
         <p data-policy-read-only="" className="text-xs text-[var(--color-text-muted)]">
           Read-only: an Administrator creates, edits, publishes and simulates release gate policies.
         </p>
+      )}
+
+      {/* W11 GATE-02: every version of this scope, closed on load (it reads
+          the history only once opened); read-only for every role. */}
+      {!isNew && loadedPolicy && (
+        <PolicyVersions policy={loadedPolicy} onOpen={(id) => navigate(`/policies/${id}`)} />
       )}
 
       <div data-policy-layout="" className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px] xl:items-start">
@@ -536,19 +597,15 @@ export default function PolicyEditorPage() {
           <section className={SECTION}>
             <h2 className={SECTION_TITLE}>Thresholds</h2>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {([
-                ['go_threshold', 'GO Threshold', 'Composite below this → GO'],
-                ['no_go_threshold', 'NO_GO Threshold', 'Composite at or above this → NO_GO'],
-                ['pass_rate_minimum', 'Pass Rate Minimum', 'Target pass rate (%)'],
-                ['pass_rate_hard_floor_factor', 'Hard Floor Factor', 'Factor × min pass rate → force NO_GO'],
-              ] as const).map(([key, label, hint]) => (
+              {/* W11 GATE-02: the labels are the Compare list's too (one table). */}
+              {THRESHOLD_KEYS.map((key) => (
                 <div key={key}>
-                  <label htmlFor={`policy-threshold-${key}`} className={LABEL}>{label}</label>
+                  <label htmlFor={`policy-threshold-${key}`} className={LABEL}>{POLICY_FIELD_LABELS.thresholds[key].label}</label>
                   <input id={`policy-threshold-${key}`} type="number" step="0.1"
-                    value={doc.thresholds[key as keyof typeof doc.thresholds]}
+                    value={doc.thresholds[key]}
                     onChange={e => setDoc(d => ({ ...d, thresholds: { ...d.thresholds, [key]: parseFloat(e.target.value) || 0 } }))}
                     className={FIELD} disabled={!editable} />
-                  <p className={HINT}>{hint}</p>
+                  <p className={HINT}>{POLICY_FIELD_LABELS.thresholds[key].hint}</p>
                 </div>
               ))}
             </div>
@@ -914,7 +971,7 @@ export default function PolicyEditorPage() {
           </Disclosure>
         </div>
 
-        <PolicySimulator doc={doc} canSimulate={isAdmin} />
+        <PolicySimulator doc={doc} canSimulate={isAdmin} projectId={projectId} />
       </div>
     </div>
   );

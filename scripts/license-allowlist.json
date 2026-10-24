@@ -52,6 +52,7 @@
     "celery": "BSD-3-Clause",
     "chromadb": "Apache-2.0",
     "click": "BSD-3-Clause",
+    "cryptography": "Apache-2.0 OR BSD-3-Clause",
     "defusedxml": "PSF-2.0",
     "email-validator": "Unlicense",
     "factory-boy": "MIT",

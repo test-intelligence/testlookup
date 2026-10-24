@@ -24,6 +24,7 @@ vi.mock('@/hooks/useLiveExecution', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/hooks/useLiveExecution')>()
   return { ...actual, useLiveExecution: live.useLiveExecution }
 })
+vi.mock('@/hooks/useEffectivePassRateBands', async () => { const { readinessBands } = await import('@/utils/passRateBands'); return { useEffectivePassRateBands: () => readinessBands(null) } })
 vi.mock('@/hooks/useSuiteOptions', () => ({ useSuiteOptions: vi.fn(() => ({ options: ['cart', 'payments'], isLoading: false })) }))
 const getData = vi.hoisted(() => vi.fn(async () => ({ sessions: [] })))
 vi.mock('@/services/http', () => ({ getData, postData: vi.fn(), deleteData: vi.fn() }))

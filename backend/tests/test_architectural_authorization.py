@@ -1393,6 +1393,17 @@ def test_binding_confinement_is_not_scope_evidence() -> None:
 GLOBAL_PATH_PARAMS: dict[str, str] = {
     "agent_id": "a capability id from the global agent registry (agent.<name>.v<n>), not tenant data",
     "entry_id": "an instance-global Redis DLQ stream id guarded by require_instance_admin",
+    # W11 REL-11: GET /compliance-packs/signing-keys/{signing_key_id}/pem. The
+    # deployment's compliance-pack signing key is one per deployment, owned by no
+    # project; the route serves only its PUBLIC half (the PEM every reviewer needs
+    # to verify any pack offline), to any authenticated active user
+    # (get_current_active_user), and checks the id's shape (k-<16 hex>) before any
+    # statement. The private key never leaves secret_refs. Not ``key_id``: that
+    # name is the tenant API-key id in SCOPED_IDS.
+    "signing_key_id": (
+        "a deployment-wide PUBLIC signing key id (k-<16 hex>, compliance_signing_keys), "
+        "no project's data; any authenticated user may read the public PEM to verify a pack"
+    ),
 }
 
 #: Path ids in use when this scan was added that neither list classifies. Their

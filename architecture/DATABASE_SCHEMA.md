@@ -2178,6 +2178,8 @@ _Constraints:_ Index(`ix_rgp_project_active`, `project_id`, `is_active`); Unique
 | `test_run_id` | `UUID` | FK |  | → `test_runs.id` |
 | `minio_key` | `String(500)` |  | NN |  |
 | `manifest_sha256` | `String(64)` |  | NN |  |
+| `signature` | `Text` |  |  |  |
+| `signing_key_id` | `String(64)` |  |  |  |
 | `file_count` | `Integer` |  | NN def |  |
 | `bytes` | `Integer` |  | NN def |  |
 | `retention_expires_at` | `DateTime` |  | NN |  |
@@ -2187,6 +2189,21 @@ _Constraints:_ Index(`ix_rgp_project_active`, `project_id`, `is_active`); Unique
 | `notes` | `Text` |  |  |  |
 
 _Constraints:_ Index(`ix_compliance_packs_release`, `release_id`); Index(`ix_compliance_packs_project`, `project_id`, `generated_at`)
+
+#### `compliance_signing_keys`  <sub>(model `ComplianceSigningKey`)</sub>
+
+| Column | Type | Key | Flags | References |
+|---|---|---|---|---|
+| `key_id` | `String(64)` | PK | NN |  |
+| `algorithm` | `String(20)` |  | NN def |  |
+| `public_key_pem` | `Text` |  | NN |  |
+| `created_at` | `DateTime` |  | NN def |  |
+| `created_by_user_id` | `ForeignKey` | FK |  | `users.id` |
+| `retired_at` | `DateTime` |  |  |  |
+| `retired_by_user_id` | `ForeignKey` | FK |  | `users.id` |
+| `retired_reason` | `String(500)` |  |  |  |
+
+_Constraints:_ Index(`uq_compliance_signing_keys_active`, `algorithm`, unique, WHERE `retired_at IS NULL`)
 
 #### `quality_gates`  <sub>(model `QualityGate`)</sub>
 

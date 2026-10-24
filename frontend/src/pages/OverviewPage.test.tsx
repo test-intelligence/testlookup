@@ -1571,3 +1571,85 @@ describe('OverviewPage — HON-07: the verdict copy promises only the readiness 
     expect(details).not.toHaveTextContent(/merg(e|ing) to/i)
   })
 })
+
+// ── W11 GATE-04: "How this verdict is decided" names its policy (cases ADDED) ──
+describe('OverviewPage — the verdict names the policy that decided it (W11 GATE-04)', () => {
+  const PAYMENTS_POLICY = {
+    id: 'pol-4',
+    name: 'Payments gate',
+    version: 4,
+    level: 'project',
+    bands: { orange_min: 90, yellow_min: 95, green_min: 99 },
+  }
+
+  async function renderDetails(summary: Record<string, unknown>) {
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        total_executions_7d: { value: 40 },
+        avg_pass_rate_7d: { value: 97 },
+        active_defects: { value: 2 },
+        flaky_test_count: { value: 1 },
+        new_failures_24h: { value: 0 },
+        avg_duration_ms: { value: 1000 },
+        ...summary,
+      },
+      isLoading: false,
+    })
+    ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({ data: { data: [] }, isLoading: false })
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <Routes>
+          <Route path="/overview" element={<OverviewPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    await findBanner()
+    return openVerdictDetails()
+  }
+
+  it('names the policy and lists the P0 downgrade that forced No-Go', async () => {
+    const details = await renderDetails({
+      release_readiness: 'RED',
+      release_readiness_band: 'red',
+      release_readiness_downgrades: ['p0_defects:2>0'],
+      readiness_policy: PAYMENTS_POLICY,
+    })
+    expect(details).toHaveTextContent(
+      'Decided by Payments gate v4 (project policy): Go at 95% or more, Conditional from 90%, No-Go below 90%.',
+    )
+    expect(within(details).getByRole('link', { name: 'Open policies' })).toHaveAttribute('href', '/policies/pol-4')
+    const downgrades = details.querySelector('[data-verdict-downgrades]') as HTMLElement
+    expect(downgrades).toHaveTextContent('A hard cap forced No-Go:')
+    expect(within(downgrades).getByRole('listitem')).toHaveTextContent('Open critical (P0) defects: 2, cap 0')
+  })
+
+  it('with no policy resolved it says what decided instead, and links the policy list', async () => {
+    const details = await renderDetails({ release_readiness: 'GREEN', readiness_policy: null })
+    expect(details).toHaveTextContent(
+      'Decided by the built-in rule (no release-gate policy is published for this project or the deployment)',
+    )
+    expect(within(details).getByRole('link', { name: 'Open policies' })).toHaveAttribute('href', '/policies')
+    expect(details.querySelector('[data-verdict-downgrades]')).toBeNull()
+  })
+
+  it('an entry cached before the deploy (no readiness_policy key) claims nothing about the policy', async () => {
+    const details = await renderDetails({ release_readiness: 'GREEN' })
+    expect(details.querySelector('[data-verdict-policy]')).toBeNull()
+    expect(details).not.toHaveTextContent(/Decided by/)
+  })
+
+  it('a pending verdict (no evidence) names no policy', async () => {
+    const details = await renderDetails({ total_executions_7d: { value: 0 }, readiness_policy: null })
+    expect(details.querySelector('[data-verdict-policy]')).toBeNull()
+  })
+
+  it('the policy name is React text', async () => {
+    const details = await renderDetails({
+      release_readiness: 'GREEN',
+      readiness_policy: { ...PAYMENTS_POLICY, name: '<img src=x onerror=alert(1)>' },
+    })
+    expect(details.querySelector('img')).toBeNull()
+    expect(details).toHaveTextContent('Decided by <img src=x onerror=alert(1)> v4 (project policy)')
+  })
+})

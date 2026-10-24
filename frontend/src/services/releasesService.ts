@@ -1,5 +1,6 @@
 import type {
   LinkedRun,
+  PhaseDraftResult,
   PhaseGateResult,
   Release,
   ReleaseActivation,
@@ -10,8 +11,14 @@ import type {
   ReleaseOutcome,
   ReleasePhase,
   ReleasePhaseGates,
+  ReleasePhasesBulkBody,
+  ReleasePhasesCloneBody,
+  ReleasePhasesCreated,
+  ReleasePortfolioTrend,
   ReleaseSyncResult,
 } from '@/types/releases'
+import { downloadBlob, sanitizeFilename } from '@/utils/download'
+import { api } from './api'
 import { deleteData, getData, postData, putData } from './http'
 
 /**
@@ -80,6 +87,21 @@ export interface ReleaseSyncBody {
 
 function isNotFound(err: unknown): boolean {
   return (err as { response?: { status?: number } })?.response?.status === 404
+}
+
+/** `attachment; filename="x.ics"` (plain, quoted or RFC 5987) → `x.ics`; else `null`. */
+function filenameFromDisposition(header: unknown): string | null {
+  if (typeof header !== 'string' || !header) return null
+  const encoded = header.match(/filename\*=UTF-8''([^;]+)/i)
+  if (encoded?.[1]) {
+    try {
+      return decodeURIComponent(encoded[1].trim())
+    } catch {
+      return null
+    }
+  }
+  const named = header.match(/filename="([^"]+)"/i) ?? header.match(/filename=([^;]+)/i)
+  return named?.[1]?.trim() || null
 }
 
 export const releasesService = {
@@ -172,5 +194,69 @@ export const releasesService = {
    */
   sync: (body: ReleaseSyncBody) =>
     postData<ReleaseSyncResult, ReleaseSyncBody>('/api/v1/releases/sync', body, { suppressToast: true }),
+
+  // ── W11 release planning (REL-05 / REL-07 / REL-06 / REL-03) ─────────────
+  // New methods only; none is called on mount, so a factory mock without them
+  // still renders the page.
+
+  /** Copy another release's phases into one that has none (REL-05). The form renders a refusal itself. */
+  clonePhases: (releaseId: string, body: ReleasePhasesCloneBody) =>
+    postData<ReleasePhasesCreated, ReleasePhasesCloneBody>(
+      `/api/v1/releases/${releaseId}/phases/clone`,
+      body,
+      { suppressToast: true },
+    ),
+
+  /** A release's first schedule in one request (REL-07's Create). The form renders a refusal itself. */
+  createPhasesBulk: (releaseId: string, body: ReleasePhasesBulkBody) =>
+    postData<ReleasePhasesCreated, ReleasePhasesBulkBody>(
+      `/api/v1/releases/${releaseId}/phases/bulk`,
+      body,
+      { suppressToast: true },
+    ),
+
+  /**
+   * Draft phases from a PRD (REL-07): multipart, the pasted `text` OR one
+   * `file` (.md / .txt / .docx), never both. Nothing is stored. The PRD goes
+   * in the request body only: never a URL, never storage.
+   */
+  draftPhases: (releaseId: string, input: { text?: string; file?: File }): Promise<PhaseDraftResult> => {
+    const form = new FormData()
+    if (input.file) form.append('file', input.file)
+    else if (input.text != null) form.append('text', input.text)
+    return api
+      .post<PhaseDraftResult>(`/api/v1/releases/${releaseId}/phases/generate`, form, {
+        // The shared client defaults Content-Type to JSON: unset it so the
+        // browser writes multipart/form-data WITH its boundary.
+        headers: { 'Content-Type': undefined as unknown as string },
+        suppressToast: true,
+      })
+      .then(({ data }) => data)
+  },
+
+  /**
+   * Download the release schedule (REL-06) as `.ics` or `.csv`: an
+   * authenticated blob read (the token rides the Authorization header, never
+   * a URL) saved through `downloadBlob`. `projectId` `null` = every project
+   * the reader can see. Rejects on failure; the page says so.
+   */
+  exportSchedule: async (format: 'ics' | 'csv', projectId: string | null): Promise<void> => {
+    // Two literal paths (not `schedule.${format}`): the SPA wire-contract test resolves every service path to a
+    // real backend route, and a template it cannot read is reported as a 404.
+    const url = format === 'ics' ? '/api/v1/releases/schedule.ics' : '/api/v1/releases/schedule.csv'
+    const response = await api.get<Blob>(url, {
+      responseType: 'blob',
+      params: projectId ? { project_id: projectId } : {},
+      suppressToast: true,
+    })
+    const named = filenameFromDisposition(response.headers?.['content-disposition'])
+    downloadBlob(response.data, sanitizeFilename(named ?? `testlookup-releases.${format}`))
+  },
+
+  /** The release KPI cards' trend (REL-03); `projectId` `null` = every project the reader can see. */
+  portfolioTrend: (projectId: string | null, weeks?: number) =>
+    getData<ReleasePortfolioTrend>('/api/v1/releases/portfolio-trend', {
+      params: { ...(projectId ? { project_id: projectId } : {}), ...(weeks ? { weeks } : {}) },
+    }),
 }
 export type { LinkedRun, Release, ReleaseDetail, ReleaseOutcome, ReleasePhase }

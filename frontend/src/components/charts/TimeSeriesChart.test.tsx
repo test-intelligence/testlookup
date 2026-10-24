@@ -7,7 +7,13 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { cloneElement, type ReactElement, type ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
-import TimeSeriesChart, { TimeSeriesTooltip } from './TimeSeriesChart'
+import TimeSeriesChart, {
+  RATE_FLOOR_FILL,
+  RATE_FLOOR_OPACITY,
+  TimeSeriesTooltip,
+  rateFloorDrawn,
+  rateTargetSentence,
+} from './TimeSeriesChart'
 import { ChartAnnouncerProvider } from './ChartAnnouncer'
 import { tooltipText } from './tooltip'
 import { NBSP } from '@/lib/trendStats'
@@ -88,6 +94,11 @@ vi.mock('recharts', () => ({
   ReferenceLine: (props: Record<string, unknown>) => {
     captured.referenceLines.push(props)
     return <div data-testid="release-marker" data-x={String(props.x)} />
+  },
+  // W11 GATE-04 (set-up only): the No-Go floor is a ReferenceArea.
+  ReferenceArea: (props: Record<string, unknown>) => {
+    referenceAreas.push(props)
+    return <div data-testid="reference-area" />
   },
 }))
 
@@ -649,5 +660,76 @@ describe('fix round B · 7 a release nobody could place is still counted', () =>
     )
     expect(screen.queryAllByTestId('release-marker')).toHaveLength(0)
     expect(document.querySelector('[data-chart-markers-outside]')?.textContent).toMatch(/1 release/i)
+  })
+})
+
+// ── W11 GATE-04: the policy's No-Go zone under the rate target (cases ADDED) ──
+
+/** What the mocked `ReferenceArea` received (the notes' bands use it too: none here). */
+const referenceAreas: Record<string, unknown>[] = []
+
+describe('W11 GATE-04 · the No-Go floor under the GO line', () => {
+  const target = { value: 95, label: 'GO ≥ 95%', floor: { value: 90, label: 'No-Go < 90%' } }
+  const legendLabels = () =>
+    Array.from(document.querySelectorAll('[data-chart-legend] li'), (li) => li.textContent)
+
+  it('draws ONE ReferenceArea on the rate axis, from its low end to the floor, and a legend entry', () => {
+    reset()
+    referenceAreas.length = 0
+    const m = model()
+    render(<TimeSeriesChart model={m} rateTarget={target} />)
+    expect(referenceAreas).toHaveLength(1)
+    expect(referenceAreas[0]).toMatchObject({
+      yAxisId: 'rate',
+      y1: m.rateAxis.domain[0],
+      y2: 90,
+      fill: RATE_FLOOR_FILL,
+      fillOpacity: RATE_FLOOR_OPACITY,
+      ifOverflow: 'hidden',
+    })
+    expect(legendLabels()).toEqual(expect.arrayContaining(['GO ≥ 95%', 'No-Go < 90%']))
+    const swatch = Array.from(document.querySelectorAll('[data-chart-legend] li'))
+      .find((li) => li.textContent === 'No-Go < 90%')
+      ?.querySelector('[data-legend-swatch]')
+    expect(swatch?.getAttribute('fill')).toBe(RATE_FLOOR_FILL)
+  })
+
+  it('draws no area and no floor entry without a floor', () => {
+    reset()
+    referenceAreas.length = 0
+    render(<TimeSeriesChart model={model()} rateTarget={{ value: 95, label: 'GO ≥ 95%' }} />)
+    expect(referenceAreas).toHaveLength(0)
+    expect(legendLabels()).not.toContain('No-Go < 90%')
+    reset()
+    render(<TimeSeriesChart model={model()} />)
+    expect(referenceAreas).toHaveLength(0)
+  })
+
+  it('names the zone in the target sentence, and only when a floor is given', () => {
+    const m = model()
+    expect(rateTargetSentence(m, target)).toBe(
+      'GO ≥ 95%: a dashed line at 95% on the rate axis. No-Go < 90%: shaded below 90% on the rate axis.',
+    )
+    expect(rateTargetSentence(m, { value: 95, label: 'GO ≥ 95%' })).toBe('GO ≥ 95%: a dashed line at 95% on the rate axis.')
+  })
+
+  it('a zoomed axis above the floor shades nothing and says so under the plot', () => {
+    const high = [
+      { date: '2026-03-01', passed: 97, failed: 3, skipped: 0, broken: 0, total: 100, pass_rate: 97 },
+      { date: '2026-03-02', passed: 98, failed: 2, skipped: 0, broken: 0, total: 100, pass_rate: 98 },
+      { date: '2026-03-03', passed: 99, failed: 1, skipped: 0, broken: 0, total: 100, pass_rate: 99 },
+    ]
+    const zoomed = buildTimeSeriesModel({ points: timeSeriesFromTrends(high), zoomRateAxis: true })
+    const [low, top] = zoomed.rateAxis.domain
+    expect(low).toBeGreaterThanOrEqual(90)
+    const onAxis = { value: low, label: `GO ≥ ${low}%`, floor: { value: 90, label: 'No-Go < 90%' } }
+    expect(rateFloorDrawn(zoomed, onAxis.floor)).toBe(false)
+    reset()
+    referenceAreas.length = 0
+    render(<TimeSeriesChart model={zoomed} rateTarget={onAxis} />)
+    expect(referenceAreas).toHaveLength(0)
+    expect(document.querySelector('[data-chart-floor-note]')?.textContent).toBe(
+      `No-Go < 90% (90%) is below the rate axis (${low}-${top}%) and is not shaded.`,
+    )
   })
 })

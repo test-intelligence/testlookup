@@ -20,6 +20,7 @@ from testlookup_cli.commands.keys import keys_app
 from testlookup_cli.commands.upload import upload_app
 from testlookup_cli.commands.ci_verdict import ci_verdict
 from testlookup_cli.commands.ai_history import ai_history, compare_ai
+from testlookup_cli.commands.compliance_pack import compliance_pack_app
 
 app = typer.Typer(
     name="testlookup",
@@ -70,6 +71,8 @@ app.add_typer(reviews_app, name="reviews")
 app.add_typer(analytics_app, name="analytics")
 app.add_typer(keys_app, name="keys")
 app.add_typer(upload_app, name="upload")
+# W11 REL-11: verify a downloaded compliance pack offline (no request).
+app.add_typer(compliance_pack_app, name="compliance-pack")
 
 # Single top-level command (not a group): `testlookup ci-verdict --run <id>`.
 # US-5.2 — exits 0 when the only failures in a run are quarantined tests.

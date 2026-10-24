@@ -11,11 +11,19 @@
  * name is how an injection ships. The card's `sparkline` prop and its `MiniSparkline` went with it:
  * no caller ever passed one (a release list has no history), so the only
  * trend line this strip could draw was an invented one.
+ *
+ * W11 REL-03: the trend is now MEASURED on the server (`release_portfolio_service`: each card's own rule at twelve
+ * Monday week ends and now), and `PortfolioKpis` passes it as `trend`. With it, a card draws a `Sparkline` of that
+ * series (none below two measured points) and Ready to ship / Released · 30d take the trend's two captions. Without
+ * it (`trend` absent, or the read still loading) the strip is exactly what it was.
  */
 import type { ReactNode } from 'react'
+import Sparkline, { type SparklineTone } from '@/components/charts/Sparkline'
 import MetricCard, { type MetricTone } from '@/components/ui/MetricCard'
+import type { ReleasePortfolioTrend } from '@/types/releases'
 import type { DerivedRelease } from './types'
 import { countReleases, openBlockerCount } from './health'
+import { packCaption, readyCaption, sparklineFor, TREND_LOAD_ERROR, type PortfolioSeriesKey } from './portfolioModel'
 
 interface KpiCardProps {
   label: string
@@ -25,6 +33,8 @@ interface KpiCardProps {
   delta?: { dir: 'up' | 'down'; value: number; period: string }
   /** The sub-line. Rendered as React children: text in it stays text. */
   sub?: ReactNode
+  /** The measured trend line beside the value (REL-03); absent = none. */
+  sparkline?: ReactNode
 }
 
 /**
@@ -32,7 +42,7 @@ interface KpiCardProps {
  * `--text-stat-lg` value in its tone's ink, the sub-line as the tile's caption, a delta as its change line ("Up 3 ·
  * vs last month (better)": up is good here, as the green / red delta was).
  */
-function KpiCard({ label, value, tone = 'neutral', delta, sub }: KpiCardProps) {
+function KpiCard({ label, value, tone = 'neutral', delta, sub, sparkline }: KpiCardProps) {
   const metric = {
     value,
     ...(delta
@@ -43,13 +53,43 @@ function KpiCard({ label, value, tone = 'neutral', delta, sub }: KpiCardProps) {
         }
       : {}),
   }
-  return <MetricCard title={label} metric={metric} tone={tone} caption={sub} />
+  return <MetricCard title={label} metric={metric} tone={tone} caption={sub} sparkline={sparkline} />
 }
 
 interface KpiStripProps {
   releases: DerivedRelease[]
   /** Optional fully-formed KPIs — overrides the client-side derivation. */
   override?: KpiCardProps[]
+  /** REL-03: the measured twelve-week trend (`PortfolioKpis`); absent or `null` = today's cards, unchanged. */
+  trend?: ReleasePortfolioTrend | null
+  /** The trend read failed: one line under the strip says so (the cards stand). */
+  trendError?: boolean
+}
+
+/** Card label → the trend series it draws, and the line's tone. */
+const TREND_SERIES: Record<string, { key: PortfolioSeriesKey; tone: SparklineTone }> = {
+  'In progress': { key: 'in_progress', tone: 'neutral' },
+  'Ready to ship': { key: 'ready_to_ship', tone: 'good' },
+  Blocked: { key: 'blocked', tone: 'bad' },
+  'Released · 30d': { key: 'released_30d', tone: 'good' },
+}
+
+/** The cards with the trend's sparklines and its two captions (REL-03). */
+function withTrend(cards: KpiCardProps[], trend: ReleasePortfolioTrend): KpiCardProps[] {
+  return cards.map((card) => {
+    const mapped = TREND_SERIES[card.label]
+    if (!mapped) return card
+    const line = sparklineFor(trend, mapped.key, typeof card.value === 'number' ? card.value : undefined)
+    const sparkline = line.drawable
+      ? <Sparkline series={line.series} label={line.label} tone={mapped.tone} pointTitles={line.pointTitles} />
+      : undefined
+    const sub = mapped.key === 'ready_to_ship'
+      ? readyCaption(trend.totals, trend.weeks)
+      : mapped.key === 'released_30d'
+        ? packCaption(trend.totals, trend.weeks)
+        : card.sub
+    return { ...card, sub, sparkline }
+  })
 }
 
 /**
@@ -68,7 +108,8 @@ interface KpiStripProps {
  * `OverviewPage` was fixed for this exact rule in 2026-08 — a KPI must not
  * claim a trend it has no history for, and a caption must explain a missing
  * trend rather than deny the metric. There is no time series behind a release
- * list, so these cards carry no sparkline at all.
+ * list, so the cards derived here carry no sparkline: the only trend they draw
+ * is the server's measured one (`trend`, REL-03).
  */
 function deriveKpis(releases: DerivedRelease[]): KpiCardProps[] {
   const { planning, inProgress, readyToShip, blocked, released30d } = countReleases(releases)
@@ -116,14 +157,22 @@ function deriveKpis(releases: DerivedRelease[]): KpiCardProps[] {
   ]
 }
 
-export default function KpiStrip({ releases, override }: KpiStripProps) {
-  const cards = override ?? deriveKpis(releases)
+export default function KpiStrip({ releases, override, trend, trendError = false }: KpiStripProps) {
+  const derived = override ?? deriveKpis(releases)
+  const cards = trend ? withTrend(derived, trend) : derived
   // Two columns: the strip sits in the list column (584 px at 1280, 744 at 1440), where four 136 px tiles cut the
   // `.eyebrow` labels on CI's fonts ("READY TO SH…", "RELEASED · 3…") and their captions, and presentation mode's
   // 16 px labels cut them at 1440 too (W29b fix-kpi). It is inside a closed disclosure: no page grows.
-  return (
+  const grid = (
     <div className="grid grid-cols-2 gap-3.5">
       {cards.map((c, i) => <KpiCard key={`${c.label}-${i}`} {...c} />)}
+    </div>
+  )
+  if (!trendError) return grid
+  return (
+    <div>
+      {grid}
+      <p data-portfolio-trend-error="" className="mt-2 text-xs text-[var(--color-text-muted)]">{TREND_LOAD_ERROR}</p>
     </div>
   )
 }

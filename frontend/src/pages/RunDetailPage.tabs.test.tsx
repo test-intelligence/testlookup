@@ -408,7 +408,7 @@ describe('Run page — one header', () => {
     expect(screen.getByText(/^checkout-ci · main · \S/)).toBeInTheDocument()
     // The status pill, suite and release chips sit in the header; the counts are the Tests tab's chips.
     const header = container.querySelector('[data-page-header]') as HTMLElement
-    expect(within(header).getByText('Set release')).toBeInTheDocument()
+    expect(within(header).getByText('Unattributed')).toBeInTheDocument()
     expect(within(header).queryByText(/^\d+ failed$/)).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
     const items = screen.getAllByRole('menuitem').map((item) => item.textContent)

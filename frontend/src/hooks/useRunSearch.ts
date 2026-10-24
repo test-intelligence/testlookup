@@ -20,24 +20,39 @@ import { useProjectScopedSWR } from './useProjectScopedSWR'
 export const RUN_SEARCH_PAGE_SIZE = 20
 
 export function useRunSearch({
-  q, suiteName, page, enabled,
+  q, suiteName, page, enabled, projectId,
 }: {
   q: string
   suiteName?: string | null
   page: number
   enabled: boolean
+  /**
+   * W11 GATE-02: search THIS project's runs (the policy simulator's picker is
+   * bound to the policy's project), whatever the top bar shows. The runs route
+   * scopes the QUERY id. Absent (or null): the top bar's scope, exactly as before.
+   */
+  projectId?: string | null
 }) {
   const query = q.trim()
   const suite = suiteName?.trim() ?? ''
-  return useProjectScopedSWR<TestRunListResponse>(
+  const pinned = typeof projectId === 'string' && projectId !== '' ? projectId : null
+  const scoped = useProjectScopedSWR<TestRunListResponse>(
     'run-search',
-    (projectId) => runListService.searchRuns(projectId, {
+    (scopedProjectId) => runListService.searchRuns(scopedProjectId, {
       q: query, suite_name: suite || null, page, size: RUN_SEARCH_PAGE_SIZE, days: 0,
     }),
     { revalidateOnFocus: false },
     [query, suite, page],
-    enabled,
+    enabled && pinned === null,
   )
+  const forProject = useSWR<TestRunListResponse>(
+    enabled && pinned !== null ? ['run-search', pinned, query, suite, page] : null,
+    () => runListService.searchRuns(pinned, {
+      q: query, suite_name: suite || null, page, size: RUN_SEARCH_PAGE_SIZE, days: 0,
+    }),
+    { revalidateOnFocus: false },
+  )
+  return pinned === null ? scoped : forProject
 }
 
 export function useRunSummary(runId: string | null | undefined) {

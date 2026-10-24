@@ -5611,6 +5611,182 @@
         "title": "ApiKeyResponse",
         "type": "object"
       },
+      "AttributionPreviewResponse": {
+        "properties": {
+          "considered": {
+            "title": "Considered",
+            "type": "integer"
+          },
+          "explicit": {
+            "default": 0,
+            "title": "Explicit",
+            "type": "integer"
+          },
+          "field_present": {
+            "title": "Field Present",
+            "type": "integer"
+          },
+          "matched": {
+            "title": "Matched",
+            "type": "integer"
+          },
+          "sample": {
+            "items": {
+              "$ref": "#/components/schemas/AttributionPreviewSample"
+            },
+            "title": "Sample",
+            "type": "array"
+          },
+          "shadowed": {
+            "default": 0,
+            "title": "Shadowed",
+            "type": "integer"
+          },
+          "target_exists": {
+            "default": true,
+            "title": "Target Exists",
+            "type": "boolean"
+          },
+          "unattributed_recent": {
+            "default": 0,
+            "title": "Unattributed Recent",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "considered",
+          "matched",
+          "field_present",
+          "sample"
+        ],
+        "title": "AttributionPreviewResponse",
+        "type": "object"
+      },
+      "AttributionPreviewSample": {
+        "properties": {
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
+          },
+          "build_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Build Number"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "current_release_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Release Name"
+          },
+          "environment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Environment"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "would_land": {
+            "default": "rule",
+            "title": "Would Land",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "title": "AttributionPreviewSample",
+        "type": "object"
+      },
+      "AttributionRuleField": {
+        "properties": {
+          "glob": {
+            "title": "Glob",
+            "type": "boolean"
+          },
+          "help": {
+            "title": "Help",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "label",
+          "glob",
+          "help"
+        ],
+        "title": "AttributionRuleField",
+        "type": "object"
+      },
+      "AttributionRuleFieldsResponse": {
+        "properties": {
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/AttributionRuleField"
+            },
+            "title": "Fields",
+            "type": "array"
+          }
+        },
+        "required": [
+          "fields"
+        ],
+        "title": "AttributionRuleFieldsResponse",
+        "type": "object"
+      },
       "AttributionRuleIn": {
         "properties": {
           "is_enabled": {
@@ -6284,6 +6460,35 @@
           "projects"
         ],
         "title": "BillingOverviewResponse",
+        "type": "object"
+      },
+      "Body_draft_release_phases_api_v1_releases__release_id__phases_generate_post": {
+        "properties": {
+          "file": {
+            "anyOf": [
+              {
+                "format": "binary",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          }
+        },
+        "title": "Body_draft_release_phases_api_v1_releases__release_id__phases_generate_post",
         "type": "object"
       },
       "Body_ingest_file_api_v1_ingest_file_post": {
@@ -7802,6 +8007,46 @@
         "title": "CodeownersImportResponse",
         "type": "object"
       },
+      "CompliancePackFileCheck": {
+        "properties": {
+          "actual_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actual Sha256"
+          },
+          "expected_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Sha256"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "status"
+        ],
+        "title": "CompliancePackFileCheck",
+        "type": "object"
+      },
       "CompliancePackGenerateRequest": {
         "description": "Body for POST /api/v1/releases/{id}/compliance-pack.",
         "properties": {
@@ -7833,6 +8078,27 @@
           }
         },
         "title": "CompliancePackGenerateRequest",
+        "type": "object"
+      },
+      "CompliancePackKeyRotateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "confirmation": {
+            "title": "Confirmation",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirmation",
+          "reason"
+        ],
+        "title": "CompliancePackKeyRotateRequest",
         "type": "object"
       },
       "CompliancePackLifecycleResponse": {
@@ -7966,6 +8232,17 @@
             "title": "Retention Expires At",
             "type": "string"
           },
+          "signing_key_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signing Key Id"
+          },
           "test_run_id": {
             "anyOf": [
               {
@@ -7990,6 +8267,79 @@
           "generated_at"
         ],
         "title": "CompliancePackRead",
+        "type": "object"
+      },
+      "CompliancePackSigningKeyRead": {
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "algorithm": {
+            "title": "Algorithm",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "key_id": {
+            "title": "Key Id",
+            "type": "string"
+          },
+          "public_key_pem": {
+            "title": "Public Key Pem",
+            "type": "string"
+          },
+          "retired_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retired At"
+          }
+        },
+        "required": [
+          "key_id",
+          "algorithm",
+          "public_key_pem",
+          "created_at",
+          "active"
+        ],
+        "title": "CompliancePackSigningKeyRead",
+        "type": "object"
+      },
+      "CompliancePackSigningKeysResponse": {
+        "properties": {
+          "active_key_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Key Id"
+          },
+          "keys": {
+            "items": {
+              "$ref": "#/components/schemas/CompliancePackSigningKeyRead"
+            },
+            "title": "Keys",
+            "type": "array"
+          }
+        },
+        "required": [
+          "keys"
+        ],
+        "title": "CompliancePackSigningKeysResponse",
         "type": "object"
       },
       "CompliancePackSummaryRead": {
@@ -8088,6 +8438,80 @@
           "retired"
         ],
         "title": "CompliancePackSummaryRead",
+        "type": "object"
+      },
+      "CompliancePackVerification": {
+        "properties": {
+          "chain": {
+            "title": "Chain",
+            "type": "string"
+          },
+          "checked_at": {
+            "format": "date-time",
+            "title": "Checked At",
+            "type": "string"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/CompliancePackFileCheck"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "files_checked": {
+            "title": "Files Checked",
+            "type": "integer"
+          },
+          "files_ok": {
+            "title": "Files Ok",
+            "type": "integer"
+          },
+          "manifest_matches_record": {
+            "title": "Manifest Matches Record",
+            "type": "boolean"
+          },
+          "pack_id": {
+            "format": "uuid",
+            "title": "Pack Id",
+            "type": "string"
+          },
+          "result": {
+            "title": "Result",
+            "type": "string"
+          },
+          "signature": {
+            "title": "Signature",
+            "type": "string"
+          },
+          "signing_key_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signing Key Id"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pack_id",
+          "result",
+          "chain",
+          "manifest_matches_record",
+          "signature",
+          "files_checked",
+          "files_ok",
+          "files",
+          "summary",
+          "checked_at"
+        ],
+        "title": "CompliancePackVerification",
         "type": "object"
       },
       "ConfidenceWhy": {
@@ -9960,6 +10384,16 @@
             "title": "Release Decisions",
             "type": "array"
           },
+          "release_verdict": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DigestReleaseVerdict"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "scope": {
             "anyOf": [
               {
@@ -9998,6 +10432,56 @@
           "generated_at"
         ],
         "title": "DigestContentResponse",
+        "type": "object"
+      },
+      "DigestReleaseVerdict": {
+        "properties": {
+          "blocker_count": {
+            "default": 0,
+            "title": "Blocker Count",
+            "type": "integer"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "release_id": {
+            "title": "Release Id",
+            "type": "string"
+          },
+          "release_name": {
+            "title": "Release Name",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict"
+          }
+        },
+        "required": [
+          "release_id",
+          "release_name",
+          "source"
+        ],
+        "title": "DigestReleaseVerdict",
         "type": "object"
       },
       "DigestScopeInfo": {
@@ -21838,6 +22322,129 @@
         "title": "PerTestRouting",
         "type": "object"
       },
+      "PhaseDraft": {
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "exit_criteria_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Criteria Text"
+          },
+          "heading": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heading"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "phase_type": {
+            "title": "Phase Type",
+            "type": "string"
+          },
+          "planned_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Days"
+          }
+        },
+        "required": [
+          "name",
+          "phase_type"
+        ],
+        "title": "PhaseDraft",
+        "type": "object"
+      },
+      "PhaseDraftResponse": {
+        "properties": {
+          "fallback_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Reason"
+          },
+          "model_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Name"
+          },
+          "phases": {
+            "items": {
+              "$ref": "#/components/schemas/PhaseDraft"
+            },
+            "title": "Phases",
+            "type": "array"
+          },
+          "release_id": {
+            "format": "uuid",
+            "title": "Release Id",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "text_chars": {
+            "title": "Text Chars",
+            "type": "integer"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "release_id",
+          "source",
+          "phases",
+          "text_chars"
+        ],
+        "title": "PhaseDraftResponse",
+        "type": "object"
+      },
       "PhaseIn": {
         "properties": {
           "actual_end": {
@@ -25103,6 +25710,17 @@
             ],
             "title": "Activated By"
           },
+          "activated_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activated By Name"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -25112,6 +25730,17 @@
             "format": "uuid",
             "title": "Created By",
             "type": "string"
+          },
+          "created_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By Name"
           },
           "description": {
             "anyOf": [
@@ -25395,6 +26024,373 @@
           "reason"
         ],
         "title": "ReleaseOutcomeIn",
+        "type": "object"
+      },
+      "ReleasePhaseBulkItem": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "exit_criteria": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Criteria"
+          },
+          "name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "phase_type": {
+            "default": "qa_testing",
+            "maxLength": 50,
+            "title": "Phase Type",
+            "type": "string"
+          },
+          "planned_end": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned End"
+          },
+          "planned_start": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Start"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ReleasePhaseBulkItem",
+        "type": "object"
+      },
+      "ReleasePhasesBulkRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "model_name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Name"
+          },
+          "phases": {
+            "items": {
+              "$ref": "#/components/schemas/ReleasePhaseBulkItem"
+            },
+            "maxItems": 30,
+            "minItems": 1,
+            "title": "Phases",
+            "type": "array"
+          },
+          "source": {
+            "default": "manual",
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "phases"
+        ],
+        "title": "ReleasePhasesBulkRequest",
+        "type": "object"
+      },
+      "ReleasePhasesCloneRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "from_release_id": {
+            "format": "uuid",
+            "title": "From Release Id",
+            "type": "string"
+          },
+          "shift_to": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shift To"
+          }
+        },
+        "required": [
+          "from_release_id"
+        ],
+        "title": "ReleasePhasesCloneRequest",
+        "type": "object"
+      },
+      "ReleasePhasesCreatedResponse": {
+        "properties": {
+          "created": {
+            "title": "Created",
+            "type": "integer"
+          },
+          "phases": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Phases",
+            "type": "array"
+          },
+          "release_id": {
+            "format": "uuid",
+            "title": "Release Id",
+            "type": "string"
+          },
+          "shifted_by_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shifted By Days"
+          },
+          "source_release_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Release Id"
+          }
+        },
+        "required": [
+          "release_id",
+          "created",
+          "phases"
+        ],
+        "title": "ReleasePhasesCreatedResponse",
+        "type": "object"
+      },
+      "ReleasePortfolioTotals": {
+        "properties": {
+          "conditional_go": {
+            "title": "Conditional Go",
+            "type": "integer"
+          },
+          "evaluated": {
+            "title": "Evaluated",
+            "type": "integer"
+          },
+          "go": {
+            "title": "Go",
+            "type": "integer"
+          },
+          "no_go": {
+            "title": "No Go",
+            "type": "integer"
+          },
+          "not_evaluated": {
+            "title": "Not Evaluated",
+            "type": "integer"
+          },
+          "released": {
+            "title": "Released",
+            "type": "integer"
+          },
+          "released_with_pack": {
+            "title": "Released With Pack",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "evaluated",
+          "go",
+          "conditional_go",
+          "no_go",
+          "not_evaluated",
+          "released",
+          "released_with_pack"
+        ],
+        "title": "ReleasePortfolioTotals",
+        "type": "object"
+      },
+      "ReleasePortfolioTrend": {
+        "properties": {
+          "approximated": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Approximated",
+            "type": "array"
+          },
+          "blocked": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Blocked",
+            "type": "array"
+          },
+          "evaluated_in_week": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Evaluated In Week",
+            "type": "array"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "go_in_week": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Go In Week",
+            "type": "array"
+          },
+          "in_progress": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "In Progress",
+            "type": "array"
+          },
+          "points_at": {
+            "items": {
+              "format": "date-time",
+              "type": "string"
+            },
+            "title": "Points At",
+            "type": "array"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "ready_to_ship": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Ready To Ship",
+            "type": "array"
+          },
+          "released_30d": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Released 30D",
+            "type": "array"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/ReleasePortfolioTotals"
+          },
+          "weeks": {
+            "title": "Weeks",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "weeks",
+          "points_at",
+          "in_progress",
+          "ready_to_ship",
+          "blocked",
+          "released_30d",
+          "evaluated_in_week",
+          "go_in_week",
+          "totals",
+          "approximated",
+          "generated_at"
+        ],
+        "title": "ReleasePortfolioTrend",
         "type": "object"
       },
       "ReleaseSyncIn": {
@@ -49986,6 +50982,188 @@
         ]
       }
     },
+    "/api/v1/compliance-packs/signing-keys": {
+      "get": {
+        "description": "Every signing key's PUBLIC half, newest first, retired ones included\n(they verify the packs they signed). Deployment-wide public data.\n\nA GET never writes: no key is created here. ``active_key_id`` is ``None``\nuntil the first signed pack creates the deployment's key.",
+        "operationId": "list_compliance_signing_keys_api_v1_compliance_packs_signing_keys_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompliancePackSigningKeysResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "List Compliance Signing Keys",
+        "tags": [
+          "Compliance Pack"
+        ]
+      }
+    },
+    "/api/v1/compliance-packs/signing-keys/rotate": {
+      "post": {
+        "description": "Retire the active signing key and create a new one (D14, D-13).\n\nThe retired key's private half is destroyed (its ciphertext cleared): it\nnever signs again. Its public key stays, so every pack it signed keeps\nverifying. Typed confirmation, and a reason kept on the retired key.",
+        "operationId": "rotate_compliance_signing_key_api_v1_compliance_packs_signing_keys_rotate_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompliancePackKeyRotateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompliancePackSigningKeyRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Rotate Compliance Signing Key",
+        "tags": [
+          "Compliance Pack"
+        ]
+      }
+    },
+    "/api/v1/compliance-packs/signing-keys/{signing_key_id}/pem": {
+      "get": {
+        "description": "One public key as ``testlookup-compliance-<id>.pem`` (never a private key).",
+        "operationId": "download_compliance_signing_key_api_v1_compliance_packs_signing_keys__signing_key_id__pem_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "signing_key_id",
+            "required": true,
+            "schema": {
+              "title": "Signing Key Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Download Compliance Signing Key",
+        "tags": [
+          "Compliance Pack"
+        ]
+      }
+    },
     "/api/v1/compliance-packs/{pack_id}": {
       "delete": {
         "description": "Delete a pack whose retention window has already passed.\n\n**Refused while the window is still open** — 409, naming the expiry. Retire\nit first if it really should go now. That two-step exists because the\nwindow was previously enforced only on the way out: nothing could shorten\nit, and with no delete route nothing tested it on the way in either.\n\nS9 adds the legal-hold check alongside this. It is deliberately absent\nrather than stubbed: a hold check against a table that does not exist\nreads as a working guard while never firing.",
@@ -50177,6 +51355,71 @@
           }
         ],
         "summary": "Retire Compliance Pack",
+        "tags": [
+          "Compliance Pack"
+        ]
+      }
+    },
+    "/api/v1/compliance-packs/{pack_id}/verify": {
+      "post": {
+        "description": "Check a stored pack: every file against the manifest, the manifest\nagainst the digest recorded at generation, and the signature (W11 REL-11).\n\nWhoever may download the pack may verify it (the download route's rule:\nthe pack's own project through ``resolve_project_scope``). A POST that\nwrites nothing. The request's connection is handed back before the storage\nread; a storage failure answers 200 ``unreadable`` (absence is not health,\nand not a 502 toast either).",
+        "operationId": "verify_compliance_pack_api_v1_compliance_packs__pack_id__verify_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pack_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Pack Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompliancePackVerification"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Verify Compliance Pack",
         "tags": [
           "Compliance Pack"
         ]
@@ -58797,9 +60040,74 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/attribution-rules/fields": {
+      "get": {
+        "description": "The fields a rule can match on, with how each one matches (W11 REL-09).\n\nIn ``AttributionMatchField`` declaration order. Static: the vocabulary is\nthe ORM enum, the glob flag the evaluator's own set, so the handler runs\nno statement (the dependency checks the caller's access to the project).",
+        "operationId": "list_attribution_rule_fields_api_v1_projects__project_id__attribution_rules_fields_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttributionRuleFieldsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "List Attribution Rule Fields",
+        "tags": [
+          "Release Attribution Rules"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/attribution-rules/preview": {
       "post": {
-        "description": "Try a rule against recent runs WITHOUT saving it.\n\nThe failure mode of an attribution rule is not that it misses — it is that\nit captures everything, and every run still gets attributed so nothing looks\nwrong. ``matched`` against ``considered`` is the one number that tells those\napart before the rule starts deciding where real runs land.\n\nEvaluated with ``rule_matches`` — the same predicate the ladder uses — on an\nUNSAVED instance, so the preview cannot disagree with the rule it previews.",
+        "description": "Try a rule against recent runs WITHOUT saving it.\n\nThe failure mode of an attribution rule is not that it misses — it is that\nit captures everything, and every run still gets attributed so nothing looks\nwrong. ``matched`` against ``considered`` is the one number that tells those\napart before the rule starts deciding where real runs land.\n\nEvaluated with ``rule_matches`` — the same predicate the ladder uses — on an\nUNSAVED instance, so the preview cannot disagree with the rule it previews.\n\n``detail`` (W11 REL-09) adds where each matched run would really land\n(``_preview_detail``). ``rule_id`` names the rule being edited, so it is not\ncounted as an earlier rule shadowing itself; it is read only inside the\nPATH project (the access check above), so another project's rule id is\nsimply never found — the answer is the same as without it, no oracle.\nPlain defaults, not ``Query(...)``: tests call this handler directly.",
         "operationId": "preview_attribution_rule_api_v1_projects__project_id__attribution_rules_preview_post",
         "parameters": [
           {
@@ -58822,6 +60130,33 @@
               "minimum": 1,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "detail",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Detail",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "rule_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Rule Id"
             }
           },
           {
@@ -58855,7 +60190,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/AttributionPreviewResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -66810,6 +68147,295 @@
         ]
       }
     },
+    "/api/v1/releases/portfolio-trend": {
+      "get": {
+        "description": "The release KPI cards' trend (REL-03): each card's rule at ``weeks`` week ends and now.\n\n``project_id`` is resolved FIRST; without it, every project the caller can\nsee. Four statements; a GET that writes and caches nothing (the page asks\nonly when the \"Release health\" disclosure is open).",
+        "operationId": "get_release_portfolio_trend_api_v1_releases_portfolio_trend_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "weeks",
+            "required": false,
+            "schema": {
+              "default": 12,
+              "maximum": 26,
+              "minimum": 4,
+              "title": "Weeks",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleasePortfolioTrend"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get Release Portfolio Trend",
+        "tags": [
+          "Releases"
+        ]
+      }
+    },
+    "/api/v1/releases/schedule.csv": {
+      "get": {
+        "description": "The release schedule as CSV (REL-06): one row per phase, formula-guarded, a BOM.\n\nScoped exactly like the ICS twin; a cancelled release IS listed, with its\nstatus. A GET: writes nothing.",
+        "operationId": "export_release_schedule_csv_api_v1_releases_schedule_csv_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Export Release Schedule Csv",
+        "tags": [
+          "Releases"
+        ]
+      }
+    },
+    "/api/v1/releases/schedule.ics": {
+      "get": {
+        "description": "The release schedule as an iCalendar file (REL-06): download only, no token in any URL.\n\n``project_id`` is resolved FIRST (400 malformed, 403 foreign); without it\nthe file covers every project the caller can see. A cancelled release is\nnot on the calendar. A GET: writes nothing.",
+        "operationId": "export_release_schedule_ics_api_v1_releases_schedule_ics_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Export Release Schedule Ics",
+        "tags": [
+          "Releases"
+        ]
+      }
+    },
     "/api/v1/releases/sync": {
       "post": {
         "description": "Pull releases in from GitHub milestones or Jira fix versions.\n\n**Why this endpoint exists at all.** ``sync_milestones`` and\n``sync_fix_versions`` shipped complete, gated and tested, and nothing\ncalled either of them -- so rung 2 of the attribution ladder (\"the run's\nexternal match\") could never fire in production, because nothing created a\nrelease carrying a ``source_system`` for it to match against. Two finished\nfeatures were unreachable behind a missing route.\n\n**Manual, not scheduled.** No beat entry: ``AI_OFFLINE_MODE`` defaults to\nTrue and a periodic job that egresses on its own is a materially larger\nchange than making a finished feature reachable. A person asking for a sync\nis also the point at which a 503 explaining WHY it cannot run is useful.\n\nOnly identity is written -- name, external id, external url. A synced\nrelease's phases, criteria, gate policy and run attribution are never\ntouched, because those are TestLookup's and neither GitHub nor Jira knows\nanything about them.",
@@ -67604,6 +69230,154 @@
         ]
       }
     },
+    "/api/v1/releases/{release_id}/phases/bulk": {
+      "post": {
+        "description": "Create a release's first schedule in one request (REL-07's Create; also a manual bulk).\n\n409 when the release already has phases (single phases keep\n``POST /phases``); every name unique in the batch; ``source`` /\n``model_name`` are recorded in the activity row and the metric only.",
+        "operationId": "create_release_phases_bulk_api_v1_releases__release_id__phases_bulk_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "release_id",
+            "required": true,
+            "schema": {
+              "title": "Release Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleasePhasesBulkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleasePhasesCreatedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Create Release Phases Bulk",
+        "tags": [
+          "Releases"
+        ]
+      }
+    },
+    "/api/v1/releases/{release_id}/phases/clone": {
+      "post": {
+        "description": "Copy another release's phases into this one (REL-05): dates moved, all Pending.\n\nThe BODY id is checked by ONE statement scoped to the target's project\nBEFORE anything else reads it: an unknown, malformed (Pydantic's 422) or\nFOREIGN source is the same 404 text, so the route is no oracle for another\nproject's release ids. ``require_release_access`` scopes the path id.",
+        "operationId": "clone_release_phases_api_v1_releases__release_id__phases_clone_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "release_id",
+            "required": true,
+            "schema": {
+              "title": "Release Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleasePhasesCloneRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleasePhasesCreatedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Clone Release Phases",
+        "tags": [
+          "Releases"
+        ]
+      }
+    },
     "/api/v1/releases/{release_id}/phases/gate": {
       "get": {
         "description": "Every phase of this release, with a verdict each, and whether it may\nadvance.\n\nRead-only: ``evaluate_all_phases`` defaults to ``record=False`` because\nlooking at the state of a release is routine, and appending a decision row\nper phase per look would bury the real decisions in noise.\n\nThe summary is three-valued on purpose. A release blocked by a FAILING\nphase and one blocked by an UNEVALUATED phase need different actions — fix\nthe tests, or go run some — and collapsing both into \"cannot advance\" sends\na release manager to do the wrong one half the time. ``NO_PHASES`` is a\nfourth state and not a pass: phases are optional, so having none is not a\nfailure, but nothing was gated either.",
@@ -67661,6 +69435,79 @@
           }
         ],
         "summary": "Get Release Phase Gate",
+        "tags": [
+          "Releases"
+        ]
+      }
+    },
+    "/api/v1/releases/{release_id}/phases/generate": {
+      "post": {
+        "description": "Draft phases from a PRD for the reader to review (REL-07). Persists nothing.\n\nThe heading parser always runs; the model is asked only in ``llm`` /\n``auto`` analysis mode, and any model failure is the rules draft with a\n``fallback_reason`` -- never an error. The request's connection is handed\nback BEFORE the config read and the model call, so no connection is held\nwhile the model runs. The PRD is never stored or logged.",
+        "operationId": "draft_release_phases_api_v1_releases__release_id__phases_generate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "release_id",
+            "required": true,
+            "schema": {
+              "title": "Release Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_draft_release_phases_api_v1_releases__release_id__phases_generate_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhaseDraftResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Draft Release Phases",
         "tags": [
           "Releases"
         ]

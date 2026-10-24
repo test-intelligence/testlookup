@@ -4,8 +4,14 @@
  * UX redesign P5 item 5: on the list, a release's detail is a drill-down beside
  * the list ("Open full page" goes to `/releases/:releaseId`), not an inline
  * expansion that pushed every card below it down the page. The two header
- * controls that only said "(planned)" (Export schedule, Calendar view) are
- * gone: what is not built is not rendered (P2).
+ * stub controls were removed then (what is not built is not rendered, P2);
+ * W11 built them: the header's List | Calendar toggle (the view rides the URL,
+ * `?view=calendar&month=YYYY-MM`; the calendar replaces the cards and reads
+ * the list the page already holds) and the ⋯ menu's schedule exports (.ics /
+ * .csv, an authenticated download: no token in any URL) and Attribution rules
+ * (one project selected). A QA lead copies a release's phases from another
+ * release or drafts them from a PRD (REL-05 / REL-07) from a planning card or
+ * the release's "Release Phases" while it has none.
  *
  * UX redesign P6 (the fold budget, `02-design-spec.md` §2): above the list,
  * one toolbar row (the counted status filter and search) and ONE
@@ -32,7 +38,7 @@
  * strip's button sends the request.
  */
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   CheckCircle2, ExternalLink, Package, Pencil, Plus, RefreshCw, RotateCcw, Trash2, TriangleAlert,
 } from 'lucide-react'
@@ -70,7 +76,12 @@ import type { LinkedRun, Release, ReleasePhase } from '@/types/releases'
 import { deriveRelease, computeStageCounts } from '@/components/releases/mapping'
 import type { DerivedRelease } from '@/components/releases/types'
 import { ReleaseHealthBanner, ReleaseHealthDetails } from '@/components/releases/ReleaseHealth'
-import ReleaseCard from '@/components/releases/ReleaseCard'
+import ReleaseCard, { type PlanPhasesMode } from '@/components/releases/ReleaseCard'
+import ClonePhasesForm, { type ClonePhasesFormProps } from '@/components/releases/ClonePhasesForm'
+import DraftPhasesForm from '@/components/releases/DraftPhasesForm'
+import ReleaseCalendar from '@/components/releases/ReleaseCalendar'
+import { parseMonthParam } from '@/components/releases/releaseCalendarModel'
+import { useNow } from '@/hooks/useNow'
 import { ShippingThisWeek, AgingSignals, CompliancePacks, RecentActivity } from '@/components/releases/RightRail'
 import GatePanel from '@/components/releases/GatePanel'
 import PhaseGateChip from '@/components/releases/PhaseGateChip'
@@ -465,6 +476,16 @@ function AddPhaseRow({ releaseId, existingPhaseNames, onSaved }: {
   )
 }
 
+/**
+ * Copy phases from… (REL-05) with its sources: the release list the page
+ * already holds (the top bar's cached entry: no request of its own), read only
+ * while the form is open.
+ */
+function ClonePhasesHost(props: Omit<ClonePhasesFormProps, 'releases'>) {
+  const { data } = useReleases(undefined, { cached: true })
+  return <ClonePhasesForm {...props} releases={data?.items ?? []} />
+}
+
 // ── Release Detail Panel ────────────────────────────────────────────────────
 
 /** A phase transition the server refused until a reason travels with it (REL-10). */
@@ -489,7 +510,7 @@ interface PendingPhaseReason {
  * header, a phase gate's reason under that phase's row. Remove phase asks in a
  * strip under the row.
  */
-function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false, slot, inPane = false }: {
+function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false, slot, inPane = false, onPhasesChanged }: {
   releaseId: string
   onEvaluate?: () => void
   evaluating?: boolean
@@ -501,6 +522,8 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false, slot, i
    * force five tiles into the pane at any desktop width.
    */
   inPane?: boolean
+  /** W11: phases were copied or created in bulk; the page re-reads its list. */
+  onPhasesChanged?: () => void
 }) {
   const navigate = useNavigate()
   const { hash } = useLocation()
@@ -519,6 +542,9 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false, slot, i
   // opens a form in another release's detail.
   const linkKey = `link:${releaseId}`
   const reasonKey = (phaseId: string) => `reason:${releaseId}:${phaseId}`
+  // W11 REL-05 / REL-07: the two first-schedule forms (the card's buttons open them by these keys too).
+  const cloneKey = `clone:${releaseId}`
+  const draftKey = `draft:${releaseId}`
   const [confirmingPhase, setConfirmingPhase] = useState<string | null>(null)
   const [markingReleased, setMarkingReleased] = useState(false)
   const [outcomeReason, setOutcomeReason] = useState('')
@@ -665,7 +691,18 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false, slot, i
     } catch { toast.error('Failed to unlink run') }
   }
 
+  /** A first schedule was copied or created (REL-05 / REL-07): close the form, re-read the release everywhere. */
+  function phasesPlanned() {
+    formSlot.close()
+    void refetch()
+    void revalidateReleaseReads(releaseId)
+    onPhasesChanged?.()
+  }
+
   const workflow = detail ? buildReleaseWorkflow(detail) : { stages: [], events: [], stageOrder: [] }
+  const detailStage = detail ? deriveRelease(detail).stage : null
+  const canPlanPhases = isQaLead && detail != null && (detail.phases ?? []).length === 0
+    && (detailStage === 'planning' || detailStage === 'in_progress')
 
   if (isLoading) {
     return <div className="flex items-center justify-center h-48"><LoadingSpinner size="lg" /></div>
@@ -790,7 +827,43 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false, slot, i
 
       {/* Phase timeline */}
       <div className="card">
-        <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">Release Phases</h3>
+        {canPlanPhases ? (
+          // W11: while the release has no phases, a QA lead builds its first
+          // schedule here: copied from another release, or drafted from a PRD.
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="m-0 text-sm font-semibold text-[var(--color-text)]">Release Phases</h3>
+            <div className="flex items-center gap-2" data-plan-phases="">
+              <button type="button" onClick={() => formSlot.open(cloneKey)} className="btn-secondary btn-sm">
+                Copy phases from…
+              </button>
+              <button type="button" onClick={() => formSlot.open(draftKey)} className="btn-secondary btn-sm">
+                Draft from a PRD…
+              </button>
+            </div>
+          </div>
+        ) : (
+          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-3">Release Phases</h3>
+        )}
+        {formSlot.openKey === cloneKey && (
+          <div className="mb-3">
+            <ClonePhasesHost
+              release={detail}
+              slot={formSlot}
+              onDone={phasesPlanned}
+              onCancel={() => formSlot.close()}
+            />
+          </div>
+        )}
+        {formSlot.openKey === draftKey && (
+          <div className="mb-3">
+            <DraftPhasesForm
+              release={detail}
+              slot={formSlot}
+              onDone={phasesPlanned}
+              onCancel={() => formSlot.close()}
+            />
+          </div>
+        )}
         <div className="space-y-2">
           {(detail.phases ?? []).map((phase, i) => {
             const phaseGate = phaseGateById.get(phase.id)
@@ -1060,6 +1133,35 @@ export default function ReleasesPage() {
   const [deletedId, setDeletedId] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [search, setSearch] = useState('')
+  // W11 REL-06: List | Calendar rides the URL (`?view=calendar&month=YYYY-MM`,
+  // beside `open`); List is the default and writes no key. The list route only.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const now = useNow()
+  const view: 'list' | 'calendar' = !releaseId && searchParams.get('view') === 'calendar' ? 'calendar' : 'list'
+  const calendarMonth = parseMonthParam(searchParams.get('month'), new Date(now))
+
+  /** Switch the view; every other key (`open`, the top bar's) is kept. */
+  function showView(next: 'list' | 'calendar') {
+    if (next === view) return
+    setSearchParams(prev => {
+      const params = new URLSearchParams(prev)
+      if (next === 'calendar') params.set('view', 'calendar')
+      else {
+        params.delete('view')
+        params.delete('month')
+      }
+      return params
+    })
+  }
+
+  /** The calendar's month (Prev / Next / Today): replaces the entry, so Back leaves the calendar. */
+  function showMonth(month: string) {
+    setSearchParams(prev => {
+      const params = new URLSearchParams(prev)
+      params.set('month', month)
+      return params
+    }, { replace: true })
+  }
 
   // Derive the renderer-ready shape once and reuse across the health banner
   // and its disclosure, the list, and the right-rail panels. Pure — no side effects, no extra
@@ -1312,6 +1414,49 @@ export default function ReleasesPage() {
     detail.close()
   }
 
+  /**
+   * A card's Copy phases from… / Draft from a PRD… (QA lead; REL-05 / REL-07):
+   * on the list, open the release in the pane with that form open in its
+   * "Release Phases"; on the release's own page, open the form there.
+   */
+  const planPhases = (id: string, mode: PlanPhasesMode) => {
+    const key = `${mode}:${id}`
+    if (releaseId || id === paneId) {
+      releaseSlot.open(key)
+      return
+    }
+    // A form typed into in the pane asks first (openPane's guard); the release
+    // then opens and its Copy / Draft is one more click.
+    if (releaseSlot.dirty) {
+      openPane(id)
+      return
+    }
+    // Clean: switch the pane and open the form in one go (the slot keys are
+    // per release, so the form appears in the new release's Release Phases).
+    setConfirmingDelete(null)
+    releaseSlot.close()
+    detail.open(id)
+    releaseSlot.open(key)
+  }
+  const onPlanPhasesCard = isQaLead ? planPhases : undefined
+
+  /** The ⋯ menu's schedule exports (REL-06): an authenticated download, every role, All Projects too. */
+  async function exportSchedule(format: 'ics' | 'csv') {
+    try {
+      await releasesService.exportSchedule(format, isAllProjects ? null : activeProjectId)
+    } catch {
+      toast.error('Could not export the release schedule.')
+    }
+  }
+  const headerOverflow = [
+    { label: 'Export schedule (.ics)', onClick: () => void exportSchedule('ics') },
+    { label: 'Export schedule (.csv)', onClick: () => void exportSchedule('csv') },
+    // REL-09 (G-D's page): single-project, so offered only with one project selected.
+    ...(!isAllProjects && activeProjectId
+      ? [{ label: 'Attribution rules', onClick: () => navigate('/releases/attribution-rules') }]
+      : []),
+  ]
+
   // Focus moves into the pane when it opens (onto its Close button, as the
   // modal panel's did — not into its first field, which can sit far down the
   // release and would scroll the pane to it), and back to the control that
@@ -1486,6 +1631,7 @@ export default function ReleasesPage() {
                 slot={releaseSlot}
                 // Expanded to the row's full width, the page's own layout fits again.
                 inPane={!paneExpanded}
+                onPhasesChanged={() => void refetch()}
               />
             </div>
           </SectionErrorBoundary>
@@ -1531,8 +1677,27 @@ export default function ReleasesPage() {
             + `${isAllProjects && !releaseId ? 'all projects' : scopeName}`
             + ` · ${stageCounts.in_progress} in progress · ${derived.filter(r => r.blockers.some(b => b.severity === 'red')).length} blocked`
           }
-          actions={!isAllProjects && !releaseId ? (
+          actions={!releaseId ? (
             <div className="flex items-center gap-2">
+              {/* W11 REL-06: the list or a month calendar (the URL's `view`), in All Projects too. */}
+              <div role="group" aria-label="View" className="inline-flex items-center gap-1">
+                <button
+                  type="button"
+                  aria-pressed={view === 'list'}
+                  onClick={() => showView('list')}
+                  className={clsx('btn-sm', view === 'list' ? 'btn-primary' : 'btn-secondary')}
+                >
+                  List
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={view === 'calendar'}
+                  onClick={() => showView('calendar')}
+                  className={clsx('btn-sm', view === 'calendar' ? 'btn-primary' : 'btn-secondary')}
+                >
+                  Calendar
+                </button>
+              </div>
               {canSync && (
                 <button
                   type="button"
@@ -1542,14 +1707,17 @@ export default function ReleasesPage() {
                   <RefreshCw className="h-4 w-4" aria-hidden="true" /> Sync releases
                 </button>
               )}
-              <button
-                onClick={openNew}
-                className="btn-primary inline-flex items-center gap-1.5"
-              >
-                <Plus className="h-4 w-4" /> New release
-              </button>
+              {!isAllProjects && (
+                <button
+                  onClick={openNew}
+                  className="btn-primary inline-flex items-center gap-1.5"
+                >
+                  <Plus className="h-4 w-4" /> New release
+                </button>
+              )}
             </div>
           ) : undefined}
+          overflow={!releaseId ? headerOverflow : undefined}
         />
 
         {/* The template (§2, UX redesign P6): header · ONE toolbar row (the
@@ -1654,7 +1822,15 @@ export default function ReleasesPage() {
             list={(
               <>
                 <div data-primary="" className="flex flex-col gap-2.5 min-w-0">
-                  {filteredDerived.length === 0 ? (
+                  {view === 'calendar' ? (
+                    // W11 REL-06: the month calendar in the cards' place, from the list the page holds.
+                    <ReleaseCalendar
+                      releases={filteredDerived.map(r => r.source)}
+                      month={calendarMonth}
+                      onMonth={showMonth}
+                      onOpen={openPane}
+                    />
+                  ) : filteredDerived.length === 0 ? (
                     <div
                       className="rounded-md border px-4 py-3 text-[12.5px] text-[var(--color-text-muted)] flex items-center justify-between"
                       style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-card)' }}
@@ -1672,7 +1848,7 @@ export default function ReleasesPage() {
                     filteredDerived.map(r => (
                       <div key={r.id} data-release-page="">
                         {/* Its Evaluate is the gate panel's, right below: one button, not two. */}
-                        <ReleaseCard release={r} onSetActive={onSetActiveCard} />
+                        <ReleaseCard release={r} onSetActive={onSetActiveCard} onPlanPhases={onPlanPhasesCard} />
                         {confirmingActivate === r.id && <div className="mt-2">{activateStrip(r)}</div>}
                         {/* The release's own page: its detail is the page, not a drill-down. */}
                         <div
@@ -1706,6 +1882,7 @@ export default function ReleasesPage() {
                             onEvaluate={isQaLead ? () => void evaluateRelease(r.id, r.name) : undefined}
                             evaluating={evaluatingIds.has(r.id)}
                             slot={releaseSlot}
+                            onPhasesChanged={() => void refetchRoutedRelease()}
                           />
                         </div>
                       </div>
@@ -1719,6 +1896,7 @@ export default function ReleasesPage() {
                           onEvaluate={onEvaluateCard}
                           evaluating={evaluatingIds.has(r.id)}
                           onSetActive={onSetActiveCard}
+                          onPlanPhases={onPlanPhasesCard}
                         />
                         {/* Set as active release asks right under its card. */}
                         {confirmingActivate === r.id && activateStrip(r)}

@@ -632,3 +632,52 @@ describe('DigestsPage W27b: Unsubscribe and Delete view ask under their row', ()
     expect(views.deleteSavedView).not.toHaveBeenCalled()
   })
 })
+
+// ── W11 GATE-08b: the preview's release line (cases ADDED) ───────────────
+describe('DigestsPage — the preview names the release-level verdict (W11 GATE-08b)', () => {
+  const PREVIEW = {
+    project_name: 'Checkout', period: 'weekly', generated_at: '2026-10-23T08:00:00Z', total_runs: 3,
+    avg_pass_rate: 90, pass_rate_trend: null, new_regressions: 1, top_blockers: [], top_clusters: [],
+    flaky_test_count: 0, release_decisions: [], action_items: [],
+  }
+  const twoHoursAgo = () => new Date(Date.now() - 2 * 3600_000 - 60_000).toISOString()
+
+  async function preview(releaseVerdict: unknown) {
+    inCheckout()
+    previewDigest.mockResolvedValue({ ...PREVIEW, release_verdict: releaseVerdict })
+    render(<MemoryRouter initialEntries={['/settings/digests?tab=preview']}><DigestsPage /></MemoryRouter>)
+    fireEvent.click(screen.getByRole('button', { name: 'Generate Preview' }))
+    await screen.findByText(/Weekly Digest — Checkout/)
+    return document.querySelector('[data-digest-release-verdict]') as HTMLElement | null
+  }
+
+  it('the active release, No-Go with two blockers, as the digest says it', async () => {
+    const line = await preview({
+      release_id: 'rel-11', release_name: '2026.11', source: 'active', verdict: 'NO_GO',
+      decided_at: twoHoursAgo(), blocker_count: 2,
+    })
+    expect(line).toHaveTextContent("Release 2026.11 — No-Go (2 blockers) · decided 2 h ago · the project's active release")
+  })
+
+  it('a release never evaluated reads "not evaluated yet", never GO', async () => {
+    const line = await preview({ release_id: 'rel-12', release_name: '2026.12', source: 'subscription', verdict: null })
+    expect(line).toHaveTextContent("Release 2026.12 — not evaluated yet · this digest's release")
+    expect(line).not.toHaveTextContent(/\bGo\b/)
+  })
+
+  it('no release_verdict renders no line', async () => {
+    expect(await preview(undefined)).toBeNull()
+  })
+
+  it('a malformed release_verdict renders no line', async () => {
+    expect(await preview({ release_name: 42 })).toBeNull()
+  })
+
+  it('the release name is text, never HTML', async () => {
+    const line = await preview({
+      release_id: 'rel-x', release_name: '<img src=x onerror=alert(1)>', source: 'active', verdict: 'GO', blocker_count: 0,
+    })
+    expect(line?.querySelector('img')).toBeNull()
+    expect(line).toHaveTextContent("Release <img src=x onerror=alert(1)> — Go · the project's active release")
+  })
+})

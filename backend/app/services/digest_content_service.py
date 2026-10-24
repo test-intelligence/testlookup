@@ -35,13 +35,21 @@ rows by ``suite_label_clause`` (a quarantine is a standing decision about a
 test, so no release predicate) -- shortens the period to the view's window
 when that is shorter, and leaves out the two project-wide sections (flaky debt
 by team, hours saved), which it says.
+
+Release verdict (W11 GATE-08b, D15): ``generate_digest(...,
+with_release_verdict=True)`` adds the RELEASE-level verdict of the digest's
+release -- the one release a saved view names, else the project's active
+release -- read in ONE statement after every other (``digest_release_verdict``).
+The default (False) emits exactly the statements and the dict it always did.
+A release never evaluated reads "not evaluated yet", never GO; the run-level
+``ReleaseDecision`` lines keep their own label and vocabulary.
 """
 from __future__ import annotations
 
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Mapping
 
 from sqlalchemy import Float, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,7 +60,9 @@ from app.models.postgres import (
     FlakyQuarantineRequest,
     FlakyQuarantineStatus,
     Project,
+    Release,
     ReleaseDecision,
+    ReleaseGateDecision,
     TestCase,
     TestRun,
     TestStatus,
@@ -353,6 +363,7 @@ async def generate_digest(
     since: datetime | None = None,
     *,
     scope: DigestScope | None = None,
+    with_release_verdict: bool = False,
 ) -> dict:
     """
     Generate actionable digest content for a project over a time period.
@@ -366,6 +377,12 @@ async def generate_digest(
     project, exactly as before (no ``scope`` key). Any other scope adds
     ``scope`` (``digest_scope_service.scope_info``); a FILTERED one narrows
     every statement to the view and shortens the period to its window.
+
+    ``with_release_verdict`` (W11 GATE-08b): with a ``project_id``, ONE more
+    statement AFTER all the others sets ``release_verdict`` (the release a
+    saved view names when it names exactly one, else the project's active
+    release; ``None`` when there is none). False (the default) reads and adds
+    nothing.
     """
     filtered = _filtered(scope)
     days = 7 if period == "weekly" else 1
@@ -589,7 +606,147 @@ async def generate_digest(
     if scope is not None and scope.source != "project":
         digest["scope"] = scope_info(scope)
 
+    # W11 GATE-08b: the release-level verdict, only for a caller that asks.
+    if with_release_verdict and project_id is not None:
+        view_releases = scope.release_ids if scope is not None and scope.source == "saved_view" else ()
+        digest["release_verdict"] = await digest_release_verdict(
+            db,
+            project_id=project_id,
+            release_id=view_releases[0] if len(view_releases) == 1 else None,
+        )
+
     return digest
+
+
+#: Where a digest's release came from (``DigestReleaseVerdict.source``).
+DIGEST_RELEASE_SOURCES = ("subscription", "active")
+#: The release-level verdict words (the release card's vocabulary, never the
+#: run-level ``ReleaseDecision``'s).
+RELEASE_VERDICT_TEXT = {
+    "GO": "Go",
+    "CONDITIONAL_GO": "Conditional Go",
+    "NO_GO": "No-Go",
+    "NOT_EVALUATED": "Not evaluated (too little evidence)",
+}
+#: A release with no recorded release-level verdict: absence is not GO.
+NEVER_EVALUATED_TEXT = "not evaluated yet"
+_RELEASE_SOURCE_TEXT = {
+    "subscription": "this digest's release",
+    "active": "the project's active release",
+}
+
+
+async def digest_release_verdict(
+    db: AsyncSession,
+    *,
+    project_id: uuid.UUID | str,
+    release_id: uuid.UUID | str | None,
+) -> dict | None:
+    """The CURRENT release-level verdict of the digest's release, in ONE statement.
+
+    ``release_id`` given: that release, only when it belongs to ``project_id``
+    (``source`` "subscription"); otherwise the project's active release
+    (``source`` "active"). ``None`` when the project has no such release, when
+    an id is not a uuid (no statement), or on a fault (one warning: a digest
+    never fails for its verdict line). Never recomputed: the stored
+    ``release_gate_decisions`` row with ``is_current`` and no phase.
+    """
+    try:
+        project_key = project_id if isinstance(project_id, uuid.UUID) else uuid.UUID(str(project_id))
+        release_key: uuid.UUID | None = None
+        if release_id is not None:
+            release_key = release_id if isinstance(release_id, uuid.UUID) else uuid.UUID(str(release_id))
+    except (TypeError, ValueError):
+        return None
+    which = Release.id == release_key if release_key is not None else Release.is_active.is_(True)
+    try:
+        row = (
+            await db.execute(
+                select(
+                    Release.id,
+                    Release.name,
+                    ReleaseGateDecision.verdict,
+                    ReleaseGateDecision.created_at,
+                    ReleaseGateDecision.blocking_reasons,
+                )
+                .outerjoin(
+                    ReleaseGateDecision,
+                    (ReleaseGateDecision.release_id == Release.id)
+                    & ReleaseGateDecision.is_current.is_(True)
+                    & ReleaseGateDecision.phase_id.is_(None),
+                )
+                .where(Release.project_id == project_key, which)
+                .limit(1)
+            )
+        ).first()
+    except Exception as exc:  # noqa: BLE001 -- the verdict line must not kill the digest
+        logger.warning(
+            "Digest release verdict read failed for %s: %s", project_key, type(exc).__name__
+        )
+        return None
+    if row is None:
+        return None
+    rel_id, name, verdict, decided, reasons = row
+    decided_at = None
+    if isinstance(verdict, str) and isinstance(decided, datetime):
+        stamp = decided if decided.tzinfo is not None else decided.replace(tzinfo=timezone.utc)
+        decided_at = stamp.astimezone(timezone.utc).isoformat()
+    return {
+        "release_id": str(rel_id),
+        "release_name": str(name or ""),
+        "source": "subscription" if release_key is not None else "active",
+        "verdict": verdict if isinstance(verdict, str) else None,
+        "decided_at": decided_at,
+        "blocker_count": len(reasons) if isinstance(reasons, list) else 0,
+    }
+
+
+def release_verdict_line(rv: Mapping) -> str:
+    """The digest's release line, as RAW text (each medium escapes it).
+
+    ``Release 2026.11 — No-Go (2 blockers) · decided 2026-10-21 14:05 UTC ·
+    the project's active release``; a release never evaluated reads
+    ``Release 2026.11 — not evaluated yet · this digest's release``. The
+    run-level line keeps its own label ("Latest run decision"); the two
+    vocabularies are never merged.
+    """
+    name = _clip_name(rv.get("release_name")) or "(unnamed)"
+    verdict = rv.get("verdict")
+    if not isinstance(verdict, str) or not verdict:
+        parts = [f"Release {name} — {NEVER_EVALUATED_TEXT}"]
+    else:
+        words = RELEASE_VERDICT_TEXT.get(verdict, verdict)
+        try:
+            blockers = int(rv.get("blocker_count") or 0)
+        except (TypeError, ValueError):
+            blockers = 0
+        tail = f" ({blockers} blocker{'s' if blockers != 1 else ''})" if blockers > 0 else ""
+        parts = [f"Release {name} — {words}{tail}"]
+        decided = _decided_text(rv.get("decided_at"))
+        if decided:
+            parts.append(f"decided {decided}")
+    source = _RELEASE_SOURCE_TEXT.get(str(rv.get("source")))
+    if source:
+        parts.append(source)
+    return " · ".join(parts)
+
+
+def _decided_text(value: Any) -> str | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        stamp = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return stamp.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _release_verdict_lines(digest: dict) -> list[str]:
+    """``[line]`` when the digest carries a release verdict, else ``[]``."""
+    rv = digest.get("release_verdict")
+    return [release_verdict_line(rv)] if isinstance(rv, Mapping) else []
 
 
 #: A view, release or suite name in a scope line is clipped to this many characters.
@@ -755,10 +912,12 @@ def render_digest_text(digest: dict) -> str:
     URLs, which Slack still links).
     """
     scope_lines = digest_scope_lines(digest)
+    # W11 GATE-08b: the release verdict is the first line after the scope.
+    verdict_lines = _release_verdict_lines(digest)
     if digest.get("is_zero_change"):
-        return _slack_lines([zero_change_line(digest), *scope_lines])
+        return _slack_lines([zero_change_line(digest), *scope_lines, *verdict_lines])
 
-    lines: list[str] = list(scope_lines)
+    lines: list[str] = [*scope_lines, *verdict_lines]
     delta = digest.get("delta")
     if delta:
         lines.append("Since last digest:")
@@ -857,6 +1016,15 @@ def render_digest_html(digest: dict) -> str:
         if scope_lines
         else ""
     )
+    # W11 GATE-08b: the release verdict, the first line after the scope (and
+    # after the zero-change one-liner). The release name is user text: _e().
+    verdict_lines = _release_verdict_lines(digest)
+    verdict_html = (
+        "<p data-digest-release-verdict style=\"font-size:13px;color:#1F2937;margin:0 0 12px\">"
+        f"{_e(verdict_lines[0], 2000)}</p>"
+        if verdict_lines
+        else ""
+    )
 
     # US-7.4: a zero-change window renders as a single line, nothing else.
     if digest.get("is_zero_change"):
@@ -865,7 +1033,7 @@ def render_digest_html(digest: dict) -> str:
 <body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto;padding:16px;color:#1F2937">
     <h2 style="color:#1E40AF;margin-bottom:4px">TestLookup — {period} Digest</h2>
     <p style="color:#6B7280;font-size:13px;margin-top:0">{_e(project_name)} · {_e(digest.get('generated_at', ''))}</p>
-    {scope_html}<p style="font-size:14px;color:#1F2937">✅ {_e(zero_change_line(digest))}</p>
+    {scope_html}<p style="font-size:14px;color:#1F2937">✅ {_e(zero_change_line(digest))}</p>{verdict_html}
     <div style="margin-top:20px;padding-top:10px;border-top:1px solid #E5E7EB;font-size:11px;color:#9CA3AF">
         You received this digest because you subscribed in TestLookup.
         Manage your subscriptions in Settings &gt; Digests.
@@ -1027,7 +1195,7 @@ def render_digest_html(digest: dict) -> str:
 <body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto;padding:16px;color:#1F2937">
     <h2 style="color:#1E40AF;margin-bottom:4px">TestLookup — {period} Digest</h2>
     <p style="color:#6B7280;font-size:13px;margin-top:0">{_e(project_name)} · {_e(digest.get('generated_at', ''))}</p>
-    {scope_html}{body}
+    {scope_html}{verdict_html}{body}
     <div style="margin-top:20px;padding-top:10px;border-top:1px solid #E5E7EB;font-size:11px;color:#9CA3AF">
         You received this digest because you subscribed in TestLookup.
         Manage your subscriptions in Settings &gt; Digests.

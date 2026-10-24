@@ -361,5 +361,8 @@ async def preview_digest(
 
     from app.services.digest_content_service import generate_digest
 
-    digest = await generate_digest(db, scoped_project_id, period, scope=scope)
+    # W11 GATE-08b: the preview shows the release line the digest will carry.
+    digest = await generate_digest(
+        db, scoped_project_id, period, scope=scope, with_release_verdict=True
+    )
     return DigestContentResponse(**digest)

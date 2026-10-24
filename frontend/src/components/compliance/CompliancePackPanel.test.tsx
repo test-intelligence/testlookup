@@ -16,6 +16,9 @@ const mocks = vi.hoisted(() => ({
   generate: vi.fn(),
   refreshRail: vi.fn(),
   refreshPanel: vi.fn(),
+  // W11 REL-11 (set-up only: the existing cases never call them)
+  verify: vi.fn(),
+  downloadPublicKey: vi.fn(),
 }))
 
 vi.mock('@/hooks/useCompliancePacks', () => ({
@@ -32,7 +35,15 @@ vi.mock('@/hooks/usePermissions', () => ({
 
 vi.mock('@/services/compliancePackService', async () => {
   const actual = await vi.importActual<typeof import('@/services/compliancePackService')>('@/services/compliancePackService')
-  return { ...actual, compliancePackService: { generate: mocks.generate, download: vi.fn() } }
+  return {
+    ...actual,
+    compliancePackService: {
+      generate: mocks.generate,
+      download: vi.fn(),
+      verify: mocks.verify,
+      downloadPublicKey: mocks.downloadPublicKey,
+    },
+  }
 })
 
 vi.mock('react-hot-toast', () => ({ default: { success: vi.fn(), error: vi.fn() } }))
@@ -89,5 +100,127 @@ describe('CompliancePackPanel', () => {
 
     await waitFor(() => expect(mocks.generate).toHaveBeenCalledTimes(1))
     expect(mocks.refreshRail).not.toHaveBeenCalled()
+  })
+})
+
+// ── W11 REL-11: the signature chip, Verify and the public key ───────────────
+
+const signedPack = {
+  id: 'pack-9',
+  release_id: 'rel-1',
+  generated_at: '2026-10-21T12:00:00Z',
+  bytes: 4096,
+  file_count: 13,
+  manifest_sha256: 'cd'.repeat(32),
+  notes: null,
+  signing_key_id: 'k-1a2b3c4d5e6f7a8b',
+}
+
+const verifiedAnswer = {
+  pack_id: 'pack-9',
+  result: 'verified',
+  chain: 'intact',
+  manifest_matches_record: true,
+  signature: 'valid',
+  signing_key_id: 'k-1a2b3c4d5e6f7a8b',
+  files_checked: 12,
+  files_ok: 12,
+  files: [{ name: 'decision.json', status: 'ok' }],
+  summary: 'Verified · 12 files · signed by key k-1a2b3c4d5e6f7a8b',
+  checked_at: '2026-10-23T10:00:00Z',
+}
+
+describe('CompliancePackPanel — signing and verification (W11 REL-11)', () => {
+  beforeEach(() => {
+    packsState.packs = []
+    vi.clearAllMocks()
+  })
+
+  it('chips a signed pack by its key and an unsigned one as tamper-evident only', () => {
+    packsState.packs = [signedPack, { ...signedPack, id: 'pack-8', signing_key_id: null }]
+    render(<CompliancePackPanel releaseId="rel-1" />)
+
+    const signed = screen.getByText('Signed · k-1a2b3c4d')
+    expect(signed).toHaveAttribute('title', 'k-1a2b3c4d5e6f7a8b')
+    expect(screen.getByText('Unsigned (tamper-evident only)')).toBeInTheDocument()
+    // Public key only where there is a key to download.
+    expect(screen.getAllByRole('button', { name: /Public key/ })).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: 'Verify' })).toHaveLength(2)
+  })
+
+  it('verifies a pack and renders the answer under its row, as text', async () => {
+    packsState.packs = [signedPack]
+    mocks.verify.mockResolvedValue(verifiedAnswer)
+    const { container } = render(<CompliancePackPanel releaseId="rel-1" />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Verify' }))
+
+    await waitFor(() => expect(screen.getByText(verifiedAnswer.summary)).toBeInTheDocument())
+    expect(mocks.verify).toHaveBeenCalledWith('pack-9')
+    expect(screen.getByText('12 of 12 files match')).toBeInTheDocument()
+    const result = container.querySelector('[data-pack-verification]')
+    expect(result).not.toBeNull()
+    expect(screen.getByText(verifiedAnswer.summary).className).toContain('--ui-success-ink')
+  })
+
+  it('names each tampered file, and renders file names as text', async () => {
+    packsState.packs = [signedPack]
+    mocks.verify.mockResolvedValue({
+      ...verifiedAnswer,
+      result: 'tampered',
+      chain: 'broken',
+      files_ok: 11,
+      files: [
+        { name: 'decision.json', status: 'mismatch' },
+        { name: '<img src=x onerror=alert(1)>.json', status: 'unexpected' },
+      ],
+      summary: 'Tampered: decision.json does not match the manifest (+1 more)',
+    })
+    const { container } = render(<CompliancePackPanel releaseId="rel-1" />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Verify' }))
+
+    await waitFor(() => expect(screen.getByText(/^Tampered: decision\.json/)).toBeInTheDocument())
+    expect(screen.getByText(/^Tampered: decision\.json/).className).toContain('--ui-danger-ink')
+    expect(screen.getByText('decision.json — does not match the manifest')).toBeInTheDocument()
+    expect(screen.getByText('<img src=x onerror=alert(1)>.json — is not listed in the manifest')).toBeInTheDocument()
+    expect(container.querySelector('img')).toBeNull()
+  })
+
+  it('shows an unreadable pack muted, with no file lines', async () => {
+    packsState.packs = [signedPack]
+    mocks.verify.mockResolvedValue({
+      ...verifiedAnswer, result: 'unreadable', chain: 'broken', files: [], files_ok: 0, files_checked: 0,
+      summary: 'Could not read the pack from storage',
+    })
+    render(<CompliancePackPanel releaseId="rel-1" />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Verify' }))
+
+    await waitFor(() => expect(screen.getByText('Could not read the pack from storage')).toBeInTheDocument())
+    expect(screen.getByText('Could not read the pack from storage').className).toContain('--color-text-muted')
+    expect(screen.queryByText(/files match/)).toBeNull()
+  })
+
+  it('says it could not verify when the request is refused', async () => {
+    packsState.packs = [signedPack]
+    mocks.verify.mockRejectedValue(Object.assign(new Error('x'), { response: { data: { detail: 'You do not have access to this project' } } }))
+    render(<CompliancePackPanel releaseId="rel-1" />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Verify' }))
+
+    await waitFor(() => expect(
+      screen.getByText('Could not verify this pack. You do not have access to this project'),
+    ).toBeInTheDocument())
+  })
+
+  it('downloads the public key of a signed pack', async () => {
+    packsState.packs = [signedPack]
+    mocks.downloadPublicKey.mockResolvedValue(undefined)
+    render(<CompliancePackPanel releaseId="rel-1" />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Public key/ }))
+
+    await waitFor(() => expect(mocks.downloadPublicKey).toHaveBeenCalledWith('k-1a2b3c4d5e6f7a8b'))
   })
 })

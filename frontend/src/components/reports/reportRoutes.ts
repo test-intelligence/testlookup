@@ -63,6 +63,7 @@ export const NOT_REPORT_ROUTES: Record<string, string> = {
   '/projects': 'management',
   '/releases': 'management',
   '/releases/:releaseId': 'management',
+  '/releases/attribution-rules': 'configuration: the attribution rules of one project',
   '/activity': 'an audit log',
   '/users': 'management',
   '/policies': 'management',

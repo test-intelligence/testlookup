@@ -141,10 +141,14 @@ test('a planned release with no phases offers no stub controls', async ({ page }
   const planned = card(page, '2026.12')
   await expect(planned.getByText('No phases scoped yet')).toBeVisible()
   await expect(planned.getByText("Add 2026.12's phases in its detail.")).toBeVisible()
-  // W05 REL-08: its one control is the real "Release actions" menu (Set as active release); no
-  // Clone / Generate / Export stub, and no Evaluate (a planned release has nothing to evaluate).
-  await expect(planned.getByRole('button')).toHaveCount(1)
+  // W05 REL-08: the real "Release actions" menu (Set as active release); W11 REL-05 / REL-07 (a QA lead): the two
+  // working planning controls, Copy phases from… and Draft from a PRD…. Still no stub (no "(planned)", no Clone /
+  // Generate / Export placeholder), and no Evaluate (a planned release has nothing to evaluate).
+  await expect(planned.getByRole('button')).toHaveCount(3)
   await expect(planned.getByRole('button', { name: 'Release actions' })).toBeVisible()
+  await expect(planned.getByRole('button', { name: 'Copy phases from…', exact: true })).toBeVisible()
+  await expect(planned.getByRole('button', { name: 'Draft from a PRD…', exact: true })).toBeVisible()
+  await expect(planned.getByRole('button', { name: /Clone from|Generate from PRD|\(planned\)/ })).toHaveCount(0)
   expect(api.unhandled).toEqual([])
   expect(errors).toEqual([])
 })

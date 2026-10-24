@@ -157,6 +157,14 @@ def _build_html(
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     run_report_html = _run_report_section(metadata, event_type, html=True)
+    # W11 GATE-08b: a per-release digest delivery names its release's verdict
+    # (from the delivery's metadata; the body is the review gate's).
+    verdict_line = _release_verdict_text(metadata)
+    verdict_html = (
+        f'<p data-release-verdict style="margin:0 0 20px;font-size:13px;color:#cbd5e1;">{escape(verdict_line)}</p>'
+        if verdict_line
+        else ""
+    )
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -175,7 +183,7 @@ def _build_html(
         <!-- Body -->
         <tr>
           <td style="padding:24px 28px;">
-            {_build_executive_panel_section(metadata) if event_type == "ai_analysis_complete" and metadata.get("executive_panel") else f'<p style="margin:0 0 20px;font-size:15px;color:#cbd5e1;line-height:1.6;">{safe_body}</p>'}
+            {_build_executive_panel_section(metadata) if event_type == "ai_analysis_complete" and metadata.get("executive_panel") else f'<p style="margin:0 0 20px;font-size:15px;color:#cbd5e1;line-height:1.6;">{safe_body}</p>'}{verdict_html}
             {f'<table cellpadding="0" cellspacing="0" style="width:100%;background:#0f172a;border-radius:8px;margin-bottom:20px;">{stats_rows}</table>' if stats_rows and not metadata.get("executive_panel") and not run_report_html else ''}
             {run_report_html}
             {f'<a href="{dashboard_url}" style="display:inline-block;padding:10px 20px;background:{colour};color:#fff;text-decoration:none;border-radius:6px;font-size:14px;font-weight:600;">View in Dashboard →</a>' if dashboard_url != "#" else ''}
@@ -225,8 +233,26 @@ def _run_report_section(metadata: dict, event_type: str, *, html: bool) -> str:
         return ""
 
 
+def _release_verdict_text(metadata: dict) -> str | None:
+    """The release verdict line of a per-release delivery (W11 GATE-08b), RAW.
+
+    ``None`` unless ``metadata["release_verdict"]`` is a dict. The one sentence
+    builder is ``digest_content_service.release_verdict_line``; each caller
+    escapes for its medium.
+    """
+    rv = metadata.get("release_verdict") if isinstance(metadata, dict) else None
+    if not isinstance(rv, dict):
+        return None
+    from app.services.digest_content_service import release_verdict_line  # noqa: PLC0415
+
+    return release_verdict_line(rv)
+
+
 def _build_plain(title: str, body: str, metadata: dict, event_type: str = "") -> str:
     lines = [title, "=" * len(title), "", body, ""]
+    verdict_line = _release_verdict_text(metadata)
+    if verdict_line:
+        lines.insert(4, verdict_line)
     if metadata.get("project_name"):
         lines.append(f"Project: {metadata['project_name']}")
     if metadata.get("build_number"):

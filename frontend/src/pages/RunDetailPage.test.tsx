@@ -192,3 +192,63 @@ describe('RunDetailPage', () => {
     expect(screen.getByText(/no verdict suppresses/i)).toBeInTheDocument()
   })
 })
+
+// W11 REL-09 (D13): a run with no release after the ladder reads Unattributed.
+describe('RunDetailPage — the release chip', () => {
+  async function renderRun(releaseName: string | null) {
+    const { useRun, useRuns, useTestCases } = await import('@/hooks/useRuns')
+    const useSWR = (await import('swr')).default as ReturnType<typeof vi.fn>
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
+    ;(useRun as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        id: 'run-1',
+        build_number: '42',
+        jenkins_job: 'job-1',
+        created_at: '2026-03-31T10:00:00Z',
+        release_name: releaseName,
+        passed_tests: 10,
+        failed_tests: 2,
+        skipped_tests: 0,
+        total_tests: 12,
+        status: 'failed',
+      },
+    })
+    ;(useTestCases as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { items: [], pages: 1, total: 0 },
+      isLoading: false,
+      error: undefined,
+    })
+    useSWR.mockReturnValue({ data: undefined, isLoading: false })
+    render(
+      <MemoryRouter initialEntries={['/runs/run-1']}>
+        <Routes>
+          <Route path="/runs/:runId" element={<RunDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    await screen.findByText(/Run #42/i)
+  }
+
+  it('reads Unattributed for a run no release claims, and still opens the release input', async () => {
+    await renderRun(null)
+
+    const chip = screen.getByRole('button', { name: 'Set release (Unattributed)' })
+    expect(chip).toHaveTextContent('Unattributed')
+    expect(chip).toHaveAttribute(
+      'title',
+      'No release claims this run: the attribution ladder did not link it. Set its release, or check the attribution rules.',
+    )
+    expect(screen.queryByText('Set release')).toBeNull()
+
+    fireEvent.click(chip)
+    expect(screen.getByPlaceholderText('Release name (e.g. v2.5.0)')).toBeInTheDocument()
+  })
+
+  it('shows a named release as before', async () => {
+    await renderRun('2026.11')
+
+    expect(screen.getByRole('button', { name: '2026.11' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Change release' })).toBeInTheDocument()
+    expect(screen.queryByText('Unattributed')).toBeNull()
+  })
+})

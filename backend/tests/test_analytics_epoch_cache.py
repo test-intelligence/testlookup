@@ -349,7 +349,7 @@ def _wire_summary(monkeypatch, store: _Runs, *, during_query=None):
     monkeypatch.setattr(metrics_service, "_period_stats", _period_stats)
     monkeypatch.setattr(metrics_service, "_count_flaky_tests", AsyncMock(return_value=0))
     monkeypatch.setattr(
-        metrics_service, "_resolve_policy_for_project", AsyncMock(return_value=None)
+        metrics_service, "resolve_readiness_policy", AsyncMock(return_value=None)
     )
 
     result = MagicMock()

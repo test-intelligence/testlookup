@@ -192,3 +192,101 @@ export interface ReleaseDetail extends Release {
   metrics: ReleaseMetrics
   outcomes: ReleaseOutcome[]
 }
+
+// ── W11 release planning (REL-05 / REL-07 / REL-03). Every field the server may
+// omit is optional, so hand-built fixtures and mocks still type-check. ────────
+
+/** `POST /releases/{id}/phases/clone`: copy another release's phases (REL-05). */
+export interface ReleasePhasesCloneBody {
+  from_release_id: string
+  /** The earliest dated source phase's NEW planned start (ISO, 00:00 UTC); `null` = the target's cutoff start. */
+  shift_to?: string | null
+}
+
+/** One phase of a bulk create. */
+export interface ReleasePhaseBulkItem {
+  name: string
+  phase_type?: string
+  description?: string | null
+  planned_start?: string | null
+  planned_end?: string | null
+  exit_criteria?: Record<string, unknown> | null
+  notes?: string | null
+}
+
+/** `POST /releases/{id}/phases/bulk`: a release's FIRST schedule in one request (REL-07's Create). */
+export interface ReleasePhasesBulkBody {
+  phases: ReleasePhaseBulkItem[]
+  /** Who drafted it: `rules` | `llm` | `manual` (recorded in the activity row and the metric only). */
+  source?: 'rules' | 'llm' | 'manual' | string
+  model_name?: string | null
+}
+
+/** The clone / bulk answer: the created phases, in order. */
+export interface ReleasePhasesCreated {
+  release_id: string
+  created: number
+  phases: ReleasePhase[]
+  /** Clone only. */
+  source_release_id?: string | null
+  /** Clone only; `null` when no source phase had a date. */
+  shifted_by_days?: number | null
+}
+
+/** One drafted phase: TEXT the reader edits before anything is saved. */
+export interface PhaseDraft {
+  name: string
+  phase_type: string
+  description?: string | null
+  exit_criteria_text?: string | null
+  /** 1..90; `null` = the PRD names no duration. */
+  planned_days?: number | null
+  /** The PRD heading it came from (rules drafts). */
+  heading?: string | null
+}
+
+/** `POST /releases/{id}/phases/generate`: a draft, persisted nowhere. */
+export interface PhaseDraftResult {
+  release_id: string
+  source: 'rules' | 'llm' | string
+  /** Set when the model drafted it. */
+  model_name?: string | null
+  /** Why the rules draft answered (`offline_mode`, `rules_mode`, `llm_timeout`, …); `null` = the model's draft. */
+  fallback_reason?: string | null
+  phases: PhaseDraft[]
+  /** Fixed sentences, never PRD text. */
+  warnings?: string[]
+  text_chars?: number
+}
+
+/** The trend's totals over the whole window (REL-03). */
+export interface ReleasePortfolioTotals {
+  evaluated: number
+  go: number
+  conditional_go: number
+  no_go: number
+  not_evaluated: number
+  released: number
+  released_with_pack: number
+}
+
+/**
+ * `GET /releases/portfolio-trend`: each KPI card's rule at `weeks` Monday week
+ * ends and now (the last point). A series point is `null` before the scope's
+ * first release existed (absence, never 0).
+ */
+export interface ReleasePortfolioTrend {
+  project_id?: string | null
+  weeks: number
+  points_at: string[]
+  in_progress: (number | null)[]
+  ready_to_ship: (number | null)[]
+  blocked: (number | null)[]
+  released_30d: (number | null)[]
+  evaluated_in_week?: number[]
+  go_in_week?: number[]
+  totals: ReleasePortfolioTotals
+  /** The series built on TODAY's status (an approximation). */
+  approximated?: string[]
+  generated_at?: string
+}

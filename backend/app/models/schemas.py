@@ -17,6 +17,9 @@ from pydantic import (
 from pydantic_core import PydanticCustomError
 
 from app.core.config import MAX_RESULTS_PER_INGEST
+# W11 (REL-05 / REL-07): the bulk-phase bound lives with the release-planning
+# vocabulary, which the services and the tests import too.
+from app.core.release_planning import MAX_BULK_PHASES
 # W10 (INT-01 / INT-03): one definition of each integration value's shape and
 # its sentence, shared with the services that refuse a stored value at use.
 from app.core.integration_values import (
@@ -1425,6 +1428,21 @@ _DASHBOARD_RELEASE_UNSCOPED = (
 )
 
 
+# ── GATE-04 (W11): the readiness policy the summary's verdict was decided by ──
+class ReadinessPolicyBands(BaseModel):
+    orange_min: float
+    yellow_min: float                                             # the GO line ("the target")
+    green_min: float
+
+
+class ReadinessPolicy(BaseModel):
+    id: uuid.UUID
+    name: str
+    version: int
+    level: str                                                    # READINESS_POLICY_LEVELS: "project" | "system"
+    bands: ReadinessPolicyBands
+
+
 class DashboardSummary(BaseModel):
     total_executions_7d: MetricCard
     avg_pass_rate_7d: MetricCard
@@ -1439,6 +1457,10 @@ class DashboardSummary(BaseModel):
     # ``yellow`` / ``green`` — see PolicyPassRateBands.
     release_readiness_band: Optional[str] = None
     release_readiness_downgrades: List[str] = Field(default_factory=list)
+    # W11 GATE-04. None: no policy resolved, OR no execution evidence in the
+    # window (the resolver runs only then), OR an entry cached before the
+    # deploy. The pages read None as "default bands".
+    readiness_policy: Optional[ReadinessPolicy] = None
 
 
 class TrendDataPoint(BaseModel):
@@ -5491,6 +5513,10 @@ class ReleaseGatePolicyResponse(BaseModel):
     activated_at: Optional[datetime] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
+    # W11 GATE-02: filled by the two history routes only (one users read);
+    # every other route leaves them None.
+    created_by_name: Optional[str] = None
+    activated_by_name: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -6039,6 +6065,16 @@ class DigestScopeInfo(BaseModel):
     dropped_release_count: int = 0
 
 
+# ── GATE-08b (W11): the digest's release verdict ──
+class DigestReleaseVerdict(BaseModel):
+    release_id: str
+    release_name: str
+    source: str                                                   # DIGEST_RELEASE_SOURCES: "subscription" | "active"
+    verdict: Optional[str] = None                                 # GO | CONDITIONAL_GO | NO_GO | NOT_EVALUATED; None = never evaluated
+    decided_at: Optional[str] = None                              # ISO-8601 UTC
+    blocker_count: int = 0
+
+
 class DigestContentResponse(BaseModel):
     """Actionable digest content for a project or saved view scope."""
     project_name: Optional[str] = None
@@ -6065,6 +6101,9 @@ class DigestContentResponse(BaseModel):
     # W09 NTF-04: present when the digest was generated for a saved view (or one
     # that is gone); absent / None for a whole-project digest.
     scope: Optional[DigestScopeInfo] = None
+    # W11 GATE-08b: set only by a caller that asks (generate_digest(...,
+    # with_release_verdict=True)).
+    release_verdict: Optional[DigestReleaseVerdict] = None
 
 
 # ── AI Evaluation Schemas (OPS-02) ───────────────────────────────────────────
@@ -6924,6 +6963,124 @@ class QuarantineStatsResponse(BaseModel):
     meta: Optional[Dict[str, Any]] = None
 
 
+# ── W11 release planning: phases (REL-05 / REL-07), portfolio trend (REL-03),
+# attribution (REL-09). releases.py keeps its inline PhaseIn / PhaseUpdate
+# unchanged. Every enum-like field is a plain ``str``; each vocabulary is a
+# constant in ``app.core.release_planning`` (or the module named beside it).
+
+
+class ReleasePhasesCloneRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    from_release_id: uuid.UUID                     # a release of the TARGET's project, with >= 1 phase
+    shift_to: Optional[datetime] = None            # the earliest dated source phase's NEW planned_start;
+                                                   # None -> the target's cutoff_start_at
+
+
+class ReleasePhaseBulkItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(..., min_length=1, max_length=255)          # stripped; unique (case-insensitive) in the batch AND the release
+    phase_type: str = Field("qa_testing", max_length=50)          # PHASE_TYPES, else 422 PHASE_TYPE_SENTENCE
+    description: Optional[str] = Field(None, max_length=4000)
+    planned_start: Optional[datetime] = None
+    planned_end: Optional[datetime] = None                        # >= planned_start, else 422 PHASE_WINDOW_SENTENCE
+    exit_criteria: Optional[dict] = None                          # a partial PolicyDocument (the phase-gate layer), as today
+    notes: Optional[str] = Field(None, max_length=4000)
+
+
+class ReleasePhasesBulkRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    phases: List[ReleasePhaseBulkItem] = Field(..., min_length=1, max_length=MAX_BULK_PHASES)   # 30
+    source: str = "manual"                                        # PHASE_DRAFT_SOURCES -- recorded in the activity row and metric only
+    model_name: Optional[str] = Field(None, max_length=200)       # the drafting model, when source == "llm"
+
+
+class ReleasePhasesCreatedResponse(BaseModel):
+    release_id: uuid.UUID
+    created: int
+    phases: List[dict]                                            # serialize_model(phase) per created phase, in order_index order
+    source_release_id: Optional[uuid.UUID] = None                 # clone only
+    shifted_by_days: Optional[int] = None                         # clone only; None when no source phase had a date
+
+
+class PhaseDraft(BaseModel):
+    name: str                                                     # <= 255, stripped, never empty
+    phase_type: str                                               # PHASE_TYPES
+    description: Optional[str] = None                             # <= 2000
+    exit_criteria_text: Optional[str] = None                      # <= 1000; TEXT the reader edits -- never a policy JSON
+    planned_days: Optional[int] = None                            # 1..90; None = the PRD names no duration
+    heading: Optional[str] = None                                 # the PRD heading it came from (rules), <= 255
+
+
+class PhaseDraftResponse(BaseModel):
+    release_id: uuid.UUID
+    source: str                                                   # "rules" | "llm"
+    model_name: Optional[str] = None                              # set iff source == "llm"
+    fallback_reason: Optional[str] = None                         # DRAFT_FALLBACK_REASONS; set iff source == "rules" and the LLM
+                                                                  # was not used (not tried, or tried and discarded)
+    phases: List[PhaseDraft]                                      # <= MAX_BULK_PHASES; may be EMPTY (rules found no heading)
+    warnings: List[str] = Field(default_factory=list)            # fixed sentences (DRAFT_WARNING_*), never PRD text
+    text_chars: int                                               # characters read (after extraction)
+
+
+class ReleasePortfolioTotals(BaseModel):                          # over the whole window
+    evaluated: int                                                # releases with >= 1 release-level decision in the window
+    go: int                                                       # ... whose LATEST decision in the window is GO
+    conditional_go: int
+    no_go: int
+    not_evaluated: int
+    released: int                                                 # releases with released_at in the window
+    released_with_pack: int                                       # ... with >= 1 non-retired pack (retention_expires_at > now)
+
+
+class ReleasePortfolioTrend(BaseModel):
+    project_id: Optional[uuid.UUID] = None                        # None = every project the caller can see
+    weeks: int                                                    # 4..26, default 12
+    points_at: List[datetime]                                     # weeks + 1 instants: Mondays 00:00 UTC, oldest first, the LAST = now
+    in_progress: List[Optional[int]]                              # per point; None before the scope's first release existed
+    ready_to_ship: List[Optional[int]]
+    blocked: List[Optional[int]]
+    released_30d: List[Optional[int]]
+    evaluated_in_week: List[int]                                  # per point: releases with a release-level decision in the 7 days before it
+    go_in_week: List[int]                                         # ... whose latest decision in those 7 days is GO
+    totals: ReleasePortfolioTotals
+    approximated: List[str]                                       # PORTFOLIO_APPROXIMATED_SERIES: series built on today's status
+    generated_at: datetime
+
+
+class AttributionRuleField(BaseModel):
+    value: str                                                    # AttributionMatchField value
+    label: str                                                    # ATTRIBUTION_FIELD_LABELS[value]
+    glob: bool                                                    # True: * and ? wildcards; False: exact, case-insensitive
+    help: str                                                     # ATTRIBUTION_FIELD_HELP[value]
+
+
+class AttributionRuleFieldsResponse(BaseModel):
+    fields: List[AttributionRuleField]                            # in AttributionMatchField declaration order
+
+
+class AttributionPreviewSample(BaseModel):
+    run_id: str
+    build_number: Optional[str] = None
+    branch: Optional[str] = None
+    environment: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)                 # NEW (first 10, each <= 100 chars)
+    created_at: Optional[datetime] = None                         # NEW
+    current_release_name: Optional[str] = None                    # NEW: its primary release today; None = Unattributed
+    would_land: str = "rule"                                      # NEW, PREVIEW_LANDINGS: "rule" | "earlier_rule" | "explicit"
+
+
+class AttributionPreviewResponse(BaseModel):                      # the route's existing dict keys, plus four
+    considered: int
+    matched: int
+    field_present: int
+    sample: List[AttributionPreviewSample]                        # the first 10 MATCHED runs, newest first (as today)
+    shadowed: int = 0                                             # NEW: matched runs an earlier saved enabled rule claims
+    explicit: int = 0                                             # NEW: matched runs attributed by rung 1/2 (explicit_client,
+                                                                  #      manual_ui, external_match): a rule never moves them
+    target_exists: bool = True                                    # NEW: a release of this project carries target_release_name
+    unattributed_recent: int = 0                                  # NEW: of `considered`, runs with primary_release_id IS NULL
+
+
 # ── Release Compliance Pack (Tier 1 item 4) ─────────────────────────────────
 
 
@@ -6952,7 +7109,52 @@ class CompliancePackRead(BaseModel):
     generated_by_user_id: Optional[uuid.UUID] = None
     metadata_snapshot: Optional[Dict[str, Any]] = None
     notes: Optional[str] = None
+    # W11 REL-11 (from_attributes: a hand-built row lacking it reads None).
+    # None = unsigned (every pack generated before 0225, or a signing failure).
+    signing_key_id: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
+
+
+# ── W11 REL-11: verifying a pack, and the deployment's signing keys ──
+class CompliancePackFileCheck(BaseModel):
+    name: str
+    status: str                                                   # FILE_CHECK_STATUSES: "ok" | "mismatch" | "missing" | "unexpected"
+    expected_sha256: Optional[str] = None
+    actual_sha256: Optional[str] = None
+
+
+class CompliancePackVerification(BaseModel):
+    pack_id: uuid.UUID
+    result: str                                                   # VERIFY_RESULTS: "verified" | "tampered" | "unreadable"
+    chain: str                                                    # CHAIN_STATES: "intact" | "broken"
+    manifest_matches_record: bool                                 # sha256(manifest.json) == compliance_packs.manifest_sha256
+    signature: str                                                # SIGNATURE_STATES: "valid" | "invalid" | "unsigned" | "unknown_key"
+    signing_key_id: Optional[str] = None
+    files_checked: int                                            # manifest-listed files
+    files_ok: int
+    files: List[CompliancePackFileCheck]                          # every listed file, then any unexpected one; sorted by name
+    summary: str                                                  # verify_summary(...) -- the panel's and the CLI's one sentence
+    checked_at: datetime
+
+
+class CompliancePackSigningKeyRead(BaseModel):
+    key_id: str                                                   # "k-" + the first 16 hex of sha256(raw 32-byte public key)
+    algorithm: str                                                # SIGNING_ALGORITHM = "ed25519"
+    public_key_pem: str                                           # SubjectPublicKeyInfo PEM; NEVER the private key
+    created_at: datetime
+    retired_at: Optional[datetime] = None
+    active: bool
+
+
+class CompliancePackSigningKeysResponse(BaseModel):
+    active_key_id: Optional[str] = None                           # None until the first signed pack (a GET never creates one)
+    keys: List[CompliancePackSigningKeyRead]                      # newest first, retired ones included (they verify old packs)
+
+
+class CompliancePackKeyRotateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    confirmation: str                                             # must equal ROTATE_CONFIRMATION ("rotate"), else 422
+    reason: str = Field(..., min_length=3, max_length=500)
 
 
 class CompliancePackSummaryRead(BaseModel):

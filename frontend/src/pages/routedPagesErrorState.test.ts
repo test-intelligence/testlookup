@@ -72,6 +72,8 @@ const REVIEWED: Record<string, ErrorState> = {
   DefectsPage: 'data-unavailable',
   RunsPage: 'data-unavailable',
   ReleasesPage: 'data-unavailable',
+  // W11 REL-09: a failed rules read says "Could not load attribution rules." over DataUnavailable.
+  ReleaseAttributionRulesPage: 'data-unavailable',
   SummaryReportPage: 'data-unavailable',
   // VIZ-505: the discovery request that names the panels; each panel's own
   // failure is its chart frame's error with Retry.

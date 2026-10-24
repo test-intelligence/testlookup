@@ -15,7 +15,7 @@ Not flag-gated, like the per-release list: generating a pack is what
 ``release_compliance_pack`` controls. A project-bound API key is confined
 to its project by ``get_accessible_project_ids``.
 
-Source: [backend/app/routers/compliance_packs.py:59](../../../backend/app/routers/compliance_packs.py#L59).
+Source: [backend/app/routers/compliance_packs.py:175](../../../backend/app/routers/compliance_packs.py#L175).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -108,6 +108,264 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 }
 ```
 
+## GET `/api/v1/compliance-packs/signing-keys`
+
+List Compliance Signing Keys
+
+Every signing key's PUBLIC half, newest first, retired ones included
+(they verify the packs they signed). Deployment-wide public data.
+
+A GET never writes: no key is created here. ``active_key_id`` is ``None``
+until the first signed pack creates the deployment's key.
+
+Source: [backend/app/routers/compliance_packs.py:98](../../../backend/app/routers/compliance_packs.py#L98).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+current_user: User=Depends(get_current_active_user), db: AsyncSession=Depends(get_db)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "list_compliance_signing_keys_api_v1_compliance_packs_signing_keys_get",
+  "parameters": [
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/CompliancePackSigningKeysResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+## POST `/api/v1/compliance-packs/signing-keys/rotate`
+
+Rotate Compliance Signing Key
+
+Retire the active signing key and create a new one (D14, D-13).
+
+The retired key's private half is destroyed (its ciphertext cleared): it
+never signs again. Its public key stays, so every pack it signed keeps
+verifying. Typed confirmation, and a reason kept on the retired key.
+
+Source: [backend/app/routers/compliance_packs.py:146](../../../backend/app/routers/compliance_packs.py#L146).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+body: CompliancePackKeyRotateRequest, current_user: User=Depends(require_role(UserRole.ADMIN)), db: AsyncSession=Depends(get_db)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=422, detail=compliance_signing.ROTATE_CONFIRMATION_SENTENCE)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "rotate_compliance_signing_key_api_v1_compliance_packs_signing_keys_rotate_post",
+  "parameters": [
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "requestBody": {
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "#/components/schemas/CompliancePackKeyRotateRequest"
+        }
+      }
+    },
+    "required": true
+  },
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/CompliancePackSigningKeyRead"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+## GET `/api/v1/compliance-packs/signing-keys/{signing_key_id}/pem`
+
+Download Compliance Signing Key
+
+One public key as ``testlookup-compliance-<id>.pem`` (never a private key).
+
+Source: [backend/app/routers/compliance_packs.py:120](../../../backend/app/routers/compliance_packs.py#L120).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+signing_key_id: str, current_user: User=Depends(get_current_active_user), db: AsyncSession=Depends(get_db)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=404, detail=SIGNING_KEY_NOT_FOUND)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "download_compliance_signing_key_api_v1_compliance_packs_signing_keys__signing_key_id__pem_get",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "signing_key_id",
+      "required": true,
+      "schema": {
+        "title": "Signing Key Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {}
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+Handler return expressions (source excerpts, not an inferred wire schema):
+
+```python
+Response(content=row.public_key_pem, media_type='application/x-pem-file', headers={'Content-Disposition': f'attachment; filename="testlookup-compliance-{row.key_id}.pem"', 'Cache-Control': 'no-store'})
+```
+
+Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
+
 ## DELETE `/api/v1/compliance-packs/{pack_id}`
 
 Delete Compliance Pack
@@ -123,7 +381,7 @@ S9 adds the legal-hold check alongside this. It is deliberately absent
 rather than stubbed: a hold check against a table that does not exist
 reads as a working guard while never firing.
 
-Source: [backend/app/routers/compliance_packs.py:246](../../../backend/app/routers/compliance_packs.py#L246).
+Source: [backend/app/routers/compliance_packs.py:430](../../../backend/app/routers/compliance_packs.py#L430).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -208,7 +466,7 @@ Enforces tenant isolation via the pack's ``project_id``. The response
 includes the SHA-256 of the manifest in the ``X-Manifest-Sha256``
 header so automated verifiers can assert before reading the body.
 
-Source: [backend/app/routers/compliance_packs.py:153](../../../backend/app/routers/compliance_packs.py#L153).
+Source: [backend/app/routers/compliance_packs.py:269](../../../backend/app/routers/compliance_packs.py#L269).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -311,7 +569,7 @@ ADMIN, typed confirmation, and a reason — a pack is audit evidence
 generated with a seven-year default, so shortening that is a deliberate
 act and is recorded as one.
 
-Source: [backend/app/routers/compliance_packs.py:193](../../../backend/app/routers/compliance_packs.py#L193).
+Source: [backend/app/routers/compliance_packs.py:377](../../../backend/app/routers/compliance_packs.py#L377).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -403,13 +661,107 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 }
 ```
 
+## POST `/api/v1/compliance-packs/{pack_id}/verify`
+
+Verify Compliance Pack
+
+Check a stored pack: every file against the manifest, the manifest
+against the digest recorded at generation, and the signature (W11 REL-11).
+
+Whoever may download the pack may verify it (the download route's rule:
+the pack's own project through ``resolve_project_scope``). A POST that
+writes nothing. The request's connection is handed back before the storage
+read; a storage failure answers 200 ``unreadable`` (absence is not health,
+and not a 502 toast either).
+
+Source: [backend/app/routers/compliance_packs.py:319](../../../backend/app/routers/compliance_packs.py#L319).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+pack_id: uuid.UUID, current_user: User=Depends(get_current_active_user), db: AsyncSession=Depends(get_db)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=404, detail=PACK_NOT_FOUND)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "verify_compliance_pack_api_v1_compliance_packs__pack_id__verify_post",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "pack_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Pack Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/CompliancePackVerification"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## POST `/api/v1/releases/{release_id}/compliance-pack`
 
 Generate Compliance Pack
 
 Generate a new compliance pack for a release. QA_LEAD+ only.
 
-Source: [backend/app/routers/compliance_packs.py:93](../../../backend/app/routers/compliance_packs.py#L93).
+Source: [backend/app/routers/compliance_packs.py:209](../../../backend/app/routers/compliance_packs.py#L209).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -508,7 +860,7 @@ List Compliance Packs
 
 List every historical pack ever generated for a release.
 
-Source: [backend/app/routers/compliance_packs.py:136](../../../backend/app/routers/compliance_packs.py#L136).
+Source: [backend/app/routers/compliance_packs.py:252](../../../backend/app/routers/compliance_packs.py#L252).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`.
 

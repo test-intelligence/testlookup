@@ -19,15 +19,31 @@ Three endpoints:
 * ``GET  /api/v1/compliance-packs?project_id=&limit=`` (W05 REL-04)
   The newest packs of one project, or of every project the caller can see,
   for the releases page's side rail.
+
+W11 REL-11 (D14) -- packs are signed with the deployment's Ed25519 key:
+
+* ``GET  /api/v1/compliance-packs/signing-keys`` -- every key's PUBLIC half;
+  never creates a key.
+* ``GET  /api/v1/compliance-packs/signing-keys/{signing_key_id}/pem`` -- one
+  public key as a PEM download.
+* ``POST /api/v1/compliance-packs/signing-keys/rotate`` -- ADMIN; retires the
+  active key (its private key destroyed, its public key kept) and creates one.
+* ``POST /api/v1/compliance-packs/{pack_id}/verify`` -- checks the stored ZIP
+  against its manifest, the recorded digest and the signature; writes nothing.
+
+The static ``signing-keys`` paths are declared before every ``{pack_id}``
+route.
 """
 from __future__ import annotations
 
+import asyncio
+import re
 import uuid
 from typing import Optional
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,19 +54,119 @@ from app.core.deps import (
     require_role,
     resolve_project_scope,
 )
+from app.db.postgres import release_read_connection
 from app.models.postgres import Release, User, UserRole
 from app.models.schemas import (
+    CompliancePackKeyRotateRequest,
     CompliancePackLifecycleResponse,
     CompliancePackListRead,
+    CompliancePackSigningKeyRead,
+    CompliancePackSigningKeysResponse,
     CompliancePackSummaryRead,
+    CompliancePackVerification,
     RetireCompliancePackRequest,
     CompliancePackGenerateRequest,
     CompliancePackRead,
 )
 from app.services import compliance_pack_service as svc
+from app.services import compliance_pack_verify, compliance_signing
 
 router = APIRouter(tags=["Compliance Pack"])
 logger = structlog.get_logger("routers.compliance_packs")
+
+#: A signing key id as ``compliance_signing.key_id_for`` builds it. Checked
+#: before any statement: anything else is simply not a key (404).
+_SIGNING_KEY_ID_RE = re.compile(r"^k-[0-9a-f]{16}$")
+SIGNING_KEY_NOT_FOUND = "Signing key not found"
+PACK_NOT_FOUND = "Compliance pack not found"
+
+
+def _key_read(row, *, active_key_id: Optional[str]) -> CompliancePackSigningKeyRead:
+    return CompliancePackSigningKeyRead(
+        key_id=row.key_id,
+        algorithm=row.algorithm,
+        public_key_pem=row.public_key_pem,
+        created_at=row.created_at,
+        retired_at=row.retired_at,
+        active=row.key_id == active_key_id,
+    )
+
+
+# ── Signing keys (W11 REL-11) — static paths, before every {pack_id} route ──
+
+
+@router.get(
+    "/api/v1/compliance-packs/signing-keys",
+    response_model=CompliancePackSigningKeysResponse,
+)
+async def list_compliance_signing_keys(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Every signing key's PUBLIC half, newest first, retired ones included
+    (they verify the packs they signed). Deployment-wide public data.
+
+    A GET never writes: no key is created here. ``active_key_id`` is ``None``
+    until the first signed pack creates the deployment's key.
+    """
+    rows = await compliance_signing.list_keys(db)
+    active = next((r.key_id for r in rows if r.retired_at is None), None)
+    return CompliancePackSigningKeysResponse(
+        active_key_id=active,
+        keys=[_key_read(r, active_key_id=active) for r in rows],
+    )
+
+
+@router.get("/api/v1/compliance-packs/signing-keys/{signing_key_id}/pem")
+async def download_compliance_signing_key(
+    # Not ``key_id``: that name is the API-key id in the authorization
+    # ratchet's SCOPED_IDS, and a public, deployment-wide signing key is not a
+    # tenant object.
+    signing_key_id: str,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """One public key as ``testlookup-compliance-<id>.pem`` (never a private key)."""
+    if not _SIGNING_KEY_ID_RE.match(signing_key_id):
+        raise HTTPException(status_code=404, detail=SIGNING_KEY_NOT_FOUND)
+    row = await compliance_signing.get_key(db, signing_key_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=SIGNING_KEY_NOT_FOUND)
+    return Response(
+        content=row.public_key_pem,
+        media_type="application/x-pem-file",
+        headers={
+            "Content-Disposition": f'attachment; filename="testlookup-compliance-{row.key_id}.pem"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+# activity: none - deployment-wide signing key, no project; audited in settings_audit_log
+@router.post(
+    "/api/v1/compliance-packs/signing-keys/rotate",
+    response_model=CompliancePackSigningKeyRead,
+)
+async def rotate_compliance_signing_key(
+    body: CompliancePackKeyRotateRequest,
+    # ADMIN, and NOT ``allow_project_key``: a deployment-wide key, refused to a
+    # project-bound API key by default.
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retire the active signing key and create a new one (D14, D-13).
+
+    The retired key's private half is destroyed (its ciphertext cleared): it
+    never signs again. Its public key stays, so every pack it signed keeps
+    verifying. Typed confirmation, and a reason kept on the retired key.
+    """
+    if body.confirmation != compliance_signing.ROTATE_CONFIRMATION:
+        raise HTTPException(status_code=422, detail=compliance_signing.ROTATE_CONFIRMATION_SENTENCE)
+    key = await compliance_signing.rotate(db, actor=current_user, reason=body.reason)
+    await db.commit()
+    row = await compliance_signing.get_key(db, key.key_id)
+    logger.info("compliance_signing_key_rotated_by", key_id=key.key_id, actor=str(current_user.id))
+    return _key_read(row, active_key_id=key.key_id)
 
 
 # ── Project-wide list (W05 REL-04) ──────────────────────────────────────────
@@ -188,6 +304,74 @@ async def download_compliance_pack(
             "X-Pack-Id": str(pack.id),
         },
     )
+
+
+def _count_verification(result: str, signature: str) -> None:
+    try:
+        from app.core.metrics import compliance_pack_verifications_total
+
+        compliance_pack_verifications_total.labels(result=result, signature=signature).inc()
+    except Exception:  # noqa: BLE001 - telemetry never breaks a verification
+        pass
+
+
+# activity: none - verification reads the stored pack and writes nothing
+@router.post(
+    "/api/v1/compliance-packs/{pack_id}/verify",
+    response_model=CompliancePackVerification,
+)
+async def verify_compliance_pack(
+    pack_id: uuid.UUID,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Check a stored pack: every file against the manifest, the manifest
+    against the digest recorded at generation, and the signature (W11 REL-11).
+
+    Whoever may download the pack may verify it (the download route's rule:
+    the pack's own project through ``resolve_project_scope``). A POST that
+    writes nothing. The request's connection is handed back before the storage
+    read; a storage failure answers 200 ``unreadable`` (absence is not health,
+    and not a 502 toast either).
+    """
+    pack = await svc.get_pack(db, pack_id)
+    if pack is None:
+        raise HTTPException(status_code=404, detail=PACK_NOT_FOUND)
+
+    await resolve_project_scope(db, current_user, str(pack.project_id))
+
+    keys = await compliance_signing.public_keys(db)
+    recorded = pack.manifest_sha256
+    record_signature = getattr(pack, "signature", None)
+    record_key_id = getattr(pack, "signing_key_id", None)
+    await release_read_connection(db)
+
+    try:
+        data = await svc.load_pack_bytes(pack)
+    except Exception as exc:  # noqa: BLE001 - any storage fault reads "unreadable"
+        logger.warning(
+            "compliance_pack_verify_unreadable", pack_id=str(pack_id), error_type=type(exc).__name__,
+        )
+        result = compliance_pack_verify.unreadable_result(pack_id=pack_id, signing_key_id=record_key_id)
+    else:
+        result = await asyncio.to_thread(
+            compliance_pack_verify.verify_pack_bytes,
+            data,
+            recorded_manifest_sha256=recorded,
+            public_keys=keys,
+            pack_id=pack_id,
+            record_signature=record_signature,
+            record_signing_key_id=record_key_id,
+        )
+    _count_verification(str(result["result"]), str(result["signature"]))
+    logger.info(
+        "compliance_pack_verified",
+        pack_id=str(pack_id),
+        result=result["result"],
+        signature=result["signature"],
+        signing_key_id=result.get("signing_key_id"),
+    )
+    return CompliancePackVerification(**result)
 
 
 @router.post(

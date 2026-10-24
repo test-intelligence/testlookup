@@ -35,7 +35,8 @@ Current SQLAlchemy metadata, without a database connection. All columns, server/
 | [chat_messages](#chat_messages) | ChatMessage | 6 |
 | [chat_sessions](#chat_sessions) | ChatSession | 9 |
 | [classification_hints](#classification_hints) | ClassificationHint | 10 |
-| [compliance_packs](#compliance_packs) | CompliancePack | 13 |
+| [compliance_packs](#compliance_packs) | CompliancePack | 15 |
+| [compliance_signing_keys](#compliance_signing_keys) | ComplianceSigningKey | 8 |
 | [contract_violations](#contract_violations) | ContractViolation | 10 |
 | [coverage_snapshots](#coverage_snapshots) | CoverageSnapshot | 8 |
 | [decision_report_eval_cycles](#decision_report_eval_cycles) | DecisionReportEvalCycle | 13 |
@@ -1281,6 +1282,8 @@ Generated compliance export pack (ZIP) for a release decision.
 | `test_run_id` | `UUID` | True | False | `—` | test_runs.id / SET NULL |
 | `minio_key` | `VARCHAR(500)` | False | False | `—` |  |
 | `manifest_sha256` | `VARCHAR(64)` | False | False | `—` |  |
+| `signature` | `TEXT` | True | False | `—` |  |
+| `signing_key_id` | `VARCHAR(64)` | True | False | `—` |  |
 | `file_count` | `INTEGER` | False | False | `application=0` |  |
 | `bytes` | `INTEGER` | False | False | `application=0` |  |
 | `retention_expires_at` | `DATETIME` | False | False | `—` |  |
@@ -1298,6 +1301,36 @@ Constraints and indexes:
 - `PrimaryKeyConstraint` `unnamed`: `id`
 - Index `ix_compliance_packs_project` (unique=False): `compliance_packs.project_id, compliance_packs.generated_at`; options `{}`
 - Index `ix_compliance_packs_release` (unique=False): `compliance_packs.release_id`; options `{}`
+
+## compliance_signing_keys
+
+[backend/app/models/postgres.py:6895](../../backend/app/models/postgres.py#L6895)
+
+The deployment's Ed25519 compliance-pack signing keys (migration 0225, W11 REL-11, D14).
+
+The PUBLIC key lives here for ever (an old pack keeps verifying after a
+rotation); the PRIVATE key lives only in secret_refs (scope
+SIGNING_SECRET_SCOPE, key_name = key_id), Fernet-encrypted by
+secret_service, and is expired (ciphertext cleared) when the key is
+retired. At most one active key (uq_compliance_signing_keys_active).
+
+| Column | SQL type | Nullable | PK | Default | Foreign key / on delete |
+|---|---|---|---|---|---|
+| `key_id` | `VARCHAR(64)` | False | True | `—` |  |
+| `algorithm` | `VARCHAR(20)` | False | False | `server=ed25519; application=ed25519` |  |
+| `public_key_pem` | `TEXT` | False | False | `—` |  |
+| `created_at` | `DATETIME` | False | False | `server=now()` |  |
+| `created_by_user_id` | `UUID` | True | False | `—` | users.id / SET NULL |
+| `retired_at` | `DATETIME` | True | False | `—` |  |
+| `retired_by_user_id` | `UUID` | True | False | `—` | users.id / SET NULL |
+| `retired_reason` | `VARCHAR(500)` | True | False | `—` |  |
+
+Constraints and indexes:
+
+- `ForeignKeyConstraint` `unnamed`: `created_by_user_id`
+- `ForeignKeyConstraint` `unnamed`: `retired_by_user_id`
+- `PrimaryKeyConstraint` `unnamed`: `key_id`
+- Index `uq_compliance_signing_keys_active` (unique=True): `compliance_signing_keys.algorithm`; options `{"postgresql_where": "retired_at IS NULL", "sqlite_where": "retired_at IS NULL"}`
 
 ## contract_violations
 
@@ -1634,7 +1667,7 @@ approver: Mapped[Optional['User']] = relationship('User', foreign_keys=[approved
 
 ## deletion_jobs
 
-[backend/app/models/postgres.py:7135](../../backend/app/models/postgres.py#L7135)
+[backend/app/models/postgres.py:7191](../../backend/app/models/postgres.py#L7191)
 
 One record of a deletion actually happening (migration 0147, S2b).
 
@@ -2104,7 +2137,7 @@ Constraints and indexes:
 
 ## flaky_quarantine_requests
 
-[backend/app/models/postgres.py:6882](../../backend/app/models/postgres.py#L6882)
+[backend/app/models/postgres.py:6938](../../backend/app/models/postgres.py#L6938)
 
 Workflow record for proposing, approving, and enforcing quarantine
 of a flaky test.
@@ -2979,7 +3012,7 @@ Constraints and indexes:
 
 ## project_activity_events
 
-[backend/app/models/postgres.py:7382](../../backend/app/models/postgres.py#L7382)
+[backend/app/models/postgres.py:7438](../../backend/app/models/postgres.py#L7438)
 
 Append-only, project-scoped product feed of everything that happens.
 
@@ -3084,7 +3117,7 @@ Constraints and indexes:
 
 ## project_llm_usage
 
-[backend/app/models/postgres.py:7342](../../backend/app/models/postgres.py#L7342)
+[backend/app/models/postgres.py:7398](../../backend/app/models/postgres.py#L7398)
 
 Running per-period LLM cost meter for a project.
 
@@ -3136,7 +3169,7 @@ Constraints and indexes:
 
 ## project_retention_policies
 
-[backend/app/models/postgres.py:7268](../../backend/app/models/postgres.py#L7268)
+[backend/app/models/postgres.py:7324](../../backend/app/models/postgres.py#L7324)
 
 Per-project data retention policy (PMF US-11.4, migration 0113).
 
@@ -3268,7 +3301,7 @@ project: Mapped['Project'] = relationship('Project', back_populates='quality_gat
 
 ## quarantine_lifecycle_policies
 
-[backend/app/models/postgres.py:7012](../../backend/app/models/postgres.py#L7012)
+[backend/app/models/postgres.py:7068](../../backend/app/models/postgres.py#L7068)
 
 Per-project quarantine lifecycle configuration (PMF US-5.4/5.5/5.6).
 
@@ -3665,7 +3698,7 @@ test_run_links: Mapped[list['ReleaseTestRunLink']] = relationship('ReleaseTestRu
 
 ## report_exports
 
-[backend/app/models/postgres.py:7217](../../backend/app/models/postgres.py#L7217)
+[backend/app/models/postgres.py:7273](../../backend/app/models/postgres.py#L7273)
 
 VIZ-607: one background export of a report (migration 0194).
 
@@ -4032,7 +4065,7 @@ Constraints and indexes:
 
 ## run_tombstones
 
-[backend/app/models/postgres.py:7094](../../backend/app/models/postgres.py#L7094)
+[backend/app/models/postgres.py:7150](../../backend/app/models/postgres.py#L7150)
 
 A run that was deliberately deleted, and must not come back (0148, S2c).
 
@@ -5462,7 +5495,7 @@ Constraints and indexes:
 
 ## value_metric_assumptions
 
-[backend/app/models/postgres.py:7053](../../backend/app/models/postgres.py#L7053)
+[backend/app/models/postgres.py:7109](../../backend/app/models/postgres.py#L7109)
 
 Per-project tunable assumptions for the engineer-hours-saved model
 (PMF US-12.1, migration 0112).

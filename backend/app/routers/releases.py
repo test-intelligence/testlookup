@@ -7,15 +7,17 @@ Authorization policy:
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Literal, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.deps import (
     get_accessible_project_ids,
     get_current_active_user,
@@ -24,8 +26,26 @@ from app.core.deps import (
     require_run_access,
     resolve_project_scope,
 )
-from app.db.postgres import get_db
-from app.models.postgres import AccessAuditLog, TestRun, User, UserRole
+from app.core.metrics import release_phases_created_total
+from app.core.release_planning import (
+    MAX_PRD_BYTES,
+    PHASE_DRAFT_SOURCES,
+    PORTFOLIO_WEEKS_DEFAULT,
+    PORTFOLIO_WEEKS_MAX,
+    PORTFOLIO_WEEKS_MIN,
+    PRD_TOO_LARGE,
+    RELEASE_NOT_FOUND,
+    SOURCE_IS_TARGET,
+)
+from app.db.postgres import get_db, release_read_connection
+from app.models.postgres import AccessAuditLog, Project, Release, TestRun, User, UserRole
+from app.models.schemas import (
+    PhaseDraftResponse,
+    ReleasePhasesBulkRequest,
+    ReleasePhasesCloneRequest,
+    ReleasePhasesCreatedResponse,
+    ReleasePortfolioTrend,
+)
 from app.services.activity.service import ActorRef, record as record_activity
 from app.models.serializers import serialize_model
 from app.services import (
@@ -37,7 +57,16 @@ from app.services import (
     release_outcome_service,
     release_owner_service,
     release_phase_gate_service,
+    release_portfolio_service,
+    release_schedule_export,
     release_service,
+)
+from app.services.ai_config_resolver import get_effective_ai_config
+from app.services.release_phase_generator import (
+    DraftContext,
+    PrdInputError,
+    draft_phases,
+    extract_prd_text,
 )
 
 router = APIRouter(prefix="/api/v1/releases", tags=["Releases"])
@@ -218,6 +247,113 @@ async def list_releases(
     return await release_service.list_releases(
         db, project_id, status, accessible_project_ids=accessible,
     )
+
+
+# ── W11 REL-06 / REL-03: static GETs, declared BEFORE ``/{release_id}`` ──────
+#
+# ``GET /{release_id}`` below would otherwise capture ``schedule.ics`` /
+# ``portfolio-trend`` as a release id (``tests/test_release_schedule_export.py``
+# pins the order).
+
+
+async def _schedule_response(
+    fmt: str,
+    db: AsyncSession,
+    scoped: Optional[uuid.UUID],
+    allowed: Optional[set[uuid.UUID]],
+    start: Optional[date],
+    end: Optional[date],
+) -> Response:
+    """The schedule file for an ALREADY-RESOLVED scope (the handlers resolve it first)."""
+    if start is not None and end is not None and end < start:
+        raise HTTPException(status_code=422, detail="to is before from.")
+    project_ids = {scoped} if scoped is not None else allowed
+    try:
+        releases = await release_schedule_export.load_schedule(
+            db, project_ids=project_ids, start=start, end=end,
+        )
+    except release_schedule_export.ScheduleTooLarge as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    now = datetime.now(timezone.utc)
+    if scoped is not None:
+        label = (await db.execute(select(Project.name).where(Project.id == scoped))).scalar_one_or_none() or "project"
+        calendar_name = f"TestLookup releases: {label}"
+    else:
+        label = "all-projects"
+        calendar_name = "TestLookup releases: all projects"
+    filename = release_schedule_export.schedule_filename(label, fmt, now.date())
+    if fmt == "ics":
+        body = release_schedule_export.write_ics(
+            releases, calendar_name=calendar_name, now=now, base_url=settings.public_base_url,
+        )
+        media_type = "text/calendar; charset=utf-8"
+    else:
+        body = release_schedule_export.write_csv(releases)
+        media_type = "text/csv; charset=utf-8"
+    return Response(
+        content=body,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.get("/schedule.ics")
+async def export_release_schedule_ics(
+    project_id: Optional[str] = Query(None),
+    from_: Optional[date] = Query(None, alias="from"),
+    to: Optional[date] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """The release schedule as an iCalendar file (REL-06): download only, no token in any URL.
+
+    ``project_id`` is resolved FIRST (400 malformed, 403 foreign); without it
+    the file covers every project the caller can see. A cancelled release is
+    not on the calendar. A GET: writes nothing.
+    """
+    scoped, allowed = await resolve_project_scope(db, current_user, project_id)
+    return await _schedule_response("ics", db, scoped, allowed, from_, to)
+
+
+@router.get("/schedule.csv")
+async def export_release_schedule_csv(
+    project_id: Optional[str] = Query(None),
+    from_: Optional[date] = Query(None, alias="from"),
+    to: Optional[date] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """The release schedule as CSV (REL-06): one row per phase, formula-guarded, a BOM.
+
+    Scoped exactly like the ICS twin; a cancelled release IS listed, with its
+    status. A GET: writes nothing.
+    """
+    scoped, allowed = await resolve_project_scope(db, current_user, project_id)
+    return await _schedule_response("csv", db, scoped, allowed, from_, to)
+
+
+@router.get("/portfolio-trend", response_model=ReleasePortfolioTrend)
+async def get_release_portfolio_trend(
+    project_id: Optional[str] = Query(None),
+    weeks: int = Query(PORTFOLIO_WEEKS_DEFAULT, ge=PORTFOLIO_WEEKS_MIN, le=PORTFOLIO_WEEKS_MAX),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """The release KPI cards' trend (REL-03): each card's rule at ``weeks`` week ends and now.
+
+    ``project_id`` is resolved FIRST; without it, every project the caller can
+    see. Four statements; a GET that writes and caches nothing (the page asks
+    only when the "Release health" disclosure is open).
+    """
+    scoped, allowed = await resolve_project_scope(db, current_user, project_id)
+    project_ids = {scoped} if scoped is not None else allowed
+    trend = await release_portfolio_service.portfolio_trend(
+        db, project_ids=project_ids, weeks=weeks, now=datetime.now(timezone.utc),
+    )
+    return {"project_id": scoped, **trend}
 
 
 @router.get("/{release_id}")
@@ -567,6 +703,176 @@ async def add_phase(
     await db.commit()
     await db.refresh(phase)
     return serialize_model(phase)
+
+
+# ── W11 REL-05 / REL-07: a release's first schedule, copied or drafted ───────
+#
+# QA_LEAD without ``allow_project_key``: these are page actions (Copy phases
+# from..., Draft from a PRD...), so a project-bound CI key is refused by
+# default; opting it in is a reviewed entry in
+# ``tests/regression/test_admin_routes_refuse_project_keys.py`` (re-audit N26).
+
+
+@router.post(
+    "/{release_id}/phases/clone", status_code=201, response_model=ReleasePhasesCreatedResponse,
+)
+async def clone_release_phases(
+    release_id: str,
+    body: ReleasePhasesCloneRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    __: User = Depends(require_release_access()),
+):
+    """Copy another release's phases into this one (REL-05): dates moved, all Pending.
+
+    The BODY id is checked by ONE statement scoped to the target's project
+    BEFORE anything else reads it: an unknown, malformed (Pydantic's 422) or
+    FOREIGN source is the same 404 text, so the route is no oracle for another
+    project's release ids. ``require_release_access`` scopes the path id.
+    """
+    target = await release_service.get_release_or_404(db, release_id)
+    source = (
+        await db.execute(
+            select(Release).where(
+                Release.id == body.from_release_id,
+                Release.project_id == target.project_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if source is None:
+        raise HTTPException(status_code=404, detail=RELEASE_NOT_FOUND)
+    if source.id == target.id:
+        raise HTTPException(status_code=422, detail=SOURCE_IS_TARGET)
+    rows, shifted = await release_service.clone_phases(db, target, source, body.shift_to)
+    # Outcome mode: staged on this session, so the event commits with the
+    # phases or not at all.
+    await record_activity(
+        db,
+        project_id=target.project_id,
+        event_type="release.phases_cloned",
+        actor=ActorRef.from_user(current_user),
+        entity_id=target.id,
+        entity_label=target.name,
+        release_id=target.id,
+        context={
+            "count": len(rows),
+            "source_release": source.name,
+            "source_release_id": str(source.id),
+            "shifted_by_days": shifted,
+        },
+    )
+    await db.commit()
+    release_phases_created_total.labels(source="clone").inc(len(rows))
+    for row in rows:
+        await db.refresh(row)
+    return {
+        "release_id": target.id,
+        "created": len(rows),
+        "phases": [serialize_model(row) for row in rows],
+        "source_release_id": source.id,
+        "shifted_by_days": shifted,
+    }
+
+
+async def _read_prd_upload(file: UploadFile) -> bytes:
+    """The upload, read in chunks: 413 as soon as it passes ``MAX_PRD_BYTES``.
+
+    The ``routers/ingest.py`` pattern, restated (not imported): the whole body
+    must never be resident before the size check fires.
+    """
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(64 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_PRD_BYTES:
+            raise HTTPException(status_code=413, detail=PRD_TOO_LARGE)
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+# activity: none - drafts phases from a PRD for review; persists nothing (the bulk create records the event)
+@router.post("/{release_id}/phases/generate", response_model=PhaseDraftResponse)
+async def draft_release_phases(
+    release_id: str,
+    text: Optional[str] = Form(None),
+    file: Optional[UploadFile] = File(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    __: User = Depends(require_release_access()),
+):
+    """Draft phases from a PRD for the reader to review (REL-07). Persists nothing.
+
+    The heading parser always runs; the model is asked only in ``llm`` /
+    ``auto`` analysis mode, and any model failure is the rules draft with a
+    ``fallback_reason`` -- never an error. The request's connection is handed
+    back BEFORE the config read and the model call, so no connection is held
+    while the model runs. The PRD is never stored or logged.
+    """
+    release = await release_service.get_release_or_404(db, release_id)
+    data = await _read_prd_upload(file) if file is not None else None
+    try:
+        prd = extract_prd_text(
+            text=text, filename=file.filename if file is not None else None, data=data,
+        )
+    except PrdInputError as exc:
+        status_code = 413 if str(exc) == PRD_TOO_LARGE else 422
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    project_id = str(release.project_id)
+    release_id_value = release.id
+    # FIRST: nothing more is read on ``db``. The config read (its own short
+    # session on a cache miss) and the model's cost check never overlap the
+    # request's connection.
+    await release_read_connection(db)
+    ctx = DraftContext.from_config(await get_effective_ai_config(), project_id=project_id)
+    body = await draft_phases(ctx, prd)
+    return {"release_id": release_id_value, **body}
+
+
+@router.post(
+    "/{release_id}/phases/bulk", status_code=201, response_model=ReleasePhasesCreatedResponse,
+)
+async def create_release_phases_bulk(
+    release_id: str,
+    body: ReleasePhasesBulkRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    __: User = Depends(require_release_access()),
+):
+    """Create a release's first schedule in one request (REL-07's Create; also a manual bulk).
+
+    409 when the release already has phases (single phases keep
+    ``POST /phases``); every name unique in the batch; ``source`` /
+    ``model_name`` are recorded in the activity row and the metric only.
+    """
+    release = await release_service.get_release_or_404(db, release_id)
+    rows = await release_service.create_phases_bulk(db, release, body.phases)
+    source = body.source if body.source in PHASE_DRAFT_SOURCES else "manual"
+    await record_activity(
+        db,
+        project_id=release.project_id,
+        event_type="release.phases_generated",
+        actor=ActorRef.from_user(current_user),
+        entity_id=release.id,
+        entity_label=release.name,
+        release_id=release.id,
+        context={
+            "count": len(rows),
+            "source": source,
+            "model_name": body.model_name if source == "llm" else None,
+        },
+    )
+    await db.commit()
+    release_phases_created_total.labels(source=source).inc(len(rows))
+    for row in rows:
+        await db.refresh(row)
+    return {
+        "release_id": release.id,
+        "created": len(rows),
+        "phases": [serialize_model(row) for row in rows],
+    }
 
 
 @router.put("/{release_id}/phases/{phase_id}")

@@ -6848,12 +6848,25 @@ class CompliancePack(Base):
     # if this hash matches the manifest, and the manifest matches each
     # file, the pack is unmodified since generation.
     #
-    # This is NOT a signature — there is no HMAC and no PKI anywhere in the
-    # pack path. Residual risk: an actor who can rewrite BOTH the MinIO
-    # object and this row forges a self-consistent pack. Mitigations are
-    # operator-side (WORM / object-lock on the compliance-packs bucket,
-    # own-key custody of an off-host copy of this digest).
+    # Signed since W11 (REL-11, migration 0225): a new pack also carries
+    # ``signature.json``, an Ed25519 signature by the deployment's key over
+    # this digest, the pack id and the key id (``signature`` /
+    # ``signing_key_id`` below). ``signature.json`` sits OUTSIDE the chain it
+    # signs -- manifest.json never lists it -- so this digest is computed
+    # exactly as before. Signing proves the deployment's key signed this
+    # exact manifest. The private key is stored encrypted beside the data
+    # (Fernet under APP_SECRET_KEY), so it defends against storage-only
+    # tampering, NOT against an actor holding both the database and
+    # APP_SECRET_KEY: keep the public key and the digests off-host (WORM /
+    # object lock on the compliance-packs bucket) for that.
     manifest_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Base64 Ed25519 signature over services.compliance_signing.SIGNED_STATEMENT
+    # (pack id, manifest_sha256, key id). NULL = unsigned: every pack generated
+    # before 0225, or one generated while the signing key was unreadable.
+    signature: Mapped[Optional[str]] = mapped_column(Text)
+    # compliance_signing_keys.key_id. No FK on purpose: an id the keys table
+    # does not know verifies as ``unknown_key`` instead of failing a join.
+    signing_key_id: Mapped[Optional[str]] = mapped_column(String(64))
 
     file_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -6877,6 +6890,49 @@ class CompliancePack(Base):
     # the ZIP.
     metadata_snapshot: Mapped[Optional[dict]] = mapped_column(JSONB)
     notes: Mapped[Optional[str]] = mapped_column(Text)
+
+
+class ComplianceSigningKey(Base):
+    """The deployment's Ed25519 compliance-pack signing keys (migration 0225, W11 REL-11, D14).
+
+    The PUBLIC key lives here for ever (an old pack keeps verifying after a
+    rotation); the PRIVATE key lives only in secret_refs (scope
+    SIGNING_SECRET_SCOPE, key_name = key_id), Fernet-encrypted by
+    secret_service, and is expired (ciphertext cleared) when the key is
+    retired. At most one active key (uq_compliance_signing_keys_active).
+    """
+    __tablename__ = "compliance_signing_keys"
+    __table_args__ = (
+        Index(
+            "uq_compliance_signing_keys_active",
+            "algorithm",
+            unique=True,
+            postgresql_where=text("retired_at IS NULL"),
+            # The same partial index where tests build the table on SQLite;
+            # without it a retired key beside the active one would collide.
+            sqlite_where=text("retired_at IS NULL"),
+        ),
+    )
+
+    # "k-" + the first 16 hex of sha256(raw 32-byte public key).
+    key_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    algorithm: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="ed25519", server_default="ed25519",
+    )
+    # SubjectPublicKeyInfo PEM. Never the private key.
+    public_key_pem: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
+    )
+    created_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+    retired_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    retired_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+    # The rotation's typed reason (settings_audit_log holds field names only).
+    retired_reason: Mapped[Optional[str]] = mapped_column(String(500))
 
 
 class FlakyQuarantineRequest(Base):

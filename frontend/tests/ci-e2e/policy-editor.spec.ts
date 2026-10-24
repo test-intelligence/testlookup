@@ -9,14 +9,21 @@
  * - The list has the template's compact header, the list as primary content.
  *
  * `#main-content` scrollHeight of the editor at 1440 x 900 (FOLD line):
- * 1737 px before P5 (every section open, the simulator last), 1285 px after.
+ * 1737 px before P5 (every section open, the simulator last), 1285 px after; 1346 px with W11's closed Versions row.
+ *
+ * W11 GATE-02 (`docs/deferred-scope-2026-10-13/work/W11-contract.md` §2.7, §6.5: a deliberate extension): the
+ * simulator's typed Run ID became the `RunPicker` bound to the POLICY's project (its search asks
+ * `GET /runs?project_id=<the policy's>…`; the picked run is what Simulate posts), so the handler set gains the runs
+ * search, the picked run's label and the history route; and a published policy's **New version from this**,
+ * **Versions** (closed on load) and **Compare** are driven end to end at the end of the file.
  *
  * Harness: `tests/lib/rollout.ts` (fail closed, pinned clock).
  */
-import { expect, test, type Page } from '@playwright/test'
-import { MAIN, networkQuiet, openRollout } from '../lib/rollout'
+import { expect, test, type Locator, type Page } from '@playwright/test'
+import { MAIN, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
 import type { ApiHandlers } from '../lib/production-pages'
-import { isoAgo, LAYOUT, PROJECT_ID, USER } from '../visual/production/fixtures'
+import { isoAgo, LAYOUT, PROJECT_ID, runs, RUNS, USER } from '../visual/production/fixtures'
+import { POLICY_IDS, policyDocument, policyVersionsWorld } from '../visual/production/fixtures-release-planning'
 
 const POLICY_ID = 'bbbbbbbb-0000-4000-8000-000000000001'
 const RUN = '33333333-3333-4333-8333-333333333333'
@@ -78,8 +85,20 @@ const POLICY_PAGE: ApiHandlers = [
     'POST',
   ],
   [`/api/v1/release-gate-policies/${POLICY_ID}`, () => POLICY],
+  // W11 GATE-02: the Versions section's read (only once it is opened) and the simulator's run picker.
+  [`/api/v1/release-gate-policies/history/${PROJECT_ID}`, () => [{ ...POLICY, created_by_name: 'qa_lead', activated_by_name: null }]],
+  [/^\/api\/v1\/runs\/[0-9a-f-]{36}$/, ({ path }) => runs().find((r) => r.id === path.split('/').pop())],
+  ...RUNS,
   ...LAYOUT,
 ]
+
+/** The simulator's run picker: open it, pick `runId` from the policy's project's runs. */
+async function pickRun(page: Page, runId: string) {
+  const simulator = page.locator('[data-policy-simulator]')
+  await simulator.locator('[data-run-picker] button[aria-haspopup]').click()
+  await simulator.locator(`[data-run-option="${runId}"]`).click()
+  await expect(simulator.locator('[data-run-picker] button[aria-haspopup]')).toContainText(/Run #\d+/)
+}
 
 const editorReady = (p: Page) => p.getByRole('heading', { name: 'Edit: Checkout gate', level: 1 })
 
@@ -121,7 +140,8 @@ test('the editor: the rules open, the tuning collapsed, the simulator a sticky r
 
   const top = await boxes(page, 0)
   console.log(`FOLD /policies/:id ${JSON.stringify(top)}`)
-  expect(top.scrollHeight, 'the editor is shorter than before P5 (1737 px)').toBeLessThan(1400)
+  // W11 GATE-02: the closed Versions disclosure adds ~61 px (1,285 → 1,346 on Windows); the bound keeps the ~115 px margin.
+  expect(top.scrollHeight, 'the editor is shorter than before P5 (1737 px)').toBeLessThan(1460)
   // Beside the form, from the same top.
   expect(top.simulator.left).toBeGreaterThan(top.form.right)
   expect(Math.abs(top.simulator.top - top.form.top)).toBeLessThanOrEqual(1)
@@ -144,9 +164,13 @@ test('the editor: the rules open, the tuning collapsed, the simulator a sticky r
   expect(bottom.simulator.top).toBeLessThanOrEqual(24)
   await expect(page.locator('[data-policy-simulator]')).toBeInViewport()
 
-  // Edit a threshold far down the form, simulate from the column beside it.
+  // Edit a threshold far down the form, simulate from the column beside it (W11: the run is PICKED, from the
+  // policy's project's runs).
   await page.getByLabel('NO_GO Threshold').fill('65')
-  await page.getByLabel('Run ID').fill(RUN)
+  await pickRun(page, RUN)
+  expect(requestsTo(api, '/api/v1/runs').filter((line) => line.includes('size=20')), 'the picker searches the policy\'s project').toEqual([
+    `GET /api/v1/runs?project_id=${PROJECT_ID}&page=1&size=20&days=0`,
+  ])
   await page.getByRole('button', { name: 'Simulate' }).click()
   const result = page.locator('[data-policy-simulation]')
   await expect(result).toContainText('A NO_GO threshold of 65 turns this NO_GO into a CONDITIONAL_GO.')
@@ -197,6 +221,85 @@ test('the list: a compact header, New Policy, the policies as primary content', 
   await page.getByRole('button', { name: 'New Policy' }).click()
   await expect(page.getByRole('heading', { name: 'New Policy', level: 1 })).toBeVisible()
   await networkQuiet(page, api)
+  expect(api.unhandled).toEqual([])
+  expect(errors).toEqual([])
+})
+
+// ── W11 GATE-02: New version from this, Versions, Compare ─────────────────────────────────────────────────
+
+const versionsToggle = (page: Page) => page.getByRole('button', { name: /^Versions/ })
+const versionsSection = (page: Page): Locator => page.locator('section[data-disclosure]').filter({ has: versionsToggle(page) })
+const versionRow = (scope: Locator, label: string): Locator => scope.locator('li, [data-policy-version]').filter({ hasText: label }).first()
+
+test('a published policy: New version from this posts its document, the draft is edited, Versions and Compare name the change', async ({ page }) => {
+  const world = policyVersionsWorld()
+  const view = (p: Page) => p.getByRole('heading', { name: 'View: Payments gate', level: 1 })
+  const { api, errors } = await openRollout(page, `/policies/${POLICY_IDS.v4}`, { handlers: world.handlers, ready: view, user: ADMIN })
+  await networkQuiet(page, api)
+  await expect(page.locator('[data-page-header]')).toContainText('Published (read-only)')
+  await expect(versionsToggle(page), 'Versions is closed on load').toHaveAttribute('aria-expanded', 'false')
+  expect(requestsTo(api, /\/release-gate-policies\/(history|system-history)/), 'no history read on load').toEqual([])
+
+  await page.locator('[data-page-header]').getByRole('button', { name: 'New version from this', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Draft v5 created from v4.' })).toBeVisible()
+  await expect(page).toHaveURL((url) => url.pathname === `/policies/${POLICY_IDS.v5}`)
+  await expect(page.getByRole('heading', { name: 'Edit: Payments gate', level: 1 })).toBeVisible()
+  const v4 = world.rows.find((r) => r.id === POLICY_IDS.v4)
+  expect(world.writes).toEqual([
+    {
+      line: 'POST /api/v1/release-gate-policies',
+      body: { project_id: PROJECT_ID, name: 'Payments gate', description: v4?.description, rules: policyDocument(20, 97) },
+    },
+  ])
+
+  await page.getByLabel('GO Threshold', { exact: true }).fill('25')
+  await page.getByRole('button', { name: 'Save Draft', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Policy saved' })).toBeVisible()
+  expect(world.writes.map((w) => w.line)).toEqual(['POST /api/v1/release-gate-policies', `PATCH /api/v1/release-gate-policies/${POLICY_IDS.v5}`])
+  expect((world.writes[1].body as { rules: { thresholds: { go_threshold: number } } }).rules.thresholds.go_threshold).toBe(25)
+
+  await versionsToggle(page).click()
+  const versions = versionsSection(page)
+  await expect(versionRow(versions, 'v5 · Draft')).toBeVisible()
+  await expect(versionRow(versions, 'v4 · Active')).toBeVisible()
+  await expect(versionRow(versions, 'v3 · Published')).toBeVisible()
+  await expect(versionRow(versions, 'v5 · Draft')).toContainText('This version')
+  await expect(versionRow(versions, 'v4 · Active')).toContainText('created by priya')
+  await networkQuiet(page, api)
+  expect(requestsTo(api, `/api/v1/release-gate-policies/history/${PROJECT_ID}`), 'the history, once opened').toHaveLength(1)
+
+  await versionRow(versions, 'v4 · Active').getByRole('checkbox').check()
+  await versionRow(versions, 'v5 · Draft').getByRole('checkbox').check()
+  await expect(versionRow(versions, 'v3 · Published').getByRole('checkbox'), 'at most two').toBeDisabled()
+  await versions.getByRole('button', { name: 'Compare v4 → v5', exact: true }).click()
+  await expect(versions.getByText('GO threshold 20 → 25', { exact: true })).toBeVisible()
+  await expect(versions.getByText('No settings differ.', { exact: true })).toHaveCount(0)
+
+  // Simulate the draft against a run picked from the policy's project.
+  await pickRun(page, RUN)
+  await page.getByRole('button', { name: 'Simulate' }).click()
+  await expect(page.locator('[data-policy-simulation]')).toBeVisible()
+  expect(world.simulated).toHaveLength(1)
+  expect(world.simulated[0]).toMatchObject({ run_id: RUN, policy_document: { thresholds: { go_threshold: 25 } } })
+  await networkQuiet(page, api)
+  expect(api.unhandled).toEqual([])
+  expect(errors).toEqual([])
+})
+
+test('as QA LEAD a published policy offers no New version from this, but Versions and Compare read', async ({ page }) => {
+  const world = policyVersionsWorld()
+  const view = (p: Page) => p.getByRole('heading', { name: 'View: Payments gate', level: 1 })
+  const { api, errors } = await openRollout(page, `/policies/${POLICY_IDS.v4}`, { handlers: world.handlers, ready: view, user: USER })
+  await networkQuiet(page, api)
+  await expect(page.getByRole('button', { name: 'New version from this' })).toHaveCount(0)
+  await versionsToggle(page).click()
+  const versions = versionsSection(page)
+  await versionRow(versions, 'v3 · Published').getByRole('checkbox').check()
+  await versionRow(versions, 'v4 · Active').getByRole('checkbox').check()
+  await versions.getByRole('button', { name: 'Compare v3 → v4', exact: true }).click()
+  await expect(versions.getByText('Pass-rate band yellow_min 95 → 97', { exact: true })).toBeVisible()
+  await networkQuiet(page, api)
+  expect(world.writes).toEqual([])
   expect(api.unhandled).toEqual([])
   expect(errors).toEqual([])
 })
