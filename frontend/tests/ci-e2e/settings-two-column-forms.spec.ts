@@ -17,6 +17,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { assertHermetic, openProductionPage, type ApiHandlers } from '../lib/production-pages'
 import { LAYOUT, NOW, PROJECT_ID, USER } from '../visual/production/fixtures'
+import { EMBEDDING_INDEX_IN_SYNC } from '../visual/production/fixtures-ai-config'
 
 /** The settings pages above are ADMIN-only for their controls. */
 const ADMIN = { ...USER, role: 'ADMIN', username: 'admin', full_name: 'Admin' }
@@ -47,6 +48,8 @@ const AI_CONFIG = {
   ml_human_label_floor: 50,
   ml_maturity: 'not_trained',
   knowledge_rag_enabled: false,
+  // W12 SRCH-02: the embedder in use, idle and in sync with the form (a W12 server always answers the key).
+  embedding_index: EMBEDDING_INDEX_IN_SYNC,
 }
 
 const MODEL_STATUS = {

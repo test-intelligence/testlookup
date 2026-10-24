@@ -106,6 +106,8 @@ Self-registration is off unless the deployment turns it on (`REGISTRATION_ENABLE
 - **Purge now** (policy enabled) asks you to type the project's name, then queues the purge.
 - **Delete by criteria** removes a selected subset.
 
+**Search usage rows** (the per-search records behind the Search page's usage tiles: no query text, no user) are not on a clock you set: every deployment keeps them 30 days and deletes older ones nightly, whatever the policy. The preview lists the project's rows older than that as **Search usage rows (kept 30 days)**, and a purge deletes them with the rest.
+
 **AI history** keeps every AI analysis of a run as a version: up to 20 per run (per kind: the analysis digest and the run summary) and 10 per test result by default, each settable from 1 to 100. The oldest go first; version 1, the newest and any version a published decision report cites never do. The caps apply whenever a version is stored, even with scheduled purging off, and AI history goes with its run.
 
 Purging is irreversible. The operator guide in the repository (`user-guide/administration.md`) lists exactly what each class covers.
@@ -211,7 +213,8 @@ Under the deployment-wide cards, **Current Status** has one row per project inte
 
 - **Analysis Engine**: **Auto**, **LLM (AI Agent)**, **Machine Learning** or **Rules-Based**, each showing whether it is ready.
 - **Model Availability & Fallback Chain**: whether the model server answers and each required model is installed.
-- **LLM Provider** and **Embedding**: provider, model, temperature, max tokens.
+- **LLM Provider**: provider, model, temperature, max tokens.
+- **Embedding**: the model that turns test results, knowledge chunks and agent memory into vectors for semantic search, similar failures and knowledge-grounded generation. **Provider** is **Bundled MiniLM** (`all-MiniLM-L6-v2`, runs inside TestLookup, the default), **Ollama** (a model on your own Ollama server) or **OpenAI** (refused while offline mode is on). Under it, **In use** names the embedder every search uses now. A change does not apply at once: **Save Configuration** starts a **re-embed** into new collections, the card shows its progress per index (*Re-embedding to Ollama · nomic-embed-text:v1.5: 1,200 / 2,290.*), and semantic search keeps the current model until it finishes. Cached AI analyses, the open-defect duplicate check and failure clusters start empty in the new collections and refill as they are used. If a re-embed fails, the card says why and the model in use stays in use; **Retry** tries again. When the configured embedder is not the one in use (*… is not in use yet.*), an administrator's **Re-embed now** applies it.
 - **Pipeline Settings**: confidence threshold, timeout, offline mode, and toggles.
 - **Knowledge-Grounded Generation**: **Enable Knowledge RAG** for generating test cases from documents. While the `rag_faithfulness_gate` feature flag is on, **Faithfulness evaluator** chooses how drafts are scored: the single-prompt judge (the configured model, works offline) or Ragas (the configured model too, several calls per case, each inside the cost cap; needs offline mode off and the `ragas` package, which only an image built with `INSTALL_RAGAS=1` has). The badge shows the one in use.
 - **Cloud API Keys** for hosted providers, stored encrypted.
@@ -275,7 +278,9 @@ SSO also has to be enabled in the deployment's configuration; the operator guide
 
 ### Data and storage
 
-**Data & storage** (`/settings/storage`): whether the databases and the cache are connected, and where results and artifacts are stored — the object storage (endpoint, bucket, SSL) and the vector store (host, port, collection). QA leads can read it; administrators change it.
+**Data & storage** (`/settings/storage`): whether the databases and the cache are connected, and where results and artifacts are stored — the object storage (endpoint, bucket, SSL) and the vector store (host, port, **Collection prefix**). QA leads can read it; administrators change it.
+
+**Collection prefix** (in the **ChromaDB (Vector Store)** card): up to 8 lower-case letters, digits or `-`, starting with a letter or a digit, put in front of every vector collection's name, so two deployments can share one ChromaDB server. Empty means no prefix. Like an embedding change, a new prefix re-embeds every index into new collections while search keeps using the current ones until it finishes; the card then reads *In use: collections start with "demo_".* (or *In use: collections carry no prefix.*). A value stored by an earlier version that is not a valid prefix is ignored, and the card says so.
 
 ### Performance
 

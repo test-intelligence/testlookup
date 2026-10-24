@@ -15,6 +15,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { networkQuiet, openRollout } from '../lib/rollout'
 import type { ApiHandlers } from '../lib/production-pages'
 import { LAYOUT } from '../visual/production/fixtures'
+import { SEARCH_LOAD_READS } from '../visual/production/fixtures-search'
 
 test.use({ viewport: { width: 1440, height: 900 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
@@ -23,6 +24,9 @@ const ENTITIES = ['Tests', 'Runs', 'Suites', 'Defects', 'Flaky', 'Releases']
 
 function searchHandlers(indexStatus: Record<string, unknown>): ApiHandlers {
   return [
+    // W12 (contract §4.2): every `/search` load also reads the reader's recents, the project's suggestions and (a
+    // QA lead, this spec's user) the usage tiles; answered empty here (this spec is about the rail).
+    ...SEARCH_LOAD_READS,
     ...LAYOUT,
     ['/api/v1/search/index-status', () => indexStatus],
     ['/api/v1/search/entity-counts', () => COUNTS],

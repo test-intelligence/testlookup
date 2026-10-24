@@ -77,7 +77,6 @@ import {
   policiesInPageWorld,
   projectDataWorld,
   projectsInPageWorld,
-  RECENT_SEARCHES,
   retentionInPageWorld,
   SEARCH_PAGE,
   SSO_ENFORCED,
@@ -198,15 +197,6 @@ function withUntaggedGroup(): ApiHandlers {
       },
     ],
   ]
-}
-
-const seedRecents = async (page: Page) => {
-  await page.addInitScript((recents) => {
-    if (!sessionStorage.getItem('w27b-seeded')) {
-      localStorage.setItem('tl.search.recent', JSON.stringify(recents))
-      sessionStorage.setItem('w27b-seeded', '1')
-    }
-  }, RECENT_SEARCHES)
 }
 
 const projectCard = (p: Page) => p.locator('.card').filter({ has: p.getByText(LEGACY_PROJECT.name, { exact: true }) })
@@ -550,9 +540,11 @@ const ROUTES: SweepRoute[] = [
     route: '/search',
     path: '/search',
     roles: EVERY,
+    // W12 SRCH-03 (deliberate edit, contract §6.5): `SEARCH_PAGE` answers the two recents from the server
+    // (`GET /api/v1/search/recent`), so nothing is seeded in the browser; it also answers the suggestions and, for a
+    // QA lead and an admin, the usage tiles, so every role loads hermetically.
     handlers: () => SEARCH_PAGE,
     ready: (p) => p.getByTestId('searchable-data-summary'),
-    init: seedRecents,
     actions: [ask('Clear history', (p) => p.getByRole('button', { name: 'Clear history' }))],
   },
   {
