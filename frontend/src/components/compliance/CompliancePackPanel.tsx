@@ -174,22 +174,28 @@ export default function CompliancePackPanel({ releaseId, releaseName }: Props) {
                 key={pack.id}
                 className="text-xs px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)]"
               >
-                <div className="flex items-center gap-2">
-                  <FileCheck className="h-3 w-3 text-[var(--status-passed)] shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-[var(--color-text)]">
-                        {formatCompactDateTime(pack.generated_at)}
-                      </span>
-                      <span className="text-[var(--color-text-faint)]">
-                        {packSizeText(pack.bytes)} · {pack.file_count} files
+                {/* Three lines, so a ~400 px panel never squeezes the chip or the date:
+                    1. when · size · files (one unbroken line) and the signature chip in full (it wraps
+                       to its own line rather than truncating), 2. the manifest digest (truncated, full
+                       value in its title), 3. the actions (each unbroken; the row wraps). */}
+                <div className="flex items-start gap-2">
+                  <FileCheck className="h-3 w-3 mt-0.5 text-[var(--status-passed)] shrink-0" />
+                  <div className="flex-1 min-w-0 space-y-1">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="inline-flex items-center gap-2 whitespace-nowrap">
+                        <span className="text-[var(--color-text)]">
+                          {formatCompactDateTime(pack.generated_at)}
+                        </span>
+                        <span className="text-[var(--color-text-faint)]">
+                          {packSizeText(pack.bytes)} · {pack.file_count} files
+                        </span>
                       </span>
                       {chip && (
                         <span
                           data-pack-signature={chip.signed ? 'signed' : 'unsigned'}
                           title={chip.title}
                           className={clsx(
-                            'max-w-[150px] truncate rounded border px-1.5 text-xs',
+                            'whitespace-nowrap rounded border px-1.5 text-xs',
                             chip.signed
                               ? 'border-[var(--ui-success-bd)] bg-[var(--ui-success-bg)] text-[var(--ui-success-ink)]'
                               : 'border-[var(--color-border)] text-[var(--color-text-muted)]',
@@ -210,32 +216,34 @@ export default function CompliancePackPanel({ releaseId, releaseName }: Props) {
                         {pack.notes}
                       </div>
                     )}
+                    <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                      <button
+                        type="button"
+                        onClick={() => handleVerify(pack.id)}
+                        disabled={verifying !== null}
+                        className="btn-secondary btn-sm whitespace-nowrap"
+                      >
+                        {verifying === pack.id ? 'Verifying…' : 'Verify'}
+                      </button>
+                      {chip?.signed && pack.signing_key_id && (
+                        <button
+                          type="button"
+                          onClick={() => handlePublicKey(pack.signing_key_id as string)}
+                          title={`Download the public key ${pack.signing_key_id} (PEM)`}
+                          className="btn-secondary btn-sm whitespace-nowrap flex items-center gap-1"
+                        >
+                          <KeyRound className="h-3 w-3" /> Public key
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleDownload(pack.id, pack.generated_at)}
+                        className="text-[var(--color-accent)] hover:underline whitespace-nowrap flex items-center gap-0.5"
+                      >
+                        <Download className="h-3 w-3" /> ZIP
+                      </button>
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => handleVerify(pack.id)}
-                    disabled={verifying !== null}
-                    className="btn-secondary btn-sm shrink-0"
-                  >
-                    {verifying === pack.id ? 'Verifying…' : 'Verify'}
-                  </button>
-                  {chip?.signed && pack.signing_key_id && (
-                    <button
-                      type="button"
-                      onClick={() => handlePublicKey(pack.signing_key_id as string)}
-                      title={`Download the public key ${pack.signing_key_id} (PEM)`}
-                      className="btn-secondary btn-sm shrink-0 flex items-center gap-1"
-                    >
-                      <KeyRound className="h-3 w-3" /> Public key
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => handleDownload(pack.id, pack.generated_at)}
-                    className="text-[var(--color-accent)] hover:underline flex items-center gap-0.5 shrink-0"
-                  >
-                    <Download className="h-3 w-3" /> ZIP
-                  </button>
                 </div>
                 {state && (
                   <div data-pack-verification className="mt-1.5 pl-5 space-y-0.5">
