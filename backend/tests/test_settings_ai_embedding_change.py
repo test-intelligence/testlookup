@@ -313,16 +313,29 @@ def _iso(seconds_from_now: float) -> str:
     return (datetime.now(timezone.utc) + timedelta(seconds=seconds_from_now)).isoformat()
 
 
+def _timed(lease: dict | None, requested_in: float) -> tuple[dict | None, str]:
+    """Build the lease / requested_at AT RUN TIME: offsets in seconds from now.
+
+    A timestamp computed in a parametrize list is fixed at collection, so in a
+    suite that runs twenty minutes before reaching the test a "live" lease has
+    already expired (the full-suite failure this replaced).
+    """
+    if lease is not None:
+        lease = {**lease, "until": _iso(lease["until"])}
+    return lease, _iso(requested_in)
+
+
 @pytest.mark.parametrize(
-    ("lease", "requested_at"),
+    ("lease", "requested_in"),
     [
-        ({"owner": "worker-1", "until": _iso(400)}, _iso(-60)),                      # a slice holds it
-        ({"owner": "worker-1", "until": _iso(-5), "released": True}, _iso(-900)),    # handed back between slices
-        (None, _iso(-30)),                                                           # queued, not claimed yet
+        ({"owner": "worker-1", "until": 400}, -60),                      # a slice holds it
+        ({"owner": "worker-1", "until": -5, "released": True}, -900),    # handed back between slices
+        (None, -30),                                                     # queued, not claimed yet
     ],
     ids=["live-lease", "just-handed-back", "just-queued"],
 )
-async def test_rebuild_toward_a_build_with_a_worker_is_a_409(api, h, lease, requested_at):
+async def test_rebuild_toward_a_build_with_a_worker_is_a_409(api, h, lease, requested_in):
+    lease, requested_at = _timed(lease, requested_in)
     h.stored_ai.update(embedding_provider="ollama", embedding_model="nomic-embed-text:v1.5")
     h.state = eis.EmbeddingIndexState(target=cc.Generation("", NOMIC).as_dict(), status="building", fence=2,
                                       lease=lease, requested_at=requested_at)
@@ -337,15 +350,16 @@ async def test_rebuild_toward_a_build_with_a_worker_is_a_409(api, h, lease, requ
 
 
 @pytest.mark.parametrize(
-    ("lease", "requested_at"),
+    ("lease", "requested_in"),
     [
-        ({"owner": "dead-worker", "until": _iso(-1)}, _iso(-600)),                   # killed mid-slice
-        ({"owner": "worker-1", "until": _iso(-600), "released": True}, _iso(-900)),  # nothing resumed it
-        (None, _iso(-600)),                                                          # nobody ever claimed it
+        ({"owner": "dead-worker", "until": -1}, -600),                   # killed mid-slice
+        ({"owner": "worker-1", "until": -600, "released": True}, -900),  # nothing resumed it
+        (None, -600),                                                    # nobody ever claimed it
     ],
     ids=["expired-lease", "never-resumed", "never-claimed"],
 )
-async def test_rebuild_resumes_a_stalled_build_under_a_new_fence(api, h, lease, requested_at):
+async def test_rebuild_resumes_a_stalled_build_under_a_new_fence(api, h, lease, requested_in):
+    lease, requested_at = _timed(lease, requested_in)
     h.stored_ai.update(embedding_provider="ollama", embedding_model="nomic-embed-text:v1.5")
     stalled = eis.EmbeddingIndexState(target=cc.Generation("", NOMIC).as_dict(), status="building", fence=2,
                                       lease=lease, requested_at=requested_at)
