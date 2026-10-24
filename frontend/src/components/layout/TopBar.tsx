@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Search, Bell, BellRing, CheckCircle, Menu, UserCircle2, XCircle } from 'lucide-react'
 import { useNavigate, Link } from 'react-router-dom'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
@@ -15,6 +15,10 @@ import { HeaderPopover } from '@/components/ui/HeaderPopover'
 import { formatCompactDateTime } from '@/utils/formatCompactDateTime'
 import { notificationHref } from './notificationHref'
 import { avatarColor } from '@/components/ui/avatarColors'
+import SearchTypeahead from '@/components/search/SearchTypeahead'
+
+/** The typeahead closes this long after the input loses focus, so a click on a match lands first. */
+const TYPEAHEAD_BLUR_CLOSE_MS = 150
 
 function getInitials(fullName: string | null | undefined, username: string): string {
   if (fullName?.trim()) {
@@ -190,10 +194,28 @@ export default function TopBar({ navToggle = null }: { navToggle?: TopBarNavTogg
     }).catch(() => {})
   }, [isAdmin, setActiveProject, refreshProjects])
 
+  // W12 SRCH-03: the typeahead under the input. Opened by typing; closed by
+  // Escape, Enter, a blur (150 ms later) or a navigation, which drops its read.
+  const [typeaheadOpen, setTypeaheadOpen] = useState(false)
+  const blurTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const closeTypeahead = useCallback(() => setTypeaheadOpen(false), [])
+  const finishTypeahead = useCallback(() => {
+    setSearchVal('')
+    setTypeaheadOpen(false)
+  }, [])
+  useEffect(() => () => {
+    if (blurTimerRef.current) clearTimeout(blurTimerRef.current)
+  }, [])
+
   const handleSearch = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Escape') {
+      setTypeaheadOpen(false)
+      return
+    }
     if (e.key === 'Enter' && searchVal.trim()) {
       navigate(`/search?q=${encodeURIComponent(searchVal.trim())}`)
       setSearchVal('')
+      setTypeaheadOpen(false)
     }
   }
 
@@ -251,8 +273,15 @@ export default function TopBar({ navToggle = null }: { navToggle?: TopBarNavTogg
           placeholder="Search tests, runs, defects… (Enter)"
           className="input pl-9 pr-9 h-9 text-sm"
           value={searchVal}
-          onChange={e => setSearchVal(e.target.value)}
+          onChange={e => { setSearchVal(e.target.value); setTypeaheadOpen(true) }}
           onKeyDown={handleSearch}
+          onFocus={() => {
+            if (blurTimerRef.current) clearTimeout(blurTimerRef.current)
+            if (searchVal.trim().length >= 2) setTypeaheadOpen(true)
+          }}
+          onBlur={() => {
+            blurTimerRef.current = setTimeout(() => setTypeaheadOpen(false), TYPEAHEAD_BLUR_CLOSE_MS)
+          }}
         />
         {/* Shortcut hint — hidden once the box has a value so it never overlaps
             typed text. pointer-events-none so it can't intercept the click that
@@ -265,6 +294,9 @@ export default function TopBar({ navToggle = null }: { navToggle?: TopBarNavTogg
             /
           </kbd>
         )}
+        {/* Anchored under the input, inside this `relative` wrapper; renders
+            nothing while closed (the bar's markup is unchanged). */}
+        <SearchTypeahead query={searchVal} open={typeaheadOpen} onClose={closeTypeahead} onDone={finishTypeahead} />
       </div>
 
       {/* Project selector */}

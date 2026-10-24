@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import TopBar from './TopBar'
@@ -50,7 +50,26 @@ const mocked = vi.hoisted(() => {
   ] as Array<Record<string, unknown>>
   const history = { logs: DEFAULT_HISTORY }
 
+  // W12 SRCH-03: the typeahead's read, answered per test.
+  const typeahead = {
+    answer: undefined as undefined | { items: Array<Record<string, unknown>> },
+    calls: [] as Array<{ query: string; projectId: string | null; enabled: boolean }>,
+  }
+  const useSearchTypeahead = vi.fn((query: string, projectId: string | null, enabled: boolean) => {
+    typeahead.calls.push({ query, projectId, enabled })
+    const debounced = enabled && query.trim().length >= 2 ? query.trim() : null
+    return {
+      debounced,
+      settling: false,
+      data: debounced ? typeahead.answer : undefined,
+      error: undefined,
+      isLoading: false,
+    }
+  })
+
   return {
+    typeahead,
+    useSearchTypeahead,
     navigate,
     setActiveProject,
     setAllProjects,
@@ -104,6 +123,10 @@ vi.mock('@/services/notificationService', () => ({
   },
 }))
 
+vi.mock('@/hooks/useSearchTypeahead', () => ({
+  useSearchTypeahead: mocked.useSearchTypeahead,
+}))
+
 describe('TopBar', () => {
   beforeEach(() => {
     mocked.navigate.mockClear()
@@ -117,6 +140,8 @@ describe('TopBar', () => {
     mocked.history.logs = mocked.DEFAULT_HISTORY
     mocked.authState.user.role = 'ADMIN'
     ;(mocked.authState.user as { avatar_color: string | null }).avatar_color = null
+    mocked.typeahead.answer = undefined
+    mocked.typeahead.calls = []
   })
 
   // W29a UIX-01 (L3): the initials are the shared avatar map's ink on its
@@ -416,6 +441,71 @@ describe('TopBar', () => {
       openBell()
       const link = screen.getByRole('link', { name: '<img src=x onerror=alert(1)>' })
       expect(link.querySelector('img')).toBeNull()
+    })
+  })
+
+  // W12 SRCH-03: the typeahead is a listbox anchored under the input (never a
+  // dialog or a portal), and while closed the input is exactly as before.
+  describe('the search typeahead (W12)', () => {
+    const MATCH = {
+      entity_type: 'test_run', entity_id: 'run-7', title: 'build-1042', subtitle: 'main · FAILED',
+      project_id: 'p1', project_name: 'Core UI', navigation_url: '/runs/run-7', relevance_score: 0.8,
+      match_reasons: [], metadata: {},
+    }
+
+    function input(): HTMLInputElement {
+      return screen.getByPlaceholderText('Search tests, runs, defects… (Enter)') as HTMLInputElement
+    }
+
+    it('closed: no list, no request, and the input carries no new attribute', () => {
+      render(
+        <MemoryRouter>
+          <TopBar />
+        </MemoryRouter>,
+      )
+      expect(screen.queryByRole('listbox', { name: 'Matches' })).toBeNull()
+      expect(input().getAttributeNames().sort()).toEqual(['class', 'placeholder', 'type', 'value'])
+      expect(mocked.typeahead.calls.every((call) => call.enabled === false)).toBe(true)
+    })
+
+    it('typing opens the matches under the input; a click selects the project and opens the match; Escape closes', () => {
+      mocked.typeahead.answer = { items: [MATCH] }
+      render(
+        <MemoryRouter>
+          <TopBar />
+        </MemoryRouter>,
+      )
+      fireEvent.change(input(), { target: { value: 'build' } })
+      // No project pinned here: the read is the caller's whole scope.
+      expect(mocked.typeahead.calls[mocked.typeahead.calls.length - 1]).toEqual({ query: 'build', projectId: null, enabled: true })
+
+      const list = screen.getByRole('listbox', { name: 'Matches' })
+      // Anchored inside the input's own wrapper: not a dialog, not portaled.
+      expect(input().parentElement?.contains(list)).toBe(true)
+      expect(list.closest('[role="dialog"]')).toBeNull()
+      const option = within(list).getByRole('option', { name: /build-1042/ })
+      expect(option).toHaveTextContent('main · FAILED')
+      expect(option).toHaveTextContent('Runs')
+      expect(within(list).getByRole('option', { name: /Search everything for “build”/ })).toBeInTheDocument()
+
+      fireEvent.click(option)
+      expect(mocked.setActiveProject).toHaveBeenCalledWith({ id: 'p1', name: 'Core UI' })
+      expect(mocked.navigate).toHaveBeenCalledWith('/runs/run-7')
+      expect(input().value).toBe('')
+      expect(screen.queryByRole('listbox', { name: 'Matches' })).toBeNull()
+
+      fireEvent.change(input(), { target: { value: 'timeout' } })
+      expect(screen.getByRole('listbox', { name: 'Matches' })).toBeInTheDocument()
+      fireEvent.keyDown(input(), { key: 'Escape' })
+      expect(screen.queryByRole('listbox', { name: 'Matches' })).toBeNull()
+      expect(input().value).toBe('timeout')
+      expect(mocked.typeahead.calls[mocked.typeahead.calls.length - 1]?.enabled).toBe(false)
+
+      // Enter still runs the full search, and closes the list.
+      fireEvent.change(input(), { target: { value: 'timeout issue' } })
+      fireEvent.keyDown(input(), { key: 'Enter' })
+      expect(mocked.navigate).toHaveBeenLastCalledWith('/search?q=timeout%20issue')
+      expect(screen.queryByRole('listbox', { name: 'Matches' })).toBeNull()
     })
   })
 

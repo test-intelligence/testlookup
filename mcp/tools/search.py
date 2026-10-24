@@ -69,6 +69,13 @@ def register(mcp) -> None:  # noqa: ANN001
         Search test cases by name, error message, or suite (legacy
         test-case-only search endpoint).
 
+        The query takes filters as ``key:value`` (quote a value with spaces:
+        ``suite:"API Regression"``). This endpoint applies ``status:``
+        (passed, failed, error, skipped; one value), ``since:`` (``7d``,
+        ``24h`` or ``YYYY-MM-DD``) and ``type:test``; any other known filter
+        means nothing is searched. An unknown ``word:value`` is searched as
+        text. For the other filters use ``global_search``.
+
         For the richer status/date-filtered search, use ``search_tests``;
         for cross-entity search use ``global_search``.
         """
@@ -94,6 +101,17 @@ def register(mcp) -> None:  # noqa: ANN001
         """
         Search across all TestLookup entities: tests, runs, suites, defects, flaky tests, releases.
         entity_types: comma-separated filter (e.g., "test_case,test_run,defect").
+
+        The query takes filters as ``key:value`` (keys case-insensitive; quote
+        a value with spaces): ``status:`` (passed, failed, error, skipped),
+        ``suite:``, ``branch:``, ``env:``, ``type:`` (test, run, suite,
+        defect, flaky, release), ``since:`` (``7d``, ``24h`` or
+        ``YYYY-MM-DD``), ``release:`` (a release name, version or id in your
+        projects) and ``owner:``. Example: ``status:failed suite:"API
+        Regression" since:7d checkout``. A kind that cannot apply a filter is
+        not searched (e.g. ``branch:`` skips defects), an unknown
+        ``word:value`` is searched as text, and the response's ``parsed.notes``
+        say what was applied, ignored or not searched.
         """
         params: dict = {"q": query, "size": 15}
         if entity_types:

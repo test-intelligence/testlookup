@@ -49,28 +49,62 @@ async def _get_or_create_collection(project_id: Optional[str] = None):
     # With no project there is no safe collection, so there is none at all.
     if not project_id:
         raise ValueError("semantic cache requires a project scope")
-    name = f"{_COLLECTION_NAME}_{project_id}"
+    from app.services import chroma_collections
+
+    # W12: the ACTIVE generation's name (``ai_analysis_cache_<project_id>`` on
+    # the legacy generation, exactly as before) and embedding function (none
+    # passed on the legacy generation).
+    target = await chroma_collections.resolve(_COLLECTION_NAME, project_id=project_id)
     client = await _get_chroma_client()
     return await asyncio.to_thread(
         client.get_or_create_collection,
-        name,
+        target.name,
         metadata={"hnsw:space": "cosine"},
+        **target.create_kwargs(),
     )
 
 
+async def _get_existing_collection(project_id: str, generation: Any) -> Any | None:
+    """This cache's collection for ``project_id`` in a NON-active generation, if it exists."""
+    from app.services import chroma_collections
+
+    try:
+        resolved = await chroma_collections.resolve(
+            _COLLECTION_NAME, project_id=project_id, generation=generation
+        )
+    except Exception:  # noqa: BLE001 - a get/delete embeds nothing: open by name
+        resolved = chroma_collections.ResolvedCollection(
+            name=chroma_collections.collection_name(
+                _COLLECTION_NAME, project_id=project_id, generation=generation
+            ),
+            embedding_function=None,
+            generation=generation,
+        )
+    client = await _get_chroma_client()
+    return await chroma_collections.open_existing(client, resolved)
+
+
+def _is_cache_collection(name: str) -> bool:
+    """Any generation's analysis-cache collection, and the legacy unscoped one (W12)."""
+    from app.services.chroma_collections import parse_collection_name
+
+    parsed = parse_collection_name(name)
+    return parsed is not None and parsed[0] == _COLLECTION_NAME
+
+
 async def purge_all_m11_semantic_cache_collections() -> int:
-    """Delete derived AI cache collections that may contain pre-M11 evidence."""
+    """Delete derived AI cache collections that may contain pre-M11 evidence.
+
+    Every generation's (W12): recognised through
+    ``chroma_collections.parse_collection_name``.
+    """
     client = await _get_chroma_client()
     collections = await asyncio.to_thread(client.list_collections)
     names = [
         collection.name if hasattr(collection, "name") else str(collection)
         for collection in collections
     ]
-    targets = [
-        name
-        for name in names
-        if name == _COLLECTION_NAME or name.startswith(f"{_COLLECTION_NAME}_")
-    ]
+    targets = [name for name in names if _is_cache_collection(name)]
     for name in targets:
         await asyncio.to_thread(client.delete_collection, name=name)
     return len(targets)
@@ -351,7 +385,6 @@ async def get_semantic_cache_stats() -> dict:
         await asyncio.to_thread(client.heartbeat)
         collections = await asyncio.to_thread(client.list_collections)
 
-        prefix = f"{_COLLECTION_NAME}_"
         project_count = 0
         document_count = 0
         legacy_documents = 0
@@ -364,7 +397,8 @@ async def get_semantic_cache_stats() -> dict:
                     else await asyncio.to_thread(client.get_collection, name)
                 )
                 legacy_documents = await asyncio.to_thread(handle.count)
-            elif name.startswith(prefix):
+            elif _is_cache_collection(name):
+                # Every generation's per-project collection (W12).
                 handle = (
                     collection
                     if not isinstance(collection, str)

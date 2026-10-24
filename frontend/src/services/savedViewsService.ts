@@ -14,9 +14,9 @@ export interface SavedViewRelease {
   reason: string | null;
 }
 
-/** The backend's `SAVED_VIEW_PAGES` (VIZ-609 added summary_report and explore). */
+/** The backend's `SAVED_VIEW_PAGES` (VIZ-609 added summary_report and explore; W12 SRCH-03 search). */
 export type SavedViewPageName =
-  | 'dashboard' | 'trends' | 'coverage' | 'defects' | 'failures' | 'summary_report' | 'explore';
+  | 'dashboard' | 'trends' | 'coverage' | 'defects' | 'failures' | 'summary_report' | 'explore' | 'search';
 
 export interface SavedView {
   id: string;

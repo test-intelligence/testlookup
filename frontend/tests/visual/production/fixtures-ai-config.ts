@@ -76,8 +76,29 @@ export function aiConfig(overrides: Record<string, unknown> = {}): Record<string
     ml_human_label_floor: 50,
     ml_maturity: 'not_trained',
     knowledge_rag_enabled: false,
+    // W12 SRCH-02 (§1.1): the embedder IN USE, idle and in sync with the form's `ollama` · `nomic-embed-text`, so
+    // this world reads as a W12 server (re-exported by `fixtures-search.ts`). No region shows the Embedding card.
+    embedding_index: EMBEDDING_INDEX_IN_SYNC,
     ...overrides,
   }
+}
+
+const IN_SYNC_GENERATION = { provider: 'ollama', model: 'nomic-embed-text', prefix: '', key: 'ollama:nomic-embed-text', tag: 'e4cdca008' }
+
+/** `AIConfigRead.embedding_index` (W12): the form's embedder in use since three days before `NOW`, nothing building. */
+export const EMBEDDING_INDEX_IN_SYNC = {
+  active: IN_SYNC_GENERATION,
+  configured: IN_SYNC_GENERATION,
+  in_sync: true,
+  status: 'idle',
+  target: null,
+  families: [],
+  processed: 0,
+  total: null,
+  requested_at: null,
+  switched_at: new Date(NOW.getTime() - 3 * 86_400_000).toISOString(),
+  last_error: null,
+  configured_note: null,
 }
 
 export const MODEL_STATUS = {

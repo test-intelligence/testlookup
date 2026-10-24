@@ -427,6 +427,9 @@ async def test_preview_writes_nothing_and_returns_all_count_keys():
         # AIH-06: ai_run_versions on the runs clock + ai_analysis_versions the
         # run delete cascades + the over-cap sweep (tests/test_ai_history_retention.py).
         "ai_history_versions",
+        # W12 SRCH-05: the project's search usage rows past the fixed 30-day
+        # window (tests/integration/test_search_usage_postgres.py).
+        "search_usage_rows",
     }
     assert set(out["cutoffs"]) == {"raw_events", "runs", "artifacts", "audit"}
     assert out["candidates"]["runs"] == 1

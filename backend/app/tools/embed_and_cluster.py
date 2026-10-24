@@ -114,9 +114,14 @@ async def embed_and_cluster(error_messages_json: str) -> str:
     # Try ChromaDB-backed embedding; fall back to Jaccard clustering
     cluster_indices: list[list[int]] = []
     try:
+        from app.services import chroma_collections
+
+        # W12: the ACTIVE generation's name (``failure_clusters`` on the legacy
+        # generation) and embedding function (none passed on the legacy one).
+        target = await chroma_collections.resolve(_COLLECTION)
         client = await _get_chroma_client()
         collection = await asyncio.to_thread(
-            client.get_or_create_collection, _COLLECTION
+            client.get_or_create_collection, target.name, **target.create_kwargs()
         )
         # Store with unique IDs derived from content hash
         ids = [hashlib.md5(e.encode()).hexdigest()[:16] for e in errors]

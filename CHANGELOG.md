@@ -52,6 +52,48 @@ locally by default.
 
 ### Added
 
+- **Search: semantic and hybrid modes, filters in the search box, saved and
+  recent searches on the server, a top-bar preview, Similar failures, search
+  usage** (wave W12, SRCH-01, SRCH-03, SRCH-04, SRCH-05; branch
+  `feat/df-search-20261024`). On `/search` the Tests scope offers **Hybrid**
+  and **Semantic** (choosing one on another scope switches to Tests and says
+  so); when the semantic index cannot answer, keyword results are shown with
+  the reason ("Semantic index unavailable — showing keyword results.", or that
+  a filters-only query needs words). The search box understands `status:`,
+  `suite:`, `branch:`, `env:`, `type:`, `since:`, `release:` and `owner:`,
+  shows each filter as a removable chip and says when a key is unknown, a value
+  is invalid or a kind of result cannot apply a filter (the **Syntax** table
+  lists the keys). Saved searches live on the server (no three-slot cap; share
+  one within a pinned project; a browser's saved searches are moved there once)
+  and recent searches follow the user (the last 20, kept 30 days). Typing two
+  or more characters in the top bar previews up to five distinct matches. A
+  failed or broken test result has a **Similar failures** tab, and a QA lead
+  can **Re-index now** from the Searchable data card. QA leads see today's
+  searches, zero-result rate and p95 latency; each search is recorded without
+  its text (a keyed hash, lengths and counts, deleted after 30 days, and listed
+  on the retention preview). Tests: `tests/test_search_query_parser.py`,
+  `tests/test_global_search_filters.py`, `tests/test_search_semantic_fallback.py`,
+  `tests/test_search_recents.py`, `tests/test_search_suggestions.py`,
+  `tests/test_search_usage_service.py`, `tests/test_search_after_response_writes.py`,
+  `tests/test_search_query_text_never_logged.py`, five `*_postgres.py`, the
+  `SearchPage` / typeahead / Similar failures vitest files and seven
+  `tests/ci-e2e/search-*` / `settings-embedding` specs.
+- **The embedding model and the Chroma collection prefix take effect**
+  (wave W12, SRCH-02; branch `feat/df-search-20261024`). Settings → AI →
+  Embedding says which embedder is in use and which is configured; choosing
+  another (the bundled MiniLM, or a local Ollama model — OpenAI is refused while
+  offline mode is on) re-embeds every vector collection into new collections
+  on the AI worker while search keeps the previous ones, then switches and
+  drops the old ones ten minutes later; a failed or stalled re-embed says so and
+  **Re-embed now** retries it. Settings → Storage's ChromaDB "Collection" field
+  is now a **Collection prefix** (up to 8 lower-case letters, digits or `-`)
+  applied to every collection name. Nothing changes on upgrade: every install
+  keeps the bundled MiniLM and today's collection names until an admin changes
+  one of these settings. Tests: `tests/test_embedding_function.py`,
+  `tests/test_chroma_collection_naming.py`, `tests/test_chroma_collection_registry.py`,
+  `tests/test_embedding_index_state.py`, `tests/test_embedding_generation_task.py`,
+  `tests/test_settings_ai_embedding_change.py`,
+  `tests/integration/test_embedding_generation_postgres.py`.
 - **Release planning: copy phases, draft phases from a PRD, the schedule as
   ICS / CSV and a calendar, a release-health trend, attribution rules** (wave
   W11, REL-05, REL-07, REL-06, REL-03, REL-09; branch
@@ -423,6 +465,15 @@ locally by default.
 
 ### Changed
 
+- **A search containing a known `key:value` now filters** (wave W12, SRCH-04).
+  `status:failed checkout` used to search for that text; it now returns failed
+  results matching "checkout" — on `/search`, on `GET /api/v1/search/global` and
+  `GET /api/v1/search`, and in the MCP search tools. Unknown keys are still
+  searched as text and reported in the response's new `parsed` block.
+  `GET /api/v1/search` and `GET /api/v1/search/similar/{id}` now say why a
+  semantic search fell back (`fallback_reason`) and whether the semantic index
+  answered (`semantic_status`); Similar failures lists failed and broken results
+  only.
 - **The gate policy's pass-rate bands set the target everywhere, and the
   pages say which policy decided** (wave W11, GATE-04, GATE-02, GATE-08a,
   GATE-08b; behaviour change). Trends draws the policy's GO line (95% under the

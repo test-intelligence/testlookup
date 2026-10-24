@@ -39,6 +39,7 @@ __all__ = [
     "local_only_async_client",
     "local_only_sync_client",
     "pin_ollama_clients",
+    "pin_ollama_sync_client",
     "resolve_local_addresses",
 ]
 
@@ -357,3 +358,20 @@ def pin_ollama_clients(model: Any) -> Any:
     sync_holder._client = _rebuilt(sync_inner, local_only_sync_client)
     async_holder._client = _rebuilt(async_inner, local_only_async_client)
     return model
+
+
+def pin_ollama_sync_client(holder: Any) -> Any:
+    """Pin the ONE sync ``httpx`` client inside an ``ollama.Client`` (W12 SRCH-02).
+
+    ChromaDB's ``OllamaEmbeddingFunction`` holds a single sync ``ollama.Client``
+    (``ef._client``), not the sync + async pair :func:`pin_ollama_clients`
+    requires, so that helper refuses it. Same rebuild, sync half only: the
+    client keeps its origin, timeout and headers and gets the local-only
+    transport. Raises when the attribute is missing -- an unpinned offline
+    client must not be returned as a pinned one.
+    """
+    inner = getattr(holder, "_client", None)
+    if holder is None or not isinstance(inner, httpx.Client):
+        raise RuntimeError("ollama client internals changed; offline connection pinning unavailable")
+    holder._client = _rebuilt(inner, local_only_sync_client)
+    return holder

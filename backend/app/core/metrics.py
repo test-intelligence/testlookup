@@ -427,6 +427,39 @@ search_index_documents = Gauge(
     multiprocess_mode="mostrecent",
 )
 
+# ── Search (W12 SRCH-01 / -02 / -03 / -05) ──────────────────────────────────
+# No label value is ever query text: every label below is a closed vocabulary.
+
+global_search_duration_seconds = Histogram(
+    "testlookup_global_search_duration_seconds",
+    "Global search latency (GET /search/global)",
+    ["scope"],  # all | one -- observed by routers/search.py on every call
+)
+
+global_search_zero_results_total = Counter(
+    "testlookup_global_search_zero_results_total",
+    "Global searches with words that found nothing (an exact zero)",
+    ["scope"],  # all | one -- routers/search.py, when total == 0 and the counts are exact
+)
+
+search_after_response_writes_total = Counter(
+    "testlookup_search_after_response_writes_total",
+    "Writes a search schedules after its response",
+    ["store", "outcome"],  # store: recent | usage; outcome: written | failed -- routers/search.py
+)
+
+embedding_generation_builds_total = Counter(
+    "testlookup_embedding_generation_builds_total",
+    "Embedding generation builds by outcome",
+    ["outcome"],  # switched | failed | superseded -- worker/tasks.py rebuild_embedding_generation
+)
+
+embedding_generation_documents_total = Counter(
+    "testlookup_embedding_generation_documents_total",
+    "Documents written into a building embedding generation",
+    ["family"],  # COLLECTION_FAMILIES[*].base -- worker/tasks.py rebuild_embedding_generation
+)
+
 # ── Defect Promotion (Epic 11) ───────────────────────────────────────────────
 
 defect_promotions_total = Counter(

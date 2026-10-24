@@ -35,7 +35,7 @@ async def test_similar_failures_authorizes_and_scopes_to_source_project(monkeypa
     )
     resolve_scope = AsyncMock(return_value=(project_id, {project_id}))
     semantic = AsyncMock(
-        return_value=([{"test_case_id": str(uuid.uuid4())}], 1, 1)
+        return_value=([{"test_case_id": str(uuid.uuid4()), "status": "FAILED"}], 1, 1)
     )
     monkeypatch.setattr(search, "resolve_project_scope", resolve_scope)
     monkeypatch.setattr("app.services.semantic_search.semantic_search", semantic)

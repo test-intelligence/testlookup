@@ -107,6 +107,15 @@ _LLM_TIMEOUT = (
     "the hypothesis LLM call times out on this machine (TimeoutError); "
     "flagged as local-only before any change in the session that found it"
 )
+_FASTAPI_YIELD_EXIT = (
+    "local FastAPI 0.136 exits a yield dependency (get_db) AFTER the response's "
+    "background tasks; CI's pin (0.115.5) exits it first, which the W12 after-response "
+    "search write relies on -- the test is the guard for a future FastAPI upgrade"
+)
+_NO_LOCAL_CHROMADB = (
+    "the hook's Python has no chromadb (CI installs requirements.txt's 1.5.9); the "
+    "worker task under test imports app.db.chroma at run time"
+)
 
 # Tests known to fail on a developer machine and pass in CI, with the reason.
 # NOT a place to park flaky tests — each entry needs evidence CI is green.
@@ -120,6 +129,30 @@ KNOWN_LOCAL_FAILURES: dict[str, str] = {
     "tests/regression/test_offline_embedder_guard.py": (
         "same ChromaDB dependency as above"
     ),
+    # W12 (2026-10-24): individual tests, green under the py3.11 venv (CI's pins); local-only for the
+    # reasons given (each file's other tests run locally).
+    **{
+        f"tests/test_search_after_response_writes.py::{name}": _FASTAPI_YIELD_EXIT
+        for name in ("test_a_recorded_search_never_holds_two_connections",)
+    },
+    **{
+        f"tests/test_embedding_generation_task.py::{name}": _NO_LOCAL_CHROMADB
+        for name in (
+            "test_a_build_with_another_embedder_re_embeds_the_documents",
+            "test_a_build_with_the_same_embedder_copies_vectors_and_switches",
+            "test_a_chroma_fault_keeps_the_generation_listed_and_retries",
+            "test_a_failure_leaves_the_active_generation_and_records_a_sentence",
+            "test_a_generation_asked_for_again_during_the_retirement_keeps_its_collections",
+            "test_a_handed_back_lease_never_blocks_the_next_slice_whatever_the_clocks",
+            "test_a_live_lease_of_another_owner_answers_busy",
+            "test_a_retiring_generation_wanted_again_is_never_dropped",
+            "test_a_stale_fence_is_superseded_and_touches_nothing",
+            "test_each_postgres_slice_is_bounded_by_the_slice_budget",
+            "test_retire_catches_up_an_old_active_but_never_a_replaced_target",
+            "test_retire_waits_for_the_grace_period_and_re_enqueues_itself",
+            "test_the_deadline_hands_the_lease_back_and_re_enqueues_under_its_fence",
+        )
+    },
     # The entries below are individual TESTS, not files -- each file also holds
     # tests that pass locally and must stay covered. Each was confirmed failing
     # on a PRISTINE origin/main checkout with no local change and no mutation
@@ -473,6 +506,14 @@ KNOWN_MYPY_SKEW: dict[str, tuple[int, str]] = {
     # CI's ratchet passed (run 38467961639).
     "app/services/intelligence_snapshot_service.py": (2, (
         "CI 2, local 0 on main's unchanged file (run 38467961639 vs local ratchet)."
+    )),
+    # Found when W12 (SRCH-02) touched it (2026-10-24): CI's ratchet passed with
+    # the baseline's 1 on PR #278 (run 40074018078, the file unchanged since), and
+    # the py3.11 venv's --check-stale on the W12 branch also counts 1; the hook's
+    # Python 3.12 install (older SQLAlchemy / pydantic) reads 0.
+    "app/services/knowledge_chunking_service.py": (1, (
+        "CI 1, local 0 (run 40074018078; .venv311 --check-stale on the W12 branch "
+        "agrees with CI)."
     )),
 }
 

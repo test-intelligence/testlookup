@@ -3041,6 +3041,29 @@ _Constraints:_ Index(`ix_github_integrations_project`, `project_id`)
 
 _Constraints:_ Index(`ix_sv_user`, `user_id`); Index(`ix_sv_project`, `project_id`)
 
+#### `search_query_events`  <sub>(model `SearchQueryEvent`)</sub>
+
+One row per search the /search page ran with words (`record=true`, written after the response; W12 SRCH-05, migration 0227). **No query text and no user id**: `q_hash` is an HMAC-SHA256 keyed from `APP_SECRET_KEY` over the normalised query (`search_usage_service.query_hash`). Kept 30 days (a fixed window): deleted nightly by `purge_search_usage_events` and, per project, by the retention purge (`search_usage_rows`).
+
+| Column | Type | Key | Flags | References |
+|---|---|---|---|---|
+| `id` | `UUID` | PK | NN def |  |
+| `project_id` | `UUID` | FK |  | `projects.id` |
+| `q_hash` | `String(64)` |  | NN |  |
+| `q_length` | `SmallInteger` |  | NN |  |
+| `word_count` | `SmallInteger` |  | NN def |  |
+| `filter_count` | `SmallInteger` |  | NN def |  |
+| `entity_scope` | `String(20)` |  | NN |  |
+| `mode_requested` | `String(10)` |  | NN |  |
+| `mode_used` | `String(10)` |  | NN |  |
+| `fallback_reason` | `String(30)` |  |  |  |
+| `result_count` | `Integer` |  | NN |  |
+| `counts_exact` | `Boolean` |  | NN def |  |
+| `latency_ms` | `Integer` |  | NN |  |
+| `created_at` | `DateTime` |  | NN def |  |
+
+_Constraints:_ Index(`ix_search_query_events_project_created`, `project_id`, `created_at DESC`); Index(`ix_search_query_events_created`, `created_at`); CHECK `ck_search_query_events_nonnegative` (`q_length`, `word_count`, `filter_count`, `result_count`, `latency_ms` all `>= 0`); `project_id` ON DELETE CASCADE
+
 #### `digest_subscriptions`  <sub>(model `DigestSubscription`)</sub>
 
 | Column | Type | Key | Flags | References |
@@ -3300,6 +3323,10 @@ The older per-domain sections omitted these tables. Their full field definitions
 | `run_tombstones` | `RunTombstone` | [Fields and constraints](../docs/reference/data-dictionary.md#run_tombstones) |
 | `deletion_jobs` | `DeletionJob` | [Fields and constraints](../docs/reference/data-dictionary.md#deletion_jobs) |
 | `project_activity_events` | `ProjectActivityEvent` | [Fields and constraints](../docs/reference/data-dictionary.md#project_activity_events) |
+| `suite_executions` | `SuiteExecution` | [Fields and constraints](../docs/reference/data-dictionary.md#suite_executions) |
+| `ai_analysis_versions` | `AIAnalysisVersion` | [Fields and constraints](../docs/reference/data-dictionary.md#ai_analysis_versions) |
+| `timeline_notes` | `TimelineNote` | [Fields and constraints](../docs/reference/data-dictionary.md#timeline_notes) |
+| `classification_hints` | `ClassificationHint` | [Fields and constraints](../docs/reference/data-dictionary.md#classification_hints) |
 
 ## Systemic cluster membership key (migration 0193, VIZ-207)
 
@@ -3320,3 +3347,21 @@ The older per-domain sections omitted these tables. Their full field definitions
   `/api/v1/analytics/systemic-clusters` then returns the key computed from the full member set.
 - **Rollback**: `downgrade()` drops the index and the column; code before 0193 ignores the column.
 - Field-level entry: the generated [data dictionary](../docs/reference/data-dictionary.md#systemic_flake_cluster).
+
+## Search: embedding generations and usage rows (migrations 0226 / 0227, W12)
+
+`semantic_reindex_jobs` gains two nullable columns (migration 0226, SRCH-02):
+
+- **`collection` `VARCHAR(63)`**: the physical ChromaDB collection the job writes (63 = Chroma's name limit).
+- **`embedder_key` `VARCHAR(200)`**: the embedder key of the generation the job builds — `default` (Chroma's
+  bundled MiniLM), `ollama:<model>` or `openai:<model>`.
+- **Backfill**: every row older than 0226 is a legacy-generation rebuild of `test_case_search` (scope `global` /
+  `project:<id>`), so it reads `embedder_key = 'default'`, `collection = 'test_case_search'`. A build of a NEW
+  generation reuses the same keyset job under `scope_key = 'generation:<tag>'` and sets both when it claims the
+  row. No index (one row per scope) and no constraint change (`state_version = 1` holds).
+- **Rollback**: `downgrade()` drops both columns; a `generation:<tag>` row stays valid for older code, which
+  never selects that scope.
+
+`search_query_events` (migration 0227, SRCH-05) is described above, beside `saved_views`: no query text, no user
+id, a keyed hash, a fixed 30-day window. Its two indexes are plain builds on the table the migration creates.
+- Field-level entries: the generated [data dictionary](../docs/reference/data-dictionary.md#semantic_reindex_jobs).

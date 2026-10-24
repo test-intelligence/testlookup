@@ -467,6 +467,16 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Deep Investigation Enabled Source",
       "type": "string"
     },
+    "embedding_index": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/EmbeddingIndexRead"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "embedding_model": {
       "title": "Embedding Model",
       "type": "string"
@@ -12619,6 +12629,204 @@ These are the full generated JSON Schema definitions, including required fields,
     "window_days"
   ],
   "title": "EmailTrendsResponse",
+  "type": "object"
+}
+```
+
+## EmbeddingFamilyProgress
+
+```json
+{
+  "properties": {
+    "family": {
+      "title": "Family",
+      "type": "string"
+    },
+    "processed": {
+      "default": 0,
+      "title": "Processed",
+      "type": "integer"
+    },
+    "state": {
+      "title": "State",
+      "type": "string"
+    },
+    "total": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Total"
+    }
+  },
+  "required": [
+    "family",
+    "state"
+  ],
+  "title": "EmbeddingFamilyProgress",
+  "type": "object"
+}
+```
+
+## EmbeddingGenerationRead
+
+```json
+{
+  "properties": {
+    "key": {
+      "title": "Key",
+      "type": "string"
+    },
+    "model": {
+      "title": "Model",
+      "type": "string"
+    },
+    "prefix": {
+      "title": "Prefix",
+      "type": "string"
+    },
+    "provider": {
+      "title": "Provider",
+      "type": "string"
+    },
+    "tag": {
+      "title": "Tag",
+      "type": "string"
+    }
+  },
+  "required": [
+    "provider",
+    "model",
+    "prefix",
+    "key",
+    "tag"
+  ],
+  "title": "EmbeddingGenerationRead",
+  "type": "object"
+}
+```
+
+## EmbeddingIndexRead
+
+```json
+{
+  "properties": {
+    "active": {
+      "$ref": "#/components/schemas/EmbeddingGenerationRead"
+    },
+    "configured": {
+      "$ref": "#/components/schemas/EmbeddingGenerationRead"
+    },
+    "configured_note": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Configured Note"
+    },
+    "families": {
+      "items": {
+        "$ref": "#/components/schemas/EmbeddingFamilyProgress"
+      },
+      "title": "Families",
+      "type": "array"
+    },
+    "in_sync": {
+      "title": "In Sync",
+      "type": "boolean"
+    },
+    "last_error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Last Error"
+    },
+    "processed": {
+      "default": 0,
+      "title": "Processed",
+      "type": "integer"
+    },
+    "requested_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Requested At"
+    },
+    "stalled": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Stalled"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    },
+    "switched_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Switched At"
+    },
+    "target": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/EmbeddingGenerationRead"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "total": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Total"
+    }
+  },
+  "required": [
+    "active",
+    "configured",
+    "in_sync",
+    "status"
+  ],
+  "title": "EmbeddingIndexRead",
   "type": "object"
 }
 ```
@@ -27010,6 +27218,93 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## RecentSearchRead
+
+```json
+{
+  "properties": {
+    "counts_exact": {
+      "default": true,
+      "title": "Counts Exact",
+      "type": "boolean"
+    },
+    "mode": {
+      "title": "Mode",
+      "type": "string"
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Project Id"
+    },
+    "q": {
+      "title": "Q",
+      "type": "string"
+    },
+    "result_count": {
+      "title": "Result Count",
+      "type": "integer"
+    },
+    "scope": {
+      "title": "Scope",
+      "type": "string"
+    },
+    "ts": {
+      "format": "date-time",
+      "title": "Ts",
+      "type": "string"
+    }
+  },
+  "required": [
+    "q",
+    "scope",
+    "mode",
+    "result_count",
+    "ts"
+  ],
+  "title": "RecentSearchRead",
+  "type": "object"
+}
+```
+
+## RecentSearchesResponse
+
+```json
+{
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/RecentSearchRead"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "max": {
+      "title": "Max",
+      "type": "integer"
+    },
+    "retention_days": {
+      "title": "Retention Days",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "items",
+    "max",
+    "retention_days"
+  ],
+  "title": "RecentSearchesResponse",
+  "type": "object"
+}
+```
+
 ## RefreshRequest
 
 ```json
@@ -28733,6 +29028,17 @@ These are the full generated JSON Schema definitions, including required fields,
 {
   "description": "One model the effective configuration depends on.",
   "properties": {
+    "in_use": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "In Use"
+    },
     "name": {
       "title": "Name",
       "type": "string"
@@ -29243,6 +29549,11 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Search Index Documents"
+    },
+    "search_usage_rows": {
+      "default": 0,
+      "title": "Search Usage Rows",
+      "type": "integer"
     },
     "test_cases": {
       "title": "Test Cases",
@@ -33123,7 +33434,8 @@ These are the full generated JSON Schema definitions, including required fields,
             "defects",
             "failures",
             "summary_report",
-            "explore"
+            "explore",
+            "search"
           ],
           "type": "string"
         },
@@ -33375,7 +33687,8 @@ These are the full generated JSON Schema definitions, including required fields,
             "defects",
             "failures",
             "summary_report",
-            "explore"
+            "explore",
+            "search"
           ],
           "type": "string"
         },
@@ -33387,6 +33700,194 @@ These are the full generated JSON Schema definitions, including required fields,
     }
   },
   "title": "SavedViewUpdate",
+  "type": "object"
+}
+```
+
+## SearchSuggestion
+
+```json
+{
+  "properties": {
+    "detail": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Detail"
+    },
+    "kind": {
+      "title": "Kind",
+      "type": "string"
+    },
+    "label": {
+      "title": "Label",
+      "type": "string"
+    },
+    "q": {
+      "title": "Q",
+      "type": "string"
+    },
+    "scope": {
+      "title": "Scope",
+      "type": "string"
+    }
+  },
+  "required": [
+    "kind",
+    "label",
+    "q",
+    "scope"
+  ],
+  "title": "SearchSuggestion",
+  "type": "object"
+}
+```
+
+## SearchSuggestionsResponse
+
+```json
+{
+  "properties": {
+    "active_release": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/SearchSuggestion"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "failing_tests": {
+      "items": {
+        "$ref": "#/components/schemas/SearchSuggestion"
+      },
+      "title": "Failing Tests",
+      "type": "array"
+    },
+    "open_defects": {
+      "items": {
+        "$ref": "#/components/schemas/SearchSuggestion"
+      },
+      "title": "Open Defects",
+      "type": "array"
+    },
+    "project_id": {
+      "format": "uuid",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "window_days": {
+      "title": "Window Days",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "project_id",
+    "window_days",
+    "failing_tests",
+    "open_defects"
+  ],
+  "title": "SearchSuggestionsResponse",
+  "type": "object"
+}
+```
+
+## SearchUsageRead
+
+```json
+{
+  "properties": {
+    "days": {
+      "title": "Days",
+      "type": "integer"
+    },
+    "fallback_searches": {
+      "default": 0,
+      "title": "Fallback Searches",
+      "type": "integer"
+    },
+    "measured": {
+      "title": "Measured",
+      "type": "boolean"
+    },
+    "p50_latency_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "P50 Latency Ms"
+    },
+    "p95_latency_ms": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "P95 Latency Ms"
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Project Id"
+    },
+    "retention_days": {
+      "title": "Retention Days",
+      "type": "integer"
+    },
+    "searches": {
+      "title": "Searches",
+      "type": "integer"
+    },
+    "since": {
+      "format": "date-time",
+      "title": "Since",
+      "type": "string"
+    },
+    "zero_result_rate": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Zero Result Rate"
+    },
+    "zero_result_searches": {
+      "title": "Zero Result Searches",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "days",
+    "since",
+    "measured",
+    "searches",
+    "zero_result_searches",
+    "retention_days"
+  ],
+  "title": "SearchUsageRead",
   "type": "object"
 }
 ```
@@ -34303,6 +34804,17 @@ These are the full generated JSON Schema definitions, including required fields,
 {
   "description": "Data & storage configuration returned to the client.\nInfrastructure connection details are masked to prevent credential/topology disclosure.",
   "properties": {
+    "active_collection_prefix": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Active Collection Prefix"
+    },
     "chroma_collection": {
       "title": "Chroma Collection",
       "type": "string"
@@ -34314,6 +34826,22 @@ These are the full generated JSON Schema definitions, including required fields,
     "chroma_port": {
       "title": "Chroma Port",
       "type": "integer"
+    },
+    "collection_prefix": {
+      "default": "",
+      "title": "Collection Prefix",
+      "type": "string"
+    },
+    "collection_prefix_note": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Collection Prefix Note"
     },
     "minio_bucket_name": {
       "title": "Minio Bucket Name",
@@ -34371,7 +34899,7 @@ These are the full generated JSON Schema definitions, including required fields,
       "anyOf": [
         {
           "maxLength": 255,
-          "minLength": 1,
+          "minLength": 0,
           "type": "string"
         },
         {

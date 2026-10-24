@@ -358,6 +358,7 @@ describe('RetentionPage', () => {
         analysis_cache_entries: null,
         search_index_documents: null,
         ai_history_versions: 3,
+        search_usage_rows: 0,
       },
       unmeasured: ['analysis_cache_entries', 'search_index_documents'],
     })
@@ -396,6 +397,7 @@ describe('RetentionPage', () => {
         analysis_cache_entries: 0,
         search_index_documents: 0,
         ai_history_versions: 0,
+        search_usage_rows: 0,
       },
       unmeasured: [],
     })
@@ -710,6 +712,45 @@ describe('RetentionPage', () => {
     expect((screen.getByText('AI history versions').closest('tr') as HTMLElement).textContent).toBe(
       'AI history versionsnot measured',
     )
+  })
+
+  it('W12 SRCH-05: the preview lists the search usage rows, and "not measured" from an older server', async () => {
+    const PREVIEW = {
+      cutoffs: {
+        raw_events: '2026-05-04T00:00:00Z',
+        runs: '2025-08-02T00:00:00Z',
+        artifacts: '2026-02-03T00:00:00Z',
+        audit: '2019-08-05T00:00:00Z',
+      },
+      candidates: {
+        runs: 1, test_cases: 2, mongo_docs: {}, minio_objects: 3, event_archive_rows: 4, audit_rows: 5,
+        provenance_rows: 6, compliance_packs_expired: 7, evidence_artifact_rows: 8, memory_entries_expired: 9,
+        analysis_cache_entries: 10, search_index_documents: 11, ai_history_versions: 12, search_usage_rows: 1234,
+      },
+      unmeasured: [],
+    }
+    const label = 'Search usage rows (kept 30 days)'
+    mockPreview.mockResolvedValue(PREVIEW)
+    const first = await renderPage()
+    await waitFor(() => expect(screen.getByText('Preview purge')).toBeTruthy())
+    await act(async () => {
+      fireEvent.click(screen.getByText('Preview purge'))
+    })
+    await waitFor(() => expect(screen.getByText(label)).toBeTruthy())
+    const rows = Array.from(first.container.querySelectorAll('tbody tr')).map(tr => tr.textContent)
+    expect(rows.indexOf(`${label}1,234`)).toBe(rows.indexOf('AI history versions12') + 1)
+    expect(screen.queryByText('not measured')).toBeNull()
+    first.unmount()
+
+    const { search_usage_rows: _dropped, ...older } = PREVIEW.candidates
+    mockPreview.mockResolvedValue({ ...PREVIEW, candidates: older })
+    await renderPage()
+    await waitFor(() => expect(screen.getByText('Preview purge')).toBeTruthy())
+    await act(async () => {
+      fireEvent.click(screen.getByText('Preview purge'))
+    })
+    await waitFor(() => expect(screen.getByText(label)).toBeTruthy())
+    expect((screen.getByText(label).closest('tr') as HTMLElement).textContent).toBe(`${label}not measured`)
   })
 
   /**

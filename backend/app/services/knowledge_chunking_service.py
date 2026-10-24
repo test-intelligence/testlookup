@@ -230,11 +230,18 @@ async def _get_chroma_client():
 
 
 async def _get_or_create_knowledge_collection():
+    from app.services import chroma_collections
+
+    # W12: the ACTIVE generation's name (``knowledge_chunks`` on the legacy
+    # generation) and embedding function (none passed on the legacy generation).
+    # rag_retrieval_service reads through this helper too.
+    target = await chroma_collections.resolve(_COLLECTION_NAME)
     client = await _get_chroma_client()
     return await asyncio.to_thread(
         client.get_or_create_collection,
-        _COLLECTION_NAME,
+        target.name,
         metadata={"hnsw:space": "cosine"},
+        **target.create_kwargs(),
     )
 
 

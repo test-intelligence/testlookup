@@ -41,14 +41,23 @@ Phase 3 / code-reviewer gate (c) — ACCEPTED DEVIATIONS (documented, not silent
   on and no local model is present, that raises, and the keyword fallback below
   handles it. If a cloud ``embedding_function`` is ever wired in it MUST be
   gated on ``settings.AI_OFFLINE_MODE`` as well.
+
+  W12 SRCH-02: it is, now. The collection's name and embedding function come
+  from ``services/chroma_collections.resolve`` (the ACTIVE generation). For the
+  legacy generation -- every install until an admin changes the embedder or the
+  Collection prefix -- the name is ``test_case_search`` and NO
+  ``embedding_function`` is passed, exactly as above. An Ollama embedder passes
+  the provider policy before it is built and is pinned on-box offline; an
+  OpenAI embedder is refused while offline (``services/embedding_function``).
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
@@ -63,6 +72,9 @@ from app.models.postgres import (
     TestStep,
 )
 
+if TYPE_CHECKING:
+    from app.services.chroma_collections import Generation
+
 logger = logging.getLogger("services.semantic_search")
 
 _COLLECTION_NAME = "test_case_search"
@@ -76,6 +88,10 @@ class _FullReindexBusy(RuntimeError):
 
 class _FullReindexOwnershipLost(RuntimeError):
     pass
+
+
+class GenerationIndexBusy(_FullReindexBusy):
+    """Another invocation holds the lease of this generation's keyset job."""
 
 
 def _step_text_subq():
@@ -125,10 +141,17 @@ async def _get_or_create_collection():
     back to keyword. Do NOT swap in a cloud ``embedding_function`` without an
     ``AI_OFFLINE_MODE`` gate either.
     """
+    from app.services import chroma_collections
+
+    # W12: the ACTIVE generation's name and embedding function. For the legacy
+    # generation this is ``_COLLECTION_NAME`` with no kwargs -- the call below
+    # is byte-identical to the one before W12.
+    target = await chroma_collections.resolve(_COLLECTION_NAME)
     client = await _get_chroma_client()
     return await asyncio.to_thread(
         client.get_or_create_collection,
-        _COLLECTION_NAME,
+        target.name,
+        **target.create_kwargs(),
     )
 
 
@@ -190,18 +213,26 @@ async def rebuild_test_case_search_for_m11(
     *,
     batch_size: int = 200,
 ) -> int:
-    """Replace the derived search index and boundedly rebuild sanitized rows."""
+    """Replace the derived search index and boundedly rebuild sanitized rows.
+
+    Rebuilds the ACTIVE generation's collection (``test_case_search`` on the
+    legacy generation).
+    """
+    from app.services import chroma_collections
+
+    target = await chroma_collections.resolve(_COLLECTION_NAME)
     client = await _get_chroma_client()
     existing = await asyncio.to_thread(client.list_collections)
     existing_names = {
         item.name if hasattr(item, "name") else str(item)
         for item in existing
     }
-    if _COLLECTION_NAME in existing_names:
-        await asyncio.to_thread(client.delete_collection, name=_COLLECTION_NAME)
+    if target.name in existing_names:
+        await asyncio.to_thread(client.delete_collection, name=target.name)
     collection = await asyncio.to_thread(
         client.get_or_create_collection,
-        _COLLECTION_NAME,
+        target.name,
+        **target.create_kwargs(),
     )
     total = 0
     last_id = None
@@ -297,22 +328,7 @@ async def index_test_cases(db: AsyncSession, project_id: Optional[str] = None) -
         logger.warning("ChromaDB unavailable — semantic indexing skipped: %s", exc)
         return None
 
-    base_query = select(
-        TestCase.id,
-        TestCase.test_name,
-        TestCase.suite_name,
-        TestCase.error_message,
-        TestCase.status,
-        TestCase.test_run_id,
-        TestRun.project_id,
-        TestCase.created_at,
-        _step_text_subq(),
-    ).join(TestRun, TestRun.id == TestCase.test_run_id).join(
-        Project, Project.id == TestRun.project_id
-    ).where(Project.is_active.is_(True))
-
-    if canonical_project_id:
-        base_query = base_query.where(TestRun.project_id == canonical_project_id)
+    base_query = _full_index_query(canonical_project_id)
 
     try:
         state = await _claim_full_reindex_job(
@@ -328,32 +344,8 @@ async def index_test_cases(db: AsyncSession, project_id: Optional[str] = None) -
         return 0
 
     count = int(state["processed_count"])
-    batch_size = max(1, settings.SEARCH_INDEX_BATCH_SIZE)
     try:
-        if state["status"] == "running":
-            while True:
-                await _renew_full_reindex_lease(db, state)
-                q = base_query.where(
-                    _at_or_before_keyset(
-                        state["high_water_created_at"], state["high_water_id"]
-                    )
-                )
-                if state["cursor_id"] is not None:
-                    q = q.where(
-                        _after_keyset(state["cursor_created_at"], state["cursor_id"])
-                    )
-                q = q.order_by(TestCase.created_at.asc(), TestCase.id.asc()).limit(
-                    batch_size
-                )
-                rows = list((await db.execute(q)).all())
-                if not rows:
-                    await _mark_full_reindex_finalizing(db, state)
-                    break
-                page_count = await _upsert_rows_to_collection(collection, rows)
-                count += page_count
-                await _checkpoint_full_reindex_page(
-                    db, state, rows[-1], count
-                )
+        count, _finished = await _index_keyset_pages(db, state, base_query, collection)
     except Exception as exc:
         # Embeddings are computed at UPSERT, not at collection creation, so an
         # unavailable embedder surfaces here — outside the guard above. Verified
@@ -390,6 +382,193 @@ async def index_test_cases(db: AsyncSession, project_id: Optional[str] = None) -
     logger.info("Full-indexed %d test cases into ChromaDB collection '%s'", count, _COLLECTION_NAME)
     await _publish_index_size(collection)
     return count
+
+
+def _full_index_query(canonical_project_id: Optional[str]):
+    """The rows a full rebuild indexes: every test result of an ACTIVE project."""
+    base_query = select(
+        TestCase.id,
+        TestCase.test_name,
+        TestCase.suite_name,
+        TestCase.error_message,
+        TestCase.status,
+        TestCase.test_run_id,
+        TestRun.project_id,
+        TestCase.created_at,
+        _step_text_subq(),
+    ).join(TestRun, TestRun.id == TestCase.test_run_id).join(
+        Project, Project.id == TestRun.project_id
+    ).where(Project.is_active.is_(True))
+
+    if canonical_project_id:
+        base_query = base_query.where(TestRun.project_id == canonical_project_id)
+    return base_query
+
+
+async def _index_keyset_pages(
+    db,
+    state: dict,
+    base_query,
+    collection,
+    *,
+    deadline: Optional[float] = None,
+) -> tuple[int, bool]:
+    """The fenced keyset loop shared by ``index_test_cases`` and the generation build.
+
+    Per page: renew the lease, read up to ``SEARCH_INDEX_BATCH_SIZE`` rows at or
+    before the high-water mark after the checkpoint, upsert them, checkpoint
+    (each checkpoint is committed by ``_guarded_job_update``). With no rows
+    left the job turns ``finalizing`` and the answer is ``(count, True)``.
+    With a ``deadline`` (``time.monotonic()``) the loop returns
+    ``(count, False)`` after the first checkpoint past it; without one (the
+    reindex task) it runs to the end exactly as before W12.
+    """
+    count = int(state["processed_count"])
+    batch_size = max(1, settings.SEARCH_INDEX_BATCH_SIZE)
+    if state["status"] != "running":
+        return count, True
+    while True:
+        await _renew_full_reindex_lease(db, state)
+        q = base_query.where(
+            _at_or_before_keyset(
+                state["high_water_created_at"], state["high_water_id"]
+            )
+        )
+        if state["cursor_id"] is not None:
+            q = q.where(
+                _after_keyset(state["cursor_created_at"], state["cursor_id"])
+            )
+        q = q.order_by(TestCase.created_at.asc(), TestCase.id.asc()).limit(
+            batch_size
+        )
+        rows = list((await db.execute(q)).all())
+        if not rows:
+            await _mark_full_reindex_finalizing(db, state)
+            return count, True
+        page_count = await _upsert_rows_to_collection(collection, rows)
+        count += page_count
+        await _checkpoint_full_reindex_page(
+            db, state, rows[-1], count
+        )
+        if deadline is not None and time.monotonic() >= deadline:
+            return count, False
+
+
+def generation_scope_key(generation: "Generation") -> str:
+    """The keyset job row a generation build uses (``semantic_reindex_jobs.scope_key``)."""
+    return f"generation:{generation.tag or 'legacy'}"
+
+
+async def build_generation_index(
+    db,
+    generation: "Generation",
+    *,
+    deadline: float,
+) -> tuple[int, bool]:
+    """Build ``generation``'s ``test_case_search`` collection from PostgreSQL, one slice.
+
+    The SAME fenced keyset job as ``index_test_cases`` (one row per scope),
+    under ``scope_key = "generation:<tag>"`` with ``collection`` /
+    ``embedder_key`` saying what it builds; every ACTIVE project's results (a
+    new generation sheds the deleted projects' leftovers). Its checkpoints are
+    committed by the two allow-listed commits of this module; the incremental
+    cursor is NOT touched here (the switch resets it). Returns the job's
+    ``(processed so far, finished)``. Raises :class:`GenerationIndexBusy` when
+    another invocation holds the job's live lease, and re-raises any other
+    failure after releasing the lease (progress is kept).
+    """
+    from app.services import chroma_collections
+
+    target = await chroma_collections.resolve(_COLLECTION_NAME, generation=generation)
+    client = await _get_chroma_client()
+    collection = await asyncio.to_thread(
+        client.get_or_create_collection,
+        target.name,
+        **target.create_kwargs(),
+    )
+    base_query = _full_index_query(None)
+    try:
+        state = await _claim_full_reindex_job(
+            db,
+            base_query,
+            None,
+            scope_key=generation_scope_key(generation),
+            collection=target.name,
+            embedder_key=generation.embedder.key,
+        )
+    except _FullReindexBusy as exc:
+        raise GenerationIndexBusy(generation_scope_key(generation)) from exc
+    if state is None:
+        return 0, True  # no test result in any active project: nothing to build
+    try:
+        count, finished = await _index_keyset_pages(
+            db, state, base_query, collection, deadline=deadline
+        )
+        if finished:
+            await _complete_full_reindex_job(db, state)
+        else:
+            # Hand the slice's lease back so the next invocation resumes at
+            # once from the committed checkpoint.
+            await _guarded_job_update(
+                db,
+                state,
+                expected_status=state["status"],
+                values={"lease_expires_at": datetime.now(timezone.utc)},
+            )
+    except Exception as exc:
+        await _release_full_reindex_after_error(db, state, exc)
+        raise
+    return count, finished
+
+
+async def count_indexable_test_cases(db) -> int:
+    """How many test results a generation build of ``test_case_search`` indexes (ONE statement)."""
+    query = (
+        select(func.count())
+        .select_from(TestCase)
+        .join(TestRun, TestRun.id == TestCase.test_run_id)
+        .join(Project, Project.id == TestRun.project_id)
+        .where(Project.is_active.is_(True))
+    )
+    return int((await db.execute(query)).scalar() or 0)
+
+
+async def generation_high_water(db, generation: "Generation") -> Optional[str]:
+    """The finished build's high-water test-case id (what the incremental cursor resumes after)."""
+    result = await db.execute(
+        select(SemanticReindexJob.high_water_id).where(
+            SemanticReindexJob.scope_key == generation_scope_key(generation)
+        )
+    )
+    value = result.scalar_one_or_none()
+    return str(value) if value is not None else None
+
+
+async def forget_generation_job(db, generation: "Generation") -> None:
+    """Stage the DELETE of a dropped generation's keyset job row (the caller commits).
+
+    Its checkpoint describes collections that no longer exist: a later build
+    of the same generation must start from the first row, never resume into
+    an empty collection past a cursor (which would leave every row before it
+    out of the index it then switches to).
+    """
+    from sqlalchemy import delete
+
+    await db.execute(
+        delete(SemanticReindexJob).where(
+            SemanticReindexJob.scope_key == generation_scope_key(generation)
+        )
+    )
+
+
+def reset_incremental_cursor(high_water_id: str) -> bool:
+    """Point the GLOBAL incremental cursor at ``high_water_id`` (after a generation switch).
+
+    Everything ingested after the build's high-water mark was indexed into the
+    OLD generation; from here the incremental indexer re-indexes it into the
+    new active one.
+    """
+    return _update_cursor_from_values(str(high_water_id), None)
 
 
 def _full_reindex_scope(project_id: Optional[str]) -> str:
@@ -433,9 +612,22 @@ def _lease_is_live(expires_at: Optional[datetime], now: datetime) -> bool:
     return expires_at > now
 
 
-async def _claim_full_reindex_job(db, base_query, project_id):
-    """Create or lease one durable checkpoint, fencing every previous owner."""
-    scope_key = _full_reindex_scope(project_id)
+async def _claim_full_reindex_job(
+    db,
+    base_query,
+    project_id,
+    *,
+    scope_key: Optional[str] = None,
+    collection: Optional[str] = None,
+    embedder_key: Optional[str] = None,
+):
+    """Create or lease one durable checkpoint, fencing every previous owner.
+
+    ``scope_key`` / ``collection`` / ``embedder_key`` (W12) name a generation
+    build's job (``"generation:<tag>"``); left out, the row is the global or
+    project rebuild exactly as before and the two columns stay unset.
+    """
+    scope_key = scope_key or _full_reindex_scope(project_id)
     project_uuid = uuid.UUID(str(project_id)) if project_id else None
     owner = uuid.uuid4()
 
@@ -476,8 +668,14 @@ async def _claim_full_reindex_job(db, base_query, project_id):
                         lease_owner=owner,
                         lease_expires_at=now + _FULL_REINDEX_LEASE_DURATION,
                     )
+                    if collection is not None:
+                        job.collection = collection
+                        job.embedder_key = embedder_key
                     db.add(job)
                 else:
+                    if collection is not None:
+                        job.collection = collection
+                        job.embedder_key = embedder_key
                     job.job_id = uuid.uuid4()
                     job.state_version = _FULL_REINDEX_STATE_VERSION
                     job.status = "running"
@@ -790,9 +988,62 @@ def _chroma_unreachable(exc: BaseException) -> bool:
     return False
 
 
+def classify_chroma_error(exc: BaseException) -> str:
+    """``not_configured`` when nothing answers at the ChromaDB address, else ``unavailable``.
+
+    The vocabulary of ``/search/similar``'s ``semantic_status`` (W12 SRCH-01).
+    Reads the exception's type and chain only: the message is never returned.
+    """
+    return "not_configured" if _chroma_unreachable(exc) else "unavailable"
+
+
+async def _generation_status_fields() -> dict:
+    """The five W12 index-status keys (collection, generation, embedder,
+    embedder_available, reembed). Never raises; no database statement beyond
+    the cached generation read."""
+    fields: dict = {
+        "collection": None,
+        "generation": None,
+        "embedder": None,
+        "embedder_available": None,
+        "reembed": None,
+    }
+    try:
+        from app.services import chroma_collections
+
+        generations = await chroma_collections.current_generations()
+        active = generations.active
+        fields["generation"] = active.tag
+        fields["embedder"] = {"provider": active.embedder.provider, "model": active.embedder.model}
+        if active.embedder.provider == "default":
+            from app.services.local_embedder_guard import embedder_status
+
+            fields["embedder_available"] = bool(embedder_status().get("available"))
+        target = generations.target
+        if target is not None and generations.status in ("building", "failed"):
+            fields["reembed"] = {
+                "status": generations.status,
+                "target_provider": target.embedder.provider,
+                "target_model": target.embedder.model,
+                "processed": int(generations.processed),
+                "total": generations.total,
+            }
+    except Exception as exc:  # noqa: BLE001 - the status read degrades, never 500s
+        logger.debug("index status: generation fields unavailable (%s)", type(exc).__name__)
+    try:
+        from app.services import chroma_collections
+
+        fields["collection"] = (await chroma_collections.resolve(_COLLECTION_NAME)).name
+    except Exception as exc:  # noqa: BLE001 - None = unreadable
+        logger.debug("index status: collection name unavailable (%s)", type(exc).__name__)
+    return fields
+
+
 async def get_index_status(
     project_id: Optional[str] = None,
     allowed_project_ids: Optional[set] = None,
+    *,
+    with_generation: bool = False,
 ) -> dict:
     """Return ChromaDB health and a scope-filtered document count.
 
@@ -801,8 +1052,21 @@ async def get_index_status(
     not set up here, and keyword search still covers every entity) or
     ``unavailable`` (a server answered but the status read failed). HON-08:
     the /search rail showed both of the last two as every entity "Down".
+
+    ``with_generation=True`` (W12 SRCH-02; what ``GET /search/index-status``
+    asks for) adds, in every branch: ``collection`` (the ACTIVE
+    ``test_case_search`` collection's name; None when unreadable),
+    ``generation`` (the active tag, "" = legacy), ``embedder``
+    (``{"provider", "model"}``), ``embedder_available`` (the bundled
+    embedder's local weights or permission to fetch them; None for Ollama /
+    OpenAI, which are not probed on a read) and ``reembed`` (a build in
+    progress or failed, else None). Opt-in so the three-key answer the
+    internal probes and ``test_search_index_status_not_configured`` pin stays
+    exactly as it was.
     """
-    status = {"status": "unknown", "document_count": 0, "last_indexed_at": None}
+    status: dict = {"status": "unknown", "document_count": 0, "last_indexed_at": None}
+    if with_generation:
+        status.update(await _generation_status_fields())
     try:
         collection = await _get_or_create_collection()
         if allowed_project_ids is None:
@@ -1108,6 +1372,46 @@ async def hybrid_search(
 # ── Retention: purge a project's documents from the search index ────────────
 
 
+async def _purge_inactive_generations(where: dict, *, execute: bool) -> None:
+    """Apply a purge's ``where`` to a BUILDING or RETIRING generation's collection too.
+
+    W12 SRCH-02: so a generation being built (or about to be dropped) never
+    keeps a purged run's vectors. Visits only generations other than the
+    active one (the caller purged that through ``_get_or_create_collection``),
+    and only collections that exist (``get_collection``; missing = nothing to
+    do). With no target and nothing retiring -- every install until an admin
+    changes the embedder or the prefix -- it touches no client at all.
+    Best effort: the caller's count is the ACTIVE index's.
+    """
+    if not execute:
+        return
+    try:
+        from app.services import chroma_collections
+
+        generations = await chroma_collections.current_generations()
+        others = [gen for gen in generations.visit_order() if gen != generations.active]
+        if not others:
+            return
+        client = await _get_chroma_client()
+        for gen in others:
+            try:
+                resolved = await chroma_collections.resolve(_COLLECTION_NAME, generation=gen)
+            except Exception:  # noqa: BLE001 - a delete embeds nothing: open by name
+                resolved = chroma_collections.ResolvedCollection(
+                    name=chroma_collections.collection_name(_COLLECTION_NAME, generation=gen),
+                    embedding_function=None,
+                    generation=gen,
+                )
+            collection = await chroma_collections.open_existing(client, resolved)
+            if collection is not None:
+                await asyncio.to_thread(collection.delete, where=where)
+    except Exception as exc:  # noqa: BLE001 - never blocks the durable-store purge
+        logger.warning(
+            "Search-index purge of a building or retiring generation failed (%s)",
+            type(exc).__name__,
+        )
+
+
 async def purge_run_documents(
     project_id: str, run_id: str, *, execute: bool
 ) -> int | None:
@@ -1133,16 +1437,10 @@ async def purge_run_documents(
     a cross-project collision is not the live worry; a where-clause naming
     only the run would be correct today and silently wrong the moment the
     collection is shared.
-    """
-    try:
-        collection = await _get_or_create_collection()
-    except Exception as exc:
-        # Unreachable is not empty — same stance as the project-wide purge.
-        logger.warning(
-            "Search-index run purge failed for run %s: %s", run_id, exc
-        )
-        return None
 
+    W12: a building or retiring embedding generation is purged too
+    (:func:`_purge_inactive_generations`); the count is the active index's.
+    """
     where = {
         "$and": [
             {"project_id": str(project_id)},
@@ -1150,10 +1448,21 @@ async def purge_run_documents(
         ]
     }
     try:
+        collection = await _get_or_create_collection()
+    except Exception as exc:
+        # Unreachable is not empty — same stance as the project-wide purge.
+        logger.warning(
+            "Search-index run purge failed for run %s: %s", run_id, exc
+        )
+        await _purge_inactive_generations(where, execute=execute)
+        return None
+
+    try:
         payload = await asyncio.to_thread(collection.get, where=where, include=[])
         ids = list(payload.get("ids") or [])
         if execute and ids:
             await asyncio.to_thread(collection.delete, where=where)
+        await _purge_inactive_generations(where, execute=execute)
         return len(ids)
     except Exception as exc:
         # A failure BETWEEN the get and the delete must not return the
@@ -1195,7 +1504,12 @@ async def purge_project_documents(project_id: str, *, execute: bool) -> int | No
     Deleting by metadata filter rather than by id list: the ids are test-case
     UUIDs we would otherwise have to re-derive from Postgres rows that this
     same purge is deleting.
+
+    W12: a building or retiring embedding generation is purged too
+    (:func:`_purge_inactive_generations`); the count is the active index's.
+    What this deletes is NOT changed by W12 (follow-up F-1).
     """
+    where = {"project_id": str(project_id)}
     try:
         collection = await _get_or_create_collection()
     except Exception as exc:
@@ -1209,14 +1523,15 @@ async def purge_project_documents(project_id: str, *, execute: bool) -> int | No
         # function renders the number, and none of them read the log. 0 and
         # "could not look" are opposite findings and now have opposite values.
         logger.warning("Search-index purge failed for project %s: %s", project_id, exc)
+        await _purge_inactive_generations(where, execute=execute)
         return None
 
-    where = {"project_id": str(project_id)}
     try:
         payload = await asyncio.to_thread(collection.get, where=where, include=[])
         ids = list(payload.get("ids") or [])
         if execute and ids:
             await asyncio.to_thread(collection.delete, where=where)
+        await _purge_inactive_generations(where, execute=execute)
         return len(ids)
     except Exception as exc:
         # Same rule as above: unreachable is not empty.

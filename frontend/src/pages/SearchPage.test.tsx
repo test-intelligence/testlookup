@@ -2,13 +2,16 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import {
   MemoryRouter, Route, Routes, useLocation, useNavigate,
 } from 'react-router-dom'
+import { SWRConfig } from 'swr'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import toast from 'react-hot-toast'
 
 import SearchPage from './SearchPage'
+import { SCOPE_SWITCH_LINE } from '@/components/search/searchModel'
 import { expectTemplateHeader } from '@/test/expectTemplateHeader'
 import type { GlobalSearchResponse, GlobalSearchResult, IndexStatus } from '@/types/search'
+import type { SavedView } from '@/services/savedViewsService'
 import { useReleaseStore } from '@/store/releaseStore'
 
 // Per-test mock handles so we can swap return values without re-defining
@@ -16,6 +19,15 @@ import { useReleaseStore } from '@/store/releaseStore'
 const mockGlobalSearch = vi.fn()
 const mockGetIndexStatus = vi.fn()
 const mockGetEntityCounts = vi.fn()
+// W12: the semantic path, the server-side recents, suggestions and usage, the
+// saved searches (saved_views rows) and their writes.
+const mockSearch = vi.fn()
+const mockRecent = vi.fn()
+const mockClearRecent = vi.fn()
+const mockSuggested = vi.fn()
+const mockUsage = vi.fn()
+const mockListSavedViews = vi.fn()
+const mockPostData = vi.fn()
 const { mockProjectState, mockSetActiveProject } = vi.hoisted(() => ({
   mockSetActiveProject: vi.fn(),
   mockProjectState: {
@@ -27,7 +39,7 @@ const { mockProjectState, mockSetActiveProject } = vi.hoisted(() => ({
 
 vi.mock('@/services/searchService', () => ({
   searchService: {
-    search:           vi.fn().mockResolvedValue({ items: [], total: 0 }),
+    search:           (...args: unknown[]) => mockSearch(...args),
     globalSearch:     (...args: unknown[]) => mockGlobalSearch(...args),
     // SearchPage calls ``getIndexStatus`` on mount to render the index health
     // pill; the mock has to expose it or the page throws "is not a function".
@@ -37,7 +49,26 @@ vi.mock('@/services/searchService', () => ({
     getEntityCounts:  (...args: unknown[]) => mockGetEntityCounts(...args),
     reindex:          vi.fn().mockResolvedValue({ task_id: 't', status: 'queued' }),
     similar:          vi.fn().mockResolvedValue({ items: [], total: 0, query: '' }),
+    triggerReindex:   vi.fn().mockResolvedValue({ task_id: 't', status: 'queued' }),
+    findSimilar:      vi.fn().mockResolvedValue({ items: [], total: 0, query: '', semantic_status: 'ok' }),
+    recent:           (...args: unknown[]) => mockRecent(...args),
+    clearRecent:      (...args: unknown[]) => mockClearRecent(...args),
+    suggested:        (...args: unknown[]) => mockSuggested(...args),
+    usage:            (...args: unknown[]) => mockUsage(...args),
   },
+}))
+
+// Saved searches are saved_views rows (page 'search'); the writes go through
+// the shared http helpers with suppressToast.
+vi.mock('@/services/savedViewsService', () => ({
+  listSavedViews: (...args: unknown[]) => mockListSavedViews(...args),
+}))
+vi.mock('@/services/http', () => ({
+  getData: vi.fn(),
+  postData: (...args: unknown[]) => mockPostData(...args),
+  putData: vi.fn(),
+  patchData: vi.fn(),
+  deleteData: vi.fn(),
 }))
 
 vi.mock('@/store/projectStore', () => ({
@@ -89,12 +120,31 @@ function makeResponse(items: GlobalSearchResult[]): GlobalSearchResponse {
   }
 }
 
+function makeSavedView(overrides: Partial<SavedView> = {}): SavedView {
+  return {
+    id: 'sv-1',
+    user_id: 'someone-else',
+    project_id: 'proj-1',
+    name: 'Saved login',
+    description: null,
+    page: 'search',
+    filters: { kind: 'search', q: 'login', scope: 'tests', mode: 'keyword' },
+    is_shared: false,
+    is_default: false,
+    created_at: '2026-10-24T10:00:00Z',
+    updated_at: null,
+    ...overrides,
+  }
+}
+
 function SearchNavigationHarness() {
   const location = useLocation()
   const navigate = useNavigate()
   return (
     <>
-      <button type="button" onClick={() => navigate('/search?q=second&mode=hybrid&scope=runs')}>
+      {/* W12: was `mode=hybrid&scope=runs` (read as keyword before Hybrid
+          existed); a hybrid link now moves the scope to Tests. */}
+      <button type="button" onClick={() => navigate('/search?q=second&mode=keyword&scope=runs')}>
         Navigate to legacy search
       </button>
       <button type="button" onClick={() => navigate(-1)}>Go back</button>
@@ -105,15 +155,19 @@ function SearchNavigationHarness() {
 }
 
 function searchTree(url: string, withNavigationHarness = false) {
+  // A fresh SWR cache per render: the page's reads (index status, recents,
+  // saved searches, suggestions) never carry over from another test.
   return (
-    <MemoryRouter initialEntries={[url]}>
-      <Routes>
-        <Route
-          path="/search"
-          element={withNavigationHarness ? <SearchNavigationHarness /> : <SearchPage />}
-        />
-      </Routes>
-    </MemoryRouter>
+    <SWRConfig value={{ provider: () => new Map() }}>
+      <MemoryRouter initialEntries={[url]}>
+        <Routes>
+          <Route
+            path="/search"
+            element={withNavigationHarness ? <SearchNavigationHarness /> : <SearchPage />}
+          />
+        </Routes>
+      </MemoryRouter>
+    </SWRConfig>
   )
 }
 
@@ -143,6 +197,28 @@ describe('SearchPage', () => {
       items: [], total: 0, query: '', search_type: 'keyword',
       entity_counts: {}, page: 1, size: 25, pages: 0,
     } as unknown as GlobalSearchResponse)
+    // W12 defaults: nothing recent, nothing saved, nothing suggested, no usage.
+    mockSearch.mockReset()
+    mockRecent.mockReset()
+    mockClearRecent.mockReset()
+    mockSuggested.mockReset()
+    mockUsage.mockReset()
+    mockListSavedViews.mockReset()
+    mockPostData.mockReset()
+    mockSearch.mockResolvedValue({
+      items: [], total: 0, page: 1, size: 25, pages: 0, query: '', search_type: 'semantic',
+    })
+    mockRecent.mockResolvedValue({ items: [], max: 20, retention_days: 30 })
+    mockClearRecent.mockResolvedValue(undefined)
+    mockSuggested.mockResolvedValue({
+      project_id: 'proj-1', window_days: 7, failing_tests: [], open_defects: [], active_release: null,
+    })
+    mockUsage.mockResolvedValue({
+      project_id: 'proj-1', days: 1, since: '2026-10-24T00:00:00Z', measured: false,
+      searches: 0, zero_result_searches: 0, retention_days: 30,
+    })
+    mockListSavedViews.mockResolvedValue([])
+    mockPostData.mockImplementation(async (_url: string, body: Record<string, unknown>) => makeSavedView({ ...body, id: 'sv-new' } as Partial<SavedView>))
   })
 
   /**
@@ -211,11 +287,11 @@ describe('SearchPage', () => {
   })
 
   // UX P2: every one of these was a toast-only stub or a claim the backend
-  // does not back (there is no field:value syntax and no suggestion service).
+  // did not back. W12 (deliberate rewrite, contract §6.5): the saved search
+  // comes from the server now, and the filter syntax is real (SRCH-04) — so
+  // `status:failed` is absent only while no search with it ran.
   it('renders no stub control, no provenance footer and no invented query syntax', async () => {
-    localStorage.setItem('tl.search.saved', JSON.stringify([{
-      id: 'sv1', label: 'Saved login', query: 'login', mode: 'keyword', scope: 'tests', slot: 1,
-    }]))
+    mockListSavedViews.mockResolvedValue([makeSavedView()])
     renderAt('/search')
 
     await screen.findByText('Saved login')
@@ -247,31 +323,55 @@ describe('SearchPage', () => {
     expect(screen.queryByText(/field:value/)).toBeNull()
   })
 
-  it('shows the Saved searches card only when the browser holds saved searches', async () => {
+  // W12 (deliberate rewrite, §6.5): the card renders from the server's list
+  // (listSavedViews, page 'search'), not from this browser's storage.
+  it('shows the Saved searches card only when the server holds saved searches', async () => {
     renderAt('/search')
     await screen.findByText(/Your queries will appear here/i)
+    await waitFor(() => expect(mockListSavedViews).toHaveBeenCalledWith('proj-1', 'search'))
     // No card, and no empty state pointing at a bookmark button that does not exist.
     expect(screen.queryByText('Saved searches')).toBeNull()
     expect(screen.queryByText(/Save a query by clicking/i)).toBeNull()
   })
 
-  it('normalizes disabled retrieval modes to the available keyword mode', async () => {
+  it('renders the Saved searches card from listSavedViews, ⌘1 on the first row', async () => {
+    mockListSavedViews.mockResolvedValue([
+      makeSavedView({ id: 'a', name: 'Checkout failures', filters: { kind: 'search', q: 'checkout status:failed', scope: 'tests', mode: 'keyword' } }),
+      makeSavedView({ id: 'b', name: 'Not a search', filters: { kind: 'report_view', page: 'trends' } }),
+    ])
+    renderAt('/search')
+
+    const card = await screen.findByTestId('saved-searches')
+    expect(within(card).getByRole('heading', { name: 'Saved searches' })).toBeInTheDocument()
+    expect(within(card).getByText('Checkout failures')).toBeInTheDocument()
+    expect(within(card).getByText('⌘1')).toBeInTheDocument()
+    expect(within(card).queryByText('Not a search')).toBeNull()
+  })
+
+  // W12 (deliberate rewrite, §6.5): Hybrid and Semantic exist on the Tests
+  // scope, so a deep link that asks for one on All loads Tests, says so in one
+  // line, and the URL is rewritten.
+  it('a semantic mode deep-linked with another scope loads on Tests, with the line that says so', async () => {
     renderAt('/search?mode=hybrid&scope=all', true)
 
-    expect(await screen.findByRole('radio', { name: 'Keyword' })).toBeChecked()
-    expect(screen.getByRole('radio', { name: 'Hybrid' })).not.toBeChecked()
+    expect(await screen.findByRole('radio', { name: 'Hybrid' })).toBeChecked()
+    expect(screen.getByRole('radio', { name: 'Keyword' })).not.toBeChecked()
+    expect(screen.getByRole('radio', { name: /^Tests/ })).toBeChecked()
+    expect(screen.getByText(SCOPE_SWITCH_LINE)).toHaveAttribute('role', 'status')
     await waitFor(() => {
-      expect(screen.getByLabelText('Current search params'))
-        .toHaveTextContent('mode=keyword')
+      expect(screen.getByLabelText('Current search params')).toHaveTextContent('mode=hybrid')
+      expect(screen.getByLabelText('Current search params')).toHaveTextContent('scope=tests')
     })
   })
 
+  // W12 (deliberate rewrite, §6.5): a page-1 search with words is recorded
+  // (`record: true`: a recent entry and a usage row, written by the server).
   it('synchronizes same-route navigation and browser history with the latest search', async () => {
     renderAt('/search?q=first&mode=keyword&scope=tests', true)
 
     await waitFor(() => {
       expect(mockGlobalSearch).toHaveBeenLastCalledWith({
-        q: 'first', project_id: 'proj-1', entity_types: ['test_case'], page: 1, size: 25,
+        q: 'first', project_id: 'proj-1', entity_types: ['test_case'], page: 1, size: 25, record: true,
       })
     })
 
@@ -285,7 +385,7 @@ describe('SearchPage', () => {
       expect(screen.getByLabelText('Current search params'))
         .toHaveTextContent('mode=keyword')
       expect(mockGlobalSearch).toHaveBeenLastCalledWith({
-        q: 'second', project_id: 'proj-1', entity_types: ['test_run'], page: 1, size: 25,
+        q: 'second', project_id: 'proj-1', entity_types: ['test_run'], page: 1, size: 25, record: true,
       })
     })
 
@@ -296,40 +396,63 @@ describe('SearchPage', () => {
         .toHaveValue('first')
       expect(screen.getByRole('radio', { name: /^Tests/ })).toBeChecked()
       expect(mockGlobalSearch).toHaveBeenLastCalledWith({
-        q: 'first', project_id: 'proj-1', entity_types: ['test_case'], page: 1, size: 25,
+        q: 'first', project_id: 'proj-1', entity_types: ['test_case'], page: 1, size: 25, record: true,
       })
     })
   })
 
-  it('migrates legacy stored modes and replays recent searches as keyword', async () => {
+  // W12 (deliberate rewrite, §6.5): the one-time move of this browser's saved
+  // searches to the server — one POST per entry the server does not hold, each
+  // removed from the key as it lands, the key deleted when empty — and the
+  // local recents dropped unread. A recent from the server replays as it was.
+  it('moves the browser\'s saved searches to the server once and drops the local recents', async () => {
     localStorage.setItem('tl.search.recent', JSON.stringify([{
       id: 'legacy-recent', query: 'legacy checkout', mode: 'hybrid', scope: 'all',
       resultCount: 7, ts: Date.now(),
     }]))
-    localStorage.setItem('tl.search.saved', JSON.stringify([{
-      id: 'legacy-saved', label: 'Legacy saved', query: 'saved checkout', mode: 'semantic',
-      scope: 'tests', resultCount: 3, slot: 1,
-    }]))
+    localStorage.setItem('tl.search.saved', JSON.stringify([
+      {
+        id: 'legacy-saved', label: 'Legacy saved', query: 'saved checkout', mode: 'semantic',
+        scope: 'tests', resultCount: 3, slot: 1,
+      },
+      { id: 'on-server', label: 'Login', query: 'Login', mode: 'keyword', scope: 'tests', slot: 2 },
+    ]))
+    mockListSavedViews.mockResolvedValue([makeSavedView()])
+    mockRecent.mockResolvedValue({
+      items: [{ q: 'server checkout', scope: 'all', mode: 'keyword', project_id: 'proj-1', result_count: 7, counts_exact: true, ts: new Date().toISOString() }],
+      max: 20,
+      retention_days: 30,
+    })
 
     renderAt('/search', true)
 
-    const recentButton = await screen.findByRole('button', { name: /legacy checkout/i })
-    expect(recentButton.parentElement).toHaveTextContent('keyword')
-    expect(recentButton.parentElement).not.toHaveTextContent('hybrid')
-    expect(JSON.parse(localStorage.getItem('tl.search.recent') ?? '[]')[0].mode).toBe('keyword')
-    expect(JSON.parse(localStorage.getItem('tl.search.saved') ?? '[]')[0].mode).toBe('keyword')
+    await waitFor(() => expect(mockPostData).toHaveBeenCalledTimes(1))
+    expect(mockPostData).toHaveBeenCalledWith('/api/v1/saved-views', {
+      project_id: 'proj-1',
+      name: 'Legacy saved',
+      page: 'search',
+      filters: { kind: 'search', q: 'saved checkout', scope: 'tests', mode: 'semantic' },
+      is_shared: false,
+    }, { suppressToast: true })
+    await waitFor(() => expect(localStorage.getItem('tl.search.saved')).toBeNull())
+    expect(localStorage.getItem('tl.search.recent')).toBeNull()
+    // The list is read again once the move posted something.
+    await waitFor(() => expect(mockListSavedViews).toHaveBeenCalledTimes(2))
 
+    const recentButton = await screen.findByRole('button', { name: /server checkout/i })
     fireEvent.click(recentButton)
 
     await waitFor(() => {
       expect(screen.getByRole('textbox', { name: 'Search across the workspace' }))
-        .toHaveValue('legacy checkout')
+        .toHaveValue('server checkout')
       expect(screen.getByLabelText('Current search params'))
         .toHaveTextContent('mode=keyword')
       expect(mockGlobalSearch).toHaveBeenLastCalledWith({
-        q: 'legacy checkout', project_id: 'proj-1', entity_types: undefined, page: 1, size: 25,
+        q: 'server checkout', project_id: 'proj-1', entity_types: undefined, page: 1, size: 25, record: true,
       })
     })
+    // Once per load: nothing more is posted.
+    expect(mockPostData).toHaveBeenCalledTimes(1)
   })
 
   it('renders result rows when the API returns items for a query', async () => {
@@ -346,7 +469,9 @@ describe('SearchPage', () => {
       ]),
     )
 
-    renderAt('/search?q=loads&mode=hybrid&scope=all')
+    // W12: was `mode=hybrid`, which read as keyword before Hybrid existed; a
+    // hybrid link now runs on Tests through GET /search (SearchPage.semantic.test).
+    renderAt('/search?q=loads&mode=keyword&scope=all')
 
     expect(await screen.findByText('dashboardLoads')).toBeInTheDocument()
     expect(await screen.findByText('order_history_loads')).toBeInTheDocument()
@@ -491,7 +616,9 @@ describe('SearchPage', () => {
       ]),
     )
 
-    renderAt('/search?mode=hybrid&scope=all')
+    // W12: was `mode=hybrid` (read as keyword then); a hybrid link now moves
+    // the scope to Tests, and this case is about the All browse.
+    renderAt('/search?mode=keyword&scope=all')
 
     // Both rows from the browse response render — proves the page hit
     // the API instead of short-circuiting to an empty grid.
@@ -577,29 +704,61 @@ describe('SearchPage', () => {
     expect(screen.getByText(/^39$/, { exact: false })).toBeInTheDocument()
   })
 
+  // W12 SRCH-03 (fix after G-E's pass): a search that found nothing is still
+  // worth saving (a query to re-run later), so No results offers Save search
+  // too; a browse (no words) offers nothing to save.
+  it('a search that found nothing can be saved from the No results card; a browse cannot', async () => {
+    renderAt('/search?q=checkout%20timeout&scope=tests')
+    const card = (await screen.findByRole('heading', { name: 'No results' })).parentElement?.parentElement as HTMLElement
+    fireEvent.click(within(card).getByRole('button', { name: 'Save search' }))
+    const form = within(card).getByRole('region', { name: 'Save this search' })
+    expect(within(form).getByLabelText('Name')).toHaveValue('checkout timeout')
+    fireEvent.click(within(form).getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(mockPostData).toHaveBeenCalledWith('/api/v1/saved-views', {
+      project_id: 'proj-1',
+      name: 'checkout timeout',
+      page: 'search',
+      filters: { kind: 'search', q: 'checkout timeout', scope: 'tests', mode: 'keyword' },
+      is_shared: false,
+    }, { suppressToast: true }))
+    expect(toast.success).toHaveBeenCalledWith('Saved “checkout timeout”.')
+  })
+
+  it('a browse with an empty box offers no Save search', async () => {
+    renderAt('/search?scope=all')
+    await screen.findByRole('heading', { name: 'No results' })
+    expect(screen.queryByRole('button', { name: 'Save search' })).toBeNull()
+  })
+
   /**
    * W27b PAN-05 (Y3): Clear history asks inside the Recent searches card, right
    * under its header, never with the browser's prompt. The first click clears
    * nothing; the strip's Clear is the only control that does; Cancel and Escape
-   * keep every recent; clearing is local (no request).
+   * keep every recent. W12 (deliberate rewrite, §6.5): the recents are the
+   * server's (GET /search/recent), and the strip's Clear sends ONE
+   * DELETE /search/recent (`clearRecent`); Cancel and Escape send nothing.
    */
   describe('Clear history asks in the recent searches card', () => {
-    const RECENTS = [
-      { id: 'r1', query: 'checkout flaky', mode: 'keyword', scope: 'all', resultCount: 4, ts: Date.now() },
-      { id: 'r2', query: 'login timeout', mode: 'keyword', scope: 'all', resultCount: 2, ts: Date.now() },
-    ]
+    const RECENTS = {
+      items: [
+        { q: 'checkout flaky', mode: 'keyword', scope: 'all', project_id: 'proj-1', result_count: 4, counts_exact: true, ts: new Date().toISOString() },
+        { q: 'login timeout', mode: 'keyword', scope: 'all', project_id: 'proj-1', result_count: 2, counts_exact: true, ts: new Date().toISOString() },
+      ],
+      max: 20,
+      retention_days: 30,
+    }
     const strip = () => document.querySelector('[data-inline-confirm]') as HTMLElement | null
     beforeEach(() => vi.mocked(toast.success).mockClear())
 
     async function openRecents() {
-      localStorage.setItem('tl.search.recent', JSON.stringify(RECENTS))
+      mockRecent.mockResolvedValue(RECENTS)
       renderAt('/search')
       await screen.findByRole('button', { name: /checkout flaky/i })
       // Load-time reads settle before the count below.
       await waitFor(() => expect(mockGlobalSearch).toHaveBeenCalled())
     }
 
-    it('asks under the card header; the strip\'s Clear clears, once, locally', async () => {
+    it('asks under the card header; the strip\'s Clear clears, once, on the server', async () => {
       const confirmSpy = vi.spyOn(window, 'confirm')
       await openRecents()
       const searches = mockGlobalSearch.mock.calls.length
@@ -616,16 +775,16 @@ describe('SearchPage', () => {
       const firstRecent = screen.getByRole('button', { name: /checkout flaky/i })
       expect(asked.compareDocumentPosition(firstRecent) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
       // The first click cleared nothing.
-      expect(JSON.parse(localStorage.getItem('tl.search.recent') ?? '[]')).toHaveLength(2)
+      expect(mockClearRecent).not.toHaveBeenCalled()
       expect(toast.success).not.toHaveBeenCalled()
 
       fireEvent.click(within(asked).getByRole('button', { name: 'Clear' }))
       expect(strip()).toBeNull()
-      expect(localStorage.getItem('tl.search.recent')).toBe('[]')
+      await waitFor(() => expect(screen.getByText('Your queries will appear here.')).toBeInTheDocument())
+      expect(mockClearRecent).toHaveBeenCalledTimes(1)
       expect(toast.success).toHaveBeenCalledTimes(1)
       expect(toast.success).toHaveBeenCalledWith('Recent searches cleared')
-      expect(screen.getByText('Your queries will appear here.')).toBeInTheDocument()
-      expect(mockGlobalSearch.mock.calls.length, 'clearing sends nothing').toBe(searches)
+      expect(mockGlobalSearch.mock.calls.length, 'clearing runs no search').toBe(searches)
       expect(confirmSpy).not.toHaveBeenCalled()
       confirmSpy.mockRestore()
     })
@@ -640,8 +799,19 @@ describe('SearchPage', () => {
       fireEvent.keyDown(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }), { key: 'Escape' })
       expect(strip()).toBeNull()
 
-      expect(JSON.parse(localStorage.getItem('tl.search.recent') ?? '[]')).toHaveLength(2)
+      expect(mockClearRecent).not.toHaveBeenCalled()
       expect(screen.getByRole('button', { name: /login timeout/i })).toBeInTheDocument()
+      expect(toast.success).not.toHaveBeenCalled()
+    })
+
+    it('a refused clear keeps the list and says the server\'s sentence in the card', async () => {
+      mockClearRecent.mockRejectedValue({ response: { status: 503, data: { detail: 'Could not clear recent searches: the cache is unavailable.' } } })
+      await openRecents()
+      fireEvent.click(screen.getByRole('button', { name: 'Clear history' }))
+      fireEvent.click(within(strip() as HTMLElement).getByRole('button', { name: 'Clear' }))
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Could not clear recent searches: the cache is unavailable.')
+      expect(screen.getByRole('button', { name: /checkout flaky/i })).toBeInTheDocument()
       expect(toast.success).not.toHaveBeenCalled()
     })
   })

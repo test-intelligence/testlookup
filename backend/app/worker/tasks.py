@@ -4106,6 +4106,447 @@ def reindex_search(self, project_id: str | None = None, full: bool = False) -> d
         raise self.retry(exc=exc, countdown=60)
 
 
+# ── Embedding generations (W12 SRCH-02) ──────────────────────────────────────
+#
+# A generation is (Collection prefix, embedder). Reads and writes stay on the
+# ACTIVE generation while the TARGET is built here, on the ai_analysis worker
+# (never in the API process: bulk work there OOMs it), in slices of at most
+# GENERATION_SLICE_SECONDS under a fenced lease in the state row; the task
+# re-enqueues itself until the build finishes, then switches (one commit) and
+# schedules the retirement of the old generation RETIRE_GRACE_SECONDS later.
+
+_GENERATION_LEASE_SECONDS = 540
+_GENERATION_FAMILY_SLICE_SECONDS = 60     # the fence is re-checked at least this often
+_GENERATION_BUSY_COUNTDOWN = 30
+
+
+def _lease_held_by_other(lease: dict | None, owner: str, now: datetime) -> bool:
+    if not lease or lease.get("owner") == owner or lease.get("released") is True:
+        return False   # a hand-back is free whatever two workers' clocks say
+    try:
+        until = datetime.fromisoformat(str(lease.get("until")))
+    except (TypeError, ValueError):
+        return False
+    if until.tzinfo is None:
+        until = until.replace(tzinfo=timezone.utc)
+    return until > now
+
+
+def _initial_families(existing: dict) -> dict:
+    from app.services.chroma_collections import COLLECTION_FAMILIES
+
+    families: dict = {}
+    for fam in COLLECTION_FAMILIES:
+        entry = existing.get(fam.base)
+        if isinstance(entry, dict) and entry.get("state") in ("pending", "running", "done", "skipped"):
+            families[fam.base] = dict(entry)
+        elif fam.rebuild in ("postgres", "copy"):
+            families[fam.base] = {"state": "pending", "processed": 0, "total": None, "cursor": 0}
+        else:
+            # Caches start empty in the new generation (refilled on demand);
+            # the ephemeral dedup collection has nothing to rebuild.
+            families[fam.base] = {"state": "skipped", "processed": 0, "total": None, "cursor": 0}
+    return families
+
+
+async def _locked_generation_state(db, generation_tag: str, fence: int):
+    """``(row, state)`` when ``(generation_tag, fence)`` is still the request in force, else ``None``."""
+    from app.services import embedding_index_state as eis
+
+    row, state = await eis.lock_state(db)
+    target = state.target_generation()
+    if (
+        target is None
+        or target.tag != generation_tag
+        or state.fence != fence
+        or state.status != "building"
+    ):
+        return None
+    return row, state
+
+
+async def _rebuild_embedding_generation_async(generation_tag: str, fence: int) -> dict:
+    """One invocation of the generation build. Returns its outcome; never raises."""
+    from dataclasses import replace as _replace
+
+    from app.core.metrics import (
+        embedding_generation_builds_total,
+        embedding_generation_documents_total,
+    )
+    from app.db.postgres import AsyncSessionLocal
+    from app.services import chroma_collections as cc
+    from app.services import embedding_index_state as eis
+    from app.services import semantic_search
+
+    owner = uuid.uuid4().hex
+    now = datetime.now(timezone.utc)
+
+    # 1. Claim: the request must still be in force, and no live lease of another owner.
+    async with AsyncSessionLocal() as db:
+        locked = await _locked_generation_state(db, generation_tag, fence)
+        if locked is None:
+            await db.rollback()
+            embedding_generation_builds_total.labels(outcome="superseded").inc()
+            return {"status": "superseded", "generation_tag": generation_tag}
+        row, state = locked
+        if _lease_held_by_other(state.lease, owner, now):
+            await db.rollback()
+            return {"status": "busy", "generation_tag": generation_tag}
+        state = _replace(
+            state,
+            families=_initial_families(state.families),
+            lease={"owner": owner, "until": (now + timedelta(seconds=_GENERATION_LEASE_SECONDS)).isoformat()},
+        )
+        eis.stage_state(db, row, state, actor_id=None)
+        await db.commit()
+    await cc.invalidate_generations_cache()
+
+    active = state.active_generation()
+    target = state.target_generation()
+    assert target is not None  # _locked_generation_state checked it
+    deadline = time.monotonic() + cc.GENERATION_SLICE_SECONDS
+
+    async def _checkpoint(base: str, entry: dict, *, release: bool = False):
+        async with AsyncSessionLocal() as db:
+            locked = await _locked_generation_state(db, generation_tag, fence)
+            if locked is None:
+                await db.rollback()
+                return None
+            row, current = locked
+            if _lease_held_by_other(current.lease, owner, datetime.now(timezone.utc)):
+                await db.rollback()
+                return None
+            families = dict(current.families)
+            if base:
+                families[base] = entry
+            # A hand-back expires at once (the next slice claims it) and says when
+            # it happened, so a chain that never resumes reads as stalled.
+            lease = {
+                "owner": owner, "until": datetime.now(timezone.utc).isoformat(), "released": True,
+            } if release else {
+                "owner": owner,
+                "until": (datetime.now(timezone.utc) + timedelta(seconds=_GENERATION_LEASE_SECONDS)).isoformat(),
+            }
+            current = _replace(current, families=families, lease=lease)
+            eis.stage_state(db, row, current, actor_id=None)
+            await db.commit()
+        await cc.invalidate_generations_cache()
+        return current
+
+    def _superseded() -> dict:
+        embedding_generation_builds_total.labels(outcome="superseded").inc()
+        return {"status": "superseded", "generation_tag": generation_tag}
+
+    try:
+        from app.db.chroma import get_configured_chroma_client
+
+        client = await get_configured_chroma_client()
+        for fam in cc.COLLECTION_FAMILIES:
+            if fam.rebuild not in ("postgres", "copy"):
+                continue
+            entry = dict(state.families.get(fam.base) or {})
+            if entry.get("state") in ("done", "skipped"):
+                continue
+            while True:
+                slice_deadline = min(deadline, time.monotonic() + _GENERATION_FAMILY_SLICE_SECONDS)
+                before = int(entry.get("processed") or 0)
+                if fam.rebuild == "postgres":
+                    async with AsyncSessionLocal() as build_db:
+                        if entry.get("total") is None:
+                            entry["total"] = await semantic_search.count_indexable_test_cases(build_db)
+                        processed, finished = await semantic_search.build_generation_index(
+                            build_db, target, deadline=slice_deadline
+                        )
+                    written = processed - before if processed >= before else processed
+                    entry["processed"] = processed
+                else:
+                    if entry.get("total") is None:
+                        entry["total"] = await cc.source_count(client, fam.base, source=active)
+                    copied, finished = await cc.copy_family(
+                        client, fam.base, source=active, target=target,
+                        offset=int(entry.get("cursor") or 0), deadline=slice_deadline,
+                    )
+                    written = copied
+                    entry["processed"] = before + copied
+                    entry["cursor"] = int(entry.get("cursor") or 0) + copied
+                entry["state"] = "done" if finished else "running"
+                saved = await _checkpoint(fam.base, entry)
+                if saved is None:
+                    return _superseded()
+                state = saved
+                if written > 0:
+                    embedding_generation_documents_total.labels(family=fam.base).inc(written)
+                if finished:
+                    break
+                if time.monotonic() >= deadline:
+                    if await _checkpoint("", {}, release=True) is None:
+                        return _superseded()
+                    return {"status": "continuing", "generation_tag": generation_tag, "countdown": 1}
+
+        # 3. Writes that reached the ACTIVE copy families during the build.
+        for fam in cc.COLLECTION_FAMILIES:
+            if fam.rebuild == "copy":
+                await cc.catch_up_family(client, fam.base, source=active, target=target)
+
+        switched_at = datetime.now(timezone.utc)
+        async with AsyncSessionLocal() as db:
+            locked = await _locked_generation_state(db, generation_tag, fence)
+            if locked is None:
+                await db.rollback()
+                return _superseded()
+            row, current = locked
+            high_water = await semantic_search.generation_high_water(db, target)
+            retiring = [
+                item for item in current.retiring
+                if cc.Generation.from_dict(item) not in (target, active)
+            ]
+            if active != target:
+                retiring.append({**active.as_dict(), "switched_at": switched_at.isoformat()})
+            current = _replace(
+                current,
+                active=target.as_dict(),
+                target=None,
+                status="idle",
+                families={},
+                retiring=retiring,
+                switched_at=switched_at.isoformat(),
+                requested_at=None,
+                requested_by=None,
+                last_error=None,
+                lease=None,
+            )
+            eis.stage_state(db, row, current, actor_id=None)
+            from app.services.settings_audit_service import log_settings_change
+
+            await log_settings_change(
+                db, eis.EMBEDDING_STATE_KEY, "switched", None,
+                changed_fields=["active", f"generation:{target.tag or 'legacy'}"],
+            )
+            await db.commit()
+        await cc.invalidate_generations_cache()
+        if high_water:
+            semantic_search.reset_incremental_cursor(high_water)
+        embedding_generation_builds_total.labels(outcome="switched").inc()
+        _slog.info(
+            "embedding_generation_switched",
+            generation=target.tag or "legacy",
+            embedder=target.embedder.key,
+            prefix=target.prefix,
+        )
+        return {"status": "switched", "generation_tag": generation_tag}
+    except semantic_search.GenerationIndexBusy:
+        # Another invocation still holds this generation's keyset lease (a
+        # superseded one finishing its slice): try again shortly.
+        if await _checkpoint("", {}, release=True) is None:
+            return _superseded()
+        return {"status": "continuing", "generation_tag": generation_tag, "countdown": _GENERATION_BUSY_COUNTDOWN}
+    except Exception as exc:  # noqa: BLE001 - the ACTIVE generation is untouched
+        sentence = eis.failure_sentence(exc)
+        try:
+            async with AsyncSessionLocal() as db:
+                locked = await _locked_generation_state(db, generation_tag, fence)
+                if locked is None:
+                    await db.rollback()
+                else:
+                    row, current = locked
+                    current = _replace(current, status="failed", last_error=sentence, lease=None)
+                    eis.stage_state(db, row, current, actor_id=None)
+                    await db.commit()
+            await cc.invalidate_generations_cache()
+        except Exception as record_exc:  # noqa: BLE001 - the lease expires on its own
+            _slog.warning("embedding_generation_failure_not_recorded", error_type=type(record_exc).__name__)
+        embedding_generation_builds_total.labels(outcome="failed").inc()
+        _slog.warning(
+            "embedding_generation_build_failed",
+            generation=generation_tag or "legacy",
+            error_type=type(exc).__name__,
+        )
+        return {"status": "failed", "generation_tag": generation_tag, "error": sentence}
+
+
+@celery_app.task(
+    name="app.worker.tasks.rebuild_embedding_generation",
+    bind=True,
+    soft_time_limit=600,
+    time_limit=660,
+)
+def rebuild_embedding_generation(self, generation_tag: str, fence: int) -> dict:
+    """Build the TARGET embedding generation, one ≤ 480 s slice per invocation.
+
+    Routed to ``ai_analysis``. Re-enqueues itself (same tag, same fence) until
+    the build finishes, then switches the active generation and schedules
+    ``retire_embedding_generations``. A stale fence (the setting changed
+    again) answers ``superseded``; a failure leaves the active generation in
+    use and records why (``status: failed``). No Celery retry.
+    """
+    outcome = cast(dict[str, Any], _run_async(_rebuild_embedding_generation_async(generation_tag, fence)))
+    if outcome.get("status") == "continuing":
+        rebuild_embedding_generation.apply_async(
+            kwargs={"generation_tag": generation_tag, "fence": fence},
+            countdown=int(outcome.get("countdown") or 1),
+        )
+    elif outcome.get("status") == "switched":
+        from app.services.chroma_collections import RETIRE_GRACE_SECONDS
+
+        retire_embedding_generations.apply_async(countdown=RETIRE_GRACE_SECONDS)
+    return outcome
+
+
+async def _retire_embedding_generations_async() -> dict:
+    """Drop every retiring generation whose grace period has passed. Never raises."""
+    from dataclasses import replace as _replace
+
+    from app.db.postgres import AsyncSessionLocal
+    from app.services import chroma_collections as cc
+    from app.services import embedding_index_state as eis
+    from app.services import semantic_search
+
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as db:
+        state = await eis.read_state(db)
+    if state is None:
+        return {"status": "unreadable", "retry": True}
+    active = state.active_generation()
+    target = state.target_generation()
+
+    due: list[dict] = []
+    waiting = 0
+    for item in state.retiring:
+        if _retiring_entry_is_due(item, now):
+            due.append(item)
+        else:
+            waiting += 1
+    if not due:
+        return {"status": "idle", "dropped": 0, "retry": waiting > 0}
+
+    dropped = 0
+    changed = False
+    failed = False
+    try:
+        from app.db.chroma import get_configured_chroma_client
+
+        client = await get_configured_chroma_client()
+        for item in due:
+            generation = cc.Generation.from_dict(item)
+            if generation not in (active, target) and not item.get("replaced"):
+                # Writes that landed in the old ACTIVE generation through a
+                # stale cache. A target replaced before it was ever active
+                # received none: copying it back would resurrect what was
+                # deleted from the active generation since it was built.
+                for fam in cc.COLLECTION_FAMILIES:
+                    if fam.rebuild == "copy":
+                        await cc.catch_up_family(client, fam.base, source=generation, target=active)
+                async with AsyncSessionLocal() as db:
+                    high_water = await semantic_search.generation_high_water(db, active)
+                if high_water:
+                    semantic_search.reset_incremental_cursor(high_water)
+            # Decide UNDER the state lock, in the transaction that unlists it:
+            # the read above is stale by now, and a settings change may have
+            # asked for this generation again (it is then the target, no longer
+            # retiring). A writer that wants it meanwhile waits on this lock.
+            async with AsyncSessionLocal() as db:
+                row, current = await eis.lock_state(db)
+                listed = [e for e in current.retiring if cc.Generation.from_dict(e) == generation]
+                in_use = generation in (current.active_generation(), current.target_generation())
+                if in_use or not listed:
+                    if listed:   # wanted again: never dropped, no longer retiring
+                        remaining = [e for e in current.retiring if e not in listed]
+                        eis.stage_state(db, row, _replace(current, retiring=remaining), actor_id=None)
+                        await db.commit()
+                        changed = True
+                    else:
+                        await db.rollback()
+                    continue
+                if item not in listed or not all(_retiring_entry_is_due(e, now) for e in listed):
+                    await db.rollback()   # re-listed since (a newer grace period): a later run
+                    waiting += 1
+                    continue
+                try:
+                    dropped += await cc.drop_generation(client, generation)
+                except Exception:
+                    await db.rollback()   # still listed: the retry drops what is left
+                    raise
+                remaining = [e for e in current.retiring if e not in listed]
+                eis.stage_state(db, row, _replace(current, retiring=remaining), actor_id=None)
+                # Its collections are gone: a later build of it starts over.
+                await semantic_search.forget_generation_job(db, generation)
+                await db.commit()
+                changed = True
+    except Exception as exc:  # noqa: BLE001 - a Chroma fault keeps it listed
+        failed = True
+        _slog.warning("embedding_generation_retire_failed", error_type=type(exc).__name__)
+
+    if changed:
+        await cc.invalidate_generations_cache()
+    return {"status": "retired", "dropped": dropped, "retry": failed or waiting > 0}
+
+
+def _retiring_entry_is_due(item: dict, now: datetime) -> bool:
+    """A retiring entry whose grace period has passed (a malformed time counts as due)."""
+    from app.services.chroma_collections import RETIRE_GRACE_SECONDS
+
+    try:
+        switched = datetime.fromisoformat(str(item.get("switched_at")))
+    except (TypeError, ValueError):
+        return True
+    if switched.tzinfo is None:
+        switched = switched.replace(tzinfo=timezone.utc)
+    return (now - switched).total_seconds() >= RETIRE_GRACE_SECONDS
+
+
+@celery_app.task(name="app.worker.tasks.retire_embedding_generations", bind=True)
+def retire_embedding_generations(self) -> dict:
+    """Drop the collections of generations retired ≥ RETIRE_GRACE_SECONDS ago.
+
+    Default queue, no beat entry: scheduled by a switch (and by a settings
+    change that replaced a target). A copy family's writes that landed in the
+    old generation are copied to the active one first. A Chroma fault keeps
+    the generation listed and re-enqueues this task.
+    """
+    outcome = cast(dict[str, Any], _run_async(_retire_embedding_generations_async()))
+    if outcome.get("retry"):
+        from app.services.chroma_collections import RETIRE_GRACE_SECONDS
+
+        retire_embedding_generations.apply_async(countdown=RETIRE_GRACE_SECONDS)
+    return outcome
+
+
+# ── Search usage (W12 SRCH-05) ───────────────────────────────────────────────
+
+_SEARCH_USAGE_MAX_BATCHES = 100
+
+
+async def _purge_search_usage_events_async() -> dict:
+    from app.db.postgres import AsyncSessionLocal
+    from app.services.search_usage_service import purge_expired_batch
+
+    now = datetime.now(timezone.utc)
+    deleted = 0
+    batches = 0
+    async with AsyncSessionLocal() as db:
+        while batches < _SEARCH_USAGE_MAX_BATCHES:
+            count = await purge_expired_batch(db, now=now)
+            await db.commit()
+            batches += 1
+            deleted += count
+            if count == 0:
+                break
+    return {"deleted": deleted, "batches": batches}
+
+
+@celery_app.task(name="app.worker.tasks.purge_search_usage_events", bind=True)
+def purge_search_usage_events(self) -> dict:
+    """Nightly: delete ``search_query_events`` older than the fixed 30-day window.
+
+    Deployment-wide (NULL-project rows and projects without a retention policy
+    included), in batches of ``USAGE_PURGE_BATCH``, each committed, at most
+    100 batches a run, until a batch deletes nothing.
+    """
+    outcome = cast(dict[str, Any], _run_async(_purge_search_usage_events_async()))
+    _slog.info("search_usage_purged", deleted=outcome["deleted"], batches=outcome["batches"])
+    return outcome
+
+
 # ── Knowledge source sync (RAG-4) ────────────────────────────────────────────
 
 

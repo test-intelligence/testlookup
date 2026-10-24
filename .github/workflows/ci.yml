@@ -885,6 +885,11 @@ jobs:
           tests/integration/test_release_portfolio_postgres.py
           tests/integration/test_digest_release_verdict_postgres.py
           tests/integration/test_attribution_preview_postgres.py
+          tests/integration/test_migration_0226_0227_postgres.py
+          tests/integration/test_search_usage_postgres.py
+          tests/integration/test_search_suggestions_postgres.py
+          tests/integration/test_global_search_filters_postgres.py
+          tests/integration/test_embedding_generation_postgres.py
           tests/integration/test_every_get_route_answers_without_500_postgres.py
           tests/integration/test_key_mint_revoke_race_postgres.py
           tests/integration/test_migration_index_leftovers_postgres.py

@@ -93,6 +93,9 @@ celery_app.conf.update(
         "app.worker.training_tasks.check_finetune_trigger": {"queue": "default"},
         "app.worker.training_tasks.run_finetune_pipeline":  {"queue": "default"},
         "app.worker.tasks.reindex_search":                    {"queue": "default"},
+        # W12 SRCH-02: a re-embed into a new generation runs on the AI worker,
+        # one <= 480 s slice per invocation (never in the API process).
+        "app.worker.tasks.rebuild_embedding_generation":    {"queue": "ai_analysis"},
         "app.worker.tasks.run_retention_purges":            {"queue": "default"},
         # W07 FAIL-04: may wait minutes for a defect-candidate build; kept off ai_analysis.
         "app.worker.tasks.rebuild_run_snapshot":            {"queue": "default"},
@@ -134,6 +137,13 @@ celery_app.conf.update(
         "nightly-retention-purge": {
             "task": "app.worker.tasks.run_retention_purges",
             "schedule": crontab(hour=2, minute=0),
+        },
+        # W12 SRCH-05: search_query_events keep a FIXED 30-day window
+        # (deployment-wide, NULL-project rows included), after the 02:00 purge.
+        "nightly-search-usage-purge": {
+            "task": "app.worker.tasks.purge_search_usage_events",
+            "schedule": crontab(hour=2, minute=40),
+            "options": {"queue": "default"},
         },
         # VIZ-607: report export files older than 7 days, and their rows.
         "nightly-report-export-sweep": {
