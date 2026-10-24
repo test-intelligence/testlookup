@@ -706,6 +706,12 @@ locally by default.
 
 ### Fixed
 
+- PII redaction no longer masks a run id as a card number. A random run id
+  whose first three groups happen to be all digits
+  (`05982379-5519-4289-a773-…`) read as 16 digits and was stored as
+  `[REDACTED_CC]-a773-…`, breaking the link to the run; a real card number is
+  still redacted. Test: `test_privacy_redaction.py`.
+
 - On `/runs`, picking a branch and then an AI verdict before the list
   refreshed dropped the branch filter; both filters stay now (W29b).
 

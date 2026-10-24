@@ -80,6 +80,16 @@ class TestCreditCardRedaction:
         result = redact_text("CC: 4111-1111-1111-1111")
         assert "[REDACTED_CC]" in result
 
+    def test_a_uuid_with_all_digit_leading_groups_is_not_a_card(self):
+        # A uuid4 whose first three groups are all digits reads as 16 digits; masking it corrupted a stored run
+        # id (seen as a flake in test_ai_history_writers on CI, 2026-10-24).
+        run_id = "05982379-5519-4289-a773-69151d742022"
+        assert redact_text(f"run {run_id} failed") == f"run {run_id} failed"
+
+    def test_a_card_followed_by_text_is_still_redacted(self):
+        result = redact_text("Card 4111-1111-1111-1111-abc and 4111111111111111 done")
+        assert result.count("[REDACTED_CC]") == 2
+
 
 class TestIPRedaction:
     def test_ipv4(self):
