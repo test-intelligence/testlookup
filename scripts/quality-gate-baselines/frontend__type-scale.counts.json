@@ -81,7 +81,7 @@
     "frontend/src/pages/ResetPasswordPage.tsx": 1,
     "frontend/src/pages/ReviewsPage.tsx": 1,
     "frontend/src/pages/RunComparePage.tsx": 11,
-    "frontend/src/pages/SearchPage.tsx": 39,
+    "frontend/src/pages/SearchPage.tsx": 12,
     "frontend/src/pages/SettingsPage.tsx": 3,
     "frontend/src/pages/SuitesPage.tsx": 1,
     "frontend/src/pages/SummaryReportPage.tsx": 14,

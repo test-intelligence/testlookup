@@ -106,7 +106,7 @@
     "frontend/src/pages/RunComparePage.tsx": 12,
     "frontend/src/pages/RunIntelligencePage.tsx": 35,
     "frontend/src/pages/RunsPage.tsx": 24,
-    "frontend/src/pages/SearchPage.tsx": 10,
+    "frontend/src/pages/SearchPage.tsx": 3,
     "frontend/src/pages/SuiteCasesPage.tsx": 5,
     "frontend/src/pages/SuiteDetailPage.tsx": 9,
     "frontend/src/pages/SuitesPage.tsx": 7,

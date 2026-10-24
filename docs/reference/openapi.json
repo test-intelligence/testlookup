@@ -439,6 +439,16 @@
             "title": "Deep Investigation Enabled Source",
             "type": "string"
           },
+          "embedding_index": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EmbeddingIndexRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "embedding_model": {
             "title": "Embedding Model",
             "type": "string"
@@ -11781,6 +11791,189 @@
           "window_days"
         ],
         "title": "EmailTrendsResponse",
+        "type": "object"
+      },
+      "EmbeddingFamilyProgress": {
+        "properties": {
+          "family": {
+            "title": "Family",
+            "type": "string"
+          },
+          "processed": {
+            "default": 0,
+            "title": "Processed",
+            "type": "integer"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          }
+        },
+        "required": [
+          "family",
+          "state"
+        ],
+        "title": "EmbeddingFamilyProgress",
+        "type": "object"
+      },
+      "EmbeddingGenerationRead": {
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "prefix": {
+            "title": "Prefix",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "tag": {
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "model",
+          "prefix",
+          "key",
+          "tag"
+        ],
+        "title": "EmbeddingGenerationRead",
+        "type": "object"
+      },
+      "EmbeddingIndexRead": {
+        "properties": {
+          "active": {
+            "$ref": "#/components/schemas/EmbeddingGenerationRead"
+          },
+          "configured": {
+            "$ref": "#/components/schemas/EmbeddingGenerationRead"
+          },
+          "configured_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Configured Note"
+          },
+          "families": {
+            "items": {
+              "$ref": "#/components/schemas/EmbeddingFamilyProgress"
+            },
+            "title": "Families",
+            "type": "array"
+          },
+          "in_sync": {
+            "title": "In Sync",
+            "type": "boolean"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "processed": {
+            "default": 0,
+            "title": "Processed",
+            "type": "integer"
+          },
+          "requested_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested At"
+          },
+          "stalled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stalled"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "switched_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Switched At"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EmbeddingGenerationRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          }
+        },
+        "required": [
+          "active",
+          "configured",
+          "in_sync",
+          "status"
+        ],
+        "title": "EmbeddingIndexRead",
         "type": "object"
       },
       "EnrichedTestCaseDetailResponse": {
@@ -25210,6 +25403,83 @@
         "title": "RagStatusResponse",
         "type": "object"
       },
+      "RecentSearchRead": {
+        "properties": {
+          "counts_exact": {
+            "default": true,
+            "title": "Counts Exact",
+            "type": "boolean"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "q": {
+            "title": "Q",
+            "type": "string"
+          },
+          "result_count": {
+            "title": "Result Count",
+            "type": "integer"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          }
+        },
+        "required": [
+          "q",
+          "scope",
+          "mode",
+          "result_count",
+          "ts"
+        ],
+        "title": "RecentSearchRead",
+        "type": "object"
+      },
+      "RecentSearchesResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RecentSearchRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "max": {
+            "title": "Max",
+            "type": "integer"
+          },
+          "retention_days": {
+            "title": "Retention Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "max",
+          "retention_days"
+        ],
+        "title": "RecentSearchesResponse",
+        "type": "object"
+      },
       "RefreshRequest": {
         "properties": {
           "refresh_token": {
@@ -26825,6 +27095,17 @@
       "RequiredModel": {
         "description": "One model the effective configuration depends on.",
         "properties": {
+          "in_use": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "In Use"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -27305,6 +27586,11 @@
               }
             ],
             "title": "Search Index Documents"
+          },
+          "search_usage_rows": {
+            "default": 0,
+            "title": "Search Usage Rows",
+            "type": "integer"
           },
           "test_cases": {
             "title": "Test Cases",
@@ -30895,7 +31181,8 @@
                   "defects",
                   "failures",
                   "summary_report",
-                  "explore"
+                  "explore",
+                  "search"
                 ],
                 "type": "string"
               },
@@ -31132,7 +31419,8 @@
                   "defects",
                   "failures",
                   "summary_report",
-                  "explore"
+                  "explore",
+                  "search"
                 ],
                 "type": "string"
               },
@@ -31144,6 +31432,179 @@
           }
         },
         "title": "SavedViewUpdate",
+        "type": "object"
+      },
+      "SearchSuggestion": {
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "q": {
+            "title": "Q",
+            "type": "string"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "label",
+          "q",
+          "scope"
+        ],
+        "title": "SearchSuggestion",
+        "type": "object"
+      },
+      "SearchSuggestionsResponse": {
+        "properties": {
+          "active_release": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SearchSuggestion"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "failing_tests": {
+            "items": {
+              "$ref": "#/components/schemas/SearchSuggestion"
+            },
+            "title": "Failing Tests",
+            "type": "array"
+          },
+          "open_defects": {
+            "items": {
+              "$ref": "#/components/schemas/SearchSuggestion"
+            },
+            "title": "Open Defects",
+            "type": "array"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "window_days": {
+            "title": "Window Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project_id",
+          "window_days",
+          "failing_tests",
+          "open_defects"
+        ],
+        "title": "SearchSuggestionsResponse",
+        "type": "object"
+      },
+      "SearchUsageRead": {
+        "properties": {
+          "days": {
+            "title": "Days",
+            "type": "integer"
+          },
+          "fallback_searches": {
+            "default": 0,
+            "title": "Fallback Searches",
+            "type": "integer"
+          },
+          "measured": {
+            "title": "Measured",
+            "type": "boolean"
+          },
+          "p50_latency_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P50 Latency Ms"
+          },
+          "p95_latency_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P95 Latency Ms"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "retention_days": {
+            "title": "Retention Days",
+            "type": "integer"
+          },
+          "searches": {
+            "title": "Searches",
+            "type": "integer"
+          },
+          "since": {
+            "format": "date-time",
+            "title": "Since",
+            "type": "string"
+          },
+          "zero_result_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Zero Result Rate"
+          },
+          "zero_result_searches": {
+            "title": "Zero Result Searches",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "days",
+          "since",
+          "measured",
+          "searches",
+          "zero_result_searches",
+          "retention_days"
+        ],
+        "title": "SearchUsageRead",
         "type": "object"
       },
       "SelfUpdateProfileRequest": {
@@ -31965,6 +32426,17 @@
       "StorageConfigRead": {
         "description": "Data & storage configuration returned to the client.\nInfrastructure connection details are masked to prevent credential/topology disclosure.",
         "properties": {
+          "active_collection_prefix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Collection Prefix"
+          },
           "chroma_collection": {
             "title": "Chroma Collection",
             "type": "string"
@@ -31976,6 +32448,22 @@
           "chroma_port": {
             "title": "Chroma Port",
             "type": "integer"
+          },
+          "collection_prefix": {
+            "default": "",
+            "title": "Collection Prefix",
+            "type": "string"
+          },
+          "collection_prefix_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collection Prefix Note"
           },
           "minio_bucket_name": {
             "title": "Minio Bucket Name",
@@ -32028,7 +32516,7 @@
             "anyOf": [
               {
                 "maxLength": 255,
-                "minLength": 1,
+                "minLength": 0,
                 "type": "string"
               },
               {
@@ -75127,7 +75615,8 @@
                     "defects",
                     "failures",
                     "summary_report",
-                    "explore"
+                    "explore",
+                    "search"
                   ],
                   "type": "string"
                 },
@@ -76524,7 +77013,7 @@
     },
     "/api/v1/search": {
       "get": {
-        "description": "Search test cases by name, suite, or error message.\n\nsearch_type options:\n- keyword  (default): ILIKE substring matching across name/suite/error columns.\n- semantic: ChromaDB vector-similarity search — finds conceptually similar failures.\n- hybrid:   Merges keyword + semantic results, deduplicates, and re-ranks by relevance.\n\nThe response always includes search_type to reflect the mode actually used\n(may fall back to keyword if ChromaDB is unavailable).",
+        "description": "Search test cases by name, suite, or error message.\n\nsearch_type options:\n- keyword  (default): ILIKE substring matching across name/suite/error columns.\n- semantic: ChromaDB vector-similarity search — finds conceptually similar failures.\n- hybrid:   Merges keyword + semantic results, deduplicates, and re-ranks by relevance.\n\nThe response always includes search_type to reflect the mode actually used\n(may fall back to keyword if ChromaDB is unavailable), plus\n``requested_search_type`` and, when they differ, WHY (``fallback_reason``:\n``semantic_unavailable`` -- the index raised; ``no_semantic_match`` -- it\nanswered nothing; ``no_text`` -- the query is filters only) with the\nsentence the page shows (``fallback_message``).\n\n``q`` takes the structured syntax; this test-result path applies\n``status:`` (one value), ``since:`` and ``type:`` naming test results.\nAny other filter means nothing is searched, and ``parsed.notes`` says so.\n``record=true`` (the /search page's own page-1 searches) records the\nsearch after the response (a recent + a usage row, no query text in the\nrow).",
         "operationId": "search_test_cases_api_v1_search_get",
         "parameters": [
           {
@@ -76612,6 +77101,16 @@
               "minimum": 1,
               "title": "Size",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "record",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Record",
+              "type": "boolean"
             }
           },
           {
@@ -76733,7 +77232,7 @@
     },
     "/api/v1/search/global": {
       "get": {
-        "description": "System-wide global search across multiple entity types.\n\nSearches test cases, test runs, suites, defects, flaky tests, and releases.\nReturns mixed results with entity badges and navigation URLs.\n\nAn empty ``q`` acts as a browse: the chips on the /search page show\nproject-scoped totals from ``/entity-counts``, and selecting a chip with\nno query should surface real records of that type rather than a blank\npanel. Adapters fall back to \"most recent N\" when ``q`` is empty.",
+        "description": "System-wide global search across multiple entity types.\n\nSearches test cases, test runs, suites, defects, flaky tests, and releases.\nReturns mixed results with entity badges and navigation URLs.\n\nAn empty ``q`` acts as a browse: the chips on the /search page show\nproject-scoped totals from ``/entity-counts``, and selecting a chip with\nno query should surface real records of that type rather than a blank\npanel. Adapters fall back to \"most recent N\" when ``q`` is empty.\n\n``q`` takes the structured syntax (``status:`` ``suite:`` ``branch:``\n``env:`` ``type:`` ``since:`` ``release:`` ``owner:``); the ``parsed``\nblock lists the applied filters, the ignored tokens, the entity types\nthat could not apply a filter (and so were not searched) and a sentence\nfor each. A ``release:`` value is resolved only inside the caller's\nscope. ``record=true`` (the /search page's own page-1 searches) records\nthe search after the response.",
         "operationId": "global_search_endpoint_api_v1_search_global_get",
         "parameters": [
           {
@@ -76824,6 +77323,16 @@
             }
           },
           {
+            "in": "query",
+            "name": "record",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Record",
+              "type": "boolean"
+            }
+          },
+          {
             "in": "header",
             "name": "X-API-Key",
             "required": false,
@@ -76873,7 +77382,7 @@
     },
     "/api/v1/search/index-status": {
       "get": {
-        "description": "Return the semantic (ChromaDB) index's health within the caller's active project scope.\n\n``status``: ``healthy`` (with ``document_count`` and ``last_indexed_at``),\n``not_configured`` (no ChromaDB server answers at the configured address,\ne.g. a ``make dev`` stack without the ``local-llm`` profile) or\n``unavailable`` (a server answered but the read failed). The index holds\ntest cases only; global search is keyword over every entity either way.",
+        "description": "Return the semantic (ChromaDB) index's health within the caller's active project scope.\n\n``status``: ``healthy`` (with ``document_count`` and ``last_indexed_at``),\n``not_configured`` (no ChromaDB server answers at the configured address,\ne.g. a ``make dev`` stack without the ``local-llm`` profile) or\n``unavailable`` (a server answered but the read failed). The index holds\ntest cases only; global search is keyword over every entity either way.\n\nW12 SRCH-01/-02: also the active collection / generation / embedder (from\n``get_index_status``) and whether Hybrid / Semantic can answer here:\n``semantic_available``, ``semantic_reason`` and its sentence\n(``core/search_vocab.semantic_availability``). Every key is always present.",
         "operationId": "get_index_status_api_v1_search_index_status_get",
         "parameters": [
           {
@@ -76935,6 +77444,107 @@
           }
         ],
         "summary": "Get Index Status",
+        "tags": [
+          "Search"
+        ]
+      }
+    },
+    "/api/v1/search/recent": {
+      "delete": {
+        "description": "Forget the caller's recent searches (their own Redis list only).",
+        "operationId": "clear_recent_searches_api_v1_search_recent_delete",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Clear Recent Searches",
+        "tags": [
+          "Search"
+        ]
+      },
+      "get": {
+        "description": "The caller's own last searches (Redis, newest first, at most 20, kept 30 days).\n\nKeyed by the CALLER's id. Each entry's project is re-checked against the\nprojects the reader can access NOW: an entry of a project they lost is\nleft out of the answer (this GET writes nothing, so it is filtered, not\ndeleted). A Redis fault answers an empty list.",
+        "operationId": "list_recent_searches_api_v1_search_recent_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecentSearchesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "List Recent Searches",
         "tags": [
           "Search"
         ]
@@ -77021,7 +77631,7 @@
     },
     "/api/v1/search/similar/{test_case_id}": {
       "get": {
-        "description": "Find similar failures within the source test case's project.",
+        "description": "Find similar FAILURES within the source test case's project.\n\nThe source's project is authorised (``resolve_project_scope``) before any\nChroma read; a malformed, unknown or textless id answers an empty list.\nThe semantic read asks for ``min(limit * 4, 40)`` candidates and keeps\nFAILED / BROKEN results only, the source excluded, the top ``limit`` in\nrelevance order. ``semantic_status`` says whether the index answered:\n``ok``, ``not_configured`` (no ChromaDB server answers) or ``unavailable``\n-- an outage is never shown as \"nothing similar\".",
         "operationId": "find_similar_failures_api_v1_search_similar__test_case_id__get",
         "parameters": [
           {
@@ -77088,6 +77698,155 @@
           }
         ],
         "summary": "Find Similar Failures",
+        "tags": [
+          "Search"
+        ]
+      }
+    },
+    "/api/v1/search/suggested": {
+      "get": {
+        "description": "What the /search page offers while its box is empty, for one project.\n\nThe tests failing most in the last 7 days (top 5, each with its failure\ncount), the newest open defects with a Jira key (top 5) and the active\nrelease. The project is authorised FIRST (400 / 403).",
+        "operationId": "suggested_searches_api_v1_search_suggested_get",
+        "parameters": [
+          {
+            "description": "The ONE project the suggestions are for",
+            "in": "query",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "description": "The ONE project the suggestions are for",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchSuggestionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Suggested Searches",
+        "tags": [
+          "Search"
+        ]
+      }
+    },
+    "/api/v1/search/usage": {
+      "get": {
+        "description": "Searches, the zero-result rate and the latency percentiles of recorded searches.\n\nQA lead and up. The project is authorised FIRST; without one a QA lead\nsees the projects they belong to and an ADMIN the whole deployment. No\nsearch in the window answers ``measured: false`` (never ``0 %``).",
+        "operationId": "search_usage_api_v1_search_usage_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
+          },
+          {
+            "description": "1 (today, UTC), 7 or 30",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "description": "1 (today, UTC), 7 or 30",
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchUsageRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Search Usage",
         "tags": [
           "Search"
         ]
@@ -77204,6 +77963,116 @@
           }
         ],
         "summary": "Update Ai Config",
+        "tags": [
+          "Settings"
+        ]
+      }
+    },
+    "/api/v1/settings/ai/embedding-index": {
+      "get": {
+        "description": "Which embedder every index uses NOW, what is configured, and any re-embed.\n\nDeployment-wide. The settings page polls this only while a build runs\n(``GET /settings/ai`` carries the same body on load). 503 when the state\ncannot be read: an unreadable state is never reported as in sync.",
+        "operationId": "get_embedding_index_api_v1_settings_ai_embedding_index_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmbeddingIndexRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get Embedding Index",
+        "tags": [
+          "Settings"
+        ]
+      }
+    },
+    "/api/v1/settings/ai/embedding-index/rebuild": {
+      "post": {
+        "description": "**Re-embed now**: build the CONFIGURED generation (embedder + Collection prefix).\n\nADMIN only (refused to project-bound keys); audited as\n``settings_audit_log(\"embedding_index\", \"reembed_requested\")``. 422 when\nthe configured generation is already in use and nothing is building, 409\nwhile a build toward it runs (a failed one may be retried, and so may a\nSTALLED one -- ``build_is_stalled``: its worker died), 422 with the\nembedder's sentence when this deployment refuses it.",
+        "operationId": "rebuild_embedding_index_api_v1_settings_ai_embedding_index_rebuild_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmbeddingIndexRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Rebuild Embedding Index",
         "tags": [
           "Settings"
         ]

@@ -10,7 +10,7 @@ Get Ai Config
 
 
 
-Source: [backend/app/routers/app_settings.py:423](../../../backend/app/routers/app_settings.py#L423).
+Source: [backend/app/routers/app_settings.py:538](../../../backend/app/routers/app_settings.py#L538).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -81,7 +81,7 @@ Update Ai Config
 
 
 
-Source: [backend/app/routers/app_settings.py:583](../../../backend/app/routers/app_settings.py#L583).
+Source: [backend/app/routers/app_settings.py:715](../../../backend/app/routers/app_settings.py#L715).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -95,6 +95,7 @@ Direct handler error branches (dependency/service errors can add others):
 
 ```python
 HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Offline mode is pinned on by AI_OFFLINE_MODE in this deployment's environment and cannot be disabled from the API. Set AI_OFFLINE_MODE=false in the backend environment and restart to permit cloud LLM egress.")
+HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=PROVIDER_UNSUPPORTED)
 ```
 
 ### Declared wire contract
@@ -162,6 +163,174 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 }
 ```
 
+## GET `/api/v1/settings/ai/embedding-index`
+
+Get Embedding Index
+
+Which embedder every index uses NOW, what is configured, and any re-embed.
+
+Deployment-wide. The settings page polls this only while a build runs
+(``GET /settings/ai`` carries the same body on load). 503 when the state
+cannot be read: an unreadable state is never reported as in sync.
+
+Source: [backend/app/routers/app_settings.py:950](../../../backend/app/routers/app_settings.py#L950).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+_: User=Depends(require_role(UserRole.QA_LEAD)), db: AsyncSession=Depends(get_db)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=STATE_UNREADABLE)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "get_embedding_index_api_v1_settings_ai_embedding_index_get",
+  "parameters": [
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/EmbeddingIndexRead"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+## POST `/api/v1/settings/ai/embedding-index/rebuild`
+
+Rebuild Embedding Index
+
+**Re-embed now**: build the CONFIGURED generation (embedder + Collection prefix).
+
+ADMIN only (refused to project-bound keys); audited as
+``settings_audit_log("embedding_index", "reembed_requested")``. 422 when
+the configured generation is already in use and nothing is building, 409
+while a build toward it runs (a failed one may be retried, and so may a
+STALLED one -- ``build_is_stalled``: its worker died), 422 with the
+embedder's sentence when this deployment refuses it.
+
+Source: [backend/app/routers/app_settings.py:973](../../../backend/app/routers/app_settings.py#L973).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+current_user: User=Depends(require_role(UserRole.ADMIN)), db: AsyncSession=Depends(get_db)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=status.HTTP_409_CONFLICT, detail=REBUILD_ALREADY_RUNNING)
+HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=PROVIDER_UNSUPPORTED)
+HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=REBUILD_NOTHING_TO_DO)
+HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=STATE_UNREADABLE)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "rebuild_embedding_index_api_v1_settings_ai_embedding_index_rebuild_post",
+  "parameters": [
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/EmbeddingIndexRead"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## GET `/api/v1/settings/ai/mode`
 
 Get Ai Mode
@@ -175,7 +344,7 @@ tester or viewer got "Requires at least QA_LEAD role" toasts on every
 page and never saw Ask AI (the UX redesign's browser E2E pass). Nothing
 else of the config — providers, models, which keys are set — is here.
 
-Source: [backend/app/routers/app_settings.py:538](../../../backend/app/routers/app_settings.py#L538).
+Source: [backend/app/routers/app_settings.py:657](../../../backend/app/routers/app_settings.py#L657).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -251,7 +420,7 @@ settings row, or a broken ML model directory all degrade into honest
 fields rather than a 500 — an operator debugging an air-gapped install
 needs this page to render precisely when things are broken.
 
-Source: [backend/app/routers/app_settings.py:560](../../../backend/app/routers/app_settings.py#L560).
+Source: [backend/app/routers/app_settings.py:679](../../../backend/app/routers/app_settings.py#L679).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -322,7 +491,7 @@ Get Audit Log
 
 Return recent settings change audit entries.
 
-Source: [backend/app/routers/app_settings.py:1045](../../../backend/app/routers/app_settings.py#L1045).
+Source: [backend/app/routers/app_settings.py:1359](../../../backend/app/routers/app_settings.py#L1359).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -427,7 +596,7 @@ List Feature Flags
 
 List all feature flags.
 
-Source: [backend/app/routers/app_settings.py:1067](../../../backend/app/routers/app_settings.py#L1067).
+Source: [backend/app/routers/app_settings.py:1381](../../../backend/app/routers/app_settings.py#L1381).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -504,7 +673,7 @@ Remove Feature Flag
 
 Delete a feature flag. Requires ADMIN.
 
-Source: [backend/app/routers/app_settings.py:1102](../../../backend/app/routers/app_settings.py#L1102).
+Source: [backend/app/routers/app_settings.py:1416](../../../backend/app/routers/app_settings.py#L1416).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -577,7 +746,7 @@ Update Feature Flag
 
 Create or update a feature flag. Requires ADMIN.
 
-Source: [backend/app/routers/app_settings.py:1077](../../../backend/app/routers/app_settings.py#L1077).
+Source: [backend/app/routers/app_settings.py:1391](../../../backend/app/routers/app_settings.py#L1391).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -673,7 +842,7 @@ Get Integrations Config
 
 
 
-Source: [backend/app/routers/app_settings.py:857](../../../backend/app/routers/app_settings.py#L857).
+Source: [backend/app/routers/app_settings.py:1118](../../../backend/app/routers/app_settings.py#L1118).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -744,7 +913,7 @@ Update Integrations Config
 
 
 
-Source: [backend/app/routers/app_settings.py:866](../../../backend/app/routers/app_settings.py#L866).
+Source: [backend/app/routers/app_settings.py:1127](../../../backend/app/routers/app_settings.py#L1127).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -834,7 +1003,7 @@ Return health status for all tracked integration providers.
 The deployment-wide view only (``scope_key = ''``): per-project GitHub /
 GitLab rows (W10 INT-04) are Integration Health's ``?scope=all`` read.
 
-Source: [backend/app/routers/app_settings.py:1202](../../../backend/app/routers/app_settings.py#L1202).
+Source: [backend/app/routers/app_settings.py:1516](../../../backend/app/routers/app_settings.py#L1516).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -911,7 +1080,7 @@ Get Mfa Policy
 
 Read the workspace MFA + lockout policy. QA_LEAD or higher.
 
-Source: [backend/app/routers/app_settings.py:1132](../../../backend/app/routers/app_settings.py#L1132).
+Source: [backend/app/routers/app_settings.py:1446](../../../backend/app/routers/app_settings.py#L1446).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -982,7 +1151,7 @@ Update Mfa Policy
 
 Update the workspace MFA + lockout policy. ADMIN only, audit-logged.
 
-Source: [backend/app/routers/app_settings.py:1144](../../../backend/app/routers/app_settings.py#L1144).
+Source: [backend/app/routers/app_settings.py:1458](../../../backend/app/routers/app_settings.py#L1458).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1063,7 +1232,7 @@ Get Smtp Config
 
 Return current SMTP configuration (password is never returned — only a boolean flag).
 
-Source: [backend/app/routers/app_settings.py:94](../../../backend/app/routers/app_settings.py#L94).
+Source: [backend/app/routers/app_settings.py:95](../../../backend/app/routers/app_settings.py#L95).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1134,7 +1303,7 @@ Update Smtp Config
 
 Persist SMTP configuration to the database. Password is stored in secret_refs, not in app_settings.
 
-Source: [backend/app/routers/app_settings.py:116](../../../backend/app/routers/app_settings.py#L116).
+Source: [backend/app/routers/app_settings.py:117](../../../backend/app/routers/app_settings.py#L117).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1215,7 +1384,7 @@ Test Smtp Config
 
 Send a test email to the current user's address using the stored SMTP config.
 
-Source: [backend/app/routers/app_settings.py:177](../../../backend/app/routers/app_settings.py#L177).
+Source: [backend/app/routers/app_settings.py:178](../../../backend/app/routers/app_settings.py#L178).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1286,7 +1455,7 @@ Get Storage Config
 
 
 
-Source: [backend/app/routers/app_settings.py:1001](../../../backend/app/routers/app_settings.py#L1001).
+Source: [backend/app/routers/app_settings.py:1281](../../../backend/app/routers/app_settings.py#L1281).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1357,7 +1526,7 @@ Update Storage Config
 
 
 
-Source: [backend/app/routers/app_settings.py:1013](../../../backend/app/routers/app_settings.py#L1013).
+Source: [backend/app/routers/app_settings.py:1295](../../../backend/app/routers/app_settings.py#L1295).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1365,6 +1534,12 @@ Declared Python handler arguments (includes exact role/guard options):
 
 ```python
 payload: StorageConfigUpdate, current_user: User=Depends(require_role(UserRole.ADMIN)), db: AsyncSession=Depends(get_db)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=PREFIX_INVALID)
 ```
 
 ### Declared wire contract

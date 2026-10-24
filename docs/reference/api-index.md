@@ -476,10 +476,16 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/search/entity-counts` | Get Entity Counts | [Search](api/search.md) |
 | GET | `/api/v1/search/global` | Global Search Endpoint | [Search](api/search.md) |
 | GET | `/api/v1/search/index-status` | Get Index Status | [Search](api/search.md) |
+| DELETE | `/api/v1/search/recent` | Clear Recent Searches | [Search](api/search.md) |
+| GET | `/api/v1/search/recent` | List Recent Searches | [Search](api/search.md) |
 | POST | `/api/v1/search/reindex` | Trigger Reindex | [Search](api/search.md) |
 | GET | `/api/v1/search/similar/{test_case_id}` | Find Similar Failures | [Search](api/search.md) |
+| GET | `/api/v1/search/suggested` | Suggested Searches | [Search](api/search.md) |
+| GET | `/api/v1/search/usage` | Search Usage | [Search](api/search.md) |
 | GET | `/api/v1/settings/ai` | Get Ai Config | [Settings](api/settings.md) |
 | PUT | `/api/v1/settings/ai` | Update Ai Config | [Settings](api/settings.md) |
+| GET | `/api/v1/settings/ai/embedding-index` | Get Embedding Index | [Settings](api/settings.md) |
+| POST | `/api/v1/settings/ai/embedding-index/rebuild` | Rebuild Embedding Index | [Settings](api/settings.md) |
 | POST | `/api/v1/settings/ai/ml/retrain` | Retrain Ml Classifier | [AI Settings](api/ai-settings.md) |
 | GET | `/api/v1/settings/ai/ml/status` | Get Ml Status | [AI Settings](api/ai-settings.md) |
 | GET | `/api/v1/settings/ai/mode` | Get Ai Mode | [Settings](api/settings.md) |
@@ -628,4 +634,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **619 HTTP operations**, **523 paths**, **86 domain pages**.
+Total: **625 HTTP operations**, **528 paths**, **86 domain pages**.
