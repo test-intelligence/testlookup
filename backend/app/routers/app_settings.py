@@ -22,6 +22,7 @@ from app.services.settings_audit_service import get_settings_audit_log, log_sett
 from app.models.schemas import (
     AIConfigRead,
     AIConfigUpdate,
+    EmbeddingIndexRead,
     IntegrationsConfigRead,
     IntegrationsConfigUpdate,
     MfaPolicyRead,
@@ -420,6 +421,120 @@ async def _ml_status() -> dict:
     return status
 
 
+# ── W12 SRCH-02: the embedding index (active / configured / building generation) ──
+
+
+async def _load_storage_values(db: AsyncSession) -> dict:
+    """The stored storage overrides (ONE statement; ``{}`` when there is no row)."""
+    from sqlalchemy import select
+
+    result = await db.execute(select(AppSetting).where(AppSetting.key == _STORAGE_KEY))
+    row = result.scalar_one_or_none()
+    value = getattr(row, "value", None) if row is not None else None
+    return dict(value) if isinstance(value, dict) else {}
+
+
+async def _embedding_index_read(db: AsyncSession, ai_cfg: dict) -> Optional[EmbeddingIndexRead]:
+    """``EmbeddingIndexRead`` of the state, or None when anything could not be read. Never raises."""
+    from app.services.embedding_index_state import read_embedding_index
+
+    try:
+        storage_values = await _load_storage_values(db)
+        body = await read_embedding_index(db, ai_config=ai_cfg, storage_values=storage_values)
+        return EmbeddingIndexRead.model_validate(body) if body is not None else None
+    except Exception:  # noqa: BLE001 - embedding_index: null, never a guess and never a 500
+        logger.warning("embedding index state could not be read for the settings page")
+        return None
+
+
+async def _embedder_runtime(db: AsyncSession, merged: dict, updates: dict) -> tuple[bool, str, bool]:
+    """``(offline, ollama_base_url, openai_key_set)`` for validating an embedder change.
+
+    Read on the request session (``fresh``: nothing is cached from inside the
+    transaction). Only the embedder-change paths call this.
+    """
+    from app.services.ai_config_resolver import get_effective_ai_config, resolve_offline_mode
+    from app.services.embedding_function import ollama_base_url
+
+    effective = await get_effective_ai_config(db=db, fresh=True)
+    offline, _source = resolve_offline_mode(merged.get("ai_offline_mode", effective.get("offline_mode")))
+    base_url = updates["base_url"] if "base_url" in updates else effective.get("base_url")
+    ollama_url = ollama_base_url({"provider": merged.get("llm_provider", effective.get("provider")),
+                                  "base_url": base_url})
+    key_set = bool(updates.get("openai_api_key") or effective.get("openai_api_key"))
+    return bool(offline), ollama_url, key_set
+
+
+async def _validate_embedder_or_422(spec, *, offline: bool, ollama_url: str, openai_key_set: bool) -> None:
+    from app.services.embedding_function import EmbedderRefused, validate_embedder
+
+    try:
+        await asyncio.to_thread(
+            validate_embedder, spec, offline=offline, ollama_base_url=ollama_url,
+            openai_key_set=openai_key_set,
+        )
+    except EmbedderRefused as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from None
+
+
+async def _stage_generation_request(db: AsyncSession, target_of, current_user: User, changed_fields: list[str]):
+    """Lock the state, ask for ``target_of(state)`` and stage it + its audit row.
+
+    Returns ``(before, after)``; the caller commits, then calls
+    :func:`_after_generation_request`.
+    """
+    from datetime import datetime, timezone
+
+    from app.services.embedding_index_state import lock_state, request_target, stage_state
+
+    row, before = await lock_state(db)
+    after = request_target(before, target_of(before), actor_id=str(current_user.id),
+                           now=datetime.now(timezone.utc))
+    stage_state(db, row, after, actor_id=current_user.id)
+    await log_settings_change(
+        db, "embedding_index", "reembed_requested", current_user, changed_fields=changed_fields,
+    )
+    return before, after
+
+
+async def _after_generation_request(db: AsyncSession, before, after) -> None:
+    """After the commit: drop the generation caches, queue the build (and the
+    retirement of a replaced target). A broker that refuses the build records
+    it as failed, so the page never shows a build nobody runs."""
+    from app.services.chroma_collections import RETIRE_GRACE_SECONDS, invalidate_generations_cache
+
+    await invalidate_generations_cache()
+    target = after.target_generation()
+    if target is not None and after.status == "building":
+        try:
+            from app.worker.tasks import rebuild_embedding_generation
+
+            rebuild_embedding_generation.apply_async(
+                kwargs={"generation_tag": target.tag, "fence": after.fence},
+            )
+        except Exception as exc:  # noqa: BLE001 - say so instead of "building" forever
+            logger.warning("embedding generation build could not be queued (%s)", type(exc).__name__)
+            from dataclasses import replace
+
+            from app.services.embedding_index_state import lock_state, stage_state
+
+            row, current = await lock_state(db)
+            if current.fence == after.fence:
+                stage_state(db, row, replace(
+                    current, status="failed",
+                    last_error=f"the build could not be queued ({type(exc).__name__})",
+                ), actor_id=None)
+                await db.commit()
+                await invalidate_generations_cache()
+    if len(after.retiring) > len(before.retiring):
+        try:
+            from app.worker.tasks import retire_embedding_generations
+
+            retire_embedding_generations.apply_async(countdown=RETIRE_GRACE_SECONDS)
+        except Exception as exc:  # noqa: BLE001 - the next switch schedules it again
+            logger.warning("embedding generation retirement could not be queued (%s)", type(exc).__name__)
+
+
 @router.get("/ai", response_model=AIConfigRead)
 async def get_ai_config(
     _: User = Depends(require_role(UserRole.QA_LEAD)),
@@ -468,6 +583,7 @@ async def get_ai_config(
         rag_faithfulness_evaluator_reason=cfg["rag_faithfulness_evaluator_reason"],
         rag_faithfulness_gate_enabled=gate_enabled,
         ml_min_training_samples=settings.ML_MIN_TRAINING_SAMPLES,
+        embedding_index=await _embedding_index_read(db, cfg),
         **ml,
     )
 
@@ -482,6 +598,9 @@ class RequiredModel(BaseModel):
     # Runtime-aware fix for a missing model. Null when the model is present
     # OR when Ollama is unreachable (fix connectivity before pulling).
     remedy: Optional[str] = None
+    # W12 SRCH-02, embedding models only: true for the ACTIVE embedder, false
+    # for the one being built (a target); null where it does not apply.
+    in_use: Optional[bool] = None
 
 
 class FallbackChainEntry(BaseModel):
@@ -575,8 +694,21 @@ async def get_ai_model_status(
         logger.warning("model-status: AI config load failed — falling back to env defaults", exc_info=True)
         cfg = {}
 
+    from app.services.embedding_index_state import read_state
     from app.services.model_status_service import build_model_status
-    status = await build_model_status(cfg)
+
+    # W12 SRCH-02: an Ollama embedding model is required when it is the ACTIVE
+    # or the TARGET embedder, not merely configured. An unreadable state keeps
+    # the configured-embedder rule (``embedding=None``).
+    embedding = None
+    state = await read_state(db)
+    if state is not None:
+        target = state.target_generation()
+        embedding = {
+            "active": state.active_generation().embedder.as_dict(),
+            "target": target.embedder.as_dict() if target is not None else None,
+        }
+    status = await build_model_status(cfg, embedding=embedding)
     return AIModelStatusRead.model_validate(status)
 
 
@@ -625,6 +757,33 @@ async def update_ai_config(
         )
 
     merged = {**existing, **updates}
+
+    # W12 SRCH-02: a CHANGED embedder is validated and starts a re-embed into
+    # a new generation; reads keep the active one until it finishes. Only a
+    # change counts -- the form posts every field back, and an unchanged
+    # (legacy) value passes through untouched, whatever it is.
+    embedder_change = None
+    if "embedding_provider" in updates or "embedding_model" in updates:
+        from app.services.embedding_function import (
+            EMBEDDING_PROVIDERS,
+            PROVIDER_UNSUPPORTED,
+            EmbedderSpec,
+        )
+
+        new_spec = EmbedderSpec.from_settings(merged.get("embedding_provider"), merged.get("embedding_model"))
+        old_spec = EmbedderSpec.from_settings(existing.get("embedding_provider"), existing.get("embedding_model"))
+        if new_spec.key != old_spec.key:
+            if new_spec.provider not in EMBEDDING_PROVIDERS:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=PROVIDER_UNSUPPORTED)
+            if new_spec.provider != "default":
+                offline_for_embedder, ollama_url, openai_key_set = await _embedder_runtime(db, merged, updates)
+                await _validate_embedder_or_422(
+                    new_spec, offline=offline_for_embedder, ollama_url=ollama_url,
+                    openai_key_set=openai_key_set,
+                )
+            merged["embedding_provider"] = new_spec.provider
+            merged["embedding_model"] = new_spec.model
+            embedder_change = new_spec
 
     # The Knowledge-RAG switch on this page drives the feature_flags row that
     # actually gates the endpoints — it does not get its own copy in ai_config.
@@ -684,10 +843,25 @@ async def update_ai_config(
     else:
         db.add(AppSetting(key=_AI_CONFIG_KEY, value=store_value, updated_by=current_user.id, is_secret_backed=bool(secrets)))
 
+    generation_request = None
+    if embedder_change is not None:
+        from app.services.chroma_collections import Generation
+        from app.services.embedding_index_state import base_generation
+
+        spec = embedder_change
+        generation_request = await _stage_generation_request(
+            db,
+            lambda state: Generation(prefix=base_generation(state).prefix, embedder=spec),
+            current_user,
+            ["embedding_provider", "embedding_model"],
+        )
+
     # Audit log
     await log_settings_change(db, _AI_CONFIG_KEY, "updated", current_user, changed_fields=list(updates.keys()))
     await db.commit()
     await invalidate_ai_config_cache()
+    if generation_request is not None:
+        await _after_generation_request(db, *generation_request)
     # AIC-04: re-seed the analysis-mode accelerator with the STORED mode, with
     # NO expiry (it used to be ex=86400, after which every reader silently fell
     # back to the env value), and whenever a valid mode is stored -- not only
@@ -768,8 +942,95 @@ async def update_ai_config(
         rag_faithfulness_evaluator_reason=evaluator_reason,
         rag_faithfulness_gate_enabled=gate_enabled,
         ml_min_training_samples=settings.ML_MIN_TRAINING_SAMPLES,
+        embedding_index=await _embedding_index_read(db, merged),
         **ml,
     )
+
+
+@router.get("/ai/embedding-index", response_model=EmbeddingIndexRead)
+async def get_embedding_index(
+    _: User = Depends(require_role(UserRole.QA_LEAD)),
+    db: AsyncSession = Depends(get_db),
+) -> EmbeddingIndexRead:
+    """Which embedder every index uses NOW, what is configured, and any re-embed.
+
+    Deployment-wide. The settings page polls this only while a build runs
+    (``GET /settings/ai`` carries the same body on load). 503 when the state
+    cannot be read: an unreadable state is never reported as in sync.
+    """
+    from app.services.embedding_index_state import STATE_UNREADABLE
+
+    try:
+        cfg = await _load_ai_config(db)
+    except Exception:  # noqa: BLE001 - unreadable, not a guess
+        cfg = None
+    body = await _embedding_index_read(db, cfg) if cfg is not None else None
+    if body is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=STATE_UNREADABLE)
+    return body
+
+
+@router.post("/ai/embedding-index/rebuild", response_model=EmbeddingIndexRead)
+async def rebuild_embedding_index(
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> EmbeddingIndexRead:
+    """**Re-embed now**: build the CONFIGURED generation (embedder + Collection prefix).
+
+    ADMIN only (refused to project-bound keys); audited as
+    ``settings_audit_log("embedding_index", "reembed_requested")``. 422 when
+    the configured generation is already in use and nothing is building, 409
+    while a build toward it runs (a failed one may be retried, and so may a
+    STALLED one -- ``build_is_stalled``: its worker died), 422 with the
+    embedder's sentence when this deployment refuses it.
+    """
+    from datetime import datetime, timezone
+
+    from app.services.embedding_function import EMBEDDING_PROVIDERS, PROVIDER_UNSUPPORTED
+    from app.services.embedding_index_state import (
+        REBUILD_ALREADY_RUNNING,
+        REBUILD_NOTHING_TO_DO,
+        STATE_UNREADABLE,
+        build_is_stalled,
+        configured_generation,
+        lock_state,
+        request_target,
+        stage_state,
+    )
+
+    cfg = await _load_ai_config(db)
+    storage_values = await _load_storage_values(db)
+    configured, _note = configured_generation(cfg, storage_values)
+    # The checks read the LOCKED row, so two clicks cannot both start a build.
+    row, before = await lock_state(db)
+    target = before.target_generation()
+    now = datetime.now(timezone.utc)
+    if configured == before.active_generation() and target is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=REBUILD_NOTHING_TO_DO)
+    # 409 only while a worker holds (or is about to take) the build; a STALLED
+    # one (its worker died, its lease expired) is resumed under a new fence.
+    if before.status == "building" and target == configured and not build_is_stalled(before, now=now):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=REBUILD_ALREADY_RUNNING)
+    if configured.embedder.provider not in EMBEDDING_PROVIDERS:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=PROVIDER_UNSUPPORTED)
+    if configured.embedder.provider != "default":
+        offline, ollama_url, openai_key_set = await _embedder_runtime(db, cfg, {})
+        await _validate_embedder_or_422(
+            configured.embedder, offline=offline, ollama_url=ollama_url, openai_key_set=openai_key_set,
+        )
+    after = request_target(before, configured, actor_id=str(current_user.id), now=now)
+    stage_state(db, row, after, actor_id=current_user.id)
+    await log_settings_change(
+        db, "embedding_index", "reembed_requested", current_user,
+        changed_fields=["embedding_provider", "embedding_model", "chroma_collection"],
+    )
+    await db.commit()
+    await _after_generation_request(db, before, after)
+    logger.info("Re-embed requested by user_id=%s", current_user.id)
+    body = await _embedding_index_read(db, cfg)
+    if body is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=STATE_UNREADABLE)
+    return body
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -984,8 +1245,16 @@ async def _get_storage_connection_status() -> dict[str, bool]:
     }
 
 
-async def _build_storage_config_read(values: dict) -> StorageConfigRead:
+async def _build_storage_config_read(values: dict, *, active_prefix: Optional[str] = None) -> StorageConfigRead:
+    from app.services.chroma_collections import prefix_of
+
     status = await _get_storage_connection_status()
+    chroma_collection = values.get("chroma_collection", settings.CHROMA_COLLECTION)
+    # W12 SRCH-02: chroma_collection is the Collection PREFIX. A stored value
+    # that is not a valid prefix reads as "no prefix", and the note says so.
+    collection_prefix, collection_prefix_note = prefix_of(
+        chroma_collection if isinstance(chroma_collection, str) else None
+    )
     return StorageConfigRead(
         **status,
         storage_backend=values.get("storage_backend", settings.STORAGE_BACKEND),
@@ -994,8 +1263,19 @@ async def _build_storage_config_read(values: dict) -> StorageConfigRead:
         minio_use_ssl=values.get("minio_use_ssl", settings.MINIO_USE_SSL),
         chroma_host=values.get("chroma_host", settings.CHROMA_HOST),
         chroma_port=values.get("chroma_port", settings.CHROMA_PORT),
-        chroma_collection=values.get("chroma_collection", settings.CHROMA_COLLECTION),
+        chroma_collection=chroma_collection,
+        collection_prefix=collection_prefix,
+        collection_prefix_note=collection_prefix_note,
+        active_collection_prefix=active_prefix,
     )
+
+
+async def _active_collection_prefix(db: AsyncSession) -> Optional[str]:
+    """The ACTIVE generation's prefix; None when the state cannot be read (never raises)."""
+    from app.services.embedding_index_state import read_state
+
+    state = await read_state(db)
+    return state.active_generation().prefix if state is not None else None
 
 
 @router.get("/storage", response_model=StorageConfigRead)
@@ -1007,7 +1287,9 @@ async def get_storage_config(
     result = await db.execute(select(AppSetting).where(AppSetting.key == _STORAGE_KEY))
     row = result.scalar_one_or_none()
     overrides = dict(row.value) if row and row.value else {}
-    return await _build_storage_config_read(overrides)
+    return await _build_storage_config_read(
+        overrides, active_prefix=await _active_collection_prefix(db),
+    )
 
 
 @router.put("/storage", response_model=StorageConfigRead)
@@ -1021,6 +1303,23 @@ async def update_storage_config(
     row = result.scalar_one_or_none()
     existing = dict(row.value) if row and row.value else {}
     updates = payload.model_dump(exclude_none=True)
+
+    # W12 SRCH-02: a CHANGED Collection prefix is validated and starts a
+    # re-embed into new collections. An unchanged value (the form posts it
+    # back) passes through untouched -- even one stored before W12 that is not
+    # a valid prefix, which reads as "no prefix" with a note.
+    prefix_change: Optional[str] = None
+    if "chroma_collection" in updates:
+        from app.services.chroma_collections import PREFIX_INVALID, prefix_change_is_valid, prefix_of
+
+        old_value = str(existing.get("chroma_collection", settings.CHROMA_COLLECTION) or "").strip()
+        new_value = str(updates["chroma_collection"] or "").strip()
+        if new_value != old_value:
+            if not prefix_change_is_valid(new_value):
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=PREFIX_INVALID)
+            updates["chroma_collection"] = new_value
+            if prefix_of(new_value)[0] != prefix_of(old_value)[0]:
+                prefix_change = prefix_of(new_value)[0]
     merged = {**existing, **updates}
 
     if row:
@@ -1029,13 +1328,28 @@ async def update_storage_config(
     else:
         db.add(AppSetting(key=_STORAGE_KEY, value=merged, updated_by=current_user.id))
 
+    generation_request = None
+    if prefix_change is not None:
+        from app.services.chroma_collections import Generation
+        from app.services.embedding_index_state import base_generation
+
+        new_prefix = prefix_change
+        generation_request = await _stage_generation_request(
+            db,
+            lambda state: Generation(prefix=new_prefix, embedder=base_generation(state).embedder),
+            current_user,
+            ["chroma_collection"],
+        )
+
     await log_settings_change(db, _STORAGE_KEY, "updated", current_user, changed_fields=list(updates.keys()))
     await db.commit()
     from app.services.storage_config_service import invalidate_storage_config_cache
 
     await invalidate_storage_config_cache()
+    if generation_request is not None:
+        await _after_generation_request(db, *generation_request)
     logger.info("Storage configuration updated by user_id=%s", current_user.id)
-    return await _build_storage_config_read(merged)
+    return await _build_storage_config_read(merged, active_prefix=await _active_collection_prefix(db))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
