@@ -1,6 +1,7 @@
 """Dashboard metrics aggregation service."""
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Optional
 
@@ -399,10 +400,14 @@ async def get_dashboard_summary(
     # honours the configured thresholds.
     band: str | None = None
     downgrades: list[str] = []
+    # W11 GATE-04: the policy is named beside its verdict, so the pages draw
+    # its GO line and say which policy decided (None = the default bands).
+    resolved: ReadinessPolicyResolved | None = None
     if total_exec <= 0:
         readiness = None
     else:
-        policy_doc = await _resolve_policy_for_project(db, project_id)
+        resolved = await resolve_readiness_policy(db, project_id)
+        policy_doc = resolved.rules if resolved else None
         if policy_doc is not None:
             bands_cfg = policy_doc.get("pass_rate_bands") or {}
             caps_cfg = policy_doc.get("hard_caps") or {}
@@ -480,6 +485,9 @@ async def get_dashboard_summary(
         # resolved or when there's no run evidence.
         "release_readiness_band": band,
         "release_readiness_downgrades": downgrades,
+        # W11 GATE-04: the policy the verdict above was decided by (cached
+        # with it). None: no evidence in the window, or no policy resolved.
+        "readiness_policy": resolved.public() if resolved else None,
     }
     if meta_builder is not None:
         result_dict["meta"] = await meta_builder()
@@ -1168,3 +1176,82 @@ async def _resolve_policy_for_project(db: AsyncSession, project_id: str | None) 
     """
     resolved = await _resolve_active_policy_for_project(db, project_id)
     return resolved[0] if resolved else None
+
+
+# W11 GATE-04: the levels a resolved readiness policy reports (the summary's
+# ``readiness_policy.level``); "default" is the pages' word for "none resolved".
+READINESS_POLICY_LEVELS = ("project", "system")
+
+_BAND_KEYS = ("orange_min", "yellow_min", "green_min")
+
+
+@dataclass(frozen=True, slots=True)
+class ReadinessPolicyResolved:
+    """The policy the summary's verdict was decided by, with its name.
+
+    ``rules`` is the document :func:`classify_with_policy` reads; ``public()``
+    is the ``ReadinessPolicy`` shape the summary carries (and caches), so the
+    pages can draw the policy's GO line and name it.
+    """
+
+    rules: dict
+    id: str
+    version: int
+    level: str
+    name: str
+
+    def public(self) -> dict:
+        from app.models.schemas import PolicyPassRateBands
+
+        defaults = PolicyPassRateBands()
+        raw = self.rules.get("pass_rate_bands") if isinstance(self.rules, dict) else None
+        configured = raw if isinstance(raw, dict) else {}
+        bands: dict[str, float] = {}
+        for key in _BAND_KEYS:
+            # Per key: a policy that states only yellow_min keeps the default
+            # orange / green lines -- exactly what classify_with_policy reads.
+            value = configured.get(key)
+            try:
+                bands[key] = float(value) if value is not None else float(getattr(defaults, key))
+            except (TypeError, ValueError):
+                bands[key] = float(getattr(defaults, key))
+        return {
+            "id": self.id,
+            "name": self.name,
+            "version": self.version,
+            "level": self.level,
+            "bands": bands,
+        }
+
+
+async def resolve_readiness_policy(
+    db: AsyncSession, project_id: str | None
+) -> ReadinessPolicyResolved | None:
+    """The policy in force for ``project_id`` (project, else system), named.
+
+    :func:`_resolve_active_policy_for_project` stays the ONE precedence
+    implementation (and its three-column SELECT is not widened: the council's
+    tests fake that row); the name is ONE more statement keyed on the resolved
+    id, run only when a policy resolved.
+    """
+    from app.models.postgres import ReleaseGatePolicy
+
+    resolved = await _resolve_active_policy_for_project(db, project_id)
+    if not resolved:
+        return None
+    rules, policy_id, version, level = resolved
+    try:
+        key: uuid.UUID | str = uuid.UUID(str(policy_id))
+    except (TypeError, ValueError):
+        key = policy_id
+    result = await db.execute(
+        select(ReleaseGatePolicy.name).where(ReleaseGatePolicy.id == key)
+    )
+    name = result.scalar()
+    if not isinstance(name, str) or not name.strip():
+        # A test double (or a row gone between the two reads) still names the
+        # version, never an empty label.
+        name = f"Policy v{version}"
+    return ReadinessPolicyResolved(
+        rules=rules, id=str(policy_id), version=int(version), level=level, name=name
+    )

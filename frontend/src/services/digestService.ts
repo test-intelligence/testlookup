@@ -1,4 +1,5 @@
 import { api } from './api';
+import { shortAgo } from '@/utils/formatters';
 
 export type DigestScheduleType =
   | 'DAILY'
@@ -76,6 +77,81 @@ export interface DigestContent {
   action_items: string[];
   /** NTF-04: present when the digest was asked for with a saved view; read through `parseDigestScope`. */
   scope?: DigestScopeInfo | null;
+  /** W11 GATE-08b: the digest release's RELEASE-level verdict; read through `parseDigestReleaseVerdict`. */
+  release_verdict?: DigestReleaseVerdict | null;
+}
+
+/** W11 GATE-08b: `DigestReleaseVerdict` (the preview carries it; `verdict` null = never evaluated). */
+export interface DigestReleaseVerdict {
+  release_id: string;
+  release_name: string;
+  source: string;
+  verdict?: string | null;
+  decided_at?: string | null;
+  blocker_count?: number;
+}
+
+/** The release-level verdict words (the digest's own, `digest_content_service.RELEASE_VERDICT_TEXT`). */
+export const RELEASE_VERDICT_TEXT: Readonly<Record<string, string>> = {
+  GO: 'Go',
+  CONDITIONAL_GO: 'Conditional Go',
+  NO_GO: 'No-Go',
+  NOT_EVALUATED: 'Not evaluated (too little evidence)',
+};
+/** A release with no recorded verdict: absence is not GO. */
+export const NEVER_EVALUATED_TEXT = 'not evaluated yet';
+const RELEASE_SOURCE_TEXT: Readonly<Record<string, string>> = {
+  subscription: "this digest's release",
+  active: "the project's active release",
+};
+
+/**
+ * The defensive guard over the preview's `release_verdict`: anything without a
+ * release id and name is `null` (no line); a verdict of the wrong type reads
+ * as never evaluated, a bad blocker count as 0.
+ */
+export function parseDigestReleaseVerdict(raw: unknown): DigestReleaseVerdict | null {
+  if (!isRecord(raw)) return null;
+  const id = strOrNull(raw.release_id);
+  const name = strOrNull(raw.release_name);
+  if (!id || !name) return null;
+  const count = typeof raw.blocker_count === 'number' && Number.isFinite(raw.blocker_count) ? Math.max(0, Math.floor(raw.blocker_count)) : 0;
+  return {
+    release_id: id,
+    release_name: name,
+    source: strOrNull(raw.source) ?? '',
+    verdict: strOrNull(raw.verdict),
+    decided_at: strOrNull(raw.decided_at),
+    blocker_count: count,
+  };
+}
+
+/**
+ * A recorded verdict's age as the release lines say it: `2 h ago`, `5 m ago`,
+ * `3 d ago`, `just now` (`shortAgo`'s buckets, with the unit spaced).
+ */
+export function decidedAgo(iso: string): string {
+  return shortAgo(iso).replace(/^(\d+)([mhd]) ago$/, '$1 $2 ago');
+}
+
+/**
+ * The preview's release line, as the digest says it:
+ * `Release 2026.11 — No-Go (2 blockers) · decided 2 h ago · the project's active release`,
+ * or `Release 2026.11 — not evaluated yet · this digest's release`. `ago` words a time.
+ */
+export function digestReleaseVerdictLine(rv: DigestReleaseVerdict, ago: (iso: string) => string): string {
+  const parts: string[] = [];
+  if (!rv.verdict) {
+    parts.push(`Release ${rv.release_name} — ${NEVER_EVALUATED_TEXT}`);
+  } else {
+    const blockers = rv.blocker_count ?? 0;
+    const tail = blockers > 0 ? ` (${blockers} blocker${blockers === 1 ? '' : 's'})` : '';
+    parts.push(`Release ${rv.release_name} — ${RELEASE_VERDICT_TEXT[rv.verdict] ?? rv.verdict}${tail}`);
+    if (rv.decided_at) parts.push(`decided ${ago(rv.decided_at)}`);
+  }
+  const source = RELEASE_SOURCE_TEXT[rv.source];
+  if (source) parts.push(source);
+  return parts.join(' · ');
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {

@@ -185,10 +185,27 @@ export interface TimeSeriesRateTarget {
   value: number
   /** Its legend entry and its name in the summary, e.g. "Target 90%". */
   label: string
+  /**
+   * W11 GATE-04: an OPTIONAL zone under the target — the policy's No-Go zone
+   * (below `orange_min`), shaded on the rate axis from its low end to `value`,
+   * with a legend entry (`No-Go < 90%`). Absent, nothing about the chart changes.
+   */
+  floor?: TimeSeriesRateFloor
+}
+
+export interface TimeSeriesRateFloor {
+  /** Percent, on the rate axis: the zone is everything below it. */
+  value: number
+  /** Its legend entry and its name in the summary, e.g. "No-Go < 90%". */
+  label: string
 }
 
 /** The target line's dash: longer than the partial day's `4 2`, and neutral, never a series colour. */
 export const RATE_TARGET_DASH = '6 4'
+
+/** The No-Go zone's tint: the danger tint, faint, under the bars and lines (`ReferenceArea` sits at z 100). */
+export const RATE_FLOOR_FILL = 'var(--ui-danger-bg)'
+export const RATE_FLOOR_OPACITY = 0.35
 
 /** Whether the target can be drawn: the SVG renderer, and a value on the rate axis. */
 export function rateTargetDrawn(model: TimeSeriesModel, target: TimeSeriesRateTarget): boolean {
@@ -196,12 +213,32 @@ export function rateTargetDrawn(model: TimeSeriesModel, target: TimeSeriesRateTa
   return model.renderer === 'svg' && Number.isFinite(target.value) && target.value >= low && target.value <= high
 }
 
+/** Whether the floor's zone shows: the SVG renderer, and some of the zone above the rate axis' low end. */
+export function rateFloorDrawn(model: TimeSeriesModel, floor: TimeSeriesRateFloor): boolean {
+  const [low] = model.rateAxis.domain
+  return model.renderer === 'svg' && Number.isFinite(floor.value) && floor.value > low
+}
+
+function rateFloorSentence(model: TimeSeriesModel, floor: TimeSeriesRateFloor): string {
+  const at = `${formatNumber(floor.value, { maximumFractionDigits: 1 })}%`
+  if (rateFloorDrawn(model, floor)) return `${floor.label}: shaded below ${at} on the rate axis.`
+  if (model.renderer !== 'svg') return `${floor.label} (${at}) is not shaded on a window this long.`
+  const [low, high] = model.rateAxis.domain
+  return `${floor.label} (${at}) is below the rate axis (${formatNumber(low)}-${formatNumber(high)}%) and is not shaded.`
+}
+
 /**
  * The one sentence about the target: where it is drawn, or why it is not.
  * The frame's summary and table view say it; the chart's own note says it
  * only when the line is NOT drawn (the legend already names a drawn one).
+ * A target with a `floor` adds the floor's sentence after it.
  */
 export function rateTargetSentence(model: TimeSeriesModel, target: TimeSeriesRateTarget): string {
+  const main = rateTargetLineSentence(model, target)
+  return target.floor ? `${main} ${rateFloorSentence(model, target.floor)}` : main
+}
+
+function rateTargetLineSentence(model: TimeSeriesModel, target: TimeSeriesRateTarget): string {
   const at = `${formatNumber(target.value, { maximumFractionDigits: 1 })}%`
   if (rateTargetDrawn(model, target)) return `${target.label}: a dashed line at ${at} on the rate axis.`
   if (model.renderer !== 'svg') return `${target.label} (${at}) is not drawn on a window this long.`
@@ -462,6 +499,7 @@ function SvgTimeSeries({
   partialDrawn,
   trend,
   rateTarget,
+  rateFloor,
 }: {
   model: TimeSeriesModel
   rows: Row[]
@@ -480,6 +518,8 @@ function SvgTimeSeries({
   trend: DrawnTrend | null
   /** VIZ-104 K2: only when the target is drawn (`rateTargetDrawn`). */
   rateTarget?: TimeSeriesRateTarget
+  /** W11 GATE-04: only when the floor's zone shows (`rateFloorDrawn`). */
+  rateFloor?: TimeSeriesRateFloor
 }) {
   // Isolated points (a single-point series included) MUST be dots: a line
   // renderer draws nothing for a point with no measured neighbour.
@@ -505,6 +545,7 @@ function SvgTimeSeries({
     legend.push({ key, label: style.label, stroke: style.stroke, dash: style.dash })
   }
   if (rateTarget) legend.push({ key: 'rateTarget', label: rateTarget.label, stroke: CHART_VARS.axis, dash: RATE_TARGET_DASH })
+  if (rateFloor) legend.push({ key: 'rateFloor', label: rateFloor.label, fill: RATE_FLOOR_FILL })
 
   /**
    * One cursor stop per bucket, worded by the SAME builder the mouse tooltip
@@ -722,6 +763,24 @@ function SvgTimeSeries({
           />
         ))}
         {/*
+          W11 GATE-04: the No-Go zone, from the rate axis' low end up to the
+          floor, a faint danger tint under the target line (a ReferenceArea
+          draws under the bars and lines). Only when the host gave a floor.
+        */}
+        {rateFloor && (
+          <ReferenceArea
+            key="rate-floor"
+            className="rate-floor-area"
+            yAxisId="rate"
+            y1={model.rateAxis.domain[0]}
+            y2={rateFloor.value}
+            fill={RATE_FLOOR_FILL}
+            fillOpacity={RATE_FLOOR_OPACITY}
+            stroke="none"
+            ifOverflow="hidden"
+          />
+        )}
+        {/*
           VIZ-104 K2: the target, dashed and neutral, under the release
           markers. Only ever handed a target that lies on the rate axis.
         */}
@@ -928,6 +987,9 @@ export default function TimeSeriesChart({
   const partialDrawn = model.points.some((point) => point.partial)
   // VIZ-104 K2: drawn only on the rate axis of the SVG renderer; otherwise a sentence says why not.
   const targetDrawn = rateTarget !== undefined && rateTargetDrawn(model, rateTarget)
+  // W11 GATE-04: the floor's zone, on its own test (it can show while the target line cannot).
+  const rateFloor = rateTarget?.floor
+  const floorDrawn = rateFloor !== undefined && rateFloorDrawn(model, rateFloor)
 
   return (
     <figure data-chart="time-series" data-renderer={model.renderer} data-single-point={model.singlePoint ? 'true' : undefined} data-partial-day={(partialDrawn && model.partialDay) || undefined} className="m-0 flex flex-col gap-1">
@@ -971,6 +1033,7 @@ export default function TimeSeriesChart({
           partialDrawn={partialDrawn}
           trend={trend}
           rateTarget={targetDrawn ? rateTarget : undefined}
+          rateFloor={floorDrawn ? rateFloor : undefined}
           tooltip={
             <TimeSeriesTooltip
               model={model}
@@ -1019,6 +1082,12 @@ export default function TimeSeriesChart({
       {rateTarget && !targetDrawn && (
         <p data-chart-target-note="" className={NOTE}>
           {rateTargetSentence(model, rateTarget)}
+        </p>
+      )}
+      {/* W11 GATE-04: a drawn target whose floor cannot be shaded says so (the legend names only what is drawn). */}
+      {rateFloor && targetDrawn && !floorDrawn && (
+        <p data-chart-floor-note="" className={NOTE}>
+          {rateFloorSentence(model, rateFloor)}
         </p>
       )}
       {analysis && <TrendStatsStrip analysis={analysis} />}

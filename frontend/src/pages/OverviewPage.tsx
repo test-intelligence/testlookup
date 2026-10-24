@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { Suspense, useCallback, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { lazyWithRetry } from '@/utils/lazyWithRetry'
 import { Clock, TrendingUp } from 'lucide-react'
 import Sparkline from '@/components/charts/Sparkline'
@@ -30,6 +31,7 @@ import RecentActivityPanel from '@/components/activity/RecentActivityPanel'
 import { isFirstRunGuideDismissed, dismissFirstRunGuide } from '@/components/onboarding/firstRunSteps'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import { describeEmptyWindow, formatAgeDays } from '@/utils/emptyWindow'
+import { decidedBy, describeDowngrade, readinessBands } from '@/utils/passRateBands'
 import { dayTimeAgo } from '@/utils/formatters'
 import { utcDayIso } from '@/utils/calendarDay'
 import SavedViewsMenu from '@/components/reports/SavedViewsMenu'
@@ -225,7 +227,7 @@ function CataloguePending({ row }: { row: 'headline' | 'breakdown' }) {
  * evaluated here) and offer an "override" this page does not have.
  */
 function VerdictDetails({
-  verdict, newFailures24h, totalExecutions, windowDays, passRatePct, passRateBasis,
+  verdict, newFailures24h, totalExecutions, windowDays, passRatePct, passRateBasis, policy, downgrades = [],
 }: {
   verdict: Verdict
   newFailures24h: number
@@ -233,6 +235,14 @@ function VerdictDetails({
   windowDays: number
   passRatePct: number
   passRateBasis: string
+  /**
+   * W11 GATE-04: the policy the verdict was decided by (`summary.readiness_policy`).
+   * `null` = none resolved (the built-in rule decided); `undefined` = not stated
+   * (an entry cached before the deploy) — then nothing is claimed.
+   */
+  policy?: DashboardSummary['readiness_policy']
+  /** The hard caps that forced No-Go (`release_readiness_downgrades`). */
+  downgrades?: readonly string[]
 }) {
   const period = windowWords(windowDays)
   const sample = `${totalExecutions} test execution${totalExecutions === 1 ? '' : 's'}`
@@ -255,6 +265,24 @@ function VerdictDetails({
     <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between" data-testid="verdict-details">
       <div className="min-w-0 space-y-2">
         <p className="m-0 max-w-[72ch] text-[13px] text-[var(--color-text-secondary)]">{lede}</p>
+        {/* W11 GATE-04: which policy decided, with a way to it. Nothing was
+            decided while PENDING, and an unstated policy is not claimed. */}
+        {verdict !== 'PENDING' && policy !== undefined && (
+          <p data-verdict-policy="" className="m-0 max-w-[72ch] text-sm text-[var(--color-text-secondary)]">
+            <span>{decidedBy(readinessBands(policy))}</span>{' '}
+            <Link to={policy ? `/policies/${policy.id}` : '/policies'} className="font-medium text-[var(--color-accent)] hover:underline">
+              Open policies
+            </Link>
+          </p>
+        )}
+        {verdict !== 'PENDING' && downgrades.length > 0 && (
+          <div data-verdict-downgrades="" className="max-w-[72ch] text-sm text-[var(--color-text-secondary)]">
+            <p className="m-0 font-medium text-[var(--ui-danger-ink)]">A hard cap forced No-Go:</p>
+            <ul className="m-0 mt-1 list-disc pl-5">
+              {downgrades.map((token) => <li key={token}>{describeDowngrade(token)}</li>)}
+            </ul>
+          </div>
+        )}
         <p className="m-0 flex items-center gap-1.5 text-[12px] text-[var(--color-text-muted)]">
           <Clock className="h-3.5 w-3.5" aria-hidden />
           <span>
@@ -821,6 +849,8 @@ export default function OverviewPage() {
             windowDays={days}
             passRatePct={passRatePct}
             passRateBasis={passRateBasis}
+            policy={summary?.readiness_policy}
+            downgrades={summary?.release_readiness_downgrades ?? []}
           />
         </Disclosure>
       )}

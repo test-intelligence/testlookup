@@ -92,6 +92,14 @@ vi.mock('@/utils/errorReporting', async (importOriginal) => ({
 vi.mock('@/hooks/useShareLinks', () => ({
   useShareLinks: () => ({ links: [], isLoading: false, isError: false, refresh: vi.fn() }),
 }))
+// W11 GATE-08a (set-up only): the top bar's effective release and its gate
+// read. No release unless a test sets one, which is what the page always saw.
+const releaseScope = vi.hoisted(() => ({ releaseId: null as string | null }))
+vi.mock('@/hooks/useReleaseScope', () => ({ useReleaseScope: () => releaseScope.releaseId }))
+const releaseGateRead = vi.hoisted(() => ({
+  useReleaseGate: vi.fn((_id: string | null) => ({ data: undefined as unknown, error: undefined as unknown })),
+}))
+vi.mock('@/hooks/useReleaseGate', () => ({ useReleaseGate: releaseGateRead.useReleaseGate }))
 
 describe('ReleaseGatePage', () => {
   it('renders the release workflow strip and decision summary', async () => {
@@ -1057,5 +1065,124 @@ describe('ReleaseGatePage — verdict first (P4 item 6)', () => {
     expect(within(dialog).getByRole('radio', { name: 'Executive' })).toBeChecked()
     expect(within(dialog).getByText('No share links for this run yet.')).toBeInTheDocument()
     expect(within(dialog).queryByRole('textbox', { name: 'Share URL' })).toBeNull()
+  })
+})
+
+// ── W11 GATE-04 / GATE-08a (cases ADDED) ─────────────────────────────────
+describe('ReleaseGatePage — the band policy and the top-bar release (W11)', () => {
+  const RELEASE_11 = { id: 'rel-11', name: '2026.11' } as Release
+  const RELEASE_10 = { id: 'rel-10', name: '2026.10' } as Release
+  const HOURS_AGO_2 = () => new Date(Date.now() - 2 * 3600_000 - 60_000).toISOString()
+
+  function Where() {
+    return <p data-testid="where">{useLocation().pathname}</p>
+  }
+
+  beforeEach(() => {
+    mockProjectState.activeProjectId = 'proj-1'
+    mockProjectState.activeProject = { id: 'proj-1', name: 'Project One' }
+    releaseScope.releaseId = null
+    releaseList.items = [RELEASE_11, RELEASE_10]
+    releaseGateRead.useReleaseGate.mockReset()
+    releaseGateRead.useReleaseGate.mockImplementation(() => ({ data: undefined, error: undefined }))
+  })
+
+  afterEach(() => {
+    releaseScope.releaseId = null
+    releaseList.items = []
+  })
+
+  function tree() {
+    return (
+      <MemoryRouter initialEntries={['/release-gate/run-1']}>
+        <Where />
+        <Routes>
+          <Route path="/release-gate" element={<ReleaseGatePage />} />
+          <Route path="/release-gate/:runId" element={<ReleaseGatePage />} />
+        </Routes>
+      </MemoryRouter>
+    )
+  }
+
+  it('names the band policy beside the stored one, and the downgrades it applied', async () => {
+    await renderGate(flooredDecision({
+      policy_level: 'project',
+      policy_version: 3,
+      ...({ band_policy_level: 'project', band_policy_version: 4, band_downgrades: ['p0_defects:2>0', 'flaky:12>10'] } as object),
+    }))
+    const band = await screen.findByText(/pass-rate bands:/)
+    expect(band.closest('[data-band-policy]')).toHaveTextContent('· pass-rate bands: project policy v4')
+    expect(screen.getByText(/Evaluated with/).parentElement ?? document.body).toHaveTextContent('project policy v3')
+    const downgrades = screen.getByRole('list', { name: 'Pass-rate band downgrades' })
+    expect(within(downgrades).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+      'Open critical (P0) defects: 2, cap 0',
+      'Flaky tests: 12, cap 10',
+    ])
+  })
+
+  it('says nothing about bands when the council applied none', async () => {
+    await renderGate(flooredDecision({ policy_level: 'project', policy_version: 3 }))
+    await screen.findByText(/Evaluated with/)
+    expect(document.querySelector('[data-band-policy]')).toBeNull()
+    expect(document.querySelector('[data-band-downgrades]')).toBeNull()
+  })
+
+  it('no release in the top bar: no strip, and the gate read is keyed null', async () => {
+    await renderGate(flooredDecision())
+    await screen.findByRole('meter', { name: 'Risk Score' })
+    expect(document.querySelector('[data-release-verdict-strip]')).toBeNull()
+    expect(releaseGateRead.useReleaseGate).toHaveBeenCalled()
+    for (const call of releaseGateRead.useReleaseGate.mock.calls) expect(call[0]).toBeNull()
+  })
+
+  it('a selected release shows its recorded verdict: No-Go, two blockers, when', async () => {
+    releaseScope.releaseId = 'rel-11'
+    releaseGateRead.useReleaseGate.mockImplementation((id: string | null) => ({
+      data: id === 'rel-11'
+        ? { release_id: 'rel-11', verdict: 'NO_GO', decided_at: HOURS_AGO_2(), blocking_reasons: ['P0 open', 'Pass rate 81%'] }
+        : undefined,
+      error: undefined,
+    }))
+    await renderGate(flooredDecision())
+    const strip = await waitFor(() => {
+      const found = document.querySelector('[data-release-verdict-strip]') as HTMLElement | null
+      if (!found) throw new Error('no strip')
+      return found
+    })
+    expect(strip).toHaveTextContent('Release 2026.11 (top bar) · release gate: No-Go · 2 blockers · decided 2 h ago')
+    expect(within(strip).getByRole('link', { name: 'Open release →' })).toHaveAttribute('href', '/releases/rel-11#gate')
+    expect(releaseGateRead.useReleaseGate).toHaveBeenCalledWith('rel-11')
+    // The run's own decision keeps its card below (its own vocabulary).
+    expect(screen.getByRole('heading', { name: 'Recommendation' })).toBeInTheDocument()
+  })
+
+  it('a release never evaluated (the 404) reads "not evaluated yet", never a verdict', async () => {
+    releaseScope.releaseId = 'rel-10'
+    releaseGateRead.useReleaseGate.mockImplementation(() => ({ data: null, error: undefined }))
+    await renderGate(flooredDecision())
+    const strip = await waitFor(() => {
+      const found = document.querySelector('[data-release-verdict-strip]') as HTMLElement | null
+      if (!found) throw new Error('no strip')
+      return found
+    })
+    expect(strip).toHaveTextContent('Release 2026.10 (top bar) · release gate: not evaluated yet')
+    expect(strip).not.toHaveTextContent(/\bGo\b/)
+  })
+
+  it('choosing another release in the top bar on /release-gate/run-1 navigates to /release-gate', async () => {
+    releaseScope.releaseId = 'rel-11'
+    const { useReleaseCouncil } = await import('@/hooks/useReleaseCouncil')
+    const { useRuns } = await import('@/hooks/useRuns')
+    ;(useReleaseCouncil as ReturnType<typeof vi.fn>).mockReturnValue({
+      council: flooredDecision(), isLoading: false, isError: false, refresh: vi.fn(),
+    })
+    // The newest finished run of the (new) scope, picked by the page's own effect.
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [{ id: 'run-of-2026-10', status: 'passed' }] } })
+    const { rerender } = render(tree())
+    expect(screen.getByTestId('where')).toHaveTextContent('/release-gate/run-1')
+
+    releaseScope.releaseId = 'rel-10'
+    rerender(tree())
+    await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('/release-gate/run-of-2026-10'))
   })
 })

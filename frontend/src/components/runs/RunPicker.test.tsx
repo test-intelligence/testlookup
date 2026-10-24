@@ -179,3 +179,34 @@ describe('RunPicker — Paste run ID is checked by the server', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 })
+
+// ── W11 GATE-02: a picker bound to one project (cases ADDED) ─────────────
+describe('RunPicker — bound to a project (the policy simulator)', () => {
+  it('a projectId reaches the request, whatever the top bar shows', async () => {
+    serveRuns(2)
+    useProjectStore.setState({ activeProjectId: ALL_PROJECTS_ID })
+    renderPicker({ projectId: 'policy-project' })
+    openPicker()
+    await waitFor(() => expect(options()).toHaveLength(2))
+    expect(searchCalls()).toEqual([{ projectId: 'policy-project', q: '', suite_name: null, page: 1, size: 20, days: 0 }])
+  })
+
+  it('the bound project is in the search key: another project asks again', async () => {
+    serveRuns(2)
+    const { rerender } = renderPicker({ projectId: 'project-a' })
+    openPicker()
+    await waitFor(() => expect(options()).toHaveLength(2))
+    rerender(
+      <RunPicker label="Left run (baseline)" value="" onChange={vi.fn()} testId="compare-left-picker" projectId="project-b" />,
+    )
+    await waitFor(() => expect(searchCalls().map((call) => call.projectId)).toEqual(['project-a', 'project-b']))
+  })
+
+  it('absent (or null), the picker searches the top bar scope, as before', async () => {
+    serveRuns(1)
+    renderPicker({ projectId: null })
+    openPicker()
+    await waitFor(() => expect(options()).toHaveLength(1))
+    expect(searchCalls()).toEqual([{ projectId: 'p1', q: '', suite_name: null, page: 1, size: 20, days: 0 }])
+  })
+})

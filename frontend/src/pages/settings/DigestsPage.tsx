@@ -33,7 +33,10 @@ import {
   type DigestContent,
   type DigestScheduleType,
   createSubscription,
+  decidedAgo,
   deleteSubscription,
+  digestReleaseVerdictLine,
+  parseDigestReleaseVerdict,
   pauseSubscription,
   previewDigest,
   resumeSubscription,
@@ -75,6 +78,21 @@ const SELECT = 'bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 
 export const PICK_PROJECT_FOR_RELEASE = 'Pick a project in the top bar to choose a release.';
 
 type RequestError = { message?: string; response?: { data?: { detail?: unknown } } };
+
+/**
+ * W11 GATE-08b: the preview's release line — the RELEASE-level verdict of the
+ * digest's release (the view's one release, else the project's active one),
+ * worded as the digest words it. Nothing when the preview carries none.
+ */
+function PreviewReleaseVerdict({ raw }: { raw: unknown }) {
+  const rv = parseDigestReleaseVerdict(raw);
+  if (!rv) return null;
+  return (
+    <p data-digest-release-verdict="" className="m-0 text-sm text-[var(--color-text-secondary)]">
+      {digestReleaseVerdictLine(rv, decidedAgo)}
+    </p>
+  );
+}
 
 export default function DigestsPage() {
   // The tab lives in `?tab=` (the page template's Tabs + useTabParam).
@@ -515,6 +533,8 @@ export default function DigestsPage() {
                 <div className="bg-[var(--color-bg-secondary)] rounded-lg p-6 space-y-4">
                   <h2 className="text-lg font-semibold text-[var(--color-text)]">{preview.period.charAt(0).toUpperCase() + preview.period.slice(1)} Digest — {preview.project_name || 'All Projects'}</h2>
                   <DigestScopeBlock scope={preview.scope} />
+                  {/* W11 GATE-08b: the release-level verdict the digest will carry (text, never HTML). */}
+                  <PreviewReleaseVerdict raw={preview.release_verdict} />
 
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                     <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">

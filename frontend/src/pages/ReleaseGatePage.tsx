@@ -27,6 +27,11 @@ import { useRuns } from '@/hooks/useRuns'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { buildReleaseGateWorkflow } from '@/components/workflow/workflowPresets'
 import { useProjectChangeRedirect } from '@/hooks/useProjectChange'
+import { useReleaseChangeRedirect } from '@/hooks/useReleaseChangeRedirect'
+import { useReleaseGate } from '@/hooks/useReleaseGate'
+import { useReleaseScope } from '@/hooks/useReleaseScope'
+import ReleaseVerdictStrip from '@/components/releaseGate/ReleaseVerdictStrip'
+import { describeDowngrade } from '@/utils/passRateBands'
 import { isRunInProgress } from '@/utils/runPassRate'
 import RingGauge from '@/components/charts/RingGauge'
 import { bandsTone, formatGaugeNumber, type GaugeBands } from '@/components/charts/gaugeBar.model'
@@ -139,6 +144,24 @@ function policyLabel(decision: ReleaseCouncilDecision): string {
   return decision.policy_version != null ? `${level} v${decision.policy_version}` : level
 }
 
+/**
+ * W11 GATE-04: the council applies the pass-rate bands of the policy in force
+ * NOW (`band_policy_*`, read-time), which may differ from the stored decision's
+ * policy (`policy_*`) and may have moved the verdict. The response has always
+ * carried both; the page names the band policy beside the stored one.
+ */
+type BandProvenance = {
+  band_policy_level?: string | null
+  band_policy_version?: number | null
+  band_downgrades?: string[] | null
+}
+
+function bandPolicyLabel(decision: BandProvenance): string | null {
+  if (!decision.band_policy_level) return null
+  const level = decision.band_policy_level === 'system' ? 'system policy' : 'project policy'
+  return decision.band_policy_version != null ? `${level} v${decision.band_policy_version}` : level
+}
+
 export default function ReleaseGatePage() {
   const { runId } = useParams<{ runId: string }>()
   const navigate = useNavigate()
@@ -157,6 +180,16 @@ export default function ReleaseGatePage() {
   const workflow = decision ? buildReleaseGateWorkflow(decision) : null
 
   useProjectChangeRedirect('/release-gate', Boolean(runId))
+  // W11 GATE-08a: another release in the top bar (or All releases) re-opens
+  // the gate on that scope's newest finished run (the effect below picks it).
+  useReleaseChangeRedirect('/release-gate', Boolean(runId))
+  // The top bar's release and its recorded release-level verdict (no read
+  // while no release is selected: the key is null).
+  const releaseId = useReleaseScope()
+  const { data: releaseGate, error: releaseGateError } = useReleaseGate(releaseId)
+  const releaseStrip = releaseId ? (
+    <ReleaseVerdictStrip releaseId={releaseId} gate={releaseGate} error={releaseGateError} />
+  ) : null
 
   const { data: recentRunsData } = useRuns({ page: 1, size: 10 })
 
@@ -264,6 +297,7 @@ export default function ReleaseGatePage() {
           subtitle={`Run ${runId?.slice(0, 8) ?? '—'}`}
           helpTopic={HELP_TOPIC}
         />
+        {releaseStrip}
         <EmptyState
           icon={<Shield className="h-10 w-10" />}
           title="No release decision found"
@@ -310,6 +344,12 @@ export default function ReleaseGatePage() {
   const cardList = blockers.length > 0
     ? { label: 'Top blockers', items: blockers }
     : conditions.length > 0 ? { label: 'Conditions for GO', items: conditions } : null
+
+  // W11 GATE-04: the read-time band policy (no server change: the council
+  // response has carried these fields since TL-2026-09-19-01-008).
+  const bandProvenance = decision as ReleaseCouncilDecision & BandProvenance
+  const bandLabel = bandPolicyLabel(bandProvenance)
+  const bandDowngrades = Array.isArray(bandProvenance.band_downgrades) ? bandProvenance.band_downgrades : []
 
   // Linked cluster insights, placed under the Context group whose share chart
   // summarises them.
@@ -372,6 +412,8 @@ export default function ReleaseGatePage() {
           },
         ]}
       />
+
+      {releaseStrip}
 
       {shareOpen && <ShareReportDialog runId={runId} open onClose={() => setShareOpen(false)} />}
 
@@ -487,6 +529,19 @@ export default function ReleaseGatePage() {
               <Shield className="w-3.5 h-3.5" />
               Evaluated with{' '}
               <span className="text-[var(--color-text)] font-medium">{policyLabel(decision)}</span>
+              {bandLabel && (
+                <span data-band-policy="">
+                  · pass-rate bands:{' '}
+                  <span className="text-[var(--color-text)] font-medium">{bandLabel}</span>
+                </span>
+              )}
+            </span>
+          )}
+          {!decision.policy_level && bandLabel && (
+            <span data-band-policy="" className="inline-flex items-center gap-1.5 text-[var(--color-text-muted)]">
+              <Shield className="w-3.5 h-3.5" />
+              Pass-rate bands:{' '}
+              <span className="text-[var(--color-text)] font-medium">{bandLabel}</span>
             </span>
           )}
           {!overrideMode && (
@@ -501,6 +556,15 @@ export default function ReleaseGatePage() {
             </button>
           )}
         </div>
+
+        {/* W11 GATE-04: the hard caps the band policy applied (each a sentence). */}
+        {bandDowngrades.length > 0 && (
+          <ul data-band-downgrades="" aria-label="Pass-rate band downgrades" className="mt-2 space-y-0.5 text-xs text-[var(--color-text-secondary)]">
+            {bandDowngrades.map((token) => (
+              <li key={token}>{describeDowngrade(token)}</li>
+            ))}
+          </ul>
+        )}
 
         {/* The shared override control (GATE-01): the run page's Analysis
             banner renders the same form, through the same endpoint. */}

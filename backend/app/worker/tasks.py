@@ -3582,6 +3582,10 @@ def dispatch_ai_summary_email(
             # included), read once, and only if a PER_RELEASE subscription of
             # this project is met.
             linked: frozenset[str] | None = None
+            # W11 GATE-08b: a PER_RELEASE delivery carries its release's
+            # release-level verdict in METADATA (the review gate may rewrite
+            # the body); read once per distinct release in this loop.
+            release_verdicts: dict[str, dict | None] = {}
 
             for sub, user_email in per_run_result.all():
                 # Scope check: global or matching project
@@ -3618,6 +3622,19 @@ def dispatch_ai_summary_email(
                 if not user_email:
                     continue
 
+                release_verdict: dict | None = None
+                if getattr(sub, "schedule", None) == "PER_RELEASE":
+                    release_key = str(getattr(sub, "scope_value", None) or "")
+                    if release_key not in release_verdicts:
+                        from app.services.digest_content_service import (
+                            digest_release_verdict,
+                        )
+
+                        release_verdicts[release_key] = await digest_release_verdict(
+                            db, project_id=_uuid.UUID(project_id), release_id=release_key,
+                        )
+                    release_verdict = release_verdicts[release_key]
+
                 title = f"🤖 AI Summary — Build {build_number} ({project_name})"
                 digest_deliveries.append(
                     {
@@ -3637,6 +3654,11 @@ def dispatch_ai_summary_email(
                             "failed_tests": _failed_tests,
                             "dashboard_url": f"{settings.public_base_url}/runs/{test_run_id}/intelligence",
                             "executive_panel": executive_panel,
+                            **(
+                                {"release_verdict": release_verdict}
+                                if release_verdict is not None
+                                else {}
+                            ),
                             **(
                                 {
                                     _REVIEW_GATE_METADATA_KEY: {
@@ -4762,8 +4784,12 @@ def dispatch_scheduled_digests(self):
                         )
                         # US-7.4: delta digest — content is structured
                         # around changes since the last successful send.
+                        # W11 GATE-08b: Daily / Weekly digests carry the
+                        # release-level verdict (the view's one release, else
+                        # the project's active release).
                         digest = await generate_digest(
                             db, project_id, period, since=window_start, scope=scope,
+                            with_release_verdict=True,
                         )
 
                     user_result = await db.execute(
