@@ -7,6 +7,13 @@ import { appSettingsService, type StorageConfigRead, type StorageConfigUpdate } 
 import { usePermissions } from '@/hooks/usePermissions'
 import Field from '@/components/ui/Field'
 import { helpTopicParam } from '@/components/help/helpTopics'
+import {
+  COLLECTION_PREFIX_HELP,
+  COLLECTION_PREFIX_PLACEHOLDER,
+  prefixFieldValue,
+  prefixInUseLine,
+  refusalSentence,
+} from '@/components/settings/embeddingIndexModel'
 
 const HELP_TOPIC = helpTopicParam('/settings/storage')
 
@@ -16,6 +23,8 @@ export default function StoragePage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState<StorageConfigUpdate>({})
+  // W12 SRCH-02: a changed Collection prefix's 422 sentence, shown under the field.
+  const [prefixRefusal, setPrefixRefusal] = useState<string | null>(null)
 
   useEffect(() => {
     appSettingsService.getStorageConfig()
@@ -25,7 +34,8 @@ export default function StoragePage() {
           storage_backend: cfg.storage_backend,
           chroma_host: cfg.chroma_host,
           chroma_port: cfg.chroma_port,
-          chroma_collection: cfg.chroma_collection,
+          // The field shows the PREFIX the stored value means (a legacy default or an invalid value: none).
+          chroma_collection: prefixFieldValue(cfg),
           minio_endpoint: cfg.minio_endpoint,
           minio_bucket_name: cfg.minio_bucket_name,
           minio_use_ssl: cfg.minio_use_ssl,
@@ -37,12 +47,23 @@ export default function StoragePage() {
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
+    // An untouched prefix field sends the STORED value back (the PUT is today's); an edited one is validated by
+    // the server, whose 422 sentence shows under the field instead of a toast.
+    const prefixEdited = config !== null && (form.chroma_collection ?? '') !== prefixFieldValue(config)
+    const payload = config !== null && !prefixEdited ? { ...form, chroma_collection: config.chroma_collection } : form
+    setPrefixRefusal(null)
     setSaving(true)
     try {
-      const updated = await appSettingsService.updateStorageConfig(form)
+      const updated = await appSettingsService.updateStorageConfig(payload, prefixEdited ? { suppressToast: true } : undefined)
       setConfig(updated)
+      setForm(prev => ({ ...prev, chroma_collection: prefixFieldValue(updated) }))
       toast.success('Storage configuration saved')
     } catch (err: unknown) {
+      const refusal = prefixEdited ? refusalSentence(err) : null
+      if (refusal) {
+        setPrefixRefusal(refusal)
+        return
+      }
       // Surface the server's reason. A bare `catch {}` here reported only
       // "Failed to save storage configuration", so a rejected bucket name or a
       // 422 on a specific field gave the operator nothing to act on. The
@@ -65,6 +86,7 @@ export default function StoragePage() {
 
   if (loading) return <div className="flex justify-center py-16"><LoadingSpinner size="lg" /></div>
   if (!config) return null
+  const prefixInUse = prefixInUseLine(config)
 
   return (
     <div className="space-y-4">
@@ -166,13 +188,23 @@ export default function StoragePage() {
                 </Field>
               </div>
               <div>
-                <Field label="Collection" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
+                {/* W12 SRCH-02: `chroma_collection` is the Collection prefix of every vector collection. */}
+                <Field label="Collection prefix" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
                   {id => (
-                    <input id={id} value={form.chroma_collection ?? ''} onChange={e => upd('chroma_collection', e.target.value)} disabled={!isAdmin}
-                      className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+                    <input id={id} value={form.chroma_collection ?? ''} disabled={!isAdmin} placeholder={COLLECTION_PREFIX_PLACEHOLDER}
+                      onChange={e => { setPrefixRefusal(null); upd('chroma_collection', e.target.value) }}
+                      className="w-full max-w-[16ch] bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
                   )}
                 </Field>
               </div>
+            </div>
+            <div className="space-y-1" data-collection-prefix="">
+              <p className="text-xs text-[var(--color-text-muted)] break-words">{COLLECTION_PREFIX_HELP}</p>
+              {config.collection_prefix_note && (
+                <p className="text-xs text-[var(--color-text-muted)] break-words">{config.collection_prefix_note}</p>
+              )}
+              {prefixInUse && <p className="text-xs text-[var(--color-text)]">{prefixInUse}</p>}
+              {prefixRefusal && <p className="text-xs text-[var(--ui-danger-ink)] break-words">{prefixRefusal}</p>}
             </div>
           </div>
         </div>

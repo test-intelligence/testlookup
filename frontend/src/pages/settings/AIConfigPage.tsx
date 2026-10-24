@@ -14,11 +14,23 @@ import {
 } from '@/services/appSettingsService'
 import { usePermissions } from '@/hooks/usePermissions'
 import { activeTier, useAIModelStatus, useMLStatus } from '@/hooks/useAIConfig'
+import { useEmbeddingIndex } from '@/hooks/useEmbeddingIndex'
 import { appMutate } from '@/utils/swrCacheMutate'
 import Field from '@/components/ui/Field'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import ConfigSourceHint from '@/components/settings/ConfigSourceHint'
 import MLTrainingCard from '@/components/settings/MLTrainingCard'
+import EmbeddingIndexStatus from '@/components/settings/EmbeddingIndexStatus'
+import {
+  DEFAULT_EMBEDDING_MODEL,
+  EMBEDDING_MODEL_PLACEHOLDER,
+  embedderChanged,
+  modelForProvider,
+  normaliseProvider,
+  providerOptions,
+  providerValue,
+  refusalSentence,
+} from '@/components/settings/embeddingIndexModel'
 
 const HELP_TOPIC = helpTopicParam('/settings/ai')
 
@@ -328,6 +340,9 @@ export default function AIConfigPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [form, setForm] = useState<AIConfigUpdate>({})
+  // W12 SRCH-02: `embedding_index` rides GET /settings/ai; the hook polls only while a re-embed builds.
+  const embedding = useEmbeddingIndex(config?.embedding_index)
+  const [embeddingRefusal, setEmbeddingRefusal] = useState<string | null>(null)
 
   useEffect(() => {
     appSettingsService.getAIConfig()
@@ -356,10 +371,18 @@ export default function AIConfigPage() {
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
+    // A changed embedder is validated by the server (offline + OpenAI, a missing model, …): its 422 sentence
+    // shows under the Embedding card, so this one request raises no global toast (every other save: as before).
+    const reembeds = config !== null && embedderChanged(
+      { provider: form.embedding_provider, model: form.embedding_model },
+      { provider: config.embedding_provider, model: config.embedding_model },
+    )
+    setEmbeddingRefusal(null)
     setSaving(true)
     try {
-      const updated = await appSettingsService.updateAIConfig(form)
+      const updated = await appSettingsService.updateAIConfig(form, reembeds ? { suppressToast: true } : undefined)
       setConfig(updated)
+      void embedding.show(updated.embedding_index)
       // This page keeps its own useState copy, loaded by a raw useEffect above
       // that predates the frontend.swr-only-fetching convention. Everything
       // ELSE reads the mode ('settings/ai-mode') through useAIConfig — Sidebar,
@@ -373,8 +396,12 @@ export default function AIConfigPage() {
       // disagreeing today.
       await Promise.all([appMutate('settings/ai-mode'), refreshModelStatus(), refreshMLStatus()])
       toast.success('AI configuration saved')
-    } catch {
-      toast.error('Failed to save AI configuration')
+    } catch (err) {
+      const refusal = reembeds ? refusalSentence(err) : null
+      const detail = (err as { response?: { data?: { detail?: unknown } } } | null)?.response?.data?.detail
+      if (refusal) setEmbeddingRefusal(refusal)
+      else if (reembeds && typeof detail === 'string' && detail) toast.error(`Failed to save AI configuration: ${detail}`)
+      else toast.error('Failed to save AI configuration')
     } finally {
       setSaving(false)
     }
@@ -384,12 +411,28 @@ export default function AIConfigPage() {
     setForm(prev => ({ ...prev, [field]: value }))
   }
 
+  /** A provider change also puts its model in the form (the bundled one, the saved one, or none). */
+  function updEmbedding(field: 'embedding_provider' | 'embedding_model', value: string) {
+    setEmbeddingRefusal(null)
+    if (field === 'embedding_model') return upd('embedding_model', value)
+    const saved = { provider: config?.embedding_provider, model: config?.embedding_model }
+    setForm(prev => ({ ...prev, embedding_provider: value, embedding_model: modelForProvider(value, saved) }))
+  }
+
   if (loading) return <div className="flex justify-center py-16"><LoadingSpinner size="lg" /></div>
   if (error) return <div className="card text-[var(--status-failed)] text-sm">{error}</div>
   if (!config) return null
 
   const llmTier = modelStatus?.fallback_chain.find(e => e.mode === 'llm')
   const offlinePinned = config.ai_offline_mode_env_pinned === true
+  // The Embedding card (W12 SRCH-02): OpenAI is refused while offline (the form's toggle, under the env ceiling);
+  // the bundled embedder's model is fixed; an edited embedder warns that Save re-embeds.
+  const embeddingOffline = offlinePinned || (form.ai_offline_mode ?? config.ai_offline_mode)
+  const bundledEmbedder = normaliseProvider(form.embedding_provider) === 'default'
+  const embedderEdited = embedderChanged(
+    { provider: form.embedding_provider, model: form.embedding_model },
+    { provider: config.embedding_provider, model: config.embedding_model },
+  )
   // The ML card's live status wins over the page-load snapshot of GET
   // /settings/ai: after "Train now" the radio badge and the bootstrap caveat
   // must agree with the card, not keep saying "Not Trained" until a reload.
@@ -553,27 +596,47 @@ export default function AIConfigPage() {
             </div>
           </div>
 
-          {/* Embedding */}
+          {/* Embedding (W12 SRCH-02): the embedder of every Chroma collection. A change re-embeds into new
+              collections while search keeps the generation in use; the block under the fields says which is in
+              use, what is configured, and a build's progress (contract §2.4). The heading stays verbatim:
+              settings-two-column-forms.spec.ts pairs it with LLM Provider. */}
           <div className="card space-y-4">
             <h3 className="text-sm font-semibold text-[var(--color-text)]">Embedding</h3>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Field label="Provider" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
                   {id => (
-                    <input id={id} value={form.embedding_provider ?? ''} onChange={e => upd('embedding_provider', e.target.value)} disabled={!isAdmin}
-                      className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+                    <select id={id} value={providerValue(form.embedding_provider)} onChange={e => updEmbedding('embedding_provider', e.target.value)} disabled={!isAdmin}
+                      className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50">
+                      {providerOptions(form.embedding_provider, embeddingOffline).map(o => (
+                        <option key={o.value} value={o.value} disabled={o.disabled} title={o.title}>{o.label}</option>
+                      ))}
+                    </select>
                   )}
                 </Field>
               </div>
-              <div>
+              {/* The model takes the card's full width: at half width (≈ 190 px of text at 1280 on DejaVu) a
+                  name like nomic-embed-text:v1.5 was cut off. The title carries the whole name as well. */}
+              <div className="col-span-2" data-embedding-model-field="">
                 <Field label="Model" labelClassName="block text-xs text-[var(--color-text-muted)] mb-1">
                   {id => (
-                    <input id={id} value={form.embedding_model ?? ''} onChange={e => upd('embedding_model', e.target.value)} disabled={!isAdmin}
-                      className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50" />
+                    <input id={id} value={bundledEmbedder ? DEFAULT_EMBEDDING_MODEL : (form.embedding_model ?? '')} readOnly={bundledEmbedder}
+                      onChange={e => updEmbedding('embedding_model', e.target.value)} disabled={!isAdmin}
+                      title={bundledEmbedder ? DEFAULT_EMBEDDING_MODEL : (form.embedding_model || undefined)}
+                      placeholder={bundledEmbedder ? undefined : EMBEDDING_MODEL_PLACEHOLDER}
+                      className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 disabled:opacity-50 read-only:text-[var(--color-text-muted)]" />
                   )}
                 </Field>
               </div>
             </div>
+            <EmbeddingIndexStatus
+              index={embedding.index}
+              pollFailed={Boolean(embedding.error)}
+              isAdmin={isAdmin}
+              warning={embedderEdited}
+              saveRefusal={embeddingRefusal}
+              onIndex={next => { setEmbeddingRefusal(null); void embedding.show(next) }}
+            />
           </div>
 
           {/* Pipeline Settings */}

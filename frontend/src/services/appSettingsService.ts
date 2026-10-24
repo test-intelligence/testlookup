@@ -104,6 +104,65 @@ export interface AIConfigRead {
   rag_faithfulness_evaluator_reason: string
   /** The rag_faithfulness_gate flag, on in any scope. Off: no case is scored. */
   rag_faithfulness_gate_enabled: boolean
+  /**
+   * W12 SRCH-02: which embedder every Chroma collection uses NOW, what is
+   * configured, and any re-embed. `null` = the server could not read the state
+   * (never a guess); missing = a server older than W12. Both read as
+   * "Could not read the embedding index state."
+   */
+  embedding_index?: EmbeddingIndex | null
+}
+
+// ── Embedding index (W12 SRCH-02, contract §1.1) ─────────────
+// Every enum-like field is a string: an unknown value renders, it never throws.
+
+/** One embedding generation: the Collection prefix + the embedder. */
+export interface EmbeddingGeneration {
+  /** 'default' (Bundled MiniLM) | 'ollama' | 'openai' — a stored unsupported value is shown, never applied. */
+  provider: string
+  model: string
+  /** '' = no prefix. */
+  prefix: string
+  /** 'default' | 'ollama:<model>' | 'openai:<model>' */
+  key: string
+  /** '' for the legacy generation, else 'e' + 8 hex. */
+  tag: string
+}
+
+export interface EmbeddingFamilyProgress {
+  /** The collection family's base name (test_case_search, knowledge_chunks, …). */
+  family: string
+  /** 'pending' | 'running' | 'done' | 'skipped' */
+  state: string
+  processed: number
+  /** null = not counted. */
+  total: number | null
+}
+
+export interface EmbeddingIndex {
+  /** What every read and write uses NOW. */
+  active: EmbeddingGeneration
+  /** ai_config.embedding_* + the storage prefix. */
+  configured: EmbeddingGeneration
+  in_sync: boolean
+  /** 'idle' | 'building' | 'failed' */
+  status: string
+  /**
+   * With `status: 'building'`: the build's worker died (its lease expired) or nothing claimed it in time.
+   * Re-embed now resumes it (the rebuild re-enqueues instead of a 409). null / missing = not stalled.
+   */
+  stalled?: boolean | null
+  target?: EmbeddingGeneration | null
+  families?: EmbeddingFamilyProgress[]
+  processed?: number
+  total?: number | null
+  requested_at?: string | null
+  /** When the active generation last changed (null = never: the legacy generation). */
+  switched_at?: string | null
+  /** A sentence (no host, no key). */
+  last_error?: string | null
+  /** The server's note when the stored provider or prefix is not applied. */
+  configured_note?: string | null
 }
 
 export type RagFaithfulnessEvaluator = 'ollama' | 'ragas'
@@ -145,6 +204,8 @@ export interface RequiredModel {
    * pulling can't be the fix until the daemon answers.
    */
   remedy: string | null
+  /** W12 SRCH-02: the embedding model is the ACTIVE embedder (false = the one a re-embed builds). */
+  in_use?: boolean | null
 }
 
 export interface FallbackChainEntry {
@@ -318,7 +379,14 @@ export interface StorageConfigRead {
   minio_use_ssl: boolean
   chroma_host: string
   chroma_port: number
+  /** The STORED value (W12: read as the Collection prefix; see `collection_prefix`). */
   chroma_collection: string
+  /** W12 SRCH-02: the configured prefix the stored value means ('' = no prefix). Missing = an older server. */
+  collection_prefix?: string
+  /** Set when the stored value is not a valid prefix and is ignored. */
+  collection_prefix_note?: string | null
+  /** The ACTIVE generation's prefix; null when the embedding index state could not be read. */
+  active_collection_prefix?: string | null
 }
 
 export interface StorageConfigUpdate {
@@ -351,8 +419,25 @@ export const appSettingsService = {
   getAIConfig(): Promise<AIConfigRead> {
     return api.get<AIConfigRead>('/api/v1/settings/ai').then(r => r.data)
   },
-  updateAIConfig(payload: AIConfigUpdate): Promise<AIConfigRead> {
-    return api.put<AIConfigRead>('/api/v1/settings/ai', payload).then(r => r.data)
+  /**
+   * `opts.suppressToast`: the caller renders the failure itself (W12 SRCH-02: a
+   * changed embedder's 422 sentence shows under the Embedding card).
+   */
+  updateAIConfig(payload: AIConfigUpdate, opts?: { suppressToast?: boolean }): Promise<AIConfigRead> {
+    return api
+      .put<AIConfigRead>('/api/v1/settings/ai', payload, opts?.suppressToast ? { suppressToast: true } : undefined)
+      .then(r => r.data)
+  },
+  /** The embedding index alone (QA lead+); polled only while a re-embed runs (W12 SRCH-02). */
+  getEmbeddingIndex(): Promise<EmbeddingIndex> {
+    return getData<EmbeddingIndex>('/api/v1/settings/ai/embedding-index')
+  },
+  /**
+   * Re-embed now / Retry (ADMIN): a build toward the CONFIGURED generation. No
+   * global toast: the Embedding card renders a 409 / 422 sentence itself.
+   */
+  rebuildEmbeddingIndex(): Promise<EmbeddingIndex> {
+    return postData<EmbeddingIndex>('/api/v1/settings/ai/embedding-index/rebuild', undefined, { suppressToast: true })
   },
   getAIModelStatus(): Promise<AIModelStatusRead> {
     return api.get<AIModelStatusRead>('/api/v1/settings/ai/model-status').then(r => r.data)
@@ -388,7 +473,10 @@ export const appSettingsService = {
   getStorageConfig(): Promise<StorageConfigRead> {
     return api.get<StorageConfigRead>('/api/v1/settings/storage').then(r => r.data)
   },
-  updateStorageConfig(payload: StorageConfigUpdate): Promise<StorageConfigRead> {
-    return api.put<StorageConfigRead>('/api/v1/settings/storage', payload).then(r => r.data)
+  /** `opts.suppressToast`: the caller renders the failure itself (W12: a changed prefix's 422 under its field). */
+  updateStorageConfig(payload: StorageConfigUpdate, opts?: { suppressToast?: boolean }): Promise<StorageConfigRead> {
+    return api
+      .put<StorageConfigRead>('/api/v1/settings/storage', payload, opts?.suppressToast ? { suppressToast: true } : undefined)
+      .then(r => r.data)
   },
 }
