@@ -326,6 +326,10 @@ def _without_meta(characterised: dict) -> dict:
                 body = _without_top_failing_totals(key, body)
             if key.startswith("summary_") and "last_run_before_window_at" in body:
                 body = _without_summary_last_run(key, body)
+            if key.startswith("metrics_summary/") and "readiness_policy" in body:
+                # W11 GATE-04 names the policy in force beside a project's readiness band and changes nothing
+                # else: set it aside, as ``meta`` is (the all-projects summary names no single policy).
+                body = {k: v for k, v in body.items() if k != "readiness_policy"}
         out[key] = {"status": case["status"], "body": body}
     return out
 

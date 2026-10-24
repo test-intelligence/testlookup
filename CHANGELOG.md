@@ -957,6 +957,10 @@ locally by default.
 
 ### Security
 
+- **pypdf 6.21.2.** The backend's PDF text extraction (knowledge RAG) moves
+  from 6.19.0 (CVE-2026-115572, CVE-2026-115580, CVE-2026-115585: long runtimes
+  on crafted PDFs).
+
 - **Compliance packs are signed and can be verified** (wave W11, REL-11;
   owner decision D14). A new pack carries an Ed25519 signature
   (`signature.json`, outside the manifest) from a deployment key created on the
