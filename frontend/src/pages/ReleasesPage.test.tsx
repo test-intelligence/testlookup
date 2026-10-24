@@ -1,10 +1,11 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ReleasesPage from './ReleasesPage'
 import { releasesService } from '@/services/releasesService'
 import { NEVER_EVALUATED_LEDE } from '@/components/releases/health'
+import { useAuthStore } from '@/store/authStore'
 
 vi.mock('@/hooks/useReleases', () => ({
   useReleases: vi.fn(),
@@ -31,6 +32,10 @@ vi.mock('@/hooks/useProjectCompliancePacks', () => ({
 }))
 vi.mock('@/hooks/useActivityFeed', () => ({
   useActivityFeed: () => ({ events: [], isLoading: false, error: undefined }),
+}))
+// W11 REL-03: the open "Release health" disclosure reads the cards' trend (PortfolioKpis.test.tsx covers it).
+vi.mock('@/hooks/useReleasePortfolioTrend', () => ({
+  useReleasePortfolioTrend: () => ({ data: undefined, error: undefined }),
 }))
 // The release editor's owner picker (REL-02).
 const projectMembers = vi.hoisted(() => ({ data: [] as unknown[] }))
@@ -508,23 +513,40 @@ describe('ReleasesPage — the release detail in a side panel (P5)', () => {
     expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
   })
 
-  it('has a compact header with its help topic and New release as the one action', () => {
+  it('has a compact header with its help topic, the List | Calendar toggle, New release and the ⋯ menu', () => {
     const { container } = renderAt('/releases')
     const header = container.querySelector('[data-page-header]') as HTMLElement
     expect(header).toHaveAttribute('data-compact', 'true')
     expect(within(header).getByRole('button', { name: 'Help: Releases' })).toHaveAttribute('data-help-topic', 'releases')
     expect(within(header).getByRole('button', { name: /New release/ })).toBeEnabled()
-    expect(within(header).queryByRole('button', { name: /Export schedule|Calendar view/ })).not.toBeInTheDocument()
+    // W11 REL-06: the former stubs are built (the toggle, and the exports in the ⋯ menu); no "(planned)" label.
+    expect(within(header).getByRole('button', { name: 'List' })).toHaveAttribute('aria-pressed', 'true')
+    expect(within(header).getByRole('button', { name: 'Calendar' })).toHaveAttribute('aria-pressed', 'false')
     expect(screen.queryByText('(planned)')).not.toBeInTheDocument()
-    expect(within(header).getAllByRole('button')).toHaveLength(2) // help + New release
+    // help + List + Calendar + New release + ⋯ (Sync releases is a QA lead's)
+    expect(within(header).getAllByRole('button').map(b => b.getAttribute('aria-label') ?? b.textContent?.trim()))
+      .toEqual(['Help: Releases', 'List', 'Calendar', 'New release', 'More actions'])
   })
 
-  it('says a planned release with no phases is scoped from its detail, with no stub controls', () => {
+  it('says a planned release with no phases is scoped from its detail; a QA lead may copy or draft its phases', () => {
     renderAt('/releases')
     const planned = card(/^Checkout 2\.6 2\.6\.0/)
     expect(within(planned).getByText('No phases scoped yet')).toBeInTheDocument()
     expect(within(planned).getByText("Add Checkout 2.6's phases in its detail.")).toBeInTheDocument()
+    // Below QA lead: the callout's text only.
     expect(within(planned).queryByRole('button')).not.toBeInTheDocument()
+    cleanup()
+
+    useAuthStore.setState({ user: { id: 'lead', role: 'QA_LEAD' } as never })
+    try {
+      renderAt('/releases')
+      const lead = card(/^Checkout 2\.6 2\.6\.0/)
+      // The Release actions menu (Set as active release), then the callout's two working controls.
+      expect(within(lead).getAllByRole('button').map(b => b.getAttribute('aria-label') ?? b.textContent?.trim()))
+        .toEqual(['Release actions', 'Copy phases from…', 'Draft from a PRD…'])
+    } finally {
+      useAuthStore.setState({ user: null })
+    }
   })
 })
 

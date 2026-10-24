@@ -22,14 +22,16 @@
  * progress and Released · 30d counts on screen while it is closed.
  *
  * The verdict is the server's (REL-01): every count here is taken from the
- * release list (`health.ts`), no request of its own and no threshold.
+ * release list (`health.ts`), no threshold. The one request of its own is the
+ * cards' measured trend (W11 REL-03, `PortfolioKpis`), and only while the
+ * disclosure is open.
  */
 import { AlertCircle, AlertTriangle, CheckCircle2 } from 'lucide-react'
 import { useNow } from '@/hooks/useNow'
 import StatusBanner, { type BannerState } from '@/components/ui/StatusBanner'
 import { DECISION_LABEL } from '@/components/ui/statusVocabulary'
 import Disclosure from '@/components/ui/Disclosure'
-import KpiStrip from './KpiStrip'
+import PortfolioKpis from './PortfolioKpis'
 import { countReleases, NOTHING_IN_FLIGHT, releaseHeadline, releaseHealthFacts, releaseLede } from './health'
 import type { DerivedBlocker, DerivedRelease, GateDecision } from './types'
 
@@ -107,7 +109,8 @@ export function ReleaseHealthDetails({ highlighted, releases }: Omit<HealthProps
             )}
           </div>
         )}
-        <KpiStrip releases={releases} />
+        {/* W11 REL-03: the cards with their measured twelve-week trend, read only while this is open. */}
+        <PortfolioKpis releases={releases} />
       </div>
     </Disclosure>
   )

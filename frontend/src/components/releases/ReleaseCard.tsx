@@ -133,23 +133,46 @@ function Dot({ color, label }: { color: string; label: string }) {
   return <span aria-hidden title={label} className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: color }} />
 }
 
+/** How a release's first schedule is built from its card: copied from another release, or drafted from a PRD. */
+export type PlanPhasesMode = 'clone' | 'draft'
+
 /**
- * A release with no phases. Says how to scope it with what exists
- * (the release's detail has "Add Phase"). The two "(planned)" controls that
- * sat here — Clone from …, Generate from PRD, disabled since BUG-006 — are
- * gone: what is not built is not rendered (UX redesign P2/P5).
+ * A release with no phases. Says how to scope it with what exists (the
+ * release's detail has "Add Phase"). The two stub controls that once sat here
+ * were removed (UX redesign P2/P5: what is not built is not rendered); W11
+ * built them (REL-05 / REL-07), so for a QA lead (`onPlan` given) the callout
+ * offers them again, working: Copy phases from… and Draft from a PRD… open the
+ * release beside the list with that form open. Without `onPlan` the callout
+ * is exactly what it was.
  */
-function PlanningCallout({ releaseName }: { releaseName: string }) {
+function PlanningCallout({ releaseName, onPlan }: { releaseName: string; onPlan?: (mode: PlanPhasesMode) => void }) {
+  const text = (
+    <>
+      <div className="text-[12.5px] font-medium text-[var(--color-text)]">No phases scoped yet</div>
+      <div className="text-[11.5px] text-[var(--color-text-muted)]">
+        Add {releaseName}&apos;s phases in its detail.
+      </div>
+    </>
+  )
   return (
     <div
       data-planning-callout=""
       className="rounded-md border border-dashed p-3"
       style={{ borderColor: 'var(--color-border)' }}
     >
-      <div className="text-[12.5px] font-medium text-[var(--color-text)]">No phases scoped yet</div>
-      <div className="text-[11.5px] text-[var(--color-text-muted)]">
-        Add {releaseName}&apos;s phases in its detail.
-      </div>
+      {onPlan ? (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">{text}</div>
+          <div className="flex items-center gap-2" data-plan-phases="">
+            <button type="button" className="btn-secondary btn-sm" onClick={(e) => { stopToCard(e); onPlan('clone') }}>
+              Copy phases from…
+            </button>
+            <button type="button" className="btn-secondary btn-sm" onClick={(e) => { stopToCard(e); onPlan('draft') }}>
+              Draft from a PRD…
+            </button>
+          </div>
+        </div>
+      ) : text}
     </div>
   )
 }
@@ -165,6 +188,11 @@ interface ReleaseCardProps {
   evaluating?: boolean
   /** Present => QA lead: "Set as active release" is in the Release actions menu (planning / in progress, not already active). */
   onSetActive?: (releaseId: string) => void
+  /**
+   * W11 REL-05 / REL-07. Present => QA lead: a planning or in-progress release with no phases offers Copy phases
+   * from… and Draft from a PRD… in its callout. Absent: the callout is today's text only.
+   */
+  onPlanPhases?: (releaseId: string, mode: PlanPhasesMode) => void
 }
 
 export default function ReleaseCard({
@@ -174,6 +202,7 @@ export default function ReleaseCard({
   onEvaluate,
   evaluating = false,
   onSetActive,
+  onPlanPhases,
 }: ReleaseCardProps) {
   const { gate } = release
   const tile = ICON_TILE[gate.decision]
@@ -363,7 +392,12 @@ export default function ReleaseCard({
           {showPhases && <PhasePipeline phases={release.phases} />}
 
           {/* No phases yet */}
-          {showCallout && <PlanningCallout releaseName={release.name} />}
+          {showCallout && (
+            <PlanningCallout
+              releaseName={release.name}
+              onPlan={onPlanPhases ? (mode) => onPlanPhases(release.id, mode) : undefined}
+            />
+          )}
 
           {/* Blocker rows (in-progress only). Each row truncates its test name,
               so the list must not size the card: zero intrinsic width

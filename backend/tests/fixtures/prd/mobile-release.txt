@@ -1,0 +1,30 @@
+Mobile app 4.2 release plan
+===========================
+
+Background
+----------
+Release 4.2 moves sign-in to passkeys and rebuilds the order history screen.
+It ships to both stores in the same week.
+
+Code freeze
+-----------
+Feature branches merge by Friday; after that only fixes for P1 defects go in.
+
+Smoke and regression (1 week)
+-----------------------------
+The device lab runs the smoke pack on every nightly build, then the full
+regression on the freeze build:
+
+1. Install the build on the twelve reference devices
+2. Run the passkey sign-in journeys
+3. Run the order history regression pack
+
+Done when: no P1 defects are open and the crash-free rate is above 99.5%
+
+Beta with pilot users (2 weeks)
+-------------------------------
+TestFlight and the Play internal track, 400 pilot users.
+
+Store release
+-------------
+Phased rollout to 100% of users over 7 days.

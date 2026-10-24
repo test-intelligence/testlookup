@@ -11,8 +11,10 @@ Transaction model (item #2: one commit per request):
 """
 from __future__ import annotations
 
+import copy
 import uuid
-from datetime import datetime, timezone
+from collections.abc import Sequence
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import structlog
@@ -21,6 +23,16 @@ from sqlalchemy import case, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.release_planning import (
+    NO_SHIFT_ANCHOR,
+    PHASE_NAME_REPEATED,
+    PHASE_TYPE_SENTENCE,
+    PHASE_TYPES,
+    PHASE_WINDOW_SENTENCE,
+    SOURCE_HAS_NO_PHASES,
+    TARGET_HAS_PHASES,
+)
+from app.models.schemas import ReleasePhaseBulkItem
 from app.models.postgres import (
     LinkSource,
     AccessAuditLog,
@@ -759,6 +771,147 @@ async def add_phase(db: AsyncSession, release_id: str, body) -> ReleasePhase:
     db.add(phase)
     await db.flush()  # materialize phase.id for any follow-up queries
     return phase
+
+
+# ── W11 REL-05 / REL-07: a release's FIRST schedule, in one request ──────────
+
+
+def _as_utc(value: Optional[datetime]) -> Optional[datetime]:
+    """A naive datetime read as UTC (a bare date parses naive), an aware one as is."""
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+async def create_phases_bulk(
+    db: AsyncSession, release: Release, items: Sequence[ReleasePhaseBulkItem],
+) -> list[ReleasePhase]:
+    """Stage a release's first schedule: every phase in ONE flush. Handler commits.
+
+    Clone (REL-05) and the PRD draft's Create (REL-07) build a FIRST schedule
+    only: a release that already has a phase grows one phase at a time
+    through ``add_phase``, whose duplicate check and ordering rules this does
+    not have to restate against a half-built list.
+
+    The target row is locked first (``FOR UPDATE``), so two concurrent bulk or
+    clone requests for the same release serialise on it: the second one reads
+    the first one's phases once it commits and is refused, instead of both
+    seeing an empty release and writing two schedules.
+    """
+    await db.execute(select(Release.id).where(Release.id == release.id).with_for_update())
+    existing = (
+        await db.execute(
+            select(ReleasePhase.id).where(ReleasePhase.release_id == release.id).limit(1)
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        raise HTTPException(status_code=409, detail=TARGET_HAS_PHASES)
+
+    seen: set[str] = set()
+    rows: list[ReleasePhase] = []
+    for index, item in enumerate(items):
+        name = (item.name or "").strip()
+        if not name:
+            raise HTTPException(status_code=422, detail="A phase needs a name.")
+        key = name.lower()
+        if key in seen:
+            raise HTTPException(status_code=409, detail=PHASE_NAME_REPEATED.format(name=name))
+        seen.add(key)
+        if item.phase_type not in PHASE_TYPES:
+            raise HTTPException(status_code=422, detail=PHASE_TYPE_SENTENCE)
+        start, end = _as_utc(item.planned_start), _as_utc(item.planned_end)
+        if start is not None and end is not None and end < start:
+            raise HTTPException(status_code=422, detail=PHASE_WINDOW_SENTENCE)
+        rows.append(
+            ReleasePhase(
+                release_id=release.id,
+                name=name,
+                phase_type=item.phase_type,
+                status="pending",
+                description=item.description,
+                order_index=index,
+                planned_start=start,
+                planned_end=end,
+                actual_start=None,
+                actual_end=None,
+                exit_criteria=item.exit_criteria,
+                notes=item.notes,
+            )
+        )
+    db.add_all(rows)
+    await db.flush()
+    return rows
+
+
+async def clone_phases(
+    db: AsyncSession, target: Release, source: Release, shift_to: Optional[datetime],
+) -> tuple[list[ReleasePhase], Optional[int]]:
+    """Copy ``source``'s phases into ``target`` (REL-05), dates moved, all Pending.
+
+    The anchor is the earliest dated source phase; it moves to ``shift_to``,
+    else the target's cutoff start, and every planned date moves by the same
+    delta (an undated phase stays undated). Never an unshifted copy of the
+    source's old dates: with no anchor and a dated source phase this is a 422
+    asking for one. ``exit_criteria`` is copied VERBATIM (a deep copy, so the
+    two releases' phase gates never share one mutable document).
+
+    Returns the staged rows and the shift in whole days (``None`` when no
+    source phase had a date).
+    """
+    source_phases = list(
+        (
+            await db.execute(
+                select(ReleasePhase)
+                .where(ReleasePhase.release_id == source.id)
+                .order_by(ReleasePhase.order_index, ReleasePhase.created_at, ReleasePhase.id)
+            )
+        ).scalars().all()
+    )
+    if not source_phases:
+        raise HTTPException(status_code=422, detail=SOURCE_HAS_NO_PHASES)
+
+    dated: list[datetime] = [
+        moment
+        for phase in source_phases
+        for moment in (_as_utc(phase.planned_start), _as_utc(phase.planned_end))
+        if moment is not None
+    ]
+    starts: list[datetime] = [
+        moment for moment in (_as_utc(p.planned_start) for p in source_phases) if moment is not None
+    ]
+    # The anchor is the earliest planned START; a source dated by its ends
+    # only is anchored on its earliest end, so it still moves rather than
+    # being copied unshifted.
+    anchor = min(starts) if starts else (min(dated) if dated else None)
+    delta: Optional[timedelta] = None
+    if anchor is not None:
+        new_start = _as_utc(shift_to) or _as_utc(target.cutoff_start_at)
+        if new_start is None:
+            raise HTTPException(status_code=422, detail=NO_SHIFT_ANCHOR)
+        delta = new_start - anchor
+
+    def _moved(value: Optional[datetime]) -> Optional[datetime]:
+        value = _as_utc(value)
+        return value + delta if value is not None and delta is not None else value
+
+    items = [
+        # ``model_construct``: the source rows were validated when they were
+        # written; a legacy description longer than the request limit must
+        # not turn a copy into a 500.
+        ReleasePhaseBulkItem.model_construct(
+            name=phase.name,
+            phase_type=phase.phase_type,
+            description=phase.description,
+            planned_start=_moved(phase.planned_start),
+            planned_end=_moved(phase.planned_end),
+            exit_criteria=copy.deepcopy(phase.exit_criteria),
+            notes=phase.notes,
+        )
+        for phase in source_phases
+    ]
+    rows = await create_phases_bulk(db, target, items)
+    shifted = round(delta.total_seconds() / 86400) if delta is not None else None
+    return rows, shifted
 
 
 #: Statuses that end a phase without the gate having approved it.

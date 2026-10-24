@@ -14,6 +14,11 @@ import { ReleaseHealthBanner, ReleaseHealthDetails } from './ReleaseHealth'
 import { countReleases, releaseHealthFacts, releaseHeadline } from './health'
 import type { DerivedBlocker, DerivedGate, DerivedRelease, GateDecision } from './types'
 
+// W11 REL-03: the open disclosure reads the cards' trend; no trend here (PortfolioKpis.test.tsx covers it).
+vi.mock('@/hooks/useReleasePortfolioTrend', () => ({
+  useReleasePortfolioTrend: () => ({ data: undefined, error: undefined }),
+}))
+
 /** A recorded verdict (or none) in the §1.4 `DerivedGate` shape. */
 function gateOf(decision: GateDecision, overrides: Partial<DerivedGate> = {}): DerivedGate {
   const evaluated = decision !== 'never_evaluated'

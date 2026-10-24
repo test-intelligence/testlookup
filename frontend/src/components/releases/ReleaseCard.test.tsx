@@ -353,3 +353,42 @@ describe('Active pill, external link, Release actions menu (REL-08)', () => {
     expect(screen.getByRole('button', { name: 'Release actions' })).toBeInTheDocument()
   })
 })
+
+// W11 REL-05 / REL-07: the planning callout's two working controls (a QA lead's), cases ADDED.
+describe('the planning callout: Copy phases from… and Draft from a PRD… (W11)', () => {
+  it('without onPlanPhases the callout is exactly its text: no button', () => {
+    renderCard({ release: release({ status: 'planning', phases: [] }) })
+    const callout = document.querySelector('[data-planning-callout]') as HTMLElement
+    expect(callout.textContent).toBe("No phases scoped yetAdd 2026.11's phases in its detail.")
+    expect(within(callout).queryByRole('button')).toBeNull()
+    expect(callout.children).toHaveLength(2)
+  })
+
+  it('with onPlanPhases: two buttons; each calls it with its mode and never opens the card', () => {
+    const onPlanPhases = vi.fn()
+    const onClick = vi.fn()
+    renderCard({ release: release({ status: 'planning', phases: [] }), onPlanPhases, onClick })
+    const callout = document.querySelector('[data-planning-callout]') as HTMLElement
+    expect(within(callout).getByText('No phases scoped yet')).toBeInTheDocument()
+    expect(within(callout).getAllByRole('button').map(b => b.textContent)).toEqual(['Copy phases from…', 'Draft from a PRD…'])
+
+    fireEvent.click(within(callout).getByRole('button', { name: 'Copy phases from…' }))
+    expect(onPlanPhases).toHaveBeenLastCalledWith('rel-1', 'clone')
+    fireEvent.click(within(callout).getByRole('button', { name: 'Draft from a PRD…' }))
+    expect(onPlanPhases).toHaveBeenLastCalledWith('rel-1', 'draft')
+    expect(onClick).not.toHaveBeenCalled()
+  })
+
+  it('a release that has phases, or a finished one, offers neither', () => {
+    const cases: Partial<Release>[] = [
+      { status: 'planning' },                  // has its phase
+      { status: 'released', phases: [] },
+      { status: 'cancelled', phases: [] },
+    ]
+    for (const overrides of cases) {
+      const { unmount } = renderCard({ release: release(overrides), onPlanPhases: vi.fn() })
+      expect(screen.queryByRole('button', { name: 'Copy phases from…' }), String(overrides.status)).toBeNull()
+      unmount()
+    }
+  })
+})
