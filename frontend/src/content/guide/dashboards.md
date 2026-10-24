@@ -18,10 +18,10 @@ If a page looks wrong, check these three before anything else. Together they exp
 
 | View | Answers | Notes |
 |---|---|---|
-| **Home** (`/overview`, titled **Dashboard**) | What is the current state? | A **Release readiness** banner, then **Total executions**, **Avg pass rate**, **New failures · 24h**, **Flaky tests** and **Active defects**; each card opens the page behind it. A project with no runs yet shows the first-run guide instead |
+| **Home** (`/overview`, titled **Dashboard**) | What is the current state? | A **Release readiness** banner, then **Total executions**, **Avg pass rate**, **New failures · 24h**, **Flaky tests** and **Active defects**; each card opens the page behind it. Under the banner, **How this verdict is decided** names the policy that decides it (`Decided by Payments gate v4 (project policy): Go at 95% or more, Conditional from 90%, No-Go below 90%.`; with no published policy, `Decided by the built-in rule (…)` and that rule: Go at 95% or more with no open defects and at most 5 flaky tests, Conditional from 85% with at most 5 open defects), links to it with **Open policies**, and lists any hard cap that forced No-Go (`Open critical (P0) defects: 2, cap 0`). A project with no runs yet shows the first-run guide instead |
 | **Runs** | What has executed recently? | Defaults to 30 days; `days=0` for all time via the API. See [Runs and run detail](/docs/runs) |
-| **Live** | What is running right now? | Only streamed runs. See [Watching runs live](/docs/live) |
-| **Trends** | Is this getting better or worse? | Needs history — sparse data makes trends meaningless |
+| **Live** | What is running right now? | Only streamed runs; the pass rate is flagged by the policy bands. See [Watching runs live](/docs/live) |
+| **Trends** | Is this getting better or worse? | Needs history — sparse data makes trends meaningless. The pass-rate chart's dashed line is the project policy's GO line (`GO ≥ 95%` under the default bands) and the shaded band below it the No-Go zone (`No-Go < 90%`); the sentence above the chart says how far the window's pass rate is from the GO line and whose bands those are. See [Which line is the target](/docs/releases#which-line-is-the-target) |
 | **Coverage** | What is being exercised? | Coverage of *executed tests*, not code coverage |
 | **Failures** | What is failing and why? | Grouped by category and cluster. See [Investigating failures](/docs/failure-analysis) |
 | **Flaky tests** | Which tests are unreliable? | Nothing below 5 observations — see [Flaky tests](/docs/flaky) |

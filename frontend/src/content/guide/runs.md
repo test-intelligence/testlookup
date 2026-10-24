@@ -37,7 +37,7 @@ Two disclosures at the bottom explain the banner:
 
 ## One run's page
 
-Click a build to open `/runs/<run id>`, titled **Run #<build number>**. Under the title: the run's status, suite and release, and its timing: **Wall clock** (or **not reported** when the report carried no timestamps), **Test time (summed)** and, when both are known, **Parallelism**. See [Concepts](/docs/concepts#definitions) for the three terms. **Set release** (or the pencil next to an existing release, **Change release**) attaches the run to a release by name, creating the release if it does not exist yet; this needs the `QA_LEAD` role.
+Click a build to open `/runs/<run id>`, titled **Run #<build number>**. Under the title: the run's status, suite and release, and its timing: **Wall clock** (or **not reported** when the report carried no timestamps), **Test time (summed)** and, when both are known, **Parallelism**. See [Concepts](/docs/concepts#definitions) for the three terms. A run that no release claims reads **Unattributed** where the release would be: the [attribution ladder](/docs/releases#getting-runs-into-a-release) did not link it (hover for why). Click **Unattributed** to give the run a release by name, creating the release if it does not exist yet; the pencil next to an existing release (**Change release**) moves the run to another. Both need the `QA_LEAD` role.
 
 The **⋯** menu:
 

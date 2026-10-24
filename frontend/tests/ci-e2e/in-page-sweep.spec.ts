@@ -95,6 +95,7 @@ import { compareCountChartData, EXPLORE, fixTaggingWorld, note, notesWorld, tren
 import { RUN_COMPARE_PICKER } from '../visual/production/fixtures-runs-failures'
 import { ADMIN, QA_ENGINEER, VIEWER } from '../visual/production/fixtures-releases'
 import { releasesInPageWorld, runAnalysisWorld } from '../visual/production/fixtures-in-page'
+import { attributionRulesWorld } from '../visual/production/fixtures-release-planning'
 
 test.use({ viewport: { width: 1280, height: 1000 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
@@ -209,6 +210,8 @@ const seedRecents = async (page: Page) => {
 }
 
 const projectCard = (p: Page) => p.locator('.card').filter({ has: p.getByText(LEGACY_PROJECT.name, { exact: true }) })
+/** W11: the first rule's row of the attribution rules table. */
+const attributionRow = (p: Page) => p.locator('[data-primary]').getByRole('row').filter({ hasText: 'Hotfix branches' })
 const EDITABLE_NOTE = note('99999999-9999-4999-8999-0000000000f1', daysAgo(11), daysAgo(5), 'CI runners paused for the datacentre move')
 
 const ROUTES: SweepRoute[] = [
@@ -229,6 +232,19 @@ const ROUTES: SweepRoute[] = [
     ready: (p) => p.getByRole('meter', { name: 'Risk Score' }),
   },
   { route: '/releases', path: '/releases', roles: MANAGEMENT, handlers: () => RELEASES_PAGE, ready: h1('Releases') },
+  // ── W11 REL-09: the attribution rules page, every role it lets in; its forms and its Delete are a QA lead's ──
+  {
+    route: '/releases/attribution-rules',
+    path: '/releases/attribution-rules',
+    roles: EVERY,
+    handlers: () => attributionRulesWorld().handlers,
+    ready: h1('Attribution rules'),
+    actions: [
+      only(LEAD_UP, form('New rule', (p) => p.getByRole('button', { name: 'New rule', exact: true }), 'New attribution rule')),
+      only(LEAD_UP, form('a rule\'s Edit', (p) => attributionRow(p).getByRole('button', { name: /^Edit/ }), 'Edit attribution rule')),
+      only(LEAD_UP, ask('a rule\'s Delete', (p) => attributionRow(p).getByRole('button', { name: /^Delete/ }))),
+    ],
+  },
   { route: '/agents', path: `/agents?run=${RUN_ID}`, roles: EVERY, handlers: () => agentsHandlers(), ready: (p) => p.getByRole('region', { name: 'AI report' }) },
   { route: '/settings', path: '/settings', roles: MANAGEMENT, handlers: () => LAYOUT, ready: (p) => p.locator('[data-settings-index]') },
 

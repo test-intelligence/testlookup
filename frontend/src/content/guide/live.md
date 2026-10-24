@@ -12,7 +12,7 @@ A run only appears here if it is **streamed**. A report file uploaded after the 
 
 - **Current** — how many runs are active and how many tests are in flight. With nothing active it says **No active runs** and when the last one completed.
 - How many tests have run across how many sessions.
-- **Pass rate** across those sessions, flagged when it falls below the 90% target.
+- **Pass rate** across those sessions, coloured and flagged by the selected project's policy bands: no flag at or above the GO line, `below the GO line (95%)` between the GO line and the No-Go zone, and `in the No-Go zone (< 90%)` below it. Hover the flag for the policy it follows (`Bands: Payments gate v4`, or `Bands: default` when no policy is published, and always in **All Projects**). See [Which line is the target](/docs/releases#which-line-is-the-target).
 - A pass/fail bar with the passed, failed, broken and skipped counts.
 
 **Sessions** lists each streaming run (and recently completed ones) with its build, suite, status, test count, passes, failures, outcome, release and timing, 25 to a page. **All**, **Running** and **Has failures** filter the list, and **Search runs…** finds one by name. Click a build to open that run's page.
