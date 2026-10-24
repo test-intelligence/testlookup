@@ -1,16 +1,23 @@
-"""Regression — compliance packs are tamper-EVIDENT, never "signed".
+"""Regression — a compliance pack's wording never claims more than the code does.
 
 US-13.3 compliance-audit finding 4: ``compliance_pack_service`` carried a
-``# ZIP assembly + signing`` section header while the implementation is a
+``# ZIP assembly + signing`` section header while the implementation was a
 plain SHA-256 checksum chain — ``manifest.json`` digests every file in the
-ZIP and ``compliance_packs.manifest_sha256`` digests the manifest. There is no
-HMAC and no PKI anywhere in the path, so an actor able to rewrite BOTH the
-MinIO object and the DB row forges a self-consistent pack.
+ZIP and ``compliance_packs.manifest_sha256`` digests the manifest. With no
+HMAC and no PKI, an actor able to rewrite BOTH the MinIO object and the DB
+row forged a self-consistent pack. The fix then was wording, not crypto, and
+these tests kept the word "signed" out of the code and the pack's README.
 
-The fix was wording, not crypto (signing is a product decision). These tests
-keep the wording honest in both directions: no "signed/signature" claim may
-creep back into the code or the pack's own README, and the residual risk must
-stay documented where the guarantee is described.
+W11 REL-11 (D14) made signing real: a new pack carries ``signature.json``, an
+Ed25519 signature by the deployment's key over the manifest's digest
+(``_sign_pack`` / ``compliance_signing``). The guard's own reminder ("if real
+signing ever lands, relabel") was followed, and its intent is kept: a pack is
+called signed only when it carries a signature — the README, generated for
+every pack, says so conditionally — an unsigned pack still reads
+tamper-evident only, and the residual risk (an actor holding the database AND
+``APP_SECRET_KEY`` can sign a forgery) stays written where the guarantee is.
+The feature-flag description checks below are unchanged: that seeded text
+still says nothing about signing (correcting deployed rows is a follow-up).
 """
 from __future__ import annotations
 
@@ -53,14 +60,38 @@ def test_module_docstring_labels_the_chain_tamper_evident_not_signed():
     assert "worm" in doc or "object-lock" in doc
 
 
-def test_pack_readme_does_not_claim_a_signature():
+#: A README sentence calling something "signed" must be conditional ("when"),
+#: say what a signature proves ("proves"), or negate ("not" / "without"): the
+#: same README is written into a signed pack and an unsigned one.
+_CONDITIONAL_SIGNED = ("when", "proves", "not", "without")
+
+
+def _sentences(text: str) -> list[str]:
+    return [s for s in re.split(r"(?<=[.!?])\s+|\n+", text) if s.strip()]
+
+
+def test_pack_readme_calls_a_pack_signed_only_conditionally():
+    """The README is built BEFORE the pack is signed (or not): it may never say
+    flatly that this pack is signed."""
     text = _readme_text()
-    for match in _CLAIMS_SIGNING.finditer(text):
-        window = text[max(0, match.start() - 30):match.start()].lower()
-        assert "not" in window or "no " in window, (
-            "compliance-pack README claims a signature it does not have: "
-            f"...{text[max(0, match.start() - 60):match.end() + 40]}..."
+    claims = [s for s in _sentences(text) if re.search(r"\bsigned\b", s, re.IGNORECASE)]
+    assert claims, "the README no longer explains signing at all"
+    for sentence in claims:
+        lowered = sentence.lower()
+        assert any(word in lowered for word in _CONDITIONAL_SIGNED), (
+            f"compliance-pack README claims a signature unconditionally: {sentence!r}"
         )
+    assert "this pack is signed" not in text.lower()
+
+
+def test_pack_readme_names_the_signature_file_and_what_it_does_not_prove():
+    text = _readme_text()
+    row = next(line for line in text.splitlines() if line.startswith("| `signature.json` |"))
+    assert "Present when the deployment signed the pack" in row
+    assert "does not list" in row, "the one file outside the manifest says why"
+    assert "NOT against an actor holding both the database and `APP_SECRET_KEY`" in text
+    # An unsigned pack is still described as what it is.
+    assert "is tamper-evident only: its chain is not signed" in text
 
 
 def test_pack_readme_states_what_the_chain_does_not_prove():
@@ -71,13 +102,23 @@ def test_pack_readme_states_what_the_chain_does_not_prove():
     assert "key custody" in text or "object-locked" in text
 
 
-def test_service_has_no_signing_implementation_to_match_the_label():
-    """If real signing ever lands, this test is the reminder to relabel."""
-    source_names = dir(svc)
-    assert not any("sign" in name.lower() for name in source_names), (
-        "a signing helper appeared — update the docstrings/README wording that "
-        "currently states the pack is NOT signed"
-    )
+def test_the_label_matches_the_signing_implementation():
+    """Signing landed (W11 REL-11) and the labels were changed with it.
+
+    Was ``test_service_has_no_signing_implementation_to_match_the_label``, the
+    reminder to relabel when signing landed. Now both halves must agree: the
+    helper that writes ``signature.json`` exists, the module docstring says the
+    pack is signed since W11, and an unsigned pack is still tamper-evident only.
+    """
+    import inspect
+
+    assert hasattr(svc, "_sign_pack"), "signing helper gone — relabel the README and docstrings"
+    source = inspect.getsource(svc._sign_pack)
+    assert "SIGNATURE_FILENAME" in source and '"state": "unsigned"' in source
+    doc = (svc.__doc__ or "").lower()
+    assert "signed since" in doc
+    assert "tamper-evident only" in doc
+    assert "app_secret_key" in doc, "what signing does not defend against is named"
     assert not hasattr(svc, "hmac")
 
 
@@ -262,14 +303,9 @@ def test_interim_0114_wording_was_at_least_honest():
     )
 
 
-def test_mcp_generate_compliance_pack_tool_makes_no_signing_claim():
-    """The MCP tool docstring is the description an agent reasons over.
-
-    ``generate_compliance_pack`` advertised "Produces a **signed** ZIP", so an
-    agent asked whether a pack is cryptographically signed would have answered
-    yes. Read from source rather than imported — the MCP package pulls in the
-    server runtime, which these unit tests do not stand up.
-    """
+def _mcp_tool_doc(name: str) -> str | None:
+    """A tool's docstring, read from source rather than imported — the MCP
+    package pulls in the server runtime, which these unit tests do not stand up."""
     import ast
     from pathlib import Path
 
@@ -277,18 +313,40 @@ def test_mcp_generate_compliance_pack_tool_makes_no_signing_claim():
         Path(__file__).resolve().parents[3] / "mcp" / "tools" / "compliance_pack.py"
     )
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    doc = next(
+    return next(
         (
             ast.get_docstring(node) or ""
             for node in ast.walk(tree)
             if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
-            and node.name == "generate_compliance_pack"
+            and node.name == name
         ),
         None,
     )
+
+
+def test_mcp_generate_compliance_pack_tool_states_signing_and_its_limit():
+    """The MCP tool docstring is the description an agent reasons over.
+
+    Before signing existed, ``generate_compliance_pack`` advertised "Produces a
+    **signed** ZIP", so an agent asked whether a pack is cryptographically
+    signed would have answered yes. Since W11 a new pack IS signed; the
+    docstring says so with its scope (new packs, the deployment's key) and its
+    limit (storage-only tampering; not an actor holding the database and
+    APP_SECRET_KEY), keeps "tamper-EVIDENT, not tamper-proof", and no longer
+    says integrity "rests on that SHA-256 chain alone".
+    """
+    doc = _mcp_tool_doc("generate_compliance_pack")
     assert doc is not None, "generate_compliance_pack tool disappeared from the MCP surface"
-    _assert_says_nothing_about_signing(doc, "the generate_compliance_pack MCP tool doc")
-    assert "tamper-evident" in doc.lower()
+    assert "tamper-evident, not tamper-proof" in doc.lower()
+    assert "Signed since W11: a new pack carries signature.json" in doc
+    assert "not against an" in doc and "APP_SECRET_KEY" in doc
+    assert "SHA-256 chain alone" not in doc
+    assert "verify_compliance_pack" in doc
+
+    verify = _mcp_tool_doc("verify_compliance_pack")
+    assert verify is not None, "the verify tool is how an agent checks the claim"
+    assert "writes nothing" in verify
+    assert "tamper-evident only" in verify, "an unsigned pack is described as what it is"
 
 
 def test_migration_0114_corrects_the_user_visible_flag_description():

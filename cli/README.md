@@ -104,6 +104,7 @@ Every group has `--help`, for example `testlookup upload file --help`.
 | `keys` | `create`, `list`, `revoke <key-id>` | Create a personal API key (`--name`), list keys, revoke one (`--yes` skips the prompt) |
 | `upload` | `file <path>`, `dir <directory>` | Upload one report file, or every `.xml`, `.json` and `.trx` file in a directory (see [Uploading results](#uploading-results)) |
 | `ci-verdict` | (top-level command) | Quarantine-aware CI gate: exit 0 when every failure in a run is quarantined (see [Gating CI with ci-verdict](#gating-ci-with-ci-verdict)) |
+| `compliance-pack` | `verify <zip>` | Verify a downloaded compliance pack offline: every file against its manifest and the Ed25519 signature (`--public-key`, `--manifest-sha256`, `--require-signature`, `--json`; see [Verifying a compliance pack](#verifying-a-compliance-pack)) |
 
 ## Common tasks
 
@@ -277,6 +278,51 @@ reachable LLM the summary is the deterministic one, and it says so.
 comparison it cannot judge prints a warning and exits `0`. Both commands take
 `--json` (or `-o json`) for the REST body.
 
+## Verifying a compliance pack
+
+A compliance pack generated since W11 carries `signature.json`: an Ed25519
+signature by the deployment's key over the SHA-256 of `manifest.json`, the
+pack id and the key id. `compliance-pack verify` checks a downloaded pack with
+no server and no network: it reads the ZIP and the deployment's public key
+(the PEM from `GET /api/v1/compliance-packs/signing-keys`, the release panel's
+**Public key** button, or one a reviewer was given out of band).
+
+```bash
+testlookup compliance-pack verify pack.zip --public-key testlookup-compliance-k-1a2b3c4d5e6f7a8b.pem
+testlookup compliance-pack verify pack.zip --public-key key.pem --manifest-sha256 "$RECORDED_SHA256"
+testlookup compliance-pack verify pack.zip --public-key key.pem --require-signature   # an unsigned pack fails
+testlookup compliance-pack verify pack.zip --json                                      # the verification as JSON
+```
+
+It checks every file the manifest lists against its SHA-256, refuses any file
+the manifest does not list (except `signature.json`), compares the manifest
+with `--manifest-sha256` when given (the digest recorded when the pack was
+generated, shown in the app and in the download's `X-Manifest-Sha256`
+header), and verifies the signature with `--public-key`. It prints one line,
+for example `OK: signature valid (key k-1a2b3c4d5e6f7a8b), 12/12 files match`
+or `TAMPERED: decision.json does not match the manifest` (one line per file
+that does not match).
+
+| Option | Meaning |
+|---|---|
+| `--public-key <pem>` | The deployment's Ed25519 public key. Without it the files are checked and the signature is not (`signature not checked`, exit 0) |
+| `--manifest-sha256 <hex>` | The manifest digest recorded at generation; a different manifest is tampered |
+| `--require-signature` | Offline the CLI cannot know a pack WAS signed: with this flag an unsigned pack exits 1. Needs `--public-key` |
+| `--json` | Print the verification as JSON |
+
+| Exit code | Meaning |
+|---|---|
+| `0` | Verified: every file matches and the signature is valid; or the pack is unsigned (tamper-evident only, a pack generated before signing existed); or no `--public-key` was given |
+| `1` | Tampered: a file does not match or is not listed, the manifest does not match `--manifest-sha256`, the signature is invalid, or the pack is signed by another key than `--public-key` (both key ids are printed); with `--require-signature`, also an unsigned pack |
+| `2` | The input could not be read (not a ZIP, a missing file, a key that is not an Ed25519 PEM), or a usage error |
+
+What a valid signature proves: the deployment's key signed this exact
+manifest. The private key is stored encrypted beside the deployment's data, so
+it defends against storage-only tampering, not against an actor holding both
+the database and `APP_SECRET_KEY`; keep the public key and the recorded digests
+off-host for that. The command needs the `cryptography` package (a dependency
+of the CLI since W11).
+
 ## Output and exit codes
 
 Commands that print data take `-o`/`--output`: `table` (default) or `json`, and
@@ -290,7 +336,7 @@ Commands that show AI-generated reports (`intelligence show`) print the
 report's review state and the AI disclaimer to stderr. `unknown` means the
 server sent no review status: treat the report as an unreviewed draft.
 
-Apart from `ci-verdict` (above), failures map to stable exit codes:
+Apart from `ci-verdict` and `compliance-pack verify` (above), failures map to stable exit codes:
 
 | Code | Meaning |
 |---|---|

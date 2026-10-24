@@ -20,22 +20,29 @@ GO/NO_GO, and by what policy?":
   * ``ai_history.json``      — every stored version of the run's AI analysis, the
                                diffs between them and the per-test versions (AIH-06)
 
-Integrity model — **tamper-evident, NOT signed.** The manifest's SHA-256
-(recorded in the ``compliance_packs`` row) is the root of a plain SHA-256
-checksum chain: if the row's ``manifest_sha256`` matches the ZIP's
-manifest.json, and each file's hash matches the manifest, the pack is
-unmodified since generation. A future verifier command can re-derive every
-digest to confirm nothing was modified in MinIO.
+Integrity model — a **tamper-evident** SHA-256 checksum chain, **signed since
+W11** (REL-11, D14). The manifest's SHA-256 (recorded in the
+``compliance_packs`` row) is the root of the chain: if the row's
+``manifest_sha256`` matches the ZIP's manifest.json, and each file's hash
+matches the manifest, the pack is unmodified since generation. Since W11 a new
+pack also carries ``signature.json``: an Ed25519 signature by the deployment's
+own key over the manifest's digest, the pack id and the key id
+(``compliance_signing``). It is the ONE file ``manifest.json`` does not list
+-- it signs the manifest's digest, so listing it would be circular -- and the
+manifest is built byte for byte as before. ``compliance_pack_verify`` checks
+all of it (``POST /api/v1/compliance-packs/{id}/verify``); ``testlookup
+compliance-pack verify`` does the same offline.
 
-There is **no HMAC and no PKI** anywhere in this path — nothing here is
-signed, and a pack cannot be attributed to TestLookup cryptographically.
-Residual risk: an actor able to rewrite BOTH the MinIO object and the
-``compliance_packs`` row can forge a self-consistent pack, and the chain
-will happily verify. Closing that is operator-side: WORM / object-lock on
-the ``compliance-packs`` bucket, and own-key custody of an off-host copy of
-the ``manifest_sha256`` values (or a signature over them). Adding real
-signing is a product decision, not a bug fix — do not describe this chain
-as "signed" until it is.
+What signing proves: the deployment's key signed this exact manifest. There is
+still no HMAC and no PKI (no certificate, no CA): the key pair is the
+deployment's own, and its private key is stored encrypted beside the data
+(Fernet under ``APP_SECRET_KEY``). Residual risk: an actor able to
+rewrite BOTH the MinIO object and the ``compliance_packs`` row now also needs
+``APP_SECRET_KEY`` to forge a pack that verifies -- one holding all three can.
+Closing that is operator-side: WORM / object-lock on the ``compliance-packs``
+bucket, and off-host custody of the public key and the ``manifest_sha256``
+values. A pack generated before W11, or while the key was unreadable, carries
+no signature and is tamper-evident only.
 
 This service is feature-flagged behind ``release_compliance_pack`` so
 deployments that haven't enabled it see zero behaviour change.
@@ -430,9 +437,11 @@ async def _gather_agent_activity(
 
 # ── ZIP assembly + tamper-evident checksum chain ───────────────────────────
 #
-# Deliberately NOT "signing": every helper below is plain SHA-256. No HMAC,
-# no keys, no certificates. See the module docstring for the residual risk
-# (rewrite-both forges) and the operator-side mitigations.
+# Every helper below is plain SHA-256: no HMAC, no keys, no certificates. The
+# chain is built exactly as it was before W11; ``generate_pack`` signs its
+# root afterwards (``signature.json``, outside the chain, through
+# ``compliance_signing``). See the module docstring for the residual risk and
+# the operator-side mitigations.
 
 
 def _sha256(data: bytes) -> str:
@@ -496,8 +505,17 @@ def _build_readme(
         "`available: false` means the AI-history store could not be read when the pack was "
         "generated, not that the run has no history. |"
     )
+    # W11 REL-11. Written into the ZIP after the manifest is hashed and NOT
+    # listed in it (it signs the manifest's digest), so this row is the only
+    # place a reviewer learns why one file is outside the chain.
+    lines.append(
+        "| `signature.json` | Present when the deployment signed the pack: an Ed25519 "
+        "signature over this manifest's SHA-256, the pack id and the key id. The one file "
+        "`manifest.json` does not list — it signs the manifest's digest, so listing it "
+        "would be circular. |"
+    )
     lines.append("")
-    lines.append("## Verification (tamper-evident checksum chain — not a signature)")
+    lines.append("## Verification (tamper-evident checksum chain + Ed25519 signature)")
     lines.append("")
     lines.append(
         "1. Compute SHA-256 of `manifest.json` and compare against the "
@@ -505,21 +523,38 @@ def _build_readme(
     )
     lines.append(
         "2. For each file listed in `manifest.json.files`, compute its SHA-256 "
-        "and compare against the hash in the manifest."
+        "and compare against the hash in the manifest. No other file may be in "
+        "the ZIP except `signature.json`."
     )
     lines.append(
         "3. Any mismatch indicates tampering — the pack is no longer authoritative."
     )
+    lines.append(
+        "4. `signature.json`: its `manifest_sha256` must equal the digest of step 1. "
+        "Verify `signature` (base64 Ed25519) over the UTF-8 statement "
+        "`testlookup-compliance-pack-v1\\n<pack_id>\\n<manifest_sha256>\\n<key_id>\\n` "
+        "with the deployment's public key for `key_id` (`GET "
+        "/api/v1/compliance-packs/signing-keys`, or the PEM a reviewer was given "
+        "out of band)."
+    )
+    lines.append(
+        "5. `testlookup compliance-pack verify <zip> --public-key <pem>` does all "
+        "of it offline."
+    )
     lines.append("")
     lines.append(
-        "**What this does and does not prove.** The chain is plain SHA-256: it "
-        "proves the ZIP matches the digest recorded when the pack was "
-        "generated. It is **not signed** — there is no HMAC and no PKI — so it "
-        "does not prove *who* produced the pack, and an actor who can rewrite "
-        "both the stored ZIP and the `compliance_packs` row can produce a "
-        "consistent forgery. If you need that property, keep the "
-        "`manifest_sha256` under your own key custody (or on WORM / "
-        "object-locked storage) outside the TestLookup deployment."
+        "**What this does and does not prove.** The checksum chain proves the ZIP "
+        "matches the digest recorded when the pack was generated. The signature "
+        "proves the deployment's key signed this exact manifest, and so every "
+        "file it lists. The private key is stored encrypted beside the data "
+        "(Fernet, under the deployment's `APP_SECRET_KEY`), so the signature "
+        "defends against storage-only tampering — rewriting the stored ZIP or "
+        "the `compliance_packs` row — NOT against an actor holding both the "
+        "database and `APP_SECRET_KEY`, who can sign a forgery. For that, keep "
+        "the public key and the `manifest_sha256` values off-host, under your "
+        "own key custody or on WORM / object-locked storage. A pack without "
+        "`signature.json` (generated before signing existed, or while the key "
+        "was unreadable) is tamper-evident only: its chain is not signed."
     )
     return "\n".join(lines).encode("utf-8")
 
@@ -538,8 +573,9 @@ def _build_manifest(
     metadata, and return the encoded JSON. The caller hashes the result
     and stores the digest on the ``compliance_packs`` row.
 
-    No key material is involved — the manifest is not signed or MACed, so
-    its authority is only as strong as the custody of the stored digest.
+    No key material is involved here: the manifest is built exactly as it was
+    before W11. ``generate_pack`` signs its digest afterwards, in
+    ``signature.json``, which this manifest never lists.
     """
     entries = []
     for name, data in sorted(files.items()):
@@ -819,6 +855,20 @@ async def generate_pack(
     pack_id = uuid.uuid4()
     generated_at = datetime.now(timezone.utc)
 
+    # W11 REL-11: sign the manifest's digest BEFORE the upload, so the stored
+    # ZIP carries signature.json. manifest.json and its digest are untouched
+    # (signature.json sits outside the chain it signs); only the ZIP grows.
+    zip_bytes, signature, signing_key_id, signing = await _sign_pack(
+        db,
+        zip_bytes,
+        pack_id=pack_id,
+        manifest_sha256=metadata["manifest_sha256"],
+        actor=actor,
+        signed_at=generated_at,
+    )
+    metadata["signing"] = signing
+    metadata["bytes"] = len(zip_bytes)
+
     # One description, one key builder. The release path goes through the same
     # ExportScope a retention export uses — the epic's warning is that a
     # half-generalised service with two entry points is worse than either,
@@ -850,6 +900,8 @@ async def generate_pack(
         test_run_id=uuid.UUID(metadata["run_id"]),
         minio_key=minio_key,
         manifest_sha256=metadata["manifest_sha256"],
+        signature=signature,
+        signing_key_id=signing_key_id,
         file_count=int(metadata["file_count"]),
         bytes=int(metadata["bytes"]),
         retention_expires_at=generated_at + retention,
@@ -888,9 +940,59 @@ async def generate_pack(
         run_id=metadata["run_id"],
         bytes=metadata["bytes"],
         manifest_sha256=metadata["manifest_sha256"],
+        signing_key_id=signing_key_id,
     )
     compliance_pack_generated_total.labels(result="success").inc()
     return row
+
+
+async def _sign_pack(
+    db: AsyncSession,
+    zip_bytes: bytes,
+    *,
+    pack_id: uuid.UUID,
+    manifest_sha256: str,
+    actor: Optional[User],
+    signed_at: datetime,
+) -> tuple[bytes, Optional[str], Optional[str], dict[str, Any]]:
+    """Append ``signature.json`` to the ZIP (W11 REL-11, D14).
+
+    Returns ``(zip_bytes, signature, signing_key_id, metadata_snapshot["signing"])``.
+    The first pack of a deployment creates the key (under the advisory lock).
+    When no key can be used -- the private key unreadable after an
+    ``APP_SECRET_KEY`` change, or a key-store fault -- the pack is generated
+    UNSIGNED and says so (D-12: a pack is evidence and still tamper-evident;
+    refusing it would block a release audit on a key-custody fault), the
+    failure is counted, and one WARNING names the pack, never key material.
+    """
+    from app.core.metrics import compliance_pack_signing_failures_total
+    from app.services import compliance_signing
+
+    try:
+        key = await compliance_signing.active_signing_key(db, actor=actor, create=True)
+    except Exception as exc:  # noqa: BLE001 - a key-custody fault must not refuse the pack
+        logger.warning("compliance_pack_key_unavailable", pack_id=str(pack_id), error_type=type(exc).__name__)
+        key = None
+    if key is None:
+        try:
+            compliance_pack_signing_failures_total.inc()
+        except Exception:  # noqa: BLE001 - telemetry never breaks generation
+            pass
+        logger.warning("compliance_pack_generated_unsigned", pack_id=str(pack_id), reason="key_unreadable")
+        return zip_bytes, None, None, {"state": "unsigned", "reason": "key_unreadable"}
+
+    document = compliance_signing.signature_document(
+        key, pack_id=pack_id, manifest_sha256=manifest_sha256, signed_at=signed_at,
+    )
+    buffer = io.BytesIO(zip_bytes)
+    with zipfile.ZipFile(buffer, "a", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(compliance_signing.SIGNATURE_FILENAME, _serialize(document))
+    return (
+        buffer.getvalue(),
+        document["signature"],
+        key.key_id,
+        {"state": "signed", "key_id": key.key_id},
+    )
 
 
 async def list_packs_for_release(

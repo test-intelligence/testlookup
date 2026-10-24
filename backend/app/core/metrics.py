@@ -588,6 +588,39 @@ compliance_pack_generated_total = Counter(
     ["result"],  # success | disabled | not_available | error
 )
 
+# W11 REL-11: every verification, by its result and its signature state.
+# Emitted by POST /api/v1/compliance-packs/{pack_id}/verify.
+compliance_pack_verifications_total = Counter(
+    "testlookup_compliance_pack_verifications_total",
+    "Compliance pack verifications",
+    ["result", "signature"],  # verified | tampered | unreadable  x  valid | invalid | unsigned | unknown_key
+)
+
+# W11 REL-11: a pack generated UNSIGNED because the signing key could not be
+# used (the private key is unreadable after an APP_SECRET_KEY change). Emitted
+# by compliance_pack_service.generate_pack. Zero is a measured zero: every
+# generation either signs or lands here.
+compliance_pack_signing_failures_total = Counter(
+    "testlookup_compliance_pack_signing_failures_total",
+    "Compliance packs generated unsigned because the signing key could not be used",
+)
+
+# W11 REL-05 / REL-07: phases created in bulk (a clone or a PRD draft), by who
+# drafted them. Emitted by the clone and bulk routes in routers/releases.py.
+release_phases_created_total = Counter(
+    "testlookup_release_phases_created_total",
+    "Release phases created in bulk (clone or a PRD draft)",
+    ["source"],  # clone | rules | llm | manual
+)
+
+# W11 REL-07: PRD-to-phases drafts, by source and the reason the rules draft
+# was used ("" when none). Emitted by services/release_phase_generator.py.
+release_phase_drafts_total = Counter(
+    "testlookup_release_phase_drafts_total",
+    "PRD-to-phases drafts",
+    ["source", "fallback_reason"],
+)
+
 # Orphan TestSuite rows (no run and no test case left) flagged by the
 # nightly reaper. Increments once per detected orphan; nothing is deleted.
 orphan_test_suites_total = Counter(

@@ -1,37 +1,85 @@
 import { useState } from 'react'
-import { Archive, Download, FileCheck, ShieldCheck } from 'lucide-react'
+import { Archive, Download, FileCheck, KeyRound, ShieldCheck } from 'lucide-react'
+import clsx from 'clsx'
 import toast from 'react-hot-toast'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useCompliancePacks } from '@/hooks/useCompliancePacks'
 import { refreshProjectCompliancePacks } from '@/hooks/useProjectCompliancePacks'
-import { compliancePackService, packSizeText } from '@/services/compliancePackService'
+import {
+  compliancePackService,
+  packSizeText,
+  type CompliancePackVerification,
+} from '@/services/compliancePackService'
 import { usePermissions } from '@/hooks/usePermissions'
 import { formatCompactDateTime } from '@/utils/formatters'
+import {
+  chipText,
+  nonOkLines,
+  PUBLIC_KEY_FAILED,
+  RESULT_TONE_CLASS,
+  resultTone,
+  VERIFY_FAILED,
+} from './packVerificationModel'
 
 interface Props {
   releaseId: string
   releaseName?: string | null
 }
 
+/** One row's last Verify answer, or why it could not be asked. */
+type VerifyState = { verification: CompliancePackVerification } | { error: string }
+
 /**
  * Release compliance export pack panel — Tier 1 item 4.
  *
  * QA Lead + generates a ZIP that reconstructs the full release decision for
  * regulated customers, sealed with a tamper-evident SHA-256 manifest. HON-07:
- * it is not SIGNED (no HMAC, no PKI: ``compliance_pack_service``), so the copy
- * says "tamper-evident", never "signed". The panel shows:
+ * the panel's description still says "tamper-evident" only; whether ONE pack
+ * is signed is the server's statement about that pack (W11 REL-11: packs are
+ * signed with the deployment's Ed25519 key since then), shown on its row. The
+ * panel shows:
  *
  * * A generate button that triggers ``POST /releases/{id}/compliance-pack``.
  * * A history list of every pack ever generated for this release, with
- *   SHA-256 of the manifest + download button.
+ *   SHA-256 of the manifest + download button; per row (W11) a signature chip,
+ *   **Verify** (``POST /compliance-packs/{id}/verify``, its answer under the
+ *   row as text) and, for a signed pack, **Public key** (the PEM download).
  *
- * Non-QA_LEAD users see the history but not the generate button.
+ * Non-QA_LEAD users see the history but not the generate button; every role
+ * that sees the panel may verify.
  */
 export default function CompliancePackPanel({ releaseId, releaseName }: Props) {
   const { canAccessManagement: canGenerate } = usePermissions()
   const { packs, isLoading, isError, refresh } = useCompliancePacks(releaseId)
   const [generating, setGenerating] = useState(false)
   const [notes, setNotes] = useState('')
+  const [verifying, setVerifying] = useState<string | null>(null)
+  const [verified, setVerified] = useState<Record<string, VerifyState>>({})
+
+  async function handleVerify(packId: string) {
+    if (verifying) return
+    setVerifying(packId)
+    try {
+      const verification = await compliancePackService.verify(packId)
+      setVerified((prev) => ({ ...prev, [packId]: { verification } }))
+    } catch (err) {
+      const detail = (err as { response?: { data?: { detail?: unknown } } }).response?.data?.detail
+      setVerified((prev) => ({
+        ...prev,
+        [packId]: { error: typeof detail === 'string' && detail ? `${VERIFY_FAILED} ${detail}` : VERIFY_FAILED },
+      }))
+    } finally {
+      setVerifying(null)
+    }
+  }
+
+  async function handlePublicKey(keyId: string) {
+    try {
+      await compliancePackService.downloadPublicKey(keyId)
+    } catch {
+      toast.error(PUBLIC_KEY_FAILED)
+    }
+  }
 
   async function handleGenerate() {
     if (generating) return
@@ -118,42 +166,98 @@ export default function CompliancePackPanel({ releaseId, releaseName }: Props) {
 
       {packs.length > 0 && (
         <ul className="space-y-1.5">
-          {packs.map((pack) => (
-            <li
-              key={pack.id}
-              className="flex items-center gap-2 text-xs px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)]"
-            >
-              <FileCheck className="h-3 w-3 text-[var(--status-passed)] shrink-0" />
-              <div className="flex-1 min-w-0">
+          {packs.map((pack) => {
+            const chip = chipText(pack)
+            const state = verified[pack.id]
+            return (
+              <li
+                key={pack.id}
+                className="text-xs px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)]"
+              >
                 <div className="flex items-center gap-2">
-                  <span className="text-[var(--color-text)]">
-                    {formatCompactDateTime(pack.generated_at)}
-                  </span>
-                  <span className="text-[var(--color-text-faint)]">
-                    {packSizeText(pack.bytes)} · {pack.file_count} files
-                  </span>
+                  <FileCheck className="h-3 w-3 text-[var(--status-passed)] shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-[var(--color-text)]">
+                        {formatCompactDateTime(pack.generated_at)}
+                      </span>
+                      <span className="text-[var(--color-text-faint)]">
+                        {packSizeText(pack.bytes)} · {pack.file_count} files
+                      </span>
+                      {chip && (
+                        <span
+                          data-pack-signature={chip.signed ? 'signed' : 'unsigned'}
+                          title={chip.title}
+                          className={clsx(
+                            'max-w-[150px] truncate rounded border px-1.5 text-xs',
+                            chip.signed
+                              ? 'border-[var(--ui-success-bd)] bg-[var(--ui-success-bg)] text-[var(--ui-success-ink)]'
+                              : 'border-[var(--color-border)] text-[var(--color-text-muted)]',
+                          )}
+                        >
+                          {chip.text}
+                        </span>
+                      )}
+                    </div>
+                    <div
+                      className="font-mono text-[10px] text-[var(--color-text-muted)] truncate"
+                      title={pack.manifest_sha256}
+                    >
+                      sha256: {pack.manifest_sha256}
+                    </div>
+                    {pack.notes && (
+                      <div className="text-[var(--color-text-muted)] italic truncate">
+                        {pack.notes}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleVerify(pack.id)}
+                    disabled={verifying !== null}
+                    className="btn-secondary btn-sm shrink-0"
+                  >
+                    {verifying === pack.id ? 'Verifying…' : 'Verify'}
+                  </button>
+                  {chip?.signed && pack.signing_key_id && (
+                    <button
+                      type="button"
+                      onClick={() => handlePublicKey(pack.signing_key_id as string)}
+                      title={`Download the public key ${pack.signing_key_id} (PEM)`}
+                      className="btn-secondary btn-sm shrink-0 flex items-center gap-1"
+                    >
+                      <KeyRound className="h-3 w-3" /> Public key
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => handleDownload(pack.id, pack.generated_at)}
+                    className="text-[var(--color-accent)] hover:underline flex items-center gap-0.5 shrink-0"
+                  >
+                    <Download className="h-3 w-3" /> ZIP
+                  </button>
                 </div>
-                <div
-                  className="font-mono text-[10px] text-[var(--color-text-muted)] truncate"
-                  title={pack.manifest_sha256}
-                >
-                  sha256: {pack.manifest_sha256}
-                </div>
-                {pack.notes && (
-                  <div className="text-[var(--color-text-muted)] italic truncate">
-                    {pack.notes}
+                {state && (
+                  <div data-pack-verification className="mt-1.5 pl-5 space-y-0.5">
+                    {'verification' in state ? (
+                      <>
+                        <p className={clsx('text-xs font-medium', RESULT_TONE_CLASS[resultTone(state.verification)])}>
+                          {state.verification.summary}
+                        </p>
+                        {nonOkLines(state.verification).map((line) => (
+                          <p key={line} className="text-xs text-[var(--color-text-muted)] break-words">
+                            {line}
+                          </p>
+                        ))}
+                      </>
+                    ) : (
+                      <p className="text-xs text-[var(--ui-danger-ink)]">{state.error}</p>
+                    )}
                   </div>
                 )}
-              </div>
-              <button
-                type="button"
-                onClick={() => handleDownload(pack.id, pack.generated_at)}
-                className="text-[var(--color-accent)] hover:underline flex items-center gap-0.5 shrink-0"
-              >
-                <Download className="h-3 w-3" /> ZIP
-              </button>
-            </li>
-          ))}
+              </li>
+            )
+          })}
         </ul>
       )}
     </section>
