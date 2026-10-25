@@ -34,25 +34,25 @@ from app.services.analytics_scope import parse_suite_filter, resolve_release_que
 from app.services.run_verdict import (
     MAX_SIGNATURE_RUN_IDS,
     MAX_VERDICT_RUN_IDS,
-    RECOMMENDATION_FILTER_VALUES,
-    RECOMMENDATION_INVALID_DETAIL,
     RUN_IDS_INVALID_DETAIL,
 )
 from app.services.runs_service import (
+    MAX_BRANCHES,
     get_run_with_release,
     list_project_runs,
     list_run_test_cases,
     natural_build_number_key,
+    parse_run_list_toolbar,
 )
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/runs", tags=["Test Runs"])
 
-# W07 FAIL-05: the Runs toolbar's branch filter.
-MAX_BRANCHES = 20
-MAX_BRANCH_LENGTH = 255
-BRANCH_INVALID_DETAIL = "branch: at most 20 names of 1-255 characters."
+# W07 FAIL-05: the Runs toolbar's branch filter. Its parser and its sentences
+# live in ``runs_service`` since W14 (the bulk filter resolver shares them);
+# the old name stays for any caller that imports it.
+_parse_toolbar = parse_run_list_toolbar
 
 
 async def _require_accessible_project(
@@ -175,30 +175,6 @@ async def list_runs(
             **toolbar,
         )
     return {"items": items, "total": total, "page": page, "size": size, "pages": pages}
-
-
-def _parse_toolbar(
-    q: Optional[str], branch: Optional[list[str]], recommendation: Optional[str],
-) -> dict[str, Any]:
-    """The Runs toolbar's ``q`` / ``branch`` / ``recommendation``, parsed before any database access.
-
-    ``q`` stripped (blank = no filter); each branch stripped, 1-255 characters,
-    at most 20, duplicates dropped; ``recommendation`` one of the filter
-    vocabulary. Anything else is a 422 with one fixed text per parameter.
-    """
-    text_q = (q or "").strip() or None
-    names: list[str] = []
-    for raw in branch or []:
-        name = (raw or "").strip()
-        if not 1 <= len(name) <= MAX_BRANCH_LENGTH:
-            raise HTTPException(status_code=422, detail=BRANCH_INVALID_DETAIL)
-        if name not in names:
-            names.append(name)
-    if len(names) > MAX_BRANCHES:
-        raise HTTPException(status_code=422, detail=BRANCH_INVALID_DETAIL)
-    if recommendation is not None and recommendation not in RECOMMENDATION_FILTER_VALUES:
-        raise HTTPException(status_code=422, detail=RECOMMENDATION_INVALID_DETAIL)
-    return {"q": text_q, "branches": tuple(names), "recommendation": recommendation}
 
 
 @router.get("/failed-ids")

@@ -2789,6 +2789,10 @@ class PipelineTimelineResponse(BaseModel):
     events: List[PipelineTimelineEventResponse] = Field(default_factory=list)
     summary: PipelineTimelineSummary = Field(default_factory=PipelineTimelineSummary)
     replay_integrity: PipelineReplayIntegritySummary = Field(default_factory=PipelineReplayIntegritySummary)
+    # W14 AGT-05 / AGT-06 / AGT-08: the run's frozen workflow and how it was chosen, both read from
+    # execution_metadata by the route (no statement); None for a legacy row.
+    workflow_ref: Optional[str] = None             # execution_metadata.workflow_ref ("offline@1", "wf.my-fork@1")
+    workflow_source: Optional[str] = None          # execution_metadata.workflow_default_source (WORKFLOW_SOURCES)
 
 
 class PipelineReplayEventResponse(BaseModel):
@@ -2848,6 +2852,233 @@ class PipelineReplayResponse(BaseModel):
     event_counts: Dict[str, int] = Field(default_factory=dict)
     replayable: bool = False
     audit_gaps: PipelineReplayAuditGaps = Field(default_factory=PipelineReplayAuditGaps)
+
+
+# ── W14 AGT-05: pipeline compare (enum-like fields are plain str; vocab in core/agent_ops_vocab.py) ──
+class PipelineCompareStageCell(BaseModel):
+    status: str
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    duration_seconds: Optional[float] = None       # None unless BOTH ends are stored (never 0 for "unknown")
+    total_tokens: Optional[int] = None             # the stage row's value; None = not reported
+    cost_usd: Optional[float] = None               # None = not reported (a reported 0.0 stays 0.0)
+    fallback_used: Optional[bool] = None
+    confidence_score: Optional[float] = None
+    execution_path: Optional[str] = None
+    output_checksum_sha256: Optional[str] = None   # result_data["_replay"]["output_checksum_sha256"] (the replay rule)
+
+
+class PipelineCompareStageRow(BaseModel):
+    stage_name: str
+    a: Optional[PipelineCompareStageCell] = None   # None = pipeline a has no row for this stage
+    b: Optional[PipelineCompareStageCell] = None
+    changed: List[str] = Field(default_factory=list)   # COMPARE_FIELDS that differ (both sides known); ["presence"] if a side is None
+    output_checksum_equal: Optional[bool] = None   # None when either checksum is missing: unknown, not "changed"
+    duration_delta_seconds: Optional[float] = None # b − a, only when both are known (same for the two below)
+    tokens_delta: Optional[int] = None
+    cost_delta_usd: Optional[float] = None
+
+
+class PipelineCompareSide(BaseModel):
+    pipeline_run_id: uuid.UUID
+    test_run_id: uuid.UUID
+    workflow_type: str
+    workflow_ref: Optional[str] = None             # execution_metadata.workflow_ref; None for a legacy row
+    status: str
+    public_status: str
+    attempt: Optional[int] = None
+    rerun_of: Optional[uuid.UUID] = None
+    created_at: Optional[datetime] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    duration_seconds: Optional[float] = None
+    analysis_mode_resolved: Optional[str] = None   # execution_metadata.analysis_mode_resolved (the replay's field)
+    release_verdict: Optional[str] = None          # the release_risk stage's result_data.recommendation; None when absent
+    total_tokens: Optional[int] = None             # sum over its stages that REPORTED tokens; None when none did
+    cost_usd: Optional[float] = None               # same rule
+    stages_truncated: bool = False                 # more than MAX_COMPARE_STAGES stage rows
+
+
+class PipelineCompareResponse(BaseModel):
+    a: PipelineCompareSide
+    b: PipelineCompareSide
+    same_test_run: bool
+    output: str                                    # COMPARE_OUTPUT_STATES: identical | changed | unknown
+    changed_stages: int                            # rows with a non-empty `changed`
+    total: int                                     # len(stages): every row, no paging
+    stages: List[PipelineCompareStageRow]          # a's stage order (started_at, stage_name), then b-only rows in b's order
+
+
+# ── W14 AGT-08: project default workflows ──
+class WorkflowDefaultUpdate(BaseModel):            # PUT body
+    workflow_id: str = Field(min_length=3, max_length=80, pattern=r"^wf\.[a-z0-9_.-]+$")
+    workflow_version: Optional[int] = Field(default=None, ge=1)   # None = always the latest PUBLISHED version
+
+
+class WorkflowDefaultRead(BaseModel):
+    base: str                                      # WORKFLOW_DEFAULT_BASES
+    source: str                                    # "project_default" | "builtin"
+    workflow_id: str                               # the fork's id, or the base itself for "builtin"
+    workflow_version: Optional[int] = None         # the stored pin; None = latest published (or the built-in)
+    resolved_ref: Optional[str] = None             # what a run started NOW executes, e.g. "wf.my-fork@3"; None if unavailable
+    resolved_name: Optional[str] = None
+    state: str                                     # "ok" | "unavailable"
+    reason: Optional[str] = None                   # a DEFAULT_UNAVAILABLE_* sentence when unavailable
+    model_stages: List[str] = Field(default_factory=list)   # steps whose project-config tier is not "deterministic"
+    updated_by: Optional[str] = None               # full name, else username; None for "builtin"
+    updated_at: Optional[datetime] = None
+
+
+class WorkflowDefaultsResponse(BaseModel):
+    project_id: uuid.UUID
+    defaults: List[WorkflowDefaultRead]            # ALWAYS both bases, in WORKFLOW_DEFAULT_BASES order
+# AgentPipelineRun.execution_metadata gains (written in _create_pipeline_run, read through existing responses):
+#   "workflow_default_source": str (WORKFLOW_SOURCES), "workflow_default_reason": Optional[str]
+
+
+# ── W14 AGT-12: bulk jobs (BulkTriggerRequest / BulkTriggerResponse stay in routers/agents.py and grow there) ──
+class BulkRunFilter(BaseModel):                    # the Runs list's own filter, resolved on the server
+    project_id: Optional[uuid.UUID] = None         # None = every project the caller can access (All Projects)
+    release_id: Optional[List[str]] = Field(default=None, max_length=20)
+    days: Optional[int] = Field(default=30, ge=0, le=365)     # 0 = all time (the list's rule)
+    status: Optional[str] = Field(default=None, max_length=20)
+    suite_name: Optional[List[str]] = None
+    q: Optional[str] = Field(default=None, max_length=100)
+    branch: Optional[List[str]] = None
+    recommendation: Optional[str] = None
+
+
+class BulkJobProgress(BaseModel):
+    started: int                                   # pipeline rows stamped with the job
+    in_progress: int
+    completed: int
+    passed: int
+    failed: int
+    not_started: Optional[int] = None              # queued − started (≥ 0); None when `queued` is unknown
+
+
+class BulkJobRead(BaseModel):
+    bulk_job_id: str
+    workflow_type: str
+    source: str                                    # BULK_SOURCES: selection | filter
+    state: str                                     # BULK_JOB_STATES: active | finished | cancelled
+    counters_source: str                           # "redis" (the request record exists) | "postgres" (it expired / was flushed)
+    created_at: Optional[datetime] = None
+    cancelled_at: Optional[datetime] = None
+    requested: Optional[int] = None                # None when counters_source == "postgres"
+    queued: Optional[int] = None
+    skipped_in_progress: Optional[int] = None
+    not_found: Optional[int] = None
+    matched: Optional[int] = None                  # filter source: COUNT of matching runs
+    truncated: bool = False                        # the filter matched more than BULK_FILTER_CAP
+    progress: BulkJobProgress
+    note: Optional[str] = None                     # BULK_NOT_STARTED_NOTE when finished with not_started > 0
+# AgentPipelineRun.execution_metadata gains "bulk_job_id": str (only on a bulk-queued run)
+
+
+# ── W14 AGT-07: deep investigation insights ──
+class PreScanGroup(BaseModel):
+    signature_id: str                              # failure_signature.signature_bucket_id(sig) ("__NO_MESSAGE__" for none)
+    representative_error: Optional[str] = None     # min(error_message) of the group, first line, ≤ 300 characters
+    members: int                                   # failing results in the group (COUNT)
+    member_result_ids: List[uuid.UUID]             # ≤ PRESCAN_MEMBERS_CAP, ordered by id (what "Run on selection" sends)
+    members_truncated: bool = False
+    suites: List[str] = Field(default_factory=list)   # ≤ 5 distinct effective suite names
+    cluster_id: Optional[str] = None               # refinement: the current cluster holding the most of its members
+    cluster_label: Optional[str] = None
+
+
+class DeepPreScanResponse(BaseModel):
+    run_id: uuid.UUID
+    measured: bool                                 # False when the run has no failing (failed / broken) result
+    failing_results: int
+    groups_total: int                              # every signature group (COUNT), never len(groups)
+    groups: List[PreScanGroup]                     # ≤ limit, by members desc then signature_id
+    grouped_by: str = "error_signature"
+    refinement: str                                # PRESCAN_REFINEMENTS: clusters | signature_only
+    refinement_note: str                           # PRESCAN_NOTE_CLUSTERS / PRESCAN_NOTE_SIGNATURE_ONLY
+
+
+class DeepHistoryRow(BaseModel):
+    run_id: uuid.UUID
+    run_seq: Optional[int] = None
+    build_number: Optional[str] = None
+    suite_name: Optional[str] = None
+    run_created_at: Optional[datetime] = None
+    failures: int                                  # the run's failed + broken counts (its own columns)
+    pipeline_run_id: uuid.UUID                     # the run's LATEST deep pipeline
+    status: str
+    public_status: str
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    duration_seconds: Optional[float] = None
+    clusters: Optional[int] = None                 # the current cluster snapshot's rows; None = no snapshot
+    findings: int = 0
+    avg_confidence: Optional[float] = None         # 0..1 (a 0-100 producer divided by 100); None = no scored finding
+    cost_usd: Optional[float] = None               # sum of that pipeline's stage cost_usd; None when no stage reported one
+
+
+class DeepHistoryResponse(BaseModel):
+    project_id: uuid.UUID
+    total: int                                     # runs with ≥ 1 deep pipeline (COUNT)
+    page: int
+    size: int
+    items: List[DeepHistoryRow]
+
+
+class DeepGateRead(BaseModel):                     # services/deep_investigation_gate.DeepGateDecision, as data
+    allowed: bool
+    reason_code: Optional[str] = None              # "disabled" | "rules_mode" | None
+    message: Optional[str] = None                  # the gate's own sentence (MESSAGE_DISABLED / MESSAGE_RULES_MODE)
+    analysis_mode: str                             # the RESOLVED mode
+    deep_investigation_enabled: bool
+
+
+class DeepRunConfigurationRead(BaseModel):
+    selected_failures: Optional[int] = None        # None = every failing result of the run
+    failures_analysed: int                         # min(selected or failing_results, max_failures_analyzed)
+    max_failures_analyzed: int                     # effective (request ≤ project)
+    project_max_failures_analyzed: int
+    model_tier: str                                # effective tier (TIER_ORDER value)
+    project_model_tier: str
+    allowed_tiers: List[str]                       # the project's tier and every one below it; [project tier] when downgrade is off
+    evidence_sources: List[str]                    # effective tool allowlist of RUN_CONFIG_AGENT_ID
+    project_evidence_sources: List[str]
+    tool_narrowing_allowed: bool                   # override_policy.allow_tool_narrowing
+
+
+class DeepCostRead(BaseModel):
+    priced: bool                                   # False: no price known (usd None) — never a quiet $0.00
+    local_model: bool                              # a SELF_HOSTED_PROVIDERS endpoint: usd 0.0 is a measured answer
+    usd: Optional[float] = None
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    note: Optional[str] = None                     # ESTIMATE_LOCAL_NOTE / ESTIMATE_UNPRICED / None
+    price_table_updated: str                       # llm_pricing.PRICE_TABLE_UPDATED
+
+
+class DeepEstimateStage(BaseModel):
+    stage_name: str
+    samples: int                                   # sample pipelines in which this stage has both timestamps
+    duration_seconds_p50: Optional[float] = None
+    input_tokens_p50: Optional[int] = None
+    output_tokens_p50: Optional[int] = None
+    per_failure: bool = False                      # scaled by failures_analysed (PER_FAILURE_STAGES)
+
+
+class DeepEstimateResponse(BaseModel):
+    run_id: uuid.UUID
+    gate: DeepGateRead
+    configuration: DeepRunConfigurationRead
+    measured: bool                                 # False with no completed deep pipeline in the project
+    reason: Optional[str] = None                   # ESTIMATE_UNMEASURED when not measured
+    sample_pipelines: int                          # ≤ ESTIMATE_SAMPLE_PIPELINES
+    minutes_p50: Optional[float] = None            # None when not measured (never 0)
+    tokens_p50: Optional[int] = None
+    cost: DeepCostRead
+    stages: List[DeepEstimateStage]
+# routers/deep_investigation.py grows TriggerDeepRequest / TriggerDeepResponse in place (§1.1 of the W14 contract).
+# AgentPipelineRun.execution_metadata gains "run_overrides", "run_overrides_status", "run_overrides_reasons".
 
 
 class PipelineEventLogHealthResponse(BaseModel):

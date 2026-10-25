@@ -25,7 +25,7 @@ same scope, not the page length, so the Inbox badge never reads
 ``min(n, page_size)``. ``project_id`` pins one project (400 malformed, 403
 not accessible); soft-deleted projects' defects never wait for anyone.
 
-Source: [backend/app/routers/deep_investigation.py:531](../../../backend/app/routers/deep_investigation.py#L531).
+Source: [backend/app/routers/deep_investigation.py:693](../../../backend/app/routers/deep_investigation.py#L693).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -151,7 +151,7 @@ webhook after the last commit.
 Reject (D-11): the defect is also closed as ``INVALID`` with the reason in
 the activity ledger, so a rejected suggestion stops blocking the gate.
 
-Source: [backend/app/routers/deep_investigation.py:343](../../../backend/app/routers/deep_investigation.py#L343).
+Source: [backend/app/routers/deep_investigation.py:505](../../../backend/app/routers/deep_investigation.py#L505).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -244,6 +244,122 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 }
 ```
 
+## GET `/api/v1/deep-investigate/history`
+
+Get Deep History
+
+Per run of ONE project, its latest deep pipeline (VIEWER may read).
+
+Source: [backend/app/routers/deep_investigation.py:252](../../../backend/app/routers/deep_investigation.py#L252).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+project_id: Optional[str]=Query(None), page: int=Query(1, ge=1), size: int=Query(HISTORY_SIZE_DEFAULT, ge=1, le=HISTORY_SIZE_MAX), current_user: User=Depends(get_current_active_user), db: AsyncSession=Depends(get_db)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=HISTORY_NEEDS_PROJECT)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "get_deep_history_api_v1_deep_investigate_history_get",
+  "parameters": [
+    {
+      "in": "query",
+      "name": "project_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Project Id"
+      }
+    },
+    {
+      "in": "query",
+      "name": "page",
+      "required": false,
+      "schema": {
+        "default": 1,
+        "minimum": 1,
+        "title": "Page",
+        "type": "integer"
+      }
+    },
+    {
+      "in": "query",
+      "name": "size",
+      "required": false,
+      "schema": {
+        "default": 10,
+        "maximum": 50,
+        "minimum": 1,
+        "title": "Size",
+        "type": "integer"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/DeepHistoryResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## POST `/api/v1/deep-investigate/{run_id}`
 
 Trigger Deep Investigation
@@ -252,7 +368,7 @@ Trigger the deep investigation pipeline for a completed test run.
 Uses workflow_type="deep" which adds failure clustering, flaky sentinel,
 test health analysis, and release risk on top of the standard 5-stage pipeline.
 
-Source: [backend/app/routers/deep_investigation.py:94](../../../backend/app/routers/deep_investigation.py#L94).
+Source: [backend/app/routers/deep_investigation.py:119](../../../backend/app/routers/deep_investigation.py#L119).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 
@@ -266,6 +382,7 @@ Direct handler error branches (dependency/service errors can add others):
 
 ```python
 HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Test run not found')
+HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=RUN_CONFIG_DEEP_ONLY)
 HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
 ```
 
@@ -350,7 +467,7 @@ Get Failure Clusters
 
 Return semantic failure clusters for a test run.
 
-Source: [backend/app/routers/deep_investigation.py:144](../../../backend/app/routers/deep_investigation.py#L144).
+Source: [backend/app/routers/deep_investigation.py:306](../../../backend/app/routers/deep_investigation.py#L306).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -435,7 +552,7 @@ Get Ranked Clusters
 
 Return failure clusters ranked by impact score for triage prioritization.
 
-Source: [backend/app/routers/deep_investigation.py:285](../../../backend/app/routers/deep_investigation.py#L285).
+Source: [backend/app/routers/deep_investigation.py:447](../../../backend/app/routers/deep_investigation.py#L447).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -523,7 +640,7 @@ Get Cluster Defect Candidate
 
 Get a pre-assembled defect candidate for a failure cluster.
 
-Source: [backend/app/routers/deep_investigation.py:208](../../../backend/app/routers/deep_investigation.py#L208).
+Source: [backend/app/routers/deep_investigation.py:370](../../../backend/app/routers/deep_investigation.py#L370).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -621,7 +738,7 @@ Check if a cluster likely duplicates an existing open defect.
 Returns duplicate info without creating anything.
 P3-9: Business logic extracted to cluster_service.
 
-Source: [backend/app/routers/deep_investigation.py:320](../../../backend/app/routers/deep_investigation.py#L320).
+Source: [backend/app/routers/deep_investigation.py:482](../../../backend/app/routers/deep_investigation.py#L482).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -723,7 +840,7 @@ Promote Cluster To Defect
 
 Promote a failure cluster to a defect record (optionally with Jira ticket).
 
-Source: [backend/app/routers/deep_investigation.py:226](../../../backend/app/routers/deep_investigation.py#L226).
+Source: [backend/app/routers/deep_investigation.py:388](../../../backend/app/routers/deep_investigation.py#L388).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 
@@ -824,13 +941,166 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 }
 ```
 
+## GET `/api/v1/deep-investigate/{run_id}/estimate`
+
+Get Deep Estimate
+
+The measured time / cost of a deep run of this configuration, and the server's gate.
+
+The gate is DATA here (``gate.allowed``), never a 422: the page decides
+whether to offer Run from it.
+
+Source: [backend/app/routers/deep_investigation.py:281](../../../backend/app/routers/deep_investigation.py#L281).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+run_id: uuid.UUID, selected_failures: Optional[int]=Query(None, ge=1), max_failures_analyzed: Optional[int]=Query(None, ge=1), model_tier: Optional[str]=Query(None), evidence_sources: Optional[list[str]]=Query(None), _: User=Depends(require_run_access()), db: AsyncSession=Depends(get_db)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "get_deep_estimate_api_v1_deep_investigate__run_id__estimate_get",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "run_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Run Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "query",
+      "name": "selected_failures",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "minimum": 1,
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Selected Failures"
+      }
+    },
+    {
+      "in": "query",
+      "name": "max_failures_analyzed",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "minimum": 1,
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Max Failures Analyzed"
+      }
+    },
+    {
+      "in": "query",
+      "name": "model_tier",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Model Tier"
+      }
+    },
+    {
+      "in": "query",
+      "name": "evidence_sources",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Evidence Sources"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/DeepEstimateResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## GET `/api/v1/deep-investigate/{run_id}/findings`
 
 Get Deep Findings
 
 Return deep investigation findings per failure cluster for a test run.
 
-Source: [backend/app/routers/deep_investigation.py:172](../../../backend/app/routers/deep_investigation.py#L172).
+Source: [backend/app/routers/deep_investigation.py:334](../../../backend/app/routers/deep_investigation.py#L334).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -885,6 +1155,99 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
             },
             "title": "Response Get Deep Findings Api V1 Deep Investigate  Run Id  Findings Get",
             "type": "array"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+## GET `/api/v1/deep-investigate/{run_id}/pre-scan`
+
+Get Deep Pre Scan
+
+The run's failing results grouped by error signature (offline; no ChromaDB).
+
+Source: [backend/app/routers/deep_investigation.py:269](../../../backend/app/routers/deep_investigation.py#L269).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+run_id: uuid.UUID, limit: int=Query(PRESCAN_LIMIT_DEFAULT, ge=1, le=PRESCAN_LIMIT_MAX), _: User=Depends(require_run_access()), db: AsyncSession=Depends(get_db)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "get_deep_pre_scan_api_v1_deep_investigate__run_id__pre_scan_get",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "run_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Run Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+        "default": 10,
+        "maximum": 50,
+        "minimum": 1,
+        "title": "Limit",
+        "type": "integer"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/DeepPreScanResponse"
           }
         }
       },

@@ -4,15 +4,26 @@ Triggers the deep analysis pipeline and exposes cluster/finding results.
 """
 import logging
 import uuid
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.agent_ops_vocab import (
+    DEEP_ALREADY_IN_PROGRESS,
+    HISTORY_NEEDS_PROJECT,
+    HISTORY_SIZE_DEFAULT,
+    HISTORY_SIZE_MAX,
+    PRESCAN_LIMIT_DEFAULT,
+    PRESCAN_LIMIT_MAX,
+    RUN_CONFIG_DEEP_ONLY,
+    RUN_CONFIG_FAILURE_IDS_MAX,
+)
 from app.core.deps import (
     get_accessible_project_ids,
+    get_current_active_user,
     require_role,
     require_run_access,
     resolve_project_scope,
@@ -28,6 +39,10 @@ from app.models.postgres import (
     UserRole,
 )
 from app.models.schemas import (
+    DeepEstimateResponse,
+    DeepHistoryResponse,
+    DeepPreScanResponse,
+    DeepRunConfigurationRead,
     DefectApprovalRequest,
     DefectApprovalResponse,
     DefectCandidateResponse,
@@ -36,6 +51,8 @@ from app.models.schemas import (
     PendingDefectItem,
     PendingDefectList,
 )
+from app.services import deep_investigation_insights_service as deep_insights
+from app.services import deep_run_overrides
 from app.services.action_policy import ActionStatus, approve_action, reject_action
 from app.services.activity.service import ActorRef, record as record_activity
 from app.services.cluster_ranking_service import rank_clusters
@@ -53,6 +70,12 @@ router = APIRouter(prefix="/api/v1/deep-investigate", tags=["Deep Investigation"
 
 class TriggerDeepRequest(BaseModel):
     mode: str = "deep"  # "deep" | "offline"
+    # W14 AGT-07: a tighten-only run configuration (every field optional; an
+    # unconfigured body queues exactly today's payload).
+    failure_ids: Optional[list[uuid.UUID]] = Field(None, min_length=1, max_length=RUN_CONFIG_FAILURE_IDS_MAX)
+    max_failures_analyzed: Optional[int] = Field(None, ge=1)
+    model_tier: Optional[str] = None                 # TIER_ORDER value, judged in the service
+    evidence_sources: Optional[list[str]] = Field(None, max_length=64)
 
 
 class TriggerDeepResponse(BaseModel):
@@ -60,6 +83,8 @@ class TriggerDeepResponse(BaseModel):
     pipeline_run_id: Optional[str] = None   # WF-2: Deprecated — use task_id + pipeline-status endpoint
     message: str
     run_id: str
+    already_in_progress: bool = False
+    run_configuration: Optional[DeepRunConfigurationRead] = None
 
 
 class ClusterResponse(BaseModel):
@@ -119,26 +144,163 @@ async def trigger_deep_investigation(
 
     workflow_type = body.mode if body.mode in ("deep", "offline") else "deep"
 
-    try:
-        task = run_agent_pipeline.apply_async(
-            kwargs={
-                "test_run_id": str(run_id),
-                "project_id": str(run.project_id),
-                "build_number": run.build_number,
-                "workflow_type": workflow_type,
-                "requested_by": str(current_user.id),
-            },
-            queue="ai_analysis",
+    # W14 AGT-07: the run configuration is judged FIRST (every refusal a 422
+    # before anything is queued); the worker freezes it at task start.
+    configuration = _configuration(body)
+    run_overrides: Optional[dict] = None
+    run_configuration: Optional[DeepRunConfigurationRead] = None
+    if not configuration.is_empty():
+        if workflow_type != "deep":
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=RUN_CONFIG_DEEP_ONLY)
+        from app.services.ai_config_resolver import get_effective_ai_config
+
+        global_ai_config = await get_effective_ai_config(db=db)
+        run_overrides, resolved = await deep_run_overrides.validate_run_configuration(
+            db, run, configuration, global_ai_config=global_ai_config,
         )
+        project_config = await deep_run_overrides.resolve_project_config(
+            db, run.project_id, global_ai_config=global_ai_config,
+        )
+        failing = int(run.failed_tests or 0) + int(run.broken_tests or 0)
+        run_configuration = DeepRunConfigurationRead.model_validate(
+            deep_run_overrides.configuration_read(resolved, project_config, configuration, failing)
+        )
+
+    # The single trigger's rule since E7.2: a run whose deep pipeline is
+    # pending / running / retry_wait is answered with that pipeline, not a
+    # second concurrent one. The one-column read first (a scripted session's
+    # bare ``.scalars()`` reads "none in progress", as the bulk route's does);
+    # the row itself only when there is one to name.
+    from app.services.pipeline_admission import (
+        latest_in_progress_pipeline,
+        runs_with_in_progress_pipeline,
+    )
+
+    existing = (
+        await latest_in_progress_pipeline(db, run.id, workflow_type)
+        if await runs_with_in_progress_pipeline(db, [run.id], workflow_type)
+        else None
+    )
+    if existing is not None:
         return TriggerDeepResponse(
-            task_id=task.id,
-            pipeline_run_id=task.id,  # Deprecated: kept for backward compat
-            message=f"Deep investigation pipeline queued (mode={workflow_type}). Poll /pipeline-status for real execution state.",
+            task_id=None,
+            pipeline_run_id=str(existing.id),
+            message=DEEP_ALREADY_IN_PROGRESS,
             run_id=str(run_id),
+            already_in_progress=True,
+            run_configuration=run_configuration,
         )
+
+    kwargs: dict[str, Any] = {
+        "test_run_id": str(run_id),
+        "project_id": str(run.project_id),
+        "build_number": run.build_number,
+        "workflow_type": workflow_type,
+        "requested_by": str(current_user.id),
+    }
+    if run_overrides is not None:
+        kwargs["run_overrides"] = run_overrides
+    try:
+        task = run_agent_pipeline.apply_async(kwargs=kwargs, queue="ai_analysis")
     except Exception as exc:
-        logger.error("Failed to queue deep pipeline for run %s: %s", run_id, exc)
+        logger.error("Failed to queue deep pipeline for run %s: %s", run_id, type(exc).__name__)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+    # Attempt mode (this handler never commits): a dispatch was issued.
+    await record_activity(
+        db,
+        project_id=run.project_id,
+        event_type="analysis.triggered",
+        actor=ActorRef.from_user(current_user),
+        entity_id=run.id,
+        entity_label=f"Build {run.build_number}",
+        context={
+            "workflow_type": workflow_type,
+            "workflow_ref": f"default:{workflow_type}",
+            "task_id": task.id,
+            "run_configuration": deep_run_overrides.ledger_summary(run_overrides),
+        },
+    )
+    return TriggerDeepResponse(
+        task_id=task.id,
+        pipeline_run_id=task.id,  # Deprecated: kept for backward compat
+        message=f"Deep investigation pipeline queued (mode={workflow_type}). Poll /pipeline-status for real execution state.",
+        run_id=str(run_id),
+        run_configuration=run_configuration,
+    )
+
+
+def _configuration(body: TriggerDeepRequest) -> deep_run_overrides.DeepRunConfiguration:
+    return deep_run_overrides.DeepRunConfiguration(
+        failure_ids=tuple(body.failure_ids or ()),
+        max_failures_analyzed=body.max_failures_analyzed,
+        model_tier=body.model_tier,
+        evidence_sources=tuple(body.evidence_sources) if body.evidence_sources is not None else None,
+    )
+
+
+# ── W14 AGT-07: the three offline reads (none writes, none calls a model or ChromaDB) ──
+
+
+async def _run_or_404(db: AsyncSession, run_id: uuid.UUID) -> TestRun:
+    run = (await db.execute(select(TestRun).where(TestRun.id == run_id))).scalar_one_or_none()
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Test run not found")
+    return run
+
+
+@router.get("/history", response_model=DeepHistoryResponse)
+async def get_deep_history(
+    project_id: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    size: int = Query(HISTORY_SIZE_DEFAULT, ge=1, le=HISTORY_SIZE_MAX),
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Per run of ONE project, its latest deep pipeline (VIEWER may read)."""
+    if not project_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=HISTORY_NEEDS_PROJECT)
+    scoped_project_id, _allowed = await resolve_project_scope(db, current_user, project_id)
+    if scoped_project_id is None:  # a named project resolves to itself or refuses; never here
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=HISTORY_NEEDS_PROJECT)
+    return await deep_insights.deep_history(db, scoped_project_id, page=page, size=size)
+
+
+@router.get("/{run_id}/pre-scan", response_model=DeepPreScanResponse)
+async def get_deep_pre_scan(
+    run_id: uuid.UUID,
+    limit: int = Query(PRESCAN_LIMIT_DEFAULT, ge=1, le=PRESCAN_LIMIT_MAX),
+    _: User = Depends(require_run_access()),
+    db: AsyncSession = Depends(get_db),
+):
+    """The run's failing results grouped by error signature (offline; no ChromaDB)."""
+    run = await _run_or_404(db, run_id)
+    return await deep_insights.pre_scan(db, run, limit=limit)
+
+
+@router.get("/{run_id}/estimate", response_model=DeepEstimateResponse)
+async def get_deep_estimate(
+    run_id: uuid.UUID,
+    selected_failures: Optional[int] = Query(None, ge=1),
+    max_failures_analyzed: Optional[int] = Query(None, ge=1),
+    model_tier: Optional[str] = Query(None),
+    evidence_sources: Optional[list[str]] = Query(None),
+    _: User = Depends(require_run_access()),
+    db: AsyncSession = Depends(get_db),
+):
+    """The measured time / cost of a deep run of this configuration, and the server's gate.
+
+    The gate is DATA here (``gate.allowed``), never a 422: the page decides
+    whether to offer Run from it.
+    """
+    run = await _run_or_404(db, run_id)
+    configuration = deep_run_overrides.DeepRunConfiguration(
+        selected_failures=selected_failures,
+        max_failures_analyzed=max_failures_analyzed,
+        model_tier=model_tier,
+        evidence_sources=tuple(evidence_sources) if evidence_sources is not None else None,
+    )
+    return await deep_insights.deep_estimate(db, run, configuration=configuration)
 
 
 @router.get("/{run_id}/clusters", response_model=list[ClusterResponse])

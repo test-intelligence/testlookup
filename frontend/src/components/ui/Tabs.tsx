@@ -8,6 +8,9 @@ export interface TabItem<T extends string = string> {
   count?: number
   /** A short marker after the label, e.g. a "New" pill or a status dot. */
   badge?: ReactNode
+  /** A tab that cannot be chosen now; say why in `title` (e.g. "No other pipeline to compare with"). */
+  disabled?: boolean
+  title?: string
 }
 
 /** Classes shared with `RouteTabs`, so section tabs and in-page tabs look the same. */
@@ -72,8 +75,10 @@ export default function Tabs<T extends string>({
             role="tab"
             aria-selected={active}
             data-tab={item.id}
+            disabled={item.disabled}
+            title={item.title}
             onClick={() => onChange(item.id)}
-            className={tabClass(active)}
+            className={clsx(tabClass(active), item.disabled && 'disabled:cursor-not-allowed disabled:opacity-50')}
           >
             {item.label}
             {item.count !== undefined && <TabCount value={item.count} active={active} />}

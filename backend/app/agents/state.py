@@ -184,6 +184,9 @@ class WorkflowState(TypedDict):
     _checkpoint_replay_metadata: dict[str, dict]  # replay hashes/version breadcrumbs for restored stages
     workflow_plan: dict  # deterministic planner output for expected stage path
     initial_workflow_plan: dict  # immutable planner snapshot captured before execution
+    # W14 AGT-07: a deep run configuration frozen at start ({"failure_ids": [...]
+    # | None, "agent_patches": {...}}); None for an unconfigured run.
+    run_overrides: Optional[dict]
     workflow_agent_configs: dict[str, dict]  # frozen compiler/runtime authority per capability
     resolved_agent_configs: dict[str, dict]  # credential-free effective snapshots per capability
     workflow_verification: dict  # verifier checks comparing final state to plan

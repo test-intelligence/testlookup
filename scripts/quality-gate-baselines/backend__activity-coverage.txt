@@ -33,7 +33,6 @@ f05b2efa5645c677  # backend/app/routers/chat.py:114  in delete_session  @router.
 3d03c3f8af79e8f4  # backend/app/routers/compliance_packs.py:209  in generate_compliance_pack  @router.post(
 629766d5b20d15e8  # backend/app/routers/compliance_packs.py:377  in retire_compliance_pack  @router.post(
 10406d2dacce4af6  # backend/app/routers/compliance_packs.py:430  in delete_compliance_pack  @router.delete("/api/v1/compliance-packs/{pack_id}", status_code=204)
-27c6f0a63d3aebf4  # backend/app/routers/deep_investigation.py:94  in trigger_deep_investigation  @router.post("/{run_id}", response_model=TriggerDeepResponse)
 7c99eee4182c72df  # backend/app/routers/defect_jira.py:89  in create_jira_defect_one_click  @router.post(
 7983f4daf343bbfb  # backend/app/routers/digests.py:50  in create_subscription  @router.post("/subscriptions", response_model=DigestSubscriptionResponse, statu…
 5795c02ff97404c3  # backend/app/routers/digests.py:177  in update_subscription  @router.patch("/subscriptions/{sub_id}", response_model=DigestSubscriptionRespo…
@@ -104,9 +103,9 @@ f4832734540644f9  # backend/app/routers/releases.py:656  in evaluate_release_gat
 7c54fd8f377d3557  # backend/app/routers/retention.py:274  in preview_criteria_deletion  @router.post(
 78de11a0dd52bd7c  # backend/app/routers/retention.py:381  in execute_criteria_deletion  @router.post(
 1c1fd060156d2184  # backend/app/routers/run_intelligence.py:378  in refresh_intelligence  @router.post("/{run_id}/intelligence/refresh")
-24141cff79eac1ea  # backend/app/routers/runs.py:688  in set_run_release  @router.post("/{run_id}/release")
-2a57c1ce6c5ee82e  # backend/app/routers/runs.py:767  in recover_live_run_from_buffer  @router.post("/{run_id}/recover-live", status_code=202)
-0c9b42b2f9412c2d  # backend/app/routers/runs.py:932  in delete_run  @router.delete("/{run_id}", status_code=202, response_model=DeleteRunAcceptedRe…
+24141cff79eac1ea  # backend/app/routers/runs.py:664  in set_run_release  @router.post("/{run_id}/release")
+2a57c1ce6c5ee82e  # backend/app/routers/runs.py:743  in recover_live_run_from_buffer  @router.post("/{run_id}/recover-live", status_code=202)
+0c9b42b2f9412c2d  # backend/app/routers/runs.py:908  in delete_run  @router.delete("/{run_id}", status_code=202, response_model=DeleteRunAcceptedRe…
 f271a69b484c9cee  # backend/app/routers/search.py:274  in trigger_reindex  @router.post("/reindex")
 87592c35eb87fc9f  # backend/app/routers/suites.py:213  in create_suite  @router.post(
 ffdba70149d701de  # backend/app/routers/suites.py:328  in delete_suite  @router.delete(

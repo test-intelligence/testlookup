@@ -69,6 +69,26 @@ const GLYPH: Record<ComputeStageId, StageGlyph> = {
   release:   'shield',
 }
 
+/**
+ * W14 AGT-06: the glyph of ANY stage name, for the generic graph — the hand
+ * canvas's glyph when the name maps onto one of its nine nodes, `bot` for a
+ * hypothesis, `layers` for the investigator's and the cluster stages, `file`
+ * otherwise.
+ */
+export function glyphFor(stageName: string): StageGlyph {
+  const id = STAGE_ID_MAP[stageName]
+  if (id) return GLYPH[id]
+  if (stageName.startsWith('hypothesis_')) return 'bot'
+  if (stageName.startsWith('investigator_') || stageName.startsWith('cluster_')) return 'layers'
+  return 'file'
+}
+
+/** W14 AGT-06: the hand canvas's card name for a stage name it maps, else null. */
+export function knownStageName(stageName: string): string | null {
+  const id = STAGE_ID_MAP[stageName]
+  return id ? NAME[id] : null
+}
+
 /** Default fall-through stage for an id that the backend didn't return. */
 function defaultStage(id: ComputeStageId): ComputeStage {
   return {
@@ -97,13 +117,13 @@ function formatDuration(startedAt: string | null, completedAt: string | null): s
   return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
 }
 
-function formatTokens(n: number | null | undefined): string | null {
+export function formatTokens(n: number | null | undefined): string | null {
   if (n == null) return null
   if (n >= 1000) return `${(n / 1000).toFixed(1)}k`
   return String(n)
 }
 
-function formatCost(n: number | null | undefined): string | null {
+export function formatCost(n: number | null | undefined): string | null {
   if (n == null || n === 0) return null
   return `$${n.toFixed(n < 0.01 ? 4 : 2)}`
 }

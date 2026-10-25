@@ -23,6 +23,18 @@ vi.mock('@/services/workflowService', () => ({
   publishWorkflow: vi.fn(),
   updateWorkflow: vi.fn(),
   validateWorkflow: vi.fn(),
+  // W14 AGT-08 (deliberate set-up edit, contract §6.5): the editor reads the
+  // project's default workflows on load; both bases answer the built-in.
+  getWorkflowDefaults: vi.fn(() => Promise.resolve({
+    project_id: 'project-1',
+    defaults: ['offline', 'deep'].map((base) => ({
+      base, source: 'builtin', workflow_id: base, workflow_version: null, resolved_ref: `${base}@1`,
+      resolved_name: null, state: 'ok', reason: null, model_stages: [], updated_by: null, updated_at: null,
+    })),
+  })),
+  setWorkflowDefault: vi.fn(),
+  clearWorkflowDefault: vi.fn(),
+  deleteWorkflow: vi.fn(),
 }))
 
 vi.mock('@/hooks/usePermissions', () => ({

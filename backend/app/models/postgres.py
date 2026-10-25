@@ -15,6 +15,7 @@ from sqlalchemy import (
     Index,
     Integer,
     JSON,
+    PrimaryKeyConstraint,
     SmallInteger,
     String,
     Text,
@@ -6062,6 +6063,44 @@ class WorkflowDefinition(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class ProjectWorkflowDefault(Base):
+    """A project's default workflow for one base (W14 AGT-08, migration 0230).
+
+    A trigger that names no workflow resolves this row at task start
+    (``services/workflow_default_service.resolve_run_workflow``); no row means
+    the built-in runs. ``workflow_version`` NULL = the latest PUBLISHED version
+    at each run's start. No foreign key to ``workflow_definitions`` and no
+    relationship attributes: a default that no longer resolves is recorded as
+    ``default_unavailable`` on the pipeline and the built-in runs instead.
+    """
+
+    __tablename__ = "project_workflow_defaults"
+    __table_args__ = (
+        PrimaryKeyConstraint("project_id", "base", name="pk_project_workflow_defaults"),
+        CheckConstraint("base IN ('offline','deep')", name="ck_pwd_base"),
+        CheckConstraint("workflow_id LIKE 'wf.%'", name="ck_pwd_workflow_is_fork"),
+        CheckConstraint(
+            "workflow_version IS NULL OR workflow_version >= 1", name="ck_pwd_version_positive"
+        ),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+    base: Mapped[str] = mapped_column(String(20), primary_key=True, nullable=False)
+    workflow_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    workflow_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    updated_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()"), nullable=False
     )
 
 

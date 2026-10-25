@@ -45,6 +45,8 @@ import { askAboutRunHref } from '@/components/chat/chatContent'
 import RunTimingFigures from '@/components/runs/RunTimingFigures'
 import { runsService } from '@/services/runsService'
 import agentService from '@/services/agentService'
+import WorkflowPicker from '@/components/agents/WorkflowPicker'
+import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { buildCompareWithPreviousHref } from '@/utils/runComparisons'
 import { formatDateTime } from '@/utils/formatters'
 import { RunDeepClusters } from './DeepInvestigationPage'
@@ -233,7 +235,13 @@ export default function RunDetailPage() {
   // so this costs no request).
   const chatFlagEnabled = useFeatureEnabled('ask_ai_chat')
   const { data: aiConfig } = useAIConfig()
-  const [triggeringPipeline, setTriggeringPipeline] = useState(false)
+  // W14 AGT-08: the ⋯ "Trigger pipeline" item opens the in-page workflow
+  // picker under the header (the same strip as /agents' Choose workflow);
+  // queuing happens there.
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const activeProjectId = useProjectStore(state => state.activeProjectId)
+  const pickerProjectId =
+    run?.project_id ?? (activeProjectId && activeProjectId !== ALL_PROJECTS_ID ? activeProjectId : null)
   const [triggeringDeep, setTriggeringDeep] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
 
@@ -241,23 +249,6 @@ export default function RunDetailPage() {
     if (!runId) return
     await runsService.setRelease(runId, name)
     appMutate(['run', runId])
-  }
-
-  async function handleTriggerPipeline() {
-    if (!runId) return
-    setTriggeringPipeline(true)
-    try {
-      await agentService.triggerPipeline(runId)
-      toast.success('Pipeline queued — its report appears under Evidence.')
-    } catch (err: unknown) {
-      const detail =
-        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
-        (err as Error)?.message ??
-        'Failed to trigger pipeline'
-      toast.error(detail)
-    } finally {
-      setTriggeringPipeline(false)
-    }
   }
 
   async function handleTriggerDeep() {
@@ -296,7 +287,7 @@ export default function RunDetailPage() {
     }
   }
 
-  const busy = triggeringPipeline || triggeringDeep
+  const busy = triggeringDeep
   const chatAvailable = chatFlagEnabled && !!aiConfig && isLLMAvailable(aiConfig)
   // W04 AIC-01: no "Deep investigation" item while Settings › AI has it off or
   // the mode is Rules (the server would answer 422). While the mode loads it is offered.
@@ -305,10 +296,10 @@ export default function RunDetailPage() {
     ...(isQaEngineer
       ? [
           {
-            label: triggeringPipeline ? 'Queuing pipeline…' : 'Trigger pipeline',
+            label: 'Trigger pipeline',
             icon: <Zap className="h-3.5 w-3.5" />,
-            onClick: () => void handleTriggerPipeline(),
-            disabled: busy,
+            onClick: () => setPickerOpen(true),
+            disabled: busy || !runId,
           },
           ...(deepAvailable
             ? [{
@@ -398,6 +389,16 @@ export default function RunDetailPage() {
         overflow={overflow}
         tabs={<Tabs items={tabs} value={tab} onChange={setTab} ariaLabel="Run sections" />}
       />
+
+      {isQaEngineer && pickerOpen && runId && (
+        <WorkflowPicker
+          projectId={pickerProjectId}
+          runId={runId}
+          onClose={() => setPickerOpen(false)}
+          onQueued={() => void appMutate(`/pipelines?run=${runId}`)}
+          queuedMessage="Pipeline queued — its report appears under Evidence."
+        />
+      )}
 
       {runId && tab === 'tests' && (
         <RunTestsTab

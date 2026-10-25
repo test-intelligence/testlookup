@@ -40,6 +40,22 @@ import ComputeCanvas from '@/components/agents/computeGraph/ComputeCanvas'
 import RightRail from '@/components/agents/computeGraph/RightRail'
 import { mapPipelineToComputeGraph } from '@/components/agents/computeGraph/mapping'
 import type { SelectedId } from '@/components/agents/computeGraph/types'
+import GenericComputeCanvas from '@/components/agents/computeGraph/GenericComputeCanvas'
+import PipelineAuditView from '@/components/agents/PipelineAuditView'
+import PipelineCompareView from '@/components/agents/PipelineCompareView'
+import WorkflowPicker from '@/components/agents/WorkflowPicker'
+import {
+  auditBadge,
+  CHOOSE_WORKFLOW_TITLE,
+  COMPARE_NONE_TITLE,
+  compareCandidates,
+  TRIGGER_DEFAULT_TITLE,
+  workflowLine,
+} from '@/components/agents/pipelineViewsModel'
+import Tabs, { type TabItem } from '@/components/ui/Tabs'
+import { useTabParam } from '@/components/ui/useTabParam'
+import { useAgenticRuntime } from '@/hooks/useAgentOps'
+import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { useProjectChangeRedirect, useProjectChangeReset } from '@/hooks/useProjectChange'
 
 // ── Stage metadata ─────────────────────────────────────────────
@@ -754,6 +770,161 @@ function ObservabilityPanel({ timeline }: { timeline?: PipelineTimeline }) {
   )
 }
 
+// ── W14 AGT-05 / AGT-06: the frame inside "Agent stages" ─────────
+
+/** The row's recorded reason a project default was not used (`execution_metadata.workflow_default_reason`). */
+function workflowReasonOf(pipeline: AgentPipelineRun | undefined): string | null {
+  const reason = (pipeline?.execution_metadata as { workflow_default_reason?: unknown } | null | undefined)?.workflow_default_reason
+  return typeof reason === 'string' && reason ? reason : null
+}
+
+type ComputeGraphModel = ReturnType<typeof mapPipelineToComputeGraph>
+
+/** The strip's views, kept in `?ptab=` (the Run page owns `?tab=`); Graph is the clean URL. */
+const PIPELINE_VIEWS = ['graph', 'audit', 'compare'] as const
+type PipelineView = (typeof PIPELINE_VIEWS)[number]
+
+/** The stages a pipeline ran, as a plain list: the frame's fallback when no graph is drawn. */
+function PlainStageList({ stages }: { stages: AgentStageResult[] }) {
+  return (
+    <ul className="space-y-1">
+      {stages.map((s) => (
+        <li
+          key={s.stage_name}
+          className="flex items-center justify-between text-sm border-b border-[var(--color-border)] py-1.5"
+        >
+          <span className="font-mono text-[13px]">{s.stage_name}</span>
+          <span className="text-[var(--color-text-muted)]">{s.status}</span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/** The hand-placed canvas (built-in offline), as it was: absolute nodes, a decision diamond, the 360 px rail. */
+function HandCanvas({ computeGraph }: { computeGraph: ComputeGraphModel }) {
+  // Default canvas selection: the first running stage (or first failed) so
+  // the rail isn't empty on first paint. Applied during render rather than via
+  // a cascading setState-in-effect; it converges in one pass and re-seeds if
+  // the user clears the selection.
+  const [canvasSelection, setCanvasSelection] = useState<SelectedId>(null)
+  const initialCanvasId =
+    (computeGraph.stages.find(s => s.status === 'running')
+      ?? computeGraph.stages.find(s => s.status === 'failed')
+      ?? computeGraph.stages[0])?.id ?? null
+  if (canvasSelection === null && initialCanvasId != null) {
+    setCanvasSelection(initialCanvasId)
+  }
+  return (
+    <div className="flex" style={{ height: 600 }}>
+      <ComputeCanvas
+        stages={computeGraph.stages}
+        decision={computeGraph.decision}
+        edges={computeGraph.edges}
+        selectedId={canvasSelection}
+        onSelect={setCanvasSelection}
+      />
+      <RightRail
+        selectedId={canvasSelection}
+        stages={computeGraph.stages}
+        decision={computeGraph.decision}
+      />
+    </div>
+  )
+}
+
+/** Any other topology, from `/agentic-runtime` (read only while this graph is shown). */
+function GenericGraph({ pipelineId, live, stages }: { pipelineId: string; live: boolean; stages: AgentStageResult[] }) {
+  const { data: runtime, error } = useAgenticRuntime(pipelineId, live)
+  if (runtime) return <GenericComputeCanvas run={runtime} />
+  if (error) {
+    return (
+      <div className="px-6 py-5 space-y-3">
+        <p className="text-sm text-[var(--ui-danger-ink)]">Could not load the pipeline graph.</p>
+        <PlainStageList stages={stages} />
+      </div>
+    )
+  }
+  return <div className="flex justify-center py-8"><LoadingSpinner /></div>
+}
+
+/**
+ * The Graph view (W14 AGT-06, contract §0.5): the hand canvas ONLY when it
+ * describes the pipeline — every stage maps onto it AND the frozen workflow is
+ * `offline@1` (or absent: a legacy row). Every other topology is drawn from
+ * the runtime projection. Until the timeline (which carries `workflow_ref` and
+ * whether the pipeline is live) has loaded, a pipeline the hand canvas cannot
+ * place is listed, not guessed — and no runtime read is made.
+ */
+function PipelineGraph({ pipelineId, stages, timeline, computeGraph }: {
+  pipelineId: string
+  stages: AgentStageResult[]
+  timeline?: PipelineTimeline
+  computeGraph: ComputeGraphModel
+}) {
+  const useHandCanvas =
+    computeGraph.unmapped.length === 0 && (timeline?.workflow_ref ?? 'offline@1') === 'offline@1'
+  if (useHandCanvas) return <HandCanvas computeGraph={computeGraph} />
+  if (!timeline) {
+    return (
+      <div className="px-6 py-5 space-y-3">
+        <p className="text-sm text-[var(--color-text-secondary)]">
+          This pipeline&apos;s stages are not on the offline compute graph.
+          Showing the {stages.length} stage{stages.length === 1 ? '' : 's'} it
+          actually ran:
+        </p>
+        <PlainStageList stages={stages} />
+      </div>
+    )
+  }
+  return (
+    <GenericGraph
+      pipelineId={pipelineId}
+      live={publicPipelineStatus(timeline) === 'in_progress'}
+      stages={stages}
+    />
+  )
+}
+
+/**
+ * Graph · Audit · Compare (W14 AGT-05), at the top of the graph frame — on
+ * `/agents` and on the Run page's Evidence tab (one component). Mounted only
+ * while "Agent stages" is open, so nothing here is asked on page load. The
+ * Audit badge comes from the timeline the page already polls; Compare offers
+ * the run's other pipelines from the list the page already holds.
+ */
+function PipelineStagesFrame({ pipelineId, testRunId, stages, timeline, computeGraph }: {
+  pipelineId: string
+  testRunId: string
+  stages: AgentStageResult[]
+  timeline?: PipelineTimeline
+  computeGraph: ComputeGraphModel
+}) {
+  const [view, setView] = useTabParam<PipelineView>(PIPELINE_VIEWS, 'graph', 'ptab')
+  const { data: runPipelines = [] } = usePipelines(testRunId)
+  const selected = runPipelines.find((p) => p.id === pipelineId) ?? null
+  const candidates = selected ? compareCandidates(runPipelines, selected) : []
+  const canCompare = candidates.length > 0
+  const shown: PipelineView = view === 'compare' && !canCompare ? 'graph' : view
+  const badge = auditBadge(timeline?.replay_integrity)
+  const live = timeline ? publicPipelineStatus(timeline) === 'in_progress' : false
+  const tabs: TabItem<PipelineView>[] = [
+    { id: 'graph', label: 'Graph' },
+    { id: 'audit', label: badge ? `Audit · ${badge}` : 'Audit' },
+    { id: 'compare', label: 'Compare', disabled: !canCompare, title: canCompare ? undefined : COMPARE_NONE_TITLE },
+  ]
+  return (
+    <div data-pipeline-frame="" className="rounded-2xl border border-[var(--color-border)] overflow-hidden">
+      <Tabs items={tabs} value={shown} onChange={setView} ariaLabel="Pipeline views" className="px-2" />
+      {shown === 'graph' && (
+        <PipelineGraph pipelineId={pipelineId} stages={stages} timeline={timeline} computeGraph={computeGraph} />
+      )}
+      {shown === 'audit' && <PipelineAuditView pipelineId={pipelineId} live={live} />}
+      {shown === 'compare' && selected && <PipelineCompareView selected={selected} candidates={candidates} />}
+    </div>
+  )
+}
+
 /// ── One pipeline's detail (the AI report + agent stages) ──────
 
 /**
@@ -773,6 +944,7 @@ export function PipelineDetail({
   showLLMMetrics,
   waiting = false,
   defaultShowStages = false,
+  workflowReason = null,
 }: {
   pipelineId: string | null
   /** The run the pipeline analysed: the AI report is keyed on the run. */
@@ -786,6 +958,8 @@ export function PipelineDetail({
    * stages the mechanism behind it.
    */
   defaultShowStages?: boolean
+  /** W14 AGT-08: why the project default was unavailable (the row's `workflow_default_reason`), for the workflow line's title. */
+  workflowReason?: string | null
 }) {
   // The AI report is shown by default (expanded) once a pipeline is selected —
   // it's the headline output of the pipeline, so users shouldn't have to click
@@ -805,26 +979,9 @@ export function PipelineDetail({
     () => mapPipelineToComputeGraph(stages as AgentStageResult[]),
     [stages],
   )
-  // True when the compute canvas can actually place this pipeline's stages.
-  // An empty stage list is "nothing to draw yet", not "wrong topology", so it
-  // keeps the canvas — only a pipeline whose stages ALL failed to map is a
-  // different pipeline type.
-  const canvasDescribesPipeline =
-    stages.length === 0 || computeGraph.recognised > 0
-  // Default canvas selection: the first running stage (or first failed) so
-  // the rail isn't empty on first paint.
-  const [canvasSelection, setCanvasSelection] = useState<SelectedId>(null)
-  // Seed the canvas selection with the first running (else failed, else first)
-  // stage while nothing is selected. Applied during render rather than via a
-  // cascading setState-in-effect; it converges in one pass and re-seeds if the
-  // user clears the selection, matching the prior effect's behaviour.
-  const initialCanvasId =
-    (computeGraph.stages.find(s => s.status === 'running')
-      ?? computeGraph.stages.find(s => s.status === 'failed')
-      ?? computeGraph.stages[0])?.id ?? null
-  if (canvasSelection === null && initialCanvasId != null) {
-    setCanvasSelection(initialCanvasId)
-  }
+  // W14 AGT-08: which workflow ran and how it was chosen, from the timeline
+  // already polled (no line for a legacy row).
+  const workflowText = workflowLine(timeline)
   const {
     data: summary,
     isLoading: summaryLoading,
@@ -859,6 +1016,15 @@ export function PipelineDetail({
           matches the argument the code was already making. */}
       <div className="flex items-center gap-3 mb-1">
         <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">AI Report</h3>
+        {workflowText && (
+          <span
+            data-workflow-line=""
+            title={workflowReason ?? workflowText}
+            className="min-w-0 truncate text-xs text-[var(--color-text-muted)]"
+          >
+            {workflowText}
+          </span>
+        )}
         <button
           onClick={() => setShowSummary(v => !v)}
           aria-expanded={showSummary}
@@ -919,55 +1085,29 @@ export function PipelineDetail({
         <div className="space-y-4">
       <ObservabilityPanel timeline={timeline} />
 
-      {/* Compute graph: 1750×560 canvas with absolute-
-          positioned nodes, SVG bezier edges, a decision diamond, and a
-          360px right rail. It used to sit under a Live · Debug · Audit ·
-          Compare tab bar, but only Debug (this canvas) had a body:
-          Audit and Compare were placeholder text and Live
-          pointed at the strip above. The bar is not rendered. */}
-      <div className="rounded-2xl border border-[var(--color-border)] overflow-hidden">
-        {!canvasDescribesPipeline ? (
-          /* This canvas has fixed nodes for the offline/deep pipeline.
-             For an investigation pipeline it recognised none of the
-             stages and used to render nine placeholders as `pending`
-             beside a COMPLETED header — a picture of a pipeline that
-             never ran, hiding the one that did. Show the real stages
-             instead of a graph that does not describe them. */
-          <div className="px-6 py-5 space-y-3">
-            <p className="text-sm text-[var(--color-text-secondary)]">
-              This pipeline&apos;s stages are not on the offline compute graph.
-              Showing the {stages.length} stage{stages.length === 1 ? '' : 's'} it
-              actually ran:
-            </p>
-            <ul className="space-y-1">
-              {stages.map((s) => (
-                <li
-                  key={s.stage_name}
-                  className="flex items-center justify-between text-sm border-b border-[var(--color-border)] py-1.5"
-                >
-                  <span className="font-mono text-[13px]">{s.stage_name}</span>
-                  <span className="text-[var(--color-text-muted)]">{s.status}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : (
-          <div className="flex" style={{ height: 600 }}>
-            <ComputeCanvas
-              stages={computeGraph.stages}
-              decision={computeGraph.decision}
-              edges={computeGraph.edges}
-              selectedId={canvasSelection}
-              onSelect={setCanvasSelection}
-            />
-            <RightRail
-              selectedId={canvasSelection}
-              stages={computeGraph.stages}
-              decision={computeGraph.decision}
-            />
-          </div>
-        )}
-      </div>
+      {/* The graph frame: Graph · Audit · Compare (W14 AGT-05). Graph is
+          the hand-placed canvas for the built-in offline pipeline and the
+          generic DAG for every other topology (AGT-06) — an investigation
+          used to fall back to a plain list, and a deep pipeline's eleven
+          stages without a node vanished from the hand canvas. */}
+      {testRunId ? (
+        <PipelineStagesFrame
+          pipelineId={pipelineId}
+          testRunId={testRunId}
+          stages={stages as AgentStageResult[]}
+          timeline={timeline}
+          computeGraph={computeGraph}
+        />
+      ) : (
+        <div className="rounded-2xl border border-[var(--color-border)] overflow-hidden">
+          <PipelineGraph
+            pipelineId={pipelineId}
+            stages={stages as AgentStageResult[]}
+            timeline={timeline}
+            computeGraph={computeGraph}
+          />
+        </div>
+      )}
 
       <details className="card">
         <summary className="cursor-pointer text-sm font-semibold text-[var(--color-text-secondary)] flex items-center gap-2">
@@ -1118,6 +1258,15 @@ export default function AgentStatusPage() {
 
   const { isQaEngineer } = usePermissions()
   const [triggerSubmitting, setTriggerSubmitting] = useState(false)
+  // W14 AGT-08: the in-page workflow picker, opened by the chevron beside
+  // Trigger pipeline (which stays ONE click: the project default).
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const activeProjectId = useProjectStore((s) => s.activeProjectId)
+  // The picked run's own project (the workflows and defaults are that
+  // project's); the active project when the run is not among the recent ones.
+  const pickerProjectId =
+    recentRuns.find((r) => r.id === runId)?.project_id
+    ?? (activeProjectId && activeProjectId !== ALL_PROJECTS_ID ? activeProjectId : null)
 
   // ONE run picker (UX redesign P5, D3). There used to be two selects over the
   // same 25 recent runs: this one (the view) and, under the pipelines, a
@@ -1201,27 +1350,52 @@ export default function AgentStatusPage() {
         </select>
         {isQaEngineer && (
           // Manual trigger — useful when the auto-trigger was lost (worker
-          // crash, etc.). It queues the standard pipeline for the run picked
-          // just left of it; with no run picked there is nothing to queue.
-          <button
-            type="button"
-            onClick={() => void handleTrigger()}
-            disabled={!runId || triggerSubmitting}
-            title={runId
-              ? 'Queue the standard pipeline for the run picked here'
-              : 'Pick a test suite & build first: the pipeline is queued for that run'}
-            className="inline-flex items-center gap-1.5 rounded border border-[var(--color-border)] px-2.5 py-1 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50 disabled:hover:bg-transparent"
-          >
-            {triggerSubmitting
-              ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-              : <Zap className="h-3.5 w-3.5" />}
-            Trigger pipeline
-          </button>
+          // crash, etc.). It queues the project's default pipeline for the run
+          // picked just left of it (W14 AGT-08: the router no longer pins
+          // built-in offline; the same one-click body); with no run picked
+          // there is nothing to queue. The chevron joined to it opens the
+          // in-page picker to queue another workflow.
+          <span data-trigger-split="" className="inline-flex items-stretch">
+            <button
+              type="button"
+              onClick={() => void handleTrigger()}
+              disabled={!runId || triggerSubmitting}
+              title={runId
+                ? TRIGGER_DEFAULT_TITLE
+                : 'Pick a test suite & build first: the pipeline is queued for that run'}
+              className="inline-flex items-center gap-1.5 rounded-l border border-[var(--color-border)] px-2.5 py-1 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50 disabled:hover:bg-transparent"
+            >
+              {triggerSubmitting
+                ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                : <Zap className="h-3.5 w-3.5" />}
+              Trigger pipeline
+            </button>
+            <button
+              type="button"
+              aria-label="Choose workflow"
+              aria-expanded={pickerOpen && Boolean(runId)}
+              title={runId ? CHOOSE_WORKFLOW_TITLE : 'Pick a test suite & build first: the pipeline is queued for that run'}
+              onClick={() => setPickerOpen((open) => !open)}
+              disabled={!runId}
+              className="inline-flex w-6 items-center justify-center rounded-r border border-l-0 border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50 disabled:hover:bg-transparent"
+            >
+              <ChevronDown aria-hidden="true" className="h-3.5 w-3.5" />
+            </button>
+          </span>
         )}
         <span className={`ml-auto text-xs px-2 py-1 rounded font-medium ${MODE_BADGE[analysisMode]?.colour ?? MODE_BADGE.auto.colour}`}>
           {MODE_BADGE[analysisMode]?.label ?? 'Auto Mode'}
         </span>
       </div>
+
+      {isQaEngineer && pickerOpen && runId && (
+        <WorkflowPicker
+          projectId={pickerProjectId}
+          runId={runId}
+          onClose={() => setPickerOpen(false)}
+          onQueued={refreshPipelines}
+        />
+      )}
 
       <section aria-label="Pipelines" className="space-y-2">
         <h2 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
@@ -1297,6 +1471,7 @@ export default function AgentStatusPage() {
           testRunId={selectedRunId}
           showLLMMetrics={showLLMMetrics}
           waiting={Boolean(runId) && pipelinesLoading}
+          workflowReason={workflowReasonOf(pipelines.find((p) => p.id === selectedPipeline))}
         />
       </section>
 

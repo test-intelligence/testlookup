@@ -142,13 +142,15 @@ The **standard** pipeline runs on its own when a run is finalised. You can also 
 
 | Where | Standard pipeline | Deep investigation |
 |---|---|---|
-| A run's page, **⋯** menu | **Trigger pipeline** | **Deep investigation** |
+| A run's page, **⋯** menu | **Trigger pipeline** (opens the workflow picker) | **Deep investigation** |
 | **Runs**, a row's action icons | **Re-trigger standard pipeline** | **Trigger deep investigation** |
 | **Runs**, ticked rows | **Bulk trigger** | **Bulk deep** |
-| **Runs**, **⋯** menu | **Trigger all failed (N)** | **Deep all failed (N)** |
-| **Pipeline runs** page | **Trigger pipeline** | — |
+| **Runs**, **⋯** menu | **Trigger all failed (N)**, **Re-trigger all matching (N)** | **Deep all failed (N)** |
+| **Pipeline runs** page | **Trigger pipeline**, or **Choose workflow** next to it | — |
 
-If a pipeline is already queued or running for that run, a new request is not started twice.
+A trigger that does not choose a workflow runs the project's default for that kind of pipeline: the built-in workflow, unless a QA lead made a published fork the default (see [Project default workflow](#project-default-workflow)). **Choose workflow** and the run page's **Trigger pipeline** let you pick one for this run. The bulk actions on **Runs** are tracked as one job with its own progress panel (see [Bulk jobs](/docs/runs#bulk-jobs)).
+
+If a pipeline is already queued or running for that run, a new request is not started twice: a bulk request counts such runs as already running instead of queuing them.
 
 The deep-investigation buttons are offered only while **Deep Investigation** is ticked under **Settings › AI** and the analysis mode is not **Rules**. Otherwise the run's page, its **Analysis** tab and the **Deep Investigation** page show a note saying why instead (**Runs** keeps its deep actions; the server refuses them with the same reason). When a run's last deep investigation failed, the **Deep Investigation** page and the run's **Analysis** tab offer **Retry from last successful stage**: it resumes that investigation, keeping the stages it completed, or starts a new one when the analysis configuration changed since it ran.
 
@@ -167,6 +169,20 @@ Both actions are recorded in the project's activity ("AI analysis for … was re
 
 The same report and stages for one run are on that run's **Evidence** tab. Anyone with access to the project can read this page.
 
+Above the AI report, one line names the workflow the pipeline ran and why: `Workflow wf.my-fork@3 · project default`, `· built-in`, `· chosen for this run`, or `· built-in — the default was unavailable` (hover for the reason). Pipelines from before this line existed show none.
+
+## Audit and Compare
+
+Open a pipeline's **Agent stages** (here, or on a run's **Evidence** tab) and the graph frame has three tabs: **Graph** (the default, see [The graph of any pipeline](#the-graph-of-any-pipeline)), **Audit** and **Compare**. The tab is kept in the address (`?ptab=audit`), so a reload or a shared link reopens it; the run page's own tab is left alone.
+
+**Audit** is the pipeline's replay record. Its tab label already says `Audit · replayable ✓` or `Audit · N gaps`. Inside: whether the pipeline is replayable, the analysis mode it asked for and the one it resolved to, its final-state checksum, and a table of every stage with its input and output checksums, whether a checkpoint was saved and restored, and how many decisions it logged. Below the table come the route decisions, the memory references the pipeline read, and its events (a count per type, then the newest 200 with their details). When the pipeline is not fully replayable, an **Audit gaps** panel comes first and lists what is missing: start or terminal events, replay checksums, checkpoints, or the final-state checksum. Older pipelines often have gaps; they are facts about the record, not an error.
+
+**Compare** puts this pipeline beside another pipeline of the same run. **Compare with** lists that run's other pipelines and starts on the one this pipeline was re-run from, otherwise the newest older pipeline of the same type. For each stage the table shows status, duration, tokens, cost, fallback, confidence and output as `before → after`, marks the cells that changed, and says when a stage ran in only one of the two. Above it: `Output identical`, `Output changed in N stages`, or `Output unknown` when no stage recorded a checksum, and each side's workflow, resolved analysis mode, release verdict and totals. A value a pipeline did not report is shown as `—`, never as zero. Only pipelines of one project can be compared.
+
+## The graph of any pipeline
+
+**Graph** draws the stages the pipeline really has. The standard pipeline (`offline@1`) keeps its hand-drawn compute canvas. Every other shape — a deep investigation with its specialists side by side, the live pipeline, an Investigator run (a plan, five hypotheses, a synthesis), a single invoked agent, a published fork, and a deep investigation's child investigations — is laid out from the dependencies the pipeline recorded when it started: one node per stage (its latest attempt, marked `attempt N` when it ran more than once), coloured by status, left to right in dependency order, with a loop back drawn dashed. Select a node to see its tokens and cost beside the graph. When a pipeline has more stages than the graph draws, a line above it says how many are left out; a dependency on a stage the pipeline does not have is listed under the graph rather than drawn. If the graph cannot be loaded, the plain list of stages is shown instead.
+
 ## The workflow editor
 
 **Pipeline runs → Workflow editor** (`/agents/workflows`) holds the versioned definitions behind the pipelines. The three built-in workflows (`offline` — the standard pipeline, `deep` and `live`) are read-only; to change one, you fork it.
@@ -176,8 +192,17 @@ The same report and stages for one run are on that run's **Evidence** tab. Anyon
 - **Validate** checks the definition; **Graph preview** draws its topology.
 - **Run evaluation** replays recent runs (20 by default) through the draft and compares the result with the published version.
 - **Publish** makes the draft the version runs use. Publishing re-evaluates the draft on 100 replayed runs and refuses a measured regression unless you tick **Accept the measured regression for this publication** and give a reason.
+- **Delete draft** removes a fork's latest version while it is still a draft, after you confirm. Published versions are kept.
 
-Anyone can open the editor and inspect definitions and validation; forking, editing, evaluating and publishing need the `QA_LEAD` role. Only **published** versions ever execute. Runs triggered from the app use the built-in workflows; a forked workflow is run by naming it (`workflow_id`) in the pipeline API call (`POST /api/v1/agents/pipelines/trigger`).
+Anyone can open the editor and inspect definitions and validation; forking, editing, evaluating, publishing, deleting a draft and choosing the project default need the `QA_LEAD` role. Only **published** versions ever execute. A fork runs when it is the project's default for its base (see [Project default workflow](#project-default-workflow)) or when someone picks it for one run with **Choose workflow** or a run's **⋯ › Trigger pipeline**; an API caller can also name it (`workflow_id`) in `POST /api/v1/agents/pipelines/trigger`.
+
+## Project default workflow
+
+A published fork can be the workflow a project's new runs use. In the workflow editor, a QA lead selects the fork and turns on **Use for new offline runs** (**Use for new deep runs** for a fork of `deep`). When the fork's steps call a model, the editor says so beside the switch (`Every new run calls a model in N stages: …`): every automatic analysis then makes those model calls. The default follows the fork's newest published version, so publishing version 2 makes version 2 the default without touching the switch. Turning the switch off returns new runs to the built-in workflow. Other roles see `Used for new offline runs` on the fork that is the default, and a built-in workflow says which fork, if any, is used instead. Setting and clearing a default are recorded in the project's activity.
+
+Every trigger that does not choose a workflow uses the default for its base: the automatic analysis after each ingest, **Trigger pipeline** on **Pipeline runs**, the bulk actions on **Runs**, and a deep investigation. To run something else once, use **Choose workflow** (next to **Trigger pipeline** on **Pipeline runs**) or a run's **⋯ › Trigger pipeline**: pick the project default, a built-in workflow or a published fork, then **Queue pipeline**. Drafts are never listed. A retry keeps the workflow its pipeline started with.
+
+Only a fork of the same project can be its default, and only for its own base: a fork of `deep` can be the deep default only. The editor refuses a fork that no longer passes validation. If a default cannot be used when a run starts (its version is gone, it is no longer built on that base, or it no longer passes validation), the run uses the built-in workflow and records why, so its workflow line reads `built-in — the default was unavailable`. A run is never left unstarted because of its default.
 
 ## The Investigator and the Fixer
 

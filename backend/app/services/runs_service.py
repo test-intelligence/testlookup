@@ -368,6 +368,43 @@ def run_list_toolbar_filters(
     return filters
 
 
+# W07 FAIL-05: the Runs toolbar's branch filter (moved from routers/runs.py in
+# W14 so the bulk filter resolver parses exactly as GET /runs does).
+MAX_BRANCHES = 20
+MAX_BRANCH_LENGTH = 255
+BRANCH_INVALID_DETAIL = "branch: at most 20 names of 1-255 characters."
+
+
+def parse_run_list_toolbar(
+    q: str | None, branch: list[str] | None, recommendation: str | None,
+) -> dict:
+    """The Runs toolbar's ``q`` / ``branch`` / ``recommendation``, parsed before any database access.
+
+    ``q`` stripped (blank = no filter); each branch stripped, 1-255 characters,
+    at most 20, duplicates dropped; ``recommendation`` one of the filter
+    vocabulary. Anything else is a 422 with one fixed text per parameter.
+    ``GET /runs`` (``routers/runs.py``) and the bulk filter resolver
+    (``bulk_pipeline_job_service.resolve_run_filter``) share it.
+    """
+    from fastapi import HTTPException  # noqa: PLC0415
+
+    from app.services.run_verdict import RECOMMENDATION_FILTER_VALUES, RECOMMENDATION_INVALID_DETAIL  # noqa: PLC0415
+
+    text_q = (q or "").strip() or None
+    names: list[str] = []
+    for raw in branch or []:
+        name = (raw or "").strip()
+        if not 1 <= len(name) <= MAX_BRANCH_LENGTH:
+            raise HTTPException(status_code=422, detail=BRANCH_INVALID_DETAIL)
+        if name not in names:
+            names.append(name)
+    if len(names) > MAX_BRANCHES:
+        raise HTTPException(status_code=422, detail=BRANCH_INVALID_DETAIL)
+    if recommendation is not None and recommendation not in RECOMMENDATION_FILTER_VALUES:
+        raise HTTPException(status_code=422, detail=RECOMMENDATION_INVALID_DETAIL)
+    return {"q": text_q, "branches": tuple(names), "recommendation": recommendation}
+
+
 async def list_run_branches(
     db: AsyncSession,
     project_id: uuid.UUID,
@@ -420,6 +457,83 @@ def _run_suite_filter(suite_name: str | tuple[str, ...] | None):
     from app.services.analytics_scope import run_list_suite_clause
 
     return run_list_suite_clause(suite_name)
+
+
+def run_list_filters(
+    project_id: str | uuid.UUID | None,
+    accessible_project_ids: set | None,
+    status: str | None,
+    release_id: str | tuple[str, ...] | None,
+    days: int | None,
+    suite_name: str | tuple[str, ...] | None,
+    *,
+    q: str | None = None,
+    branches: tuple[str, ...] = (),
+    recommendation: str | None = None,
+) -> list:
+    """The run list's WHERE predicates, clause for clause and in the same order
+    as ``list_project_runs`` builds them (pure; W14 AGT-12).
+
+    The bulk "re-trigger all matching" resolver
+    (``bulk_pipeline_job_service.resolve_run_filter``) builds its COUNT and its
+    ids from this list, so a filter matches exactly the runs ``GET /runs`` lists.
+    A TWIN, not a factoring: the repo's source guards
+    (``tests/regression/test_runs_exclude_deleted_projects.py``,
+    ``test_runs_release_scope.py``, ``test_natural_build_ordering.py``) read the
+    predicate code inside ``list_project_runs`` itself, so the list keeps it.
+    ``tests/test_bulk_trigger_job.py`` compiles both over a matrix of filters
+    and fails on any drift. The reasons behind each clause are written
+    at the list. Every value is parsed and authorised by the caller first.
+    """
+    filters: list = []
+    # Live projects only (a soft-deleted project's runs are gone everywhere).
+    filters.append(
+        TestRun.project_id.in_(select(Project.id).where(Project.is_active.is_(True)))
+    )
+    if days and days > 0:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        filters.append(TestRun.created_at >= cutoff)
+    if project_id:
+        filters.append(TestRun.project_id == project_id)
+    if accessible_project_ids is not None:
+        # Tenant isolation: memberships apply even with an explicit project.
+        filters.append(TestRun.project_id.in_(accessible_project_ids))
+    if status:
+        filters.append(TestRun.status == status)
+    if release_id and not isinstance(release_id, (str, uuid.UUID)):
+        from app.core.release_filter import release_predicate
+
+        filters.extend(release_predicate(list(release_id)))
+    elif release_id:
+        # The denormalised primary column; an unparseable id fails CLOSED.
+        from app.core.release_filter import is_unattributed
+
+        if is_unattributed(str(release_id)):
+            filters.append(TestRun.primary_release_id.is_(None))
+        else:
+            try:
+                release_uuid = uuid.UUID(str(release_id))
+            except (ValueError, TypeError, AttributeError):
+                filters.append(false())
+            else:
+                filters.append(TestRun.primary_release_id == release_uuid)
+    suite_filter = _run_suite_filter(suite_name)
+    if suite_filter is not None:
+        filters.append(suite_filter)
+    filters.extend(run_list_toolbar_filters(q=q, branches=branches, recommendation=recommendation))
+    return filters
+
+
+def run_list_order_keys() -> tuple:
+    """The run list's order (newest build first), the twin of ``list_project_runs``'
+    ``order_keys`` (pinned there by ``test_natural_build_ordering.py``) for the
+    bulk filter resolver; ``tests/test_bulk_trigger_job.py`` compares them."""
+    return (
+        natural_build_number_key().desc().nulls_first(),
+        TestRun.build_number.desc(),
+        TestRun.created_at.desc(),
+        TestRun.id.desc(),
+    )
 
 
 async def list_project_runs(

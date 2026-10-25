@@ -304,11 +304,14 @@ async def test_trigger_queues_when_nothing_is_in_progress(monkeypatch):
         current_user=SimpleNamespace(id=requester),
         _=None,
     )
+    # W14 AGT-08: a trigger that names no workflow is no longer pinned to offline at the router; the worker
+    # resolves the project default at start, so the answer carries no ref yet.
     assert resp == {
         "message": "Pipeline queued",
         "task_id": "task-1",
         "run_id": str(run.id),
-        "workflow_ref": "offline@1",
+        "workflow_ref": None,
+        "workflow_source": "resolved_at_start",
     }
     delay.assert_called_once()
     assert delay.call_args.kwargs["requested_by"] == str(requester)

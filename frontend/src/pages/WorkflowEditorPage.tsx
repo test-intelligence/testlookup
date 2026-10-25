@@ -12,8 +12,12 @@ import {
   RefreshCw,
   Save,
   ShieldCheck,
+  Trash2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
+
+import { InlineConfirm } from '@/components/ui/inPage/InlineConfirm'
+import WorkflowDefaultSwitch from '@/components/workflow/WorkflowDefaultSwitch'
 
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import PageHeader from '@/components/ui/PageHeader'
@@ -22,6 +26,7 @@ import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState
 import DataUnavailable from '@/components/ui/DataUnavailable'
 import { usePermissions } from '@/hooks/usePermissions'
 import {
+  deleteWorkflow,
   evaluateWorkflow,
   forkWorkflow,
   listWorkflows,
@@ -253,6 +258,9 @@ export default function WorkflowEditorPage() {
   const [acceptRegression, setAcceptRegression] = useState(false)
   const [regressionReason, setRegressionReason] = useState('')
   const [evaluationManifestChecksum, setEvaluationManifestChecksum] = useState<string | null>(null)
+  // W14 AGT-08: Delete draft asks in the page (InlineConfirm), never a dialog.
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   const selected = workflows.find(item => ref(item) === selectedRef) ?? workflows[0] ?? null
   const currentRef = selected ? ref(selected) : null
@@ -291,6 +299,31 @@ export default function WorkflowEditorPage() {
     setValidation(null)
     setEvaluationManifestChecksum(null)
     setForkOpen(false)
+    setConfirmDelete(false)
+    setDeleteError(null)
+  }
+
+  // W14 AGT-08: the latest version of a fork, when it is a draft, can be
+  // deleted (the server deletes the LATEST version only, and only a draft).
+  const canDeleteDraft = !!selected && isQaLead && !selected.built_in && selected.status === 'draft' && selectedIsLatest
+
+  async function handleDeleteDraft() {
+    if (!projectId || !selected || !canDeleteDraft) return
+    setBusy('delete')
+    setDeleteError(null)
+    try {
+      await deleteWorkflow(projectId, selected.workflow_id)
+      setConfirmDelete(false)
+      setSelectedRef(null)
+      setSeededRef(null)
+      setValidation(null)
+      await mutate()
+      toast.success(`Deleted draft version ${selected.version} of ${selected.workflow_id}`)
+    } catch (deleteFailure) {
+      setDeleteError(errorMessage(deleteFailure))
+    } finally {
+      setBusy(null)
+    }
   }
 
   async function refreshAndChoose(item: WorkflowItem) {
@@ -491,6 +524,7 @@ export default function WorkflowEditorPage() {
                       <span>Base: <strong className="text-[var(--color-text-secondary)]">{selected.base}</strong></span>
                       <span>Evaluation: <strong className="text-[var(--color-text-secondary)]">{selected.eval_verdict ?? 'unmeasured'}</strong></span>
                       <span data-testid="workflow-eval-coverage">{formatCoverage(selected.eval_coverage)}</span>
+                      <WorkflowDefaultSwitch projectId={projectId} workflow={selected} canManage={isQaLead} />
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -507,8 +541,35 @@ export default function WorkflowEditorPage() {
                         <PlayCircle className="h-3.5 w-3.5" /> Run evaluation
                       </button>
                     )}
+                    {canDeleteDraft && (
+                      <button
+                        type="button"
+                        onClick={() => { setConfirmDelete(true); setDeleteError(null) }}
+                        disabled={busy !== null}
+                        className="inline-flex items-center gap-1.5 rounded border border-[var(--color-border)] px-3 py-1.5 text-xs disabled:opacity-50 hover:bg-[var(--color-bg-hover)]"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> Delete draft
+                      </button>
+                    )}
                   </div>
                 </div>
+
+                {confirmDelete && canDeleteDraft && (
+                  <div className="mt-4">
+                    <InlineConfirm
+                      message={<>Delete draft version {selected.version} of <strong>{selected.workflow_id}</strong>? Published versions are kept.</>}
+                      confirmLabel="Delete draft"
+                      tone="danger"
+                      busy={busy === 'delete'}
+                      onConfirm={() => void handleDeleteDraft()}
+                      onCancel={() => setConfirmDelete(false)}
+                      testId="workflow-delete-draft-confirm"
+                    />
+                  </div>
+                )}
+                {deleteError && (
+                  <p data-delete-error="" className="mt-2 text-xs text-[var(--ui-danger-ink)]">{deleteError}</p>
+                )}
 
                 {forkOpen && (
                   <div className="mt-4 grid gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3 md:grid-cols-[1fr_1fr_auto]">

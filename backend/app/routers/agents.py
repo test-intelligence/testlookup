@@ -7,6 +7,7 @@ import asyncio
 import inspect
 import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Any, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -48,7 +49,10 @@ from app.models.postgres import (
 from app.models.schemas import (
     AgentPipelineResponse,
     AgentRunSummaryResponse,
+    BulkJobRead,
+    BulkRunFilter,
     ReviewBlock,
+    PipelineCompareResponse,
     PipelineEventLogHealthResponse,
     PipelineReplayResponse,
     PipelineTimelineResponse,
@@ -57,7 +61,22 @@ from app.models.schemas import (
     TriggerPipelineRequest,
 )
 from app.models.agentic_runtime import AgenticRunV1
-from app.services import agent_catalog, runs_service
+from app.core.agent_ops_vocab import (
+    BULK_FILTER_CAP,
+    BULK_IDS_OR_FILTER,
+    BULK_JOB_ALREADY_FINISHED,
+    BULK_JOB_NOT_FOUND,
+    BULK_NOTHING_TO_TRIGGER,
+    COMPARE_CROSS_PROJECT,
+    COMPARE_SAME_ID,
+)
+from app.services import (
+    agent_catalog,
+    bulk_pipeline_job_service,
+    pipeline_admission,
+    pipeline_compare_service,
+    runs_service,
+)
 from app.services.activity.service import ActorRef, record as record_activity
 from app.services.run_summary_service import build_fallback_summary, normalize_summary_doc
 
@@ -279,6 +298,35 @@ async def list_pipelines(
     return pipelines
 
 
+@router.get("/pipelines/compare", response_model=PipelineCompareResponse)
+async def compare_pipelines(
+    a: uuid.UUID = Query(...),
+    b: uuid.UUID = Query(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: Any = Depends(get_current_active_user),
+):
+    """Compare two pipeline runs of one project stage by stage (W14 AGT-05).
+
+    Declared BEFORE ``get_pipeline``: FastAPI matches in registration order,
+    and the UUID route would otherwise read ``compare`` as a pipeline id.
+    BOTH query ids pass the same 404 / 403 gate as ``/pipelines/{id}``.
+    Writes nothing.
+    """
+    if a == b:
+        raise HTTPException(422, detail=COMPARE_SAME_ID)
+    first = await _load_pipeline_or_404(db, a)
+    second = await _load_pipeline_or_404(db, b)
+    await _require_pipeline_access(db, current_user, first)
+    await _require_pipeline_access(db, current_user, second)
+    run_a = await db.get(TestRun, first.test_run_id)
+    run_b = await db.get(TestRun, second.test_run_id)
+    if run_a is None or run_b is None:
+        raise HTTPException(404, detail="Pipeline run not found")
+    if run_a.project_id != run_b.project_id:
+        raise HTTPException(422, detail=COMPARE_CROSS_PROJECT)
+    return await pipeline_compare_service.compare_pipelines(db, first, second)
+
+
 @router.get("/pipelines/{pipeline_id}", response_model=AgentPipelineResponse)
 async def get_pipeline(
     pipeline_id: uuid.UUID,
@@ -319,27 +367,38 @@ async def trigger_pipeline(
 
     from app.services import workflow_definition_service as workflow_svc
 
-    requested_workflow_id = getattr(payload, "workflow_id", None) or "offline"
-    try:
-        selected_workflow = await workflow_svc.get_published_definition(
-            db,
-            run.project_id,
-            requested_workflow_id,
-            getattr(payload, "workflow_version", None),
+    # W14 AGT-08: a request that names NO workflow is not pinned here. The
+    # task gets ``workflow_id=None`` and the worker resolves the project's
+    # default for the offline base at task start (``_create_pipeline_run``,
+    # the one place every trigger path meets), falling back to the built-in.
+    # A NAMED workflow is resolved here exactly as before.
+    workflow_id: Optional[str] = None
+    workflow_version: Optional[int] = None
+    workflow_ref: Optional[str] = None
+    if getattr(payload, "workflow_id", None) is None:
+        workflow_type = "offline"
+    else:
+        requested_workflow_id = getattr(payload, "workflow_id", None) or "offline"
+        try:
+            selected_workflow = await workflow_svc.get_published_definition(
+                db,
+                run.project_id,
+                requested_workflow_id,
+                getattr(payload, "workflow_version", None),
+            )
+        except workflow_svc.WorkflowNotFound:
+            raise HTTPException(404, detail="Workflow definition not found") from None
+        except workflow_svc.WorkflowNotPublished:
+            raise HTTPException(409, detail="Workflow definition is not published") from None
+        selected_item = (
+            selected_workflow
+            if isinstance(selected_workflow, dict)
+            else workflow_svc.serialize(selected_workflow)
         )
-    except workflow_svc.WorkflowNotFound:
-        raise HTTPException(404, detail="Workflow definition not found") from None
-    except workflow_svc.WorkflowNotPublished:
-        raise HTTPException(409, detail="Workflow definition is not published") from None
-    selected_item = (
-        selected_workflow
-        if isinstance(selected_workflow, dict)
-        else workflow_svc.serialize(selected_workflow)
-    )
-    workflow_type = str(selected_item["base"])
-    workflow_id = str(selected_item["workflow_id"])
-    workflow_version = int(selected_item["version"])
-    workflow_ref = f"{workflow_id}@{workflow_version}"
+        workflow_type = str(selected_item["base"])
+        workflow_id = str(selected_item["workflow_id"])
+        workflow_version = int(selected_item["version"])
+        workflow_ref = f"{workflow_id}@{workflow_version}"
 
     # E7.2: the state machine, not the Redis admission lock, decides whether a
     # new trigger is accepted. A run that is pending / running / retry_wait is
@@ -388,10 +447,18 @@ async def trigger_pipeline(
         entity_label=f"Build {run.build_number}",
         context={
             "workflow_type": workflow_type,
-            "workflow_ref": workflow_ref,
+            "workflow_ref": workflow_ref if workflow_ref is not None else f"default:{workflow_type}",
             "task_id": task.id,
         },
     )
+    if workflow_ref is None:
+        return {
+            "message": "Pipeline queued",
+            "task_id": task.id,
+            "run_id": str(run.id),
+            "workflow_ref": None,
+            "workflow_source": "resolved_at_start",
+        }
     return {
         "message": "Pipeline queued",
         "task_id": task.id,
@@ -403,19 +470,11 @@ async def trigger_pipeline(
 async def _latest_in_progress_pipeline(
     db: AsyncSession, test_run_id: uuid.UUID, workflow_type: str
 ) -> Optional[AgentPipelineRun]:
-    """The newest non-terminal pipeline for (run, workflow), or None."""
-    in_progress = [s.value for s, pub in PUBLIC_STATUS.items() if pub == "in_progress"]
-    result = await db.execute(
-        select(AgentPipelineRun)
-        .where(
-            AgentPipelineRun.test_run_id == test_run_id,
-            AgentPipelineRun.workflow_type == workflow_type,
-            AgentPipelineRun.status.in_(in_progress),
-        )
-        .order_by(AgentPipelineRun.created_at.desc())
-        .limit(1)
-    )
-    return result.scalar_one_or_none()
+    """The newest non-terminal pipeline for (run, workflow), or None.
+
+    A module-level name tests patch; the read is ``pipeline_admission``'s
+    (shared with the deep trigger)."""
+    return await pipeline_admission.latest_in_progress_pipeline(db, test_run_id, workflow_type)
 
 
 # ── Manual retry / cancel (E7.4) ─────────────────────────────────────────────
@@ -724,8 +783,13 @@ async def cancel_pipeline(
 # ── Bulk trigger ────────────────────────────────────────────────────────────
 
 class BulkTriggerRequest(BaseModel):
-    run_ids: List[uuid.UUID] = Field(..., min_length=1, max_length=2000)
+    # W14 AGT-12: exactly one of ``run_ids`` / ``run_filter`` (judged in the
+    # handler with one fixed sentence each); ``client_token`` makes a retried
+    # or double-clicked request queue the batch once (10 minutes).
+    run_ids: Optional[List[uuid.UUID]] = Field(None, min_length=1, max_length=BULK_FILTER_CAP)
     workflow_type: Literal["offline", "deep"] = "offline"
+    run_filter: Optional[BulkRunFilter] = None
+    client_token: Optional[str] = Field(None, min_length=8, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
 
 
 class BulkTriggerResponse(BaseModel):
@@ -733,6 +797,15 @@ class BulkTriggerResponse(BaseModel):
     not_found: int
     workflow_type: str
     not_found_ids: List[str] = Field(default_factory=list)
+    requested: int = 0
+    skipped_in_progress: int = 0
+    skipped_in_progress_ids: List[str] = Field(default_factory=list)   # <= 25
+    source: str = "selection"                                          # BULK_SOURCES
+    matched: Optional[int] = None                                      # filter: the COUNT of matching runs
+    truncated: bool = False                                            # filter: more matched than BULK_FILTER_CAP
+    bulk_job_id: Optional[str] = None
+    tracking: bool = False                                             # False: Redis was unavailable
+    replayed: bool = False                                             # the client_token's earlier answer
 
 
 @router.post("/pipelines/bulk-trigger", response_model=BulkTriggerResponse, status_code=202)
@@ -748,11 +821,22 @@ async def bulk_trigger_pipelines(
     Replaces the previous client-side fan-out — for a 500-run trigger this
     is one round-trip instead of 500. Tasks are queued in batches of 25 with
     a tiny inter-batch sleep so the Celery broker isn't slammed in a single
-    burst. Celery's existing dedup on (run_id, workflow_type) for 7200s
-    handles re-triggers gracefully, so this endpoint doesn't need to dedup
-    itself — repeats just resolve to ``{duplicate: true}`` per task.
+    burst.
+
+    W14 AGT-12: the runs are ``run_ids`` OR the Runs list's own filter
+    (``run_filter``, resolved by the list's predicates, newest 2,000); a run
+    whose pipeline is still in progress is skipped and counted (the worker's
+    admission keys never held a person's trigger); the answer carries a
+    ``bulk_job_id`` whose progress ``GET /pipelines/bulk-jobs/{id}`` counts
+    from the pipeline rows. ``client_token`` makes a retry queue nothing twice.
     """
     from app.worker.tasks import run_agent_pipeline
+
+    # W14 AGT-12: exactly one source of runs, judged before any statement.
+    if payload.run_ids is not None and payload.run_filter is not None:
+        raise HTTPException(422, detail=BULK_IDS_OR_FILTER)
+    if payload.run_ids is None and payload.run_filter is None:
+        raise HTTPException(422, detail=BULK_NOTHING_TO_TRIGGER)
 
     # AIC-01: a bulk deep trigger obeys the same Settings > AI gate as the
     # single route (it applied none), refused BEFORE the scope query and the
@@ -760,33 +844,78 @@ async def bulk_trigger_pipelines(
     if payload.workflow_type == "deep":
         await require_deep_investigation(db)
 
-    # One DB roundtrip to resolve every run + reject unknown ids.
-    # Returning the not-found list lets the UI tell the user *which* IDs
-    # were skipped vs which actually queued.
-    # Scope BEFORE fanning out. The single-run sibling above checks membership;
-    # this one accepted up to 2000 ids and filtered on none of them, so one call
-    # could queue pipelines across every project on the deployment. A run the
-    # caller cannot access is reported as not-found rather than as forbidden --
-    # the response already carries a not_found list, and distinguishing the two
-    # would turn it into an existence oracle.
-    accessible = await get_accessible_project_ids(db, current_user)
-    stmt = select(TestRun.id, TestRun.project_id, TestRun.build_number).where(
-        TestRun.id.in_(payload.run_ids)
+    # W14 AGT-12: a retried / double-clicked request (same client_token within
+    # 10 minutes) answers the first request's job instead of queueing again.
+    bulk_job_id = str(uuid.uuid4())
+    if payload.client_token:
+        earlier = await bulk_pipeline_job_service.claim_client_token(
+            current_user.id, payload.client_token, bulk_job_id,
+        )
+        if earlier is not None:
+            return await _bulk_replayed_answer(earlier, payload.workflow_type)
+
+    source = "filter" if payload.run_filter is not None else "selection"
+    matched: Optional[int] = None
+    truncated = False
+    not_found_ids: list[str] = []
+    if payload.run_filter is not None:
+        # The Runs list's own filter: its predicates, the caller's projects,
+        # newest first, at most BULK_FILTER_CAP (``matched`` is the COUNT).
+        found, matched, truncated = await bulk_pipeline_job_service.resolve_run_filter(
+            db, current_user, payload.run_filter,
+        )
+        requested = len(found)
+    else:
+        # One DB roundtrip to resolve every run + reject unknown ids.
+        # Returning the not-found list lets the UI tell the user *which* IDs
+        # were skipped vs which actually queued.
+        # Scope BEFORE fanning out. The single-run sibling above checks membership;
+        # this one accepted up to 2000 ids and filtered on none of them, so one call
+        # could queue pipelines across every project on the deployment. A run the
+        # caller cannot access is reported as not-found rather than as forbidden --
+        # the response already carries a not_found list, and distinguishing the two
+        # would turn it into an existence oracle.
+        run_ids = list(payload.run_ids or [])
+        accessible = await get_accessible_project_ids(db, current_user)
+        stmt = select(TestRun.id, TestRun.project_id, TestRun.build_number).where(
+            TestRun.id.in_(run_ids)
+        )
+        if accessible is not None:
+            stmt = stmt.where(TestRun.project_id.in_(accessible))
+        result = await db.execute(stmt)
+        found = [(row[0], row[1], row[2]) for row in result.all()]
+        found_ids = {row[0] for row in found}
+        not_found_ids = [str(rid) for rid in run_ids if rid not in found_ids]
+        requested = len(run_ids)
+
+    # ONE grouped statement: a run whose pipeline of this workflow is still in
+    # progress is skipped (counted and echoed), not queued a second time.
+    in_progress = await pipeline_admission.runs_with_in_progress_pipeline(
+        db, [row[0] for row in found], payload.workflow_type,
     )
-    if accessible is not None:
-        stmt = stmt.where(TestRun.project_id.in_(accessible))
-    result = await db.execute(stmt)
-    found = list(result.all())
-    found_ids = {row[0] for row in found}
-    not_found_ids = [str(rid) for rid in payload.run_ids if rid not in found_ids]
+    to_queue = [row for row in found if row[0] not in in_progress]
+    skipped_rows = [row for row in found if row[0] in in_progress]
+    planned_per_project: dict[uuid.UUID, int] = {}
+    for _run_id, project_id, _build in to_queue:
+        planned_per_project[project_id] = planned_per_project.get(project_id, 0) + 1
+
+    # The job record BEFORE the fan-out (a fast worker must find it). Redis
+    # down: untracked, and the batch still queues exactly as before W14.
+    tracking = await bulk_pipeline_job_service.create_job(
+        job_id=bulk_job_id, requested_by=current_user.id, workflow_type=payload.workflow_type,
+        source=source, requested=requested, queued_rows=to_queue, skipped=len(skipped_rows),
+        not_found=len(not_found_ids), matched=matched, truncated=truncated,
+        queued_per_project=planned_per_project,
+    )
+    stamp = {"bulk_job_id": bulk_job_id} if tracking else {}
 
     BATCH_SIZE = 25
     INTER_BATCH_SLEEP_S = 0.05  # 50ms between bursts; barely noticeable, gentle on broker
-    queued = 0
+    queued_ids: list[uuid.UUID] = []
     queued_per_project: dict[uuid.UUID, int] = {}
 
-    for i in range(0, len(found), BATCH_SIZE):
-        batch = found[i : i + BATCH_SIZE]
+    for i in range(0, len(to_queue), BATCH_SIZE):
+        batch = to_queue[i : i + BATCH_SIZE]
         for run_id, project_id, build_number in batch:
             try:
                 run_agent_pipeline.apply_async(
@@ -796,25 +925,31 @@ async def bulk_trigger_pipelines(
                         "build_number": build_number,
                         "workflow_type": payload.workflow_type,
                         "requested_by": str(current_user.id),
+                        **stamp,
                     },
                     queue="ai_analysis",
                 )
-                queued += 1
+                queued_ids.append(run_id)
                 queued_per_project[project_id] = queued_per_project.get(project_id, 0) + 1
             except Exception as exc:  # pragma: no cover - broker errors are exceptional
                 logger.warning(
-                    "bulk_trigger: queue failed for run %s: %s", run_id, exc,
+                    "bulk_trigger: queue failed for run %s: %s", run_id, type(exc).__name__,
                 )
-        if i + BATCH_SIZE < len(found):
+        if i + BATCH_SIZE < len(to_queue):
             await asyncio.sleep(INTER_BATCH_SLEEP_S)
+    if tracking and len(queued_ids) != len(to_queue):
+        await bulk_pipeline_job_service.record_queued(bulk_job_id, queued_ids, queued_per_project)
 
     logger.info(
-        "bulk_trigger_pipelines: queued=%d not_found=%d workflow=%s",
-        queued, len(not_found_ids), payload.workflow_type,
+        "bulk_trigger_pipelines: queued=%d not_found=%d skipped_in_progress=%d workflow=%s",
+        len(queued_ids), len(not_found_ids), len(skipped_rows), payload.workflow_type,
     )
 
     # One row per project, not per run: a 2000-run trigger would otherwise
     # bury the feed. Counted from what actually queued, not what was asked.
+    skipped_per_project: dict[uuid.UUID, int] = {}
+    for _run_id, project_id, _build in skipped_rows:
+        skipped_per_project[project_id] = skipped_per_project.get(project_id, 0) + 1
     actor = ActorRef.from_user(current_user)
     for project_id, count in queued_per_project.items():
         await record_activity(
@@ -823,15 +958,135 @@ async def bulk_trigger_pipelines(
             event_type="analysis.bulk_triggered",
             actor=actor,
             entity_id=project_id,
-            context={"count": count, "workflow_type": payload.workflow_type},
+            context={
+                "count": count,
+                "workflow_type": payload.workflow_type,
+                "bulk_job_id": bulk_job_id if tracking else None,
+                "source": source,
+                "skipped_in_progress": skipped_per_project.get(project_id, 0),
+            },
         )
 
     return BulkTriggerResponse(
-        queued=queued,
+        queued=len(queued_ids),
         not_found=len(not_found_ids),
         workflow_type=payload.workflow_type,
         not_found_ids=not_found_ids[:25],  # cap echo to keep response small
+        requested=requested,
+        skipped_in_progress=len(skipped_rows),
+        skipped_in_progress_ids=[str(row[0]) for row in skipped_rows[:25]],
+        source=source,
+        matched=matched,
+        truncated=truncated,
+        bulk_job_id=bulk_job_id if tracking else None,
+        tracking=tracking,
     )
+
+
+async def _bulk_replayed_answer(bulk_job_id: str, workflow_type: str) -> JSONResponse:
+    """200 with the earlier request's facts (from its record); nothing is queued again."""
+    job = await bulk_pipeline_job_service.read_job(bulk_job_id)
+    body = BulkTriggerResponse(
+        queued=(job or {}).get("queued") or 0,
+        not_found=(job or {}).get("not_found") or 0,
+        workflow_type=(job or {}).get("workflow_type") or workflow_type,
+        requested=(job or {}).get("requested") or 0,
+        skipped_in_progress=(job or {}).get("skipped_in_progress") or 0,
+        source=(job or {}).get("source") or "selection",
+        matched=(job or {}).get("matched"),
+        truncated=bool((job or {}).get("truncated")),
+        bulk_job_id=bulk_job_id,
+        tracking=job is not None,
+        replayed=True,
+    )
+    return JSONResponse(status_code=200, content=body.model_dump(mode="json"))
+
+
+# ── Bulk jobs (W14 AGT-12): progress and cancel ────────────────────────────
+# Declared right after the bulk trigger; neither path is matched by a
+# ``/pipelines/{pipeline_id}/...`` route (a literal third segment). A job is
+# readable / cancellable by its requester or an admin only; anyone else gets
+# the same 404 as an unknown job (no oracle).
+
+
+def _job_owner(job: dict) -> Optional[uuid.UUID]:
+    try:
+        return uuid.UUID(str(job.get("requested_by") or ""))
+    except ValueError:
+        return None
+
+
+@router.get("/pipelines/bulk-jobs/{bulk_job_id}", response_model=BulkJobRead)
+async def get_bulk_job(
+    bulk_job_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """A bulk job's request facts and its progress, COUNTED from the pipeline
+    rows on this read (restricted to the caller's current projects). Without
+    the request record (expired / flushed) only the caller's own rows are
+    counted and ``counters_source`` says ``postgres``. Writes nothing."""
+    job_id = str(bulk_job_id)
+    accessible = await get_accessible_project_ids(db, current_user)
+    is_admin = accessible is None
+    now = datetime.now(timezone.utc)
+    job = await bulk_pipeline_job_service.read_job(job_id)
+    if job is not None:
+        if _job_owner(job) != current_user.id and not is_admin:
+            raise HTTPException(404, detail=BULK_JOB_NOT_FOUND)
+        progress = await bulk_pipeline_job_service.job_progress(
+            db, job_id, run_ids=job["run_ids"], requested_by=_job_owner(job), accessible=accessible,
+        )
+        return bulk_pipeline_job_service.job_read(job_id, job, progress, now=now)
+    progress = await bulk_pipeline_job_service.job_progress(
+        db, job_id, run_ids=None, requested_by=current_user.id, accessible=accessible,
+    )
+    if progress["started"] == 0:
+        raise HTTPException(404, detail=BULK_JOB_NOT_FOUND)
+    return bulk_pipeline_job_service.job_read(job_id, None, progress, now=now)
+
+
+@router.post("/pipelines/bulk-jobs/{bulk_job_id}/cancel", response_model=BulkJobRead, status_code=200)
+async def cancel_bulk_job(
+    bulk_job_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+    _: Any = Depends(require_role(UserRole.QA_ENGINEER)),
+):
+    """Cancel a bulk job: its tasks that have NOT started return at their first
+    line without creating a pipeline; running pipelines keep their own Stop.
+    Idempotent (an already-cancelled job answers 200 and records nothing new);
+    a finished job is a 409. One ``analysis.bulk_cancelled`` per project."""
+    job_id = str(bulk_job_id)
+    accessible = await get_accessible_project_ids(db, current_user)
+    is_admin = accessible is None
+    now = datetime.now(timezone.utc)
+    job = await bulk_pipeline_job_service.read_job(job_id)
+    if job is None or (_job_owner(job) != current_user.id and not is_admin):
+        raise HTTPException(404, detail=BULK_JOB_NOT_FOUND)
+    progress = await bulk_pipeline_job_service.job_progress(
+        db, job_id, run_ids=job["run_ids"], requested_by=_job_owner(job), accessible=accessible,
+    )
+    current = bulk_pipeline_job_service.job_read(job_id, job, progress, now=now)
+    if current["state"] == "cancelled":
+        return current
+    if current["state"] == "finished":
+        raise HTTPException(409, detail=BULK_JOB_ALREADY_FINISHED)
+    cancelled = await bulk_pipeline_job_service.mark_cancelled(job_id, by=current_user.id, now=now)
+    if cancelled is None:
+        raise HTTPException(404, detail=BULK_JOB_NOT_FOUND)
+    # Attempt mode (this handler never commits): the ask is the fact recorded.
+    actor = ActorRef.from_user(current_user)
+    for project_id, queued in sorted(cancelled["queued_per_project"].items()):
+        await record_activity(
+            db,
+            project_id=project_id,
+            event_type="analysis.bulk_cancelled",
+            actor=actor,
+            entity_id=project_id,
+            context={"bulk_job_id": job_id, "workflow_type": cancelled["workflow_type"], "queued": queued},
+        )
+    return bulk_pipeline_job_service.job_read(job_id, cancelled, progress, now=now)
 
 
 @router.get("/pipelines/{pipeline_id}/stages", response_model=list[dict])
@@ -927,11 +1182,16 @@ async def get_pipeline_timeline(
     skipped = sum(1 for s in stages if s.status == "skipped")
     pending = sum(1 for s in stages if s.status == "pending")
     progress = round(((completed + failed + skipped) / len(stages)) * 100, 1) if stages else 0.0
+    # W14 AGT-05 / AGT-08: which workflow ran and why, from the row already
+    # loaded (no statement). None on a legacy row that never recorded them.
+    run_metadata = pipeline.execution_metadata if isinstance(pipeline.execution_metadata, dict) else {}
 
     return {
         "schema_version": 2,
         "pipeline_run_id": str(pipeline_id),
         "workflow_type": pipeline.workflow_type,
+        "workflow_ref": run_metadata.get("workflow_ref"),
+        "workflow_source": run_metadata.get("workflow_default_source"),
         "status": pipeline.status,
         # E7.5: the four-value projection clients should branch on.
         "public_status": public_status(pipeline.status),

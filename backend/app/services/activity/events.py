@@ -238,6 +238,10 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     # NOT tidily succeed.
     _spec("analysis.retried", "analysis", "run", "AI analysis for {entity_label} was retried ({mode})", "attempt"),
     _spec("analysis.cancelled", "analysis", "run", "AI analysis for {entity_label} was cancelled", "attempt"),
+    # W14 AGT-12: a tracked bulk job was cancelled (one row per project of the
+    # job). An attempt write, like the bulk trigger it cancels: the cancel
+    # route never commits, and the ask is the fact worth recording.
+    _spec("analysis.bulk_cancelled", "analysis", "project", "Bulk AI analysis {bulk_job_id} was cancelled", "attempt"),
     # E1.2: one agent invoked through the public API. An attempt write, like a
     # trigger: the request is worth recording whatever the worker does next.
     _spec("agent.invoked", "analysis", "run", "Agent {agent_id} was invoked on {entity_label}", "attempt"),
@@ -319,6 +323,10 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("workflow.evaluated", "configuration", "workflow", "Workflow {entity_label} version {version} evaluation {verdict} at {coverage} coverage", "outcome", _HUMAN_OR_KEY),
     _spec("workflow.published", "configuration", "workflow", "Workflow {entity_label} version {version} was published", "outcome", _HUMAN_OR_KEY),
     _spec("workflow.forked", "configuration", "workflow", "Workflow {entity_label} was forked from {source}", "outcome", _HUMAN_OR_KEY),
+    # W14 AGT-08: a project's default workflow per base. Outcome writes staged
+    # on the request session and committed by the defaults routes.
+    _spec("workflow.default_set", "configuration", "workflow", "Workflow {entity_label} is the {base} default for new runs", "outcome", _HUMAN_OR_KEY),
+    _spec("workflow.default_cleared", "configuration", "workflow", "The {base} default workflow {entity_label} was cleared", "outcome", _HUMAN_OR_KEY),
     _spec("ai_eval.tier_compared", "configuration", "project", "Agent {entity_label} tier comparison {verdict} with {sample_count} paired samples", "outcome", _HUMAN_OR_KEY),
     _spec("ai_eval.reviewer_evaluated", "configuration", "project", "Agent {entity_label} reviewer evaluation {verdict} with {sample_count} semantic samples", "outcome", _HUMAN_OR_KEY),
     _spec("attribution_rule.created", "configuration", "attribution_rule", "Attribution rule {entity_label} was created"),

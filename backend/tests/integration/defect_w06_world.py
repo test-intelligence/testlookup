@@ -106,7 +106,9 @@ async def defect_world() -> AsyncIterator[SimpleNamespace]:
     patch.setattr("app.db.redis_client.get_redis", lambda: redis)
     patch.setattr("app.db.postgres.AsyncSessionLocal", sessions, raising=False)
 
-    tag = uuid.uuid4().hex[:10]
+    # Starts with a letter: ten hex chars are all digits ~1% of the time, and the PDF / log
+    # redaction then masks them as a phone number ([REDACTED_PHONE]), failing a name-in-text check.
+    tag = "t" + uuid.uuid4().hex[:9]
     P, Q, D = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     admin, member, outsider = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     R, R2, RQ = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()

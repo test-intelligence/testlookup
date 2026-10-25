@@ -19,6 +19,15 @@ logger = structlog.get_logger("agents.ingestion")
 _FAILED_STATUSES = {TestStatus.FAILED, TestStatus.BROKEN}
 
 
+def _failure_subset(state: dict) -> set[str] | None:
+    """The run configuration's failure ids (W14 AGT-07), or None for every failure."""
+    overrides = state.get("run_overrides")
+    failure_ids = overrides.get("failure_ids") if isinstance(overrides, dict) else None
+    if not isinstance(failure_ids, list) or not failure_ids:
+        return None
+    return {str(failure_id) for failure_id in failure_ids}
+
+
 class IngestionAgent(BaseAgent):
     stage_name = "ingestion"
 
@@ -33,28 +42,57 @@ class IngestionAgent(BaseAgent):
         )
 
         try:
-            run_data, failed_ids = await self._extract_run_data(test_run_id)
+            run_data, all_failed_ids = await self._extract_run_data(test_run_id)
+            # W14 AGT-07: a deep run configuration may name a subset of the
+            # run's failing results; every later stage sees only those (order
+            # kept). The fingerprint below still covers the FULL list: it
+            # fingerprints the run, not the selection.
+            subset = _failure_subset(state)
+            failed_ids = (
+                [failed_id for failed_id in all_failed_ids if failed_id in subset]
+                if subset is not None
+                else all_failed_ids
+            )
             # The authoritative read is what every downstream route keys off:
             # zero failures skips analysis entirely, and the failure count sets
             # the fan-out width. Record what was actually seen.
-            await self.log_decision(
-                pipeline_run_id,
-                decision_point="ingestion_scope",
-                chosen="validated",
-                rationale=(
-                    f"{run_data['total_tests']} test(s) persisted, "
-                    f"{len(failed_ids)} failed/broken"
-                ),
-                context={
-                    "total_tests": run_data["total_tests"],
-                    "failed_count": len(failed_ids),
-                    "run_status": run_data.get("status"),
-                },
-            )
-            await self.mark_stage_done(
-                pipeline_run_id,
-                result_data={"total_tests": run_data["total_tests"], "failed_count": len(failed_ids)},
-            )
+            if subset is not None:
+                await self.log_decision(
+                    pipeline_run_id,
+                    decision_point="ingestion_scope",
+                    chosen="subset",
+                    rationale=(
+                        f"{run_data['total_tests']} test(s) persisted, "
+                        f"{len(all_failed_ids)} failed/broken; the run configuration "
+                        f"selects {len(failed_ids)} of them"
+                    ),
+                    alternatives=["validated"],
+                    context={
+                        "total_tests": run_data["total_tests"],
+                        "failed_count": len(failed_ids),
+                        "failed_count_full": len(all_failed_ids),
+                        "run_status": run_data.get("status"),
+                    },
+                )
+            else:
+                await self.log_decision(
+                    pipeline_run_id,
+                    decision_point="ingestion_scope",
+                    chosen="validated",
+                    rationale=(
+                        f"{run_data['total_tests']} test(s) persisted, "
+                        f"{len(failed_ids)} failed/broken"
+                    ),
+                    context={
+                        "total_tests": run_data["total_tests"],
+                        "failed_count": len(failed_ids),
+                        "run_status": run_data.get("status"),
+                    },
+                )
+            result_data = {"total_tests": run_data["total_tests"], "failed_count": len(failed_ids)}
+            if subset is not None:
+                result_data["failed_count_full"] = len(all_failed_ids)
+            await self.mark_stage_done(pipeline_run_id, result_data=result_data)
             await self.broadcast_progress(
                 state["project_id"],
                 {
@@ -72,7 +110,7 @@ class IngestionAgent(BaseAgent):
                 "test_run_data": run_data,
                 "branch": run_data.get("branch"),
                 "failed_test_ids": failed_ids,
-                "run_input_fingerprint": run_input_fingerprint(run_data, failed_ids),
+                "run_input_fingerprint": run_input_fingerprint(run_data, all_failed_ids),
                 "total_tests": run_data["total_tests"],
                 "pass_rate": run_data.get("pass_rate") or 0.0,
                 "ingestion_enriched": True,

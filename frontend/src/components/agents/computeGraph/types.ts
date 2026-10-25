@@ -58,6 +58,20 @@ export interface ComputeStage {
   logs?: string | null
 }
 
+/**
+ * W14 AGT-06: a stage of the GENERIC compute graph (any pipeline topology).
+ * The same card as `ComputeStage`, but its id is any string (one node per
+ * `(source pipeline, stage_name)`), and the pill / a short note can say what
+ * the five-value `StageStatus` cannot (`cancelled`, `partial`).
+ */
+export interface GenericComputeStage extends Omit<ComputeStage, 'id'> {
+  id: string
+  /** The pill's text when it differs from the status (`cancelled`). */
+  pill?: string | null
+  /** A short qualifier shown after the description (`partial`). */
+  note?: string | null
+}
+
 export type DecisionId = 'route_analysis_mode'
 
 export interface ComputeDecision {
@@ -92,3 +106,6 @@ export interface ComputeEdge {
 
 /** Currently-selected canvas element — a stage id or a decision id. */
 export type SelectedId = ComputeStageId | DecisionId | null
+
+/** W14 AGT-06: a selection on either canvas (the generic one's ids are any string). */
+export type AnySelectedId = SelectedId | string
