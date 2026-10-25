@@ -404,7 +404,7 @@ describe('InvestigationKpiStrip — glyphs from real numbers only', () => {
       preScanClusters: 0, preScanAvgConfidence: 0, proposedClusters: [], severityCounts: { p0: 0, p1: 0, p2: 0, p3: 0 },
     })} />)
     const likely = kpiCell('Likely clusters')
-    expect(likely).toHaveTextContent('last analysis · avg conf —')
+    expect(likely).toHaveTextContent('last analysis · conf —')
     expect(likely).not.toHaveTextContent('0.00')
     // "Avg cluster confidence" says "—" in the neutral tone: not measured is not a bad reading.
     const value = within(kpiCell('Avg cluster confidence')).getByText('—')
@@ -645,7 +645,7 @@ describe('DeepInvestigationPage — only what it really does', () => {
     expect(avg).toHaveTextContent('target ≥ 0.7 · 1 below')
     expect(within(avg).getByRole('meter')).toHaveAttribute('aria-valuetext', '0.74 of 1.00; target 0.70')
     const likely = kpi('Likely clusters')
-    expect(likely).toHaveTextContent('last analysis · avg conf 0.74')
+    expect(likely).toHaveTextContent('last analysis · conf 0.74')
     expect(likely).toHaveTextContent('1 P0 · 1 P2 · 1 unscored')
   })
 
@@ -657,7 +657,7 @@ describe('DeepInvestigationPage — only what it really does', () => {
     expect(avg).not.toHaveTextContent(/\d\.\d{2}/)
     expect(within(avg).getByText('—')).toHaveStyle({ color: 'var(--color-text)' })
     expect(within(avg).queryByRole('meter')).toBeNull()
-    expect(kpi('Likely clusters')).toHaveTextContent('last analysis · avg conf —')
+    expect(kpi('Likely clusters')).toHaveTextContent('last analysis · conf —')
     // W14 AGT-07: the Pre-scan facet is the server's error-signature pre-scan, not the clusters relabelled.
     expect(screen.getByRole('region', { name: 'Investigation verdict' })).toHaveTextContent(/Pre-scan3 groupsby signature/)
     vi.mocked(usePreScan).mockReturnValue(idleSwr())

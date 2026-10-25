@@ -8,7 +8,7 @@
  * changed cell is marked (`data-changed`, the info ink); an unknown checksum
  * is `unknown`, never "changed"; a missing release verdict is `—`.
  */
-import { useId, useState } from 'react'
+import { Fragment, useId, useState } from 'react'
 import { Link } from 'react-router-dom'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { Table, Td, Th, Tr } from '@/components/ui/Table'
@@ -53,6 +53,17 @@ function SideFacts({ title, side }: { title: string; side: SideLike }) {
       </Link>
     </div>
   )
+}
+
+/** `anomaly_detection` → `anomaly_` `<wbr>` `detection`: a break opportunity after each underscore only. */
+function breakableStageName(name: string) {
+  const parts = name.split('_')
+  return parts.map((part, i) => (
+    <Fragment key={i}>
+      {part}
+      {i < parts.length - 1 && <>_<wbr /></>}
+    </Fragment>
+  ))
 }
 
 function Cell({ row, field }: { row: CompareRowLike; field: (typeof COMPARE_COLUMNS)[number]['field'] }) {
@@ -124,10 +135,11 @@ export default function PipelineCompareView<P extends ComparePipelineLike>({
             <tbody>
               {compare.stages.map((row, index) => (
                 <Tr key={`${row.stage_name}-${index}`} interactive={false} data-compare-row={row.stage_name}>
-                  {/* A stage name has no spaces (cluster_investigation_dispatch): let it wrap
-                      anywhere, or it widens the column and pushes Output off the frame at 1280. */}
-                  <Td className="min-w-0 max-w-[11rem] [overflow-wrap:anywhere] font-mono text-xs">
-                    {row.stage_name}
+                  {/* A stage name has no spaces (cluster_investigation_dispatch): it may break only
+                      after an underscore, so the column stays narrow enough for Output to fit at
+                      1280 without cutting a word (breaking anywhere read "anoma / ly_de" on DejaVu). */}
+                  <Td className="min-w-0 font-mono text-xs">
+                    {breakableStageName(row.stage_name)}
                     {!row.a && <span className="block font-sans text-2xs text-[var(--color-text-muted)]">{COMPARE_NOT_IN_PIPELINE}</span>}
                     {!row.b && <span className="block font-sans text-2xs text-[var(--color-text-muted)]">not in the compared pipeline</span>}
                   </Td>

@@ -1037,7 +1037,8 @@ export function InvestigationKpiStrip({ model }: { model: DeepModel }) {
             hint="Likely clusters"
             metric={{ value: model.preScanClusters }}
             // W14 AGT-07: these are the LAST ANALYSIS's clusters; "pre-scan" now names the real pre-scan.
-            caption={<>last analysis · avg conf {avgConfidence != null ? avgConfidence.toFixed(2) : '—'}</>}
+            // "conf", not "avg conf": on CI's DejaVu the longer caption cut the number off the tile.
+            caption={<>last analysis · conf {avgConfidence != null ? avgConfidence.toFixed(2) : '—'}</>}
             sparkline={severityGauge}
           />,
           <InputTile
@@ -1782,7 +1783,6 @@ export default function DeepInvestigationPage() {
             runNote={runNote && runNote.runId === runId ? runNote.text : null}
           />
           <ProposedClustersCard model={model} focusedRunId={runId ?? null} />
-          <DeepHistoryTable rows={model.pastInvestigations} projectId={budgetProjectId} onOpen={onOpenPastRun} />
         </div>
         <div className="flex flex-col gap-3.5 min-w-0">
           <EvidenceSourcesCard
@@ -1794,6 +1794,10 @@ export default function DeepInvestigationPage() {
           <ModelRoutingCard trail={decisionTrail} isLoading={!!runId && trailLoading} />
         </div>
       </div>
+
+      {/* Full width (W14): its eight columns cut Status off the 599 px left column at 1280 on
+          CI's DejaVu; the W29b dense padding stays. */}
+      <DeepHistoryTable rows={model.pastInvestigations} projectId={budgetProjectId} onOpen={onOpenPastRun} />
 
       <div className="fixed bottom-4 left-4 right-4 lg:hidden text-center text-xs text-[var(--color-text-muted)] bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded-md px-3 py-2 z-10">
         Wider screen needed for the full layout. Some sections may overflow on narrow viewports.

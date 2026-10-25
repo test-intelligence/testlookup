@@ -10,7 +10,7 @@
  *    `deep-history-table` (the Investigated runs mode).
  *
  * The one CHANGED region of the wave on these pages, `deep-kpis` (the Clusters tile's caption "pre-scan · avg conf" →
- * "last analysis · avg conf"), is shot by the UNEDITED `prod-deep-investigation.visual.spec.ts`. Each region is the
+ * "last analysis · conf"), is shot by the UNEDITED `prod-deep-investigation.visual.spec.ts`. Each region is the
  * in-page container itself, with focus blurred. Hermetic worlds: `production/fixtures-agent-ops-b.ts`. PNGs are
  * rendered by CI only (Linux); nobody regenerates them locally.
  */
