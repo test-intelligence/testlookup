@@ -77,15 +77,28 @@ def test_golden_match_stops_after_twenty_batches(monkeypatch):
     assert log.count("commit") == 20
 
 
-def test_expiry_commits_each_batch_until_one_deletes_nothing(monkeypatch):
-    from structlog.testing import capture_logs
+class _Log:
+    """Records ``_slog`` calls. ``structlog.testing.capture_logs`` cannot see a
+    logger another test already bound under a cached configuration."""
 
+    def __init__(self):
+        self.entries: list[dict] = []
+
+    def info(self, event, **kw):
+        self.entries.append({"event": event, "log_level": "info", **kw})
+
+    def error(self, event, **kw):
+        self.entries.append({"event": event, "log_level": "error", **kw})
+
+
+def test_expiry_commits_each_batch_until_one_deletes_nothing(monkeypatch):
     log = _patch(monkeypatch, "expire_unlabelled_batch", [1000, 400, 0], full=1000)
-    with capture_logs() as captured:
-        assert tasks.expire_unlabelled_shadow_pairs.run() == {"deleted": 1400, "batches": 3}
+    slog = _Log()
+    monkeypatch.setattr(tasks, "_slog", slog)
+    assert tasks.expire_unlabelled_shadow_pairs.run() == {"deleted": 1400, "batches": 3}
 
     assert log.count("commit") == 3
-    assert {"event": "shadow_pairs_expired", "deleted": 1400, "batches": 3, "log_level": "info"} in captured
+    assert {"event": "shadow_pairs_expired", "deleted": 1400, "batches": 3, "log_level": "info"} in slog.entries
 
 
 def test_expiry_stops_after_one_hundred_batches(monkeypatch):

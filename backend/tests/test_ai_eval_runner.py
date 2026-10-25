@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
+import types
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -376,7 +378,11 @@ async def test_the_duplicate_item_never_touches_chroma(monkeypatch):
     def no_chroma(*_a, **_k):
         raise AssertionError("the replay reached ChromaDB")
 
-    monkeypatch.setattr("app.db.chroma.get_chroma_client", no_chroma)
+    # A stand-in module, not a patch of the real one: importing app.db.chroma needs the chromadb package, which a
+    # machine without it lacks; the dedup path imports it lazily, so any import of it lands here.
+    chroma = types.ModuleType("app.db.chroma")
+    chroma.get_chroma_client = no_chroma
+    monkeypatch.setitem(sys.modules, "app.db.chroma", chroma)
     outcomes = [await _replay("duplicate_detection", item, i) for i, item in enumerate(_golden("duplicate_detection"))]
 
     assert all(o.output["detector_path"] == "title_ratio" for o in outcomes)

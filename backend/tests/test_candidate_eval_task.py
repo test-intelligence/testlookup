@@ -165,18 +165,28 @@ def test_a_run_reconciled_mid_flight_stops_writing(monkeypatch):
     assert "finish" not in log
 
 
-def test_a_run_level_exception_fails_the_run_with_the_modules_handler_shape(monkeypatch):
-    from structlog.testing import capture_logs
+class _Log:
+    """Records ``_slog`` calls. ``structlog.testing.capture_logs`` cannot see a
+    logger another test already bound under a cached configuration."""
 
+    def __init__(self):
+        self.entries: list[dict] = []
+
+    def error(self, event, **kw):
+        self.entries.append({"event": event, "log_level": "error", **kw})
+
+
+def test_a_run_level_exception_fails_the_run_with_the_modules_handler_shape(monkeypatch):
     log = _patch(monkeypatch, plan=ConnectionRefusedError(111, "Connect call failed"))
-    with capture_logs() as captured:
-        exc = tasks.run_candidate_evaluation.apply(kwargs={"run_id": str(RUN)}).result
+    slog = _Log()
+    monkeypatch.setattr(tasks, "_slog", slog)
+    exc = tasks.run_candidate_evaluation.apply(kwargs={"run_id": str(RUN)}).result
 
     assert isinstance(exc, RuntimeError)
     assert str(exc) == "ConnectionRefusedError: candidate evaluation failed"
     assert exc.__suppress_context__ is True  # ``from None`` ran: the original trace stays private
     assert ("fail", "run_error") in log
-    errors = [e for e in captured if e["event"] == "candidate_evaluation_failed"]
+    errors = [e for e in slog.entries if e["event"] == "candidate_evaluation_failed"]
     assert errors and errors[0]["error_type"] == "ConnectionRefusedError" and errors[0]["log_level"] == "error"
 
 

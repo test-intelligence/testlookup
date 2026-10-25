@@ -163,6 +163,16 @@ KNOWN_LOCAL_FAILURES: dict[str, str] = {
     # real classify_test -> create_react_agent path behind BudgetedLLM with a
     # fake chat model; it passes under the repo-root .venv311 (CI's pin).
     "tests/test_ai_eval_runner.py::test_llm_tier_replays_through_the_budgeted_wrapper": _LANGCHAIN,
+    # W16 AGT-13: the byte-for-byte pin of the summary tier comparison (no live
+    # pairs) was hashed under Python 3.11 (CI, the images, .venv311 — it passes
+    # there). The hook's Python 3.12 sums floats with compensation, so the
+    # unchanged cost_delta_usd mean reads -0.01 instead of
+    # -0.010000000000000002 and the hash differs; the manifest checksum agrees.
+    "tests/services/test_tier_comparison_service.py::"
+    "test_no_labelled_pairs_reproduces_todays_answer_byte_for_byte": (
+        "Python 3.12's compensated float sum() changes the last digit of a mean; "
+        "the pin is CI's Python 3.11 answer"
+    ),
     # The ReAct triage regression tests (2026-10-09) drive create_react_agent
     # for real; they pass under the repo-root .venv311 (langchain 0.3.30, CI's
     # pin). The file's adapter and Runnable tests need no agent and stay
