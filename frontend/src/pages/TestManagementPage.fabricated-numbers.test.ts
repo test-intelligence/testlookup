@@ -75,11 +75,13 @@ describe('TestManagementPage renders no fabricated numbers', () => {
     expect(code).not.toMatch(/uncoveredReqs|untestedBranches|defectsWithoutRegression/)
   })
 
-  it('discloses when the library-health rates cover only a sample', () => {
-    // The 200-row roll and the server total still coexist -- that is fine, as
-    // long as the page says which one the percentages came from.
-    expect(code).toMatch(/describeStatBasis\(/)
-    expect(code).toMatch(/statBasis/)
+  // W13 TCL-03 (deliberate rewrite): there is no sample any more. The library
+  // health is the server's, over the whole library (`useLibraryHealth`), so the
+  // 200-row roll and the note that disclosed it are both gone.
+  it('takes the library-health numbers from the server: no 200-row sample, no sample note', () => {
+    expect(code).not.toMatch(/useTestCases\(\{[^}]*size:\s*200\b/)
+    expect(code).not.toMatch(/describeStatBasis\(/)
+    expect(code).toMatch(/useLibraryHealth\(/)
   })
 
   it('still reports the automation split, which IS measured', () => {

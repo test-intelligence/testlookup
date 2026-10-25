@@ -31,6 +31,8 @@ import { useAuthStore, type User } from '@/store/authStore'
 import type { ManagedTestCase, PaginatedResponse } from '@/types/test-management'
 import { TestCasesTab } from './TestManagementPage'
 
+// W13 (deliberate set-up): the page's new reads (library health, the owner list, saved views) stubbed idle.
+vi.mock('@/hooks/useTestLibrary', async () => (await import('@/test/testLibraryMocks')).testLibraryHookMocks())
 vi.mock('@/hooks/useTestManagement', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/hooks/useTestManagement')>(),
   useAuditLog: vi.fn(),

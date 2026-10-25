@@ -20,6 +20,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useAuditLog, useTestCases } from '@/hooks/useTestManagement'
+import { useLibraryHealth } from '@/hooks/useTestLibrary'
 import { testManagementService } from '@/services/testManagementService'
 import { useAuthStore } from '@/store/authStore'
 import type { ManagedTestCase, PaginatedResponse } from '@/types/test-management'
@@ -30,6 +31,8 @@ import { TestCasesTab } from './TestManagementPage'
 beforeEach(() => { useAuthStore.setState({ user: { id: 'u-lead', role: 'QA_LEAD' } as never }) })
 afterEach(() => { useAuthStore.setState({ user: null }) })
 
+// W13 (deliberate set-up): the page's new reads (library health, the owner list, saved views) stubbed idle.
+vi.mock('@/hooks/useTestLibrary', async () => (await import('@/test/testLibraryMocks')).testLibraryHookMocks())
 vi.mock('@/hooks/useTestManagement', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/hooks/useTestManagement')>(),
   useAuditLog: vi.fn(),
@@ -85,6 +88,10 @@ describe('/test-management Cases: forms and sections in the page (W27b)', () => 
       data: page, error: undefined, isLoading: false, isValidating: false,
       mutate: params?.size === 200 ? mutateHealth : mutateCases,
     } as unknown as ReturnType<typeof useTestCases>))
+    // W13 (deliberate set-up): the health read is `useLibraryHealth` now (the 200-row roll is gone).
+    vi.mocked(useLibraryHealth).mockReturnValue(
+      { data: undefined, error: undefined, isLoading: false, mutate: mutateHealth } as unknown as ReturnType<typeof useLibraryHealth>,
+    )
   })
   afterEach(() => {
     vi.restoreAllMocks()
