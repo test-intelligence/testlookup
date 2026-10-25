@@ -58,6 +58,7 @@ vi.mock('@/hooks/useRuns', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/hooks/useRuns')>()),
   useRunStepFlips: () => ({ data: undefined, isLoading: false }),
 }))
+vi.mock('@/hooks/useAgentActions', async () => (await import('@/test/agentActionMocks')).agentActionHookMocks())
 vi.mock('@/hooks/useDecisionTrail', () => ({
   useDecisionTrail: () => ({ data: undefined, error: undefined, isLoading: false }),
 }))

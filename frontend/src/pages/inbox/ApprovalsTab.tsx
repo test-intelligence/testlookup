@@ -10,6 +10,9 @@
  *     (`DefectApprovals`). The list is QA_LEAD-only on the server, so for
  *     anyone else the chip and the section are absent and the queue is never
  *     requested (no 403 toast on every Inbox visit).
+ *   - Agent actions (W15 AGT-01, QA leads only, exactly like Defects): what
+ *     an agent proposed, waiting for a decision, and what was recently decided
+ *     (`AgentActionApprovals`).
  *
  * A source filter (`?source=`) narrows it to one of them; "All" stacks them,
  * each under its heading with its count. Every queue belongs to one
@@ -27,14 +30,17 @@ import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { ReviewsBody } from '../ReviewsPage'
 import { QuarantineBody } from '../QuarantinePage'
 import CaseApprovals from './CaseApprovals'
+import AgentActionApprovals from './AgentActionApprovals'
 import ChipFilter, { type ChipOption } from './ChipFilter'
 import DefectApprovals from './DefectApprovals'
 import { useApprovalCounts } from './approvalQueues'
 
-const APPROVAL_SOURCES = ['all', 'reports', 'quarantine', 'cases', 'defects'] as const
+const APPROVAL_SOURCES = ['all', 'reports', 'quarantine', 'cases', 'defects', 'actions'] as const
 type ApprovalSource = (typeof APPROVAL_SOURCES)[number]
-/** What anyone but a QA lead may pick: `?source=defects` then reads as "All". */
-const NON_LEAD_SOURCES: readonly ApprovalSource[] = APPROVAL_SOURCES.filter((s) => s !== 'defects')
+/** The sources only a QA lead reads (their lists are QA_LEAD on the server). */
+const LEAD_ONLY_SOURCES: readonly ApprovalSource[] = ['defects', 'actions']
+/** What anyone but a QA lead may pick: `?source=defects` / `?source=actions` then read as "All". */
+const NON_LEAD_SOURCES: readonly ApprovalSource[] = APPROVAL_SOURCES.filter((s) => !LEAD_ONLY_SOURCES.includes(s))
 
 export default function ApprovalsTab() {
   const activeProjectId = useProjectStore((s) => s.activeProjectId)
@@ -59,7 +65,12 @@ function Approvals({ projectId }: { projectId: string }) {
     { id: 'reports', label: 'AI reports', count: counts.reports },
     { id: 'quarantine', label: 'Quarantine proposals', count: counts.quarantine },
     { id: 'cases', label: 'Test cases', count: counts.cases },
-    ...(isQaLead ? [{ id: 'defects' as const, label: 'Defects', count: counts.defects }] : []),
+    ...(isQaLead
+      ? [
+          { id: 'defects' as const, label: 'Defects', count: counts.defects },
+          { id: 'actions' as const, label: 'Agent actions', count: counts.actions },
+        ]
+      : []),
   ]
 
   return (
@@ -111,6 +122,21 @@ function Approvals({ projectId }: { projectId: string }) {
             }
           >
             <DefectApprovals projectId={projectId} />
+          </ApprovalSection>
+        )}
+        {isQaLead && show('actions') && (
+          <ApprovalSection
+            id="actions"
+            title="Agent actions"
+            count={counts.actions}
+            heading={source === 'all'}
+            more={
+              <ScopedLink to="/settings/ai-agents" className="text-xs text-[var(--color-accent)] hover:underline">
+                Open AI agents settings
+              </ScopedLink>
+            }
+          >
+            <AgentActionApprovals projectId={projectId} />
           </ApprovalSection>
         )}
       </div>

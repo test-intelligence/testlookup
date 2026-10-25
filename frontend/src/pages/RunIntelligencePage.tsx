@@ -56,7 +56,7 @@ import MetricCard, { type MetricTone } from '@/components/ui/MetricCard'
 import { Panel } from '@/components/ui/PanelHeader'
 import AISuggestion from '@/components/ai/AISuggestion'
 import DecisionTrailDrawer from '@/components/ai/DecisionTrailDrawer'
-import DecisionIntelligencePanel from '@/components/ai/DecisionIntelligencePanel'
+import DecisionIntelligencePanel, { type ProposedActionStatuses } from '@/components/ai/DecisionIntelligencePanel'
 import { deriveDecisionTrustState } from '@/components/ai/decisionTrustState'
 import DefectPromotionModal from '@/components/ai/DefectPromotionModal'
 import RunStepFlipCard from '@/components/runs/RunStepFlipCard'
@@ -71,6 +71,7 @@ import {
   selectedDigestVersion,
 } from '@/components/ai/aiHistoryUrl'
 import { useAIHistory } from '@/hooks/useAIHistory'
+import { useRunAgentActions } from '@/hooks/useAgentActions'
 import { useDecisionReportVersions, useRunIntelligence } from '@/hooks/useRunIntelligence'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useReleaseCouncil } from '@/hooks/useReleaseCouncil'
@@ -1667,10 +1668,23 @@ export function RunDecisionReport({ runId }: { runId: string }) {
   // W03 AIH-04, "one picker drives both": choosing a report version also moves
   // `?ai_version=` to the AI version that published it (the Analysis tab's picker).
   const { data: aiHistory } = useAIHistory(runId)
+  // W15 AGT-01: each proposed action's ledger state (QA lead+ only — the hook keys nothing for anyone else, and a
+  // failed read leaves the map absent: no chip is not a status).
+  const { data: runActions } = useRunAgentActions(runId)
+  const actionStatuses = useMemo<ProposedActionStatuses | undefined>(
+    () =>
+      runActions
+        ? Object.fromEntries(
+            runActions.items.map((a) => [a.idempotency_key, { id: a.id, status: a.status, outcome: a.outcome, outcome_text: a.outcome_text }]),
+          )
+        : undefined,
+    [runActions],
+  )
   if (!intelligence) return null
   const summary = intelligence.structured_summary
   return (
     <DecisionIntelligencePanel
+      actionStatuses={actionStatuses}
       runId={runId}
       report={summary?.decision_intelligence}
       latestVerification={summary?.decision_report_verification}

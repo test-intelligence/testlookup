@@ -23,6 +23,7 @@ vi.mock('@/store/projectStore', () => ({
 vi.mock('@/services/agentGovernanceService', () => ({
   agentGovernanceService: {
     updatePolicy: vi.fn(),
+    updateInvestigatorAct: vi.fn(),
     listPolicies: vi.fn(),
     listAgentRuns: vi.fn(),
   },
@@ -68,7 +69,7 @@ describe('AIAgentsPage', () => {
     vi.clearAllMocks()
   })
 
-  it('renders the Investigator card with trust-ladder modes; act is disabled with the later-wave tooltip', async () => {
+  it('renders the Investigator card with trust-ladder modes; act is enabled and choosing it shows the action types', async () => {
     await mockPolicies()
     render(<AIAgentsPage />)
 
@@ -76,9 +77,13 @@ describe('AIAgentsPage', () => {
     expect(screen.getByRole('radio', { name: 'Shadow' })).toHaveAttribute('aria-checked', 'true')
     expect(screen.getByRole('radio', { name: 'Suggest' })).toHaveAttribute('aria-checked', 'false')
 
+    // W15 AGT-03 (D16): Act is enabled, with no "later wave" title; the fieldset renders only in Act.
     const act = screen.getByRole('radio', { name: 'Act' })
-    expect(act).toBeDisabled()
-    expect(act).toHaveAttribute('title', 'Gated-act mode is coming in a later wave')
+    expect(act).toBeEnabled()
+    expect(act).not.toHaveAttribute('title')
+    expect(screen.queryByRole('group', { name: 'Action types Act may run' })).toBeNull()
+    fireEvent.click(act)
+    expect(screen.getByRole('group', { name: 'Action types Act may run' })).toBeInTheDocument()
 
     // Promotion status line.
     expect(screen.getByText(/7/)).toBeInTheDocument()
