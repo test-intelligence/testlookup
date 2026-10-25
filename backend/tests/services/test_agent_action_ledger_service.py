@@ -206,32 +206,21 @@ async def test_approved_action_gets_one_outbox_and_claim_is_leased():
 
 @pytest.mark.asyncio
 async def test_executor_fails_closed_without_registered_external_adapter(monkeypatch):
-    import app.services.agent_action_ledger_service as service
+    # W15 rewrite (contract §0.22 / §6.5): the executor now runs registered
+    # adapters, so the fail-closed case is a type with NO adapter -- on the
+    # executor test's multi-session world (one MagicMock result cannot answer
+    # the new statements).
+    from tests.test_agent_action_executor import Harness, _row as executor_row
 
-    action = _row(status="approved", project_id=uuid.uuid4())
-    result = MagicMock()
-    result.scalar_one_or_none.return_value = action
-    db = MagicMock()
-    db.execute = AsyncMock(return_value=result)
-    db.commit = AsyncMock()
-
-    class _Session:
-        async def __aenter__(self):
-            return db
-
-        async def __aexit__(self, *_args):
-            return False
-
-    monkeypatch.setattr(service, "AsyncSessionLocal", lambda: _Session())
-    outcome = await service.execute_agent_action(
-        project_id=action.project_id,
-        action_id=action.id,
-    )
+    harness = Harness(monkeypatch)
+    action = executor_row(action_type="jira_ticket_creation", payload={"summary": "file it"})
+    world = harness.world(action, real_adapter=True)
+    outcome = await harness.run(world)
     assert outcome["status"] == "failed"
     assert outcome["reason"] == "action_executor_not_configured"
     assert action.status == "failed"
     assert action.error_code == "action_executor_not_configured"
-    db.commit.assert_awaited_once()
+    assert len(world.commits) == 1
 
 
 @pytest.mark.asyncio
@@ -290,53 +279,55 @@ def test_action_relay_is_scheduled_and_executor_is_registered():
 
 
 # -- E8.6: a mutating call needs an accepted review of the run that proposed it --
+#
+# W15 rewrite (contract §0.22 / §6.5): these five ran the executor over ONE
+# MagicMock result, which cannot answer the executor's new statements, and
+# three of their expectations change by design -- the legacy
+# ``decision_report_action`` is now ACKNOWLEDGEABLE (an executed no-effect
+# action) and the refusal codes are specific (``review_not_accepted``,
+# ``act_mode_required``, ``proposer_not_permitted``) instead of the old
+# blanket ``policy_denied``. They run on the executor test's world now.
 
 
-def _executor_harness(monkeypatch, action, review_row):
-    import app.services.agent_action_ledger_service as service
-
-    action_result = MagicMock()
-    action_result.scalar_one_or_none.return_value = action
-    review_result = MagicMock()
-    review_result.scalar_one_or_none.return_value = review_row
-    db = MagicMock()
-    db.execute = AsyncMock(side_effect=[action_result, review_result])
-    db.commit = AsyncMock()
-
-    class _Session:
-        async def __aenter__(self):
-            return db
-
-        async def __aexit__(self, *_args):
-            return False
-
-    monkeypatch.setattr(service, "AsyncSessionLocal", lambda: _Session())
-    resolve = AsyncMock(
-        return_value=MagicMock(config=MagicMock(mode="act"))
-    )
-    monkeypatch.setattr(service, "resolve_for_project", resolve)
-    return service, db
+def _decision_payload(**overrides):
+    payload = {
+        "proposing_agent_id": "agent.decision_report.v1",
+        "action_id": "release.blocker.1",
+        "title": "Investigate",
+        "owner": "release_owner",
+        "rationale": "failure",
+        "evidence": [],
+        "risk": "unknown",
+        "required_permission": "release_review",
+    }
+    payload.update(overrides)
+    return payload
 
 
 @pytest.mark.asyncio
 async def test_executor_denies_an_action_whose_proposing_run_is_not_accepted(monkeypatch):
-    action = _row(status="approved", pipeline_run_id=uuid.uuid4())
-    service, db = _executor_harness(monkeypatch, action, review_row=None)
+    from tests.test_agent_action_executor import Harness, _row as executor_row
 
-    outcome = await service.execute_agent_action(project_id=action.project_id, action_id=action.id)
+    harness = Harness(monkeypatch)
+    action = executor_row(action_type="decision_report_action", payload=_decision_payload())
+    world = harness.world(action, review=None, real_adapter=True)
 
-    assert outcome == {"status": "failed", "action_id": str(action.id), "reason": "policy_denied"}
+    outcome = await harness.run(world)
+
+    assert outcome == {"status": "failed", "action_id": str(action.id), "reason": "review_not_accepted"}
     assert action.status == "failed"
-    assert action.error_code == "policy_denied"
-    db.commit.assert_awaited_once()
-    review_query = str(db.execute.await_args_list[1].args[0])
+    assert action.error_code == "review_not_accepted"
+    assert len(world.commits) == 1
+    review_stmt = next(
+        s for session in world.sessions for s in session.raw_statements if "FROM review_requests" in str(s)
+    )
+    review_query = str(review_stmt)
     assert "review_requests.pipeline_run_id" in review_query
     assert "review_requests.state" in review_query
     assert "review_requests.project_id" in review_query
     assert "review_requests.kind" in review_query
     assert "review_requests.subject_type" in review_query
     assert "review_requests.subject_id" in review_query
-    review_stmt = db.execute.await_args_list[1].args[0]
     params = set(review_stmt.compile().params.values())
     assert {
         "accepted",
@@ -349,70 +340,66 @@ async def test_executor_denies_an_action_whose_proposing_run_is_not_accepted(mon
 
 @pytest.mark.asyncio
 async def test_executor_proceeds_when_the_proposing_run_was_accepted(monkeypatch):
-    action = _row(
-        status="approved",
-        pipeline_run_id=uuid.uuid4(),
-        request_payload={"proposing_agent_id": "agent.decision_report.v1"},
-    )
-    service, _ = _executor_harness(monkeypatch, action, review_row=uuid.uuid4())
+    from tests.test_agent_action_executor import Harness, _row as executor_row
 
-    outcome = await service.execute_agent_action(project_id=action.project_id, action_id=action.id)
+    harness = Harness(monkeypatch)
+    action = executor_row(action_type="decision_report_action", payload=_decision_payload())
+    world = harness.world(action, real_adapter=True)
 
-    assert outcome["reason"] == "action_executor_not_configured"
+    outcome = await harness.run(world)
+
+    # The legacy type is the no-effect acknowledge now (D-5): executed, nothing changed.
+    assert outcome == {"status": "executed", "action_id": str(action.id)}
+    assert action.result_payload["acknowledged"] is True
 
 
 @pytest.mark.asyncio
 async def test_executor_denies_an_accepted_action_unless_proposer_mode_is_act(monkeypatch):
-    action = _row(
-        status="approved",
-        pipeline_run_id=uuid.uuid4(),
-        request_payload={"proposing_agent_id": "agent.decision_report.v1"},
-    )
-    service, db = _executor_harness(monkeypatch, action, review_row=uuid.uuid4())
-    service.resolve_for_project.return_value.config.mode = "suggest"
+    from tests.test_agent_action_executor import Harness, _act_config, _row as executor_row
 
-    outcome = await service.execute_agent_action(
-        project_id=action.project_id,
-        action_id=action.id,
-    )
+    harness = Harness(monkeypatch)
+    harness.config = _act_config(mode="suggest")
+    action = executor_row()                      # an effectful quarantine.apply proposal
+    world = harness.world(action)
 
-    assert outcome == {
-        "status": "failed",
-        "action_id": str(action.id),
-        "reason": "policy_denied",
-    }
+    outcome = await harness.run(world)
+
+    assert outcome == {"status": "failed", "action_id": str(action.id), "reason": "act_mode_required"}
     assert action.status == "failed"
-    assert action.error_code == "policy_denied"
-    service.resolve_for_project.assert_awaited_once_with(
-        db, action.project_id, "agent.decision_report.v1"
-    )
-    db.commit.assert_awaited_once()
+    assert action.error_code == "act_mode_required"
+    assert harness.resolved == [(action.project_id, "investigator")]
+    assert len(world.commits) == 1
+    assert world.adapter.calls == []
 
 
 @pytest.mark.asyncio
 async def test_executor_denies_pipeline_action_without_proposer_identity(monkeypatch):
-    action = _row(
-        status="approved",
-        pipeline_run_id=uuid.uuid4(),
-        request_payload={"title": "legacy proposal"},
-    )
-    service, _ = _executor_harness(monkeypatch, action, review_row=uuid.uuid4())
+    from tests.test_agent_action_executor import Harness, _quarantine_payload, _row as executor_row
 
-    outcome = await service.execute_agent_action(
-        project_id=action.project_id,
-        action_id=action.id,
-    )
+    harness = Harness(monkeypatch)
+    payload = _quarantine_payload()
+    payload.pop("proposing_agent_id")
+    action = executor_row(payload=payload)
+    world = harness.world(action)
 
-    assert outcome["reason"] == "policy_denied"
-    service.resolve_for_project.assert_not_awaited()
+    outcome = await harness.run(world)
+
+    assert outcome["reason"] == "proposer_not_permitted"
+    assert harness.resolved == [], "no config can be proven without an identity"
+    assert world.adapter.calls == []
 
 
 @pytest.mark.asyncio
 async def test_executor_needs_no_review_for_an_action_with_no_proposing_run(monkeypatch):
-    action = _row(status="approved", pipeline_run_id=None)
-    service, db = _executor_harness(monkeypatch, action, review_row=None)
+    from tests.test_agent_action_executor import Harness, _row as executor_row
 
-    outcome = await service.execute_agent_action(project_id=action.project_id, action_id=action.id)
+    harness = Harness(monkeypatch)
+    action = executor_row(action_type="decision_report_action", payload=_decision_payload(), pipeline=False)
+    world = harness.world(action, review=None, real_adapter=True)
 
-    assert outcome["reason"] == "action_executor_not_configured"
-    assert db.execute.await_count == 1, "no review lookup without a proposing run"
+    outcome = await harness.run(world)
+
+    assert outcome["status"] == "executed"
+    assert not any("FROM review_requests" in s for s in world.statements()), (
+        "no review lookup without a proposing run"
+    )

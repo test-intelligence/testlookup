@@ -1,5 +1,5 @@
 /**
- * Investigator cockpit (shadow mode).
+ * Investigator cockpit (shadow / suggest / act).
  *
  * Renders as an "Agent Investigation" section on the Deep Investigation page:
  *   - "Investigate this run" CTA (tooltip-disabled when no run in scope, the
@@ -9,9 +9,16 @@
  *     Environment / Known-flaky / Regression) with live status, confidence +
  *     basis chip (same calibrated/estimated pattern as AIAnalysisPanel), a
  *     summary line, and an expandable evidence list (url_path → internal link).
- *   - Verdict panel when complete — clearly AI-labeled, recommended actions as
- *     text only (no action buttons this slice), and an explicit "shadow mode —
- *     no actions were taken" note.
+ *   - Verdict panel when complete — clearly AI-labeled, the recommended actions
+ *     as text, and (W15 AGT-02) the verdict's typed **Proposed actions**: one
+ *     row per action with the state of its ledger row (the detail's
+ *     `proposals`: Waiting for approval / Executed / Rejected / Replaced …, or
+ *     "Shadow mode — not proposed"); for a QA lead a **Review** link into
+ *     Inbox › Approvals › Agent actions and a **Do it myself** — the existing
+ *     in-page Propose quarantine form under the row, or a link to the Run page
+ *     that already does the job. No modal; titles render as text. The mode
+ *     line says what the mode does: shadow took no action, suggest waits for
+ *     a person, act runs an approved proposal (audited, undoable).
  *   - Run controls: cancel while active; spend-vs-budget mini bars; a details
  *     footer with trigger, model, and prompt-registry versions.
  *   - Past investigations for the run (falling back to the project) that
@@ -20,7 +27,7 @@
  * Polling: useInvestigation refreshes every 2.5 s while the status is
  * queued/running/synthesizing and stops on terminal statuses.
  */
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState, type CSSProperties } from 'react'
 import { Link } from 'react-router-dom'
 import { isAxiosError } from 'axios'
 import {
@@ -32,7 +39,10 @@ import { clsx } from 'clsx'
 // US-15.1: the basis chip is shared trust chrome — this file used to carry a
 // third verbatim copy of the label/tooltip mapping.
 import { BasisChip } from '@/components/ai/AISuggestion'
+import ProposeQuarantineModal from '@/components/quarantine/ProposeQuarantineModal'
+import { useInlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import { useAgentPolicies } from '@/hooks/useAgentGovernance'
+import { useSlotCloser } from '@/hooks/useSlotCloser'
 import { useInvestigation, useInvestigations } from '@/hooks/useInvestigation'
 import { usePermissions } from '@/hooks/usePermissions'
 import { investigatorService } from '@/services/investigatorService'
@@ -44,6 +54,17 @@ import {
   type InvestigationSummary,
 } from '@/types/investigator'
 import { formatNumber, formatRunWhen } from '@/utils/formatters'
+import {
+  ACT_MODE_LINE,
+  DO_IT_MYSELF_LABEL,
+  PROPOSED_ACTIONS_HEADING,
+  REVIEW_HREF,
+  REVIEW_LABEL,
+  SUGGEST_MODE_LINE,
+  cockpitActionRows,
+  type CockpitActionRow,
+  type CockpitTone,
+} from './cockpitActionsModel'
 
 // ── Hypothesis metadata (fixed 5-card matrix) ────────────────────────────
 
@@ -219,9 +240,97 @@ function HypothesisCard({ id, hypothesis }: { id: HypothesisId; hypothesis: Inve
   )
 }
 
+// ── Proposed actions (W15 AGT-02) ────────────────────────────────────────
+
+const STATE_CHIP: Record<CockpitTone, CSSProperties> = {
+  info: { background: 'var(--ui-info-bg)', border: '1px solid var(--ui-info-bd)', color: 'var(--ui-info-ink)' },
+  success: { background: 'var(--ui-success-bg)', border: '1px solid var(--ui-success-bd)', color: 'var(--ui-success-ink)' },
+  warning: { background: 'var(--ui-warning-bg)', border: '1px solid var(--ui-warning-bd)', color: 'var(--ui-warning-ink)' },
+  muted: { background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-text-muted)' },
+}
+
+function ActionRowControls({ row, onDoItMyself }: { row: CockpitActionRow; onDoItMyself: () => void }) {
+  const manual = row.doItMyself
+  if (!row.canReview && !manual) return null
+  return (
+    <span className="ml-auto flex items-center gap-2 flex-shrink-0">
+      {row.canReview && (
+        <Link to={REVIEW_HREF} className="text-xs font-medium hover:underline whitespace-nowrap" style={{ color: 'var(--color-accent-ink)' }}>
+          {REVIEW_LABEL}
+        </Link>
+      )}
+      {manual?.kind === 'form' && (
+        <button type="button" onClick={onDoItMyself} className="btn-secondary btn-sm whitespace-nowrap">
+          {DO_IT_MYSELF_LABEL}
+        </button>
+      )}
+      {manual?.kind === 'link' && (
+        <Link to={manual.href} className="text-xs font-medium hover:underline whitespace-nowrap" style={{ color: 'var(--color-accent-ink)' }}>
+          {manual.label}
+        </Link>
+      )}
+    </span>
+  )
+}
+
+/** The verdict's typed actions, each with the state of its ledger row. */
+function ProposedActions({ detail, isQaLead }: { detail: InvestigationDetail; isQaLead: boolean }) {
+  // One Propose-quarantine form open at a time, under its own row.
+  const slot = useInlineSlot<string>()
+  const closeForm = useSlotCloser(slot)
+  const rows = cockpitActionRows(detail.verdict?.structured_actions, detail.proposals, {
+    mode: detail.mode, runId: detail.run_id, isQaLead,
+  })
+  if (!rows) return null
+  return (
+    <div className="mt-2" data-testid="cockpit-proposed-actions">
+      <div className="eyebrow">{PROPOSED_ACTIONS_HEADING}</div>
+      <ul className="m-0 mt-1 p-0 list-none flex flex-col gap-1">
+        {rows.map((row) => (
+          <Fragment key={row.key}>
+            <li
+              data-testid="cockpit-action-row"
+              data-action-type={row.action.action_type}
+              className="rounded-md border px-2.5 py-1.5 min-w-0"
+              style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-secondary)' }}
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-xs font-medium truncate min-w-0" style={{ color: 'var(--color-text)' }} title={row.action.title}>
+                  {row.action.title}
+                </span>
+                <span aria-hidden className="text-xs flex-shrink-0" style={{ color: 'var(--color-text-faint)' }}>{' — '}</span>
+                <span
+                  data-testid="cockpit-action-state"
+                  className="inline-flex items-center px-1.5 py-px rounded-full text-2xs font-semibold whitespace-nowrap flex-shrink-0"
+                  style={STATE_CHIP[row.state.tone]}
+                  title={row.state.title}
+                >
+                  {row.state.label}
+                </span>
+                <ActionRowControls row={row} onDoItMyself={() => slot.open(row.key)} />
+              </div>
+              <div className="text-2xs truncate mt-0.5" style={{ color: 'var(--color-text-muted)' }}>{row.target}</div>
+            </li>
+            {slot.openKey === row.key && row.doItMyself?.kind === 'form' && (
+              <li data-in-page-row="" className="list-none">
+                <ProposeQuarantineModal
+                  prefill={{ project_id: detail.project_id, ...row.doItMyself.prefill }}
+                  source="investigator-cockpit"
+                  slot={slot}
+                  onClose={() => closeForm(row.key)}
+                />
+              </li>
+            )}
+          </Fragment>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 // ── Verdict panel ────────────────────────────────────────────────────────
 
-function VerdictPanel({ detail }: { detail: InvestigationDetail }) {
+function VerdictPanel({ detail, isQaLead }: { detail: InvestigationDetail; isQaLead: boolean }) {
   const verdict = detail.verdict
   if (!verdict) return null
   const causeTitle =
@@ -270,9 +379,20 @@ function VerdictPanel({ detail }: { detail: InvestigationDetail }) {
           </ul>
         </div>
       )}
+      <ProposedActions detail={detail} isQaLead={isQaLead} />
       {detail.mode === 'shadow' && (
         <div className="text-[11px] mt-2 italic" style={{ color: 'var(--color-text-muted)' }}>
           Shadow mode — no actions were taken. The agent only recorded what it would do.
+        </div>
+      )}
+      {detail.mode === 'suggest' && (
+        <div className="text-2xs mt-2 italic" style={{ color: 'var(--color-text-muted)' }} data-testid="mode-line">
+          {SUGGEST_MODE_LINE}
+        </div>
+      )}
+      {detail.mode === 'act' && (
+        <div className="text-2xs mt-2 italic" style={{ color: 'var(--color-text-muted)' }} data-testid="mode-line">
+          {ACT_MODE_LINE}
         </div>
       )}
     </div>
@@ -340,7 +460,7 @@ function HistoryList({
 // ── Cockpit ──────────────────────────────────────────────────────────────
 
 export default function InvestigatorCockpit({ runId, projectId }: { runId: string | null; projectId: string | null }) {
-  const { isQaEngineer } = usePermissions()
+  const { isQaEngineer, isQaLead } = usePermissions()
   const { investigatorPolicy } = useAgentPolicies(projectId)
   const { data: listData, mutate: mutateList } = useInvestigations(projectId)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -503,7 +623,7 @@ export default function InvestigatorCockpit({ runId, projectId }: { runId: strin
             {/* Verdict */}
             {detail.status === 'completed' && detail.verdict && (
               <div className="mt-3">
-                <VerdictPanel detail={detail} />
+                <VerdictPanel detail={detail} isQaLead={Boolean(isQaLead)} />
               </div>
             )}
 

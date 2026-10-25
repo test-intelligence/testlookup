@@ -57,6 +57,8 @@ export interface AgentConfigDocument {
       }
       shadow_runs_completed: number
       promotion_note: string | null
+      /** W15 AGT-03: the action types Act may run (opt-in each); absent on an old server = none. */
+      act?: { allowed_action_types: string[] }
     } | null
     fixer: {
       runner: FixerRunner

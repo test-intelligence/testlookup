@@ -208,6 +208,16 @@ Only a fork of the same project can be its default, and only for its own base: a
 
 Two further agents can act on a project's failures beyond the analysis pipeline: the **Investigator** (reasons about clusters of failures) and the **Fixer** (proposes validated fixes for flaky tests as draft pull requests). Their policies, autonomy levels and budgets are per project under **Admin → AI → AI agents**, and what they did is under **Agent activity**; see [Settings and administration](/docs/administration#ai).
 
+### The trust ladder in practice
+
+Each agent climbs the same ladder per project, and only a QA lead moves it:
+
+- **Shadow** (the default) — the Investigator reasons and records the actions it *would* take. Nothing is proposed and nothing changes.
+- **Suggest** — the Investigator turns its recommendation into typed proposals: quarantine a known-flaky offender, reassign a newly failing test to its suite owner, promote an internal defect for a concentrated failure cluster. They wait in **Inbox › Approvals › Agent actions**, where a QA lead approves or rejects each one (a rejection needs a reason), or does the job by hand. Nothing executes in Suggest. A newer investigation replaces the older pending proposals for the same target.
+- **Act** — an approved proposal runs, but only for the action types a QA lead ticked under the Investigator's **Act** card. There are three, all internal and reversible: **Quarantine flaky offenders** (needs quarantine turned on for the project), **Reassign failures to the suite owner** and **Promote an internal defect** (never Jira). There is no auto-approval: a person approves every action from an interactive login, the AI report must be accepted first, and the person who requested the investigation cannot approve the changes it proposes. Every run is audited, appears in the activity feed and can be undone with **Undo**. An action whose outcome is unknown (the worker stopped while it ran) is never retried; check the target on its own page.
+
+Decision-report items in the same queue are acknowledged rather than executed: acknowledging records the decision, changes nothing and needs no Act.
+
 ## Human-in-the-loop
 
 - Every AI-produced category or explanation can be **corrected**; the correction is stored alongside the original.

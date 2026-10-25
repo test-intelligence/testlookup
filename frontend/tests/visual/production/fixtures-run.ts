@@ -376,4 +376,6 @@ export const RUN_PAGE: ApiHandlers = [
   [`/api/v1/agents/runs/${RUN_ID}/summary`, () => RUN_SUMMARY],
   // Analysis (+ Evidence, + the ⋯ menu's previous run): the AI history, quiet (W03).
   ...AI_HISTORY_QUIET,
+  // Evidence (W15 AGT-01): the decision report's action chips, read for a QA lead (the fixture user is one). None.
+  [`/api/v1/projects/${PROJECT_ID}/agent-actions`, () => ({ items: [], count: 0, total: 0 })],
 ]

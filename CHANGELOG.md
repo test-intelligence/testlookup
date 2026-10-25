@@ -52,6 +52,50 @@ locally by default.
 
 ### Added
 
+- **Agent actions you approve: an Inbox queue, typed proposals in Suggest,
+  and an Act mode whose approved actions run, are audited and can be undone**
+  (wave W15, AGT-01, AGT-02, AGT-03 under owner decision D16; branch
+  `feat/df-agent-approvals-act-20261025`). Inbox › Approvals gains an
+  **Agent actions** source (QA leads): each waiting proposal shows its
+  target, the proposing agent and run, whether its AI report is accepted, and
+  why Approve is not offered yet; Reject takes a reason from the reviews'
+  closed list (notes are stored redacted and never returned); **Recently
+  decided** shows what happened — executed with a link to the result,
+  acknowledged, rejected, undone, or "the outcome is unknown" (never retried).
+  The run page's Decision panel shows each proposed action's status. In
+  **Suggest**, the Investigator files typed proposals — quarantine a known-flaky
+  offender, reassign a newly failed test to its suite owner, promote an internal
+  defect for a concentrated regression — instead of text only (targets already
+  handled are skipped; a newer investigation replaces older waiting proposals for
+  the same target; Shadow files nothing). **Act** is now available for the
+  Investigator (Settings › AI agents) with per-type opt-in; a person still
+  approves each action, the AI report must be accepted first, and an approved
+  action runs within a minute through one of four reviewed adapters (quarantine,
+  reassign, internal defect — never Jira —, acknowledge), re-checking the payload,
+  the approver's role and the target's project at execution; reversible actions
+  offer **Undo**. A cleanup job settles an action stuck mid-run as "outcome
+  unknown". The MCP server gains a read-only `list_agent_actions`. **Changes for
+  existing installs:** the agent-action PATCH now refuses project API keys and
+  synthetic accounts (the list keeps API-key access) and records an audit row and
+  an activity event for every decision; the person who requested an
+  investigation cannot approve the changes it proposes, nor accept its report
+  when it proposes act-mode actions; a decision report's self-review refusal now
+  applies only to act-mode proposals (it refused every requester before, because
+  the lookup never matched); existing decision-report items become
+  acknowledgeable; a `{code, message}` error now toasts as its sentence
+  (it read "message: …"). No migration. Tests:
+  `tests/test_agent_action_types.py`, `tests/test_agent_action_adapter_base.py`,
+  `tests/test_agent_config_act.py`, `tests/test_agent_action_vocab_frontend_parity.py`,
+  `tests/test_agent_actions_router.py`, `tests/test_investigator_action_plan.py`,
+  `tests/test_investigator_structured_actions.py`, `tests/test_agent_action_executor.py`,
+  `tests/test_agent_action_adapters.py`, `tests/test_agent_action_adapter_registry.py`,
+  `tests/test_reap_stuck_agent_actions.py`, four `*_postgres.py`
+  (`test_agent_actions_queue_postgres`, `test_investigator_proposals_postgres`,
+  `test_agent_action_executor_postgres`, `test_agent_act_end_to_end_postgres`),
+  `mcp/tests/test_mcp_agent_actions.py`, the Inbox / Decision panel / cockpit /
+  Settings vitests, three `tests/ci-e2e/` specs (`inbox-agent-actions`,
+  `agent-act-mode`, `investigator-suggest-proposals`) and two visual specs
+  (`prod-agent-actions`, `prod-investigator-proposals`).
 - **Agent operations: a pipeline's Audit and Compare, a graph for every
   pipeline shape, project default workflows, tracked bulk jobs, and a real
   Deep Investigation pre-scan, history, estimate and run configuration**

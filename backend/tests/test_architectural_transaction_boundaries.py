@@ -76,6 +76,22 @@ STAGE_ONLY_SERVICES: frozenset[str] = frozenset({
     # ── Tier 0-2 stage-only conversions (Phase E-1, 2026-04-15) ──────
     "feature_flags.py",
     "compliance_pack_service.py",
+    # ── W15 agent approvals / Act: new modules, commit-free from birth ──
+    # The catalogue and the adapter protocol (pure / caller's session).
+    "agent_action_types.py",
+    "adapter_base.py",
+    # The reviewed adapters (D16) and their explicit registry: an effect is
+    # staged on the executor's session, or committed by the TARGET service
+    # (quarantine), never by an adapter.
+    "agent_action_registry.py",
+    "quarantine_adapter.py",
+    "reassign_adapter.py",
+    "defect_adapter.py",
+    "acknowledge_adapter.py",
+    # The queue reads (the PATCH commits in its router) and the investigator's
+    # proposals (staged on _finalize's session, committed by its commit).
+    "agent_action_queue_service.py",
+    "investigation_action_proposals.py",
 })
 
 # Services that still own commits, with a cap and a documented reason.
@@ -254,9 +270,15 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
         5,
         "Durable action-ledger/outbox owner: approval execution and broker "
         "relay use isolated worker sessions so action state and dispatch "
-        "retries remain atomic without a request-scoped transaction. E8.6 adds "
-        "the policy_denied terminal write in execute_agent_action, on the same "
-        "worker session as the executor's own terminal write.",
+        "retries remain atomic without a request-scoped transaction. The "
+        "executor (W15 AGT-03) owns exactly two: _commit_claim, the DURABLE "
+        "approved -> executing claim committed BEFORE any effect (a target "
+        "service such as the quarantine approve commits on its own, so the "
+        "effect and its record are two transactions and a crash after the "
+        "claim must be visible as executing, then reaped as outcome_unknown), "
+        "and _finish, the ONE terminal write helper (every refusal, executed, "
+        "failed). The relay owns the other three (claim, sent, failed). The "
+        "reaper's sweep is stage-only; its commit lives in worker/tasks.py.",
     ),
     "decision_report_supersession_service.py": (
         6,

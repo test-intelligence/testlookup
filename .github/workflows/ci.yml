@@ -907,6 +907,10 @@ jobs:
           tests/integration/test_deep_investigation_insights_postgres.py
           tests/integration/test_deep_run_overrides_postgres.py
           tests/integration/test_workflow_publish_postgres.py
+          tests/integration/test_agent_actions_queue_postgres.py
+          tests/integration/test_investigator_proposals_postgres.py
+          tests/integration/test_agent_action_executor_postgres.py
+          tests/integration/test_agent_act_end_to_end_postgres.py
           tests/integration/test_every_get_route_answers_without_500_postgres.py
           tests/integration/test_key_mint_revoke_race_postgres.py
           tests/integration/test_migration_index_leftovers_postgres.py

@@ -2,23 +2,30 @@
  * Settings → AI Agents (agent governance).
  *
  * Per-agent policy cards (only "Investigator" ships in Wave B): enabled
- * toggle, trust-ladder mode selector (shadow → suggest → act; act is disabled
- * with a "coming in a later wave" tooltip), the four per-run/per-day budget
- * inputs, and the promotion status line ("N shadow runs completed"). Saves
- * via the canonical /agent-configs/{agent_id} resource with success/error toasts.
+ * toggle, trust-ladder mode selector (shadow → suggest → act), the four
+ * per-run/per-day budget inputs, and the promotion status line ("N shadow runs
+ * completed"). Saves via the canonical /agent-configs/{agent_id} resource with
+ * success/error toasts.
+ *
+ * Act (W15 AGT-03, owner decision D16): while the card's mode is Act, a
+ * fieldset ticks the action types Act may run — quarantine, reassign, an
+ * internal defect — each opt-in; a person still approves every action in
+ * Inbox › Approvals, every run is audited and can be undone. Save writes the
+ * policy (`updatePolicy`) when it changed and the ticks
+ * (`updateInvestigatorAct`, a fresh GET-then-PUT) when they changed.
  *
  * Route-level access is QA_LEAD+ (managementRoutes in App.tsx), same as every
  * other settings page.
  */
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { Bot, ShieldAlert } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { clsx } from 'clsx'
 import { useAgentPolicies, refreshAgentGovernance } from '@/hooks/useAgentGovernance'
 import { useActiveProjectId } from '@/hooks/useProjectScopedSWR'
 import { agentGovernanceService } from '@/services/agentGovernanceService'
 import { ALL_PROJECTS_ID } from '@/store/projectStore'
 import type { AgentMode, AgentPolicy, AgentPolicyBudgets } from '@/types/investigator'
+import { ACT_ACTION_LABELS, ACT_ACTION_TYPES } from '@/types/agentActions'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import FixerConfigCard from '@/components/fixer/FixerConfigCard'
 import AgentConfigPanel from '@/components/agents/AgentConfigPanel'
@@ -34,22 +41,75 @@ const AGENT_LABEL: Record<string, { title: string; desc: string }> = {
   },
 }
 
-/** Trust-ladder copy per mode — mirrors the plan's shadow→suggest→act doctrine. */
-const MODE_COPY: Record<AgentMode, { label: string; copy: string; disabled?: boolean; tooltip?: string }> = {
+/**
+ * Trust-ladder copy per mode — mirrors the plan's shadow→suggest→act doctrine.
+ * Act (W15 AGT-03, owner decision D16) runs only the action types ticked
+ * below, each one approved by a person, audited and undoable: no autonomy.
+ */
+export const MODE_COPY: Record<AgentMode, { label: string; copy: string }> = {
   shadow: {
     label: 'Shadow',
     copy: 'Logs what it would do. Takes no action, proposes nothing — pure observation while trust is established.',
   },
   suggest: {
     label: 'Suggest',
-    copy: 'Proposes actions for explicit human approval. Nothing executes without a person clicking approve.',
+    copy: 'Proposes typed actions to Inbox › Approvals. Nothing executes: a person approves or does it themselves.',
   },
   act: {
     label: 'Act',
-    copy: 'Executes pre-approved action types autonomously within budgets, with a full audit trail.',
-    disabled: true,
-    tooltip: 'Gated-act mode is coming in a later wave',
+    copy: 'Approved proposals run: a person approves each one, every run is audited and can be undone. Only the action types ticked below.',
   },
+}
+
+/** What each action type Act may run does, and how its Undo restores it (one muted line each). */
+export const ACT_TYPE_HINTS: Record<string, string> = {
+  'quarantine.apply':
+    'Applies the quarantine an approved proposal names; Undo releases it. Needs quarantine to be on for this project.',
+  'failure.reassign': 'Assigns the failure to its suite owner; Undo restores the previous assignee.',
+  'defect.promote': 'Files an internal defect for the cluster (never Jira); Undo closes it as Invalid.',
+}
+export const ACT_FIELDSET_LABEL = 'Action types Act may run'
+export const ACT_ACK_NOTE = 'Acknowledging a release item needs no Act: it only records the decision.'
+export const ACT_NO_TICK_NOTE = 'Act runs nothing until at least one action type is ticked.'
+
+const sortedTicks = (ticks: readonly string[]) => [...new Set(ticks)].sort()
+const sameTicks = (a: readonly string[], b: readonly string[]) =>
+  sortedTicks(a).join('\n') === sortedTicks(b).join('\n')
+
+/** Act's per-type opt-in (D16): three checkboxes, each with what it does and how Undo restores it. */
+function ActTypesFieldset({ ticks, onChange }: { ticks: string[]; onChange: (ticks: string[]) => void }) {
+  const hintId = useId()
+  const toggle = (type: string, on: boolean) =>
+    onChange(sortedTicks(on ? [...ticks, type] : ticks.filter((t) => t !== type)))
+  return (
+    <fieldset
+      aria-label={ACT_FIELDSET_LABEL}
+      data-testid="agent-act-types"
+      className="m-0 mt-3 min-w-0 space-y-2.5 rounded-lg border border-[var(--color-border)] p-3"
+    >
+      <div className="text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">Act — action types</div>
+      {ACT_ACTION_TYPES.map((type) => (
+        <div key={type}>
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-[var(--color-text)]">
+            <input
+              type="checkbox"
+              checked={ticks.includes(type)}
+              aria-describedby={`${hintId}-${type}`}
+              onChange={(e) => toggle(type, e.target.checked)}
+            />
+            {ACT_ACTION_LABELS[type]}
+          </label>
+          <p id={`${hintId}-${type}`} className="m-0 ml-6 max-w-[60ch] text-xs text-[var(--color-text-muted)]">
+            {ACT_TYPE_HINTS[type]}
+          </p>
+        </div>
+      ))}
+      <p className="m-0 text-xs text-[var(--color-text-muted)]">{ACT_ACK_NOTE}</p>
+      {ticks.length === 0 && (
+        <p className="m-0 text-xs text-[var(--ui-warning-ink)]" data-testid="agent-act-no-tick">{ACT_NO_TICK_NOTE}</p>
+      )}
+    </fieldset>
+  )
 }
 
 const BUDGET_FIELDS: { key: keyof AgentPolicyBudgets; label: string; hint: string }[] = [
@@ -63,26 +123,44 @@ function PolicyCard({ policy, projectId, onSaved }: { policy: AgentPolicy; proje
   const [enabled, setEnabled] = useState(policy.enabled)
   const [mode, setMode] = useState<AgentMode>(policy.mode)
   const [budgets, setBudgets] = useState<AgentPolicyBudgets>({ ...policy.budgets })
+  // The Act allowlist survives a mode change (re-entering Act restores the ticks); it is inert outside Act.
+  const savedTicks = policy.act?.allowed_action_types ?? []
+  const [ticks, setTicks] = useState<string[]>(() => sortedTicks(savedTicks))
   const [saving, setSaving] = useState(false)
 
   const meta = AGENT_LABEL[policy.agent_id] ?? { title: policy.agent_id, desc: '' }
   const budgetErrors = BUDGET_FIELDS.filter(
     (f) => !Number.isFinite(budgets[f.key]) || budgets[f.key] < 1 || !Number.isInteger(budgets[f.key]),
   )
-  const dirty =
+  const policyDirty =
     enabled !== policy.enabled ||
     mode !== policy.mode ||
     BUDGET_FIELDS.some((f) => budgets[f.key] !== policy.budgets[f.key])
+  const ticksDirty = !sameTicks(ticks, savedTicks)
+  const dirty = policyDirty || ticksDirty
 
   const onSave = async () => {
     if (budgetErrors.length > 0 || saving) return
     setSaving(true)
+    let wrote = false
+    let reseeded = false
     try {
-      await agentGovernanceService.updatePolicy(projectId, policy.agent_id, { enabled, mode, budgets })
+      if (policyDirty) {
+        await agentGovernanceService.updatePolicy(projectId, policy.agent_id, { enabled, mode, budgets })
+        wrote = true
+      }
+      // The second write re-reads the document, so it carries the config_version the first one produced.
+      if (ticksDirty) {
+        await agentGovernanceService.updateInvestigatorAct(projectId, sortedTicks(ticks))
+        wrote = true
+      }
       toast.success(`${meta.title} policy saved`)
+      reseeded = true
       onSaved()
     } catch {
-      // shared axios interceptor surfaces the server's error message
+      // shared axios interceptor surfaces the server's error message; a failed second write leaves the first one
+      // saved, so the card re-seeds from the server (once).
+      if (wrote && !reseeded) onSaved()
     } finally {
       setSaving(false)
     }
@@ -141,13 +219,8 @@ function PolicyCard({ policy, projectId, onSaved }: { policy: AgentPolicy; proje
                 role="radio"
                 aria-checked={selected}
                 aria-label={info.label}
-                disabled={info.disabled}
-                title={info.tooltip}
-                onClick={() => !info.disabled && setMode(m)}
-                className={clsx(
-                  'rounded-lg border p-3 text-left transition-colors',
-                  info.disabled ? 'opacity-50 cursor-not-allowed' : 'hover:bg-[var(--color-bg-hover)]',
-                )}
+                onClick={() => setMode(m)}
+                className="rounded-lg border p-3 text-left transition-colors hover:bg-[var(--color-bg-hover)]"
                 style={{
                   background: selected ? 'var(--color-bg-secondary)' : 'var(--color-bg)',
                   borderColor: selected ? 'var(--color-accent)' : 'var(--color-border)',
@@ -155,17 +228,14 @@ function PolicyCard({ policy, projectId, onSaved }: { policy: AgentPolicy; proje
               >
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-semibold text-[var(--color-text)]">{info.label}</span>
-                  {info.disabled && (
-                    <span className="text-[10px] px-1.5 py-px rounded-full bg-[var(--color-bg-hover)] text-[var(--color-text-muted)]">
-                      later wave
-                    </span>
-                  )}
                 </div>
                 <p className="text-xs text-[var(--color-text-muted)] m-0 mt-1 leading-relaxed">{info.copy}</p>
               </button>
             )
           })}
         </div>
+        {/* W15 AGT-03: the action types Act may run — only while the card's mode is Act (nothing renders otherwise). */}
+        {mode === 'act' && <ActTypesFieldset ticks={ticks} onChange={setTicks} />}
       </div>
 
       {/* Budgets */}
@@ -262,7 +332,7 @@ export default function AIAgentsPage() {
                 // Key on the server state so a successful save (or an external
                 // change surfaced by revalidation) re-seeds the form — no
                 // set-state-in-effect syncing.
-                key={`${p.agent_id}:${p.enabled}:${p.mode}:${p.budgets.max_runs_per_day}:${p.budgets.max_llm_calls_per_run}:${p.budgets.max_tokens_per_run}:${p.budgets.max_seconds_per_run}`}
+                key={`${p.agent_id}:${p.enabled}:${p.mode}:${p.budgets.max_runs_per_day}:${p.budgets.max_llm_calls_per_run}:${p.budgets.max_tokens_per_run}:${p.budgets.max_seconds_per_run}:${(p.act?.allowed_action_types ?? []).join(',')}`}
                 policy={p}
                 projectId={scopedProjectId}
                 // Both keys: the config panel below renders the same document

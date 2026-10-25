@@ -32,8 +32,8 @@ import type {
 
 const MODES: { value: AgentMode; label: string; copy: string }[] = [
   { value: 'shadow', label: 'Shadow', copy: 'Read-only tools; records what it would do.' },
-  { value: 'suggest', label: 'Suggest', copy: 'Adds proposals that a person approves.' },
-  { value: 'act', label: 'Act', copy: 'Adds mutating tools and capabilities.' },
+  { value: 'suggest', label: 'Suggest', copy: 'Adds proposals that a person approves in Inbox › Approvals.' },
+  { value: 'act', label: 'Act', copy: 'Approved proposals of the ticked action types run (Investigator only); every run is audited.' },
 ]
 
 const TIERS: { value: AgentTier; label: string }[] = [

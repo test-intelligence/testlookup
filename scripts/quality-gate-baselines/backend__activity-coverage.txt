@@ -12,9 +12,8 @@
 #
 # Reviewed in PR; remove entries as the code is cleaned up.
 # ---- notes below this line are preserved across --update-baseline ----
-2676c41de6d24dda  # backend/app/routers/agent_actions.py:71  in transition_agent_action  @router.patch("/{project_id}/agent-actions/{action_id}")
 3d43a41d1ea33865  # backend/app/routers/agent_investigations.py:163  in start_investigation  @router.post(
-418819775e838798  # backend/app/routers/agent_investigations.py:236  in cancel_investigation  @router.post(
+418819775e838798  # backend/app/routers/agent_investigations.py:254  in cancel_investigation  @router.post(
 e0ca11061a227e85  # backend/app/routers/agent_memory.py:94  in recall_similar_memories  @router.post(
 6b95b209c407468d  # backend/app/routers/ai_evaluation.py:123  in create_dataset  @router.post("/datasets", response_model=AIEvalDatasetResponse, status_code=201)
 8922751081f1dc82  # backend/app/routers/ai_evaluation.py:144  in create_dataset_from_feedback  @router.post("/datasets/from-feedback", response_model=AIEvalDatasetResponse, s…

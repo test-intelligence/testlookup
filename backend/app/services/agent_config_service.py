@@ -276,10 +276,35 @@ class InvestigatorPolicyBudgets(_Strict):
     max_cluster_children_per_day: int = Field(default=20, ge=0, le=1_000)
 
 
+class InvestigatorActConfig(_Strict):
+    """W15 AGT-03 (D16): the action types Act may run in this project, each opt-in.
+
+    Inert outside Act (kept when the mode is lowered, so re-entering Act
+    restores the ticks). A missing block on a stored document = ``[]``.
+    """
+
+    allowed_action_types: list[str] = Field(default_factory=list, max_length=8)
+
+    @field_validator("allowed_action_types")
+    @classmethod
+    def _act_types_only(cls, value: list[str]) -> list[str]:
+        # Lazy: agent_action_types imports this module lazily too (no cycle at import).
+        from app.services.agent_action_types import ACT_ACTION_TYPES
+
+        for entry in value:
+            if entry not in ACT_ACTION_TYPES:
+                raise ValueError(
+                    f"act.allowed_action_types: {entry} is not an action type Act can execute; "
+                    f"choose from {', '.join(ACT_ACTION_TYPES)}"
+                )
+        return sorted(set(value))
+
+
 class InvestigatorConfigExtension(_Strict):
     budgets: InvestigatorPolicyBudgets = Field(default_factory=InvestigatorPolicyBudgets)
     shadow_runs_completed: int = Field(default=0, ge=0)
     promotion_note: Optional[str] = Field(default=None, max_length=2_000)
+    act: InvestigatorActConfig = Field(default_factory=InvestigatorActConfig)
 
 
 class FixerRunnerExtension(_Strict):

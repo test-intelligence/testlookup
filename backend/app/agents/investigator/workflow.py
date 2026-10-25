@@ -65,6 +65,7 @@ from app.models.postgres import (
     FailureCluster,
     TestCase,
     TestRun,
+    TestSuiteOwner,
 )
 from app.services.pipeline_event_log import emit_event
 from app.services.evidence_sanitizer import sanitize_reference_text
@@ -172,6 +173,7 @@ async def _gather_bundle(investigation: AgentInvestigation) -> dict[str, Any]:
         "flaky_fingerprints": [],
         "clusters": [],
         "recall_lines": {},
+        "suite_owners": {},
     }
     async with AsyncSessionLocal() as db:
         run = (
@@ -383,6 +385,29 @@ async def _gather_bundle(investigation: AgentInvestigation) -> dict[str, Any]:
             ]
         except Exception as exc:  # noqa: BLE001
             logger.warning("investigator_cluster_lookup_failed", error_type=type(exc).__name__)
+
+        # Suite owners of the failing suites (W15 AGT-02): a regression core is
+        # proposed for reassignment to its suite's owner. ONE statement, only
+        # when a failing row names a suite; {} on any error like every section.
+        try:
+            failing_suites = sorted({
+                str(f["suite_name"]) for f in bundle["failures"] if f.get("suite_name")
+            })
+            if failing_suites:
+                owner_rows = (
+                    await db.execute(
+                        select(TestSuiteOwner.suite_name, TestSuiteOwner.owner_user_id).where(
+                            TestSuiteOwner.project_id == run.project_id,
+                            TestSuiteOwner.suite_name.in_(failing_suites),
+                            TestSuiteOwner.owner_user_id.is_not(None),
+                        )
+                    )
+                ).all()
+                bundle["suite_owners"] = {
+                    str(r.suite_name): str(r.owner_user_id) for r in owner_rows
+                }
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("investigator_suite_owner_lookup_failed", error_type=type(exc).__name__)
 
         # Memory recall for the top flaky-overlapping offenders (AI-F3 read side).
         try:
@@ -878,6 +903,43 @@ async def _finalize(
             from app.services.agent_config_service import increment_investigator_shadow_runs
 
             await increment_investigator_shadow_runs(db, row.project_id)
+
+        # W15 AGT-02: Suggest / Act file the verdict's typed actions as
+        # pending_review proposals on THIS session — the commit below covers
+        # them. Shadow persists nothing (the mode gate comes before any
+        # statement); only a run-scoped investigation proposes (D-7). Best
+        # effort inside a SAVEPOINT: a proposal problem never fails the run.
+        if (
+            row.mode in ("suggest", "act")
+            and status == "completed"
+            and pipeline is not None
+            and row.verdict
+            and (getattr(row, "scope_type", "run") or "run") == "run"
+        ):
+            from app.services.investigation_action_proposals import (  # noqa: PLC0415
+                persist_investigation_proposals,
+            )
+
+            proposal_kwargs = {
+                "investigation": row,
+                "pipeline_run_id": pipeline.id,
+                "actions": list(row.verdict.get("structured_actions") or []),
+            }
+            try:
+                # The review-staging rule: a SAVEPOINT when the session has one,
+                # so a failed flush cannot abort the terminal commit below.
+                begin_nested = getattr(db, "begin_nested", None)
+                if begin_nested is None:
+                    await persist_investigation_proposals(db, **proposal_kwargs)
+                else:
+                    async with begin_nested():
+                        await persist_investigation_proposals(db, **proposal_kwargs)
+            except Exception as exc:  # noqa: BLE001 — the verdict still lands
+                logger.warning(
+                    "investigation_action_proposals_failed",
+                    investigation_id=investigation_id,
+                    error_type=type(exc).__name__,
+                )
 
         verdict = row.verdict or {}
         await record_agent_run(

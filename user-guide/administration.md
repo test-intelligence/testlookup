@@ -289,7 +289,7 @@ Per project, per agent (saving needs `QA_LEAD`):
 | Control | What it does |
 |---|---|
 | **Enabled** | Whether the agent runs at all |
-| **Autonomy mode** | **Shadow** — run and record what it *would* have done; proposes nothing. **Suggest** — proposes actions that need explicit human approval; nothing executes without it. The proposals are served by the agent-actions API (`/api/v1/projects/{id}/agent-actions`, `QA_LEAD`); there is no approval page in the app yet. **Act** is not available yet |
+| **Autonomy mode** | **Shadow** — run and record what it *would* have done; proposes nothing. **Suggest** — files typed proposals (quarantine, reassign, internal defect) to **Inbox › Approvals › Agent actions** (`/my-failures?tab=approvals&source=actions`, `QA_LEAD`); nothing executes. **Act** (Investigator only) — an approved proposal of a ticked action type runs within a minute: **Quarantine flaky offenders** (needs quarantine on for the project), **Reassign failures to the suite owner**, **Promote an internal defect** (never Jira). Each type is off until a QA lead ticks it. A QA lead approves each action from an interactive login (API keys are refused), the AI report must be accepted first, and the person who requested the investigation cannot approve its effects. Every run is audited and can be undone. The same queue is served by `/api/v1/projects/{id}/agent-actions` |
 | **Budgets** | Investigator: max runs a day, LLM calls, tokens and seconds per run (defaults 10 runs a day, 30 calls, 60,000 tokens, 300 seconds). Fixer: max tests per run, attempts per test, validation reruns, open PRs |
 | **Schedule** (Fixer) | **Off (manual only)**, **Daily** or **Weekly** |
 

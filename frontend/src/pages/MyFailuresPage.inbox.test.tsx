@@ -41,6 +41,7 @@ const defects = vi.hoisted(() => ({ listPendingDefects: vi.fn(), reviewDefect: v
 vi.mock('@/services/defectPromotionService', () => ({ defectPromotionService: defects }))
 
 vi.mock('@/hooks/useFeatureFlags', () => ({ useFeatureEnabled: () => false }))
+vi.mock('@/hooks/useAgentActions', async () => (await import('@/test/agentActionMocks')).agentActionHookMocks())
 
 vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => ({ isQaLead: state.isQaLead, canAccessManagement: state.isQaLead, isQaEngineer: true }),

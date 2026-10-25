@@ -188,6 +188,7 @@ async def upsert_policy(
         budgets=config_svc.InvestigatorPolicyBudgets.model_validate(_effective_budgets(budgets)),
         shadow_runs_completed=existing.shadow_runs_completed,
         promotion_note=promotion_note,
+        act=existing.act,  # W15: the per-type Act ticks survive a policy write (D-12)
     )
     document = current.model_dump(mode="json")
     document.update({"enabled": bool(enabled), "mode": mode})
@@ -539,9 +540,42 @@ def _iso(value: Optional[datetime]) -> Optional[str]:
     return value.isoformat() if value is not None else None
 
 
-def serialize_investigation_detail(inv: AgentInvestigation) -> dict[str, Any]:
+def _serialize_proposal(row: Any) -> dict[str, Any]:
+    """One ledger row of the investigation's proposals (W15 §1.1) — ids, codes and the title only."""
+    from app.services.agent_action_types import (  # noqa: PLC0415 -- keep this module's imports as they were
+        canonical_action_type,
+        outcome_of,
+        resolve_action_type,
+    )
+
+    payload = row.request_payload if isinstance(row.request_payload, dict) else {}
+    title = payload.get("title")
+    outcome, outcome_text = outcome_of(row, resolve_action_type(row.action_type))
+    return {
+        "id": str(row.id),
+        "action_type": row.action_type,
+        "canonical_type": canonical_action_type(row.action_type),
+        "target_type": row.target_type,
+        "target_id": row.target_id,
+        "status": row.status,
+        "error_code": row.error_code,
+        "outcome": outcome,
+        "outcome_text": outcome_text,
+        "idempotency_key": row.idempotency_key,
+        "title": (title.strip()[:200] or None) if isinstance(title, str) else None,
+        "created_at": _iso(row.created_at),
+    }
+
+
+def serialize_investigation_detail(
+    inv: AgentInvestigation, proposals: Optional[list[Any]] = None
+) -> dict[str, Any]:
     """InvestigationDetail wire shape — pinned; the frontend consumes this
-    verbatim. ``model_info`` (ORM) maps to the contract key ``model``."""
+    verbatim. ``model_info`` (ORM) maps to the contract key ``model``.
+
+    ``proposals`` (W15 AGT-02) are the investigation's agent-action ledger rows,
+    newest first, read by the detail route ``WHERE pipeline_run_id AND
+    project_id = inv.project_id``; ``[]`` when none (or a shadow investigation)."""
     spend = dict(inv.spend or {})
     return {
         "id": str(inv.id),
@@ -568,6 +602,7 @@ def serialize_investigation_detail(inv: AgentInvestigation) -> dict[str, Any]:
         "verdict": inv.verdict,
         "prompt_versions": dict(inv.prompt_versions or {}),
         "model": inv.model_info,
+        "proposals": [_serialize_proposal(row) for row in (proposals or [])],
     }
 
 

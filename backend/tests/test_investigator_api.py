@@ -44,6 +44,7 @@ DETAIL_KEYS = {
     "id", "run_id", "project_id", "status", "mode", "triggered_by",
     "started_at", "completed_at", "cancelled_by", "budget", "spend",
     "hypotheses", "verdict", "prompt_versions", "model",
+    "proposals",  # W15 AGT-02: the investigation's agent-action ledger rows ([] when none)
 }
 SUMMARY_KEYS = {
     "id", "run_id", "run_build_number", "status", "mode", "triggered_by",
@@ -304,6 +305,43 @@ async def test_detail_404_when_missing():
             investigation_id=uuid.uuid4(), db=db, current_user=_user(),
         )
     assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_detail_proposals_never_include_another_projects_row_under_the_same_pipeline_id():
+    """W15 AGT-02: the proposals are read WHERE pipeline_run_id AND project_id = the investigation's."""
+    from app.models.postgres import AgentActionLedger
+
+    inv = _investigation(status="completed", mode="suggest")
+    pipeline = uuid.uuid5(uuid.NAMESPACE_URL, f"testlookup:investigation:{inv.id}")
+
+    def _ledger(project_id, title):
+        return AgentActionLedger(
+            id=uuid.uuid4(), project_id=project_id, pipeline_run_id=pipeline, action_type="quarantine.apply",
+            target_type="test", target_id="fpA1b2C3d4", status="pending_review", idempotency_key=title,
+            request_sha256="a" * 64, request_payload={"title": title}, created_at=datetime.now(timezone.utc),
+        )
+
+    rows = [_ledger(PROJECT_ID, "ours"), _ledger(uuid.uuid4(), "theirs")]
+
+    class _LedgerSession(_FakeSession):
+        async def execute(self, stmt):
+            if "agent_action_ledger" not in str(stmt).lower():
+                return await super().execute(stmt)
+            params = stmt.compile().params  # emulate the WHERE the route wrote
+            keep = [
+                r for r in rows
+                if all(getattr(r, key.rsplit("_", 1)[0]) == value for key, value in params.items()
+                       if key.rsplit("_", 1)[0] in ("project_id", "pipeline_run_id"))
+            ]
+            return _Result(scalars=keep)
+
+    detail = await router_mod.get_investigation(
+        investigation_id=inv.id, db=_LedgerSession(investigation=inv), current_user=_user(),
+    )
+    assert [p["title"] for p in detail["proposals"]] == ["ours"]
+    assert detail["proposals"][0]["outcome"] == "awaiting_approval"
+    assert detail["proposals"][0]["canonical_type"] == "quarantine.apply"
 
 
 # ─────────────────────────── POST /investigations/{id}/cancel ────────────────

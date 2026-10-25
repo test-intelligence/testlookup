@@ -294,3 +294,52 @@ describe('DecisionIntelligencePanel', () => {
     expect(onSelect).toHaveBeenCalledWith(1)
   })
 })
+
+describe('DecisionIntelligencePanel — the ledger state of each proposed action (W15 AGT-01)', () => {
+  const action = (n: number) => ({
+    action_id: `action-${n}`, title: `Proposed action ${n}`, owner: 'release_owner', rationale: `Why ${n}.`,
+    evidence: [], risk: 'medium' as const, required_permission: 'release_review', idempotency_key: `action:action-${n}`,
+    status: 'proposed' as const,
+  })
+  const withActions = report({ proposed_actions: [action(1), action(2), action(3)] })
+  const itemOf = (title: string) => screen.getByText(title).closest('li') as HTMLElement
+
+  it('gives each matched action its chip (outcome in its title) and the waiting one a Review in Inbox link', () => {
+    renderPanel(withActions, passed, published, {
+      actionStatuses: {
+        'action:action-1': { id: 'l1', status: 'pending_review', outcome: 'awaiting_approval', outcome_text: "Waiting for a QA lead's approval." },
+        'action:action-2': { id: 'l2', status: 'executed', outcome: 'acknowledged', outcome_text: 'Acknowledged by Ana Lead.' },
+      },
+    })
+    const waiting = itemOf('Proposed action 1')
+    const chip = waiting.querySelector('[data-proposed-action-status]') as HTMLElement
+    expect(chip).toHaveTextContent('Waiting')
+    expect(chip).toHaveAttribute('title', "Waiting for a QA lead's approval.")
+    expect(waiting.querySelector('a')?.getAttribute('href')).toBe('/my-failures?tab=approvals&source=actions')
+    expect(waiting).toHaveTextContent('Review in Inbox')
+    const acknowledged = itemOf('Proposed action 2')
+    expect(acknowledged.querySelector('[data-proposed-action-status]')).toHaveTextContent('Acknowledged')
+    expect(acknowledged).not.toHaveTextContent('Review in Inbox')
+    // No ledger row for the third: no chip (absence is not a status).
+    expect(itemOf('Proposed action 3').querySelector('[data-proposed-action-status]')).toBeNull()
+  })
+
+  it.each([
+    [{ status: 'rejected', outcome: 'rejected' }, 'Rejected'],
+    [{ status: 'failed', outcome: 'not_executed_review' }, 'Not executed'],
+  ])('labels %o as %s', (status, label) => {
+    renderPanel(withActions, passed, published, { actionStatuses: { 'action:action-1': { id: 'l1', outcome_text: 'x', ...status } } })
+    expect(itemOf('Proposed action 1').querySelector('[data-proposed-action-status]')).toHaveTextContent(label)
+  })
+
+  it('without the map renders the list exactly as before: no chip, no link', () => {
+    renderPanel(withActions, passed, published)
+    for (const n of [1, 2, 3]) {
+      const item = itemOf(`Proposed action ${n}`)
+      expect(item.querySelector('[data-proposed-action-status]')).toBeNull()
+      expect(item.querySelector('[data-proposed-action-meta]')).toBeNull()
+      expect(item.querySelector('a')).toBeNull()
+    }
+    expect(screen.queryByText('Review in Inbox')).toBeNull()
+  })
+})

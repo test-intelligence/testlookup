@@ -30,6 +30,7 @@ export const agentGovernanceService = {
           shadow_runs_completed: extension.shadow_runs_completed,
           note: extension.promotion_note,
         },
+        act: { allowed_action_types: extension.act?.allowed_action_types ?? [] },
       }],
     }
   },
@@ -62,6 +63,46 @@ export const agentGovernanceService = {
         shadow_runs_completed: savedExtension.shadow_runs_completed,
         note: savedExtension.promotion_note,
       },
+      act: { allowed_action_types: savedExtension.act?.allowed_action_types ?? [] },
+    }
+  },
+
+  /**
+   * W15 AGT-03: the action types Act may run in this project. The same
+   * GET-then-PUT with `If-Match` as `updatePolicy` (a fresh read, so a save
+   * right after `updatePolicy` carries the NEW `config_version`); every other
+   * field of the document — mode, budgets — is sent back as read.
+   */
+  updateInvestigatorAct: async (projectId: string, allowedActionTypes: string[]): Promise<AgentPolicy> => {
+    const view = await getData<AgentConfigView>(
+      `/api/v1/projects/${projectId}/agent-configs/${INVESTIGATOR_AGENT_ID}`,
+    )
+    const extension = view.config.extensions?.investigator
+    if (!extension) throw new Error('Investigator AgentConfig extension is missing')
+    const config: AgentConfigDocument = {
+      ...view.config,
+      extensions: {
+        ...(view.config.extensions ?? { investigator: null, fixer: null }),
+        investigator: { ...extension, act: { allowed_action_types: [...allowedActionTypes] } },
+      },
+    }
+    const saved = await putData<AgentConfigView, AgentConfigDocument>(
+      `/api/v1/projects/${projectId}/agent-configs/${INVESTIGATOR_AGENT_ID}`,
+      config,
+      { headers: { 'If-Match': `"${view.config_version}"` } },
+    )
+    const savedExtension = saved.config.extensions?.investigator
+    if (!savedExtension) throw new Error('Saved Investigator AgentConfig extension is missing')
+    return {
+      agent_id: INVESTIGATOR_AGENT_ID,
+      enabled: saved.config.enabled,
+      mode: saved.config.mode,
+      budgets: savedExtension.budgets,
+      promotion: {
+        shadow_runs_completed: savedExtension.shadow_runs_completed,
+        note: savedExtension.promotion_note,
+      },
+      act: { allowed_action_types: savedExtension.act?.allowed_action_types ?? [] },
     }
   },
 

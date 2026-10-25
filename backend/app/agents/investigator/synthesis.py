@@ -27,9 +27,16 @@ offline/failure fallback.
    the complement signal — low (25) so consumers never treat an unknown as
    actionable.
 
-``recommended_actions`` are TEXT ONLY, mapped from the primary cause —
-shadow and suggest modes are identical this slice and ``act`` is reserved:
-the Investigator never executes anything.
+``recommended_actions`` stay TEXT, mapped from the primary cause. Beside them
+the verdict carries ``structured_actions``: the TYPED actions of the
+deterministic plan (``action_plan.plan_structured_actions`` — quarantine the
+known-flaky offenders, reassign a regression core to its suite owner, promote
+a concentrated cluster), built from ids, fingerprints and names of the bundle,
+never from the narrative or any model output. The modes now differ at
+finalize: **shadow** persists nothing (the cockpit shows what would have been
+proposed), **suggest** files each action as a ``pending_review`` proposal in
+Inbox › Approvals, **act** files the same proposals, which run only after a
+person approves each one. The Investigator itself never executes anything.
 """
 from __future__ import annotations
 
@@ -39,6 +46,7 @@ import time
 from typing import Any, Optional
 
 from app.agents.base import BaseAgent
+from app.agents.investigator.action_plan import plan_structured_actions
 from app.agents.investigator.persistence import (
     is_cancel_requested,
     reserve_investigation_budget,
@@ -163,6 +171,26 @@ class SynthesisAgent(BaseAgent):
     """Fan-in node: hypotheses → verdict (+ ONE optional narrative LLM call)."""
 
     stage_name = "investigator_synthesis"
+
+    def _structured_actions(
+        self, primary_cause: str, state: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """The deterministic typed actions (``action_plan``); ``[]`` when the
+        plan fails — a plan problem never fails a verdict."""
+        bundle = state.get("bundle") or {}
+        try:
+            return plan_structured_actions(
+                primary_cause,
+                bundle,
+                suite_owners=bundle.get("suite_owners") or {},
+                investigation_id=str(state.get("investigation_id") or ""),
+                proposing_agent_mode=str(state.get("mode") or "shadow"),
+            )
+        except Exception as exc:  # noqa: BLE001 — the text recommendations still stand
+            self.logger.warning(
+                "investigator_action_plan_failed", error_type=type(exc).__name__
+            )
+            return []
 
     async def _narrative_with_llm(
         self, primary_cause: str, hypotheses: list[dict[str, Any]], state: dict[str, Any]
@@ -402,6 +430,8 @@ class SynthesisAgent(BaseAgent):
             "recommended_actions": list(
                 RECOMMENDED_ACTIONS.get(primary_cause, RECOMMENDED_ACTIONS["unknown"])
             ),
+            # Typed, from the bundle's ids only — the narrative never feeds it.
+            "structured_actions": self._structured_actions(primary_cause, state),
             "degradation": {
                 "degraded": bool(exhausted or synthesis_stop_reason),
                 "budget_exhausted": bool(

@@ -15,6 +15,7 @@ import { deriveDecisionTrustState } from './decisionTrustState'
 import { readAnalysisCoverage, describeAnalysisCoverage } from './analysisCoverage'
 import DecisionReportFeedbackControls from './DecisionReportFeedbackControls'
 import { formatCompactDateTime, formatNumber } from '@/utils/formatters'
+import { ACTIONS_QUEUE_HREF, CHIP_TONE_CLASS, chipFor, type AgentActionLike } from '@/pages/inbox/agentActionModel'
 
 interface Props {
   runId: string
@@ -25,6 +26,8 @@ interface Props {
   reportVersions?: DecisionReportVersion[]
   selectedReportVersion?: number | null
   onSelectReportVersion?: (version: number | null) => void
+  /** W15 AGT-01: each proposed action's ledger state by `idempotency_key` (QA lead+ only; absent = no chips). */
+  actionStatuses?: ProposedActionStatuses
 }
 
 const metricLabels: Array<[string, string]> = [
@@ -68,7 +71,38 @@ function formatTime(value: string | undefined): string {
   return Number.isNaN(date.getTime()) ? 'Unknown time' : formatCompactDateTime(date)
 }
 
-function ClaimsSection({ claims, actions, onInspect }: { claims: DecisionClaim[]; actions: ProposedAction[]; onInspect: (claim: DecisionClaim) => void }) {
+/**
+ * W15 AGT-01: a proposed action's ledger state, matched on its
+ * `idempotency_key` (the report's key IS the ledger row's key). Optional: a
+ * reader who cannot read the queue (below QA lead) gets no map, and the list
+ * renders exactly as before; a key with no entry gets no chip (absence is not
+ * a status).
+ */
+export type ProposedActionStatuses = Record<string, Pick<AgentActionLike, 'id' | 'status' | 'outcome' | 'outcome_text'>>
+
+/** The chip and, while it waits, the way to decide it. */
+function ProposedActionState({ status }: { status: ProposedActionStatuses[string] }) {
+  const chip = chipFor(status)
+  const waiting = status.status === 'pending_review' || status.status === 'proposed'
+  return (
+    <>
+      <span
+        data-proposed-action-status={chip.tone}
+        title={status.outcome_text ?? undefined}
+        className={`inline-flex items-center rounded-full border px-1.5 py-px text-2xs font-semibold ${CHIP_TONE_CLASS[chip.tone]}`}
+      >
+        {chip.label}
+      </span>
+      {waiting && (
+        <Link to={ACTIONS_QUEUE_HREF} className="text-xs font-semibold text-[var(--color-accent)] hover:underline">
+          Review in Inbox
+        </Link>
+      )}
+    </>
+  )
+}
+
+function ClaimsSection({ claims, actions, actionStatuses, onInspect }: { claims: DecisionClaim[]; actions: ProposedAction[]; actionStatuses?: ProposedActionStatuses; onInspect: (claim: DecisionClaim) => void }) {
   const groups: Array<[DecisionClaim['kind'], string]> = [
     ['fact', 'Facts'],
     ['inference', 'Inferences'],
@@ -100,17 +134,26 @@ function ClaimsSection({ claims, actions, onInspect }: { claims: DecisionClaim[]
           )
         })}
       </div>
-      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3">
+      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3" data-proposed-actions="">
         <h4 className="m-0 text-[12px] font-semibold">Proposed actions · {actions.length}</h4>
         {actions.length === 0 ? <p className="mb-0 mt-2 text-[12px] text-[var(--color-text-muted)]">No actions proposed</p> : (
           <ul className="mt-2 mb-0 list-none space-y-2 p-0 text-[12px]">
-            {actions.slice(0, 8).map(action => (
-              <li key={action.idempotency_key}>
-                <p className="m-0 font-semibold">{action.title}</p>
-                <p className="m-0 text-[var(--color-text-secondary)]">{action.rationale}</p>
-                <span className="text-[11px] text-[var(--color-text-muted)]">Owner {action.owner} · {action.required_permission} · {action.risk} risk</span>
-              </li>
-            ))}
+            {actions.slice(0, 8).map(action => {
+              const meta = <span className="text-[11px] text-[var(--color-text-muted)]">Owner {action.owner} · {action.required_permission} · {action.risk} risk</span>
+              const status = actionStatuses?.[action.idempotency_key]
+              return (
+                <li key={action.idempotency_key}>
+                  <p className="m-0 font-semibold">{action.title}</p>
+                  <p className="m-0 text-[var(--color-text-secondary)]">{action.rationale}</p>
+                  {status ? (
+                    <div className="flex flex-wrap items-center gap-1" data-proposed-action-meta="">
+                      {meta}
+                      <ProposedActionState status={status} />
+                    </div>
+                  ) : meta}
+                </li>
+              )
+            })}
           </ul>
         )}
       </div>
@@ -226,6 +269,7 @@ export default function DecisionIntelligencePanel({
   reportVersions = [],
   selectedReportVersion,
   onSelectReportVersion,
+  actionStatuses,
 }: Props) {
   const [expanded, setExpanded] = useState(false)
   const [selectedClaim, setSelectedClaim] = useState<DecisionClaim | null>(null)
@@ -353,7 +397,7 @@ export default function DecisionIntelligencePanel({
 
           <div className="mt-3">
             <EvidenceList report={displayReport} />
-      <ClaimsSection claims={displayReport.claims ?? []} actions={displayReport.proposed_actions ?? []} onInspect={setSelectedClaim} />
+      <ClaimsSection claims={displayReport.claims ?? []} actions={displayReport.proposed_actions ?? []} actionStatuses={actionStatuses} onInspect={setSelectedClaim} />
             <DecisionReportFeedbackControls runId={runId} reportVersion={verified ? reportVersion : null} claims={displayReport.claims ?? []} />
             {/* Keyed: inspecting another claim opens its own section (focus and scroll move to it). */}
             {selectedClaim && <EvidenceDrawer key={selectedClaim.claim_id} claim={selectedClaim} reportHash={displayReport.evidence_bundle_sha256} reportVersion={reportVersion} runId={runId} onClose={() => setSelectedClaim(null)} />}
