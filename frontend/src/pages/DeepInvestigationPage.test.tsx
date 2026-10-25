@@ -1,9 +1,11 @@
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 
 import DeepInvestigationPage, { InvestigationKpiStrip } from './DeepInvestigationPage'
 import { expectTemplateHeader } from '@/test/expectTemplateHeader'
+import { usePreScan } from '@/hooks/useAgentOps'
+import { idleSwr, PRESCAN_FIXTURE } from '@/test/agentOpsMocks'
 
 vi.mock('@/hooks/useDeepInvestigation', () => ({
   useFailureClusters: vi.fn(),
@@ -12,6 +14,7 @@ vi.mock('@/hooks/useDeepInvestigation', () => ({
   // mock must export it or the page throws on render.
   usePipelineStatus: vi.fn(),
 }))
+vi.mock('@/hooks/useAgentOps', async () => (await import('@/test/agentOpsMocks')).agentOpsHookMocks())
 
 // W04 AIC-01: the page reads `/settings/ai/mode` for the deep triggers; Auto
 // with deep investigation on offers them (the state these tests describe).
@@ -401,7 +404,7 @@ describe('InvestigationKpiStrip — glyphs from real numbers only', () => {
       preScanClusters: 0, preScanAvgConfidence: 0, proposedClusters: [], severityCounts: { p0: 0, p1: 0, p2: 0, p3: 0 },
     })} />)
     const likely = kpiCell('Likely clusters')
-    expect(likely).toHaveTextContent('pre-scan · avg conf —')
+    expect(likely).toHaveTextContent('last analysis · avg conf —')
     expect(likely).not.toHaveTextContent('0.00')
     // "Avg cluster confidence" says "—" in the neutral tone: not measured is not a bad reading.
     const value = within(kpiCell('Avg cluster confidence')).getByText('—')
@@ -499,9 +502,10 @@ describe('DeepInvestigationPage — only what it really does', () => {
     return screen.findByRole('region', { name: 'Investigation verdict' })
   }
 
-  it('renders no stub control: History, Configure, Run on selection, Dry run, Open cluster, Swap, Decision trail', async () => {
+  // W14 AGT-07: "Run on selection" is real now (the run configuration; the case below posts its failure ids).
+  it('renders no stub control: History, Configure, Dry run, Open cluster, Swap, Decision trail', async () => {
     await renderPage()
-    for (const name of [/^History$/, /^Configure$/, /Run on selection/, /Dry run/, /Open cluster/, /Swap/, /Decision trail/]) {
+    for (const name of [/^History$/, /^Configure$/, /Dry run/, /Open cluster/, /Swap/, /Decision trail/]) {
       expect(screen.queryByRole('button', { name })).toBeNull()
     }
     // The ⌘⏎ shortcut was advertised and never wired.
@@ -511,6 +515,26 @@ describe('DeepInvestigationPage — only what it really does', () => {
     expect(screen.getByText('GitHub')).toBeInTheDocument()
     // The one real CTA stays.
     expect(screen.getByRole('button', { name: /Run on all 7 failures/ })).toBeInTheDocument()
+  })
+
+  it('W14 AGT-07: Run on selection posts the selected groups\' failure ids', async () => {
+    const { useAuthStore } = await import('@/store/authStore')
+    const { deepInvestigationService } = await import('@/services/deepInvestigationService')
+    const trigger = vi.spyOn(deepInvestigationService, 'triggerDeep').mockResolvedValue({ message: 'queued', run_id: 'run-1' })
+    useAuthStore.setState({ user: { id: 'eng', role: 'QA_ENGINEER' } as never })
+    vi.mocked(usePreScan).mockReturnValue(idleSwr({ data: PRESCAN_FIXTURE }))
+    await renderPage()
+    const [timeouts, asserts] = PRESCAN_FIXTURE.groups
+    fireEvent.click(screen.getByRole('checkbox', { name: `Select 7 failures: ${timeouts.representative_error}` }))
+    fireEvent.click(screen.getByRole('checkbox', { name: `Select 3 failures: ${asserts.representative_error}` }))
+    fireEvent.click(screen.getByRole('button', { name: 'Run on selection' }))
+    await waitFor(() => expect(trigger).toHaveBeenCalledTimes(1))
+    expect(trigger).toHaveBeenCalledWith('run-1', 'deep', {
+      failure_ids: [...timeouts.member_result_ids, ...asserts.member_result_ids],
+    })
+    trigger.mockRestore()
+    vi.mocked(usePreScan).mockReturnValue(idleSwr())
+    useAuthStore.setState({ user: null } as never)
   })
 
   it('renders neither the Run settings card (never sent with triggerDeep) nor the provenance footer', async () => {
@@ -621,19 +645,22 @@ describe('DeepInvestigationPage — only what it really does', () => {
     expect(avg).toHaveTextContent('target ≥ 0.7 · 1 below')
     expect(within(avg).getByRole('meter')).toHaveAttribute('aria-valuetext', '0.74 of 1.00; target 0.70')
     const likely = kpi('Likely clusters')
-    expect(likely).toHaveTextContent('pre-scan · avg conf 0.74')
+    expect(likely).toHaveTextContent('last analysis · avg conf 0.74')
     expect(likely).toHaveTextContent('1 P0 · 1 P2 · 1 unscored')
   })
 
   it('says no proposed cluster has a score when none is scored — neutral, no number', async () => {
+    vi.mocked(usePreScan).mockReturnValue(idleSwr({ data: PRESCAN_FIXTURE }))
     await renderPage({ clusters: [cluster('cl-u', 'Mystery Errors', null), cluster('cl-v', 'Other Errors', null)], findings: [] })
     const avg = kpi('Avg cluster confidence')
     expect(avg).toHaveTextContent('no proposed cluster has a score')
     expect(avg).not.toHaveTextContent(/\d\.\d{2}/)
     expect(within(avg).getByText('—')).toHaveStyle({ color: 'var(--color-text)' })
     expect(within(avg).queryByRole('meter')).toBeNull()
-    expect(kpi('Likely clusters')).toHaveTextContent('pre-scan · avg conf —')
-    expect(screen.getByRole('region', { name: 'Investigation verdict' })).toHaveTextContent(/Pre-scan2 clustersunscored/)
+    expect(kpi('Likely clusters')).toHaveTextContent('last analysis · avg conf —')
+    // W14 AGT-07: the Pre-scan facet is the server's error-signature pre-scan, not the clusters relabelled.
+    expect(screen.getByRole('region', { name: 'Investigation verdict' })).toHaveTextContent(/Pre-scan3 groupsby signature/)
+    vi.mocked(usePreScan).mockReturnValue(idleSwr())
   })
 
   // ── UX redesign P6: the page template's header, not a page-made heading ──

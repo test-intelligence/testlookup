@@ -32,6 +32,7 @@ vi.mock('@/hooks/useDeepInvestigation', () => ({
   usePipelineStatus: hooks.usePipelineStatus,
 }))
 vi.mock('@/hooks/useRuns', () => ({ useRuns: hooks.useRuns, useRun: hooks.useRun }))
+vi.mock('@/hooks/useAgentOps', async () => (await import('@/test/agentOpsMocks')).agentOpsHookMocks())
 vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => ({ isQaEngineer: true, canAccessManagement: true }) }))
 vi.mock('@/hooks/useAIConfig', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/hooks/useAIConfig')>()),

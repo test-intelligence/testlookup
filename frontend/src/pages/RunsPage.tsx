@@ -40,14 +40,17 @@
  * runs on screen (the stored verdicts, never computed by the list;
  * `runsList/aiVerdict.ts`), and ONE `GET /runs/failure-signatures` for up to
  * 50 failed builds (the visible ones first, then the newest). Bisect
- * navigates to /runs/compare; per-row Trigger / Deep + bulk-trigger use the
- * existing agentService calls. UX redesign P2: a control renders only when it
- * does something real.
+ * navigates to /runs/compare; per-row Trigger / Deep use the agentService
+ * calls. W14 AGT-12: every bulk action (selection, all failed, deep, and
+ * "Re-trigger all matching" — the list's own filter, resolved on the server)
+ * is ONE server request whose job is tracked in `BulkJobProgress` above the
+ * table (`?bulk_job=`). UX redesign P2: a control renders only when it does
+ * something real.
  */
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
-  GitBranch, GitCompare, Layers, Search, Stethoscope, Upload, Zap,
+  GitBranch, GitCompare, Layers, RotateCcw, Search, Stethoscope, Upload, Zap,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { clsx } from 'clsx'
@@ -65,6 +68,12 @@ import MetricCard from '@/components/ui/MetricCard'
 import { Panel } from '@/components/ui/PanelHeader'
 import { Table, Td, Th, ThSort, Tr } from '@/components/ui/Table'
 import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
+import InlineConfirm from '@/components/ui/inPage/InlineConfirm'
+import { isUuid } from '@/components/ui/inPage/ids'
+import BulkJobProgress from '@/components/agents/BulkJobProgress'
+import {
+  BULK_FILTER_CAP, bulkOutcome, confirmSentence, filterFromPage, matchingLabel,
+} from '@/components/agents/bulkJobModel'
 import WindowPicker, { DEFAULT_WINDOW_OPTIONS } from '@/components/ui/WindowPicker'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
@@ -85,6 +94,7 @@ import { countTones, type DayStripCell } from '@/components/charts/dayStrip.mode
 import type { GaugeTick, GaugeTone } from '@/components/charts/gaugeBar.model'
 import { useDataFreshness } from '@/hooks/useDataFreshness'
 import { useRuns } from '@/hooks/useRuns'
+import { useReleaseScope } from '@/hooks/useReleaseScope'
 import { useRunAiVerdicts, useRunBranches, useRunSignatures } from '@/hooks/useRunListInsights'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
@@ -92,7 +102,8 @@ import { usePageSuiteFilter } from '@/hooks/usePageSuiteFilter'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useFeatureEnabled } from '@/hooks/useFeatureFlags'
-import agentService from '@/services/agentService'
+import agentService, { newClientToken } from '@/services/agentService'
+import { pipelineActionError } from '@/services/pipelineActions'
 import type { RunListFilters, TestRun, TestRunListResponse } from '@/types/runs'
 import { shortAgo } from '@/utils/formatters'
 import { buildCompareWithPreviousHref } from '@/utils/runComparisons'
@@ -1454,7 +1465,8 @@ export default function RunsPage() {
     pendingQueries.current = at === -1 ? [] : pendingQueries.current.slice(at + 1)
     if (pendingQueries.current.length === 0) latestQuery.current = searchParams
   }, [searchParams])
-  const writeFilters = useCallback((values: Partial<Record<'q' | 'branch' | 'verdict', string>>) => {
+  // (`bulk_job` rides the same writer: W14 AGT-12's tracked bulk job, `?bulk_job=<id>`.)
+  const writeFilters = useCallback((values: Partial<Record<'q' | 'branch' | 'verdict' | 'bulk_job', string>>) => {
     const next = new URLSearchParams(latestQuery.current)
     for (const [name, value] of Object.entries(values)) {
       if (value) next.set(name, value)
@@ -1542,8 +1554,9 @@ export default function RunsPage() {
 
   const { options: suiteOptions } = useSuiteOptions(days)
 
-  // Absent filters are not sent: an unfiltered page asks exactly what it did.
-  const { data, isLoading, error: runsError, mutate: retryRuns } = useRuns({
+  // Absent filters are not sent: an unfiltered page asks exactly what it did. W14 AGT-12: the same object is
+  // the `run_filter` of "Re-trigger all matching" (`filterFromPage`), so the two can never disagree.
+  const runsParams: Record<string, unknown> = {
     page: 1,
     size: ANALYTICS_FETCH_SIZE,
     days,
@@ -1552,7 +1565,20 @@ export default function RunsPage() {
     ...(urlQ && { q: urlQ }),
     ...(branchFilter && { branch: branchFilter }),
     ...(verdictFilter && { recommendation: verdictFilter }),
-  })
+  }
+  const { data, isLoading, error: runsError, mutate: retryRuns } = useRuns(runsParams)
+  // The global release scope `useRuns` adds to the list's request (its own rule, read the same way here).
+  const releaseScope = useReleaseScope()
+  // W14 AGT-12: the tracked bulk job (`?bulk_job=<id>`; a value that is not an id is never put in a path),
+  // the line a bulk answer without a job leaves, and the "Re-trigger all matching" confirmation (open while it
+  // holds the request's client token: a second click, or a retry after a timeout, queues the batch once).
+  const rawBulkJob = searchParams.get('bulk_job')
+  const bulkJobId = isUuid(rawBulkJob) ? rawBulkJob : null
+  const [bulkNote, setBulkNote] = useState<string | null>(null)
+  const [retriggerToken, setRetriggerToken] = useState<string | null>(null)
+  const [retriggerBusy, setRetriggerBusy] = useState(false)
+  // At the job's finish the list revalidates once (its own 15 s poll is unchanged).
+  const revalidateRuns = useCallback(() => { void retryRuns() }, [retryRuns])
   // While a search / branch / verdict change loads, the page keeps the rows it
   // had (same project, window, status and suite) instead of swapping itself
   // for the full-page spinner: the spinner unmounted the search box under the
@@ -1682,15 +1708,37 @@ export default function RunsPage() {
   const projectLabel = project?.name ?? 'All Projects'
 
   // Per-row + bulk action handlers ────────────────────────────────────────
+  // W14 AGT-12: a bulk answer with a job opens the progress panel (it replaces the bulk success toast); one
+  // without (Redis down: `tracking: false`) says the batch queued untracked; an older server's answer toasts.
+  function applyBulk(result: Parameters<typeof bulkOutcome>[0], asked: number, toastText: (queued: number) => string) {
+    const outcome = bulkOutcome(result, asked)
+    if (outcome.kind === 'panel') {
+      setBulkNote(null)
+      writeFilters({ bulk_job: outcome.jobId })
+    } else if (outcome.kind === 'untracked') {
+      setBulkNote(outcome.note)
+    } else {
+      toast.success(toastText(outcome.queued))
+    }
+  }
+  // A refused batch is ONE 422 with the server's sentence (W04's deep gate, a filter text): it is shown where
+  // the panel would be, never as a second toast (the bulk calls suppress the global one).
+  function bulkRefused(err: unknown, fallback: string) {
+    const status = (err as { response?: { status?: number } } | null)?.response?.status
+    if (status === 422) setBulkNote(pipelineActionError(err, fallback))
+    else toast.error(fallback)
+  }
+
   async function handleTrigger(id: string) {
     if (id === '__bulk__') {
+      setBulkNote(null)
       try {
         const ids = Array.from(selectedIds)
         const result = await agentService.bulkTriggerPipelines(ids)
-        toast.success(`Bulk-triggered ${result?.queued ?? ids.length} pipelines`)
+        applyBulk(result, ids.length, (n) => `Bulk-triggered ${n} pipelines`)
         setSelectedIds(new Set())
-      } catch {
-        toast.error('Bulk trigger failed')
+      } catch (err) {
+        bulkRefused(err, 'Bulk trigger failed')
       }
     } else {
       try {
@@ -1704,13 +1752,15 @@ export default function RunsPage() {
 
   async function handleDeep(id: string) {
     if (id === '__bulk__') {
+      // W14 AGT-12: ONE server request (the gate is applied once for the batch), nothing fanned out here.
+      setBulkNote(null)
       try {
         const ids = Array.from(selectedIds)
-        await Promise.all(ids.map(rid => agentService.triggerDeepPipeline(rid)))
-        toast.success(`Bulk-queued deep investigation for ${ids.length} run${ids.length === 1 ? '' : 's'}`)
+        const result = await agentService.bulkTriggerPipelines(ids, 'deep')
+        applyBulk(result, ids.length, (n) => `Bulk-queued deep investigation for ${n} run${n === 1 ? '' : 's'}`)
         setSelectedIds(new Set())
-      } catch {
-        toast.error('Bulk deep failed')
+      } catch (err) {
+        bulkRefused(err, 'Bulk deep failed')
       }
     } else {
       try {
@@ -1728,11 +1778,12 @@ export default function RunsPage() {
       toast('No failed runs in window', { icon: 'ℹ️' })
       return
     }
+    setBulkNote(null)
     try {
       const result = await agentService.bulkTriggerPipelines(failedIds)
-      toast.success(`Triggered ${result?.queued ?? failedIds.length} failed runs`)
-    } catch {
-      toast.error('Trigger-all failed')
+      applyBulk(result, failedIds.length, (n) => `Triggered ${n} failed runs`)
+    } catch (err) {
+      bulkRefused(err, 'Trigger-all failed')
     }
   }
 
@@ -1742,11 +1793,37 @@ export default function RunsPage() {
       toast('No failed runs in window', { icon: 'ℹ️' })
       return
     }
+    setBulkNote(null)
     try {
-      await Promise.all(failedIds.map(id => agentService.triggerDeepPipeline(id)))
-      toast.success(`Deep investigation queued for ${failedIds.length} runs`)
-    } catch {
-      toast.error('Deep-all failed')
+      const result = await agentService.bulkTriggerPipelines(failedIds, 'deep')
+      applyBulk(result, failedIds.length, (n) => `Deep investigation queued for ${n} runs`)
+    } catch (err) {
+      bulkRefused(err, 'Deep-all failed')
+    }
+  }
+
+  // W14 AGT-12 "Re-trigger all matching": the list's own filter, resolved on the server (capped at 2,000).
+  const matchTotal = shownData?.total ?? 0
+  async function handleRetriggerMatching() {
+    if (!retriggerToken) return
+    setRetriggerBusy(true)
+    setBulkNote(null)
+    try {
+      const result = await agentService.bulkTriggerFiltered(
+        filterFromPage({ projectId: isAllProjects ? null : activeProjectId, release: releaseScope, params: runsParams }),
+        'offline',
+        retriggerToken,
+      )
+      setRetriggerToken(null)
+      applyBulk(result, Math.min(matchTotal, BULK_FILTER_CAP), (n) => `Re-triggered ${n} matching runs`)
+    } catch (err) {
+      // A 422 (a filter the server refuses) closes the question with its sentence; anything else keeps it open
+      // with the SAME token, so asking again cannot queue the batch twice.
+      const status = (err as { response?: { status?: number } } | null)?.response?.status
+      if (status === 422) setRetriggerToken(null)
+      bulkRefused(err, 'Re-trigger failed')
+    } finally {
+      setRetriggerBusy(false)
     }
   }
 
@@ -1783,6 +1860,13 @@ export default function RunsPage() {
       icon: <Stethoscope className="h-3.5 w-3.5" />,
       onClick: () => void handleDeepAllFailed(),
       disabled: !isQaEngineer || model.failedRuns === 0,
+    },
+    {
+      // The list answer's COUNT (`total`), not the rows on screen; the confirm names it before anything is sent.
+      label: matchingLabel(matchTotal),
+      icon: <RotateCcw className="h-3.5 w-3.5" />,
+      onClick: () => setRetriggerToken((token) => token ?? newClientToken()),
+      disabled: !isQaEngineer || matchTotal === 0,
     },
   ]
 
@@ -1941,6 +2025,30 @@ export default function RunsPage() {
             onJumpToRow={onJumpToRow}
           />
         </InlineFormSection>
+      )}
+
+      {/* W14 AGT-12: the bulk answers, in the page above the table (nothing here on load without ?bulk_job=). */}
+      {retriggerToken && (
+        <InlineConfirm
+          message={confirmSentence(matchTotal)}
+          confirmLabel="Re-trigger"
+          busy={retriggerBusy}
+          onConfirm={() => void handleRetriggerMatching()}
+          onCancel={() => setRetriggerToken(null)}
+          testId="runs-retrigger-confirm"
+        />
+      )}
+      {bulkNote && (
+        <p role="note" data-bulk-note="" className="m-0 text-sm text-[var(--color-text-secondary)]">{bulkNote}</p>
+      )}
+      {bulkJobId && (
+        <BulkJobProgress
+          key={bulkJobId}
+          jobId={bulkJobId}
+          canCancel={isQaEngineer}
+          onSettled={revalidateRuns}
+          onClose={() => writeFilters({ bulk_job: '' })}
+        />
       )}
 
       {/* The page's primary content: the runs table. */}

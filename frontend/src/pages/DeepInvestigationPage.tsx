@@ -11,17 +11,23 @@
  *             / RUNNING / FAILED. Left: pulsing eyebrow → 26 px headline
  *             → lede → 4 input facets (Failures eligible · Scope ·
  *             Evidence sources · Pre-scan signal) → "Run on all" CTA.
- *             Right: Cost & time card (last run's actual cost, a workload
- *             heuristic, the real budget bar).
+ *             Right: Cost & time (`DeepEstimateCard`: the MEASURED estimate,
+ *             the last run's actual cost, the real budget bar).
  *   Cockpit → AI-1 Investigator cockpit.
  *   KPIs    → 5 tiles: Eligible failures · Likely clusters · Last analysis
  *             · Avg cluster confidence · Spend MTD.
  *   Body    → 1.65fr | 1fr.
- *     Left  → Proposed clusters preview + Recent runs table.
+ *     Left  → Run configuration (the pre-scan's groups as a selection) +
+ *             Proposed clusters preview + Recent runs table.
  *     Right → Evidence sources card · Model routing card.
  *
- * Pre-scan is synthesised client-side from useFailureClusters (members +
- * cohesion_score) of the focused run; there is no pre-scan endpoint.
+ * W14 AGT-07: three server answers (`hooks/useAgentOps`). The pre-scan
+ * (`usePreScan`: the run's failing results grouped by error signature), the
+ * estimate (`useDeepEstimate`: a p50 of the project's past deep runs, the
+ * price when one is known, and the server's own deep GATE — Run is offered
+ * only when it allows; while it loads, `deepInvestigationAvailability`
+ * decides as before) and the investigation history (`DeepHistoryTable`).
+ * None of the three is computed in the browser.
  *
  * Data: derives every rendered field from useRuns (focused run picker),
  * useFailureClusters, useDeepFindings, usePipelineStatus,
@@ -39,13 +45,11 @@ import {
   Server, ShieldCheck,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { clsx } from 'clsx'
 import AISuggestion from '@/components/ai/AISuggestion'
 import EmptyState from '@/components/ui/EmptyState'
 import KpiStrip from '@/components/ui/KpiStrip'
 import MetricCard, { type MetricTone } from '@/components/ui/MetricCard'
 import { Panel } from '@/components/ui/PanelHeader'
-import { Table, Td, Th, Tr } from '@/components/ui/Table'
 import { SEVERITY_STYLE, severityLevel } from '@/components/ui/severity'
 import InvestigatorCockpit from '@/components/investigator/InvestigatorCockpit'
 import GaugeBar from '@/components/charts/GaugeBar'
@@ -55,6 +59,14 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import PageHeader from '@/components/ui/PageHeader'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
 import { helpTopicParam } from '@/components/help/helpTopics'
+import DeepEstimateCard from '@/components/deep/DeepEstimateCard'
+import DeepHistoryTable from '@/components/deep/DeepHistoryTable'
+import DeepRunConfigurationCard from '@/components/deep/DeepRunConfigurationCard'
+import {
+  DEEP_ALREADY_IN_PROGRESS, EMPTY_CONFIG, estimateQuery, runRequest, selectionFromGroups,
+  type DeepRunConfig, type DeepRunRow,
+} from '@/components/deep/deepRunModel'
+import { useDeepEstimate, usePreScan } from '@/hooks/useAgentOps'
 import { useFailureClusters, useDeepFindings, usePipelineStatus } from '@/hooks/useDeepInvestigation'
 import { useDecisionTrail } from '@/hooks/useDecisionTrail'
 import { useIntegrationStatus } from '@/hooks/useIntegrationHealth'
@@ -75,6 +87,7 @@ import {
   pipelineActionError,
   readPipelineActionConflict,
 } from '@/services/pipelineActions'
+import type { DeepPreScan } from '@/types/agentOps'
 import type { FailureCluster, DeepFinding } from '@/types/deep-investigation'
 import type { DecisionTrailResponse } from '@/types/decisionTrail'
 import type { IntegrationStatus } from '@/services/integrationHealthService'
@@ -481,11 +494,14 @@ interface DeepModel {
   evidenceSources: EvidenceSource[]
   evidenceConnected: number
   evidenceTotal: number
+  /** The clusters the LAST ANALYSIS proposed (`proposedClusters.length`). The name predates W14's real
+   *  pre-scan (`usePreScan`, the error-signature groups); it is kept because the KPI strip's tests build it. */
   preScanClusters: number
   /** Mean confidence of the SCORED proposed clusters; null when none is scored. */
   preScanAvgConfidence: number | null
   proposedClusters: ProposedCluster[]
-  pastInvestigations: PastRun[]
+  /** The recent runs (the run picker); `DeepHistoryTable` fills the other runs from the history. */
+  pastInvestigations: DeepRunRow[]
   lastRunAgeHours: number | null
   lastRunSummary: string | null
   /** Real month-to-date LLM spend for the project (GET /llm-usage). */
@@ -496,8 +512,6 @@ interface DeepModel {
   spendSoftWarnPct: number | null
   /** Actual cost of the focused run's last investigation (decision trail). */
   lastRunCostDollars: number | null
-  estimateBreakdown: EstimateRow[]
-  estimateMinutes: number
   severityCounts: { p0: number; p1: number; p2: number; p3: number }
 }
 
@@ -526,36 +540,6 @@ interface ProposedCluster {
   /** DeepFinding.confidence_basis — likewise already on the wire. */
   confidenceBasis?: DeepFinding['confidence_basis']
   startedHoursAgo: number | null
-}
-
-interface PastRun {
-  runId: string
-  runIdLabel: string
-  /** Per-(project, suite) human-readable run number, 1-based. Mirrors
-   *  the same value shown on /runs, /live, /my-failures, etc. May be
-   *  null for legacy runs ingested before the field existed. */
-  runSeq: number | null
-  suiteLabel: string | null
-  suiteNames: string[] | null
-  whenRel: string
-  whenAbs: string
-  failures: number
-  /** The four columns below are known only for the FOCUSED run (its
-   *  clusters, findings, decision-trail cost and pipeline status); every
-   *  other row is null and renders "—". They used to be invented:
-   *  failures/12 clusters, failures/14 defects, 0.75 + (i % 4) * 0.03
-   *  confidence, $0.30 + failures * $0.005, and every fifth row "Failed at
-   *  clustering" (a hard-coded demo row). */
-  clusters: number | null
-  findings: number | null
-  avgConf: number | null
-  cost: number | null
-  status: 'complete' | 'running' | 'failed' | null
-}
-
-interface EstimateRow {
-  label: string
-  detail: string
 }
 
 /** DeepFinding.origin → the provenance phrasing shown in the trust chrome.
@@ -593,9 +577,8 @@ function buildModel({
   const eligibleFailures = focusedRun?.failed_tests
     ?? recentRuns.reduce((s, r) => s + (r.failed_tests ?? 0), 0)
 
-  // Pre-scan: synthesise from existing cluster data on the focused run.
-  // When the backend grows a cheap-embedding pre-scan endpoint, swap this
-  // for a real call and drop the synthesis.
+  // The clusters the focused run's LAST deep analysis proposed (its stored
+  // `failure_clusters`). The pre-scan is the server's (`usePreScan`), not these.
   const proposedClusters: ProposedCluster[] = clusters.slice(0, 3).map((c, i) => {
     const finding = findings.find(f => f.cluster_id === c.cluster_id)
     // confidence_score arrives as either a 0-1 fraction or a 0-100 percent
@@ -633,10 +616,12 @@ function buildModel({
     ? scoredConfidences.reduce((s, c) => s + c, 0) / scoredConfidences.length
     : null
 
-  // Recent runs — the run picker. There is no investigations endpoint, so
-  // only the focused run carries investigation data (see PastRun).
+  // Recent runs — the run picker. What the page knows live is the FOCUSED
+  // run's (its clusters, findings, decision-trail cost, pipeline status);
+  // `DeepHistoryTable` fills every investigated run from the server's history
+  // (`GET /deep-investigate/history`), and a run it does not list keeps "—".
   const trailCost = trail && trail.total_cost_usd > 0 ? trail.total_cost_usd : null
-  const pastInvestigations: PastRun[] = recentRuns.slice(0, 6).map((r) => {
+  const pastInvestigations: DeepRunRow[] = recentRuns.slice(0, 6).map((r) => {
     const ageMs = Date.now() - new Date(r.created_at).getTime()
     const ageH = Math.max(0, Math.floor(ageMs / 3600000))
     const ageRel = ageH < 1 ? 'just now'
@@ -644,7 +629,7 @@ function buildModel({
       : ageH < 48 ? 'Yesterday'
       : `${Math.floor(ageH / 24)}d ago`
     const isFocus = Boolean(focusedRun && r.id === focusedRun.id)
-    const status: PastRun['status'] = isFocus && pipelineStatus
+    const status: DeepRunRow['status'] = isFocus && pipelineStatus
       ? (isPipelineInProgress(pipelineStatus.status) ? 'running'
          : pipelineStatus.status === 'failed' ? 'failed'
          : 'complete')
@@ -684,17 +669,8 @@ function buildModel({
       ].join(' · ')
     : null
 
-  // Workload breakdown — real counts per stage. There is no server-side
-  // price book, so no per-stage $ figures are fabricated here; the estimate
-  // card shows the decision trail's ACTUAL cost for the last investigation.
-  const estimateBreakdown: EstimateRow[] = [
-    { label: 'Clustering',        detail: `${eligibleFailures} embeds` },
-    { label: 'Root cause',        detail: `${proposedClusters.length} traces` },
-    { label: 'Evidence synth',    detail: `${proposedClusters.length} packs` },
-    { label: 'Defect drafts',     detail: `${proposedClusters.length} drafts` },
-  ]
-  // Time estimate: 0.5 min base + 0.05 min/failure clustering + 1 min/cluster RCA
-  const estimateMinutes = 0.5 + eligibleFailures * 0.05 + proposedClusters.length * 1.0
+  // (W14 AGT-07: the time / cost estimate is the server's measured one,
+  // `useDeepEstimate`; nothing is estimated here.)
 
   // Severity distribution of the SCORED proposed clusters (an unscored one
   // has no severity).
@@ -740,8 +716,6 @@ function buildModel({
     spendBudgetDollars,
     spendSoftWarnPct,
     lastRunCostDollars: trailCost,
-    estimateBreakdown,
-    estimateMinutes,
     severityCounts: { ...sevCounts },
   }
 }
@@ -761,6 +735,7 @@ function pickVerdict(model: DeepModel, pipelineStatus: { status: string } | null
 // ── Verdict card ────────────────────────────────────────────────────────
 function VerdictCard({
   model, verdict, headline, lede, onRunAll, isQaEngineer, retry, offerRetry, unavailableMessage,
+  preScan, preScanError, aside,
 }: {
   model: DeepModel
   verdict: Verdict
@@ -772,9 +747,27 @@ function VerdictCard({
   retry: DeepRetry
   /** The last deep run failed and has an id to retry: the CTA is the retry, not a fresh run. */
   offerRetry: boolean
-  /** W04 AIC-01: set when deep investigation is not offered (toggle off / Rules mode). */
+  /** W04 AIC-01: set when deep investigation is not offered (toggle off / Rules mode); W14 AGT-07: or when the
+   *  estimate's server-side gate refuses (a configured Auto that resolves to Rules). */
   unavailableMessage: string | null
+  /** W14 AGT-07: the server's error-signature pre-scan (the Pre-scan facet). */
+  preScan: DeepPreScan | undefined
+  preScanError: unknown
+  /** The right column: Cost & time (`DeepEstimateCard`). */
+  aside: React.ReactNode
 }) {
+  const groups = preScan?.groups_total ?? 0
+  const preScanValue = preScan?.measured ? `${groups} group${groups === 1 ? '' : 's'}` : '—'
+  const preScanSub = !preScan
+    ? (preScanError ? 'could not load' : 'loading')
+    : !preScan.measured
+      ? 'no failing results'
+      // The facet is ~131 px at 1280: the short caption fits on CI's DejaVu, the
+      // full sentence rides the title (the count and the clusters are in the headline).
+      : 'by signature'
+  const preScanTitle = preScan?.measured
+    ? `${preScan.failing_results} failing · by error signature${preScan.refinement === 'clusters' ? ' · clusters shown' : ''}`
+    : preScanSub
   const t = VERDICT_THEME[verdict]
   return (
     <section
@@ -842,14 +835,15 @@ function VerdictCard({
               : 'none live'}
             tone={model.evidenceConnected >= 3 ? 'neutral' : 'warn'}
           />
+          {/* W14 AGT-07: the server's pre-scan (the run's failing results grouped by error signature), no
+              longer the last analysis's clusters relabelled. */}
           <FacetTile
             label="Pre-scan"
             hint="Pre-scan signal"
-            value={model.preScanClusters > 0 ? `${model.preScanClusters} clusters` : '—'}
-            sub={model.preScanClusters === 0 ? 'run analysis'
-              : model.preScanAvgConfidence != null ? `avg conf ${model.preScanAvgConfidence.toFixed(2)}`
-              : 'unscored'}
-            tone={model.preScanClusters > 0 ? 'good' : 'neutral'}
+            value={preScanValue}
+            // The tile's caption is one truncated line (≈ 131 px at 1280): the whole sentence is its title.
+            sub={<span title={preScanTitle}>{preScanSub}</span>}
+            tone="neutral"
           />
         </div>
 
@@ -877,7 +871,7 @@ function VerdictCard({
       </div>
 
       <div className="flex flex-col gap-3.5 pt-0.5 min-w-0">
-        <EstimateCard model={model} />
+        {aside}
       </div>
     </section>
   )
@@ -901,71 +895,7 @@ function FacetTile({
   return <MetricCard size="sm" className="overflow-hidden" title={label} hint={hint} metric={{ value }} caption={sub} tone={tone} />
 }
 
-// ── Estimate card ───────────────────────────────────────────────────────
-// Headline $ is the ACTUAL cost of the focused run's last investigation
-// (decision trail). There is no server-side price book, so no per-stage $
-// estimates are fabricated — the breakdown lists real workload counts and
-// the budget bar reads the real project spend/quota.
-function EstimateCard({ model }: { model: DeepModel }) {
-  const budget = model.spendBudgetDollars
-  const usedPct = budget && budget > 0
-    ? Math.min(100, (model.spendMtdDollars / budget) * 100)
-    : 0
-  const softWarnPct = model.spendSoftWarnPct
-  return (
-    // The headline is the one KPI tile (W29b UIX-09: the md tile, its value on --text-stat-lg, which presentation
-    // mode raises; it was a fixed 32 px); the workload and the budget follow it.
-    <div className="flex min-w-0 flex-col gap-2.5">
-      <MetricCard
-        title="Cost & time"
-        metric={{ value: model.lastRunCostDollars != null ? `$${model.lastRunCostDollars.toFixed(2)}` : '—' }}
-        caption={model.lastRunCostDollars != null ? 'last run' : 'no costed run yet'}
-        sparkline={
-          <span
-            className="inline-flex items-center px-2 py-0.5 rounded-full text-2xs font-semibold tabular-nums"
-            style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
-          >
-            ~{model.estimateMinutes.toFixed(1)} min
-          </span>
-        }
-      />
-
-      <div className="flex flex-col gap-1.5 text-xs">
-        {model.estimateBreakdown.map((r, i) => (
-          <div key={i} className="flex items-baseline justify-between gap-3">
-            <span className="text-[var(--color-text-secondary)]">{r.label}</span>
-            <span className="text-[var(--color-text-muted)] tabular-nums">{r.detail}</span>
-          </div>
-        ))}
-      </div>
-
-      {/* Budget bar — real spend vs the configured monthly quota. */}
-      {budget != null && budget > 0 ? (
-        <div className="mt-1">
-          <div className="relative h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--color-bg-secondary)' }}>
-            <i className="block h-full" style={{ width: `${usedPct}%`, background: 'var(--color-accent)' }} />
-            {softWarnPct != null && softWarnPct > 0 && softWarnPct < 100 && (
-              <span
-                aria-hidden
-                className="absolute top-0 bottom-0"
-                style={{ left: `${softWarnPct}%`, width: 1, background: 'var(--status-broken)' }}
-                title={`Soft warn at ${softWarnPct}%`}
-              />
-            )}
-          </div>
-          <div className="text-2xs text-[var(--color-text-muted)] mt-1.5 flex justify-between">
-            <span>${model.spendMtdDollars.toFixed(2)} of ${budget} monthly</span>
-            {softWarnPct != null && <span>warn at {softWarnPct}%</span>}
-          </div>
-        </div>
-      ) : (
-        <div className="text-2xs text-[var(--color-text-muted)] mt-1">
-          ${model.spendMtdDollars.toFixed(2)} spent this month · no budget set — configure in Settings → Billing
-        </div>
-      )}
-    </div>
-  )
-}
+// (W14 AGT-07: Cost & time is `components/deep/DeepEstimateCard`, the server's measured estimate.)
 
 // ── KPI strip ───────────────────────────────────────────────────────────
 /** A tone's ink, as the tile's value draws it (MetricCard's `tone`). */
@@ -1106,7 +1036,8 @@ export function InvestigationKpiStrip({ model }: { model: DeepModel }) {
             title="Clusters"
             hint="Likely clusters"
             metric={{ value: model.preScanClusters }}
-            caption={<>pre-scan · avg conf {avgConfidence != null ? avgConfidence.toFixed(2) : '—'}</>}
+            // W14 AGT-07: these are the LAST ANALYSIS's clusters; "pre-scan" now names the real pre-scan.
+            caption={<>last analysis · avg conf {avgConfidence != null ? avgConfidence.toFixed(2) : '—'}</>}
             sparkline={severityGauge}
           />,
           <InputTile
@@ -1285,117 +1216,7 @@ function ClusterRow({ cluster }: { cluster: ProposedCluster }) {
   )
 }
 
-// ── Past investigations ────────────────────────────────────────────────
-function PastInvestigations({ rows, onOpen }: { rows: PastRun[]; onOpen: (runId: string) => void }) {
-  return (
-    <Panel
-      title="Recent runs"
-      actions={<span>latest {rows.length} · investigation data for the focused run</span>}
-    >
-      <div className="overflow-x-auto">
-        <Table density="dense">
-          <thead>
-            <tr>
-              <Th>Test Suite</Th>
-              {/* Per-(project, suite) human-readable run number,
-                  alongside the suite the row belongs to. Same value
-                  rendered on /runs, /live, /my-failures, /intelligence,
-                  and /agents — the column is named "Run" everywhere. */}
-              <Th>Run</Th>
-              <Th numeric>Failures</Th>
-              <Th numeric>Clusters</Th>
-              <Th numeric>Findings</Th>
-              <Th numeric>Avg conf</Th>
-              <Th numeric>Cost</Th>
-              <Th>Status</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={8} className="text-center py-8 text-[var(--color-text-muted)]">
-                  No runs yet.
-                </td>
-              </tr>
-            )}
-            {rows.map(r => <PastRow key={r.runId} row={r} onOpen={() => onOpen(r.runId)} />)}
-          </tbody>
-        </Table>
-      </div>
-    </Panel>
-  )
-}
-
-function PastRow({ row, onOpen }: { row: PastRun; onOpen: () => void }) {
-  const confColor = row.avgConf == null ? 'var(--color-text-faint)' : row.avgConf >= 0.8 ? 'var(--status-passed)' : row.avgConf >= 0.6 ? 'var(--status-broken)' : 'var(--status-failed)'
-  const statusPalette = row.status === 'complete'
-    ? { bg: 'color-mix(in srgb, var(--status-passed) 10%, transparent)', bd: 'color-mix(in srgb, var(--status-passed) 25%, transparent)', fg: 'var(--status-passed)', label: 'Complete' }
-    : row.status === 'running'
-      ? { bg: 'color-mix(in srgb, var(--color-accent) 10%, transparent)', bd: 'color-mix(in srgb, var(--color-accent) 25%, transparent)', fg: 'var(--color-accent)', label: 'Running' }
-      : row.status === 'failed'
-        ? { bg: 'color-mix(in srgb, var(--status-broken) 10%, transparent)', bd: 'color-mix(in srgb, var(--status-broken) 25%, transparent)', fg: 'var(--status-broken)', label: 'Failed' }
-        : null
-  const unknown = <span className="text-[var(--color-text-faint)]">—</span>
-  return (
-    <Tr onClick={onOpen}>
-      <Td>
-        <div className="flex flex-col min-w-0">
-          {/* Clickable badge → /test-management Test Suites tab pre-
-              filtered to this suite. Same deep-link shape used by the
-              /runs and /live tables. SuiteBadge handles the
-              ``stopPropagation`` internally so clicking the chip
-              doesn't also fire the row's onClick (run-detail nav). */}
-          <SuiteBadge
-            primary={row.suiteLabel}
-            all={row.suiteNames}
-            className="self-start max-w-full"
-            linkTo={name => `/test-management?tab=Test+Suites&suite=${encodeURIComponent(name)}`}
-          />
-          <span className="text-2xs text-[var(--color-text-muted)] tabular-nums mt-1">
-            {row.whenRel} · {row.whenAbs}
-          </span>
-        </div>
-      </Td>
-      <Td>
-        {/* Run #N when known; fall back to the 8-char run-uuid slug
-            (already computed as ``row.runIdLabel`` above) so legacy
-            rows still have a clickable handle. */}
-        <span className="font-mono text-xs text-[var(--color-text)]">
-          {row.runSeq != null ? `Run #${row.runSeq}` : row.runIdLabel}
-        </span>
-      </Td>
-      <Td numeric>{row.failures}</Td>
-      <Td numeric>{row.clusters ?? unknown}</Td>
-      <Td numeric>{row.findings ?? unknown}</Td>
-      <Td numeric>
-        {row.avgConf == null ? unknown : (
-          <span className="inline-flex items-center gap-1.5" style={{ color: confColor }}>
-            <i aria-hidden style={{ width: 6, height: 6, borderRadius: 999, background: 'currentColor' }} />
-            {row.avgConf.toFixed(2)}
-          </span>
-        )}
-      </Td>
-      <Td numeric className="font-mono text-xs">
-        {row.cost == null ? unknown : `$${row.cost.toFixed(2)}`}
-      </Td>
-      <Td>
-        {statusPalette == null ? unknown : (
-          <span
-            className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-full text-2xs"
-            style={{ background: statusPalette.bg, border: `1px solid ${statusPalette.bd}`, color: statusPalette.fg }}
-          >
-            <i
-              aria-hidden
-              className={clsx(row.status === 'running' && 'animate-pulse')}
-              style={{ width: 6, height: 6, borderRadius: 999, background: 'currentColor' }}
-            />
-            {statusPalette.label}
-          </span>
-        )}
-      </Td>
-    </Tr>
-  )
-}
+// (W14 AGT-07: the Recent runs table is `components/deep/DeepHistoryTable`, filled from the server's history.)
 
 // ── Right rail: Evidence sources ─────────────────────────────────────────
 function EvidenceSourcesCard({
@@ -1553,8 +1374,10 @@ export function RunDeepClusters({ runId, run }: { runId: string; run: TestRun | 
   async function onAnalyze() {
     setQueuing(true)
     try {
-      await deepInvestigationService.triggerDeep(runId, 'deep')
-      toast.success('Deep analysis queued')
+      const res = await deepInvestigationService.triggerDeep(runId, 'deep')
+      // W14 AGT-07: the server answers a deep run already in progress as such (nothing queued twice).
+      if (res?.already_in_progress) toast(res.message || DEEP_ALREADY_IN_PROGRESS, { icon: 'ℹ️' })
+      else toast.success('Deep analysis queued')
       refreshStatus()
     } catch {
       toast.error('Trigger failed')
@@ -1723,6 +1546,27 @@ export default function DeepInvestigationPage() {
   )
   const verdict = pickVerdict(model, pipelineStatus)
 
+  // W14 AGT-07: the server's pre-scan of the focused run, and the measured estimate for the run configuration
+  // the reader last asked about (`estimated`: none on load, so the first estimate carries no query). The
+  // configuration belongs to its run: a run picked later starts clean.
+  const preScan = usePreScan(runId ?? null)
+  const preScanGroups = useMemo(() => preScan.data?.groups ?? [], [preScan.data])
+  const [runConfig, setRunConfig] = useState<{ runId: string; draft: DeepRunConfig; estimated: DeepRunConfig } | null>(null)
+  const draftConfig = runConfig && runConfig.runId === runId ? runConfig.draft : EMPTY_CONFIG
+  const estimatedConfig = runConfig && runConfig.runId === runId ? runConfig.estimated : EMPTY_CONFIG
+  const estimate = useDeepEstimate(runId ?? null, estimateQuery(estimatedConfig, preScanGroups))
+  // Run is offered only when BOTH answers allow it: the mode read (`deepInvestigationAvailability`, the
+  // instant answer while the estimate loads) and the server's resolved gate (a configured Auto that resolves
+  // to Rules would otherwise be offered Run and refused with a 422 after the click).
+  const gate = estimate.data?.gate
+  const deepBlocked: string | null = !deepAvailability.available
+    ? deepAvailability.message
+    : gate && !gate.allowed
+      ? gate.message ?? 'Deep investigation is not available right now.'
+      : null
+  const [runNote, setRunNote] = useState<{ runId: string; text: string } | null>(null)
+  const [runningSelection, setRunningSelection] = useState(false)
+
   if (!project && !isAllProjects) {
     return (
       <EmptyState
@@ -1779,9 +1623,19 @@ export default function DeepInvestigationPage() {
       return <>No clusters proposed yet for the focused run. Trigger a run to generate them, or pick a different recent run from the picker.</>
     const top = model.proposedClusters[0]
     if (!top) return null
+    const k = model.preScanClusters
+    const scan = preScan.data?.measured ? preScan.data : null
     return (
       <>
-        Pre-scan groups the {model.eligibleFailures} eligible failures into {model.preScanClusters} candidate clusters.
+        {scan ? (
+          <>
+            The error-signature pre-scan finds {scan.groups_total} group{scan.groups_total === 1 ? '' : 's'} among
+            {' '}{scan.failing_results} failing result{scan.failing_results === 1 ? '' : 's'}; the last analysis proposed
+            {' '}{k} cluster{k === 1 ? '' : 's'}.
+          </>
+        ) : (
+          <>The last analysis proposed {k} cluster{k === 1 ? '' : 's'}.</>
+        )}
         {' '}The largest is <strong className="text-[var(--color-text)]">{top.name}</strong> ({top.failures} failures{top.confidence != null ? `, confidence ${top.confidence.toFixed(2)}` : ', unscored'}).
         {' '}Deep analysis will walk the stack, fetch commits + telemetry, and confirm or split these.
       </>
@@ -1791,10 +1645,35 @@ export default function DeepInvestigationPage() {
   const onRunAll = async () => {
     if (!runId) return
     try {
-      await deepInvestigationService.triggerDeep(runId, 'deep')
-      toast.success(`Deep analysis queued for ${runId.slice(0, 8)}`)
+      const res = await deepInvestigationService.triggerDeep(runId, 'deep')
+      // W14 AGT-07: a deep run already in progress is answered as such (200), not queued a second time.
+      if (res?.already_in_progress) toast(res.message || DEEP_ALREADY_IN_PROGRESS, { icon: 'ℹ️' })
+      else toast.success(`Deep analysis queued for ${runId.slice(0, 8)}`)
     } catch {
       toast.error('Trigger failed')
+    }
+  }
+  // W14 AGT-07 "Run on selection": the selected groups' failure ids and the tighten-only configuration, in
+  // the trigger's body (the server judges both; its sentence is shown in the card).
+  const selection = selectionFromGroups(preScanGroups, draftConfig.selected)
+  const onRunSelection = async () => {
+    if (!runId) return
+    const forRun = runId
+    setRunningSelection(true)
+    setRunNote(null)
+    try {
+      const res = await deepInvestigationService.triggerDeep(forRun, 'deep', runRequest(draftConfig, preScanGroups))
+      setRunNote({
+        runId: forRun,
+        text: res?.already_in_progress
+          ? res.message || DEEP_ALREADY_IN_PROGRESS
+          : `Deep analysis queued for the ${selection.failures} selected failure${selection.failures === 1 ? '' : 's'}.`,
+      })
+      deepRetry.refreshStatus()
+    } catch (err) {
+      setRunNote({ runId: forRun, text: pipelineActionError(err, 'Trigger failed') })
+    } finally {
+      setRunningSelection(false)
     }
   }
   const onOpenPastRun = (rid: string) => navigate(focusHref(rid))
@@ -1836,7 +1715,7 @@ export default function DeepInvestigationPage() {
               options={suiteOptions}
               allLabel="All suites"
             />
-            {deepAvailability.available ? (
+            {deepBlocked == null ? (
               <PrimaryBtn
                 onClick={onRunAll}
                 disabled={!isQaEngineer || verdict === 'NO_FAILURES' || verdict === 'NO_SOURCES' || !runId}
@@ -1846,7 +1725,7 @@ export default function DeepInvestigationPage() {
                 Run Deep Analysis
               </PrimaryBtn>
             ) : (
-              <DeepDisabledNote message={deepAvailability.message} />
+              <DeepDisabledNote message={deepBlocked} />
             )}
           </div>
         }
@@ -1861,7 +1740,20 @@ export default function DeepInvestigationPage() {
         isQaEngineer={isQaEngineer}
         retry={deepRetry}
         offerRetry={verdict === 'FAILED' && Boolean(pipelineStatus?.pipeline_run_id)}
-        unavailableMessage={deepAvailability.available ? null : deepAvailability.message}
+        unavailableMessage={deepBlocked}
+        preScan={preScan.data}
+        preScanError={preScan.error}
+        aside={
+          <DeepEstimateCard
+            estimate={estimate.data}
+            error={estimate.error}
+            onRetry={() => void estimate.mutate()}
+            lastRunCostDollars={model.lastRunCostDollars}
+            spendMtdDollars={model.spendMtdDollars}
+            spendBudgetDollars={model.spendBudgetDollars}
+            spendSoftWarnPct={model.spendSoftWarnPct}
+          />
+        }
       />
 
       {/* AI-1 Investigator cockpit — hypothesis-loop agent (shadow mode).
@@ -1873,8 +1765,24 @@ export default function DeepInvestigationPage() {
 
       <div className="grid gap-3.5" style={{ gridTemplateColumns: 'minmax(0, 1.65fr) minmax(0, 1fr)' }}>
         <div className="flex flex-col gap-3.5 min-w-0">
+          {/* W14 AGT-07: the pre-scan's groups as a selection + the tighten-only run configuration. */}
+          <DeepRunConfigurationCard
+            preScan={preScan.data}
+            preScanError={preScan.error}
+            onRetryPreScan={() => void preScan.mutate()}
+            canConfigure={isQaEngineer}
+            configuration={estimate.data?.configuration}
+            config={draftConfig}
+            onChange={(draft) => runId && setRunConfig({ runId, draft, estimated: estimatedConfig })}
+            onEstimate={() => runId && setRunConfig({ runId, draft: draftConfig, estimated: draftConfig })}
+            estimating={estimate.isValidating}
+            blockedMessage={deepBlocked}
+            onRun={() => void onRunSelection()}
+            running={runningSelection}
+            runNote={runNote && runNote.runId === runId ? runNote.text : null}
+          />
           <ProposedClustersCard model={model} focusedRunId={runId ?? null} />
-          <PastInvestigations rows={model.pastInvestigations} onOpen={onOpenPastRun} />
+          <DeepHistoryTable rows={model.pastInvestigations} projectId={budgetProjectId} onOpen={onOpenPastRun} />
         </div>
         <div className="flex flex-col gap-3.5 min-w-0">
           <EvidenceSourcesCard

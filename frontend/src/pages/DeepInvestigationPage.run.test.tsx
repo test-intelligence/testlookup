@@ -36,6 +36,7 @@ vi.mock('@/hooks/useDeepInvestigation', () => ({
   usePipelineStatus: hooks.usePipelineStatus,
 }))
 vi.mock('@/hooks/useRuns', () => ({ useRuns: hooks.useRuns, useRun: hooks.useRun }))
+vi.mock('@/hooks/useAgentOps', async () => (await import('@/test/agentOpsMocks')).agentOpsHookMocks())
 // W04 AIC-01: the deep triggers read `/settings/ai/mode`; Auto with deep on offers them.
 vi.mock('@/hooks/useAIConfig', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/hooks/useAIConfig')>()),
