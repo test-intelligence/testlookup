@@ -124,7 +124,9 @@ export default function PipelineCompareView<P extends ComparePipelineLike>({
             <SideFacts title="This pipeline" side={compare.a} />
             <SideFacts title="Compared with" side={compare.b} />
           </div>
-          <Table density="dense" data-compare-table="">
+          {/* compact (px-2): eight columns in the 664 px view at 1280. Dense measured 688 px on CI's
+              DejaVu (the view scrolled sideways); compact is ~624, the ≥ 40 px slack the contract planned. */}
+          <Table density="compact" data-compare-table="">
             <thead>
               <tr>
                 <Th>Stage</Th>
