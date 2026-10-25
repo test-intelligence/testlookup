@@ -56,11 +56,20 @@ def _dsn() -> str:
 
 @pytest.fixture
 async def pg_engine():
-    engine = create_async_engine(_dsn(), pool_size=4, max_overflow=0)
+    # The app's own engine is lazily built on whichever loop first touches it
+    # (a route's activity write, a service's own session); dispose it before
+    # and after, or its pooled connections outlive this test's loop and the
+    # next module that uses AsyncSessionLocal gets "Event loop is closed".
+    from app.db import postgres as app_postgres
+
+    dsn = _dsn()
+    await app_postgres.dispose_engine_for_loop()
+    engine = create_async_engine(dsn, pool_size=4, max_overflow=0)
     try:
         yield engine
     finally:
         await engine.dispose()
+        await app_postgres.dispose_engine_for_loop()
 
 
 def _user(token: str, name: str, *, active: bool = True, role: UserRole = UserRole.TESTER) -> User:
