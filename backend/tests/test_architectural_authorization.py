@@ -86,6 +86,7 @@ UNGUARDED_SCOPED_PARAMS: frozenset[str] = frozenset({
     # test_case_id, so another case's or project's link is the unknown-id 404.
     # Listed so a future route reaching it by id ALONE needs a guard.
     "requirement_link_id",
+    "bulk_job_id",  # W14 AGT-12: a bulk job (a Redis record) reached by id alone; the handler compares requested_by with current_user.id and reads get_accessible_project_ids
 })
 
 # ── Known backlog of unprotected scoped routes ──────────────────────────────
@@ -220,6 +221,10 @@ def _route_is_protected(route: APIRoute) -> bool:
         return True
     # API key — owner/admin check.
     if "{key_id}" in path and any("require_api_key_owner" in n for n in dep_names):
+        return True
+    # W14 AGT-12: bulk job -> its requester (a current_user.id comparison) or an
+    # admin (get_accessible_project_ids is None), both read from the handler's AST.
+    if "{bulk_job_id}" in path and {"current_user.id", "get_accessible_project_ids"} <= _authorization_names(route):
         return True
     # Authored test case -> project. This guard is router-local because the
     # shared test-management module also returns the loaded case to handlers.

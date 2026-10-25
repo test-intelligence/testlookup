@@ -22,7 +22,7 @@ A **run** is one execution of a suite: a CI job, a local `pytest`, a TestNG sess
 | **Timing** | When it ran and how long it took: the **wall clock** ("9.0s wall") when the run reported one, otherwise the **summed** test time ("17.4s summed"); hover for both. Click the header to sort |
 | **Actions** | Icon buttons: **Re-trigger standard pipeline**, **Trigger deep investigation**, and **Compare to the previous run** of the same suite |
 
-The first two actions, and the bulk controls (tick rows, then **Bulk trigger** or **Bulk deep**), need the `QA_ENGINEER` role or above. The **⋯** menu offers **Trigger all failed (N)** and **Deep all failed (N)** for every failed run in the window.
+The first two actions, and the bulk controls (tick rows, then **Bulk trigger** or **Bulk deep**), need the `QA_ENGINEER` role or above. The **⋯** menu offers **Trigger all failed (N)** and **Deep all failed (N)** for every failed run in the window, and **Re-trigger all matching (N)** for every run the current filters match. Each bulk action is one request, tracked as a [bulk job](#bulk-jobs) with its own progress panel.
 
 **Failure signatures** (next to the page title, when the window has a failed build, or a row's signature chip) opens a section above the runs table that groups the window's failed builds by the error most of their failing tests share. Each group is titled by that error's first line (**No message recorded** when the failures carry none), lists its builds, and says when one test fails with that error in all of them. Two builds with the same pass and fail counts but different errors are different groups. With more than 50 failed builds in the window, the newest 50 are grouped and the section says so. Its **Close panel** button closes it.
 
@@ -34,6 +34,23 @@ Two disclosures at the bottom explain the banner:
 **Upload report** is the primary button when uploading is enabled; see [Getting results in](/docs/ingestion#upload-a-report-from-the-app).
 
 > **Note.** Counts on this page are **executions**: a suite run five times counts five times. Coverage and the summary report count unique tests across the window, so their totals are smaller. Both are right; they answer different questions. See [Dashboards and metrics](/docs/dashboards#reading-a-metric-honestly).
+
+## Bulk jobs
+
+Every bulk action on **Runs** — **Bulk trigger**, **Bulk deep**, **Trigger all failed**, **Deep all failed** and **Re-trigger all matching** — is one request: the server queues the pipelines as one **bulk job**, and a panel opens above the table. The job stays in the address (`?bulk_job=<id>`), so a reload keeps the panel.
+
+- The first line is what was asked: `N requested · M queued · K already running · J not found`. A run whose pipeline is already queued or running is not queued a second time; it is counted as already running. For **Re-trigger all matching** the line says how many runs matched; at most the newest 2,000 are queued.
+- The second line is the progress, counted from the pipelines themselves each time the panel refreshes (every few seconds while the job is active): completed, passed, failed, running and not started, with a bar of how many have started.
+- **Cancel** (for the person who started the job, while it is active) asks you to confirm, then stops every pipeline of the job that has not started yet. Pipelines already running carry on; each keeps its own **Stop** on **Pipeline runs** (**Open Pipeline runs**).
+- **Close** hides the panel.
+
+When the job finishes, the runs list refreshes once. A queued pipeline that never started (after a cancel or a worker restart, for example) is counted as **not started**, never as failed. The job's request record is kept for 24 hours; after that the panel says `Counted from the pipelines: the job's request record has expired.` and shows only what the pipelines record. If the job cannot be tracked at all, the panel says so and the pipelines still run.
+
+**Re-trigger all matching (N)** re-runs the standard pipeline for every run the current filters match — the project, the global release, the window, status, suite, search, branch and AI verdict — exactly the runs the table lists, newest first. N is the list's total, and a confirmation names the count before anything is queued.
+
+**Bulk deep** and **Deep all failed** are refused as a whole, with the reason shown in the panel's place, while deep investigation is off under **Settings › AI** or the analysis mode is **Rules**: nothing is queued.
+
+Only the person who started a job, or an administrator, can open or cancel it. Starting and cancelling a job are recorded in the project's activity.
 
 ## One run's page
 
