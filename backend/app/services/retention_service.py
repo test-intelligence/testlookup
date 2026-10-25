@@ -50,7 +50,11 @@ Plus one class on a FIXED clock (W12 SRCH-05): ``search_usage_rows``, the
 project's ``search_query_events`` older than 30 days (``USAGE_RETENTION_DAYS``;
 rows hold no query text). The nightly ``purge_search_usage_events`` task
 deletes those deployment-wide; the preview counts and execute deletes the
-project's own, so the dry run lists every class the purge removes.
+project's own, so the dry run lists every class the purge removes. W16
+AGT-13 adds a second: ``shadow_pairs_unlabelled``, the project's PENDING
+``ai_eval_shadow_pairs`` older than 30 days (``SHADOW_PAIR_RETENTION_DAYS``;
+labelled pairs are G2 evidence and stay), deleted deployment-wide nightly by
+``expire_unlabelled_shadow_pairs``.
 
 NEVER purged: ``settings_audit_log`` (it has no project scope and holds the
 purge-audit records themselves — ``setting_key = "retention_purge:{id}"``),
@@ -103,6 +107,7 @@ from app.db.mongo import Collections, get_mongo_db
 from app.db.storage import get_storage_provider
 from app.models.postgres import (
     AccessAuditLog,
+    AIEvalShadowPair,
     AgentPipelineRun,
     AgentMemoryEntry,
     AIProvenanceRecord,
@@ -121,6 +126,7 @@ from app.models.postgres import (
     TestRun,
 )
 from app.services import ai_history_retention, deletion_job_service
+from app.services.ai_eval_vocab import SHADOW_PAIR_RETENTION_DAYS
 from app.services.search_usage_service import usage_cutoff
 from app.services.ai_history_core import (
     CAP_MAX,
@@ -876,6 +882,14 @@ async def run_purge(
         SearchQueryEvent.project_id == project_id,
         SearchQueryEvent.created_at < usage_cutoff(now),
     )
+    # W16 AGT-13: unlabelled shadow pairs ride the same kind of FIXED window (30 days); the nightly
+    # expire_unlabelled_shadow_pairs task covers every project, this class the project's own purge.
+    # Labelled pairs are G2 evidence and are never taken here.
+    shadow_pairs_where = (
+        AIEvalShadowPair.project_id == project_id,
+        AIEvalShadowPair.label_status == "pending",
+        AIEvalShadowPair.created_at < now - timedelta(days=SHADOW_PAIR_RETENTION_DAYS),
+    )
     memory_expired_ids = list(
         (
             await db.execute(
@@ -1007,6 +1021,7 @@ async def run_purge(
                 + ai_plan.total
             ),
             "search_usage_rows": await _count(SearchQueryEvent.id, search_usage_where),
+            "shadow_pairs_unlabelled": await _count(AIEvalShadowPair.id, shadow_pairs_where),
         }
         return {
             "mode": "preview",
@@ -1038,6 +1053,10 @@ async def run_purge(
     # per-run delete, which must never take project-wide rows.
     usage_result = await db.execute(delete(SearchQueryEvent).where(*search_usage_where))
     counts["postgres"]["search_usage_rows"] = int(getattr(usage_result, "rowcount", 0) or 0)
+    # W16 AGT-13: the project's unlabelled shadow pairs past 30 days -- the class the preview counted
+    # (project-wide rows, so beside the search-usage delete and outside execute_candidates for the same reason).
+    shadow_result = await db.execute(delete(AIEvalShadowPair).where(*shadow_pairs_where))
+    counts["postgres"]["shadow_pairs_unlabelled"] = int(getattr(shadow_result, "rowcount", 0) or 0)
     # The cap sweep runs on the SURVIVING runs, so after the run delete; it
     # deletes exactly ``ai_plan`` (the object the preview counted).
     over_cap = await ai_history_retention.execute_over_cap(db, mongo, ai_plan)

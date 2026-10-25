@@ -131,6 +131,8 @@ const CANDIDATE_ROWS: Array<{
   { key: 'ai_history_versions', label: 'AI history versions' },
   // W12 SRCH-05: a FIXED 30-day window, not one of the clocks above.
   { key: 'search_usage_rows', label: 'Search usage rows (kept 30 days)' },
+  // W16 AGT-13: pending shadow pairs, the same kind of fixed window; labelled pairs stay.
+  { key: 'shadow_pairs_unlabelled', label: 'Unlabelled shadow pairs (kept 30 days)' },
 ]
 
 /** Editable form shape — counts as strings so typing is never fought. */
