@@ -10,7 +10,7 @@ List Workflows
 
 
 
-Source: [backend/app/routers/workflows.py:91](../../../backend/app/routers/workflows.py#L91).
+Source: [backend/app/routers/workflows.py:93](../../../backend/app/routers/workflows.py#L93).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -93,7 +93,7 @@ Create Workflow
 
 
 
-Source: [backend/app/routers/workflows.py:100](../../../backend/app/routers/workflows.py#L100).
+Source: [backend/app/routers/workflows.py:102](../../../backend/app/routers/workflows.py#L102).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_project_role.<locals>._check`.
 
@@ -180,13 +180,281 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 }
 ```
 
+## GET `/api/v1/projects/{project_id}/workflows/defaults`
+
+Get Workflow Defaults
+
+Both bases' defaults (a fork, or the built-in). Any member; writes nothing.
+
+Source: [backend/app/routers/workflows.py:129](../../../backend/app/routers/workflows.py#L129).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+project_id: uuid.UUID, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_project_access())
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "get_workflow_defaults_api_v1_projects__project_id__workflows_defaults_get",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Project Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/WorkflowDefaultsResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+## DELETE `/api/v1/projects/{project_id}/workflows/defaults/{base}`
+
+Delete Workflow Default
+
+Clear the ``base`` default: new runs use the built-in again. 204 also
+when there was none (nothing changed, nothing recorded).
+
+Source: [backend/app/routers/workflows.py:176](../../../backend/app/routers/workflows.py#L176).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_project_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+project_id: uuid.UUID, base: str, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_project_access()), _lead: User=Depends(require_project_role(UserRole.QA_LEAD))
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "delete_workflow_default_api_v1_projects__project_id__workflows_defaults__base__delete",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Project Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "path",
+      "name": "base",
+      "required": true,
+      "schema": {
+        "title": "Base",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "204": {
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+## PUT `/api/v1/projects/{project_id}/workflows/defaults/{base}`
+
+Put Workflow Default
+
+Make a PUBLISHED fork of this project the ``base`` default for new runs.
+
+The fork resolves in THIS project only; the publish route's semantic
+validation runs first and a definition it refuses is a 422 here too.
+
+Source: [backend/app/routers/workflows.py:139](../../../backend/app/routers/workflows.py#L139).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_project_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+project_id: uuid.UUID, base: str, body: WorkflowDefaultUpdate, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_project_access()), _lead: User=Depends(require_project_role(UserRole.QA_LEAD))
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "put_workflow_default_api_v1_projects__project_id__workflows_defaults__base__put",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Project Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "path",
+      "name": "base",
+      "required": true,
+      "schema": {
+        "title": "Base",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "requestBody": {
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "#/components/schemas/WorkflowDefaultUpdate"
+        }
+      }
+    },
+    "required": true
+  },
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/WorkflowDefaultRead"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## DELETE `/api/v1/projects/{project_id}/workflows/{workflow_id}`
 
 Delete Workflow
 
 
 
-Source: [backend/app/routers/workflows.py:154](../../../backend/app/routers/workflows.py#L154).
+Source: [backend/app/routers/workflows.py:253](../../../backend/app/routers/workflows.py#L253).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_project_role.<locals>._check`.
 
@@ -269,7 +537,7 @@ Get Workflow
 
 
 
-Source: [backend/app/routers/workflows.py:118](../../../backend/app/routers/workflows.py#L118).
+Source: [backend/app/routers/workflows.py:217](../../../backend/app/routers/workflows.py#L217).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -377,7 +645,7 @@ Update Workflow
 
 
 
-Source: [backend/app/routers/workflows.py:129](../../../backend/app/routers/workflows.py#L129).
+Source: [backend/app/routers/workflows.py:228](../../../backend/app/routers/workflows.py#L228).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_project_role.<locals>._check`.
 
@@ -485,7 +753,7 @@ Evaluate Workflow
 
 
 
-Source: [backend/app/routers/workflows.py:188](../../../backend/app/routers/workflows.py#L188).
+Source: [backend/app/routers/workflows.py:287](../../../backend/app/routers/workflows.py#L287).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_project_role.<locals>._check`.
 
@@ -592,7 +860,7 @@ Fork Workflow
 
 
 
-Source: [backend/app/routers/workflows.py:318](../../../backend/app/routers/workflows.py#L318).
+Source: [backend/app/routers/workflows.py:423](../../../backend/app/routers/workflows.py#L423).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_project_role.<locals>._check`.
 
@@ -710,7 +978,7 @@ Publish Workflow
 
 
 
-Source: [backend/app/routers/workflows.py:231](../../../backend/app/routers/workflows.py#L231).
+Source: [backend/app/routers/workflows.py:334](../../../backend/app/routers/workflows.py#L334).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_project_role.<locals>._check`.
 
@@ -812,7 +1080,7 @@ Validate Workflow
 
 
 
-Source: [backend/app/routers/workflows.py:177](../../../backend/app/routers/workflows.py#L177).
+Source: [backend/app/routers/workflows.py:276](../../../backend/app/routers/workflows.py#L276).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 

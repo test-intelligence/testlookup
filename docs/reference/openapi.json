@@ -6726,17 +6726,334 @@
         "title": "BudgetConfig",
         "type": "object"
       },
+      "BulkJobProgress": {
+        "properties": {
+          "completed": {
+            "title": "Completed",
+            "type": "integer"
+          },
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "in_progress": {
+            "title": "In Progress",
+            "type": "integer"
+          },
+          "not_started": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Started"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "integer"
+          },
+          "started": {
+            "title": "Started",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "started",
+          "in_progress",
+          "completed",
+          "passed",
+          "failed"
+        ],
+        "title": "BulkJobProgress",
+        "type": "object"
+      },
+      "BulkJobRead": {
+        "properties": {
+          "bulk_job_id": {
+            "title": "Bulk Job Id",
+            "type": "string"
+          },
+          "cancelled_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancelled At"
+          },
+          "counters_source": {
+            "title": "Counters Source",
+            "type": "string"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "matched": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Matched"
+          },
+          "not_found": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Found"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "progress": {
+            "$ref": "#/components/schemas/BulkJobProgress"
+          },
+          "queued": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Queued"
+          },
+          "requested": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested"
+          },
+          "skipped_in_progress": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skipped In Progress"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "workflow_type": {
+            "title": "Workflow Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bulk_job_id",
+          "workflow_type",
+          "source",
+          "state",
+          "counters_source",
+          "progress"
+        ],
+        "title": "BulkJobRead",
+        "type": "object"
+      },
+      "BulkRunFilter": {
+        "properties": {
+          "branch": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
+          },
+          "days": {
+            "anyOf": [
+              {
+                "maximum": 365.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 30,
+            "title": "Days"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "q": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Q"
+          },
+          "recommendation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recommendation"
+          },
+          "release_id": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 20,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Id"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "suite_name": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suite Name"
+          }
+        },
+        "title": "BulkRunFilter",
+        "type": "object"
+      },
       "BulkTriggerRequest": {
         "properties": {
+          "client_token": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 8,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Token"
+          },
+          "run_filter": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BulkRunFilter"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "run_ids": {
-            "items": {
-              "format": "uuid",
-              "type": "string"
-            },
-            "maxItems": 2000,
-            "minItems": 1,
-            "title": "Run Ids",
-            "type": "array"
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "maxItems": 2000,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Ids"
           },
           "workflow_type": {
             "default": "offline",
@@ -6748,14 +7065,33 @@
             "type": "string"
           }
         },
-        "required": [
-          "run_ids"
-        ],
         "title": "BulkTriggerRequest",
         "type": "object"
       },
       "BulkTriggerResponse": {
         "properties": {
+          "bulk_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bulk Job Id"
+          },
+          "matched": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Matched"
+          },
           "not_found": {
             "title": "Not Found",
             "type": "integer"
@@ -6770,6 +7106,43 @@
           "queued": {
             "title": "Queued",
             "type": "integer"
+          },
+          "replayed": {
+            "default": false,
+            "title": "Replayed",
+            "type": "boolean"
+          },
+          "requested": {
+            "default": 0,
+            "title": "Requested",
+            "type": "integer"
+          },
+          "skipped_in_progress": {
+            "default": 0,
+            "title": "Skipped In Progress",
+            "type": "integer"
+          },
+          "skipped_in_progress_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Skipped In Progress Ids",
+            "type": "array"
+          },
+          "source": {
+            "default": "selection",
+            "title": "Source",
+            "type": "string"
+          },
+          "tracking": {
+            "default": false,
+            "title": "Tracking",
+            "type": "boolean"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
           },
           "workflow_type": {
             "title": "Workflow Type",
@@ -8991,6 +9364,206 @@
         "title": "DecisionTrailResponse",
         "type": "object"
       },
+      "DeepCostRead": {
+        "properties": {
+          "local_model": {
+            "title": "Local Model",
+            "type": "boolean"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "price_table_updated": {
+            "title": "Price Table Updated",
+            "type": "string"
+          },
+          "priced": {
+            "title": "Priced",
+            "type": "boolean"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Usd"
+          }
+        },
+        "required": [
+          "priced",
+          "local_model",
+          "price_table_updated"
+        ],
+        "title": "DeepCostRead",
+        "type": "object"
+      },
+      "DeepEstimateResponse": {
+        "properties": {
+          "configuration": {
+            "$ref": "#/components/schemas/DeepRunConfigurationRead"
+          },
+          "cost": {
+            "$ref": "#/components/schemas/DeepCostRead"
+          },
+          "gate": {
+            "$ref": "#/components/schemas/DeepGateRead"
+          },
+          "measured": {
+            "title": "Measured",
+            "type": "boolean"
+          },
+          "minutes_p50": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Minutes P50"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "sample_pipelines": {
+            "title": "Sample Pipelines",
+            "type": "integer"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/DeepEstimateStage"
+            },
+            "title": "Stages",
+            "type": "array"
+          },
+          "tokens_p50": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokens P50"
+          }
+        },
+        "required": [
+          "run_id",
+          "gate",
+          "configuration",
+          "measured",
+          "sample_pipelines",
+          "cost",
+          "stages"
+        ],
+        "title": "DeepEstimateResponse",
+        "type": "object"
+      },
+      "DeepEstimateStage": {
+        "properties": {
+          "duration_seconds_p50": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds P50"
+          },
+          "input_tokens_p50": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Tokens P50"
+          },
+          "output_tokens_p50": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Tokens P50"
+          },
+          "per_failure": {
+            "default": false,
+            "title": "Per Failure",
+            "type": "boolean"
+          },
+          "samples": {
+            "title": "Samples",
+            "type": "integer"
+          },
+          "stage_name": {
+            "title": "Stage Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage_name",
+          "samples"
+        ],
+        "title": "DeepEstimateStage",
+        "type": "object"
+      },
       "DeepFindingResponse": {
         "properties": {
           "affected_services": {
@@ -9119,6 +9692,366 @@
           "recommended_actions"
         ],
         "title": "DeepFindingResponse",
+        "type": "object"
+      },
+      "DeepGateRead": {
+        "properties": {
+          "allowed": {
+            "title": "Allowed",
+            "type": "boolean"
+          },
+          "analysis_mode": {
+            "title": "Analysis Mode",
+            "type": "string"
+          },
+          "deep_investigation_enabled": {
+            "title": "Deep Investigation Enabled",
+            "type": "boolean"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason Code"
+          }
+        },
+        "required": [
+          "allowed",
+          "analysis_mode",
+          "deep_investigation_enabled"
+        ],
+        "title": "DeepGateRead",
+        "type": "object"
+      },
+      "DeepHistoryResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DeepHistoryRow"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project_id",
+          "total",
+          "page",
+          "size",
+          "items"
+        ],
+        "title": "DeepHistoryResponse",
+        "type": "object"
+      },
+      "DeepHistoryRow": {
+        "properties": {
+          "avg_confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Confidence"
+          },
+          "build_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Build Number"
+          },
+          "clusters": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clusters"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "failures": {
+            "title": "Failures",
+            "type": "integer"
+          },
+          "findings": {
+            "default": 0,
+            "title": "Findings",
+            "type": "integer"
+          },
+          "pipeline_run_id": {
+            "format": "uuid",
+            "title": "Pipeline Run Id",
+            "type": "string"
+          },
+          "public_status": {
+            "title": "Public Status",
+            "type": "string"
+          },
+          "run_created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Created At"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "run_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Seq"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "suite_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suite Name"
+          }
+        },
+        "required": [
+          "run_id",
+          "failures",
+          "pipeline_run_id",
+          "status",
+          "public_status"
+        ],
+        "title": "DeepHistoryRow",
+        "type": "object"
+      },
+      "DeepPreScanResponse": {
+        "properties": {
+          "failing_results": {
+            "title": "Failing Results",
+            "type": "integer"
+          },
+          "grouped_by": {
+            "default": "error_signature",
+            "title": "Grouped By",
+            "type": "string"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/PreScanGroup"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "groups_total": {
+            "title": "Groups Total",
+            "type": "integer"
+          },
+          "measured": {
+            "title": "Measured",
+            "type": "boolean"
+          },
+          "refinement": {
+            "title": "Refinement",
+            "type": "string"
+          },
+          "refinement_note": {
+            "title": "Refinement Note",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "measured",
+          "failing_results",
+          "groups_total",
+          "groups",
+          "refinement",
+          "refinement_note"
+        ],
+        "title": "DeepPreScanResponse",
+        "type": "object"
+      },
+      "DeepRunConfigurationRead": {
+        "properties": {
+          "allowed_tiers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Tiers",
+            "type": "array"
+          },
+          "evidence_sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence Sources",
+            "type": "array"
+          },
+          "failures_analysed": {
+            "title": "Failures Analysed",
+            "type": "integer"
+          },
+          "max_failures_analyzed": {
+            "title": "Max Failures Analyzed",
+            "type": "integer"
+          },
+          "model_tier": {
+            "title": "Model Tier",
+            "type": "string"
+          },
+          "project_evidence_sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Project Evidence Sources",
+            "type": "array"
+          },
+          "project_max_failures_analyzed": {
+            "title": "Project Max Failures Analyzed",
+            "type": "integer"
+          },
+          "project_model_tier": {
+            "title": "Project Model Tier",
+            "type": "string"
+          },
+          "selected_failures": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Failures"
+          },
+          "tool_narrowing_allowed": {
+            "title": "Tool Narrowing Allowed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "failures_analysed",
+          "max_failures_analyzed",
+          "project_max_failures_analyzed",
+          "model_tier",
+          "project_model_tier",
+          "allowed_tiers",
+          "evidence_sources",
+          "project_evidence_sources",
+          "tool_narrowing_allowed"
+        ],
+        "title": "DeepRunConfigurationRead",
         "type": "object"
       },
       "DefectApprovalRequest": {
@@ -23460,6 +24393,413 @@
         "title": "PhaseUpdate",
         "type": "object"
       },
+      "PipelineCompareResponse": {
+        "properties": {
+          "a": {
+            "$ref": "#/components/schemas/PipelineCompareSide"
+          },
+          "b": {
+            "$ref": "#/components/schemas/PipelineCompareSide"
+          },
+          "changed_stages": {
+            "title": "Changed Stages",
+            "type": "integer"
+          },
+          "output": {
+            "title": "Output",
+            "type": "string"
+          },
+          "same_test_run": {
+            "title": "Same Test Run",
+            "type": "boolean"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/PipelineCompareStageRow"
+            },
+            "title": "Stages",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "a",
+          "b",
+          "same_test_run",
+          "output",
+          "changed_stages",
+          "total",
+          "stages"
+        ],
+        "title": "PipelineCompareResponse",
+        "type": "object"
+      },
+      "PipelineCompareSide": {
+        "properties": {
+          "analysis_mode_resolved": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis Mode Resolved"
+          },
+          "attempt": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "pipeline_run_id": {
+            "format": "uuid",
+            "title": "Pipeline Run Id",
+            "type": "string"
+          },
+          "public_status": {
+            "title": "Public Status",
+            "type": "string"
+          },
+          "release_verdict": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Verdict"
+          },
+          "rerun_of": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rerun Of"
+          },
+          "stages_truncated": {
+            "default": false,
+            "title": "Stages Truncated",
+            "type": "boolean"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "test_run_id": {
+            "format": "uuid",
+            "title": "Test Run Id",
+            "type": "string"
+          },
+          "total_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Tokens"
+          },
+          "workflow_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Ref"
+          },
+          "workflow_type": {
+            "title": "Workflow Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pipeline_run_id",
+          "test_run_id",
+          "workflow_type",
+          "status",
+          "public_status"
+        ],
+        "title": "PipelineCompareSide",
+        "type": "object"
+      },
+      "PipelineCompareStageCell": {
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "confidence_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence Score"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "execution_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Execution Path"
+          },
+          "fallback_used": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Used"
+          },
+          "output_checksum_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Checksum Sha256"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "total_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Tokens"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "PipelineCompareStageCell",
+        "type": "object"
+      },
+      "PipelineCompareStageRow": {
+        "properties": {
+          "a": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PipelineCompareStageCell"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "b": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PipelineCompareStageCell"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "changed": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Changed",
+            "type": "array"
+          },
+          "cost_delta_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Delta Usd"
+          },
+          "duration_delta_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Delta Seconds"
+          },
+          "output_checksum_equal": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Checksum Equal"
+          },
+          "stage_name": {
+            "title": "Stage Name",
+            "type": "string"
+          },
+          "tokens_delta": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokens Delta"
+          }
+        },
+        "required": [
+          "stage_name"
+        ],
+        "title": "PipelineCompareStageRow",
+        "type": "object"
+      },
       "PipelineEventLogHealthResponse": {
         "properties": {
           "dead_letter_count": {
@@ -23969,6 +25309,28 @@
           "summary": {
             "$ref": "#/components/schemas/PipelineTimelineSummary"
           },
+          "workflow_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Ref"
+          },
+          "workflow_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Source"
+          },
           "workflow_type": {
             "title": "Workflow Type",
             "type": "string"
@@ -24392,6 +25754,78 @@
           }
         },
         "title": "PreReleaseGateRequest",
+        "type": "object"
+      },
+      "PreScanGroup": {
+        "properties": {
+          "cluster_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Id"
+          },
+          "cluster_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Label"
+          },
+          "member_result_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Member Result Ids",
+            "type": "array"
+          },
+          "members": {
+            "title": "Members",
+            "type": "integer"
+          },
+          "members_truncated": {
+            "default": false,
+            "title": "Members Truncated",
+            "type": "boolean"
+          },
+          "representative_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Representative Error"
+          },
+          "signature_id": {
+            "title": "Signature Id",
+            "type": "string"
+          },
+          "suites": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Suites",
+            "type": "array"
+          }
+        },
+        "required": [
+          "signature_id",
+          "members",
+          "member_result_ids"
+        ],
+        "title": "PreScanGroup",
         "type": "object"
       },
       "ProjectCreate": {
@@ -40281,10 +41715,65 @@
       },
       "TriggerDeepRequest": {
         "properties": {
+          "evidence_sources": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 64,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Sources"
+          },
+          "failure_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "maxItems": 500,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Ids"
+          },
+          "max_failures_analyzed": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Failures Analyzed"
+          },
           "mode": {
             "default": "deep",
             "title": "Mode",
             "type": "string"
+          },
+          "model_tier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Tier"
           }
         },
         "title": "TriggerDeepRequest",
@@ -40292,6 +41781,11 @@
       },
       "TriggerDeepResponse": {
         "properties": {
+          "already_in_progress": {
+            "default": false,
+            "title": "Already In Progress",
+            "type": "boolean"
+          },
           "message": {
             "title": "Message",
             "type": "string"
@@ -40306,6 +41800,16 @@
               }
             ],
             "title": "Pipeline Run Id"
+          },
+          "run_configuration": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DeepRunConfigurationRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "run_id": {
             "title": "Run Id",
@@ -41439,6 +42943,158 @@
           "rationale"
         ],
         "title": "WorkflowDecisionEvent",
+        "type": "object"
+      },
+      "WorkflowDefaultRead": {
+        "properties": {
+          "base": {
+            "title": "Base",
+            "type": "string"
+          },
+          "model_stages": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Model Stages",
+            "type": "array"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "resolved_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved Name"
+          },
+          "resolved_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved Ref"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "updated_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated By"
+          },
+          "workflow_id": {
+            "title": "Workflow Id",
+            "type": "string"
+          },
+          "workflow_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Version"
+          }
+        },
+        "required": [
+          "base",
+          "source",
+          "workflow_id",
+          "state"
+        ],
+        "title": "WorkflowDefaultRead",
+        "type": "object"
+      },
+      "WorkflowDefaultUpdate": {
+        "properties": {
+          "workflow_id": {
+            "maxLength": 80,
+            "minLength": 3,
+            "pattern": "^wf\\.[a-z0-9_.-]+$",
+            "title": "Workflow Id",
+            "type": "string"
+          },
+          "workflow_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Version"
+          }
+        },
+        "required": [
+          "workflow_id"
+        ],
+        "title": "WorkflowDefaultUpdate",
+        "type": "object"
+      },
+      "WorkflowDefaultsResponse": {
+        "properties": {
+          "defaults": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowDefaultRead"
+            },
+            "title": "Defaults",
+            "type": "array"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "defaults"
+        ],
+        "title": "WorkflowDefaultsResponse",
         "type": "object"
       },
       "WorkflowEdgeV1": {
@@ -43465,9 +45121,139 @@
         ]
       }
     },
+    "/api/v1/agents/pipelines/bulk-jobs/{bulk_job_id}": {
+      "get": {
+        "description": "A bulk job's request facts and its progress, COUNTED from the pipeline\nrows on this read (restricted to the caller's current projects). Without\nthe request record (expired / flushed) only the caller's own rows are\ncounted and ``counters_source`` says ``postgres``. Writes nothing.",
+        "operationId": "get_bulk_job_api_v1_agents_pipelines_bulk_jobs__bulk_job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bulk_job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Bulk Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkJobRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get Bulk Job",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/api/v1/agents/pipelines/bulk-jobs/{bulk_job_id}/cancel": {
+      "post": {
+        "description": "Cancel a bulk job: its tasks that have NOT started return at their first\nline without creating a pipeline; running pipelines keep their own Stop.\nIdempotent (an already-cancelled job answers 200 and records nothing new);\na finished job is a 409. One ``analysis.bulk_cancelled`` per project.",
+        "operationId": "cancel_bulk_job_api_v1_agents_pipelines_bulk_jobs__bulk_job_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bulk_job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Bulk Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkJobRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Cancel Bulk Job",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
     "/api/v1/agents/pipelines/bulk-trigger": {
       "post": {
-        "description": "Queue the agent pipeline for many runs in one HTTP call.\n\nBacks the /runs bulk-action UI (\"Trigger all FAILED\", multi-row select).\nReplaces the previous client-side fan-out — for a 500-run trigger this\nis one round-trip instead of 500. Tasks are queued in batches of 25 with\na tiny inter-batch sleep so the Celery broker isn't slammed in a single\nburst. Celery's existing dedup on (run_id, workflow_type) for 7200s\nhandles re-triggers gracefully, so this endpoint doesn't need to dedup\nitself — repeats just resolve to ``{duplicate: true}`` per task.",
+        "description": "Queue the agent pipeline for many runs in one HTTP call.\n\nBacks the /runs bulk-action UI (\"Trigger all FAILED\", multi-row select).\nReplaces the previous client-side fan-out — for a 500-run trigger this\nis one round-trip instead of 500. Tasks are queued in batches of 25 with\na tiny inter-batch sleep so the Celery broker isn't slammed in a single\nburst.\n\nW14 AGT-12: the runs are ``run_ids`` OR the Runs list's own filter\n(``run_filter``, resolved by the list's predicates, newest 2,000); a run\nwhose pipeline is still in progress is skipped and counted (the worker's\nadmission keys never held a person's trigger); the answer carries a\n``bulk_job_id`` whose progress ``GET /pipelines/bulk-jobs/{id}`` counts\nfrom the pipeline rows. ``client_token`` makes a retry queue nothing twice.",
         "operationId": "bulk_trigger_pipelines_api_v1_agents_pipelines_bulk_trigger_post",
         "parameters": [
           {
@@ -43525,6 +45311,81 @@
           }
         ],
         "summary": "Bulk Trigger Pipelines",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/api/v1/agents/pipelines/compare": {
+      "get": {
+        "description": "Compare two pipeline runs of one project stage by stage (W14 AGT-05).\n\nDeclared BEFORE ``get_pipeline``: FastAPI matches in registration order,\nand the UUID route would otherwise read ``compare`` as a pipeline id.\nBOTH query ids pass the same 404 / 403 gate as ``/pipelines/{id}``.\nWrites nothing.",
+        "operationId": "compare_pipelines_api_v1_agents_pipelines_compare_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "a",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "A",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "b",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "B",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineCompareResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Compare Pipelines",
         "tags": [
           "Agents"
         ]
@@ -53383,6 +55244,100 @@
         ]
       }
     },
+    "/api/v1/deep-investigate/history": {
+      "get": {
+        "description": "Per run of ONE project, its latest deep pipeline (VIEWER may read).",
+        "operationId": "get_deep_history_api_v1_deep_investigate_history_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "size",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Size",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeepHistoryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get Deep History",
+        "tags": [
+          "Deep Investigation"
+        ]
+      }
+    },
     "/api/v1/deep-investigate/{run_id}": {
       "post": {
         "description": "Trigger the deep investigation pipeline for a completed test run.\nUses workflow_type=\"deep\" which adds failure clustering, flaky sentinel,\ntest health analysis, and release risk on top of the standard 5-stage pipeline.",
@@ -53820,6 +55775,140 @@
         ]
       }
     },
+    "/api/v1/deep-investigate/{run_id}/estimate": {
+      "get": {
+        "description": "The measured time / cost of a deep run of this configuration, and the server's gate.\n\nThe gate is DATA here (``gate.allowed``), never a 422: the page decides\nwhether to offer Run from it.",
+        "operationId": "get_deep_estimate_api_v1_deep_investigate__run_id__estimate_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "selected_failures",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Selected Failures"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_failures_analyzed",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Failures Analyzed"
+            }
+          },
+          {
+            "in": "query",
+            "name": "model_tier",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Model Tier"
+            }
+          },
+          {
+            "in": "query",
+            "name": "evidence_sources",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Evidence Sources"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeepEstimateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get Deep Estimate",
+        "tags": [
+          "Deep Investigation"
+        ]
+      }
+    },
     "/api/v1/deep-investigate/{run_id}/findings": {
       "get": {
         "description": "Return deep investigation findings per failure cluster for a test run.",
@@ -53884,6 +55973,83 @@
           }
         ],
         "summary": "Get Deep Findings",
+        "tags": [
+          "Deep Investigation"
+        ]
+      }
+    },
+    "/api/v1/deep-investigate/{run_id}/pre-scan": {
+      "get": {
+        "description": "The run's failing results grouped by error signature (offline; no ChromaDB).",
+        "operationId": "get_deep_pre_scan_api_v1_deep_investigate__run_id__pre_scan_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeepPreScanResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get Deep Pre Scan",
         "tags": [
           "Deep Investigation"
         ]
@@ -67667,6 +69833,220 @@
           }
         ],
         "summary": "Create Workflow",
+        "tags": [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/workflows/defaults": {
+      "get": {
+        "description": "Both bases' defaults (a fork, or the built-in). Any member; writes nothing.",
+        "operationId": "get_workflow_defaults_api_v1_projects__project_id__workflows_defaults_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowDefaultsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get Workflow Defaults",
+        "tags": [
+          "Workflows"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/workflows/defaults/{base}": {
+      "delete": {
+        "description": "Clear the ``base`` default: new runs use the built-in again. 204 also\nwhen there was none (nothing changed, nothing recorded).",
+        "operationId": "delete_workflow_default_api_v1_projects__project_id__workflows_defaults__base__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "base",
+            "required": true,
+            "schema": {
+              "title": "Base",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Delete Workflow Default",
+        "tags": [
+          "Workflows"
+        ]
+      },
+      "put": {
+        "description": "Make a PUBLISHED fork of this project the ``base`` default for new runs.\n\nThe fork resolves in THIS project only; the publish route's semantic\nvalidation runs first and a definition it refuses is a 422 here too.",
+        "operationId": "put_workflow_default_api_v1_projects__project_id__workflows_defaults__base__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "base",
+            "required": true,
+            "schema": {
+              "title": "Base",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowDefaultUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowDefaultRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Put Workflow Default",
         "tags": [
           "Workflows"
         ]

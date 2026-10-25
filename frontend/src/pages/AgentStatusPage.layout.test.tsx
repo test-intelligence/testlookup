@@ -245,14 +245,14 @@ describe('Pipeline runs — the page template (P5, D3)', () => {
     })
   })
 
-  // P2: the Live · Debug · Audit · Compare bar is gone (Audit and Compare were
-  // "not built yet" placeholder text; Live pointed at the strip above).
-  it('renders no Audit / Compare (or any) workflow-mode tabs', async () => {
+  // P2 removed the Live · Debug · Audit · Compare placeholder bar; W14 AGT-05
+  // brings back a real Graph · Audit · Compare strip inside Agent stages.
+  // Still no placeholder text.
+  it('renders the Graph · Audit · Compare strip, and no placeholder text', async () => {
     await renderWithPipeline()
     fireEvent.click(stagesToggle())
-    expect(screen.queryByRole('tab', { name: /Audit/i })).toBeNull()
-    expect(screen.queryByRole('tab', { name: /Compare/i })).toBeNull()
-    expect(screen.queryByRole('tablist')).toBeNull()
+    const strip = screen.getByRole('tablist', { name: 'Pipeline views' })
+    expect(within(strip).getAllByRole('tab').map((t) => t.getAttribute('data-tab'))).toEqual(['graph', 'audit', 'compare'])
     expect(screen.queryByText(/coming in the next\s+iteration/i)).toBeNull()
   })
 

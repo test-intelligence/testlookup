@@ -897,6 +897,16 @@ jobs:
           tests/integration/test_test_case_timeline_postgres.py
           tests/integration/test_requirement_traceability_postgres.py
           tests/integration/test_test_case_import_postgres.py
+          tests/integration/test_migration_0230_postgres.py
+          tests/integration/test_workflow_default_service_postgres.py
+          tests/integration/test_pipeline_compare_postgres.py
+          tests/integration/test_workflow_defaults_postgres.py
+          tests/integration/test_bulk_run_filter_postgres.py
+          tests/integration/test_bulk_job_progress_postgres.py
+          tests/integration/test_create_pipeline_run_default_postgres.py
+          tests/integration/test_deep_investigation_insights_postgres.py
+          tests/integration/test_deep_run_overrides_postgres.py
+          tests/integration/test_workflow_publish_postgres.py
           tests/integration/test_every_get_route_answers_without_500_postgres.py
           tests/integration/test_key_mint_revoke_race_postgres.py
           tests/integration/test_migration_index_leftovers_postgres.py

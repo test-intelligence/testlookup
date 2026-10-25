@@ -52,6 +52,49 @@ locally by default.
 
 ### Added
 
+- **Agent operations: a pipeline's Audit and Compare, a graph for every
+  pipeline shape, project default workflows, tracked bulk jobs, and a real
+  Deep Investigation pre-scan, history, estimate and run configuration**
+  (wave W14, AGT-05, AGT-06, AGT-08, AGT-12, AGT-07; branch
+  `feat/df-agent-ops-20261025`). A pipeline's **Agent stages** (on
+  `/agents` and the Run page's Evidence tab) have **Graph · Audit · Compare**
+  tabs: Audit shows the replay document (checksums, checkpoints, route
+  decisions, and the audit gaps of an older pipeline as data); Compare puts the
+  pipeline beside another of the same run (the previous attempt by default)
+  stage by stage. Every pipeline shape now draws as a graph: the built-in deep
+  and live pipelines, investigations and forks draw their real stages instead
+  of the offline canvas (which silently dropped 11 of the deep workflow's 20
+  stages). A QA lead can make a published fork the project's **default
+  workflow** per base (Settings › Workflow editor › **Use for new runs**); it
+  is used by every trigger that names no workflow — including the automatic
+  analysis after each ingest and **Trigger pipeline** on `/agents`, which ran
+  built-in offline before —, and a default that no longer resolves runs the
+  built-in and says why. **Choose workflow** on `/agents` and the Run page's
+  ⋯ **Trigger pipeline** open a workflow picker; a draft version can be
+  deleted. Bulk triggers are tracked **bulk jobs** on `/runs` with live
+  progress, cancellation of the not-yet-started part, and **Re-trigger all
+  matching** (the list's own filter, up to 2,000 runs); a bulk request now
+  skips runs whose pipeline is already in progress, a repeated request is not
+  queued twice, and bulk deep is ONE server request under the Settings › AI
+  gate. Deep Investigation reads the server: the error-signature pre-scan,
+  investigated-runs history, a measured cost / time estimate (from the
+  project's completed deep runs; a local model costs $0.00; no sample reads
+  "not measured"), and a run configuration (failure groups, a lower model
+  tier, a cap, fewer evidence sources — tighten-only); **Run** is offered only
+  when the server would accept it, and a second trigger answers "already in
+  progress" instead of queuing another deep run. Also fixed: publishing or
+  evaluating a forked workflow answered 500 (an expired row attribute after the
+  evaluation's flush). Migration 0230 (`project_workflow_defaults`). Tests:
+  `tests/test_pipeline_compare.py`, `tests/test_trigger_no_workflow_named.py`,
+  `tests/test_bulk_trigger_job.py`, `tests/test_bulk_job_worker_skip.py`,
+  `tests/test_pipeline_task_payloads_bind.py`, `tests/test_deep_run_overrides.py`,
+  `tests/test_deep_gate_in_estimate.py`, `tests/test_workflow_default_service.py`,
+  `tests/test_pipeline_admission.py`, `tests/test_agent_ops_vocab_frontend_parity.py`,
+  ten `*_postgres.py` (incl. `test_workflow_publish_postgres.py`), the Audit /
+  Compare / graph / picker / bulk / deep component and page vitests, five
+  `tests/ci-e2e/` specs (`agents-audit-compare`, `agents-generic-graph`,
+  `workflow-default`, `runs-bulk-job`, `deep-investigation-config`) and two
+  visual specs (`prod-agent-ops`, `prod-agent-ops-b`).
 - **Test library: filters that really filter, saved case views, library
   health from the server, CSV / Excel import, a case timeline, requirement
   links, editable suites** (wave W13, TCL-07, TCL-01, TCL-03, TCL-04, TCL-05,

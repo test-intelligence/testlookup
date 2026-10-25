@@ -24,7 +24,7 @@ the endpoint leaked every tenant's live run (slug, build number, counts,
 timing) to any authenticated user — the ``/active-runs/{run_id}`` sibling
 already gates on ``require_run_access`` but the list did not.
 
-Source: [backend/app/routers/agents.py:1131](../../../backend/app/routers/agents.py#L1131).
+Source: [backend/app/routers/agents.py:1391](../../../backend/app/routers/agents.py#L1391).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -101,7 +101,7 @@ Get Live Run State
 
 Get the current state for a single live test run.
 
-Source: [backend/app/routers/agents.py:1187](../../../backend/app/routers/agents.py#L1187).
+Source: [backend/app/routers/agents.py:1447](../../../backend/app/routers/agents.py#L1447).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -197,7 +197,7 @@ Clients read agent ids here instead of hard-coding stage names. Declared
 first in this router: the planned ``/agents/{agent_id}/invoke`` route must
 come after every literal ``/agents/...`` path (architecture section 3.5).
 
-Source: [backend/app/routers/agents.py:197](../../../backend/app/routers/agents.py#L197).
+Source: [backend/app/routers/agents.py:216](../../../backend/app/routers/agents.py#L216).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -272,7 +272,7 @@ Get Agent Catalog Entry
 
 One agent, with its generated input wrapper and JSON Schemas (E1.1).
 
-Source: [backend/app/routers/agents.py:210](../../../backend/app/routers/agents.py#L210).
+Source: [backend/app/routers/agents.py:229](../../../backend/app/routers/agents.py#L229).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -361,7 +361,7 @@ Run the Defect Commander on a failure cluster.
 Scores the cluster on 7 criticality dimensions, generates a Jira-ready
 defect description, and optionally creates a Jira ticket.
 
-Source: [backend/app/routers/agents.py:1388](../../../backend/app/routers/agents.py#L1388).
+Source: [backend/app/routers/agents.py:1648](../../../backend/app/routers/agents.py#L1648).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -483,7 +483,7 @@ Get Pipeline Event Log Health
 
 Return write-health details for the pipeline audit event log.
 
-Source: [backend/app/routers/agents.py:1098](../../../backend/app/routers/agents.py#L1098).
+Source: [backend/app/routers/agents.py:1358](../../../backend/app/routers/agents.py#L1358).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -554,7 +554,7 @@ List Pipelines
 
 List agent pipeline runs, optionally filtered by test run, project, or status.
 
-Source: [backend/app/routers/agents.py:227](../../../backend/app/routers/agents.py#L227).
+Source: [backend/app/routers/agents.py:246](../../../backend/app/routers/agents.py#L246).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -691,6 +691,187 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 }
 ```
 
+## GET `/api/v1/agents/pipelines/bulk-jobs/{bulk_job_id}`
+
+Get Bulk Job
+
+A bulk job's request facts and its progress, COUNTED from the pipeline
+rows on this read (restricted to the caller's current projects). Without
+the request record (expired / flushed) only the caller's own rows are
+counted and ``counters_source`` says ``postgres``. Writes nothing.
+
+Source: [backend/app/routers/agents.py:1019](../../../backend/app/routers/agents.py#L1019).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+bulk_job_id: uuid.UUID, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(404, detail=BULK_JOB_NOT_FOUND)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "get_bulk_job_api_v1_agents_pipelines_bulk_jobs__bulk_job_id__get",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "bulk_job_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Bulk Job Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/BulkJobRead"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+## POST `/api/v1/agents/pipelines/bulk-jobs/{bulk_job_id}/cancel`
+
+Cancel Bulk Job
+
+Cancel a bulk job: its tasks that have NOT started return at their first
+line without creating a pipeline; running pipelines keep their own Stop.
+Idempotent (an already-cancelled job answers 200 and records nothing new);
+a finished job is a 409. One ``analysis.bulk_cancelled`` per project.
+
+Source: [backend/app/routers/agents.py:1049](../../../backend/app/routers/agents.py#L1049).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+bulk_job_id: uuid.UUID, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user), _: Any=Depends(require_role(UserRole.QA_ENGINEER))
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(404, detail=BULK_JOB_NOT_FOUND)
+HTTPException(409, detail=BULK_JOB_ALREADY_FINISHED)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "cancel_bulk_job_api_v1_agents_pipelines_bulk_jobs__bulk_job_id__cancel_post",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "bulk_job_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Bulk Job Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/BulkJobRead"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## POST `/api/v1/agents/pipelines/bulk-trigger`
 
 Bulk Trigger Pipelines
@@ -701,11 +882,16 @@ Backs the /runs bulk-action UI ("Trigger all FAILED", multi-row select).
 Replaces the previous client-side fan-out — for a 500-run trigger this
 is one round-trip instead of 500. Tasks are queued in batches of 25 with
 a tiny inter-batch sleep so the Celery broker isn't slammed in a single
-burst. Celery's existing dedup on (run_id, workflow_type) for 7200s
-handles re-triggers gracefully, so this endpoint doesn't need to dedup
-itself — repeats just resolve to ``{duplicate: true}`` per task.
+burst.
 
-Source: [backend/app/routers/agents.py:738](../../../backend/app/routers/agents.py#L738).
+W14 AGT-12: the runs are ``run_ids`` OR the Runs list's own filter
+(``run_filter``, resolved by the list's predicates, newest 2,000); a run
+whose pipeline is still in progress is skipped and counted (the worker's
+admission keys never held a person's trigger); the answer carries a
+``bulk_job_id`` whose progress ``GET /pipelines/bulk-jobs/{id}`` counts
+from the pipeline rows. ``client_token`` makes a retry queue nothing twice.
+
+Source: [backend/app/routers/agents.py:811](../../../backend/app/routers/agents.py#L811).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -713,6 +899,13 @@ Declared Python handler arguments (includes exact role/guard options):
 
 ```python
 payload: BulkTriggerRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user), _: Any=Depends(require_role(UserRole.QA_ENGINEER))
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(422, detail=BULK_IDS_OR_FILTER)
+HTTPException(422, detail=BULK_NOTHING_TO_TRIGGER)
 ```
 
 ### Declared wire contract
@@ -780,6 +973,110 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 }
 ```
 
+## GET `/api/v1/agents/pipelines/compare`
+
+Compare Pipelines
+
+Compare two pipeline runs of one project stage by stage (W14 AGT-05).
+
+Declared BEFORE ``get_pipeline``: FastAPI matches in registration order,
+and the UUID route would otherwise read ``compare`` as a pipeline id.
+BOTH query ids pass the same 404 / 403 gate as ``/pipelines/{id}``.
+Writes nothing.
+
+Source: [backend/app/routers/agents.py:301](../../../backend/app/routers/agents.py#L301).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+a: uuid.UUID=Query(...), b: uuid.UUID=Query(...), db: AsyncSession=Depends(get_db), current_user: Any=Depends(get_current_active_user)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(404, detail='Pipeline run not found')
+HTTPException(422, detail=COMPARE_CROSS_PROJECT)
+HTTPException(422, detail=COMPARE_SAME_ID)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "compare_pipelines_api_v1_agents_pipelines_compare_get",
+  "parameters": [
+    {
+      "in": "query",
+      "name": "a",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "A",
+        "type": "string"
+      }
+    },
+    {
+      "in": "query",
+      "name": "b",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "B",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/PipelineCompareResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## POST `/api/v1/agents/pipelines/trigger`
 
 Trigger Pipeline
@@ -787,7 +1084,7 @@ Trigger Pipeline
 Manually trigger the agent pipeline for an existing test run.
 Returns 202 Accepted — pipeline runs asynchronously via Celery.
 
-Source: [backend/app/routers/agents.py:298](../../../backend/app/routers/agents.py#L298).
+Source: [backend/app/routers/agents.py:346](../../../backend/app/routers/agents.py#L346).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -872,6 +1169,7 @@ Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
 JSONResponse(status_code=200, content={'message': 'Pipeline already in progress', 'pipeline_run_id': str(existing.id), 'status': existing.status, 'public_status': public_status(existing.status), 'attempt': existing.attempt, 'next_retry_at': existing.next_retry_at.isoformat() if existing.next_retry_at else None, 'run_id': str(run.id)})
+{'message': 'Pipeline queued', 'task_id': task.id, 'run_id': str(run.id), 'workflow_ref': None, 'workflow_source': 'resolved_at_start'}
 {'message': 'Pipeline queued', 'task_id': task.id, 'run_id': str(run.id), 'workflow_ref': workflow_ref}
 ```
 
@@ -883,7 +1181,7 @@ Get Pipeline
 
 Get a single pipeline run with all stage results.
 
-Source: [backend/app/routers/agents.py:282](../../../backend/app/routers/agents.py#L282).
+Source: [backend/app/routers/agents.py:330](../../../backend/app/routers/agents.py#L330).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -968,7 +1266,7 @@ This additive adapter keeps the established timeline API stable while
 exposing selected/skipped capabilities, parent-child task identity,
 allocated budgets, actual usage and terminal stop reasons in one model.
 
-Source: [backend/app/routers/agents.py:990](../../../backend/app/routers/agents.py#L990).
+Source: [backend/app/routers/agents.py:1250](../../../backend/app/routers/agents.py#L1250).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1059,7 +1357,7 @@ Cancellation is sticky either way — an automatic retry can never bring a
 cancelled run back. See ``app/services/pipeline_cancellation.py`` for why
 both orderings of the cancel-vs-retry race end ``failed``.
 
-Source: [backend/app/routers/agents.py:668](../../../backend/app/routers/agents.py#L668).
+Source: [backend/app/routers/agents.py:727](../../../backend/app/routers/agents.py#L727).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1152,7 +1450,7 @@ Get Pipeline Replay
 
 Return a deterministic replay document for audit reconstruction.
 
-Source: [backend/app/routers/agents.py:1113](../../../backend/app/routers/agents.py#L1113).
+Source: [backend/app/routers/agents.py:1373](../../../backend/app/routers/agents.py#L1373).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1257,7 +1555,7 @@ run explicitly to produce a fresh proposal. The rejection and ceiling responses
 carry ``links.rerun`` so the caller can deliberately start a fresh run
 rather than being told only "no".
 
-Source: [backend/app/routers/agents.py:465](../../../backend/app/routers/agents.py#L465).
+Source: [backend/app/routers/agents.py:524](../../../backend/app/routers/agents.py#L524).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1357,7 +1655,7 @@ Get Pipeline Stages
 
 Get detailed stage results for a pipeline run.
 
-Source: [backend/app/routers/agents.py:837](../../../backend/app/routers/agents.py#L837).
+Source: [backend/app/routers/agents.py:1092](../../../backend/app/routers/agents.py#L1092).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1445,7 +1743,7 @@ Get the full agent timeline with per-stage observability data:
 tokens, cost, latency, confidence, evidence count, route rationale,
 error taxonomy, fallback status, and alerts.
 
-Source: [backend/app/routers/agents.py:876](../../../backend/app/routers/agents.py#L876).
+Source: [backend/app/routers/agents.py:1131](../../../backend/app/routers/agents.py#L1131).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1528,7 +1826,7 @@ Run the Regression Watchman on an existing test run.
 Returns classification of each failure cluster as:
   - new_regression | known_flaky_recurrence | environmental_anomaly
 
-Source: [backend/app/routers/agents.py:1429](../../../backend/app/routers/agents.py#L1429).
+Source: [backend/app/routers/agents.py:1689](../../../backend/app/routers/agents.py#L1689).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1628,7 +1926,7 @@ WF-1: Return the latest pipeline execution status for a run and workflow type.
 Enables the frontend to know when deep/offline analysis ran, whether it
 completed fully, partially, or failed, without scanning the full timeline.
 
-Source: [backend/app/routers/agents.py:1200](../../../backend/app/routers/agents.py#L1200).
+Source: [backend/app/routers/agents.py:1460](../../../backend/app/routers/agents.py#L1460).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1736,7 +2034,7 @@ Carries the human-review envelope (E8.3): ``requires_human_review``,
 ``review`` and the ``X-TestLookup-AI-Generated`` / ``X-TestLookup-Review-State``
 headers. A deterministic fallback is ``not_applicable``: no AI wrote it.
 
-Source: [backend/app/routers/agents.py:1275](../../../backend/app/routers/agents.py#L1275).
+Source: [backend/app/routers/agents.py:1535](../../../backend/app/routers/agents.py#L1535).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 

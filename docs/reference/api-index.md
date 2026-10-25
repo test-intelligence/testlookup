@@ -31,7 +31,10 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/agents/invocations/{invocation_id}/events/ticket` | Issue Invocation Stream Ticket | [Agent Invocations](api/agent-invocations.md) |
 | POST | `/api/v1/agents/invocations/{invocation_id}/retry` | Retry Invocation | [Agent Invocations](api/agent-invocations.md) |
 | GET | `/api/v1/agents/pipelines` | List Pipelines | [Agents](api/agent-operations.md) |
+| GET | `/api/v1/agents/pipelines/bulk-jobs/{bulk_job_id}` | Get Bulk Job | [Agents](api/agent-operations.md) |
+| POST | `/api/v1/agents/pipelines/bulk-jobs/{bulk_job_id}/cancel` | Cancel Bulk Job | [Agents](api/agent-operations.md) |
 | POST | `/api/v1/agents/pipelines/bulk-trigger` | Bulk Trigger Pipelines | [Agents](api/agent-operations.md) |
+| GET | `/api/v1/agents/pipelines/compare` | Compare Pipelines | [Agents](api/agent-operations.md) |
 | POST | `/api/v1/agents/pipelines/trigger` | Trigger Pipeline | [Agents](api/agent-operations.md) |
 | GET | `/api/v1/agents/pipelines/{pipeline_id}` | Get Pipeline | [Agents](api/agent-operations.md) |
 | GET | `/api/v1/agents/pipelines/{pipeline_id}/agentic-runtime` | Get Agentic Runtime | [Agents](api/agent-operations.md) |
@@ -147,13 +150,16 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/debug/generate-test-run` | Generate Mock Test Run | [Debug](api/debug.md) |
 | GET | `/api/v1/deep-investigate/defects/pending-review` | List Pending Defects | [Deep Investigation](api/deep-investigation.md) |
 | POST | `/api/v1/deep-investigate/defects/{defect_id}/review` | Review Defect | [Deep Investigation](api/deep-investigation.md) |
+| GET | `/api/v1/deep-investigate/history` | Get Deep History | [Deep Investigation](api/deep-investigation.md) |
 | POST | `/api/v1/deep-investigate/{run_id}` | Trigger Deep Investigation | [Deep Investigation](api/deep-investigation.md) |
 | GET | `/api/v1/deep-investigate/{run_id}/clusters` | Get Failure Clusters | [Deep Investigation](api/deep-investigation.md) |
 | GET | `/api/v1/deep-investigate/{run_id}/clusters/ranked` | Get Ranked Clusters | [Deep Investigation](api/deep-investigation.md) |
 | GET | `/api/v1/deep-investigate/{run_id}/clusters/{cluster_id}/defect-candidate` | Get Cluster Defect Candidate | [Deep Investigation](api/deep-investigation.md) |
 | GET | `/api/v1/deep-investigate/{run_id}/clusters/{cluster_id}/duplicate-check` | Check Cluster Duplicate | [Deep Investigation](api/deep-investigation.md) |
 | POST | `/api/v1/deep-investigate/{run_id}/clusters/{cluster_id}/promote` | Promote Cluster To Defect | [Deep Investigation](api/deep-investigation.md) |
+| GET | `/api/v1/deep-investigate/{run_id}/estimate` | Get Deep Estimate | [Deep Investigation](api/deep-investigation.md) |
 | GET | `/api/v1/deep-investigate/{run_id}/findings` | Get Deep Findings | [Deep Investigation](api/deep-investigation.md) |
+| GET | `/api/v1/deep-investigate/{run_id}/pre-scan` | Get Deep Pre Scan | [Deep Investigation](api/deep-investigation.md) |
 | DELETE | `/api/v1/dev/seed` | Delete Seed Data | [Dev Seed Data](api/dev-seed-data.md) |
 | POST | `/api/v1/dev/seed` | Load Seed Data | [Dev Seed Data](api/dev-seed-data.md) |
 | POST | `/api/v1/dev/seed/reset` | Reset Seed Data | [Dev Seed Data](api/dev-seed-data.md) |
@@ -336,6 +342,9 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | PUT | `/api/v1/projects/{project_id}/value-metrics/assumptions` | Put Value Metric Assumptions | [Value Metrics](api/value-metrics.md) |
 | GET | `/api/v1/projects/{project_id}/workflows` | List Workflows | [Workflows](api/workflows.md) |
 | POST | `/api/v1/projects/{project_id}/workflows` | Create Workflow | [Workflows](api/workflows.md) |
+| GET | `/api/v1/projects/{project_id}/workflows/defaults` | Get Workflow Defaults | [Workflows](api/workflows.md) |
+| DELETE | `/api/v1/projects/{project_id}/workflows/defaults/{base}` | Delete Workflow Default | [Workflows](api/workflows.md) |
+| PUT | `/api/v1/projects/{project_id}/workflows/defaults/{base}` | Put Workflow Default | [Workflows](api/workflows.md) |
 | DELETE | `/api/v1/projects/{project_id}/workflows/{workflow_id}` | Delete Workflow | [Workflows](api/workflows.md) |
 | GET | `/api/v1/projects/{project_id}/workflows/{workflow_id}` | Get Workflow | [Workflows](api/workflows.md) |
 | PUT | `/api/v1/projects/{project_id}/workflows/{workflow_id}` | Update Workflow | [Workflows](api/workflows.md) |
@@ -641,4 +650,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **632 HTTP operations**, **534 paths**, **86 domain pages**.
+Total: **641 HTTP operations**, **542 paths**, **86 domain pages**.

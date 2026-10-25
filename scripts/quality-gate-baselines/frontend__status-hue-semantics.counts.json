@@ -88,7 +88,7 @@
     "frontend/src/pages/CanonicalDetailPage.tsx": 9,
     "frontend/src/pages/ChatPage.tsx": 1,
     "frontend/src/pages/CoveragePage.tsx": 26,
-    "frontend/src/pages/DeepInvestigationPage.tsx": 28,
+    "frontend/src/pages/DeepInvestigationPage.tsx": 22,
     "frontend/src/pages/DefectsPage.tsx": 14,
     "frontend/src/pages/FailureAnalysisPage.tsx": 28,
     "frontend/src/pages/FlakyCoachPage.tsx": 6,
