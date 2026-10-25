@@ -19,7 +19,7 @@ import {
   Shield,
   Stethoscope,
 } from 'lucide-react'
-import type { ComputeStage } from './types'
+import type { ComputeStage, ComputeStageId, GenericComputeStage } from './types'
 import { NODE_W, NODE_H, POS } from './layout'
 
 const GLYPH_MAP = {
@@ -151,13 +151,22 @@ function ProgressBar({ pct }: { pct: number }) {
 }
 
 interface ComputeNodeProps {
-  stage: ComputeStage
+  /** W14 AGT-06: a generic-graph stage too (any string id); the hand canvas passes a ComputeStage. */
+  stage: ComputeStage | GenericComputeStage
   selected: boolean
   onSelect: () => void
+  /**
+   * W14 AGT-06: the card's top-left from the generic layout (`dagLayout.ts`),
+   * numbers placed through the same `left` / `top` style object. Absent on the
+   * hand canvas, which reads its fixed `POS`.
+   */
+  position?: { x: number; y: number }
 }
 
-export default function ComputeNode({ stage, selected, onSelect }: ComputeNodeProps) {
-  const pos = POS[stage.id]
+export default function ComputeNode({ stage, selected, onSelect, position }: ComputeNodeProps) {
+  const pos = position ?? POS[stage.id as ComputeStageId]
+  const pillLabel = ('pill' in stage && stage.pill) || PILL_LABEL[stage.status]
+  const note = 'note' in stage ? stage.note : null
   const style = STATUS_STYLE[stage.status]
   const Icon = GLYPH_MAP[stage.glyph] ?? FileText
   // Ticking clock so the running progress bar advances without calling the
@@ -199,6 +208,8 @@ export default function ComputeNode({ stage, selected, onSelect }: ComputeNodePr
       type="button"
       onClick={onSelect}
       title={stage.skipReason ?? undefined}
+      data-stage-id={position ? stage.id : undefined}
+      data-stage-status={position ? stage.status : undefined}
       className={clsx(
         'absolute text-left rounded-xl p-3 transition-all duration-150',
         'focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]/50',
@@ -239,7 +250,7 @@ export default function ComputeNode({ stage, selected, onSelect }: ComputeNodePr
               aria-hidden
             />
           )}
-          {PILL_LABEL[stage.status]}
+          {pillLabel}
         </span>
       </div>
 
@@ -249,6 +260,7 @@ export default function ComputeNode({ stage, selected, onSelect }: ComputeNodePr
         style={{ minHeight: 28, lineHeight: 1.4 }}
       >
         {stage.desc}
+        {note && <span data-stage-note=""> · {note}</span>}
       </div>
 
       {/* 2×2 metric grid */}

@@ -13,11 +13,14 @@
 import { useState } from 'react'
 import { clsx } from 'clsx'
 import { CheckCircle2, Loader2, XCircle, ChevronRight, Sparkles } from 'lucide-react'
-import type { ComputeStage, ComputeDecision, ComputeEdgeEvent, SelectedId } from './types'
+import type { AnySelectedId, ComputeStage, ComputeDecision, ComputeEdgeEvent, GenericComputeStage } from './types'
+
+/** W14 AGT-06: either canvas's stages (the generic graph's ids are any string). */
+type RailStage = ComputeStage | GenericComputeStage
 
 interface RightRailProps {
-  selectedId: SelectedId
-  stages: ComputeStage[]
+  selectedId: AnySelectedId
+  stages: RailStage[]
   decision: ComputeDecision | null
   /** Stage-scoped event list (used by the Activity tab). */
   events?: ComputeEdgeEvent[]
@@ -61,7 +64,7 @@ function KV({ k, v, tone }: { k: string; v: React.ReactNode; tone?: 'ok' | 'bad'
 
 type Tab = 'overview' | 'output' | 'activity' | 'logs'
 
-function StageBody({ stage, events }: { stage: ComputeStage; events: ComputeEdgeEvent[] }) {
+function StageBody({ stage, events }: { stage: RailStage; events: ComputeEdgeEvent[] }) {
   const [tab, setTab] = useState<Tab>('overview')
   const stageEvents = events.filter(e => e.stage === stage.id)
   const confTone: 'ok' | 'bad' | undefined = (() => {
@@ -71,6 +74,7 @@ function StageBody({ stage, events }: { stage: ComputeStage; events: ComputeEdge
     return n > 80 ? 'ok' : undefined
   })()
   const tone = STATUS_TONE[stage.status]
+  const pill = 'pill' in stage && stage.pill ? stage.pill.toUpperCase() : tone.label
 
   return (
     <>
@@ -82,7 +86,7 @@ function StageBody({ stage, events }: { stage: ComputeStage; events: ComputeEdge
             className="px-1.5 py-0.5 rounded"
             style={{ color: tone.pillText, background: tone.pillBg }}
           >
-            {tone.label}
+            {pill}
           </span>
           {stage.dur && (
             <span className="text-[var(--color-text-muted)]">· {stage.dur}</span>
