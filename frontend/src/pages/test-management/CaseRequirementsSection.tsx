@@ -203,7 +203,9 @@ export default function CaseRequirementsSection({ caseItem, canEdit, onFilterReq
             <Fragment key={link.id}>
               <li
                 data-requirement-link={link.id}
-                className="grid grid-cols-[minmax(0,12rem)_minmax(0,1fr)_auto_auto] items-center gap-2 rounded-md px-1 py-1 hover:bg-[var(--color-bg-hover)]"
+                // A fixed key track: the titles line up row to row, and a key wider than it is cut (the
+                // button's title carries it whole) instead of taking the title's room in a 399 px pane.
+                className="grid grid-cols-[6.5rem_minmax(0,1fr)_auto_auto] items-center gap-2 rounded-md px-1 py-1 hover:bg-[var(--color-bg-hover)]"
               >
                 <button
                   type="button"
