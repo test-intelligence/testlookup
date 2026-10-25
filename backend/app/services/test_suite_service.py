@@ -1351,6 +1351,56 @@ async def list_test_case_evidence_gaps(
 ) -> tuple[list[dict], int]:
     from app.services.test_case_lifecycle_service import RETIRED_STATES
 
+    if kind in {"flaky_active", "no_owner"}:
+        # W13 TCL-03: the library health's two lists, paged with the SAME
+        # predicates as its preview (test_library_health_service), each scoped
+        # to the case's own project (flaky fingerprints are not project-salted).
+        from sqlalchemy import null
+
+        from app.models.postgres import FlakyScore, User
+        from app.services import test_library_health_service as health
+
+        if project_ids is not None and not project_ids:
+            return [], 0
+        if kind == "flaky_active":
+            gap_stmt: Any = (
+                select(ManagedTestCase, FlakyScore.score, FlakyScore.confidence)
+                .join(FlakyScore, health.flaky_join_condition())
+                .where(*health.flaky_active_where())
+            )
+            gap_order: tuple[Any, ...] = (FlakyScore.score.desc(), ManagedTestCase.id.asc())
+        else:
+            gap_stmt = (
+                select(ManagedTestCase, null().label("score"), null().label("confidence"))
+                .outerjoin(User, health.no_owner_join_condition())
+                .where(*health.no_owner_where())
+            )
+            gap_order = (ManagedTestCase.created_at.asc(), ManagedTestCase.id.asc())
+        if project_ids is not None:
+            gap_stmt = gap_stmt.where(ManagedTestCase.project_id.in_(project_ids))
+        gap_total = int(
+            (await db.execute(select(func.count()).select_from(gap_stmt.subquery()))).scalar() or 0
+        )
+        gap_rows = (
+            await db.execute(gap_stmt.order_by(*gap_order).offset((page - 1) * size).limit(size))
+        ).all()
+        return [
+            {
+                "id": managed.id,
+                "project_id": managed.project_id,
+                "title": managed.title,
+                "status": managed.status,
+                "last_executed_at": managed.last_executed_at,
+                "owner_state": (
+                    health.owner_state(managed.assignee_id, managed.author_id)
+                    if kind == "no_owner" else None
+                ),
+                "flaky_score": float(score) if score is not None else None,
+                "flaky_confidence": confidence,
+            }
+            for managed, score, confidence in gap_rows
+        ], gap_total
+
     if kind not in {"never_executed", "automation_vanished"}:
         raise HTTPException(status_code=422, detail="Unknown evidence gap kind")
     stmt = (

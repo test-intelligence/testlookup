@@ -80,6 +80,12 @@ UNGUARDED_SCOPED_PARAMS: frozenset[str] = frozenset({
     # with ``test_run_id`` in the same Mongo query, so another run's version id
     # is a 404. Listed so a future route reaching it by id ALONE needs a guard.
     "version_id",
+    # W13 TCL-06: a manual requirement link. Only ever nested under
+    # ``/cases/{case_id}`` (require_case_access runs first, so another project's
+    # case is a 403 before any read), and the service loads it WHERE id AND
+    # test_case_id, so another case's or project's link is the unknown-id 404.
+    # Listed so a future route reaching it by id ALONE needs a guard.
+    "requirement_link_id",
 })
 
 # ── Known backlog of unprotected scoped routes ──────────────────────────────

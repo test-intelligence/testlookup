@@ -37,6 +37,39 @@ The API reports the actions available to the signed-in user (`allowed_actions` o
 
 The lifecycle is controlled by the **`test_case_lifecycle_v2`** feature flag, which ships **on**. With it off for a project, the direct transition API is not exposed (it answers `404`, and so does a bulk `transition`), the **Lifecycle** tab and the status moves disappear, and the older request-review / review-action / **Delete** paths remain (Delete deprecates the case). Those older paths enforce the same row-locked policy with review required.
 
+## Library health and the automation target
+
+`GET /api/v1/test-management/health?project_id=` (every member; a project is required: `422 Choose a project: library health is per project.`) computes the **Test cases** banner and the **Insights** cards on the server over the project's whole authored catalogue, deprecated and archived cases aside; it replaced a client-side sample of 200 cases, so **the numbers change for any project with more than 200 authored cases**, and "retired cases in open plans" now measures plans (it read 0 before). It writes nothing and reads about eight bounded statements. Each component (`automation` 35 %, `stale_drafts` 20 %, `review_freshness` 20 %, `retired_in_open_plans` 25 %) answers its value with its numerator and denominator; a project with no authored case is `measured: false` with no score (never 0). The answer also carries the review queue's first five (with its total), the strategy gaps, and the **Flaky and active** and **No owner** lists' first five with their totals; their full lists page through `GET /api/v1/test-management/cases/evidence-gaps?kind=flaky_active|no_owner`.
+
+- **Flaky and active** uses the product's one flaky bar (`flaky_score.score >= 0.5`, confidence not `none` / `low`) on the case's automation identity: the promoted canonical's fingerprint, else the case's own, matched in the case's project only (fingerprints are not project-salted). No score row for the project, or no approved / active case with an identity, is reported as not measured with the reason.
+- **No owner**: neither an assignee nor an author, or an owner whose account is deactivated.
+- The automation target is `projects.automation_target_pct` (0-100, default 60; migration `0228`), written through the existing `PUT /api/v1/projects/{id}` (`QA_LEAD`); its `project.updated` activity entry names the field.
+
+## Case-list filters and saved case views
+
+`GET /api/v1/test-management/cases` and the Excel export take `status`, `test_type` and `priority` repeatedly (at most 20 values each), `owner` (`me`, or a member's user id with a project: someone outside the project is a `422`), `automation` (`automated` / `not_automated`) and, with traceability on, `requirement` (a normalised key). Any of the new filters answers authored cases only and says so (`automation_rows_excluded: true`). The export honours the same filters and appends the columns `ID`, `Suite` and `Description` (19-21; columns 1-18 are unchanged, so sheets built on them keep working). Saved case views are `saved_views` rows with `page: test_management` and `filters.kind: test_case_view` (their keys are validated: statuses, priorities, types, owner, automation, suite, q, ai_generated, requirement); a shared one belongs to one project, and its `owner: me` means the reader.
+
+## Importing test cases
+
+`POST /api/v1/test-management/cases/import?project_id=&dry_run=` (`TESTER`; multipart `file`) reads CSV (UTF-8, `,` `;` or tab) or `.xlsx` (the first sheet; formulas are read as their cached values, external links are not followed). `dry_run` defaults to `true` and writes nothing. The caps are checked before parsing goes further: 5 MB while reading (`413`), a workbook expanding past 50 MB (`422`, checked before the workbook is opened), 2,000 rows (`422`). Every case is created as a Draft through the normal create path (membership, suite resolution, version 1, audit entry), one savepoint per row, and the request commits once; the `Status` column is never applied (an audit entry records the override). Duplicates (the same title, objective, steps and expected result as an eligible case of the project, or an earlier row) are not created. One `test_case.imported` activity entry records the file name and the counts.
+
+Imported text is untrusted and stored as typed: a cell starting `=`, `+`, `-`, `@`, tab or CR stays text; the Excel export escapes it with a leading `'` and the import removes exactly that one `'`, so export → import round-trips. A 2,000-row apply takes about 12 seconds on a local PostgreSQL (about 8 statements per row); if it ever exceeds 30 seconds on your hardware, split the file.
+
+## The case timeline
+
+`GET /api/v1/test-management/cases/{id}/timeline?kinds=&cursor=&limit=` (any member of the case's project; `limit` 1-100, default 50) merges eight kinds: `version`, `review_requested`, `review_decided`, `comment`, `plan_execution` (every execution from the audit trail, not just the latest), `automated_execution` and `defect` (through the case's automation identity, in its project only; never `test_case_history`, which has no project column), and `requirement` (the link / unlink activity entries). It is keyset-paged newest first: `next_cursor` continues it and is valid for that case only (`422` otherwise); one bounded statement per kind.
+
+## Requirement traceability (lite)
+
+Owner decision D10: manual requirement keys on authored cases, the uncovered-requirement gaps and the "Requirements verified N of M" stat; no matrix, no export, no Jira, no automatic backfill. Behind the **`test_case_requirement_traceability`** flag (migration `0229`): **on for a new installation, off for an upgraded one** — turn it on with `PATCH /api/v1/feature-flags/test_case_requirement_traceability` (or **Settings → Feature flags**); while it is off every route below answers `404 Requirement traceability is off for this project.` and the page shows nothing of it.
+
+- `GET` / `POST /api/v1/test-management/cases/{id}/requirements` and `DELETE …/requirements/{requirement_link_id}` (writes `TESTER`; a deprecated or archived case is `409 Reinstate it to edit it`). A key is 1-200 characters without control characters, stored as typed beside its normalised form (one pair of surrounding brackets dropped, whitespace collapsed, upper-cased; unique per case). Each link and unlink records `test_case.requirement_linked` / `_unlinked`. Links do not bump the case version.
+- The known keys of a project are its links' keys, its generation batches' `requirement_coverage` ids and its active knowledge chunks' extracted `requirement_id`s (each source capped at 5,000 distinct keys; beyond that the counts are lower bounds and say so). A key is verified by a `verifies` link from a case that is not deprecated or archived. `GET /api/v1/test-management/traceability/gaps?project_id=` pages the gaps (`no_link`, `related_only`, `partly_verified`) and lists the approved / active cases that link nothing; the health answer carries the same summary.
+
+## Editing a suite
+
+`PATCH /api/v1/suites/{id}` (`QA_ENGINEER`, unchanged) is now reachable from the UI (**Suites** row **Edit**, and **Edit suite** on the suite page). A change records `suite.updated` with the fields that changed. A rename copies an explicit suite owner to the new name when it has none (owners are keyed by suite name, and the old name keeps its row), and a run that still reports the old name creates a suite of that name again for tests new to the project: rename the suite in the reporters' configuration as well. A first-class suite no run has reported yet is listed on **Test cases → Suites** as **Empty** (one project, no release filter; never the default suite).
+
 ## Ownership: who gets the failure?
 
 Two layers decide the owner of anything that fails:
