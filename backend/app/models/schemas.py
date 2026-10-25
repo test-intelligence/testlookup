@@ -3089,6 +3089,73 @@ class PipelineEventLogHealthResponse(BaseModel):
     recent_dead_letters: List[Dict[str, Any]] = Field(default_factory=list)
 
 
+# ── W15 AGT-01: the agent-action queue (enum-like fields are plain str; vocab in services/agent_action_types.py) ──
+class AgentActionTarget(BaseModel):                # what the row acts on — built server-side from TYPED payload fields only
+    kind: str                                      # TARGET_KINDS: test | test_case | cluster | release_item
+    id: Optional[str] = None                       # fingerprint / test case id / cluster id / decision action id
+    label: Optional[str] = None                    # test name / cluster label / the action id — run data, rendered as TEXT
+    href: Optional[str] = None                     # target_href(...) from ids only; None when no page shows it
+
+
+class AgentActionResultLink(BaseModel):            # where an EXECUTED action's effect can be seen
+    kind: str                                      # RESULT_KINDS: quarantine | defect | assignee
+    id: Optional[str] = None
+    label: Optional[str] = None                    # "quarantined" | the assignee's name | "defect created"
+    href: Optional[str] = None                     # /flaky?tab=quarantined | /defects?defect=<id> | /runs/<run>?tab=tests
+
+
+class AgentActionRead(BaseModel):
+    # the twenty keys `_action_response` returns today (routers/agent_actions.py), names and types unchanged:
+    id: str
+    project_id: str
+    test_run_id: Optional[str] = None
+    pipeline_run_id: Optional[str] = None
+    action_type: str
+    target_type: str
+    target_id: Optional[str] = None
+    status: str
+    approval_required: bool
+    idempotency_key: str
+    request_sha256: str
+    request_payload: dict
+    approved_by: Optional[str] = None
+    approved_at: Optional[str] = None
+    execution_started_at: Optional[str] = None
+    execution_completed_at: Optional[str] = None
+    result_payload: Optional[dict] = None          # NEVER carries result_payload["rejection"]["notes"] (stripped)
+    rollback_payload: Optional[dict] = None
+    error_code: Optional[str] = None
+    created_at: Optional[str] = None
+    # NEW (W15), every one defaulted:
+    canonical_type: Optional[str] = None           # the catalogue type after ACTION_TYPE_ALIASES; None = unregistered
+    title: Optional[str] = None                    # request_payload["title"], ≤ 200 — display only
+    rationale: Optional[str] = None                # request_payload["rationale"], ≤ 500 — display only
+    risk: Optional[str] = None                     # RISK_LEVELS, else None
+    side_effect: Optional[str] = None              # SIDE_EFFECTS of the type; None = unregistered
+    reversible: bool = False
+    proposing_agent_id: Optional[str] = None
+    proposing_agent_label: Optional[str] = None    # PROPOSER_LABELS ("Investigator", "Decision report"), else the id
+    proposing_review_state: str = "none"           # PROPOSING_REVIEW_STATES
+    review_id: Optional[str] = None                # the proposing run's newest report review (a link into AI reports)
+    test_run_build_number: Optional[str] = None
+    test_run_branch: Optional[str] = None
+    pipeline_workflow_type: Optional[str] = None   # "investigation" | "deep" | …
+    approved_by_name: Optional[str] = None         # full name, else username (the decider of approve / reject)
+    target: Optional[AgentActionTarget] = None
+    outcome: str = "unknown"                       # OUTCOME_CODES, from status + error_code + type
+    outcome_text: str = ""                         # OUTCOME_SENTENCES[outcome], formatted server-side
+    approvable: bool = False                       # pending AND review accepted (AI rows) AND (no effect OR act + type allowed)
+    approve_blocked_reason: Optional[str] = None   # the sentence when a pending row is not approvable
+    result_link: Optional[AgentActionResultLink] = None   # executed rows only
+    rejection_reason_code: Optional[str] = None    # result_payload["rejection"]["reason_code"]
+
+
+class AgentActionListResponse(BaseModel):
+    items: List[AgentActionRead]
+    count: int                                     # len(items) — the EXISTING key, its meaning unchanged
+    total: int                                     # COUNT(*) OVER () of the filtered set — the number the UI shows
+
+
 # ── Run Intelligence Schemas ──────────────────────────────────
 
 class Provenance(BaseModel):

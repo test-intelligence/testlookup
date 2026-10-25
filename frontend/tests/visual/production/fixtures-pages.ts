@@ -11,7 +11,7 @@
  * a decision or a trigger made in one test never leaks into the next.
  */
 import { respond, type ApiHandlers, type ApiRequest } from '../../lib/production-pages'
-import { daysAgo, isoAgo, LAYOUT, NOW, PROJECT_ID, RUN_ID } from './fixtures'
+import { daysAgo, isoAgo, LAYOUT, NOW, PROJECT_ID, RUN_ID, USER } from './fixtures'
 import { RUN_PAGE } from './fixtures-run'
 
 const P = PROJECT_ID
@@ -367,14 +367,100 @@ export interface InboxWrite {
   body: unknown
 }
 
+/** W15 AGT-01: one agent-action row (`AgentActionRead`); `id` and `status` at least. */
+export type AgentActionFixtureRow = Record<string, unknown> & { id: string; status: string }
+
+export interface InboxOptions {
+  /** The agent-action queue's rows for `P`. Default NONE: every composing spec keeps its counts and inventory. */
+  agentActions?: readonly AgentActionFixtureRow[]
+}
+
+const AGENT_ACTION_DECIDED = ['approved', 'executing', 'executed', 'failed', 'rejected', 'rolled_back']
+const AGENT_ACTION_REASONS = ['wrong_category', 'unsupported_claim', 'missing_evidence', 'contradiction', 'stale_data', 'other']
+const refuse = (status: number, code: string, message: string) => respond(status, { detail: { code, message } })
+const at = (row: AgentActionFixtureRow, key: string) => String(row[key] ?? row.created_at ?? '')
+
+/** `GET /projects/<P>/agent-actions`: the view's rows (pending oldest first, decided newest first), `total` = the COUNT. */
+function agentActionsPage(rows: AgentActionFixtureRow[], url: URL) {
+  const view = url.searchParams.get('view')
+  const runId = url.searchParams.get('test_run_id')
+  let items = rows.filter((row) => (runId ? row.test_run_id === runId : true))
+  if (view === 'pending') {
+    items = items.filter((row) => row.status === 'pending_review').sort((a, b) => at(a, 'created_at').localeCompare(at(b, 'created_at')))
+  } else if (view === 'decided') {
+    items = items.filter((row) => AGENT_ACTION_DECIDED.includes(row.status))
+      .sort((a, b) => at(b, 'execution_completed_at').localeCompare(at(a, 'execution_completed_at')))
+  }
+  const page = items.slice(0, Number(url.searchParams.get('limit') ?? 50))
+  return { items: page, count: page.length, total: items.length }
+}
+
+/** `PATCH /projects/<P>/agent-actions/<id>`: the server's order of checks, its `{ code, message }` refusals. */
+function decideAgentActionRow(rows: AgentActionFixtureRow[], id: string, body: Record<string, unknown> | null) {
+  const row = rows.find((candidate) => candidate.id === id)
+  const status = body?.status
+  const reason = body?.reason_code
+  if (status === 'rejected' && !AGENT_ACTION_REASONS.includes(String(reason))) {
+    return refuse(422, 'reason_code_required', `A rejection needs a reason_code: ${AGENT_ACTION_REASONS.join(', ')}.`)
+  }
+  if (status !== 'rejected' && reason != null) return refuse(422, 'reason_code_on_reject_only', 'reason_code applies to a rejection only.')
+  if (!row) return refuse(404, 'action_not_found', 'Agent action not found.')
+  const name = USER.full_name
+  const decided = { approved_by: USER.id, approved_by_name: name, approved_at: NOW.toISOString(), approvable: false, approve_blocked_reason: null }
+  if (status === 'approved' || status === 'rejected') {
+    if (row.status !== 'pending_review') return refuse(409, 'action_not_pending', `This action is already ${row.status}.`)
+    if (status === 'rejected') {
+      Object.assign(row, decided, { status: 'rejected', rejection_reason_code: reason, outcome: 'rejected', outcome_text: `Rejected by ${name} (${String(reason)}).` })
+      return row
+    }
+    if (row.approvable === false) {
+      const code = row.pipeline_run_id && row.proposing_review_state !== 'accepted' ? 'review_not_accepted' : 'action_type_not_allowed'
+      return refuse(409, code, String(row.approve_blocked_reason ?? 'This action cannot be approved.'))
+    }
+    const acknowledge = row.side_effect === 'none'
+    Object.assign(row, decided, acknowledge
+      ? { status: 'executed', outcome: 'acknowledged', outcome_text: `Acknowledged by ${name}.`, execution_completed_at: NOW.toISOString() }
+      : { status: 'approved', outcome: 'approved_queued', outcome_text: `Approved by ${name} · running…` })
+    return row
+  }
+  if (status === 'rolled_back') {
+    if (row.status !== 'executed') return refuse(409, 'action_not_executed', 'Only an executed action can be undone.')
+    if (row.reversible !== true) return refuse(409, 'action_not_reversible', 'This action cannot be undone.')
+    Object.assign(row, { status: 'rolled_back', outcome: 'rolled_back', outcome_text: `Undone by ${name}.`, result_link: null })
+    return row
+  }
+  return respond(422, { detail: 'status must be approved, rejected or rolled_back' })
+}
+
+/** The agent-action queue of `P` (W15 AGT-01): reads by view / run, decisions recorded in `writes`. */
+function agentActionHandlers(writes: InboxWrite[], agentActions: readonly AgentActionFixtureRow[]): ApiHandlers {
+  const rows = agentActions.map((row) => ({ ...row }))
+  return [
+    [`/api/v1/projects/${P}/agent-actions`, ({ url }) => agentActionsPage(rows, url)],
+    [
+      new RegExp(`^/api/v1/projects/${P}/agent-actions/[^/]+$`),
+      ({ path, route }) => {
+        const body = route.request().postDataJSON() as Record<string, unknown> | null
+        writes.push({ line: `PATCH ${path}`, body })
+        return decideAgentActionRow(rows, decodeURIComponent(path.split('/')[6] ?? ''), body)
+      },
+      'PATCH',
+    ],
+  ]
+}
+
 /**
  * Fresh state per test: a decision taken in one test never leaks into the
- * next. `writes` records the defect reviews it answered (W06 DEF-06).
+ * next. `writes` records the defect reviews it answered (W06 DEF-06) and the
+ * agent-action decisions (W15 AGT-01). `agentActions` seeds the agent-action
+ * queue; by default it is EMPTY (the Approvals badge read answers `total: 0`).
  */
-export function inboxHandlers(writes: InboxWrite[] = []): ApiHandlers {
+export function inboxHandlers(writes: InboxWrite[] = [], { agentActions = [] }: InboxOptions = {}): ApiHandlers {
   let reviewState = 'pending_review'
   let defectPending = true
   return [
+    // W15 AGT-01: the agent-action queue, a QA lead's (the fixture user is one); its badge read runs on every load.
+    ...agentActionHandlers(writes, agentActions),
     // W06 DEF-06: the defect approval queue, a QA lead's (the fixture user is one). Approve answers what an
     // offline install does (committed, Jira not filed); reject closes it. Either way it leaves the queue.
     [

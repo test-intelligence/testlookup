@@ -61,11 +61,40 @@ export interface InvestigationHypothesis {
   completed_at: string | null
 }
 
+/** W15 AGT-02: one typed action of the verdict (built from run data, never LLM text). */
+export interface StructuredAction {
+  /** quarantine.apply | failure.reassign | defect.promote */
+  action_type: string
+  target_type: string
+  target_id: string
+  /** Display only — render as text. */
+  title: string
+  payload: Record<string, unknown>
+}
+
 export interface InvestigationVerdict {
   primary_cause: HypothesisId | 'unknown'
   narrative: string
   confidence: number
   recommended_actions: string[]
+  /** W15 AGT-02; absent on an old verdict. */
+  structured_actions?: StructuredAction[]
+}
+
+/** W15 AGT-02: a ledger row this investigation proposed (the detail's `proposals`, newest first). */
+export interface InvestigationProposal {
+  id: string
+  action_type: string
+  canonical_type: string | null
+  target_type: string
+  target_id: string | null
+  status: string
+  error_code: string | null
+  outcome: string
+  outcome_text: string
+  idempotency_key: string
+  title: string | null
+  created_at: string | null
 }
 
 export interface InvestigationModelInfo {
@@ -90,6 +119,8 @@ export interface InvestigationDetail {
   /** Prompt-registry name → version digest, e.g. { investigator_plan: "v3@ab12" }. */
   prompt_versions: Record<string, string>
   model: InvestigationModelInfo | null
+  /** W15 AGT-02; absent on an old server. */
+  proposals?: InvestigationProposal[]
 }
 
 export interface InvestigationSummary {
@@ -149,6 +180,8 @@ export interface AgentPolicy {
   mode: AgentMode
   budgets: AgentPolicyBudgets
   promotion: AgentPolicyPromotion
+  /** W15 AGT-03: the Act allowlist (projected from the investigator extension). */
+  act?: { allowed_action_types: string[] }
 }
 
 export interface AgentPolicyListResponse {

@@ -72,6 +72,7 @@ const APPROVAL_COUNT_LINES = [
   `GET /api/v1/test-management/cases?project_id=${P}&status=review_requested&size=50`,
   `GET /api/v1/test-management/cases?project_id=${P}&status=under_review&size=50`,
   `GET /api/v1/deep-investigate/defects/pending-review?project_id=${P}&page=1&page_size=100`,
+  `GET /api/v1/projects/${P}/agent-actions?view=pending&limit=200`,
 ]
 
 test('the assigned failures table starts within the fold budget at 1440 x 900', async ({ page }) => {

@@ -425,6 +425,7 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("agent.action_approved", "agent", "agent_action", "Agent action on {entity_label} was approved", "outcome", _HUMAN_OR_KEY),
     _spec("agent.action_executed", "agent", "agent_action", "{actor_name} executed an action on {entity_label}", "outcome", frozenset({"agent"})),
     _spec("agent.action_denied", "agent", "agent_action", "Agent action on {entity_label} was denied", "outcome", _ANY_WRITER),
+    _spec("agent.action_rolled_back", "agent", "agent_action", "{actor_name} undid an agent action on {entity_label}", "outcome", _HUMAN_OR_KEY),
     # ── system ──────────────────────────────────────────────────────────────
     # NOTE: there is deliberately no ``activity.exported`` event. Recording
     # an export in the ledger made a GET mutate what it reads: an export of

@@ -677,6 +677,25 @@ class InvestigatorDegradationV1(BaseModel):
     synthesis_stop_reason: Optional[InvestigatorStopReason] = None
 
 
+class InvestigatorStructuredActionV1(BaseModel):
+    """One typed action the investigator proposes (W15 AGT-02).
+
+    Built by the deterministic action plan from ids, fingerprints, names and
+    counts of the run bundle — never from LLM text. ``action_type`` is one of
+    ``PROPOSABLE_BY["investigator"]`` and ``payload`` is EXACTLY that type's
+    payload model, dumped (both validated by the builder,
+    ``services/agent_action_types.py``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    action_type: str = Field(min_length=3, max_length=60)
+    target_type: str = Field(min_length=1, max_length=60)
+    target_id: str = Field(min_length=1, max_length=255)
+    title: str = Field(min_length=1, max_length=200)
+    payload: dict[str, Any]
+
+
 class InvestigatorVerdictV1(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -687,6 +706,10 @@ class InvestigatorVerdictV1(BaseModel):
     confidence: int = Field(ge=0, le=100)
     recommended_actions: list[str] = Field(default_factory=list, max_length=10)
     degradation: InvestigatorDegradationV1 = Field(default_factory=InvestigatorDegradationV1)
+    # W15 AGT-02: the typed proposals; defaulted so stored verdicts keep validating.
+    structured_actions: list[InvestigatorStructuredActionV1] = Field(
+        default_factory=list, max_length=10
+    )
 
 
 class InvestigatorHypothesisOutput(ContractedAgentOutput):
