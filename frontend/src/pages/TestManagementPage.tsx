@@ -3,13 +3,13 @@ import useSWR from 'swr'
 import { useDataFreshness } from '@/hooks/useDataFreshness'
 import { useNow } from '@/hooks/useNow'
 import { shortAgo } from '@/utils/formatters'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import {
   ClipboardList, Plus, Sparkles, ChevronDown,
   User, CheckCircle2, AlertCircle,
   RotateCcw, MessageSquare, History, Shield, FileText,
   ChevronUp, Trash2, BookOpen,
-  Download, FileSpreadsheet, Layers, Pencil,
+  Download, FileSpreadsheet, Layers, Pencil, Upload, ListOrdered,
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
@@ -17,7 +17,7 @@ import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import Pagination from '@/components/ui/Pagination'
-import StatusBanner, { type BannerState } from '@/components/ui/StatusBanner'
+import StatusBanner from '@/components/ui/StatusBanner'
 import { avatarColorForName } from '@/components/ui/avatarColors'
 import { SEVERITY_STYLE, severityLevel } from '@/components/ui/severity'
 import { useTabParam } from '@/components/ui/useTabParam'
@@ -52,7 +52,7 @@ import {
   testManagementService,
 } from '@/services/testManagementService'
 import type { UserSummary, SuiteReviewItem, SuiteReviewState } from '@/services/testManagementService'
-import { deriveTestManagementTotals, describeStatBasis } from '@/utils/testManagementTotals'
+import { deriveTestManagementTotals } from '@/utils/testManagementTotals'
 import { latestResultPath, runHistoryPath } from '@/utils/testManagementCase'
 import KnowledgeGenerationTab from '@/pages/test-management/KnowledgeGenerationTab'
 import AIGenerateModal from '@/pages/test-management/AIGenerateModal'
@@ -61,14 +61,17 @@ import AuditTab from '@/pages/test-management/AuditTab'
 import DuplicatesTab from '@/pages/test-management/DuplicatesTab'
 import InsightsPanel, {
   AutomationCoverageCard,
+  HealthPendingCard,
   LibraryHealthCard,
   RecentActivityCard,
   ReviewQueueCard,
   StrategyGapsCard,
-  type HealthTag,
   type RecentEvent,
-  type StrategyGap,
 } from '@/pages/test-management/InsightsPanel'
+// W13 TCL-03: the server's library health (G-A's hook), its copy (G-D's model)
+// and the per-project automation target editor (G-E).
+import { automatedPctText, bannerFor } from '@/pages/test-management/libraryHealthModel'
+import AutomationTargetEditor from '@/pages/test-management/AutomationTargetEditor'
 import StrategyTab from '@/pages/test-management/StrategyTab'
 import TestCasesTabBar from '@/pages/test-management/TestCasesTabBar'
 // W28 (TCM-01..05): G-C's edit form and Status moves; G-D's bulk bar, history panel and plan item version.
@@ -97,6 +100,27 @@ import {
   buildTestCaseListParams,
   LIFECYCLE_STATUS_OPTIONS,
 } from '@/utils/testCaseLifecycleUi'
+// W13 "test-library": the filters' URL state (G-A), the Owner options read (G-A), the
+// reviewed multi-value control (VIZ-109) and the Views bar (G-E).
+import MultiSelect from '@/components/ui/MultiSelect'
+import { useCaseOwnerOptions, useLibraryHealth } from '@/hooks/useTestLibrary'
+import {
+  CASE_PRESET_IDS,
+  CASE_PRESET_LABELS,
+  CASE_TYPE_OPTIONS,
+  EMPTY_CASE_FILTERS,
+  activePreset,
+  caseFiltersKey,
+  readCaseFilters,
+  writeCaseFilters,
+  type CaseFilterState,
+} from '@/pages/test-management/caseFilterState'
+import CaseViewsBar from '@/pages/test-management/CaseViewsBar'
+// W13 TCL-04 / 05 / 06: G-E's import section, case timeline and requirements mounts.
+import ImportCasesSection from '@/pages/test-management/ImportCasesSection'
+import CaseTimeline from '@/pages/test-management/CaseTimeline'
+import CaseRequirementsSection from '@/pages/test-management/CaseRequirementsSection'
+import RequirementCoverageCard from '@/pages/test-management/RequirementCoverageCard'
 
 // ─── Constants / helpers ─────────────────────────────────────────────────────
 //
@@ -358,7 +382,8 @@ function EditCaseButton({ retired, onEdit }: { retired: boolean; onEdit: () => v
   )
 }
 
-type DetailTab = 'details' | 'lifecycle' | 'history' | 'reviews' | 'comments' | 'ai_review'
+// W13 TCL-05: `timeline` (second, after Details; Details stays the default).
+type DetailTab = 'details' | 'timeline' | 'lifecycle' | 'history' | 'reviews' | 'comments' | 'ai_review'
 
 /** W28: the case pane's one open form: the edit form, or a Status move's reason. */
 type CasePaneSlotKey = 'edit' | 'reason'
@@ -385,6 +410,10 @@ interface CaseDetailPanelProps {
   /** The case takes the full width (the list folds away) for long steps and history. */
   expanded: boolean
   onToggleExpand: () => void
+  /** W13 TCL-06: the traceability flag (read once by the page); off = nothing of it renders. */
+  requirementTraceability?: boolean
+  /** W13 TCL-06: filter the case list by a requirement key (a key in the Requirements section). */
+  onFilterRequirement?: (normalizedKey: string) => void
 }
 
 /**
@@ -398,6 +427,7 @@ interface CaseDetailPanelProps {
 function CaseDetailPanel({
   caseItem, onClose, onRefresh, onCaseChanged, lifecycleV2, projectId, slot, suiteOptions,
   position, onPrev, onNext, expanded, onToggleExpand,
+  requirementTraceability = false, onFilterRequirement = () => undefined,
 }: CaseDetailPanelProps) {
   const [activeTab, setActiveTab] = useState<DetailTab>('details')
   const [comment, setComment] = useState('')
@@ -443,6 +473,8 @@ function CaseDetailPanel({
     { id: 'details',   label: 'Details',    icon: <FileText className="h-3.5 w-3.5" /> },
   ] : [
     { id: 'details',   label: 'Details',    icon: <FileText className="h-3.5 w-3.5" /> },
+    // W13 TCL-05: one stream of what happened to the case (History keeps compare / restore).
+    { id: 'timeline',  label: 'Timeline',   icon: <ListOrdered className="h-3.5 w-3.5" /> },
     ...(lifecycleV2 ? [{ id: 'lifecycle' as const, label: 'Lifecycle', icon: <RotateCcw className="h-3.5 w-3.5" /> }] : []),
     { id: 'history',   label: 'History',    icon: <History className="h-3.5 w-3.5" /> },
     { id: 'reviews',   label: 'Reviews',    icon: <Shield className="h-3.5 w-3.5" /> },
@@ -709,8 +741,21 @@ function CaseDetailPanel({
                   </button>
                 </div>
               )}
+              {/* W13 TCL-06: an authored case's requirement keys, only with the
+                  traceability flag on (read once by the page); hidden while the
+                  edit form is open (this whole body is). */}
+              {requirementTraceability && !isAutomation && (
+                <CaseRequirementsSection
+                  caseItem={caseItem}
+                  canEdit={canWrite && !retired}
+                  onFilterRequirement={onFilterRequirement}
+                />
+              )}
             </div>
           )}
+
+          {/* Mounted only while open: the timeline asks nothing before. */}
+          {activeTab === 'timeline' && !isAutomation && <CaseTimeline caseId={caseItem.id} />}
 
           {activeTab === 'lifecycle' && (
             caseItem.source === 'automation' ? (
@@ -985,25 +1030,65 @@ function CreatePlanModal({ projectId, onClose, onCreated }: CreatePlanModalProps
 
 // ─── Tab: Test Cases ──────────────────────────────────────────────────────────
 
-interface TestCasesTabProps { projectId: string | null; lifecycleV2: boolean }
+/** = the server's `AUTOMATION_ROWS_EXCLUDED_TEXT` (W13 TCL-01): the note under the filter bar. */
+const AUTOMATION_ROWS_EXCLUDED_TEXT = 'Authored cases only: automation-ingested tests are left out under these filters.'
 
-export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
-  const now = useNow()  // captured at mount — avoids impure Date.now() in render
-  // ── Filter state ────────────────────────────────────────────────────
-  // Single-select chips (README §6's multi-select popover is not built).
-  // No owner filter: the chip was a disabled stub with a single "Anyone"
-  // option, so it is not rendered and the list is never owner-filtered.
+interface TestCasesTabProps {
+  projectId: string | null
+  lifecycleV2: boolean
+  /**
+   * W13 TCL-06: the `test_case_requirement_traceability` flag, read ONCE by the
+   * page. Default off, so a test rendering the tab directly sees none of it.
+   */
+  requirementTraceability?: boolean
+}
+
+/** The search box's words; with traceability on it also matches requirement keys. */
+const SEARCH_PLACEHOLDER = 'Search by title, tags or ID…'
+const SEARCH_PLACEHOLDER_REQUIREMENTS = 'Search by title, tags, ID or requirement…'
+
+export function TestCasesTab({ projectId, lifecycleV2, requirementTraceability = false }: TestCasesTabProps) {
+  // ── Filter state (W13 TCL-01) ───────────────────────────────────────
+  // Every filter lives in the URL (`caseFilterState.ts`: `status`, `priority`,
+  // `type`, `owner`, `automation`, `cases_suite`, `q`, `ai`, `requirement`),
+  // written with `replace` so a click adds no history entry; `tab` and `case`
+  // are kept. Unknown values are dropped on read, so they are never sent; a
+  // reload restores the exact list. Any change resets the page to 1 (and the
+  // bulk selection, whose scope key is built from this state).
   const [page, setPage] = useState(1)
-  const [status, setStatus] = useState('')
-  const [testType, setTestType] = useState('')
-  const [priority, setPriority] = useState('')
-  const [search, setSearch] = useState('')
-  const [suiteFilter, setSuiteFilter] = useState('')
-  const [savedView, setSavedView] = useState<string | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const routeState: unknown = useLocation().state
+  const filters = useMemo(() => readCaseFilters(searchParams), [searchParams])
+  // The search box types into local state (a URL write is a transition, which
+  // a controlled text input must not wait on); each keystroke also writes `q`.
+  const [searchText, setSearchText] = useState(filters.q)
+  const applyFilters = useCallback((next: CaseFilterState) => {
+    setPage(1)
+    setSearchText(next.q)
+    setSearchParams((prev) => writeCaseFilters(prev, next), { replace: true, state: routeState })
+  }, [routeState, setSearchParams])
+  const onSearchChange = useCallback((text: string) => {
+    setPage(1)
+    setSearchText(text)
+    setSearchParams(
+      (prev) => writeCaseFilters(prev, { ...readCaseFilters(prev), q: text }),
+      { replace: true, state: routeState },
+    )
+  }, [routeState, setSearchParams])
+  // W13 TCL-06: a requirement key (a link in a case, a gap in Insights) filters
+  // the list by it alone on top of the other filters (the note line's chip).
+  const filterByRequirement = useCallback(
+    (key: string) => applyFilters({ ...filters, requirement: key }),
+    [applyFilters, filters],
+  )
+  const presetId = activePreset(filters)
+  // `Me`, then the project's members: the bulk bar's members request (one shared key).
+  const { options: ownerOptions } = useCaseOwnerOptions(projectId)
   // W27b PAN-05: New test case and AI Generate open one at a time, in the
   // page, between the alerts and the cases row (the tab's form slot: a form
-  // with typed input asks before the other replaces it).
-  const topSlot = useInlineSlot<'create' | 'ai'>()
+  // with typed input asks before the other replaces it). W13 TCL-04: Import
+  // opens in the same slot (`'import'`).
+  const topSlot = useInlineSlot<'create' | 'ai' | 'import'>()
   const closeTop = useSlotCloser(topSlot)
   const [showInsights, setShowInsights] = useState(false)
   const [selectedCase, setSelectedCase] = useState<ManagedTestCase | null>(null)
@@ -1076,21 +1161,27 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  // One value of a list filter is sent as today's plain string, several as
+  // repeated keys; the owner as `owner` (never the `assignee_id` the route ignored).
   const params = useMemo(() => {
     return buildTestCaseListParams({
       page,
       size: 25,
-      status,
-      testType,
-      priority,
-      search,
-      ownerFilter: '',
-      suiteFilter,
+      status: filters.statuses,
+      testType: filters.types,
+      priority: filters.priorities,
+      search: filters.q.trim(),
+      // `me` works in every scope (My drafts in All Projects); another person
+      // only within one project (the server refuses it otherwise).
+      ownerFilter: filters.owner && (projectId || filters.owner === 'me') ? filters.owner : '',
+      suiteFilter: filters.suite ?? '',
       includeAutomation,
       // W28: the AI drafts view (draft + ai_generated, a list filter the API already has).
-      aiGenerated: savedView === 'ai_drafts',
+      aiGenerated: filters.aiGenerated,
+      automation: filters.automation,
+      requirement: filters.requirement,
     })
-  }, [page, status, testType, priority, search, suiteFilter, includeAutomation, savedView])
+  }, [page, filters, projectId, includeAutomation])
 
   const {
     data,
@@ -1101,28 +1192,32 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
   // Was a hardcoded "knowledge graph rebuilt just now" -- a fabricated
   // freshness claim (#893) about an event this page cannot observe. Report
   // when the payload actually arrived instead.
-  const fetchedAt = useDataFreshness(data)
-  const refreshedAt = fetchedAt ? shortAgo(fetchedAt) : 'just now'
-  // Wider read used to power Library Verdict + right-rail synthesis (review
-  // queue, strategy gaps, coverage matrix). The /test-cases/health endpoint
-  // the spec assumes (README §14 q1) doesn't exist yet, so we synthesise.
+  // W13 TCL-03: the library health is the SERVER's, over the whole library
+  // (`GET /test-management/health`, one read on load at the old roll's
+  // background cadence; none in All Projects). It replaced a 200-row
+  // `useTestCases` roll the page synthesised the banner, Insights, the Suite
+  // filter's options and the review queue from (capped, so wrong for any
+  // larger library). The page computes none of those numbers now.
   const {
-    data: healthRoll,
+    data: health,
     error: healthError,
-    mutate: mutateHealthRoll,
-  } = useTestCases({ page: 1, size: 200 })
+    mutate: mutateHealth,
+  } = useLibraryHealth(projectId)
+  // When the health answer arrived ("Library refreshed 2m ago" in Insights).
+  const fetchedAt = useDataFreshness(health)
+  const refreshedAt = fetchedAt ? shortAgo(fetchedAt) : 'just now'
   const { data: auditRoll } = useAuditLog({ page: 1, size: 5, entity_type: 'test_case' })
   const [caseRetrying, setCaseRetrying] = useState(false)
   const [caseRefreshWarning, setCaseRefreshWarning] = useState<string | null>(null)
-  const hasPreviouslyLoadedCases = Boolean(data?.items.length || healthRoll?.items.length)
+  const hasPreviouslyLoadedCases = Boolean(data?.items.length)
 
-  // Both rolls must be revalidated. The library-health panel reads its own
-  // `useTestCases({page:1,size:200})` roll, a DIFFERENT SWR key from the
-  // paginated table, so refreshing only the table left the panel asserting
-  // "1 cases" beside a list showing 2 until the 60 s background poll caught up.
+  // Both reads must be revalidated after a write: the paginated table and the
+  // library health are DIFFERENT SWR keys, so refreshing only the table left
+  // the health asserting "1 cases" beside a list showing 2 until the 60 s
+  // background poll caught up.
   const handleRefresh = useCallback(
-    () => { void mutateCases(); void mutateHealthRoll() },
-    [mutateCases, mutateHealthRoll],
+    () => { void mutateCases(); void mutateHealth() },
+    [mutateCases, mutateHealth],
   )
 
   const retryCaseData = useCallback(async () => {
@@ -1130,13 +1225,13 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
     setCaseRetrying(true)
     setCaseRefreshWarning(null)
     try {
-      await Promise.all([mutateCases(), mutateHealthRoll()])
+      await Promise.all([mutateCases(), mutateHealth()])
     } catch {
       setCaseRefreshWarning('Test-case data is still unavailable. Previously loaded results remain visible.')
     } finally {
       setCaseRetrying(false)
     }
-  }, [caseRetrying, mutateCases, mutateHealthRoll])
+  }, [caseRetrying, mutateCases, mutateHealth])
 
   const casesRaw = data?.items ?? []
   const { sorted: cases } = useTableSort(casesRaw, 'updated_at', 'desc')
@@ -1175,12 +1270,16 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
     paneSlot.close()
     action()
   }, [paneSlot])
-  const pickCase = useCallback((caseItem: ManagedTestCase) => {
+  // A case named by id (an Insights row: the review queue, a Strategy gaps
+  // list): through the pane's slot, then `?case=` — the row on this page, else
+  // the case fetched by id (`needsCaseFetch` below).
+  const pickCaseById = useCallback((caseId: string) => {
     paneSlot.guard(() => {
       paneSlot.close()
-      openCase(caseItem)
+      setSelectedCase(null)
+      openCaseParam(caseId)
     })
-  }, [openCase, paneSlot])
+  }, [openCaseParam, paneSlot])
 
   // "3 of 25" and previous / next, within the page the list shows.
   const activeIndex = activeCase ? cases.findIndex((c) => c.id === activeCase.id) : -1
@@ -1278,79 +1377,39 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
     )
   }
 
-  // ── Library health model (synthesised) ─────────────────────────────
-  const fullList: ManagedTestCase[] = healthRoll?.items ?? casesRaw
+  // ── Library health (the server's, W13 TCL-03) ──────────────────────
   // Two distinct totals — both surfaced separately to fix the recurring
   // "Cases 25 of 0" misread (third regression 2026-05-16). See
-  // ``utils/testManagementTotals.ts`` for the helper + unit tests.
+  // ``utils/testManagementTotals.ts`` for the helper + unit tests. The
+  // authored total is the health answer's (every non-retired authored case).
   const { authoredTotal, casesTotal } = deriveTestManagementTotals({
-    healthRoll,
+    healthRoll: health ? { total: health.total_cases } : null,
     data,
     casesLength: cases.length,
   })
-  const activeCount       = fullList.filter(c => c.status === 'active').length
-  const automatedCount    = fullList.filter(c => c.is_automated).length
-  const automatedPct      = fullList.length > 0 ? Math.round((automatedCount / fullList.length) * 100) : 0
-  const reviewQueue       = fullList.filter(c => c.status === 'review_requested' || c.status === 'under_review')
-  const reviewCount       = reviewQueue.length
-  const draftAgeDays = (iso: string) => Math.floor((now - new Date(iso).getTime()) / 86400000)
-  const staleDrafts       = fullList.filter(c => c.status === 'draft' && draftAgeDays(c.updated_at) >= 30)
-  const staleCount        = staleDrafts.length
-  // "Deprecated cases referenced by active suites" — heuristic: deprecated
-  // cases that still carry a non-null suite_name are flagged. The real check
-  // needs a server-side cross-reference (README §14 q2) — flagged in BACKLOG.
-  const deprecatedInActive = fullList.filter(c => c.status === 'deprecated' && !!c.suite_name).length
-  const oldestReviewDays = reviewQueue.length === 0
-    ? 0
-    : Math.max(...reviewQueue.map(c => draftAgeDays(c.updated_at)))
-  const avgAgeDays = fullList.length > 0
-    ? Math.round(fullList.reduce((s, c) => s + draftAgeDays(c.created_at), 0) / fullList.length)
-    : 0
-  const olderThan180 = fullList.filter(c => draftAgeDays(c.created_at) > 180).length
-  const olderThan180Pct = fullList.length > 0 ? Math.round((olderThan180 / fullList.length) * 100) : 0
+  const automatedCount = health?.automated_cases ?? 0
+  // The banner's state, pill and title (`libraryHealthModel.ts`): pending with
+  // no facts while there is no answer or nothing to grade — never zeros.
+  const banner = bannerFor({ projectId, health, error: healthError })
+  // The Suite filter's options: the authored suite names the answer carries.
+  const suiteOptions = health?.suite_names ?? []
 
-  // Health score — weighted: automation (35%) · stale-drafts inverse (20%)
-  // · review-queue freshness (20%) · deprecated-in-active inverse (25%).
-  // 0-100, higher = healthier.
-  const automationScore   = automatedPct
-  const staleScore        = fullList.length > 0 ? Math.max(0, 100 - (staleCount / fullList.length) * 400) : 100
-  const reviewFreshScore  = oldestReviewDays === 0 ? 100 : Math.max(0, 100 - (oldestReviewDays / 14) * 100)
-  const depInActiveScore  = fullList.length > 0 ? Math.max(0, 100 - (deprecatedInActive / fullList.length) * 400) : 100
-  const healthScore = Math.round(
-    automationScore   * 0.35 +
-    staleScore        * 0.20 +
-    reviewFreshScore  * 0.20 +
-    depInActiveScore  * 0.25,
-  )
-  const healthTag: HealthTag =
-    healthScore >= 85 ? 'Healthy' : healthScore >= 70 ? 'Needs attention' : 'At risk'
-  const healthTone = healthScore >= 85 ? 'var(--status-passed)' : healthScore >= 70 ? 'var(--status-broken)' : 'var(--status-failed)'
-
-  // ── Saved views (synthesised) ───────────────────────────────────────
-  // An "Unautomated" view used to sit here: it cleared every filter and
-  // applied none (there is no server-side automation filter), so it showed
-  // the whole library under a label that promised a subset. Removed.
-  const SAVED_VIEWS: { id: SavedViewId; label: string }[] = [
-    { id: 'my_drafts',   label: 'My drafts' },
-    { id: 'p0_p1',       label: "My team's P0/P1" },
-    // W28 TCM-02: generated cases arrive as AI drafts; accepting them is Make active (one or many).
-    { id: 'ai_drafts',   label: 'AI drafts' },
-  ]
-  const applySavedView = (id: SavedViewId) => {
-    setSavedView(id)
-    setPage(1)
-    // Re-write filter state from the view definition.
-    if (id === 'my_drafts')   { setStatus('draft');    setPriority(''); setTestType(''); setSuiteFilter('') }
-    if (id === 'p0_p1')       { setStatus('');         setPriority('critical'); setTestType(''); setSuiteFilter('') }
-    if (id === 'ai_drafts')   { setStatus('draft');    setPriority(''); setTestType(''); setSuiteFilter('') }
-  }
+  // ── Views (W13 TCL-01) ──────────────────────────────────────────────
+  // The four presets REALLY filter (`CASE_PRESETS`): My drafts, My P0/P1 (was
+  // "My team's P0/P1", which filtered by nothing team-shaped: owner = me now),
+  // Unautomated (`automation=not_automated`, a server filter since W13) and AI
+  // drafts. A chip is active exactly when the URL state equals its filters;
+  // clicking one replaces every filter key (`CaseViewsBar`, which also holds the
+  // saved case views).
+  const presets = CASE_PRESET_IDS.map((id) => ({ id, label: CASE_PRESET_LABELS[id] }))
 
   // ── W28 TCM-03: the bulk selection ──────────────────────────────────
-  // Per page and local: cleared whenever the page, a filter, the search, the
-  // saved view, Automation tests or the project changes (what you see is what
-  // you edit; no "all N matching" selection). The scope key does it without an
-  // effect: a selection made under another scope reads as empty.
-  const selectionScope = JSON.stringify([projectId, page, status, testType, priority, search, suiteFilter, savedView, includeAutomation])
+  // Per page and local: cleared whenever the page, a filter (any key of the URL
+  // state: a multi-select, the owner, automation, the search, a view),
+  // Automation tests or the project changes (what you see is what you edit; no
+  // "all N matching" selection). The scope key does it without an effect: a
+  // selection made under another scope reads as empty.
+  const selectionScope = JSON.stringify([projectId, page, caseFiltersKey(filters), includeAutomation])
   const [bulk, setBulk] = useState<{ scope: string; ids: string[]; open: boolean }>({ scope: selectionScope, ids: [], open: false })
   const bulkState = canWrite && bulk.scope === selectionScope ? bulk : { scope: selectionScope, ids: [] as string[], open: false }
   const selectableOnPage = cases.filter((tc) => isSelectable(tc, canWrite))
@@ -1410,31 +1469,10 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
   // N / 1.15N = 87% for every project, every day, forever — which a QA lead
   // could reasonably have reported to management as a coverage figure.
   //
-  // What the page can honestly say is how many authored cases are automated,
-  // which it already knows from the rows themselves.
+  // What the page can honestly say is how many authored cases are automated:
+  // since W13 the server counts them over the whole library (health answer).
   const coverageAuto    = automatedCount
-  const coverageManual  = fullList.length - automatedCount
-
-  // ── Strategy gaps synthesis ─────────────────────────────────────────
-  const suiteCounts = new Map<string, number>()
-  for (const c of fullList) {
-    const s = (c.suite_name ?? '').trim() || 'unknown'
-    suiteCounts.set(s, (suiteCounts.get(s) ?? 0) + 1)
-  }
-  const suiteOptions = Array.from(suiteCounts.keys()).filter(s => s !== 'unknown').sort()
-  const strategyGaps: StrategyGap[] = []
-  if (deprecatedInActive > 0) {
-    strategyGaps.push({ severity: 'critical', title: 'Deprecated cases in active suites', sub: 'still referenced by run plans', pill: `${deprecatedInActive} active` })
-  }
-  if (reviewCount > 0 && oldestReviewDays >= 7) {
-    strategyGaps.push({ severity: 'warn', title: 'Aging reviews over SLA', sub: `oldest ${oldestReviewDays} days`, pill: `${reviewCount} pending` })
-  }
-  if (automatedPct < 60) {
-    strategyGaps.push({ severity: 'warn', title: 'Automation below target', sub: `${automatedPct}% automated · target 60%`, pill: `${60 - automatedPct}% gap` })
-  }
-  if (staleCount > 0) {
-    strategyGaps.push({ severity: 'warn', title: 'Stale drafts ≥ 30d', sub: 'untouched in the last month', pill: `${staleCount} stale` })
-  }
+  const coverageManual  = Math.max(0, authoredTotal - automatedCount)
 
   // ── Recent activity from audit log ──────────────────────────────────
   const auditEvents: RecentEvent[] = ((auditRoll?.items ?? []) as unknown as RecentEvent[]).slice(0, 5)
@@ -1445,90 +1483,109 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
 
   // ── The health banner (UX redesign P4 item 7) ───────────────────────
   // The 48 px strip above the table: the library-health verdict and four of
-  // its inputs. The full breakdown (active, average age, deprecated cases in
-  // active suites, the refresh time) is the Insights drawer's first card.
-  const statBasis = describeStatBasis(fullList.length, authoredTotal)
-  const isEmptyCatalog = authoredTotal === 0
-  const bannerState: BannerState = isEmptyCatalog
-    ? 'pending'
-    : healthTag === 'Healthy' ? 'ok' : healthTag === 'Needs attention' ? 'warn' : 'fail'
+  // its inputs, all read from the server's answer (no sample any more, so no
+  // stat-basis line). The full breakdown is the Insights drawer's first card.
+  const healthSource = { projectId, health, error: healthError }
 
   // ── Render ──────────────────────────────────────────────────────────
   return (
     <div className="space-y-3">
       <StatusBanner
-        state={bannerState}
+        state={banner.state}
         // The tag is the pill ("AT RISK", not the state's "FAILING"); the title the score.
-        pillLabel={isEmptyCatalog ? undefined : healthTag.toUpperCase()}
-        title={isEmptyCatalog ? 'No authored test cases yet' : `Library health ${healthScore}/100`}
-        facts={[
+        pillLabel={banner.pillLabel}
+        title={banner.title}
+        facts={banner.factsFrom ? [
           { label: authoredTotal === 1 ? 'Case' : 'Cases', value: authoredTotal },
-          { label: 'Awaiting review', value: reviewCount },
-          { label: 'Automated', value: `${automatedPct}%` },
-          { label: 'Stale drafts', value: staleCount },
-        ]}
+          { label: 'Awaiting review', value: banner.factsFrom.review_queue.total },
+          { label: 'Automated', value: automatedPctText(banner.factsFrom) },
+          { label: 'Stale drafts', value: banner.factsFrom.stale_drafts },
+        ] : []}
         action={{ label: 'Insights', onClick: () => setShowInsights(true) }}
       />
-      {statBasis && (
-        <p className="text-[11px] m-0 text-[var(--color-text-muted)]" data-testid="library-health-stat-basis">
-          {statBasis}
-        </p>
-      )}
 
       {/* The former right rail (UX redesign P4 item 7), opened from the
           banner's "Insights": a read-only section right here, under the
           banner (W27b PAN-05), closed by default. Its "Generate test cases"
           card is the AI Generate form's sources now (a description, or
-          documents). */}
+          documents). Opening it sends nothing: every card reads the health
+          answer or the audit roll. */}
       <InsightsPanel open={showInsights} onClose={() => setShowInsights(false)}>
         <LibraryHealthCard
-          healthScore={healthScore}
-          healthTag={healthTag}
-          healthTone={healthTone}
+          {...healthSource}
           totalCases={authoredTotal}
-          reviewCount={reviewCount}
-          staleCount={staleCount}
-          deprecatedInActive={deprecatedInActive}
-          oldestReviewDays={oldestReviewDays}
-          activeCount={activeCount}
-          automatedPct={automatedPct}
-          avgAgeDays={avgAgeDays}
-          olderThan180Pct={olderThan180Pct}
-          statBasis={statBasis}
           refreshedAt={refreshedAt}
+          targetEditor={projectId && health?.measured ? (
+            <AutomationTargetEditor
+              projectId={projectId}
+              target={health.automation_target_pct}
+              onSaved={() => { void mutateHealth() }}
+            />
+          ) : null}
         />
-        <ReviewQueueCard
-          rows={reviewQueue.slice(0, 5)}
-          onPick={pickCase}
-        />
-        <StrategyGapsCard gaps={strategyGaps} />
+        <ReviewQueueCard {...healthSource} onPick={pickCaseById} />
+        <StrategyGapsCard {...healthSource} onOpenCase={pickCaseById} />
         <RecentActivityCard events={auditEvents} />
         {/* Automation split of the authored catalog */}
-        <AutomationCoverageCard
-          auto={coverageAuto}
-          manual={coverageManual}
-        />
+        {health ? (
+          <AutomationCoverageCard
+            auto={coverageAuto}
+            manual={coverageManual}
+          />
+        ) : (
+          <HealthPendingCard title="Automation coverage" projectId={projectId} error={healthError} />
+        )}
+        {/* W13 TCL-06: a sixth card only with the traceability flag on (the
+            answer then carries `requirements`; null = no card). */}
+        {requirementTraceability && projectId && health?.requirements && (
+          <RequirementCoverageCard
+            projectId={projectId}
+            summary={health.requirements}
+            onFilterRequirement={filterByRequirement}
+            onOpenCase={pickCaseById}
+          />
+        )}
       </InsightsPanel>
 
       {/* Filter bar */}
       <CasesFilterBar
         searchInputRef={searchInputRef}
-        search={search}
-        onSearchChange={(v) => { setSearch(v); setPage(1); setSavedView(null) }}
-        status={status}
-        onStatusChange={(v) => { setStatus(v); setPage(1); setSavedView(null) }}
-        testType={testType}
-        onTypeChange={(v) => { setTestType(v); setPage(1); setSavedView(null) }}
-        priority={priority}
-        onPriorityChange={(v) => { setPriority(v); setPage(1); setSavedView(null) }}
-        suiteFilter={suiteFilter}
-        onSuiteChange={(v) => { setSuiteFilter(v); setPage(1); setSavedView(null) }}
+        search={searchText}
+        onSearchChange={onSearchChange}
+        filters={filters}
+        onFiltersChange={applyFilters}
         suiteOptions={suiteOptions}
+        ownerOptions={projectId ? ownerOptions : null}
         includeAutomation={includeAutomation}
         onToggleAutomation={(v) => { setIncludeAutomation(v); setPage(1) }}
+        searchPlaceholder={requirementTraceability ? SEARCH_PLACEHOLDER_REQUIREMENTS : SEARCH_PLACEHOLDER}
       />
+      {/* One line under the bar, only when there is something to say: the
+          authored-only answer (a filter the merged automation path cannot
+          apply) and the requirement filter's removable chip (set from a link
+          or a gap, TCL-06). Absent in every default world. */}
+      {(data?.automation_rows_excluded || filters.requirement) && (
+        <div className="flex items-center gap-3 flex-wrap text-xs text-[var(--color-text-muted)]" data-cases-filter-note>
+          {filters.requirement && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-[var(--color-border)] px-2 py-0.5 text-[var(--color-text)]">
+              <span className="max-w-[28ch] truncate" title={filters.requirement}>Requirement: {filters.requirement}</span>
+              <button
+                type="button"
+                className="text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                aria-label={`Remove the requirement filter ${filters.requirement}`}
+                onClick={() => applyFilters({ ...filters, requirement: null })}
+              >
+                ×
+              </button>
+            </span>
+          )}
+          {data?.automation_rows_excluded && <span role="note">{AUTOMATION_ROWS_EXCLUDED_TEXT}</span>}
+        </div>
+      )}
 
-      {(casesError || healthError) && (
+      {/* The cases read's failure (a failed health read says so in the banner
+          and the Insights cards instead); Retry re-reads both. */}
+      {casesError && (
         <div
           role="alert"
           className="flex items-center justify-between gap-3 rounded-lg border border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)] p-3 text-sm text-[var(--status-failed)]"
@@ -1593,6 +1650,17 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
           onClose={() => closeTop('ai')}
         />
       )}
+      {/* W13 TCL-04: Import (a dry run first, every case a Draft), in the
+          same slot; after an apply both reads refresh (the cases and health). */}
+      {topSlot.openKey === 'import' && projectId && (
+        <ImportCasesSection
+          projectId={projectId}
+          slot={topSlot}
+          onClose={() => closeTop('import')}
+          onImported={() => handleRefresh()}
+          onOpenCase={pickCaseById}
+        />
+      )}
 
       {/* The cases table, the page's primary content, at full width (the
           right rail it shared the row with is the Insights drawer). With a case
@@ -1622,18 +1690,20 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
             onNext={nextCase ? leaveCase(() => openCase(nextCase)) : undefined}
             expanded={caseExpanded}
             onToggleExpand={() => setCaseExpanded((v) => !v)}
+            requirementTraceability={requirementTraceability}
+            onFilterRequirement={filterByRequirement}
           />
         ) : null}
         list={<>
-            <div
-              className="flex items-center justify-between gap-2 px-4 py-3"
-              style={{ borderBottom: '1px solid var(--color-border)' }}
-            >
+            {/* The Cases card's header: the title and the toolbar, then (W13
+                TCL-01) its second row, Views — inside the primary card, so a
+                wrap of the views never moves the table's top. */}
+            <div className="px-4 py-3 space-y-2" style={{ borderBottom: '1px solid var(--color-border)' }}>
+            <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-4 flex-wrap min-w-0">
                 <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">
                   Cases <span className="font-normal text-[var(--color-text-muted)] text-[11.5px] ml-2">{totalShown} of {casesTotal} · sorted by {sortLabel}</span>
                 </h3>
-                <SavedViewChips savedView={savedView} savedViews={SAVED_VIEWS} onSavedView={(v) => applySavedView(v.id)} />
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
                 <button
@@ -1647,6 +1717,16 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
                   <FileSpreadsheet className="h-3.5 w-3.5" />{!activeCase && ' Export'}
                 </button>                {canWrite && (
                   <>
+                    {/* W13 TCL-04: TESTER+ with one project (the canWrite rule); icon-only beside a case, like Export. */}
+                    <button
+                      type="button"
+                      onClick={() => topSlot.open('import')}
+                      className="btn-secondary btn-sm inline-flex items-center gap-1.5"
+                      title="Import test cases from CSV or Excel"
+                      aria-label="Import"
+                    >
+                      <Upload className="h-3.5 w-3.5" />{!activeCase && ' Import'}
+                    </button>
                     <button
                       onClick={() => topSlot.open('ai')}
                       aria-label="AI Generate"
@@ -1668,6 +1748,15 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
                 )}
               </div>
             </div>
+            <CaseViewsBar
+              projectId={projectId}
+              current={filters}
+              activePresetId={presetId}
+              presets={presets}
+              onApply={applyFilters}
+              canSave={Boolean(projectId)}
+            />
+            </div>
 
             {casesError && !data ? (
               <div role="status" className="px-4 py-12 text-center text-sm text-[var(--color-text-muted)]">
@@ -1680,7 +1769,7 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
                 canCreate={canWrite}
                 onCreate={() => topSlot.open('create')}
                 onAiGenerate={() => topSlot.open('ai')}
-                onReset={() => { setSearch(''); setStatus(''); setTestType(''); setPriority(''); setSuiteFilter(''); setSavedView(null); setPage(1) }}
+                onReset={() => applyFilters(EMPTY_CASE_FILTERS)}
               />
             ) : (
               <CasesTableBody
@@ -1722,7 +1811,6 @@ export function TestCasesTab({ projectId, lifecycleV2 }: TestCasesTabProps) {
 }
 
 // ── Filter bar ──────────────────────────────────────────────────────────
-type SavedViewId = 'my_drafts' | 'p0_p1' | 'ai_drafts'
 
 /** The footer's bulk-edit hint names the platform's key (⌘ on a Mac, Ctrl elsewhere). */
 function isMacPlatform(): boolean {
@@ -1734,20 +1822,31 @@ interface CasesFilterBarProps {
   searchInputRef: React.RefObject<HTMLInputElement | null>
   search: string
   onSearchChange: (v: string) => void
-  status: string
-  onStatusChange: (v: string) => void
-  testType: string
-  onTypeChange: (v: string) => void
-  priority: string
-  onPriorityChange: (v: string) => void
-  suiteFilter: string
-  onSuiteChange: (v: string) => void
+  /** W13 TCL-01: the URL state; every control writes a whole new state. */
+  filters: CaseFilterState
+  onFiltersChange: (next: CaseFilterState) => void
   suiteOptions: string[]
+  /** `Me`, then the project's members; null in All Projects (no Owner control). */
+  ownerOptions: { value: string; label: string }[] | null
   // "Show automation-ingested tests too" toggle — merges per-run TestCase
   // rows (dedup'd by fingerprint) into the listing alongside ManagedTestCase.
   includeAutomation: boolean
   onToggleAutomation: (v: boolean) => void
+  /** W13 TCL-06: the search also matches requirement keys while traceability is on. */
+  searchPlaceholder?: string
 }
+
+/** The Priority filter's options (= the server's `CASE_PRIORITIES`). */
+const PRIORITY_FILTER_OPTIONS = [
+  { value: 'critical', label: 'Critical' },
+  { value: 'high', label: 'High' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'low', label: 'Low' },
+]
+const TYPE_FILTER_OPTIONS = CASE_TYPE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))
+
+/** A single-value MultiSelect's value (`max={1}`): the list form of one value or none. */
+const one = (value: string | null): string[] => (value ? [value] : [])
 
 function CasesFilterBar({
   // Destructure props so the RefObject is a named binding. The react-hooks v7
@@ -1757,18 +1856,15 @@ function CasesFilterBar({
   searchInputRef,
   search,
   onSearchChange,
-  status,
-  onStatusChange,
-  testType,
-  onTypeChange,
-  priority,
-  onPriorityChange,
-  suiteFilter,
-  onSuiteChange,
+  filters,
+  onFiltersChange,
   suiteOptions,
+  ownerOptions,
   includeAutomation,
   onToggleAutomation,
+  searchPlaceholder = 'Search by title, tags or ID…',
 }: CasesFilterBarProps) {
+  const suiteChoices = useMemo(() => suiteOptions.map((s) => ({ value: s, label: s })), [suiteOptions])
   return (
     <div
       className="flex items-center flex-wrap gap-2 rounded-md"
@@ -1778,17 +1874,18 @@ function CasesFilterBar({
         padding: '10px 12px',
       }}
     >
-      {/* Search */}
+      {/* Search. 200 px minimum, not 240: at 1280 on CI's DejaVu the bar has
+          22 px of slack with two filters set and wrapped with three. */}
       <div
         className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md flex-1"
-        style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)', minWidth: 240, height: 32 }}
+        style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)', minWidth: 200, height: 32 }}
       >
         <input
           ref={searchInputRef}
           type="search"
           value={search}
           onChange={(e) => onSearchChange(e.target.value)}
-          placeholder="Search by title, tags or ID…"
+          placeholder={searchPlaceholder}
           className="bg-transparent text-[13px] text-[var(--color-text)] outline-none flex-1"
           aria-label="Search cases"
         />
@@ -1816,132 +1913,51 @@ function CasesFilterBar({
         Automation tests
       </label>
 
-      <SelectChip
+      {/* W13 TCL-01: the reviewed multi-value control (anchored popovers, no
+          new one): Status / Type / Priority take several values, Suite and
+          Owner one (`max={1}`). Owner is per project (absent in All Projects). */}
+      <MultiSelect
         label="Status"
-        value={status}
-        options={[{ value: '', label: 'All' }, ...LIFECYCLE_STATUS_OPTIONS]}
-        onChange={onStatusChange}
+        options={LIFECYCLE_STATUS_OPTIONS}
+        value={filters.statuses}
+        onChange={(statuses) => onFiltersChange({ ...filters, statuses })}
+        triggerData={{ 'data-case-filter': 'status' }}
       />
-
-      <SelectChip label="Type" value={testType} options={[
-        { value: '', label: 'All' },
-        { value: 'functional',   label: 'Functional' },
-        { value: 'integration',  label: 'Integration' },
-        { value: 'e2e',          label: 'E2E' },
-        { value: 'regression',   label: 'Regression' },
-        { value: 'smoke',        label: 'Smoke' },
-        { value: 'performance',  label: 'Performance' },
-        { value: 'security',     label: 'Security' },
-        { value: 'usability',    label: 'Usability' },
-        { value: 'api',          label: 'API' },
-      ]} onChange={onTypeChange} />
-
-      <SelectChip label="Priority" value={priority} options={[
-        { value: '', label: 'Any' },
-        { value: 'critical', label: 'Critical' },
-        { value: 'high', label: 'High' },
-        { value: 'medium', label: 'Medium' },
-        { value: 'low', label: 'Low' },
-      ]} onChange={onPriorityChange} />
-
-      <SelectChip
+      <MultiSelect
+        label="Type"
+        options={TYPE_FILTER_OPTIONS}
+        value={filters.types}
+        onChange={(types) => onFiltersChange({ ...filters, types })}
+        triggerData={{ 'data-case-filter': 'type' }}
+      />
+      <MultiSelect
+        label="Priority"
+        options={PRIORITY_FILTER_OPTIONS}
+        value={filters.priorities}
+        onChange={(priorities) => onFiltersChange({ ...filters, priorities })}
+        triggerData={{ 'data-case-filter': 'priority' }}
+      />
+      <MultiSelect
         label="Suite"
-        value={suiteFilter}
-        options={[
-          { value: '', label: 'All' },
-          ...suiteOptions.map(s => ({ value: s, label: s })),
-        ]}
-        onChange={onSuiteChange}
+        options={suiteChoices}
+        value={one(filters.suite)}
+        max={1}
+        onChange={(next) => onFiltersChange({ ...filters, suite: next[0] ?? null })}
+        triggerData={{ 'data-case-filter': 'suite' }}
       />
-
+      {ownerOptions && (
+        <MultiSelect
+          label="Owner"
+          options={ownerOptions}
+          value={one(filters.owner)}
+          max={1}
+          onChange={(next) => onFiltersChange({ ...filters, owner: next[0] ?? null })}
+          triggerData={{ 'data-case-filter': 'owner' }}
+        />
+      )}
     </div>
   )
 }
-
-/**
- * The saved views, as chips. They sat at the end of the filter bar, which
- * then wrapped to a second line at 1440 px; they are views OF the table, so
- * since UX redesign P4 they sit in the table's own header row and the filter
- * bar is one line.
- */
-function SavedViewChips({
-  savedView,
-  savedViews,
-  onSavedView,
-}: {
-  savedView: string | null
-  savedViews: { id: SavedViewId; label: string }[]
-  onSavedView: (v: { id: SavedViewId; label: string }) => void
-}) {
-  return (
-    <span className="inline-flex items-center gap-1.5" role="group" aria-label="Saved views">
-      <span
-        className="inline-flex items-center text-[10px] uppercase font-medium text-[var(--color-text-muted)]"
-        style={{ letterSpacing: 'var(--tracking-wider)' }}
-      >
-        Views
-      </span>
-      {savedViews.map(v => {
-        const active = savedView === v.id
-        return (
-          <button
-            key={v.id}
-            type="button"
-            onClick={() => onSavedView(v)}
-            className="inline-flex items-center px-2.5 py-1 text-[12.5px] rounded-full border transition-colors"
-            style={{
-              background: active ? 'color-mix(in srgb, var(--status-flaky) 14%, transparent)' : 'transparent',
-              borderColor: active ? 'color-mix(in srgb, var(--status-flaky) 30%, transparent)' : 'var(--color-border)',
-              color: active ? 'var(--status-flaky)' : 'var(--color-text-muted)',
-            }}
-          >
-            {v.label}
-          </button>
-        )
-      })}
-    </span>
-  )
-}
-
-function SelectChip({
-  label, value, options, onChange,
-}: {
-  label: string
-  value: string
-  options: { value: string; label: string }[]
-  onChange: (v: string) => void
-}) {
-  const active = !!value
-  return (
-    <span
-      className="inline-flex items-center px-2.5 py-1 text-[12.5px] rounded-full border transition-colors"
-      style={{
-        background: active ? 'color-mix(in srgb, var(--color-accent) 10%, transparent)' : 'transparent',
-        borderColor: active ? 'color-mix(in srgb, var(--color-accent) 30%, transparent)' : 'var(--color-border)',
-        color: active ? 'var(--color-accent)' : 'var(--color-text-muted)',
-      }}
-    >
-      <span className="font-medium mr-1">{label}:</span>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        aria-label={label}
-        className="bg-transparent outline-none border-0 text-[12.5px] tabular-nums"
-        style={{ color: 'inherit' }}
-      >
-        {options.map(o => (
-          <option key={o.value} value={o.value} style={{ background: 'var(--color-bg-card)', color: 'var(--color-text)' }}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-      <span className="font-mono text-[10.5px] tabular-nums ml-1" style={{ color: active ? 'color-mix(in srgb, var(--color-accent) 65%, transparent)' : 'var(--color-text-faint)' }}>
-        {value ? '1' : options.length - 1}
-      </span>
-    </span>
-  )
-}
-
 // ── Cases table body + footer ─────────────────────────────────────────
 
 /** W28 TCM-03: the bulk selection's hooks into the table (absent: no checkboxes, the table as before). */
@@ -2884,7 +2900,14 @@ interface SuiteItem {
   owner_email?: string | null
   owner_full_name?: string | null
   owner_is_fallback?: boolean
+  // W13 TCL-07: a first-class suite no result reports yet (one project, no
+  // release filter). Absent on every aggregated row: absent = an aggregate.
+  empty?: boolean
+  suite_id?: string | null
 }
+
+/** The line an empty suite's card shows in place of its counts (TCL-07). */
+const EMPTY_SUITE_LINE ='Waiting for its first run: no result reports this suite yet.'
 
 interface SuiteCase {
   id: string
@@ -3007,7 +3030,9 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
     // an intentional part of that one-shot, not a derive-during-render case.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setExpandedSuite(deepLinkSuite)
-    void loadSuiteData(deepLinkSuite)
+    // An empty suite (TCL-07) has no cases to load.
+    const linked: SuiteItem | undefined = suites.find(s => s.suite_name === deepLinkSuite)
+    if (!linked?.empty) void loadSuiteData(deepLinkSuite)
     const el = document.getElementById(`suite-card-${deepLinkSuite}`)
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3145,10 +3170,9 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
   }
 
   // Add-suite handler. Refreshes the list on success so the user sees their
-  // new suite immediately (the legacy aggregated listSuites endpoint still
-  // groups by suite_name — first-class TestSuite rows show up once any test
-  // case is ingested for that name, OR you can extend listSuites to merge
-  // first-class rows; that's a follow-up).
+  // new suite immediately: since W13 TCL-07 the aggregated listSuites answer
+  // also carries a first-class suite no result reports yet, as an `empty`
+  // row (one project, no release filter), rendered as the Empty card below.
   async function handleCreateSuite(payload: {
     name: string; description: string; owner_user_id: string | null; tags: string[]
   }) {
@@ -3161,7 +3185,7 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
       owner_user_id: payload.owner_user_id,
       tags: payload.tags.length > 0 ? payload.tags : null,
     })
-    // Refetch suites so the new one (if it has test cases yet) shows up.
+    // Refetch suites so the new one shows up at once (as an Empty card).
     await mutateSuites()
   }
 
@@ -3225,18 +3249,27 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
         const reviewState: SuiteReviewState = review?.state ?? 'pending'
         const reviewStyle = REVIEW_STATE_STYLES[reviewState]
         const isEditingOwner = editingOwnerFor === suite.suite_name
+        // TCL-07: a first-class suite no result reports yet. Nothing to
+        // count, chart or expand: its badge, the waiting line and its owner.
+        const asItem: SuiteItem = suite
+        const isEmpty = asItem.empty === true
+        const suitePageId = asItem.suite_id || suiteIdByName.get(suite.suite_name)
         return (
         <div
           key={suite.suite_name}
           id={`suite-card-${suite.suite_name}`}
+          data-suite-empty={isEmpty ? 'true' : undefined}
           className={clsx(
             'card p-0',
             deepLinkSuite === suite.suite_name && 'ring-2 ring-[var(--color-accent)] ring-offset-1 ring-offset-[var(--color-bg)]',
           )}
         >
           <div
-            className="p-4 cursor-pointer hover:bg-[var(--color-bg-hover)]/50 transition-colors rounded-xl"
-            onClick={() => handleExpandSuite(suite.suite_name)}
+            className={clsx(
+              'p-4 rounded-xl',
+              !isEmpty && 'cursor-pointer hover:bg-[var(--color-bg-hover)]/50 transition-colors',
+            )}
+            onClick={isEmpty ? undefined : () => handleExpandSuite(suite.suite_name)}
           >
             <div className="flex items-center justify-between gap-3">
               <div className="flex-1 min-w-0">
@@ -3247,9 +3280,9 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                         and charts. A name with no suite record (aggregated
                         from runs only) has no page, so it stays text; the
                         row still expands its cases here. */}
-                    {suiteIdByName.get(suite.suite_name) ? (
+                    {suitePageId ? (
                       <Link
-                        to={`/suites/${suiteIdByName.get(suite.suite_name)}`}
+                        to={`/suites/${encodeURIComponent(suitePageId)}`}
                         className="hover:text-[var(--color-accent)] hover:underline"
                         onClick={e => e.stopPropagation()}
                       >
@@ -3257,12 +3290,21 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                       </Link>
                     ) : suite.suite_name}
                   </h3>
+                  {isEmpty ? (
+                    <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-[var(--ui-info-bg)] text-[var(--ui-info-ink)]">
+                      Empty
+                    </span>
+                  ) : (
                   <span className={clsx('text-[10px] px-1.5 py-0.5 rounded font-medium', reviewStyle.cls)}>
                     {reviewStyle.label}
                   </span>
+                  )}
                 </div>
+                {isEmpty && (
+                  <p className="text-xs text-[var(--color-text-muted)] mb-1">{EMPTY_SUITE_LINE}</p>
+                )}
                 <div className="flex items-center gap-4 text-xs text-[var(--color-text-muted)] flex-wrap">
-                {(() => {
+                {!isEmpty && (() => {
                   // Headline counts. The snapshot columns
                   // (``test_count``/``passed_count``/``failed_count``) are
                   // DISTINCT-fingerprint with the *latest* status, which
@@ -3328,7 +3370,7 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                   )}
                   {/* The per-day trend is the suite page's Charts tab (P4:
                       `/coverage/suite?name=` only redirects there now). */}
-                  {suiteIdByName.get(suite.suite_name) && (
+                  {!isEmpty && suiteIdByName.get(suite.suite_name) && (
                     <Link
                       to={`/suites/${suiteIdByName.get(suite.suite_name)}?tab=charts`}
                       className="text-[var(--color-accent)] hover:underline text-[11px]"
@@ -3382,7 +3424,7 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                   </span>
                   {suite.last_run_at && <span className="ml-auto">Last run: {fmtDate(suite.last_run_at)}</span>}
                 </div>
-                {suite.last_run_id && (
+                {!isEmpty && suite.last_run_id && (
                   <div className="mt-2 flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
                     <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mr-1">AI verdict:</span>
                     {(['confirmed', 'acknowledged', 'review_later'] as SuiteReviewState[]).map(s => (
@@ -3409,13 +3451,13 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                   </div>
                 )}
               </div>
-              {expandedSuite === suite.suite_name
+              {isEmpty ? null : expandedSuite === suite.suite_name
                 ? <ChevronUp className="h-4 w-4 text-[var(--color-text-muted)] flex-shrink-0" />
                 : <ChevronDown className="h-4 w-4 text-[var(--color-text-muted)] flex-shrink-0" />
               }
             </div>
           </div>
-          {expandedSuite === suite.suite_name && (
+          {!isEmpty && expandedSuite === suite.suite_name && (
             <div className="border-t border-[var(--color-border)]">
               {loadingCases === suite.suite_name ? (
                 <div className="flex items-center justify-center py-8"><LoadingSpinner size="md" /></div>
@@ -3759,6 +3801,8 @@ export default function TestManagementPage() {
   const projectId = useProjectStore(s => s.activeProjectId)
   const isAllProjects = projectId === 'all'
   const lifecycleV2 = useFeatureEnabled('test_case_lifecycle_v2')
+  // W13 TCL-06: read ONCE here, beside the lifecycle flag, and passed down.
+  const requirementTraceability = useFeatureEnabled('test_case_requirement_traceability')
 
   if (!project && !isAllProjects) {
     return (
@@ -3784,7 +3828,9 @@ export default function TestManagementPage() {
       />
 
       <div data-tab-panel={activeTab}>
-        {activeTab === 'cases'      && <TestCasesTab projectId={tabProjectId} lifecycleV2={lifecycleV2} />}
+        {activeTab === 'cases'      && (
+          <TestCasesTab projectId={tabProjectId} lifecycleV2={lifecycleV2} requirementTraceability={requirementTraceability} />
+        )}
         {activeTab === 'suites'     && <TestSuitesTab projectId={tabProjectId} />}
         {activeTab === 'plans'      && <TestPlansTab projectId={tabProjectId} />}
         {activeTab === 'approvals'  && <ApprovalsTab projectId={tabProjectId} lifecycleV2={lifecycleV2} />}

@@ -21,6 +21,19 @@ A suite's name comes from your reports where present and is inferred otherwise; 
 
 When a suite's latest run no longer reports some of its tests, the suite sync moves them aside as **Deleted from Suite (N tests need review)** on the **Suites** tab of **Test cases**. The **Coverage map** shows the same count on the suite (`3 need review`, in its tooltip and its table), and its **Open the tests that need review** action opens that list (`/test-management?tab=suites&suite=<suite>`).
 
+A suite you create is listed at once, before any run reports it: on the **Suites** tab of **Test cases** (one project selected, no release filter) its card carries an **Empty** badge and reads "Waiting for its first run: no result reports this suite yet.", with its owner and no counts. The **Default** suite is never shown as empty: it is the catch-all for tests ingested without a suite name.
+
+### Editing a suite
+
+**Edit** (the pencil on a suite's row on **Suites**, or **Edit suite** on the suite's own page; `QA_ENGINEER` or higher) opens the suite's form in the page: **Name**, **Description** and **Tags** (comma-separated). **Save** sends only what you changed. Renaming has two consequences the form states before you save:
+
+- Past runs keep the name they reported: their results stay under the old name on the **Suites** tab of **Test cases**.
+- A run that still sends the old name creates a suite of that name again for tests new to the project. Rename the suite in your reporter's configuration too.
+
+An explicit owner moves with a rename (the new name gets the same owner when it has none; the old name keeps its owner for the runs that still report it). Every change is recorded in the project's activity log as `Suite <name> changed: <fields>`.
+
+On a suite's **Tests** tab, the latest-run cell shows the run's id and, under it, when that run happened.
+
 ### A suite's page
 
 Click a suite to open it (`/suites/<id>`). The KPIs for the window are **Tests run**, **Executions**, **Pass rate**, **Failed** and **Avg duration**. Three tabs:
@@ -43,13 +56,14 @@ Nothing here is hard-deleted. A test that stops being reported keeps its history
 
 ### Cases
 
-The list of test cases, filterable by status, type, priority and suite, and searchable. **Automation tests** shows the observed tests too. The saved views beside the filters include **AI drafts**: the AI-generated cases still in Draft (accept them by making them Active, one at a time or in bulk). A **Library health** banner scores the catalogue (**HEALTHY**, **NEEDS ATTENTION** or **AT RISK**) from its cases, reviews waiting, automation and stale drafts; **Insights** explains it. Below the list, evidence gaps: authored cases that have never been executed, cases whose automation has vanished, and automation retirements waiting for a QA lead to confirm. Deprecated and archived cases are left out of the evidence gaps.
+The list of test cases, filtered and searched from the bar above it (see [Filters and views](#filters-and-views)). **Automation tests** shows the observed tests too. A **Library health** banner scores the whole catalogue (**HEALTHY**, **NEEDS ATTENTION** or **AT RISK**); **Insights** explains it (see [Library health](#library-health)). Below the list, evidence gaps: authored cases that have never been executed, cases whose automation has vanished, and automation retirements waiting for a QA lead to confirm. Deprecated and archived cases are left out of the evidence gaps.
 
 - **New test case** writes one by hand (`TESTER` or higher).
 - **AI Generate** drafts test cases from a description (**Generate & Save**) or from your documents (see [Generating from documents](#generating-from-documents)); `TESTER` or higher. The drafts are marked with the AI sparkle and land in **AI drafts**.
-- **Export** downloads the catalogue as Excel.
+- **Import** reads test cases from a CSV or Excel file (`TESTER` or higher, one project; see [Importing cases](#importing-cases)).
+- **Export** downloads the cases the list shows (its filters and search apply) as Excel.
 
-Click a case to open it: **Details**, **Lifecycle**, **History**, **Reviews**, **Comments** and **AI Review** (an advisory review by the AI, recorded separately; it never counts as a human review). A viewer reads all of it but changes nothing: there is no **New test case**, **AI Generate**, **Edit**, status move, selection box, comment box or **Run AI Review** below `TESTER`, and the API refuses those writes too.
+Click a case to open it: **Details**, **Timeline** (see [A case's timeline](#a-cases-timeline)), **Lifecycle**, **History**, **Reviews**, **Comments** and **AI Review** (an advisory review by the AI, recorded separately; it never counts as a human review). A viewer reads all of it but changes nothing: there is no **New test case**, **AI Generate**, **Edit**, status move, selection box, comment box or **Run AI Review** below `TESTER`, and the API refuses those writes too.
 
 **Edit** (in the case's **Details**, `TESTER` or higher, one project selected) opens the case's form in place of its details: title, objective, description, preconditions, steps (add, move up or down, remove; a step with no action is dropped and the rest renumbered), the overall expected result, test data, parameters, type, priority, severity, feature area, suite, tags, owner, estimated duration, automation, and an optional change summary. **Save changes** sends only the fields you changed and saves a new version (`Test case saved (v2)`). Editing never changes the status. A masked parameter's value is never shown: leave it empty to keep it, or type a new value to replace it. A deprecated or archived case cannot be edited until it is reinstated, and a case from automation is promoted before it is edited.
 
@@ -60,6 +74,77 @@ The **Details** toolbar also offers the status moves you can make now, named by 
 **History** lists every version, newest first: who saved it (marked **AI** when an AI generation wrote it and **API** when an API key did), its summary, and what changed, field by field and step by step. **Compare with current** shows how a version differs from the case now. **Restore this version** (`TESTER` or higher) saves that version's content as a new version; the status and the owner stay as they are, and nothing is removed from the history. Each version also lists the plan executions recorded against it.
 
 **Bulk edit.** With one project selected (`TESTER` or higher), tick cases in the list (the box in the header ticks every case on the page) and the bulk bar opens above the list: **Change status**, **Owner**, **Priority**, **Add tags**, **Remove tags** or **Move to suite**, then **Apply**. Every case is changed on its own, with its own version and audit entry, and the bar reports the result (for example `2 changed · 1 skipped`) with each skipped case and why: it changed since you selected it, the move is not available from its status, or it is deprecated. **Deprecate**, **Archive** and **Reinstate** are offered only to QA leads and administrators. **Ctrl+E** (**⌘E** on a Mac) opens the bar, as the list's footer says. The selection is the cases you can see: changing the page, a filter, the search or the view clears it.
+
+### Filters and views
+
+The bar above the list holds the search (title, tags or ID; with requirement traceability on, requirement keys too), **Automation tests**, and five filters: **Status**, **Type** and **Priority** (pick several values each), **Suite** and **Owner** (one each). **Owner** offers **Me** and the project's members; it is absent in **All Projects**. A case's owner is its assignee, else its author.
+
+Every filter is kept in the page's address (`?status=draft,review_requested&owner=me`), so a reload, a bookmark or a link you send someone opens the same list. Changing a filter goes back to the first page and clears the bulk selection. When a filter can only be answered from authored cases (an owner, an automation state, a requirement, or several values of one filter), the observed tests are left out and a line under the bar says so: "Authored cases only: automation-ingested tests are left out under these filters."
+
+The **Views** row under the list's title applies a set of filters in one click, replacing the current ones:
+
+- **My drafts** — my cases in Draft.
+- **My P0/P1** — my critical and high priority cases.
+- **Unautomated** — cases not marked automated.
+- **AI drafts** — AI-generated cases still in Draft (accept them by making them Active, one at a time or in bulk).
+
+**Save view** keeps the current filters under a name, for you or, with **Share with** the project ticked, for every member of it. **Manage** renames, shares, stops sharing or deletes your own views; a view another member shared can be applied but not changed. In a shared view, **Me** means whoever applies it: a shared "my drafts" shows each reader their own.
+
+### Library health
+
+With one project selected, the **Library health** banner and the **Insights** cards are computed by the server over the project's whole authored catalogue (deprecated and archived cases aside), read once when the page opens. In **All Projects** the banner reads "Choose a project: library health is per project." A project with no authored case reads "No authored test cases yet" instead of a score: an empty library is not measured, never 0.
+
+The score (0 to 100) weighs four components; each shows both of its numbers on the **Library health** card (for example `Automated 38 · 13 of 34 cases automated (target 60 %)`):
+
+| Component | Weight | Score |
+|---|---|---|
+| **Automated** | 35 % | the share of cases marked automated |
+| **Stale drafts** | 20 % | 100 − 400 × the share of drafts untouched for 30 days or more |
+| **Review freshness** | 20 % | 100 − 100 × the oldest review's wait in days ÷ 14 (100 with nothing waiting) |
+| **Retired cases in open plans** | 25 % | 100 − 400 × the share of deprecated or archived cases still in a plan that is not completed or archived |
+
+**Healthy** is 85 or more, **Needs attention** 70 or more, **At risk** below. The automation target is a project setting (60 % unless changed); a QA lead or administrator changes it with **Change target** in the **Library health** card.
+
+**Insights** holds the **Library health** card, **Review queue · N** (the five cases waiting longest, oldest first; the **Approvals** tab has the rest), **Strategy gaps**, **Recent activity** and **Automation coverage**. The strategy gaps, each shown only when it has something in it:
+
+- **Deprecated cases in active plans** — retired cases still items of an open test plan.
+- **Aging reviews over SLA** — the oldest review has waited 7 days or more.
+- **Automation below target** — the automated share is under the project's target.
+- **Stale drafts ≥ 30d** — drafts untouched in the last month.
+- **Flaky and active** — approved or active cases whose automated test is flaky: a flaky score of 0.5 or more with a confidence above low, the same bar as the [Flaky tests](/docs/flaky#the-flaky-tests-page) page. A case's automated test is the observed test promoted from it, else the one with its fingerprint, in the same project. When no score has been computed yet, or no approved or active case has an automated test, the row says which instead of a count.
+- **No owner** — cases nobody active owns: no assignee and no author, or an owner whose account is deactivated.
+
+**Show 5** opens the first five of a list in place; **Show all N** pages through the rest, 25 at a time.
+
+### Importing cases
+
+**Import** (beside **Export**; `TESTER` or higher, one project selected) reads a CSV file (UTF-8) or an Excel workbook (`.xlsx`, its first sheet), up to 5 MB and 2,000 rows. **Download the CSV template** gives the columns it reads: **Title** (required, 3 to 500 characters), **Type**, **Priority**, **Severity**, **Feature Area**, **Objective**, **Preconditions**, **Steps**, **Expected Result**, **Automated**, **Automation Status**, **Tags**, **Suite**, **Description** and **Test Data**. Headers are matched without regard to case. An **Export** file imports as it is: its other columns (**Status**, **AI Generated**, **AI Quality Score**, **Last Execution Status**, **Version**, **Created At**, **ID**) are listed as ignored, and any column the import does not know is listed as unknown and never imported.
+
+Choosing a file runs a check first and writes nothing: a summary (`20 rows: 17 to create · 0 duplicates · 3 invalid`), then every row with what would happen to it. **Import 17 cases** then creates the valid rows, each as a **Draft** at version 1, owned by you, with its own version and audit entry; one entry in the project's activity log records the import (`Imported 17 test cases from cases.csv`). A row that fails while saving is reported and the others are still created.
+
+- **Priority**: critical, high, medium or low, or P0 to P3 (P0 is critical). Blank is medium.
+- **Severity**: blocker, critical, major, minor or trivial; any other value is kept as written, with a warning. Blank is major.
+- **Type**: up to 50 letters, digits, spaces, `-` or `_` (blank is functional). **Automated**: Yes or No. **Automation Status**: not_automated, in_progress, automated or broken.
+- **Tags**: separated by commas or semicolons, at most 20, each up to 100 characters.
+- **Steps**: the export's own form (`Step 1: open the basket; Step 2: pay`), or one step per line.
+- **Status** is never applied: every case starts as a Draft, and a row that named another status says so (its audit entry records it).
+- **Duplicates**: a row with the same title, objective, steps and expected result as a case already in the project, or as an earlier row of the file, is not imported; the preview names the case or the row.
+
+Imported text is kept as it was typed. A cell starting with `=`, `+`, `-` or `@` is stored as text, never as a formula, and every Excel export writes it back with a leading `'` so a spreadsheet does not evaluate it; the import removes that one `'` again, so an export imports unchanged.
+
+### A case's timeline
+
+An authored case's **Timeline** tab lists everything that happened to it, newest first: every saved version (who saved it, and whether a person, an AI generation or an API key did), each review request and decision with its notes, comments, every plan execution (with the case version the latest one ran against; an older one says "version not recorded"), each run of its automated test with the build and branch, the defects raised on those runs, and each requirement linked or unlinked. The chips narrow it: **All**, **Changes**, **Reviews**, **Comments**, **Executions** and **Defects**. **Load more** reads further back; "Start of the timeline." marks the end.
+
+The automated runs and defects are those of the case's automated test (the observed test promoted from it, else the one with its fingerprint) in the case's own project only. A case with no automated test says "No automated test is linked to this case; plan executions are shown." An entry with nobody recorded reads "by not recorded". **History**, **Reviews** and **Comments** stay as they are: **History** is where versions are compared and restored.
+
+### Requirements
+
+With the `test_case_requirement_traceability` feature flag on for the project, a case's **Details** end with **Requirements**: the requirement keys someone typed on it (for example `REQ-PAY-07`), each with an optional title, its link type (**verifies**, **partly verifies** or **related**) and who added it. **Add requirement** and **Remove** need `TESTER` or higher, one project selected and a case that is not deprecated or archived. Keys are compared after brackets around the key are dropped, spaces collapsed and letters upper-cased, so `[REQ-12]`, `(req-12)` and `REQ-12` are one key; a case links each key once. Clicking a key filters the list to the cases that link it (the **Requirement:** chip under the filter bar removes the filter).
+
+A **Requirement coverage** card joins **Insights**: **Requirements verified** `12 of 15` (always both numbers). A project's known requirements are the keys typed on its cases, the requirement ids of its generation batches and the requirement ids found in its active knowledge sources; a requirement is verified when at least one case that is not deprecated or archived **verifies** it. The gaps say why: "No case links it.", "Only "related" links: no case verifies it." or "Only partly verified.", and where the key is known from (a generation batch's claim that cases cover it is shown, but only a link counts). **Show all gaps** pages through them; the card also counts the approved or active cases that link no requirement. With no key known yet the card says "No requirement keys are known to this project yet: add one to a test case."
+
+This is traceability "lite": no requirement matrix, no export, no Jira look-up. The flag is on for a new installation and off for an upgraded one; an administrator turns it on under [Feature flags](/docs/administration#feature-flags). With it off, none of this is shown and the search placeholder does not mention requirements.
 
 ### Authored test cases and reviews
 

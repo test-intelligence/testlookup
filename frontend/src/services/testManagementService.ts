@@ -10,6 +10,7 @@ import type {
   DuplicateDetectionRunResult,
   DuplicateMergeRequest,
   ManagedTestCase,
+  ManagedTestCaseListResponse,
   PaginatedResponse,
   TestCaseComment,
   AllowedTestCaseTransition,
@@ -50,7 +51,7 @@ async function downloadFile(url: string, fallbackFilename: string) {
 
 export const testManagementService = {
   // Test Cases
-  listCases: (projectId: string | null, params?: Record<string, unknown>): Promise<PaginatedResponse<ManagedTestCase>> =>
+  listCases: (projectId: string | null, params?: Record<string, unknown>): Promise<ManagedTestCaseListResponse> =>
     getData('/api/v1/test-management/cases', { params: { ...(projectId ? { project_id: projectId } : {}), ...params } }),
 
   createCase: (data: Partial<ManagedTestCase>): Promise<ManagedTestCase> =>
@@ -173,7 +174,14 @@ export const testManagementService = {
   exportCasesExcelUrl: (projectId: string | null, params?: Record<string, unknown>): string => {
     const query = new URLSearchParams()
     if (projectId) query.set('project_id', projectId)
-    if (params) Object.entries(params).forEach(([k, v]) => { if (v != null && v !== '') query.set(k, String(v)) })
+    // W13 TCL-01: a list value is one key per element (`status=draft&status=review_requested`),
+    // the same shape the list read sends (`paramsSerializer: { indexes: null }`);
+    // `String(array)` would export as `status=draft,review_requested`.
+    const keep = (v: unknown) => v != null && v !== ''
+    if (params) Object.entries(params).forEach(([k, v]) => {
+      if (Array.isArray(v)) v.filter(keep).forEach((item) => query.append(k, String(item)))
+      else if (keep(v)) query.set(k, String(v))
+    })
     return `/api/v1/test-management/cases/export/excel?${query.toString()}`
   },
 
@@ -235,6 +243,10 @@ export const testManagementService = {
     owner_email?: string | null
     owner_full_name?: string | null
     owner_is_fallback?: boolean
+    // W13 TCL-07: a first-class suite no result reports yet (one project, no
+    // release filter). Absent on an aggregated row (= false).
+    empty?: boolean
+    suite_id?: string | null
   }>> =>
     getData('/api/v1/test-management/suites', { params: projectId ? { project_id: projectId } : {} }),
 

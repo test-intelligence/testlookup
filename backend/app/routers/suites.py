@@ -21,6 +21,7 @@ it's a project-wide configuration change.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -48,12 +49,18 @@ from app.models.schemas import (
     TestSuiteResponse,
     TestSuiteUpdate,
 )
+from app.services.activity.service import ActorRef, record as record_activity
+from app.services.suite_review_service import copy_suite_owner
 from app.services.test_case_lifecycle_service import lifecycle_actions_for
 from app.services.test_management_metrics_service import emit_staged_test_management_metrics
 from app.services import test_suite_service as svc
 from app.services.run_environment import resolve_environment
 
 router = APIRouter(tags=["Test Suites"])
+
+#: The suite fields ``PATCH /suites/{id}`` can change (``TestSuiteUpdate``);
+#: ``suite.updated`` names the ones whose value differs.
+_SUITE_EDIT_FIELDS = ("name", "description", "tags")
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
@@ -77,6 +84,7 @@ def _canonical_to_response(
     *,
     suite_name: Optional[str] = None,
     last_seen_test_case_id: Optional[uuid.UUID] = None,
+    last_seen_at: Optional[datetime] = None,
 ) -> dict:
     return {
         "id": c.id,
@@ -95,6 +103,9 @@ def _canonical_to_response(
         # last-seen run, surface it so the UI can navigate directly to
         # ``/runs/<run>/tests/<case>``. Falls back to None when unresolved.
         "last_seen_test_case_id": last_seen_test_case_id,
+        # W13 TCL-07: when that run was created (None = unknown: no run id,
+        # or the run is not in this canonical's project). Never guessed.
+        "last_seen_at": last_seen_at,
         "deleted_at_run_id": c.deleted_at_run_id,
         "managed_test_case_id": c.managed_test_case_id,
         "retirement_confirmed_at": c.retirement_confirmed_at,
@@ -143,6 +154,37 @@ async def _resolve_last_seen_test_case_ids(
         if cid is not None:
             result[cid] = tc_id
     return result
+
+
+async def _resolve_last_seen_run_times(
+    db: AsyncSession,
+    canonicals: list,
+    *,
+    project_id: uuid.UUID,
+) -> dict:
+    """``{run id: run created_at}`` for the canonicals' ``last_seen_run_id``s.
+
+    W13 TCL-07: the suite page's latest-run cell shows a date, not just the
+    run's id. Read by RUN id (one statement for the page's distinct run ids)
+    rather than through the per-run result, so the time shows even when that
+    result was garbage-collected; scoped to the suite's project, so a run id
+    naming another project's run resolves to nothing (no date is shown).
+    """
+    from sqlalchemy import select
+    from app.models.postgres import TestRun
+
+    run_ids = {c.last_seen_run_id for c in canonicals if c.last_seen_run_id}
+    if not run_ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(TestRun.id, TestRun.created_at).where(
+                TestRun.id.in_(run_ids),
+                TestRun.project_id == project_id,
+            )
+        )
+    ).all()
+    return {run_id: created_at for run_id, created_at in rows}
 
 
 # ── /api/v1/suites ─────────────────────────────────────────────────────────
@@ -241,6 +283,12 @@ async def update_suite(
     # A rename re-keys the coverage map's idle tests (VIZ-206), so it is an
     # analytics mutation: bump the epoch after the commit (VIZ-212).
     renamed = payload.name is not None and payload.name.strip() != suite.name
+    old_name: str = suite.name
+    before: dict[str, object] = {
+        "name": old_name,
+        "description": suite.description,
+        "tags": list(suite.tags) if suite.tags is not None else None,
+    }
     await svc.update_test_suite(
         db,
         suite,
@@ -248,6 +296,26 @@ async def update_suite(
         description=payload.description,
         tags=payload.tags,
     )
+    # W13 TCL-07: the fields whose value really changed (an identical PATCH
+    # records nothing). Recorded HERE, not in test_suite_service, so that
+    # module stays non-recording and no other suite handler reads as covered.
+    changed = sorted(field for field in _SUITE_EDIT_FIELDS if getattr(suite, field) != before[field])
+    if "name" in changed:
+        # The owner is keyed by name: carry an explicit one to the new name
+        # (the old name keeps its row for the runs that still report it).
+        await copy_suite_owner(db, project_id=suite.project_id, from_name=old_name, to_name=suite.name)
+    if changed:
+        await record_activity(
+            db,
+            project_id=suite.project_id,
+            event_type="suite.updated",
+            actor=ActorRef.from_user(current_user),
+            entity_id=suite.id,
+            entity_label=suite.name,
+            before={field: before[field] for field in changed},
+            after={field: getattr(suite, field) for field in changed},
+            context={"changed": ", ".join(changed)},
+        )
     await db.commit()
     if renamed:
         from app.services.cache_service import bump_analytics_epoch
@@ -315,11 +383,13 @@ async def list_suite_test_cases(
     )
     if rows:
         last_seen_map = await _resolve_last_seen_test_case_ids(db, rows)
+        run_times = await _resolve_last_seen_run_times(db, rows, project_id=suite.project_id)
         items = [
             _canonical_to_response(
                 c,
                 suite_name=suite.name,
                 last_seen_test_case_id=last_seen_map.get(c.id),
+                last_seen_at=run_times.get(c.last_seen_run_id) if c.last_seen_run_id else None,
             )
             for c in rows
         ]
@@ -331,6 +401,9 @@ async def list_suite_test_cases(
     # suite's name. Keeps /suites/{id} usable for older or partially-synced
     # data; new ingests populate canonical and short-circuit this branch.
     legacy = await svc.list_legacy_suite_test_cases(db, suite)
+    # A legacy row IS its latest run's result: its ``created_at`` is that
+    # run's creation time, so it doubles as the latest-run date (TCL-07).
+    legacy = [{**row, "last_seen_at": row.get("created_at")} for row in legacy]
     return {"items": legacy, "total": len(legacy)}
 
 

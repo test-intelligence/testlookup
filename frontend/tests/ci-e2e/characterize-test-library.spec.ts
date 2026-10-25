@@ -75,10 +75,10 @@ async function open(page: Page, path: string, options: TestLibraryOptions & { us
 /** A case's own row in the cases table (never a form row a conversion puts under it). */
 const caseRow = (page: Page, i: number) =>
   page.locator(`[data-primary] tbody tr[data-case-row="${tmCaseId(i)}"]:not([data-in-page-row])`)
-/** The two case rolls: the table's page (`size=25`) and the library health roll (`size=200`). */
+/** The two reads a write refreshes: the table's page (`size=25`) and the library health (W13: `GET /test-management/health`, was the `size=200` roll). */
 const rollReads = (api: Api) => {
   const lines = requestsTo(api, CASES)
-  return { table: lines.filter((l) => l.includes('size=25')).length, health: lines.filter((l) => l.includes('size=200')).length }
+  return { table: lines.filter((l) => l.includes('size=25')).length, health: requestsTo(api, '/api/v1/test-management/health').length }
 }
 const pathAndSearch = (page: Page) => {
   const url = new URL(page.url())

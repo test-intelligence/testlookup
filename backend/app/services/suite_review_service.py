@@ -286,6 +286,56 @@ async def set_suite_owner(
     return row
 
 
+async def copy_suite_owner(
+    db: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    from_name: str,
+    to_name: str,
+) -> bool:
+    """Carry an explicit owner across a suite rename (W13 TCL-07). Stage-only.
+
+    The owner is keyed by NAME (``test_suite_owners``), so renaming a suite
+    would leave the new name on the fallback owner. When ``from_name`` has an
+    explicit row and ``to_name`` has none, a row for ``to_name`` is added with
+    the same ``owner_user_id``; ``True`` when one was added. The ``from_name``
+    row is KEPT: runs still reporting the old name keep their owner. One read
+    (both names), then at most one staged insert in its own SAVEPOINT, so a
+    concurrent writer of the same row answers ``False`` instead of poisoning
+    the caller's transaction. The caller commits.
+    """
+    if not from_name or not to_name or from_name == to_name:
+        return False
+    rows = (
+        await db.execute(
+            select(TestSuiteOwner).where(
+                TestSuiteOwner.project_id == project_id,
+                TestSuiteOwner.suite_name.in_([from_name, to_name]),
+            )
+        )
+    ).scalars().all()
+    by_name = {row.suite_name: row for row in rows}
+    source = by_name.get(from_name)
+    if source is None or source.owner_user_id is None or to_name in by_name:
+        return False
+    try:
+        async with db.begin_nested():
+            db.add(TestSuiteOwner(
+                project_id=project_id,
+                suite_name=to_name,
+                owner_user_id=source.owner_user_id,
+            ))
+            await db.flush()
+    except IntegrityError:
+        return False
+    logger.info(
+        "suite_owner_copied_on_rename",
+        project_id=str(project_id),
+        owner_user_id=str(source.owner_user_id),
+    )
+    return True
+
+
 # ── reviews ───────────────────────────────────────────────────────────────
 
 

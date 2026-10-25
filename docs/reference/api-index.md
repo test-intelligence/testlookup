@@ -550,6 +550,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/test-management/cases/bulk` | Bulk Edit Test Cases | [Test Management](api/test-management.md) |
 | GET | `/api/v1/test-management/cases/evidence-gaps` | Get Test Case Evidence Gaps | [Test Management](api/test-management.md) |
 | GET | `/api/v1/test-management/cases/export/excel` | Export Test Cases Excel | [Test Management](api/test-management.md) |
+| POST | `/api/v1/test-management/cases/import` | Import Test Cases | [Test Management](api/test-management.md) |
 | GET | `/api/v1/test-management/cases/needs-review` | Cases Needing Review | [RAG Generation](api/rag-generation.md) |
 | POST | `/api/v1/test-management/cases/rag-generate` | Rag Generate | [RAG Generation](api/rag-generation.md) |
 | POST | `/api/v1/test-management/cases/rag-retrieve` | Rag Retrieve | [RAG Generation](api/rag-generation.md) |
@@ -565,10 +566,15 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/test-management/cases/{case_id}/dismiss-stale` | Dismiss Stale | [RAG Generation](api/rag-generation.md) |
 | GET | `/api/v1/test-management/cases/{case_id}/history` | Get Test Case History | [Test Management](api/test-management.md) |
 | POST | `/api/v1/test-management/cases/{case_id}/request-review` | Request Review | [Test Management](api/test-management.md) |
+| GET | `/api/v1/test-management/cases/{case_id}/requirements` | List Case Requirements | [Test Management](api/test-management.md) |
+| POST | `/api/v1/test-management/cases/{case_id}/requirements` | Add Case Requirement | [Test Management](api/test-management.md) |
+| DELETE | `/api/v1/test-management/cases/{case_id}/requirements/{requirement_link_id}` | Remove Case Requirement | [Test Management](api/test-management.md) |
 | POST | `/api/v1/test-management/cases/{case_id}/restore` | Restore Test Case Version | [Test Management](api/test-management.md) |
 | POST | `/api/v1/test-management/cases/{case_id}/review-action` | Review Action | [Test Management](api/test-management.md) |
 | GET | `/api/v1/test-management/cases/{case_id}/reviews` | Get Reviews | [Test Management](api/test-management.md) |
+| GET | `/api/v1/test-management/cases/{case_id}/timeline` | Get Test Case Timeline | [Test Management](api/test-management.md) |
 | POST | `/api/v1/test-management/cases/{case_id}/transition` | Transition Test Case | [Test Management](api/test-management.md) |
+| GET | `/api/v1/test-management/health` | Get Library Health | [Test Management](api/test-management.md) |
 | GET | `/api/v1/test-management/plans` | List Plans | [Test Management](api/test-management.md) |
 | POST | `/api/v1/test-management/plans` | Create Plan | [Test Management](api/test-management.md) |
 | POST | `/api/v1/test-management/plans/ai-create` | Ai Create Plan | [Test Management](api/test-management.md) |
@@ -600,6 +606,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/test-management/suites/{suite_name}/deleted` | Get Suite Deleted | [Test Management](api/test-management.md) |
 | GET | `/api/v1/test-management/suites/{suite_name}/membership` | Get Suite Membership | [Test Management](api/test-management.md) |
 | GET | `/api/v1/test-management/suites/{suite_name}/trend` | Get Suite Trend In Scope | [Test Management](api/test-management.md) |
+| GET | `/api/v1/test-management/traceability/gaps` | Get Traceability Gaps | [Test Management](api/test-management.md) |
 | POST | `/api/v1/training/export` | Trigger Export | [Feedback & Training](api/feedback-training.md) |
 | POST | `/api/v1/training/finetune` | Trigger Finetune | [Feedback & Training](api/feedback-training.md) |
 | POST | `/api/v1/training/promote` | Promote Model | [Feedback & Training](api/feedback-training.md) |
@@ -634,4 +641,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **625 HTTP operations**, **528 paths**, **86 domain pages**.
+Total: **632 HTTP operations**, **534 paths**, **86 domain pages**.

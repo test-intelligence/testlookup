@@ -25,6 +25,8 @@ export interface Project {
   default_qa_lead_user_id?: string | null
   /** W28 TCM-02 (migration 0222): a test case needs an approved review before it can be made Active. Default off. */
   require_case_review?: boolean
+  /** W13 TCL-03 (migration 0228): the library health's automation target, 0-100. Default 60. */
+  automation_target_pct?: number
 }
 
 export interface ProjectUpdate {
@@ -41,4 +43,6 @@ export interface ProjectUpdate {
   default_qa_lead_user_id?: string
   /** W28 TCM-02: sent only when it differs from the project's current value. */
   require_case_review?: boolean
+  /** W13 TCL-03: 0-100 (QA_LEAD+, the existing PUT). */
+  automation_target_pct?: number
 }

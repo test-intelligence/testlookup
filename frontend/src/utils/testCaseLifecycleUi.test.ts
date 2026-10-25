@@ -52,4 +52,53 @@ describe('test-case lifecycle filters', () => {
     expect(buildTestCaseListParams({ ...baseFilters, aiGenerated: false })).not.toHaveProperty('ai_generated')
     expect(buildTestCaseListParams(baseFilters)).not.toHaveProperty('ai_generated')
   })
+
+  // ── W13 TCL-01: multi-value filters, the Owner and Automation filters ──
+  it('sends several values of a filter as an array (repeated keys), one value as today', () => {
+    expect(buildTestCaseListParams({
+      ...baseFilters,
+      status: ['draft', 'review_requested'],
+      testType: ['e2e'],
+      priority: ['critical', 'high'],
+    })).toEqual({
+      page: 1,
+      size: 25,
+      status: ['draft', 'review_requested'],
+      test_type: 'e2e',
+      priority: ['critical', 'high'],
+    })
+    // Empty lists and blank values send nothing; duplicates are sent once.
+    expect(buildTestCaseListParams({ ...baseFilters, status: [], testType: [''], priority: ['high', 'high'] }))
+      .toEqual({ page: 1, size: 25, priority: 'high' })
+  })
+
+  it('asks for archived rows when the archived status is among several', () => {
+    expect(buildTestCaseListParams({ ...baseFilters, status: ['deprecated', 'archived'] })).toMatchObject({
+      status: ['deprecated', 'archived'],
+      include_archived: true,
+    })
+    expect(buildTestCaseListParams({ ...baseFilters, status: ['deprecated', 'draft'] })).not.toHaveProperty('include_archived')
+  })
+
+  it('sends the owner as `owner` (me or a user id), never as assignee_id', () => {
+    const mine = buildTestCaseListParams({ ...baseFilters, ownerFilter: 'me' })
+    expect(mine).toEqual({ page: 1, size: 25, owner: 'me' })
+    expect(mine).not.toHaveProperty('assignee_id')
+    const someone = buildTestCaseListParams({ ...baseFilters, ownerFilter: '6f1c2a54-0000-4000-8000-000000000001' })
+    expect(someone.owner).toBe('6f1c2a54-0000-4000-8000-000000000001')
+    expect(someone).not.toHaveProperty('assignee_id')
+    expect(buildTestCaseListParams(baseFilters)).not.toHaveProperty('owner')
+  })
+
+  it('sends the automation and requirement filters only when set', () => {
+    expect(buildTestCaseListParams({ ...baseFilters, automation: 'not_automated', requirement: 'REQ-PAY-07' })).toEqual({
+      page: 1,
+      size: 25,
+      automation: 'not_automated',
+      requirement: 'REQ-PAY-07',
+    })
+    const none = buildTestCaseListParams({ ...baseFilters, automation: null, requirement: null })
+    expect(none).not.toHaveProperty('automation')
+    expect(none).not.toHaveProperty('requirement')
+  })
 })

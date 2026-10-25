@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useAuditLog, useTestCases } from '@/hooks/useTestManagement'
+import { useLibraryHealth } from '@/hooks/useTestLibrary'
 import { testManagementService } from '@/services/testManagementService'
 import { useAuthStore } from '@/store/authStore'
 import type { ManagedTestCase, PaginatedResponse } from '@/types/test-management'
@@ -13,6 +14,8 @@ import { TestCasesTab } from './TestManagementPage'
 beforeEach(() => { useAuthStore.setState({ user: { id: 'u-lead', role: 'QA_LEAD' } as never }) })
 afterEach(() => { useAuthStore.setState({ user: null }) })
 
+// W13 (deliberate set-up): the page's new reads (library health, the owner list, saved views) stubbed idle.
+vi.mock('@/hooks/useTestLibrary', async () => (await import('@/test/testLibraryMocks')).testLibraryHookMocks())
 vi.mock('@/hooks/useTestManagement', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/hooks/useTestManagement')>(),
   useAuditLog: vi.fn(),
@@ -98,6 +101,11 @@ describe('TestCasesTab request failures and retries', () => {
         mutate: isHealth ? mutateHealth : mutateCases,
       } as unknown as ReturnType<typeof useTestCases>
     })
+    // W13 TCL-03 (deliberate): the health is `useLibraryHealth` (the 200-row roll is gone);
+    // Retry re-reads the cases roll AND the health read.
+    vi.mocked(useLibraryHealth).mockReturnValue(
+      { data: undefined, error: undefined, isLoading: false, mutate: mutateHealth } as unknown as ReturnType<typeof useLibraryHealth>,
+    )
   })
 
   it('keeps stale rows visible and retries the list and health roll together', async () => {
@@ -229,17 +237,26 @@ describe('TestCasesTab renders no stub controls', () => {
     expect(screen.queryByText('Generate test cases')).toBeNull()
   })
 
-  it('has no disabled Owner chip and never sends an owner filter', () => {
+  // W13 TCL-01 (deliberate rewrite): the Owner filter is real now — a MultiSelect
+  // button (Me + the members) that sends `owner=me`, never the ignored `assignee_id`.
+  it('has no disabled Owner chip; the real Owner filter sends owner=me, never assignee_id', () => {
     renderTab()
     expect(screen.queryByRole('combobox', { name: 'Owner' })).toBeNull()
-    expect(screen.getByRole('combobox', { name: 'Status' })).toBeEnabled()
-    for (const [params] of vi.mocked(useTestCases).mock.calls) {
+    expect(screen.getByRole('button', { name: /^Status/ })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: /^Owner/ }))
+    fireEvent.click(screen.getByRole('option', { name: 'Me' }))
+    const calls = vi.mocked(useTestCases).mock.calls
+    expect(calls[calls.length - 1][0]).toMatchObject({ owner: 'me' })
+    for (const [params] of calls) {
       expect(params).not.toHaveProperty('assignee_id')
     }
   })
 
-  it('offers no "Unautomated" view that applied no filter', () => {
+  // W13 TCL-01 (deliberate rewrite): Unautomated is back, and it filters (a server filter now).
+  it('the "Unautomated" view sends automation=not_automated', () => {
     renderTab()
-    expect(screen.queryByRole('button', { name: 'Unautomated' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Unautomated' }))
+    const calls = vi.mocked(useTestCases).mock.calls
+    expect(calls[calls.length - 1][0]).toMatchObject({ automation: 'not_automated' })
   })
 })

@@ -10,7 +10,7 @@ List Canonical Cases
 
 
 
-Source: [backend/app/routers/suites.py:340](../../../backend/app/routers/suites.py#L340).
+Source: [backend/app/routers/suites.py:413](../../../backend/app/routers/suites.py#L413).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -170,7 +170,7 @@ Ids that don't resolve to an existing canonical are surfaced in
 ``missing_ids`` so the UI can clear stale rows from its selection
 without re-fetching the whole page.
 
-Source: [backend/app/routers/suites.py:524](../../../backend/app/routers/suites.py#L524).
+Source: [backend/app/routers/suites.py:597](../../../backend/app/routers/suites.py#L597).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -251,7 +251,7 @@ List Orphaned Canonical Cases
 
 
 
-Source: [backend/app/routers/suites.py:380](../../../backend/app/routers/suites.py#L380).
+Source: [backend/app/routers/suites.py:453](../../../backend/app/routers/suites.py#L453).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -368,7 +368,7 @@ Get Canonical Case
 
 
 
-Source: [backend/app/routers/suites.py:409](../../../backend/app/routers/suites.py#L409).
+Source: [backend/app/routers/suites.py:482](../../../backend/app/routers/suites.py#L482).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -449,7 +449,7 @@ Confirm Canonical Retirement
 
 
 
-Source: [backend/app/routers/suites.py:474](../../../backend/app/routers/suites.py#L474).
+Source: [backend/app/routers/suites.py:547](../../../backend/app/routers/suites.py#L547).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -542,7 +542,7 @@ Move a canonical test case to a different suite within the same
 project. Refuses cross-project moves (different project's suites are
 isolated by design).
 
-Source: [backend/app/routers/suites.py:496](../../../backend/app/routers/suites.py#L496).
+Source: [backend/app/routers/suites.py:569](../../../backend/app/routers/suites.py#L569).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -633,7 +633,7 @@ Unlink Canonical Managed Case
 
 
 
-Source: [backend/app/routers/suites.py:453](../../../backend/app/routers/suites.py#L453).
+Source: [backend/app/routers/suites.py:526](../../../backend/app/routers/suites.py#L526).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -724,7 +724,7 @@ Promote Canonical Case
 
 
 
-Source: [backend/app/routers/suites.py:423](../../../backend/app/routers/suites.py#L423).
+Source: [backend/app/routers/suites.py:496](../../../backend/app/routers/suites.py#L496).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -821,7 +821,7 @@ confidence, engine/model, review flag, root-cause excerpt, version count) or
 ``None``; only the newest 2,000 rows get it (``ai_truncated``). The case ids
 are this canonical's own, so the project scope is the canonical's.
 
-Source: [backend/app/routers/suites.py:564](../../../backend/app/routers/suites.py#L564).
+Source: [backend/app/routers/suites.py:637](../../../backend/app/routers/suites.py#L637).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -909,7 +909,7 @@ List Suites
 List test suites. ``project_id`` scopes to one project; otherwise the
 response covers every project the caller can see (ADMIN: all).
 
-Source: [backend/app/routers/suites.py:151](../../../backend/app/routers/suites.py#L151).
+Source: [backend/app/routers/suites.py:193](../../../backend/app/routers/suites.py#L193).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1003,7 +1003,7 @@ Create Suite
 
 
 
-Source: [backend/app/routers/suites.py:171](../../../backend/app/routers/suites.py#L171).
+Source: [backend/app/routers/suites.py:213](../../../backend/app/routers/suites.py#L213).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1084,7 +1084,7 @@ Delete Suite
 
 
 
-Source: [backend/app/routers/suites.py:260](../../../backend/app/routers/suites.py#L260).
+Source: [backend/app/routers/suites.py:328](../../../backend/app/routers/suites.py#L328).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1158,7 +1158,7 @@ Get Suite
 
 
 
-Source: [backend/app/routers/suites.py:213](../../../backend/app/routers/suites.py#L213).
+Source: [backend/app/routers/suites.py:255](../../../backend/app/routers/suites.py#L255).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1245,7 +1245,7 @@ Update Suite
 
 
 
-Source: [backend/app/routers/suites.py:228](../../../backend/app/routers/suites.py#L228).
+Source: [backend/app/routers/suites.py:270](../../../backend/app/routers/suites.py#L270).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1338,7 +1338,7 @@ Promote this suite to ``is_default`` within its project (demoting the
 prior default). New ingested test cases without an explicit suite land
 in whichever suite is currently default.
 
-Source: [backend/app/routers/suites.py:276](../../../backend/app/routers/suites.py#L276).
+Source: [backend/app/routers/suites.py:344](../../../backend/app/routers/suites.py#L344).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1419,7 +1419,7 @@ List Suite Test Cases
 
 
 
-Source: [backend/app/routers/suites.py:298](../../../backend/app/routers/suites.py#L298).
+Source: [backend/app/routers/suites.py:366](../../../backend/app/routers/suites.py#L366).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 

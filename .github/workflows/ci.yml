@@ -890,6 +890,13 @@ jobs:
           tests/integration/test_search_suggestions_postgres.py
           tests/integration/test_global_search_filters_postgres.py
           tests/integration/test_embedding_generation_postgres.py
+          tests/integration/test_migration_0228_0229_postgres.py
+          tests/integration/test_tm_suites_empty_rows_postgres.py
+          tests/integration/test_test_case_list_filters_postgres.py
+          tests/integration/test_library_health_postgres.py
+          tests/integration/test_test_case_timeline_postgres.py
+          tests/integration/test_requirement_traceability_postgres.py
+          tests/integration/test_test_case_import_postgres.py
           tests/integration/test_every_get_route_answers_without_500_postgres.py
           tests/integration/test_key_mint_revoke_race_postgres.py
           tests/integration/test_migration_index_leftovers_postgres.py

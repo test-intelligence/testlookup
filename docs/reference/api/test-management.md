@@ -153,14 +153,14 @@ List Test Cases
 
 
 
-Source: [backend/app/routers/test_management_cases.py:216](../../../backend/app/routers/test_management_cases.py#L216).
+Source: [backend/app/routers/test_management_cases.py:218](../../../backend/app/routers/test_management_cases.py#L218).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: Optional[uuid.UUID]=None, status: TestCaseLifecycleState | None=None, test_type: str | None=None, priority: str | None=None, feature_area: str | None=None, ai_generated: bool | None=None, search: str | None=None, suite_name: str | None=None, include_automation: bool=Query(False, description='When true, merge synthesised rows derived from per-run test_cases into the response so the Test Management page can surface automation-ingested tests alongside authored ones. Deduped by test_fingerprint — any fingerprint already linked to a managed_test_cases row is skipped.'), include_archived: bool=Query(False, description='Include archived authored cases when no exact status filter is set.'), page: int=Query(1, ge=1), size: int=Query(25, ge=1, le=200), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+project_id: Optional[uuid.UUID]=None, status: Optional[List[TestCaseLifecycleState]]=Query(None), test_type: Optional[List[str]]=Query(None), priority: Optional[List[str]]=Query(None), feature_area: str | None=None, ai_generated: bool | None=None, search: str | None=None, suite_name: str | None=None, owner: Optional[str]=None, automation: Optional[str]=None, requirement: Optional[str]=Query(None, max_length=200), include_automation: bool=Query(False, description='When true, merge synthesised rows derived from per-run test_cases into the response so the Test Management page can surface automation-ingested tests alongside authored ones. Deduped by test_fingerprint — any fingerprint already linked to a managed_test_cases row is skipped.'), include_archived: bool=Query(False, description='Include archived authored cases when no exact status filter is set.'), page: int=Query(1, ge=1), size: int=Query(25, ge=1, le=200), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
 ```
 
 ### Declared wire contract
@@ -195,7 +195,10 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
       "schema": {
         "anyOf": [
           {
-            "$ref": "#/components/schemas/TestCaseLifecycleState"
+            "items": {
+              "$ref": "#/components/schemas/TestCaseLifecycleState"
+            },
+            "type": "array"
           },
           {
             "type": "null"
@@ -211,7 +214,10 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
       "schema": {
         "anyOf": [
           {
-            "type": "string"
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           {
             "type": "null"
@@ -227,7 +233,10 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
       "schema": {
         "anyOf": [
           {
-            "type": "string"
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           {
             "type": "null"
@@ -298,6 +307,55 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
           }
         ],
         "title": "Suite Name"
+      }
+    },
+    {
+      "in": "query",
+      "name": "owner",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Owner"
+      }
+    },
+    {
+      "in": "query",
+      "name": "automation",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Automation"
+      }
+    },
+    {
+      "in": "query",
+      "name": "requirement",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "maxLength": 200,
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Requirement"
       }
     },
     {
@@ -400,7 +458,7 @@ Create Test Case
 
 
 
-Source: [backend/app/routers/test_management_cases.py:363](../../../backend/app/routers/test_management_cases.py#L363).
+Source: [backend/app/routers/test_management_cases.py:385](../../../backend/app/routers/test_management_cases.py#L385).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -890,14 +948,14 @@ Get Test Case Evidence Gaps
 
 
 
-Source: [backend/app/routers/test_management_cases.py:376](../../../backend/app/routers/test_management_cases.py#L376).
+Source: [backend/app/routers/test_management_cases.py:398](../../../backend/app/routers/test_management_cases.py#L398).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-kind: str=Query(..., pattern='^(never_executed|automation_vanished)$'), project_id: Optional[uuid.UUID]=Query(None), page: int=Query(1, ge=1), size: int=Query(25, ge=1, le=200), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+kind: str=Query(..., pattern=EVIDENCE_GAP_KIND_PATTERN), project_id: Optional[uuid.UUID]=Query(None), page: int=Query(1, ge=1), size: int=Query(25, ge=1, le=200), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
 ```
 
 ### Declared wire contract
@@ -913,7 +971,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
       "name": "kind",
       "required": true,
       "schema": {
-        "pattern": "^(never_executed|automation_vanished)$",
+        "pattern": "^(never_executed|automation_vanished|flaky_active|no_owner)$",
         "title": "Kind",
         "type": "string"
       }
@@ -1011,14 +1069,20 @@ Export Test Cases Excel
 
 Export test cases to an Excel (.xlsx) file.
 
-Source: [backend/app/routers/test_management_exports.py:81](../../../backend/app/routers/test_management_exports.py#L81).
+Honours the case list's filters (``status`` / ``test_type`` / ``priority``
+repeatable, ``owner``, ``automation``, ``requirement``, the list's search)
+and keeps its own default of every status. Columns 1-18 are unchanged;
+``ID``, ``Suite`` and ``Description`` are appended as 19-21 (an import
+reads them back; prepending would renumber the pinned columns).
+
+Source: [backend/app/routers/test_management_exports.py:82](../../../backend/app/routers/test_management_exports.py#L82).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: Optional[uuid.UUID]=None, status: Optional[str]=None, test_type: Optional[str]=None, priority: Optional[str]=None, search: Optional[str]=None, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+project_id: Optional[uuid.UUID]=None, status: Optional[List[str]]=Query(None), test_type: Optional[List[str]]=Query(None), priority: Optional[List[str]]=Query(None), search: Optional[str]=None, owner: Optional[str]=None, automation: Optional[str]=None, requirement: Optional[str]=None, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
 ```
 
 ### Declared wire contract
@@ -1053,7 +1117,10 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
       "schema": {
         "anyOf": [
           {
-            "type": "string"
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           {
             "type": "null"
@@ -1069,7 +1136,10 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
       "schema": {
         "anyOf": [
           {
-            "type": "string"
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           {
             "type": "null"
@@ -1085,7 +1155,10 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
       "schema": {
         "anyOf": [
           {
-            "type": "string"
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           {
             "type": "null"
@@ -1108,6 +1181,54 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
           }
         ],
         "title": "Search"
+      }
+    },
+    {
+      "in": "query",
+      "name": "owner",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Owner"
+      }
+    },
+    {
+      "in": "query",
+      "name": "automation",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Automation"
+      }
+    },
+    {
+      "in": "query",
+      "name": "requirement",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Requirement"
       }
     },
     {
@@ -1164,13 +1285,114 @@ Response(content=buf.getvalue(), media_type='application/vnd.openxmlformats-offi
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
 
+## POST `/api/v1/test-management/cases/import`
+
+Import Test Cases
+
+A dry run by default (nothing written); ``dry_run=false`` creates every valid row as a Draft.
+
+Source: [backend/app/routers/test_management_library.py:103](../../../backend/app/routers/test_management_library.py#L103).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+project_id: uuid.UUID=Query(...), dry_run: bool=Query(True), file: UploadFile=File(...), db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.TESTER))
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "import_test_cases_api_v1_test_management_cases_import_post",
+  "parameters": [
+    {
+      "in": "query",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Project Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "query",
+      "name": "dry_run",
+      "required": false,
+      "schema": {
+        "default": true,
+        "title": "Dry Run",
+        "type": "boolean"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "requestBody": {
+    "content": {
+      "multipart/form-data": {
+        "schema": {
+          "$ref": "#/components/schemas/Body_import_test_cases_api_v1_test_management_cases_import_post"
+        }
+      }
+    },
+    "required": true
+  },
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/TestCaseImportResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## DELETE `/api/v1/test-management/cases/{case_id}`
 
 Deprecate Test Case
 
 
 
-Source: [backend/app/routers/test_management_cases.py:435](../../../backend/app/routers/test_management_cases.py#L435).
+Source: [backend/app/routers/test_management_cases.py:458](../../../backend/app/routers/test_management_cases.py#L458).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`, `require_role.<locals>._check`.
 
@@ -1261,7 +1483,7 @@ Get Test Case
 
 
 
-Source: [backend/app/routers/test_management_cases.py:407](../../../backend/app/routers/test_management_cases.py#L407).
+Source: [backend/app/routers/test_management_cases.py:430](../../../backend/app/routers/test_management_cases.py#L430).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`.
 
@@ -1342,7 +1564,7 @@ Update Test Case
 
 
 
-Source: [backend/app/routers/test_management_cases.py:420](../../../backend/app/routers/test_management_cases.py#L420).
+Source: [backend/app/routers/test_management_cases.py:443](../../../backend/app/routers/test_management_cases.py#L443).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`, `require_role.<locals>._check`.
 
@@ -1514,7 +1736,7 @@ Get Allowed Transitions
 
 
 
-Source: [backend/app/routers/test_management_cases.py:507](../../../backend/app/routers/test_management_cases.py#L507).
+Source: [backend/app/routers/test_management_cases.py:530](../../../backend/app/routers/test_management_cases.py#L530).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`.
 
@@ -1599,7 +1821,7 @@ List Comments
 
 
 
-Source: [backend/app/routers/test_management_cases.py:551](../../../backend/app/routers/test_management_cases.py#L551).
+Source: [backend/app/routers/test_management_cases.py:574](../../../backend/app/routers/test_management_cases.py#L574).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`.
 
@@ -1684,7 +1906,7 @@ Add Comment
 
 
 
-Source: [backend/app/routers/test_management_cases.py:562](../../../backend/app/routers/test_management_cases.py#L562).
+Source: [backend/app/routers/test_management_cases.py:585](../../../backend/app/routers/test_management_cases.py#L585).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`, `require_role.<locals>._check`.
 
@@ -1775,7 +1997,7 @@ Get Test Case History
 
 
 
-Source: [backend/app/routers/test_management_cases.py:450](../../../backend/app/routers/test_management_cases.py#L450).
+Source: [backend/app/routers/test_management_cases.py:473](../../../backend/app/routers/test_management_cases.py#L473).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`.
 
@@ -1860,7 +2082,7 @@ Request Review
 
 
 
-Source: [backend/app/routers/test_management_cases.py:465](../../../backend/app/routers/test_management_cases.py#L465).
+Source: [backend/app/routers/test_management_cases.py:488](../../../backend/app/routers/test_management_cases.py#L488).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access_for_review_target`, `require_role.<locals>._check`.
 
@@ -1914,6 +2136,262 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
           }
         }
       },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+## GET `/api/v1/test-management/cases/{case_id}/requirements`
+
+List Case Requirements
+
+The case's manual requirement links, oldest first.
+
+Source: [backend/app/routers/test_management_library.py:130](../../../backend/app/routers/test_management_library.py#L130).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+case_id: uuid.UUID, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user), case: ManagedTestCase=Depends(require_case_access)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "list_case_requirements_api_v1_test_management_cases__case_id__requirements_get",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "case_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Case Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/RequirementLinkListResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+## POST `/api/v1/test-management/cases/{case_id}/requirements`
+
+Add Case Requirement
+
+Link a requirement key to the case (TESTER+); records ``test_case.requirement_linked``.
+
+Source: [backend/app/routers/test_management_library.py:143](../../../backend/app/routers/test_management_library.py#L143).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`, `require_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+case_id: uuid.UUID, payload: RequirementLinkCreate, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.TESTER)), case: ManagedTestCase=Depends(require_case_access)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "add_case_requirement_api_v1_test_management_cases__case_id__requirements_post",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "case_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Case Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "requestBody": {
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "#/components/schemas/RequirementLinkCreate"
+        }
+      }
+    },
+    "required": true
+  },
+  "responses": {
+    "201": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/RequirementLinkRead"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+## DELETE `/api/v1/test-management/cases/{case_id}/requirements/{requirement_link_id}`
+
+Remove Case Requirement
+
+Unlink one of THIS case's requirement links (TESTER+); records ``test_case.requirement_unlinked``.
+
+Source: [backend/app/routers/test_management_library.py:162](../../../backend/app/routers/test_management_library.py#L162).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`, `require_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+case_id: uuid.UUID, requirement_link_id: uuid.UUID, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.TESTER)), case: ManagedTestCase=Depends(require_case_access)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "remove_case_requirement_api_v1_test_management_cases__case_id__requirements__requirement_link_id__delete",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "case_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Case Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "path",
+      "name": "requirement_link_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Requirement Link Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "204": {
       "description": "Successful Response"
     },
     "422": {
@@ -2035,7 +2513,7 @@ Review Action
 
 
 
-Source: [backend/app/routers/test_management_cases.py:525](../../../backend/app/routers/test_management_cases.py#L525).
+Source: [backend/app/routers/test_management_cases.py:548](../../../backend/app/routers/test_management_cases.py#L548).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`, `require_role.<locals>._check`.
 
@@ -2126,7 +2604,7 @@ Get Reviews
 
 
 
-Source: [backend/app/routers/test_management_cases.py:540](../../../backend/app/routers/test_management_cases.py#L540).
+Source: [backend/app/routers/test_management_cases.py:563](../../../backend/app/routers/test_management_cases.py#L563).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`.
 
@@ -2205,13 +2683,148 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 }
 ```
 
+## GET `/api/v1/test-management/cases/{case_id}/timeline`
+
+Get Test Case Timeline
+
+The case's timeline (TCL-05): newest first, keyset-paged by ``cursor``.
+
+Source: [backend/app/routers/test_management_library.py:83](../../../backend/app/routers/test_management_library.py#L83).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+case_id: uuid.UUID, kinds: Optional[List[str]]=Query(None), cursor: Optional[str]=Query(None, max_length=512), limit: int=Query(TIMELINE_LIMIT_DEFAULT, ge=1, le=TIMELINE_LIMIT_MAX), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user), case: ManagedTestCase=Depends(require_case_access)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=422, detail=TIMELINE_KIND_INVALID)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "get_test_case_timeline_api_v1_test_management_cases__case_id__timeline_get",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "case_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Case Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "query",
+      "name": "kinds",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Kinds"
+      }
+    },
+    {
+      "in": "query",
+      "name": "cursor",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "maxLength": 512,
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Cursor"
+      }
+    },
+    {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+        "default": 50,
+        "maximum": 100,
+        "minimum": 1,
+        "title": "Limit",
+        "type": "integer"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/TestCaseTimelineResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## POST `/api/v1/test-management/cases/{case_id}/transition`
 
 Transition Test Case
 
 
 
-Source: [backend/app/routers/test_management_cases.py:479](../../../backend/app/routers/test_management_cases.py#L479).
+Source: [backend/app/routers/test_management_cases.py:502](../../../backend/app/routers/test_management_cases.py#L502).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_case_access`, `require_role.<locals>._check`.
 
@@ -2272,6 +2885,100 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
         "application/json": {
           "schema": {
             "$ref": "#/components/schemas/ManagedTestCaseResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+## GET `/api/v1/test-management/health`
+
+Get Library Health
+
+Library health for ONE project (All Projects has none: 422 with the sentence).
+
+Source: [backend/app/routers/test_management_library.py:64](../../../backend/app/routers/test_management_library.py#L64).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+project_id: Optional[uuid.UUID]=Query(None), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=422, detail=HEALTH_NEEDS_PROJECT_SENTENCE)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "get_library_health_api_v1_test_management_health_get",
+  "parameters": [
+    {
+      "in": "query",
+      "name": "project_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "format": "uuid",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Project Id"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/LibraryHealthResponse"
           }
         }
       },
@@ -2856,7 +3563,7 @@ Export Test Plan Pdf
 
 Export a test plan to a PDF document.
 
-Source: [backend/app/routers/test_management_exports.py:387](../../../backend/app/routers/test_management_exports.py#L387).
+Source: [backend/app/routers/test_management_exports.py:421](../../../backend/app/routers/test_management_exports.py#L421).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -2949,7 +3656,7 @@ Export Test Plan Word
 
 Export a test plan to a Word (.docx) document.
 
-Source: [backend/app/routers/test_management_exports.py:292](../../../backend/app/routers/test_management_exports.py#L292).
+Source: [backend/app/routers/test_management_exports.py:326](../../../backend/app/routers/test_management_exports.py#L326).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -3829,7 +4536,7 @@ Export Test Strategy Pdf
 
 Export a test strategy to a PDF document.
 
-Source: [backend/app/routers/test_management_exports.py:618](../../../backend/app/routers/test_management_exports.py#L618).
+Source: [backend/app/routers/test_management_exports.py:652](../../../backend/app/routers/test_management_exports.py#L652).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -3922,7 +4629,7 @@ Export Test Strategy Word
 
 Export a test strategy to a Word (.docx) document.
 
-Source: [backend/app/routers/test_management_exports.py:506](../../../backend/app/routers/test_management_exports.py#L506).
+Source: [backend/app/routers/test_management_exports.py:540](../../../backend/app/routers/test_management_exports.py#L540).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -4596,7 +5303,7 @@ summary of the analytics envelope (ids and counts, no names, <= 2 KB;
 ``analytics_meta.header_summary``) travels in the ``X-Analytics-Meta``
 header (VIZ-204).
 
-Source: [backend/app/routers/test_management_exports.py:744](../../../backend/app/routers/test_management_exports.py#L744).
+Source: [backend/app/routers/test_management_exports.py:778](../../../backend/app/routers/test_management_exports.py#L778).
 
 Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -4739,7 +5446,7 @@ Suite-match semantics: per-row ``tc.suite_name`` OR run-level
 the Java class as the per-row name but ``testlookup.suite`` at the
 run level still surfaces the case under the run-level suite.
 
-Source: [backend/app/routers/test_management_exports.py:1226](../../../backend/app/routers/test_management_exports.py#L1226).
+Source: [backend/app/routers/test_management_exports.py:1300](../../../backend/app/routers/test_management_exports.py#L1300).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -4884,7 +5591,7 @@ Get Suite Changes
 
 Return suite membership change events, optionally filtered by run.
 
-Source: [backend/app/routers/test_management_exports.py:1474](../../../backend/app/routers/test_management_exports.py#L1474).
+Source: [backend/app/routers/test_management_exports.py:1548](../../../backend/app/routers/test_management_exports.py#L1548).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -5017,7 +5724,7 @@ Get Suite Deleted
 
 Return deleted/needs_review members from the <suite>-deleted bucket.
 
-Source: [backend/app/routers/test_management_exports.py:1521](../../../backend/app/routers/test_management_exports.py#L1521).
+Source: [backend/app/routers/test_management_exports.py:1595](../../../backend/app/routers/test_management_exports.py#L1595).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -5121,7 +5828,7 @@ Get Suite Membership
 
 Return current suite membership records from the traceability model.
 
-Source: [backend/app/routers/test_management_exports.py:1424](../../../backend/app/routers/test_management_exports.py#L1424).
+Source: [backend/app/routers/test_management_exports.py:1498](../../../backend/app/routers/test_management_exports.py#L1498).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -5246,7 +5953,7 @@ Per-day trend points for one suite over the time window.
 suite is the path segment; a ``suite_name`` query parameter cannot widen
 or narrow it and is reported in ``meta.ignored_filters``.
 
-Source: [backend/app/routers/test_management_exports.py:1133](../../../backend/app/routers/test_management_exports.py#L1133).
+Source: [backend/app/routers/test_management_exports.py:1207](../../../backend/app/routers/test_management_exports.py#L1207).
 
 Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -5376,3 +6083,120 @@ Handler return expressions (source excerpts, not an inferred wire schema):
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
+
+## GET `/api/v1/test-management/traceability/gaps`
+
+Get Traceability Gaps
+
+The project's uncovered requirements, paged, and the cases linking none.
+
+Source: [backend/app/routers/test_management_library.py:179](../../../backend/app/routers/test_management_library.py#L179).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+project_id: Optional[uuid.UUID]=Query(None), page: int=Query(1, ge=1), size: int=Query(25, ge=1, le=100), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=422, detail=TRACEABILITY_NEEDS_PROJECT)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "get_traceability_gaps_api_v1_test_management_traceability_gaps_get",
+  "parameters": [
+    {
+      "in": "query",
+      "name": "project_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "format": "uuid",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Project Id"
+      }
+    },
+    {
+      "in": "query",
+      "name": "page",
+      "required": false,
+      "schema": {
+        "default": 1,
+        "minimum": 1,
+        "title": "Page",
+        "type": "integer"
+      }
+    },
+    {
+      "in": "query",
+      "name": "size",
+      "required": false,
+      "schema": {
+        "default": 25,
+        "maximum": 100,
+        "minimum": 1,
+        "title": "Size",
+        "type": "integer"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/TraceabilityGapsResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```

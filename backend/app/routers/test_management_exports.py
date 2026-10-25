@@ -6,7 +6,7 @@ import io
 import json
 import re
 import uuid
-from typing import Any, Optional, Sequence
+from typing import Any, List, Optional, Sequence
 
 import dataclasses
 
@@ -18,8 +18,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.analytics_errors import analytics_error_contract
 from app.core.deps import get_current_active_user, resolve_project_scope
+from app.core.test_library_vocab import EXPORT_APPENDED_HEADERS
 from app.db.postgres import get_db
-from app.models.postgres import ManagedTestCase, TestPlan, TestPlanItem, TestStrategy, User
+from app.models.postgres import ManagedTestCase, TestPlan, TestPlanItem, TestStrategy, TestSuite, User
 from app.services.analytics_meta import (
     META_HEADER,
     build_meta,
@@ -81,24 +82,48 @@ def _check_pdf_deps() -> None:
 @router.get("/cases/export/excel")
 async def export_test_cases_excel(
     project_id: Optional[uuid.UUID] = None,
-    status: Optional[str] = None,
-    test_type: Optional[str] = None,
-    priority: Optional[str] = None,
+    # W13 TCL-01: the list's filters, so the workbook holds what the page shows.
+    status: Optional[List[str]] = Query(None),
+    test_type: Optional[List[str]] = Query(None),
+    priority: Optional[List[str]] = Query(None),
     search: Optional[str] = None,
+    owner: Optional[str] = None,
+    automation: Optional[str] = None,
+    requirement: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Export test cases to an Excel (.xlsx) file."""
+    """Export test cases to an Excel (.xlsx) file.
+
+    Honours the case list's filters (``status`` / ``test_type`` / ``priority``
+    repeatable, ``owner``, ``automation``, ``requirement``, the list's search)
+    and keeps its own default of every status. Columns 1-18 are unchanged;
+    ``ID``, ``Suite`` and ``Description`` are appended as 19-21 (an import
+    reads them back; prepending would renumber the pinned columns).
+    """
+    # A direct Python call (the export tests) leaves the Query(None) defaults.
+    status = status if isinstance(status, list) else None
+    test_type = test_type if isinstance(test_type, list) else None
+    priority = priority if isinstance(priority, list) else None
     # F-042: this check ran ONLY in the ``not project_id`` branch, so naming a
     # project skipped it entirely. See the backend.project-scope-guard-placement
     # gate — this is the third recurrence of the class.
     from app.core.deps import resolve_project_scope  # noqa: PLC0415
+    from app.services.test_management_service import (  # noqa: PLC0415
+        apply_case_list_filters,
+        managed_case_search_clause,
+        parse_case_list_filters,
+    )
 
     scoped_project_id, allowed = await resolve_project_scope(
         db, current_user, str(project_id) if project_id else None
     )
     if scoped_project_id is None and allowed is not None:
         return Response(content=b"", media_type="application/octet-stream")
+    filters, _single = await parse_case_list_filters(
+        db, current_user, project_id=project_id, status=status, test_type=test_type,
+        priority=priority, owner=owner, automation=automation, requirement=requirement,
+    )
     _check_excel_deps()
     import openpyxl
     from openpyxl.styles import Alignment, Font, PatternFill
@@ -124,18 +149,19 @@ async def export_test_cases_excel(
         ManagedTestCase.steps,
         ManagedTestCase.version,
         ManagedTestCase.created_at,
+        # Columns 19-21 (W13 TCL-04 reads them back on import).
+        ManagedTestCase.id,
+        ManagedTestCase.suite_name,
+        ManagedTestCase.description,
     ).order_by(ManagedTestCase.created_at.desc())
     if project_id:
         stmt = stmt.where(ManagedTestCase.project_id == project_id)
-    if status:
-        stmt = stmt.where(ManagedTestCase.status == status)
-    if test_type:
-        stmt = stmt.where(ManagedTestCase.test_type == test_type)
-    if priority:
-        stmt = stmt.where(ManagedTestCase.priority == priority)
+    # The list's rule (status IN, type IN, priority IN, owner, automation,
+    # requirement); no default status exclusion: the export lists every status.
+    stmt = apply_case_list_filters(stmt, filters)
     if search:
-        from app.services.sql_utils import like_contains
-        stmt = stmt.where(ManagedTestCase.title.ilike(like_contains(search), escape="\\"))
+        # The list's search (HON-07 + the requirement term), not the title alone.
+        stmt = stmt.where(managed_case_search_clause(search, requirements=True))
 
     cases = (await db.execute(stmt)).all()
     logger.info("exporting_test_cases_excel", count=len(cases), project_id=str(project_id) if project_id else None)
@@ -152,6 +178,9 @@ async def export_test_cases_excel(
         "Feature Area", "Objective", "Preconditions", "Steps", "Expected Result",
         "Automated", "Automation Status", "AI Generated", "AI Quality Score",
         "Last Execution Status", "Tags", "Version", "Created At",
+        # Appended, never prepended: the column-numbered export tests and any
+        # sheet built on 1-18 keep their numbers.
+        *EXPORT_APPENDED_HEADERS,
     ]
 
     for col_idx, header in enumerate(headers, start=1):
@@ -189,6 +218,11 @@ async def export_test_cases_excel(
         ws.cell(row=row_idx, column=16, value=_excel_text(tags_text))
         ws.cell(row=row_idx, column=17, value=tc.version)
         ws.cell(row=row_idx, column=18, value=tc.created_at.strftime("%Y-%m-%d") if tc.created_at else "")
+        # getattr: a hand-built row (the export tests' SimpleNamespace) may not carry them.
+        case_id = getattr(tc, "id", None)
+        ws.cell(row=row_idx, column=19, value=_excel_text(str(case_id) if case_id else ""))
+        ws.cell(row=row_idx, column=20, value=_excel_text(getattr(tc, "suite_name", None) or ""))
+        ws.cell(row=row_idx, column=21, value=_excel_text(getattr(tc, "description", None) or ""))
 
     # Auto-fit column widths
     for col in ws.columns:
@@ -1060,6 +1094,43 @@ async def list_test_suites(
                 "last_run_id": None,  # manual-only suite, no automation run yet
             }
 
+    # TCL-07: a first-class suite nobody has reported yet (made on /suites or
+    # the Suites tab) is listed at once as an ``empty`` row, so it does not
+    # wait for its first ingest. One project, no release filter (a release's
+    # catalogue holds what ran in it); the default suite is the catch-all for
+    # tests ingested without a name, never "waiting for its first run". A
+    # FOURTH statement after the manual one, in its own SAVEPOINT like its
+    # siblings: a hand-built session scripted for three answers meets
+    # StopAsyncIteration here and the catalogue degrades to today's. Only the
+    # ADDED rows carry ``empty`` / ``suite_id`` (aggregated rows are
+    # byte-identical: the analytics parity golden compares them key for key).
+    if project_id is not None and not release_where:
+        try:
+            async with db.begin_nested():
+                first_class = (await db.execute(
+                    select(TestSuite.id, TestSuite.name, TestSuite.created_at)
+                    .where(TestSuite.project_id == project_id, TestSuite.is_default.is_(False))
+                )).all()
+        except Exception as exc:
+            logger.warning("first_class_suites_unavailable", error_type=type(exc).__name__)
+            first_class = []
+        known = {(name or "").strip().lower() for name in merged}
+        for first_class_id, first_class_name, _created_at in first_class:
+            key = (first_class_name or "").strip().lower()
+            if not key or key in known:
+                continue
+            merged[first_class_name] = {
+                "suite_name": first_class_name,
+                "test_count": 0,
+                "passed_count": 0,
+                "failed_count": 0,
+                "last_run_at": None,
+                "last_run_id": None,
+                "empty": True,
+                "suite_id": str(first_class_id),
+            }
+            known.add(key)
+
     wanted = suite_keys(suite_name)
     if wanted:
         # VIZ-202: the requested suites, matched the way every analytics
@@ -1125,6 +1196,9 @@ async def list_test_suites(
             "owner_email": owner_map.get(s["suite_name"], {}).get("owner_email"),
             "owner_full_name": owner_map.get(s["suite_name"], {}).get("owner_full_name"),
             "owner_is_fallback": owner_map.get(s["suite_name"], {}).get("is_fallback", False),
+            # TCL-07: only an added (first-class, never reported) row carries
+            # these two keys; an aggregated row has neither (absent = False).
+            **({"empty": True, "suite_id": s["suite_id"]} if s.get("empty") else {}),
         }
         for s in result
     ]

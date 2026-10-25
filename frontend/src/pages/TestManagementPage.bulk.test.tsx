@@ -18,6 +18,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useAuditLog, useTestCases } from '@/hooks/useTestManagement'
+import { useLibraryHealth } from '@/hooks/useTestLibrary'
 import { testCaseEditingService } from '@/services/testCaseEditingService'
 import { useAuthStore, type User } from '@/store/authStore'
 import type { ManagedTestCase, PaginatedResponse } from '@/types/test-management'
@@ -28,6 +29,8 @@ vi.mock('@/hooks/useTestManagement', async (importOriginal) => ({
   useAuditLog: vi.fn(),
   useTestCases: vi.fn(),
 }))
+// W13 (deliberate set-up): the page's new reads (library health, the owner list, saved views) stubbed idle.
+vi.mock('@/hooks/useTestLibrary', async () => (await import('@/test/testLibraryMocks')).testLibraryHookMocks())
 vi.mock('@/hooks/useUserManagement', () => ({ useProjectMembers: () => ({ data: [], isLoading: false }) }))
 vi.mock('@/components/testManagement/EvidenceGapLists', () => ({ default: () => null }))
 vi.mock('@/hooks/useNow', () => ({ useNow: () => Date.parse('2026-10-10T12:00:00Z') }))
@@ -93,6 +96,10 @@ describe('/test-management: select cases and edit them together (W28)', () => {
       data: page, error: undefined, isLoading: false, isValidating: false,
       mutate: params?.size === 200 ? mutateHealth : mutateCases,
     } as unknown as ReturnType<typeof useTestCases>))
+    // W13 (deliberate set-up): the health read is `useLibraryHealth` now (the 200-row roll is gone).
+    vi.mocked(useLibraryHealth).mockReturnValue(
+      { data: undefined, error: undefined, isLoading: false, mutate: mutateHealth } as unknown as ReturnType<typeof useLibraryHealth>,
+    )
   })
   afterEach(() => {
     act(() => useAuthStore.setState({ user: null }))
@@ -135,7 +142,10 @@ describe('/test-management: select cases and edit them together (W28)', () => {
   it('a filter, the search or the page clears the selection', () => {
     renderTab()
     fireEvent.click(box(A))
-    fireEvent.change(screen.getByRole('combobox', { name: 'Priority' }), { target: { value: 'high' } })
+    // W13 TCL-01 (deliberate): the filter bar's Priority is a MultiSelect (was a <select>).
+    fireEvent.click(screen.getByRole('button', { name: /^Priority/ }))
+    fireEvent.click(screen.getByRole('option', { name: 'High' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Priority/ }))
     expect(box(A)).not.toBeChecked()
     expect(bar()).toBeNull()
 

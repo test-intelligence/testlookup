@@ -6891,6 +6891,25 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## Body_import_test_cases_api_v1_test_management_cases_import_post
+
+```json
+{
+  "properties": {
+    "file": {
+      "format": "binary",
+      "title": "File",
+      "type": "string"
+    }
+  },
+  "required": [
+    "file"
+  ],
+  "title": "Body_import_test_cases_api_v1_test_management_cases_import_post",
+  "type": "object"
+}
+```
+
 ## Body_ingest_file_api_v1_ingest_file_post
 
 ```json
@@ -7449,6 +7468,18 @@ These are the full generated JSON Schema definitions, including required fields,
       "format": "uuid",
       "title": "Id",
       "type": "string"
+    },
+    "last_seen_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Last Seen At"
     },
     "last_seen_run_id": {
       "anyOf": [
@@ -13375,6 +13406,28 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Deleted Observed At"
     },
+    "flaky_confidence": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Flaky Confidence"
+    },
+    "flaky_score": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Flaky Score"
+    },
     "id": {
       "format": "uuid",
       "title": "Id",
@@ -13391,6 +13444,17 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Last Executed At"
+    },
+    "owner_state": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Owner State"
     },
     "project_id": {
       "format": "uuid",
@@ -16741,6 +16805,196 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## ImportDuplicateOf
+
+```json
+{
+  "properties": {
+    "case_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Case Id"
+    },
+    "row": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Row"
+    },
+    "title": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Title"
+    }
+  },
+  "title": "ImportDuplicateOf",
+  "type": "object"
+}
+```
+
+## ImportHeaderReport
+
+```json
+{
+  "properties": {
+    "ignored": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Ignored",
+      "type": "array"
+    },
+    "recognised": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Recognised",
+      "type": "array"
+    },
+    "unknown": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Unknown",
+      "type": "array"
+    }
+  },
+  "required": [
+    "recognised",
+    "ignored",
+    "unknown"
+  ],
+  "title": "ImportHeaderReport",
+  "type": "object"
+}
+```
+
+## ImportRowResult
+
+```json
+{
+  "properties": {
+    "case_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Case Id"
+    },
+    "duplicate_of": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/ImportDuplicateOf"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "outcome": {
+      "title": "Outcome",
+      "type": "string"
+    },
+    "reasons": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Reasons",
+      "type": "array"
+    },
+    "row": {
+      "title": "Row",
+      "type": "integer"
+    },
+    "title": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Title"
+    },
+    "warnings": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+    }
+  },
+  "required": [
+    "row",
+    "outcome"
+  ],
+  "title": "ImportRowResult",
+  "type": "object"
+}
+```
+
+## ImportSummary
+
+```json
+{
+  "properties": {
+    "create": {
+      "title": "Create",
+      "type": "integer"
+    },
+    "created": {
+      "default": 0,
+      "title": "Created",
+      "type": "integer"
+    },
+    "duplicate": {
+      "title": "Duplicate",
+      "type": "integer"
+    },
+    "invalid": {
+      "title": "Invalid",
+      "type": "integer"
+    },
+    "rows": {
+      "title": "Rows",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "rows",
+    "create",
+    "duplicate",
+    "invalid"
+  ],
+  "title": "ImportSummary",
+  "type": "object"
+}
+```
+
 ## IngestPayload
 
 ```json
@@ -19083,6 +19337,346 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## LibraryCaseList
+
+```json
+{
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/LibraryCaseRow"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "measured": {
+      "default": true,
+      "title": "Measured",
+      "type": "boolean"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    },
+    "total": {
+      "title": "Total",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "total",
+    "items"
+  ],
+  "title": "LibraryCaseList",
+  "type": "object"
+}
+```
+
+## LibraryCaseRow
+
+```json
+{
+  "properties": {
+    "age_days": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Age Days"
+    },
+    "detail": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Detail"
+    },
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "owner": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Owner"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "title",
+    "status"
+  ],
+  "title": "LibraryCaseRow",
+  "type": "object"
+}
+```
+
+## LibraryHealthComponent
+
+```json
+{
+  "properties": {
+    "denominator": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Denominator"
+    },
+    "detail": {
+      "title": "Detail",
+      "type": "string"
+    },
+    "key": {
+      "title": "Key",
+      "type": "string"
+    },
+    "label": {
+      "title": "Label",
+      "type": "string"
+    },
+    "measured": {
+      "title": "Measured",
+      "type": "boolean"
+    },
+    "numerator": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Numerator"
+    },
+    "value": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Value"
+    },
+    "weight": {
+      "title": "Weight",
+      "type": "number"
+    }
+  },
+  "required": [
+    "key",
+    "label",
+    "weight",
+    "measured",
+    "detail"
+  ],
+  "title": "LibraryHealthComponent",
+  "type": "object"
+}
+```
+
+## LibraryHealthResponse
+
+```json
+{
+  "properties": {
+    "active_cases": {
+      "title": "Active Cases",
+      "type": "integer"
+    },
+    "automated_cases": {
+      "title": "Automated Cases",
+      "type": "integer"
+    },
+    "automation_target_pct": {
+      "title": "Automation Target Pct",
+      "type": "integer"
+    },
+    "avg_age_days": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Avg Age Days"
+    },
+    "components": {
+      "items": {
+        "$ref": "#/components/schemas/LibraryHealthComponent"
+      },
+      "title": "Components",
+      "type": "array"
+    },
+    "computed_at": {
+      "format": "date-time",
+      "title": "Computed At",
+      "type": "string"
+    },
+    "flaky_active": {
+      "$ref": "#/components/schemas/LibraryCaseList"
+    },
+    "measured": {
+      "title": "Measured",
+      "type": "boolean"
+    },
+    "no_owner": {
+      "$ref": "#/components/schemas/LibraryCaseList"
+    },
+    "older_than_180_days": {
+      "default": 0,
+      "title": "Older Than 180 Days",
+      "type": "integer"
+    },
+    "older_than_180_pct": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Older Than 180 Pct"
+    },
+    "project_id": {
+      "format": "uuid",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "requirements": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/RequirementCoverageSummary"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "retired_cases": {
+      "title": "Retired Cases",
+      "type": "integer"
+    },
+    "retired_in_open_plans": {
+      "title": "Retired In Open Plans",
+      "type": "integer"
+    },
+    "review_queue": {
+      "$ref": "#/components/schemas/ReviewQueueSummary"
+    },
+    "score": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Score"
+    },
+    "stale_drafts": {
+      "title": "Stale Drafts",
+      "type": "integer"
+    },
+    "strategy_gaps": {
+      "items": {
+        "$ref": "#/components/schemas/StrategyGapRead"
+      },
+      "title": "Strategy Gaps",
+      "type": "array"
+    },
+    "suite_names": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Suite Names",
+      "type": "array"
+    },
+    "suite_names_total": {
+      "title": "Suite Names Total",
+      "type": "integer"
+    },
+    "tag": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Tag"
+    },
+    "total_cases": {
+      "title": "Total Cases",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "project_id",
+    "computed_at",
+    "measured",
+    "total_cases",
+    "active_cases",
+    "retired_cases",
+    "automated_cases",
+    "automation_target_pct",
+    "stale_drafts",
+    "retired_in_open_plans",
+    "components",
+    "review_queue",
+    "strategy_gaps",
+    "flaky_active",
+    "no_owner",
+    "suite_names",
+    "suite_names_total"
+  ],
+  "title": "LibraryHealthResponse",
+  "type": "object"
+}
+```
+
 ## LinkRunRequest
 
 ```json
@@ -20937,6 +21531,11 @@ These are the full generated JSON Schema definitions, including required fields,
 ```json
 {
   "properties": {
+    "automation_rows_excluded": {
+      "default": false,
+      "title": "Automation Rows Excluded",
+      "type": "boolean"
+    },
     "items": {
       "items": {
         "$ref": "#/components/schemas/ManagedTestCaseResponse"
@@ -25805,6 +26404,11 @@ These are the full generated JSON Schema definitions, including required fields,
 ```json
 {
   "properties": {
+    "automation_target_pct": {
+      "default": 60,
+      "title": "Automation Target Pct",
+      "type": "integer"
+    },
     "component_owner_map": {
       "anyOf": [
         {
@@ -26059,6 +26663,19 @@ These are the full generated JSON Schema definitions, including required fields,
 {
   "description": "Partial update for project attributes. None = keep existing.",
   "properties": {
+    "automation_target_pct": {
+      "anyOf": [
+        {
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Automation Target Pct"
+    },
     "component_owner_map": {
       "anyOf": [
         {
@@ -29145,6 +29762,245 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## RequirementCoverageSummary
+
+```json
+{
+  "properties": {
+    "gaps": {
+      "title": "Gaps",
+      "type": "integer"
+    },
+    "known": {
+      "title": "Known",
+      "type": "integer"
+    },
+    "measured": {
+      "title": "Measured",
+      "type": "boolean"
+    },
+    "partly_verified": {
+      "title": "Partly Verified",
+      "type": "integer"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    },
+    "top_gaps": {
+      "items": {
+        "$ref": "#/components/schemas/RequirementGapRead"
+      },
+      "title": "Top Gaps",
+      "type": "array"
+    },
+    "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+    },
+    "verified": {
+      "title": "Verified",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "measured",
+    "known",
+    "verified",
+    "partly_verified",
+    "gaps"
+  ],
+  "title": "RequirementCoverageSummary",
+  "type": "object"
+}
+```
+
+## RequirementGapRead
+
+```json
+{
+  "properties": {
+    "batch_claimed_cases": {
+      "default": 0,
+      "title": "Batch Claimed Cases",
+      "type": "integer"
+    },
+    "key": {
+      "title": "Key",
+      "type": "string"
+    },
+    "linked_cases": {
+      "default": 0,
+      "title": "Linked Cases",
+      "type": "integer"
+    },
+    "normalized_key": {
+      "title": "Normalized Key",
+      "type": "string"
+    },
+    "reason": {
+      "title": "Reason",
+      "type": "string"
+    },
+    "sources": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Sources",
+      "type": "array"
+    }
+  },
+  "required": [
+    "key",
+    "normalized_key",
+    "reason",
+    "sources"
+  ],
+  "title": "RequirementGapRead",
+  "type": "object"
+}
+```
+
+## RequirementLinkCreate
+
+```json
+{
+  "properties": {
+    "link_type": {
+      "default": "verifies",
+      "maxLength": 20,
+      "title": "Link Type",
+      "type": "string"
+    },
+    "requirement_key": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Requirement Key",
+      "type": "string"
+    },
+    "requirement_title": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Requirement Title"
+    }
+  },
+  "required": [
+    "requirement_key"
+  ],
+  "title": "RequirementLinkCreate",
+  "type": "object"
+}
+```
+
+## RequirementLinkListResponse
+
+```json
+{
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/RequirementLinkRead"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "total": {
+      "title": "Total",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "items",
+    "total"
+  ],
+  "title": "RequirementLinkListResponse",
+  "type": "object"
+}
+```
+
+## RequirementLinkRead
+
+```json
+{
+  "properties": {
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "created_by_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Created By Name"
+    },
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "link_type": {
+      "title": "Link Type",
+      "type": "string"
+    },
+    "normalized_key": {
+      "title": "Normalized Key",
+      "type": "string"
+    },
+    "requirement_key": {
+      "title": "Requirement Key",
+      "type": "string"
+    },
+    "requirement_title": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Requirement Title"
+    },
+    "test_case_id": {
+      "format": "uuid",
+      "title": "Test Case Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "test_case_id",
+    "requirement_key",
+    "normalized_key",
+    "link_type",
+    "created_at"
+  ],
+  "title": "RequirementLinkRead",
+  "type": "object"
+}
+```
+
 ## RetentionCriteria
 
 ```json
@@ -29904,6 +30760,59 @@ These are the full generated JSON Schema definitions, including required fields,
     }
   },
   "title": "ReviewConfig",
+  "type": "object"
+}
+```
+
+## ReviewQueueSummary
+
+```json
+{
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/LibraryCaseRow"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "measured": {
+      "default": true,
+      "title": "Measured",
+      "type": "boolean"
+    },
+    "oldest_age_days": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Oldest Age Days"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    },
+    "total": {
+      "title": "Total",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "total",
+    "items"
+  ],
+  "title": "ReviewQueueSummary",
   "type": "object"
 }
 ```
@@ -33435,7 +34344,8 @@ These are the full generated JSON Schema definitions, including required fields,
             "failures",
             "summary_report",
             "explore",
-            "search"
+            "search",
+            "test_management"
           ],
           "type": "string"
         },
@@ -33688,7 +34598,8 @@ These are the full generated JSON Schema definitions, including required fields,
             "failures",
             "summary_report",
             "explore",
-            "search"
+            "search",
+            "test_management"
           ],
           "type": "string"
         },
@@ -35067,6 +35978,49 @@ These are the full generated JSON Schema definitions, including required fields,
     "exact"
   ],
   "title": "StoreFootprintResponse",
+  "type": "object"
+}
+```
+
+## StrategyGapRead
+
+```json
+{
+  "properties": {
+    "count": {
+      "title": "Count",
+      "type": "integer"
+    },
+    "detail": {
+      "title": "Detail",
+      "type": "string"
+    },
+    "kind": {
+      "title": "Kind",
+      "type": "string"
+    },
+    "pill": {
+      "title": "Pill",
+      "type": "string"
+    },
+    "severity": {
+      "title": "Severity",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "kind",
+    "severity",
+    "title",
+    "detail",
+    "count",
+    "pill"
+  ],
+  "title": "StrategyGapRead",
   "type": "object"
 }
 ```
@@ -38122,6 +39076,56 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## TestCaseImportResponse
+
+```json
+{
+  "properties": {
+    "dry_run": {
+      "title": "Dry Run",
+      "type": "boolean"
+    },
+    "file_name": {
+      "title": "File Name",
+      "type": "string"
+    },
+    "format": {
+      "title": "Format",
+      "type": "string"
+    },
+    "headers": {
+      "$ref": "#/components/schemas/ImportHeaderReport"
+    },
+    "project_id": {
+      "format": "uuid",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "rows": {
+      "items": {
+        "$ref": "#/components/schemas/ImportRowResult"
+      },
+      "title": "Rows",
+      "type": "array"
+    },
+    "summary": {
+      "$ref": "#/components/schemas/ImportSummary"
+    }
+  },
+  "required": [
+    "project_id",
+    "dry_run",
+    "file_name",
+    "format",
+    "headers",
+    "summary",
+    "rows"
+  ],
+  "title": "TestCaseImportResponse",
+  "type": "object"
+}
+```
+
 ## TestCaseLifecycleState
 
 ```json
@@ -38835,6 +39839,57 @@ These are the full generated JSON Schema definitions, including required fields,
     "failure_kind"
   ],
   "title": "TestCaseSummary",
+  "type": "object"
+}
+```
+
+## TestCaseTimelineResponse
+
+```json
+{
+  "properties": {
+    "automation_linked": {
+      "default": false,
+      "title": "Automation Linked",
+      "type": "boolean"
+    },
+    "case_id": {
+      "format": "uuid",
+      "title": "Case Id",
+      "type": "string"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/TimelineEntry"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "kinds": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Kinds",
+      "type": "array"
+    },
+    "next_cursor": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Next Cursor"
+    }
+  },
+  "required": [
+    "case_id",
+    "kinds",
+    "items"
+  ],
+  "title": "TestCaseTimelineResponse",
   "type": "object"
 }
 ```
@@ -41521,6 +42576,194 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## TimelineEntry
+
+```json
+{
+  "properties": {
+    "actor_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Actor Id"
+    },
+    "actor_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Actor Name"
+    },
+    "actor_source": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Actor Source"
+    },
+    "detail": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Detail"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "kind": {
+      "title": "Kind",
+      "type": "string"
+    },
+    "link": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/TimelineLink"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "occurred_at": {
+      "format": "date-time",
+      "title": "Occurred At",
+      "type": "string"
+    },
+    "status": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Status"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "version": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Version"
+    }
+  },
+  "required": [
+    "id",
+    "kind",
+    "occurred_at",
+    "title"
+  ],
+  "title": "TimelineEntry",
+  "type": "object"
+}
+```
+
+## TimelineLink
+
+```json
+{
+  "properties": {
+    "defect_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Defect Id"
+    },
+    "jira_key": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Jira Key"
+    },
+    "plan_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Plan Id"
+    },
+    "run_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Run Id"
+    },
+    "test_case_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Test Case Id"
+    },
+    "type": {
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "type"
+  ],
+  "title": "TimelineLink",
+  "type": "object"
+}
+```
+
 ## TimelineNoteCreate
 
 ```json
@@ -41813,6 +43056,65 @@ These are the full generated JSON Schema definitions, including required fields,
     }
   },
   "title": "ToolsConfig",
+  "type": "object"
+}
+```
+
+## TraceabilityGapsResponse
+
+```json
+{
+  "properties": {
+    "cases_without_requirements": {
+      "items": {
+        "$ref": "#/components/schemas/LibraryCaseRow"
+      },
+      "title": "Cases Without Requirements",
+      "type": "array"
+    },
+    "cases_without_requirements_total": {
+      "title": "Cases Without Requirements Total",
+      "type": "integer"
+    },
+    "gaps": {
+      "items": {
+        "$ref": "#/components/schemas/RequirementGapRead"
+      },
+      "title": "Gaps",
+      "type": "array"
+    },
+    "gaps_total": {
+      "title": "Gaps Total",
+      "type": "integer"
+    },
+    "page": {
+      "title": "Page",
+      "type": "integer"
+    },
+    "project_id": {
+      "format": "uuid",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "size": {
+      "title": "Size",
+      "type": "integer"
+    },
+    "summary": {
+      "$ref": "#/components/schemas/RequirementCoverageSummary"
+    }
+  },
+  "required": [
+    "project_id",
+    "summary",
+    "gaps",
+    "gaps_total",
+    "page",
+    "size",
+    "cases_without_requirements_total",
+    "cases_without_requirements"
+  ],
+  "title": "TraceabilityGapsResponse",
   "type": "object"
 }
 ```

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import uuid
-from typing import Optional
+from typing import List, Optional
 from fastapi import APIRouter, Body, Depends, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_active_user, require_role
+from app.core.test_library_vocab import EVIDENCE_GAP_KIND_PATTERN
 from app.db.postgres import get_db
 from app.models.postgres import (
     ManagedTestCase,
@@ -46,6 +47,7 @@ from app.services.test_management_service import (
     list_combined_test_case_identities,
     list_automation_test_cases,
     list_managed_test_cases,
+    parse_case_list_filters,
     request_test_case_review,
     update_managed_test_case,
 )
@@ -216,13 +218,18 @@ async def case_response(
 @router.get("/cases", response_model=ManagedTestCaseListResponse)
 async def list_test_cases(
     project_id: Optional[uuid.UUID] = None,
-    status: TestCaseLifecycleState | None = None,
-    test_type: str | None = None,
-    priority: str | None = None,
+    # W13 TCL-01: repeatable (``?status=draft&status=review_requested``); an
+    # unknown status is FastAPI's 422, as for the single value it was.
+    status: Optional[List[TestCaseLifecycleState]] = Query(None),
+    test_type: Optional[List[str]] = Query(None),
+    priority: Optional[List[str]] = Query(None),
     feature_area: str | None = None,
     ai_generated: bool | None = None,
     search: str | None = None,
     suite_name: str | None = None,
+    owner: Optional[str] = None,
+    automation: Optional[str] = None,
+    requirement: Optional[str] = Query(None, max_length=200),
     include_automation: bool = Query(
         False,
         description=(
@@ -260,14 +267,23 @@ async def list_test_cases(
     if scoped_project_id is None and allowed is not None:
         return {"items": [], "total": 0, "page": page, "size": size, "pages": 0}
 
+    # W13 TCL-01: the filters, parsed only AFTER the project scope (every id
+    # in the QUERY is judged against a project the reader may see).
+    filters, single = await parse_case_list_filters(
+        db, current_user, project_id=project_id, status=status, test_type=test_type,
+        priority=priority, owner=owner, automation=automation, requirement=requirement,
+    )
     # Fetch the FULL managed-cases set when merging with automation so we
     # can dedupe by fingerprint correctly and paginate the merged result
     # at the end. When ``include_automation`` is off we keep the existing
-    # SQL-paginated path (cheap, no merge needed).
+    # SQL-paginated path (cheap, no merge needed). Any W13 filter (an owner,
+    # an automation state, a requirement, several values of one list) is
+    # answered by authored cases only, and the answer says so.
     if (
         not include_automation
-        or status is not None
-        or priority is not None
+        or filters.authored_only
+        or single["status"] is not None
+        or single["priority"] is not None
         or feature_area is not None
         or ai_generated is not None
     ):
@@ -276,14 +292,16 @@ async def list_test_cases(
             project_id=project_id,
             page=page,
             size=size,
-            status=status,
-            include_archived=include_archived,
-            test_type=test_type,
-            priority=priority,
+            status=single["status"],
+            include_archived=include_archived or "archived" in filters.statuses,
+            test_type=single["test_type"],
+            priority=single["priority"],
             feature_area=feature_area,
             ai_generated=ai_generated,
             search=search,
             suite_name=suite_name,
+            filters=filters,
+            search_requirements=True,
         )
         names = await _owner_names(db, list(items))
         # After the names: the integration suite scripts exactly one result.
@@ -302,17 +320,21 @@ async def list_test_cases(
             "page": page,
             "size": size,
             "pages": pages,
+            # The automation union was asked for and the authored-only path answered.
+            "automation_rows_excluded": include_automation,
         }
 
     identities, total, pages = await list_combined_test_case_identities(
         db,
         project_id=project_id,
         include_archived=include_archived,
-        test_type=test_type,
+        test_type=single["test_type"],
         search=search,
         suite_name=suite_name,
         page=page,
         size=size,
+        # Only with a search: the authored half also matches requirement keys.
+        **({"search_requirements": True} if search else {}),
     )
     managed_ids = {entity_id for source, entity_id in identities if source == "managed"}
     automation_ids = {
@@ -375,7 +397,8 @@ async def create_test_case(
 
 @router.get("/cases/evidence-gaps", response_model=EvidenceGapListResponse)
 async def get_test_case_evidence_gaps(
-    kind: str = Query(..., pattern="^(never_executed|automation_vanished)$"),
+    # W13 TCL-03: + flaky_active, no_owner (the service, G-C, answers them).
+    kind: str = Query(..., pattern=EVIDENCE_GAP_KIND_PATTERN),
     project_id: Optional[uuid.UUID] = Query(None),
     page: int = Query(1, ge=1),
     size: int = Query(25, ge=1, le=200),

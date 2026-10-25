@@ -23,11 +23,14 @@ import {
   useTestCaseReviews,
   useTestCases,
 } from '@/hooks/useTestManagement'
+import { useLibraryHealth } from '@/hooks/useTestLibrary'
 import { testCaseEditingService } from '@/services/testCaseEditingService'
 import { useAuthStore, type User } from '@/store/authStore'
 import type { ManagedTestCase, PaginatedResponse, TestCaseVersion } from '@/types/test-management'
 import { TestCasesTab } from './TestManagementPage'
 
+// W13 (deliberate set-up): the page's new reads (library health, the owner list, saved views) stubbed idle.
+vi.mock('@/hooks/useTestLibrary', async () => (await import('@/test/testLibraryMocks')).testLibraryHookMocks())
 vi.mock('@/hooks/useTestManagement', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/hooks/useTestManagement')>(),
   useAuditLog: vi.fn(),
@@ -128,6 +131,10 @@ describe('/test-management: edit a case in the page (W28)', () => {
       data: page, error: undefined, isLoading: false, isValidating: false,
       mutate: params?.size === 200 ? mutateHealth : mutateCases,
     } as unknown as ReturnType<typeof useTestCases>))
+    // W13 (deliberate set-up): the health read is `useLibraryHealth` now (the 200-row roll is gone).
+    vi.mocked(useLibraryHealth).mockReturnValue(
+      { data: undefined, error: undefined, isLoading: false, mutate: mutateHealth } as unknown as ReturnType<typeof useLibraryHealth>,
+    )
     vi.mocked(useTestCaseHistory).mockImplementation((id?: string) => ({
       data: id ? history : undefined, isLoading: false, error: undefined, mutate: mutateHistory,
     } as unknown as ReturnType<typeof useTestCaseHistory>))

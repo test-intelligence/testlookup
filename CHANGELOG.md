@@ -52,6 +52,47 @@ locally by default.
 
 ### Added
 
+- **Test library: filters that really filter, saved case views, library
+  health from the server, CSV / Excel import, a case timeline, requirement
+  links, editable suites** (wave W13, TCL-07, TCL-01, TCL-03, TCL-04, TCL-05,
+  TCL-06; branch `feat/df-test-library-20261024`). On `/test-management` the
+  Status, Type, Priority, Suite and Owner filters each take several values, all
+  of them live in the URL, and the four presets (My drafts, **My P0/P1**,
+  Unautomated, AI drafts) replace the filters instead of only highlighting;
+  bulk selection follows the filters, the export takes the same filters (and
+  adds ID, Suite and Description columns), and a filter the merged automation
+  list cannot apply says the list shows authored cases only. Priorities read
+  critical / high / medium / low everywhere; P0–P3 are accepted as aliases and
+  any other priority is refused. Filter sets can be saved as **case views**
+  (private or shared within the project). The health banner and Insights read
+  one server answer over the whole library (no longer the first 200 cases); a
+  QA lead sets the project's **automation target** there, and the flaky and
+  ownerless cases are listed. **Import** takes a CSV (UTF-8) or Excel file of
+  up to 2,000 rows, previews every row (create, duplicate, invalid with the
+  reason) and creates only Drafts (TESTER and above). A case's **Timeline**
+  tab merges its versions, reviews, comments, plan and automated executions,
+  defects and requirement changes, newest first, with kind chips. Behind the
+  `test_case_requirement_traceability` flag (on for new installs, off on
+  upgrade until an admin turns it on), a case links requirement keys
+  (verifies / partially verifies / related; the key is kept as typed and
+  matched case- and bracket-insensitively), the list filters by requirement and
+  Insights shows requirement coverage and the requirements no case fully
+  verifies yet. `/suites`
+  and a suite's page gain **Edit** (name, description, tags), each suite test
+  shows when it last ran, and the Suites tab shows a suite with no run yet as
+  **Empty**. Migrations 0228 (`projects.automation_target_pct`) and 0229
+  (`test_case_requirement_links`). TCL-02 needed no change (W28 shipped bulk
+  edits). Tests: `tests/test_test_case_list_filters.py`,
+  `tests/test_test_case_export_filters_and_columns.py`,
+  `tests/test_library_health_service.py`, `tests/test_test_case_import.py`,
+  `tests/test_test_case_timeline.py`, `tests/test_requirement_traceability.py`,
+  `tests/test_saved_case_view_schema.py`, `tests/test_test_library_vocab.py`,
+  `tests/test_tm_suites_empty_rows.py`, `tests/test_suite_update_activity.py`,
+  seven `*_postgres.py`, the `TestManagementPage` filters / health / import /
+  timeline / requirements / suites-empty vitest files, the component and model
+  tests under `pages/test-management/`, six `tests/ci-e2e/` specs
+  (`suites-edit`, `test-management-filters`, `-health`, `-import`, `-timeline`,
+  `-requirements`) and `prod-test-library.visual.spec.ts`.
 - **Search: semantic and hybrid modes, filters in the search box, saved and
   recent searches on the server, a top-bar preview, Similar failures, search
   usage** (wave W12, SRCH-01, SRCH-03, SRCH-04, SRCH-05; branch

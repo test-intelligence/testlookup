@@ -172,6 +172,24 @@ describe('testManagementService request contracts', () => {
     expect(testManagementService.exportStrategyPdfUrl('strategy-1')).toBe('/api/v1/test-management/strategies/strategy-1/export/pdf')
   })
 
+  it('W13: repeats a list filter one key per value in the export URL (as the list read sends it)', () => {
+    expect(testManagementService.exportCasesExcelUrl('project-1', {
+      status: ['draft', 'review_requested'],
+      priority: ['critical'],
+      test_type: [],
+      owner: 'me',
+      automation: 'not_automated',
+      search: 'login',
+    })).toBe(
+      '/api/v1/test-management/cases/export/excel?project_id=project-1&status=draft&status=review_requested'
+      + '&priority=critical&owner=me&automation=not_automated&search=login',
+    )
+    // Empty and absent values inside a list are dropped, as scalar ones are; never `status=draft,review_requested`.
+    const url = testManagementService.exportCasesExcelUrl(null, { status: ['draft', '', null, 'active'] })
+    expect(url).toBe('/api/v1/test-management/cases/export/excel?status=draft&status=active')
+    expect(url).not.toContain('%2C')
+  })
+
   it('encodes suite names and carries only supplied pagination filters', () => {
     testManagementService.getSuiteTrend('Checkout / card', 'project-1', 14)
     testManagementService.getSuiteCases('Checkout / card', 'project-1', { page: 2 })

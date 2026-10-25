@@ -19,8 +19,10 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { SWRConfig } from 'swr'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { useLibraryHealth } from '@/hooks/useTestLibrary'
 import { testManagementService } from '@/services/testManagementService'
 import { useAuthStore } from '@/store/authStore'
+import { LIBRARY_HEALTH_FIXTURE } from '@/test/testLibraryMocks'
 import type { ManagedTestCase } from '@/types/test-management'
 import TestManagementPage from './TestManagementPage'
 
@@ -63,6 +65,12 @@ const CASES: ManagedTestCase[] = [
   updated_at: '2026-09-15T00:00:00Z',
 }))
 
+// W13 TCL-03 (deliberate set-up): the library health is the server's (`useLibraryHealth`),
+// stubbed with the answer for these three cases (the banner facts and `Review queue · 1` read as before).
+vi.mock('@/hooks/useTestLibrary', async () => {
+  const mocks = await import('@/test/testLibraryMocks')
+  return mocks.testLibraryHookMocks({ health: mocks.LIBRARY_HEALTH_FIXTURE })
+})
 vi.mock('@/hooks/useTestManagement', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/hooks/useTestManagement')>(),
   useTestCases: () => ({
@@ -198,17 +206,19 @@ describe('Test Cases — five tabs (P4 item 7)', () => {
     }
   })
 
-  it('a draft untouched for 30 days counts as stale', () => {
-    vi.useFakeTimers({ toFake: ['Date'] })
-    vi.setSystemTime(new Date('2026-10-15T00:00:00Z'))
-    try {
-      renderAt('/test-management')
-      const banner = document.querySelector('[data-status-banner]') as HTMLElement
-      const facts = Array.from(banner.querySelectorAll('[data-banner-fact]')).map((f) => f.textContent)
-      expect(facts).toContain('Stale drafts 1')
-    } finally {
-      vi.useRealTimers()
-    }
+  // W13 TCL-03 (deliberate rewrite): "stale" (a draft untouched for 30 days) is counted by the
+  // server over the whole library now; the banner prints the answer's count.
+  it('a draft untouched for 30 days counts as stale (the server\'s count)', () => {
+    vi.mocked(useLibraryHealth).mockReturnValue(
+      { data: { ...LIBRARY_HEALTH_FIXTURE, stale_drafts: 1 }, error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useLibraryHealth>,
+    )
+    renderAt('/test-management')
+    const banner = document.querySelector('[data-status-banner]') as HTMLElement
+    const facts = Array.from(banner.querySelectorAll('[data-banner-fact]')).map((f) => f.textContent)
+    expect(facts).toContain('Stale drafts 1')
+    vi.mocked(useLibraryHealth).mockReturnValue(
+      { data: LIBRARY_HEALTH_FIXTURE, error: undefined, isLoading: false, mutate: vi.fn() } as unknown as ReturnType<typeof useLibraryHealth>,
+    )
   })
 
   it.each([

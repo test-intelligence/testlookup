@@ -52,12 +52,13 @@ def _message(exc: pytest.ExceptionInfo[ValidationError]) -> str:
 
 
 def test_the_page_literal_grows_append_only():
+    # Append-only: every value up to W12's "search" keeps its place; later waves may only add after it
+    # (W13 appended "test_management" / "test_case_view").
     pages = get_args(SAVED_VIEW_PAGES)
-    assert pages[-1] == "search"
-    assert pages[:-1] == (
-        "dashboard", "trends", "coverage", "defects", "failures", "summary_report", "explore",
+    assert pages[:8] == (
+        "dashboard", "trends", "coverage", "defects", "failures", "summary_report", "explore", "search",
     ), "never remove or reorder a value: one stored row with a retired value 422s the list"
-    assert SAVED_VIEW_KINDS == ("report_view", "search")
+    assert SAVED_VIEW_KINDS[:2] == ("report_view", "search")
 
 
 def test_a_saved_search_round_trips_with_q_stripped():

@@ -1,14 +1,32 @@
 import type { ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import { FileText } from 'lucide-react'
+import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import MetricCard from '@/components/ui/MetricCard'
 import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
 import { useNow } from '@/hooks/useNow'
-import type { ManagedTestCase } from '@/types/test-management'
+import LibraryCaseListRows from '@/pages/test-management/LibraryCaseListRows'
+import {
+  componentLine,
+  FLAKY_ACTIVE_TITLE,
+  HEALTH_LOAD_ERROR_TEXT,
+  HEALTH_NEEDS_PROJECT_TEXT,
+  NO_OWNER_TITLE,
+  automatedPctText,
+} from '@/pages/test-management/libraryHealthModel'
+import type { LibraryCaseList, LibraryHealth, ReviewQueueSummary, StrategyGapRead } from '@/types/test-library'
 
 /**
  * The Cases tab's "Insights" (UX redesign P4 item 7): what used to be the
  * right rail beside the cases table, so the table has the page's width.
- * Every card is derived from data the tab already holds (the library-health
- * roll and the audit roll); nothing here is fetched by the section itself.
+ * Every card reads data the tab already holds — since W13 TCL-03 the
+ * SERVER's library health (`GET /test-management/health`, read once on load
+ * over the WHOLE library) and the audit roll; nothing here is fetched by the
+ * section itself (opening it sends nothing). Only **Show all** of a Strategy
+ * gaps list pages more, through its own hook (`LibraryCaseListRows`).
+ *
+ * While the answer loads, after it failed, or in All Projects, every card still
+ * renders its heading, and its body says which — never zeros.
  *
  * It renders IN THE PAGE (W27b PAN-05): a read-only section named `Insights`
  * right under the health banner, above the filter bar, closed by default, its
@@ -16,28 +34,13 @@ import type { ManagedTestCase } from '@/types/test-management'
  * drawn for). X `Close panel` and Escape inside it close it.
  */
 
-export type HealthTag = 'Healthy' | 'Needs attention' | 'At risk'
-
-export interface LibraryHealth {
-  healthScore: number
-  healthTag: HealthTag
-  healthTone: string
-  totalCases: number
-  reviewCount: number
-  staleCount: number
-  deprecatedInActive: number
-  oldestReviewDays: number
-  activeCount: number
-  automatedPct: number
-  avgAgeDays: number
-  olderThan180Pct: number
-  /** Set when the rates describe a capped sample rather than the catalog. */
-  statBasis: string | null
-  /** When the cases payload arrived ("2m ago"). */
-  refreshedAt: string
+/** Where a card's health data comes from: the one read of the page. */
+export interface HealthSource {
+  projectId: string | null
+  health: LibraryHealth | undefined
+  error?: unknown
 }
 
-export interface StrategyGap { severity: 'critical' | 'warn'; title: string; sub: string; pill: string }
 export interface RecentEvent { id: string; action?: string; actor_name?: string; entity_id?: string; created_at: string; event_type?: string }
 
 export function CasesCardShell({
@@ -60,33 +63,66 @@ export function CasesCardShell({
   )
 }
 
-function HealthStat({ label, value, sub }: { label: string; value: ReactNode; sub?: ReactNode }) {
+/**
+ * A card body while there is no health answer: All Projects (nothing asked),
+ * a failed read, or one in flight. Never zeros.
+ */
+export function HealthPending({ projectId, error }: { projectId: string | null; error?: unknown }) {
+  if (!projectId || error) {
+    return (
+      <p className="px-4 py-6 m-0 text-center text-sm text-[var(--color-text-secondary)]" data-health-pending="">
+        {!projectId ? HEALTH_NEEDS_PROJECT_TEXT : HEALTH_LOAD_ERROR_TEXT}
+      </p>
+    )
+  }
   return (
-    <div className="flex flex-col gap-0.5">
-      <div className="text-[10px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
-        {label}
-      </div>
-      <div className="font-bold tabular-nums leading-[1.1] text-[var(--color-text)]" style={{ fontSize: 19, letterSpacing: '-0.01em' }}>
-        {value}
-      </div>
-      {sub && <div className="text-[10.5px] text-[var(--color-text-muted)]">{sub}</div>}
+    <div className="flex justify-center py-6" data-health-pending="">
+      <LoadingSpinner size="md" />
     </div>
   )
 }
 
+/** A health-backed card's shell with the pending body (its heading always rendered). */
+export function HealthPendingCard({ title, projectId, error }: { title: string } & Omit<HealthSource, 'health'>) {
+  return (
+    <CasesCardShell title={title}>
+      <HealthPending projectId={projectId} error={error} />
+    </CasesCardShell>
+  )
+}
+
+const TAG_INK: Record<string, string> = {
+  Healthy: 'text-[var(--ui-success-ink)]',
+  'Needs attention': 'text-[var(--ui-warning-ink)]',
+  'At risk': 'text-[var(--ui-danger-ink)]',
+}
+
+export interface LibraryHealthCardProps extends HealthSource {
+  /** = `health.total_cases`, the non-retired authored cases. */
+  totalCases: number
+  /** When the health answer arrived ("2m ago"). */
+  refreshedAt: string
+  /** The automation-target editor (QA lead+, one project; G-E), placed in the card. */
+  targetEditor?: ReactNode
+}
+
 /**
- * The library-health breakdown behind the Cases tab's banner: the score and
- * its inputs (the banner carries the score and four facts). The empty-catalog
- * explanation lives here too: a panel of zeros reads exactly like a failed
- * load (user report 2026-05-15), so it says WHY there is nothing to grade.
+ * The library-health breakdown behind the Cases tab's banner: the server's
+ * score and tag, its inputs, and one line per component with BOTH numbers.
+ * The empty-catalog explanation lives here too: a panel of zeros reads
+ * exactly like a failed load (user report 2026-05-15), so it says WHY there
+ * is nothing to grade.
  */
-export function LibraryHealthCard(p: LibraryHealth) {
-  const isEmptyCatalog = p.totalCases === 0
+export function LibraryHealthCard(p: LibraryHealthCardProps) {
+  const h = p.health
+  if (!h) return <HealthPendingCard title="Library health" projectId={p.projectId} error={p.error} />
+  const ink = (h.tag && TAG_INK[h.tag]) || 'text-[var(--color-text)]'
+  const strong = (n: ReactNode) => <strong className="text-[var(--color-text)]">{n}</strong>
   return (
     <CasesCardShell title="Library health">
       <div className="px-4 py-3.5 space-y-3">
-        {isEmptyCatalog ? (
-          <p className="text-[12.5px] m-0" style={{ color: 'var(--color-text-secondary)' }}>
+        {!h.measured ? (
+          <p className="text-sm m-0 text-[var(--color-text-secondary)]">
             <strong className="text-[var(--color-text)]">No authored test cases yet.</strong>{' '}
             Library health summarises the <strong>authored</strong> test-case catalog — not the
             execution rows ingested from CI runs — and renders once you have at least one authored
@@ -95,34 +131,37 @@ export function LibraryHealthCard(p: LibraryHealth) {
         ) : (
           <>
             <div className="flex items-baseline gap-3">
-              <span className="font-bold tabular-nums leading-none" style={{ fontSize: 30, color: p.healthTone, letterSpacing: '-0.02em' }}>
-                {p.healthScore}
-              </span>
-              <span className="text-[13px] text-[var(--color-text-muted)] font-medium">/ 100</span>
-              <span className="text-[12px] font-semibold" style={{ color: p.healthTone }}>{p.healthTag}</span>
+              <span className={`text-3xl font-bold tabular-nums leading-none ${ink}`}>{h.score ?? '—'}</span>
+              <span className="text-sm text-[var(--color-text-muted)] font-medium">/ 100</span>
+              {h.tag && <span className={`text-xs font-semibold ${ink}`}>{h.tag}</span>}
             </div>
-            <p className="text-[12.5px] m-0" style={{ color: 'var(--color-text-secondary)' }}>
-              <strong style={{ color: 'var(--color-text)' }}>{p.totalCases}</strong> case{p.totalCases === 1 ? '' : 's'} · <strong style={{ color: 'var(--color-text)' }}>{p.reviewCount}</strong> awaiting review, <strong style={{ color: 'var(--color-text)' }}>{p.staleCount}</strong> stale drafts over 30 days, <strong style={{ color: 'var(--color-text)' }}>{p.deprecatedInActive}</strong> deprecated still in active suites.
+            <p className="text-sm m-0 text-[var(--color-text-secondary)]">
+              {strong(p.totalCases)} case{p.totalCases === 1 ? '' : 's'} · {strong(h.review_queue.total)} awaiting review, {strong(h.stale_drafts)} stale drafts over 30 days, {strong(h.retired_in_open_plans)} deprecated still in active plans.
             </p>
             <div className="grid grid-cols-3 gap-3">
-              <HealthStat label="Active" value={p.activeCount} />
-              <HealthStat label="Automated" value={`${p.automatedPct}%`} sub="target 60%" />
-              {/* A fourth stat, "Req coverage", once read a constant 87% for
-                  every project. There is no requirements data to compute a
-                  real one from, and an invented number is worse than none. */}
-              <HealthStat label="Avg age" value={`${p.avgAgeDays}d`} sub={`${p.olderThan180Pct}% >180d`} />
+              <MetricCard size="sm" title="Active" metric={{ value: h.active_cases }} />
+              <MetricCard size="sm" title="Automated" metric={{ value: automatedPctText(h) }} caption={`target ${h.automation_target_pct}%`} />
+              <MetricCard
+                size="sm"
+                title="Avg age"
+                metric={{ value: h.avg_age_days == null ? '—' : `${Math.round(h.avg_age_days)}d` }}
+                caption={h.older_than_180_pct == null ? undefined : `${Math.round(h.older_than_180_pct)}% >180d`}
+              />
             </div>
+            {p.targetEditor}
+            <ul className="m-0 p-0 list-none space-y-0.5" data-health-components="">
+              {h.components.map((c) => (
+                <li key={c.key} className="text-xs text-[var(--color-text-secondary)]" data-health-component={c.key}>
+                  {componentLine(c)}
+                </li>
+              ))}
+            </ul>
           </>
-        )}
-        {p.statBasis && (
-          <p className="text-[11px] m-0 text-[var(--color-text-muted)]" data-testid="library-health-stat-basis-drawer">
-            {p.statBasis}
-          </p>
         )}
         {/* This row once read "Library indexed against prd:current ·
             main@HEAD": neither ref exists. The refresh time is real (it comes
-            from useDataFreshness), so it is what remains. */}
-        <p className="text-[11px] m-0 text-[var(--color-text-muted)]">Library refreshed {p.refreshedAt}</p>
+            from useDataFreshness over the health answer), so it is what remains. */}
+        <p className="text-xs m-0 text-[var(--color-text-muted)]">Library refreshed {p.refreshedAt}</p>
       </div>
     </CasesCardShell>
   )
@@ -194,87 +233,117 @@ function Legend({ color, label }: { color: string; label: string }) {
   )
 }
 
-export function ReviewQueueCard({ rows, onPick }: { rows: ManagedTestCase[]; onPick: (c: ManagedTestCase) => void }) {
-  const now = useNow()  // captured at mount — avoids impure Date.now() in render
+/**
+ * The oldest five cases awaiting review, from the health answer (names
+ * resolved, oldest first), and the queue's TOTAL; the Approvals tab is the
+ * whole queue. A row opens its case (`?case=`; the page fetches it when it is
+ * not on the current page).
+ */
+export function ReviewQueueCard({ projectId, health, error, onPick }: HealthSource & { onPick: (caseId: string) => void }) {
+  const queue: ReviewQueueSummary | undefined = health?.review_queue
+  if (!queue) return <HealthPendingCard title="Review queue" projectId={projectId} error={error} />
   return (
-    <CasesCardShell title={`Review queue · ${rows.length}`}>
-      {rows.length === 0 ? (
-        <div className="px-4 py-6 text-center text-[12.5px] text-[var(--color-text-secondary)]">
+    <CasesCardShell title={`Review queue · ${queue.total}`}>
+      {queue.items.length === 0 ? (
+        <div className="px-4 py-6 text-center text-sm text-[var(--color-text-secondary)]">
           Caught up — review queue is empty.
         </div>
       ) : (
         <div>
-          {rows.map(c => {
-            const days = Math.floor((now - new Date(c.updated_at).getTime()) / 86400000)
-            const ageColor = days >= 7 ? 'var(--status-failed)' : 'var(--color-text-muted)'
-            return (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => onPick(c)}
-                className="grid items-center gap-2.5 w-full text-left hover:bg-[var(--color-bg-hover)] transition-colors"
-                style={{
-                  gridTemplateColumns: '1fr auto',
-                  padding: '10px 16px',
-                  borderBottom: '1px solid var(--color-border)',
-                }}
-              >
-                <div className="min-w-0">
-                  <div className="text-[12.5px] m-0 flex items-center gap-1.5">
-                    <code className="font-mono text-[11px]" style={{ color: 'var(--color-accent)' }}>TC-{c.id.slice(0, 6).toUpperCase()}</code>
-                    <span className="text-[var(--color-text)] truncate font-medium">{c.title}</span>
-                  </div>
-                  <div className="text-[10.5px] text-[var(--color-text-muted)] truncate mt-0.5">
-                    {c.assignee_id ? c.assignee_id.slice(0, 8) : 'Unassigned'} · requested by {c.author_id ? c.author_id.slice(0, 8) : '—'}
-                  </div>
+          {queue.items.map((row) => (
+            <button
+              key={row.id}
+              type="button"
+              onClick={() => onPick(row.id)}
+              data-review-queue-row={row.id}
+              className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2.5 w-full text-left px-4 py-2.5 border-b border-[var(--color-border)] hover:bg-[var(--color-bg-hover)] transition-colors"
+            >
+              <div className="min-w-0">
+                <div className="text-sm m-0 flex items-center gap-1.5">
+                  <code className="font-mono text-xs text-[var(--color-accent-ink)]">TC-{row.id.slice(0, 6).toUpperCase()}</code>
+                  <span className="text-[var(--color-text)] truncate font-medium">{row.title}</span>
                 </div>
-                <span className="text-[11px] tabular-nums" style={{ color: ageColor }}>
-                  {days < 1 ? `${Math.max(1, Math.floor((now - new Date(c.updated_at).getTime()) / 3600000))}h` : `${days}d`}
-                </span>
-              </button>
-            )
-          })}
+                <div className="text-xs text-[var(--color-text-muted)] truncate mt-0.5">{row.owner ?? 'Unassigned'}</div>
+              </div>
+              <span className={`text-xs tabular-nums ${(row.age_days ?? 0) >= 7 ? 'text-[var(--ui-danger-ink)]' : 'text-[var(--color-text-muted)]'}`}>
+                {row.age_days == null ? '—' : `${row.age_days} day${row.age_days === 1 ? '' : 's'}`}
+              </span>
+            </button>
+          ))}
+          {queue.total > queue.items.length && (
+            <p className="m-0 px-4 py-2.5 text-xs text-[var(--color-text-muted)]">
+              <Link to="/test-management?tab=approvals" className="text-[var(--color-accent-ink)] hover:underline">
+                Open the Approvals tab
+              </Link>{' '}
+              for the other {queue.total - queue.items.length}.
+            </p>
+          )}
         </div>
       )}
     </CasesCardShell>
   )
 }
 
-export function StrategyGapsCard({ gaps }: { gaps: StrategyGap[] }) {
+const PILL_BY_SEVERITY: Record<string, string> = {
+  critical: 'bg-[var(--ui-danger-bg)] border-[var(--ui-danger-bd)] text-[var(--ui-danger-ink)]',
+  warn: 'bg-[var(--ui-warning-bg)] border-[var(--ui-warning-bd)] text-[var(--ui-warning-ink)]',
+}
+
+type ListKind = 'flaky_active' | 'no_owner'
+const LIST_TITLES: Record<ListKind, string> = { flaky_active: FLAKY_ACTIVE_TITLE, no_owner: NO_OWNER_TITLE }
+
+interface GapRow { kind: string; title: string; detail: string; pill: string | null; severity: string }
+
+/**
+ * The server's strategy gaps in its order. The two case lists ("Flaky and
+ * active", "No owner") carry their rows in place; an UNMEASURED list has no
+ * gap to show a count for, so it gets a row of its own saying why (never `0`).
+ */
+function gapRows(health: LibraryHealth): GapRow[] {
+  const rows: GapRow[] = health.strategy_gaps.map((g: StrategyGapRead) => ({
+    kind: g.kind, title: g.title, detail: g.detail, pill: g.pill, severity: g.severity,
+  }))
+  for (const kind of ['flaky_active', 'no_owner'] as const) {
+    const list: LibraryCaseList = health[kind]
+    if (list.measured === false && !rows.some((r) => r.kind === kind)) {
+      rows.push({ kind, title: LIST_TITLES[kind], detail: '', pill: null, severity: 'warn' })
+    }
+  }
+  return rows
+}
+
+export function StrategyGapsCard({ projectId, health, error, onOpenCase }: HealthSource & { onOpenCase: (caseId: string) => void }) {
+  if (!health) return <HealthPendingCard title="Strategy gaps" projectId={projectId} error={error} />
+  const rows = gapRows(health)
   return (
     <CasesCardShell title="Strategy gaps">
-      {gaps.length === 0 ? (
-        <div className="px-4 py-6 text-center text-[12.5px] text-[var(--color-text-secondary)]">
+      {rows.length === 0 ? (
+        <div className="px-4 py-6 text-center text-sm text-[var(--color-text-secondary)]">
           No gaps detected against current strategy.
         </div>
       ) : (
         <div>
-          {gaps.map((g, i) => (
-            <div
-              key={i}
-              className="grid items-center gap-2.5"
-              style={{
-                gridTemplateColumns: '1fr auto',
-                padding: '9px 16px',
-                borderBottom: i < gaps.length - 1 ? '1px solid var(--color-border)' : '0',
-              }}
-            >
-              <div className="min-w-0">
-                <div className="text-[12px] font-medium text-[var(--color-text)]">{g.title}</div>
-                <div className="text-[10.5px] text-[var(--color-text-muted)]">{g.sub}</div>
+          {rows.map((g) => {
+            const listKind = g.kind === 'flaky_active' || g.kind === 'no_owner' ? (g.kind as ListKind) : null
+            return (
+              <div key={g.kind} data-strategy-gap={g.kind} className="px-4 py-2.5 border-b border-[var(--color-border)] last:border-b-0">
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2.5">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-[var(--color-text)]">{g.title}</div>
+                    {g.detail && <div className="text-xs text-[var(--color-text-muted)]">{g.detail}</div>}
+                  </div>
+                  {g.pill && (
+                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full border text-xs font-semibold ${PILL_BY_SEVERITY[g.severity] ?? PILL_BY_SEVERITY.warn}`}>
+                      {g.pill}
+                    </span>
+                  )}
+                </div>
+                {listKind && projectId && (
+                  <LibraryCaseListRows projectId={projectId} kind={listKind} list={health[listKind]} onOpenCase={onOpenCase} />
+                )}
               </div>
-              <span
-                className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10.5px] font-semibold"
-                style={{
-                  background: g.severity === 'critical' ? 'color-mix(in srgb, var(--status-failed) 14%, transparent)' : 'color-mix(in srgb, var(--status-broken) 14%, transparent)',
-                  border: g.severity === 'critical' ? '1px solid color-mix(in srgb, var(--status-failed) 30%, transparent)' : '1px solid color-mix(in srgb, var(--status-broken) 30%, transparent)',
-                  color: g.severity === 'critical' ? 'var(--status-failed)' : 'var(--status-broken)',
-                }}
-              >
-                {g.pill}
-              </span>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </CasesCardShell>

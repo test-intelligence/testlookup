@@ -3,6 +3,16 @@ import type { PaginatedResponse } from './common'
 export type { PaginatedResponse }
 
 /**
+ * W13 TCL-01: `GET /test-management/cases`. `automation_rows_excluded` is true
+ * when `include_automation` was asked and the authored-only path answered (a
+ * filter the merged automation path cannot apply was set). Optional: an older
+ * server, and every existing fixture, omit it.
+ */
+export type ManagedTestCaseListResponse = PaginatedResponse<ManagedTestCase> & {
+  automation_rows_excluded?: boolean
+}
+
+/**
  * Wire vocabulary for the authored test-case lifecycle. Keep runtime UI
  * controls, filters and TypeScript types on this one list so a state cannot be
  * rendered without also being queryable.
@@ -433,7 +443,8 @@ export interface AICoverageResponse {
   summary?: string
 }
 
-export type TestCaseEvidenceGapKind = 'never_executed' | 'automation_vanished'
+/** W13 TCL-03 adds `flaky_active` and `no_owner` (the server's `EVIDENCE_GAP_KINDS`). */
+export type TestCaseEvidenceGapKind = 'never_executed' | 'automation_vanished' | 'flaky_active' | 'no_owner'
 
 export interface TestCaseEvidenceGapItem {
   id: string
@@ -444,6 +455,11 @@ export interface TestCaseEvidenceGapItem {
   canonical_status?: string | null
   deleted_observed_at?: string | null
   last_executed_at?: string | null
+  /** W13 `no_owner`: `unassigned` | `deactivated`. */
+  owner_state?: string | null
+  /** W13 `flaky_active`. */
+  flaky_score?: number | null
+  flaky_confidence?: string | null
 }
 
 export interface TestCaseEvidenceGapResponse {

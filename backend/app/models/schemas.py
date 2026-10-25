@@ -47,6 +47,27 @@ from app.core.search_vocab import (
     SEARCH_MODES,
     SEARCH_SCOPES,
 )
+# W13 (TCL-01): the saved case view's rules and sentences live with the
+# test-library vocabulary, which the services, the routers and the tests import too.
+from app.core.test_library_vocab import (
+    AUTOMATION_TARGET_DEFAULT,
+    CASE_AUTOMATION_FILTERS,
+    CASE_FILTER_MAX_VALUES,
+    CASE_PRIORITIES,
+    CASE_VIEW_KEYS,
+    CASE_VIEW_KEYS_SENTENCE,
+    CASE_VIEW_PAGE_SENTENCE,
+    CASE_VIEW_Q_MAX,
+    CASE_VIEW_REQUIREMENT_MAX,
+    CASE_VIEW_SHARE_NEEDS_PROJECT,
+    CASE_VIEW_SUITE_MAX,
+    CASE_VIEW_TYPE_MAX,
+    CASE_VIEW_VALUE_SENTENCE,
+    LIFECYCLE_STATES,
+    OWNER_ME,
+    TEST_CASE_VIEW_KIND,
+    TEST_CASE_VIEW_PAGE,
+)
 # W03 (AI history): the types live in their own module; the existing models
 # below only gain optional fields of these types.
 from app.models.ai_history_schemas import (
@@ -554,6 +575,9 @@ class ProjectUpdate(BaseModel):
     # W28 TCM-02 (migration 0222): a test case needs an approved review before
     # Active. exclude_none in the PUT applies a False (routers/projects.py).
     require_case_review: Optional[bool] = None
+    # W13 TCL-03 (migration 0228): the library health's automation target, a
+    # whole percentage; exclude_none in the PUT applies it (0 included).
+    automation_target_pct: Optional[int] = Field(None, ge=0, le=100)
 
     # W10 INT-03: validated at save; "" clears the field (stored "", read as
     # unset by the precedence rule, so the deployment's index / namespace apply).
@@ -585,6 +609,7 @@ class ProjectResponse(TimestampMixin):
     manager_user_id: Optional[uuid.UUID] = None  # migration 0076
     default_qa_lead_user_id: Optional[uuid.UUID] = None  # migration 0079
     require_case_review: bool = False  # migration 0222 (W28 TCM-02)
+    automation_target_pct: int = AUTOMATION_TARGET_DEFAULT  # migration 0228 (W13 TCL-03)
     # S1 — retention posture, resolved in the SAME query as the project list
     # (LEFT JOIN, never a per-project lookup). Three states, deliberately
     # distinct: "unconfigured" (no policy row has ever existed) is the case
@@ -602,6 +627,13 @@ class ProjectResponse(TimestampMixin):
         # at INSERT: a Project answered before its flush (a hand-built row, a
         # session double) still carries None. That is the default, so: off.
         return False if value is None else value
+
+    @field_validator("automation_target_pct", mode="before")
+    @classmethod
+    def _unflushed_automation_target_is_the_default(cls, value: Any) -> Any:
+        # NOT NULL DEFAULT 60 (migration 0228), applied only at INSERT: an
+        # unflushed Project carries None, which is the default target.
+        return AUTOMATION_TARGET_DEFAULT if value is None else value
 
 
 class DeleteRunRequest(BaseModel):
@@ -3396,6 +3428,25 @@ class ManagedTestCaseResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    # W13 (a pre-existing 500, made prominent by the TCL-01 automation filter):
+    # ``managed_test_cases.is_automated`` / ``ai_generated`` / ``automation_status``
+    # are NULLABLE columns (migration 0007: a server default, no NOT NULL), so a
+    # row written without them (raw SQL, an old writer) holds NULL -- and one such
+    # row on a page failed this response's validation: the whole list answered 500.
+    # A NULL reads as the column's own default, the value an INSERT would have
+    # stored, and exactly what the server's filters already assume:
+    # ``automation=not_automated`` is ``coalesce(is_automated, false) = false`` and
+    # the library health counts ``is_automated IS TRUE`` as automated. The wire
+    # type stays ``bool`` / ``str`` (the SPA's ``ManagedTestCase`` is unchanged).
+    _NULL_COLUMN_DEFAULTS: ClassVar[dict[str, Any]] = {
+        "is_automated": False, "ai_generated": False, "automation_status": "not_automated",
+    }
+
+    @field_validator("is_automated", "ai_generated", "automation_status", mode="before")
+    @classmethod
+    def _null_column_reads_as_its_default(cls, value: Any, info: Any) -> Any:
+        return cls._NULL_COLUMN_DEFAULTS[info.field_name] if value is None else value
+
 
 class ManagedTestCaseListResponse(BaseModel):
     items: List[ManagedTestCaseResponse]
@@ -3403,6 +3454,9 @@ class ManagedTestCaseListResponse(BaseModel):
     page: int
     size: int
     pages: int
+    # W13 TCL-01: include_automation was asked and the authored-only path
+    # answered (a filter the merged automation path cannot apply was set).
+    automation_rows_excluded: bool = False
 
 
 class TestCaseVersionExecution(BaseModel):
@@ -3853,6 +3907,9 @@ class CanonicalTestCaseResponse(TimestampMixin):
     review_tag: Optional[str] = None
     tags: Optional[List[str]] = None
     run_count: Optional[int] = None
+    # W13 TCL-07: the created_at of the run last_seen_run_id names (read by run
+    # id within the suite's project); None = unknown, never a guessed date.
+    last_seen_at: Optional[datetime] = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -3902,11 +3959,218 @@ class EvidenceGapItem(BaseModel):
     canonical_status: Optional[str] = None
     deleted_observed_at: Optional[datetime] = None
     last_executed_at: Optional[datetime] = None
+    # W13 TCL-03: the two new kinds' facts; never_executed / automation_vanished leave them None.
+    owner_state: Optional[str] = None          # no_owner: "unassigned" | "deactivated"
+    flaky_score: Optional[float] = None        # flaky_active
+    flaky_confidence: Optional[str] = None     # flaky_active
 
 
 class EvidenceGapListResponse(BaseModel):
     items: List[EvidenceGapItem]
     total: int
+
+
+# ── W13 TCL-03: library health (GET /api/v1/test-management/health) ──────────
+# Enum-like fields are plain ``str``; each vocabulary is in core/test_library_vocab.
+
+
+class LibraryHealthComponent(BaseModel):
+    key: str                                   # HEALTH_COMPONENTS
+    label: str                                 # HEALTH_COMPONENT_LABELS[key]
+    weight: float                              # HEALTH_WEIGHTS[key]
+    measured: bool                             # False when its denominator is 0 (then value / numerator are None)
+    value: Optional[float] = None              # the component's 0..100 score
+    numerator: Optional[int] = None
+    denominator: Optional[int] = None
+    detail: str                                # one sentence with both numbers
+
+
+class LibraryCaseRow(BaseModel):
+    id: uuid.UUID
+    title: str                                 # React text
+    status: str
+    owner: Optional[str] = None                # full name, else username; None = nobody
+    age_days: Optional[int] = None             # review queue: days in review; stale lists: days since the last change
+    detail: Optional[str] = None               # "flaky score 0.72 (high confidence)" / "owner deactivated" / "unassigned"
+
+
+class LibraryCaseList(BaseModel):
+    total: int                                 # every match (a count, not the page length)
+    items: List[LibraryCaseRow]                # <= HEALTH_LIST_PREVIEW (5)
+    measured: bool = True
+    reason: Optional[str] = None               # when not measured: the sentence (FLAKY_UNMEASURED_*)
+
+
+class ReviewQueueSummary(LibraryCaseList):
+    oldest_age_days: Optional[int] = None      # None when the queue is empty
+
+
+class StrategyGapRead(BaseModel):
+    kind: str                                  # STRATEGY_GAP_KINDS
+    severity: str                              # "critical" | "warn"
+    title: str                                 # STRATEGY_GAP_TITLES[kind]
+    detail: str                                # "oldest 9 days" / "38 % automated · target 75 %"
+    count: int                                 # the pill's number (cases; automation_below_target: the % points gap)
+    pill: str                                  # "3 in open plans" / "2 pending" / "22 % gap" / "4 stale" / "3 flaky" / "7 cases"
+
+
+class RequirementGapRead(BaseModel):
+    key: str                                   # the key as first written (a link's typed key, else the extracted id)
+    normalized_key: str
+    reason: str                                # REQUIREMENT_GAP_REASONS
+    sources: List[str]                         # REQUIREMENT_KEY_SOURCES it is known from
+    linked_cases: int = 0                      # cases linking it with any link type (retired cases excluded)
+    batch_claimed_cases: int = 0               # requirement_coverage.covered_by_case_ids of its batches (a claim, not a link)
+
+
+class RequirementCoverageSummary(BaseModel):
+    measured: bool                             # False when the project knows no requirement key
+    known: int                                 # distinct normalised keys known to the project
+    verified: int                              # keys with >= 1 "verifies" link from a non-retired case
+    partly_verified: int                       # no "verifies", >= 1 "partially_verifies"
+    gaps: int                                  # known - verified
+    truncated: bool = False                    # a source held more than KNOWN_KEYS_CAP distinct keys: lower bounds
+    reason: Optional[str] = None               # REQUIREMENTS_UNMEASURED_SENTENCE when not measured
+    top_gaps: List[RequirementGapRead] = Field(default_factory=list)   # <= 5 (no_link, related_only, partly_verified)
+
+
+class LibraryHealthResponse(BaseModel):
+    project_id: uuid.UUID
+    computed_at: datetime
+    measured: bool                             # False when the project has no non-retired authored case
+    total_cases: int                           # non-retired authored cases (the banner's "Cases")
+    active_cases: int
+    retired_cases: int
+    automated_cases: int
+    automation_target_pct: int                 # projects.automation_target_pct (default 60)
+    stale_drafts: int                          # drafts unchanged for STALE_DRAFT_DAYS
+    retired_in_open_plans: int                 # deprecated / archived cases still items of a plan not completed / archived
+    avg_age_days: Optional[float] = None
+    older_than_180_days: int = 0
+    older_than_180_pct: Optional[float] = None
+    score: Optional[int] = None                # 0..100 over the measured components; None when not measured
+    tag: Optional[str] = None                  # HEALTH_TAGS
+    components: List[LibraryHealthComponent]
+    review_queue: ReviewQueueSummary
+    strategy_gaps: List[StrategyGapRead]
+    flaky_active: LibraryCaseList
+    no_owner: LibraryCaseList
+    suite_names: List[str]                     # the authored suite names (the Suite filter's options), sorted, <= 500
+    suite_names_total: int
+    requirements: Optional[RequirementCoverageSummary] = None   # None when the traceability flag is off
+
+
+# ── W13 TCL-04: import (POST /cases/import: multipart file + QUERY project_id, dry_run) ──
+
+
+class ImportHeaderReport(BaseModel):
+    recognised: List[str]                      # the file's headers that map to a field, as written
+    ignored: List[str]                         # export-only headers (IMPORT_IGNORED_HEADERS)
+    unknown: List[str]                         # anything else (reported, never imported)
+
+
+class ImportDuplicateOf(BaseModel):
+    case_id: Optional[uuid.UUID] = None        # an existing case of the project
+    title: Optional[str] = None
+    row: Optional[int] = None                  # an earlier row of the same file
+
+
+class ImportRowResult(BaseModel):
+    row: int                                   # the spreadsheet row number (the header is row 1)
+    outcome: str                               # IMPORT_OUTCOMES: create | duplicate | invalid | created
+    title: Optional[str] = None                # React text (<= 500)
+    reasons: List[str] = Field(default_factory=list)    # why invalid / duplicate (IMPORT_* sentences)
+    warnings: List[str] = Field(default_factory=list)   # kept-as-written values, the ignored Status, a stripped "'"
+    duplicate_of: Optional[ImportDuplicateOf] = None
+    case_id: Optional[uuid.UUID] = None        # outcome "created" only
+
+
+class ImportSummary(BaseModel):
+    rows: int
+    create: int                                # dry run: would be created; apply: valid rows attempted
+    duplicate: int
+    invalid: int
+    created: int = 0                           # apply only
+
+
+class TestCaseImportResponse(BaseModel):
+    project_id: uuid.UUID
+    dry_run: bool
+    file_name: str                             # <= 200, control characters dropped
+    format: str                                # IMPORT_FORMATS: csv | xlsx
+    headers: ImportHeaderReport
+    summary: ImportSummary
+    rows: List[ImportRowResult]                # one per data row, file order (<= IMPORT_MAX_ROWS)
+
+
+# ── W13 TCL-05: the case timeline (GET /cases/{case_id}/timeline) ────────────
+
+
+class TimelineLink(BaseModel):
+    type: str                                  # TIMELINE_LINK_TYPES: run_result | run | plan | defect
+    run_id: Optional[uuid.UUID] = None
+    test_case_id: Optional[uuid.UUID] = None   # a per-run RESULT id (run_result)
+    plan_id: Optional[uuid.UUID] = None
+    defect_id: Optional[uuid.UUID] = None
+    jira_key: Optional[str] = None
+
+
+class TimelineEntry(BaseModel):
+    id: str                                    # unique within its kind (review rows: "<uuid>:requested" / ":decided")
+    kind: str                                  # TIMELINE_KINDS
+    occurred_at: datetime
+    actor_id: Optional[uuid.UUID] = None
+    actor_name: Optional[str] = None           # full name, else username; None = nobody recorded
+    actor_source: Optional[str] = None         # VERSION_SOURCES on version rows; "automation" on runs; else None
+    title: str                                 # one server-rendered sentence (timeline_title), React text
+    detail: Optional[str] = None               # <= 300 characters
+    status: Optional[str] = None               # the version's status / the execution's result / the decision / the defect's state
+    version: Optional[int] = None              # version rows; the executed case version on a plan execution when recorded
+    link: Optional[TimelineLink] = None
+
+
+class TestCaseTimelineResponse(BaseModel):
+    case_id: uuid.UUID
+    kinds: List[str]                           # the kinds this page covers (the request's, else every kind)
+    items: List[TimelineEntry]                 # <= limit, (occurred_at DESC, kind ASC, id DESC)
+    next_cursor: Optional[str] = None          # None = the end of the stream (a stream is paged, not counted)
+    automation_linked: bool = False            # the case has an automation identity: automated kinds can answer
+
+
+# ── W13 TCL-06: requirement links (/cases/{case_id}/requirements, /traceability/gaps) ──
+
+
+class RequirementLinkCreate(BaseModel):
+    requirement_key: str = Field(..., min_length=1, max_length=200)
+    requirement_title: Optional[str] = Field(None, max_length=500)
+    link_type: str = Field("verifies", max_length=20)   # REQUIREMENT_LINK_TYPES, judged in the service (422 sentence)
+
+
+class RequirementLinkRead(BaseModel):
+    id: uuid.UUID
+    test_case_id: uuid.UUID
+    requirement_key: str
+    normalized_key: str
+    requirement_title: Optional[str] = None
+    link_type: str
+    created_by_name: Optional[str] = None
+    created_at: datetime
+
+
+class RequirementLinkListResponse(BaseModel):
+    items: List[RequirementLinkRead]           # oldest first
+    total: int
+
+
+class TraceabilityGapsResponse(BaseModel):
+    project_id: uuid.UUID
+    summary: RequirementCoverageSummary        # the same numbers the health answer carries (top_gaps empty here)
+    gaps: List[RequirementGapRead]             # the page
+    gaps_total: int
+    page: int
+    size: int
+    cases_without_requirements_total: int      # approved / active cases with no link at all
+    cases_without_requirements: List[LibraryCaseRow]   # <= 25, oldest first
 
 
 class CanonicalTestCaseLinkRequest(BaseModel):
@@ -5881,9 +6145,11 @@ class TeamChannelResponse(BaseModel):
 # VIZ-609: ``summary_report`` and ``explore`` join. Never REMOVE a value: ``page``
 # is an unconstrained String(50) column, and one row carrying a retired value
 # would 422 the whole list endpoint, which declares this Literal as its filter.
-# W12 SRCH-03: ``search`` joins (saved searches). Append-only.
+# W12 SRCH-03: ``search`` joins (saved searches). W13 TCL-01: ``test_management``
+# joins (saved case views). Append-only.
 SAVED_VIEW_PAGES = Literal[
     "dashboard", "trends", "coverage", "defects", "failures", "summary_report", "explore", "search",
+    "test_management",
 ]
 MAX_SAVED_VIEW_INSTANCES = 12
 
@@ -5893,8 +6159,11 @@ MAX_SAVED_VIEW_FILTERS_BYTES = 32 * 1024
 
 #: The ``kind`` a named report view carries (the saved-views manager), and
 #: W12 SRCH-03's saved search (``page = "search"``, ``filters = {kind, q,
-#: scope, mode}``). A layout row (``useAnalyticsView``) has no kind. Append-only.
-SAVED_VIEW_KINDS = ("report_view", SAVED_SEARCH_KIND)
+#: scope, mode}``). A layout row (``useAnalyticsView``) has no kind. W13 TCL-01:
+#: the saved case view (``page = "test_management"``, ``filters = {kind,
+#: statuses, priorities, types, owner, automation, suite, q, ai_generated,
+#: requirement}``). Append-only.
+SAVED_VIEW_KINDS = ("report_view", SAVED_SEARCH_KIND, TEST_CASE_VIEW_KIND)
 
 #: W08 TRND-10: ``filters.charts`` holds the customised charts of a view's page,
 #: one entry per chart key (``trends.suite-series``, ``trends.compare``) and
@@ -5973,6 +6242,89 @@ def _validate_saved_search_filters(filters: dict) -> dict:
     return {"kind": SAVED_SEARCH_KIND, "q": q.strip(), "scope": scope, "mode": mode}
 
 
+def _case_view_refusal(key: str) -> PydanticCustomError:
+    return PydanticCustomError("saved_case_view", CASE_VIEW_VALUE_SENTENCE.format(key=key))
+
+
+def _case_view_list(filters: dict, key: str, allowed: tuple[str, ...] | None) -> list[str] | None:
+    """A list of strings, stripped, de-duplicated (order kept); None when absent or empty."""
+    value = filters.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, list) or len(value) > CASE_FILTER_MAX_VALUES:
+        raise _case_view_refusal(key)
+    out: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise _case_view_refusal(key)
+        item = item.strip()
+        if allowed is not None and item not in allowed:
+            raise _case_view_refusal(key)
+        if allowed is None and not 1 <= len(item) <= CASE_VIEW_TYPE_MAX:
+            raise _case_view_refusal(key)
+        if item not in out:
+            out.append(item)
+    return out or None
+
+
+def _case_view_text(filters: dict, key: str, max_chars: int) -> str | None:
+    value = filters.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not 1 <= len(value.strip()) <= max_chars:
+        raise _case_view_refusal(key)
+    return value.strip()
+
+
+def _validate_case_view_filters(filters: dict) -> dict:
+    """W13 TCL-01: a saved case view's ``filters`` (``kind == "test_case_view"`` ONLY).
+
+    Keys within ``CASE_VIEW_KEYS``; ``statuses`` lifecycle values, ``priorities``
+    ``CASE_PRIORITIES``, ``types`` strings of 1-50 characters, each list at most
+    ``CASE_FILTER_MAX_VALUES``; ``owner`` None, ``"me"`` or a user id;
+    ``automation`` None or ``CASE_AUTOMATION_FILTERS``; ``suite`` 1-500 and
+    ``requirement`` 1-200 characters; ``q`` 1-200 characters, stripped;
+    ``ai_generated`` None or a bool. One sentence per rule
+    (``core/test_library_vocab``). Returns the normalised dict: strings
+    stripped, lists de-duplicated with their order kept, empty lists dropped,
+    a user id in its canonical form. ``owner: "me"`` means the READER.
+    """
+    if set(filters) - CASE_VIEW_KEYS:
+        raise PydanticCustomError("saved_case_view", CASE_VIEW_KEYS_SENTENCE)
+    out: dict[str, Any] = {"kind": TEST_CASE_VIEW_KIND}
+    for key, allowed in (("statuses", LIFECYCLE_STATES), ("priorities", CASE_PRIORITIES), ("types", None)):
+        values = _case_view_list(filters, key, allowed)
+        if values:
+            out[key] = values
+    if "owner" in filters:
+        owner = filters["owner"]
+        if owner is not None:
+            if not isinstance(owner, str):
+                raise _case_view_refusal("owner")
+            owner = owner.strip()
+            if owner != OWNER_ME:
+                try:
+                    owner = str(uuid.UUID(owner))
+                except ValueError:
+                    raise _case_view_refusal("owner") from None
+        out["owner"] = owner
+    if "automation" in filters:
+        automation = filters["automation"]
+        if automation is not None and automation not in CASE_AUTOMATION_FILTERS:
+            raise _case_view_refusal("automation")
+        out["automation"] = automation
+    for key, max_chars in (("suite", CASE_VIEW_SUITE_MAX), ("q", CASE_VIEW_Q_MAX),
+                           ("requirement", CASE_VIEW_REQUIREMENT_MAX)):
+        if key in filters:
+            out[key] = _case_view_text(filters, key, max_chars)
+    if "ai_generated" in filters:
+        ai_generated = filters["ai_generated"]
+        if ai_generated is not None and not isinstance(ai_generated, bool):
+            raise _case_view_refusal("ai_generated")
+        out["ai_generated"] = ai_generated
+    return out
+
+
 def _validate_saved_view_filters(filters: dict) -> dict:
     """Reject malformed analytics layouts while preserving legacy filters.
 
@@ -5995,6 +6347,8 @@ def _validate_saved_view_filters(filters: dict) -> dict:
         raise ValueError(f"filters.kind must be one of {', '.join(SAVED_VIEW_KINDS)}")
     if kind == SAVED_SEARCH_KIND:
         return _validate_saved_search_filters(filters)
+    if kind == TEST_CASE_VIEW_KIND:
+        return _validate_case_view_filters(filters)
     _check_string_list(filters, "release_ids")
     _check_string_list(filters, "suites")
     window = filters.get("window")
@@ -6051,7 +6405,17 @@ class SavedViewCreate(BaseModel):
         """W12 SRCH-03: a saved search (``filters.kind == "search"``) belongs
         to ``page = "search"``, and one saved for All Projects (no
         ``project_id``) cannot be shared: ``list_saved_views`` shows a shared
-        row only to members of its project. Every other kind is untouched."""
+        row only to members of its project. Every other kind is untouched.
+
+        W13 TCL-01: the same two rules for a saved case view
+        (``filters.kind == "test_case_view"``): ``page = "test_management"``,
+        and sharing needs a project."""
+        if self.filters.get("kind") == TEST_CASE_VIEW_KIND:
+            if self.page != TEST_CASE_VIEW_PAGE:
+                raise PydanticCustomError("saved_case_view", CASE_VIEW_PAGE_SENTENCE)
+            if self.is_shared and self.project_id is None:
+                raise PydanticCustomError("saved_case_view", CASE_VIEW_SHARE_NEEDS_PROJECT)
+            return self
         if self.filters.get("kind") != SAVED_SEARCH_KIND:
             return self
         if self.page != "search":

@@ -33,13 +33,17 @@ import type { ManagedTestCase, PaginatedResponse, TestCaseVersion, TestPlan, Tes
 import TestManagementPage, { TestCasesTab } from './TestManagementPage'
 
 vi.mock('@/store/projectStore', () => {
-  const state = { activeProjectId: 'project-1', activeProject: { id: 'project-1', name: 'Project One' } }
+  // W13 (deliberate set-up): `projects` as the real store always has it (the Views bar reads
+  // the project's name from it, in All Projects too).
+  const state = { activeProjectId: 'project-1', activeProject: { id: 'project-1', name: 'Project One' }, projects: [] }
   return {
     ALL_PROJECTS_ID: '__ALL__',
     useProjectStore: (selector: (s: typeof state) => unknown) => selector(state),
   }
 })
 vi.mock('@/hooks/useFeatureFlags', () => ({ useFeatureEnabled: () => true }))
+// W13 (deliberate set-up): the page's new reads (library health, the owner list, saved views) stubbed idle.
+vi.mock('@/hooks/useTestLibrary', async () => (await import('@/test/testLibraryMocks')).testLibraryHookMocks())
 vi.mock('@/hooks/useTestManagement', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/hooks/useTestManagement')>(),
   useAuditLog: vi.fn(),
