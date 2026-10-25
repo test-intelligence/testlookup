@@ -108,6 +108,8 @@ Self-registration is off unless the deployment turns it on (`REGISTRATION_ENABLE
 
 **Search usage rows** (the per-search records behind the Search page's usage tiles: no query text, no user) are not on a clock you set: every deployment keeps them 30 days and deletes older ones nightly, whatever the policy. The preview lists the project's rows older than that as **Search usage rows (kept 30 days)**, and a purge deletes them with the rest.
 
+**Unlabelled shadow pairs** (live outputs of two model tiers waiting for a label on **AI evaluation › Tiers**) are on a fixed clock too: a pair nobody labelled within 30 days is deleted nightly. The preview lists them as **Unlabelled shadow pairs (kept 30 days)**, and a purge deletes them with the rest. Labelled pairs are evidence for tier changes and are kept.
+
 **AI history** keeps every AI analysis of a run as a version: up to 20 per run (per kind: the analysis digest and the run summary) and 10 per test result by default, each settable from 1 to 100. The oldest go first; version 1, the newest and any version a published decision report cites never do. The caps apply whenever a version is stored, even with scheduled purging off, and AI history goes with its run.
 
 Purging is irreversible. The operator guide in the repository (`user-guide/administration.md`) lists exactly what each class covers.
@@ -241,7 +243,16 @@ Saving a policy needs `QA_LEAD`. **Agent activity** (`/settings/agent-activity`)
 
 ### AI evaluation
 
-**AI evaluation** (`/settings/ai-eval`) measures how well the AI answers: **Quality Overview** (agreement between people and the AI, training-label health, drift, recent evaluation runs), **Evaluation Datasets** (build one from your team's corrections, then **Run Evaluation**), and **Evaluation Gate** (run the pre-release gate for classification, root cause, duplicate detection or release decisions). QA leads can read it; running evaluations and changing datasets needs an administrator.
+**AI evaluation** (`/settings/ai-eval`) measures how well the AI answers, in six tabs:
+
+- **Overview**: agreement between people and the AI, training-label health, drift, and recent evaluation runs, each marked **Legacy label agreement** or **Replay**.
+- **Datasets**: build a dataset from your team's corrections or seed the golden sets. **Run label agreement** scores the labels stored in the dataset (the legacy metric). **Evaluate candidate** replays the dataset through the real engine of one tier (rules, ML, or the configured language model; under offline mode only a local one), up to 200 items, using the LLM budget and release policy of the project chosen in the top bar. **Items** shows each item's expected and candidate output.
+- **Gate**: the pre-release gate for classification, root cause, duplicate detection or release decisions, on the legacy metric or on a completed candidate run. It answers **PASS**, **FAIL** or **Not enough evidence** (for example when the baseline uses the other metric or another dataset). **Set as baseline** makes a result or a candidate run the baseline.
+- **Agent stack**: **Run gate** runs the four gates for one change and records it; a history row opens its manifest.
+- **Tiers** (one project): the G2 tier comparison, its recorded results, and **Label live pairs**: outputs of a local SLM and a language model on the same case, recorded in shadow mode. Choose **Incumbent correct**, **Candidate correct**, **Both correct** or **Neither**; a label is final. **Include live labels** adds the labelled pairs to the comparison.
+- **Reviewer** (one project): the reviewer agent's quality history, read only.
+
+QA leads can read every tab and label live pairs (signed in, not with an API key). Evaluating a candidate, running a gate, setting a baseline, changing datasets and opening a run's items need an administrator; those controls are shown disabled with **Needs an administrator.**
 
 ### LLM cost budget
 

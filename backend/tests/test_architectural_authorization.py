@@ -87,6 +87,11 @@ UNGUARDED_SCOPED_PARAMS: frozenset[str] = frozenset({
     # Listed so a future route reaching it by id ALONE needs a guard.
     "requirement_link_id",
     "bulk_job_id",  # W14 AGT-12: a bulk job (a Redis record) reached by id alone; the handler compares requested_by with current_user.id and reads get_accessible_project_ids
+    # W16 AGT-13: a live shadow-tier pair (ai_eval_shadow_pairs, project-owned)
+    # reached by id alone under /ai-eval. The router-local
+    # require_shadow_pair_access() loads it and checks its OWN project against
+    # get_accessible_project_ids; another project's pair is the missing-id 404.
+    "shadow_pair_id",
 })
 
 # ── Known backlog of unprotected scoped routes ──────────────────────────────
@@ -225,6 +230,9 @@ def _route_is_protected(route: APIRoute) -> bool:
     # W14 AGT-12: bulk job -> its requester (a current_user.id comparison) or an
     # admin (get_accessible_project_ids is None), both read from the handler's AST.
     if "{bulk_job_id}" in path and {"current_user.id", "get_accessible_project_ids"} <= _authorization_names(route):
+        return True
+    # W16 AGT-13: shadow pair -> its project (router-local guard in ai_evaluation).
+    if "{shadow_pair_id}" in path and any("require_shadow_pair_access" in n for n in dep_names):
         return True
     # Authored test case -> project. This guard is router-local because the
     # shared test-management module also returns the loaded case to handlers.
@@ -1414,6 +1422,12 @@ GLOBAL_PATH_PARAMS: dict[str, str] = {
     "signing_key_id": (
         "a deployment-wide PUBLIC signing key id (k-<16 hex>, compliance_signing_keys), "
         "no project's data; any authenticated user may read the public PEM to verify a pack"
+    ),
+    # W16 AGT-09: GET /ai-eval/runs/{eval_run_id}[/items].
+    "eval_run_id": (
+        "an instance-level AI evaluation run over a GLOBAL dataset (ai_eval_runs / "
+        "ai_eval_datasets have no tenant owner), role-gated (QA_LEAD reads the run, ADMIN "
+        "its items); its project_id names only the budget and release policy a replay used"
     ),
 }
 
