@@ -6997,6 +6997,64 @@ class AIEvalDatasetResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+# ── W16 AGT-09 (b): candidate evaluation ─────────────────────────────────────
+# Every enum-like field is a plain ``str``; the values live in
+# ``services/ai_eval_vocab.py`` and the router judges them with one sentence.
+
+
+class EvalCandidateIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tier: str = Field(min_length=2, max_length=20)  # CANDIDATE_TIERS; judged in the router
+    model: Optional[str] = Field(None, max_length=200)  # an ASSERTION: must equal the effective llm model
+    prompt_version: Optional[str] = Field(None, max_length=400)  # an ASSERTION: must equal current_prompt_tag()
+
+
+class CandidateEvaluationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    candidate: EvalCandidateIn
+    project_id: uuid.UUID  # budget + release policy + cost scope; resolve_project_scope
+    limit: Optional[int] = Field(None, ge=1, le=200)  # <= MAX_CANDIDATE_ITEMS; default = min(item_count, 200)
+
+
+class CandidateEvaluationAccepted(BaseModel):
+    run_id: str
+    status: str  # "queued"
+
+
+class EvalCandidateResolved(BaseModel):
+    """What the run ACTUALLY replays (stored in ``ai_eval_runs.candidate``)."""
+    tier: str
+    model: Optional[str] = None
+    provider: Optional[str] = None
+    prompt_version: Optional[str] = None
+    offline_mode: bool
+    requested: EvalCandidateIn
+
+
+class CandidateTierOption(BaseModel):
+    tier: str
+    available: bool
+    reason: Optional[str] = None  # the TIER_UNAVAILABLE sentence when unavailable
+    model: Optional[str] = None
+    provider: Optional[str] = None
+
+
+class CandidateOptionsResponse(BaseModel):
+    tiers: List[CandidateTierOption]
+    prompt_version: Optional[str] = None
+    offline_mode: bool
+    max_items: int  # MAX_CANDIDATE_ITEMS
+    supported_tiers_by_task: Dict[str, List[str]]  # TASK_TIERS
+
+
+class EvalMetric(BaseModel):
+    name: str
+    value: Optional[float] = None
+    n: int = 0
+    measured: bool
+    kind: str  # "score" | "sub_check"
+
+
 class AIEvalRunResponse(BaseModel):
     id: uuid.UUID
     dataset_id: uuid.UUID
@@ -7013,7 +7071,79 @@ class AIEvalRunResponse(BaseModel):
     fallback_used: bool = False
     evaluated_at: datetime
     duration_ms: Optional[int] = None
+    # W16 AGT-09 (b): every new field OPTIONAL and defaulted, so legacy rows,
+    # fakes and an UNFLUSHED ORM row (whose server-default columns still read
+    # None) validate; the validator below maps None to the default.
+    metric_kind: Optional[str] = "label_agreement"
+    metric_label: str = ""  # METRIC_LABELS[metric_kind]
+    status: Optional[str] = "completed"
+    error_code: Optional[str] = None
+    error_text: Optional[str] = None  # RUN_ERROR_SENTENCES[error_code] when not given
+    candidate: Optional[EvalCandidateResolved] = None
+    project_id: Optional[uuid.UUID] = None
+    requested_by: Optional[uuid.UUID] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    heartbeat_at: Optional[datetime] = None
+    scored_items: Optional[int] = 0
+    unscored_items: Optional[int] = 0
+    error_items: Optional[int] = 0
+    items_capped: Optional[bool] = False
+    metrics: Optional[List[EvalMetric]] = None  # replay runs only; legacy rows: None
+    measured: bool = True  # False when scored_items == 0 on a replay
     model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode="after")
+    def _fill_w16_defaults(self) -> "AIEvalRunResponse":
+        from app.services.ai_eval_vocab import METRIC_LABELS, RUN_ERROR_SENTENCES  # noqa: PLC0415
+
+        if self.metric_kind is None:
+            self.metric_kind = "label_agreement"
+        if self.status is None:
+            self.status = "completed"
+        if self.scored_items is None:
+            self.scored_items = 0
+        if self.unscored_items is None:
+            self.unscored_items = 0
+        if self.error_items is None:
+            self.error_items = 0
+        if self.items_capped is None:
+            self.items_capped = False
+        if not self.metric_label:
+            self.metric_label = METRIC_LABELS.get(self.metric_kind, self.metric_kind)
+        if self.error_text is None and self.error_code:
+            self.error_text = RUN_ERROR_SENTENCES.get(self.error_code)
+        if self.metric_kind == "replay" and not self.scored_items:
+            # Absence is not health: a replay with nothing scored measured nothing.
+            self.measured = False
+        return self
+
+
+class AIEvalRunListResponse(BaseModel):
+    """GET /ai-eval/runs (was a bare list; no client read it)."""
+    items: List[AIEvalRunResponse]
+    total: int
+
+
+class AIEvalItemOutputRead(BaseModel):
+    item_index: int
+    item_key: Optional[str] = None
+    status: str  # ITEM_STATUSES
+    error_code: Optional[str] = None
+    error_text: Optional[str] = None  # ITEM_ERROR_SENTENCES
+    input: Dict[str, Any] = Field(default_factory=dict)  # the dataset item's input, re-sanitized on read
+    expected: Dict[str, Any]  # stored sanitized; re-sanitized on read
+    output: Optional[Dict[str, Any]] = None
+    score: Dict[str, Any] = Field(default_factory=dict)
+    latency_ms: Optional[int] = None
+    tokens: Optional[int] = None
+    mode_used: Optional[str] = None
+
+
+class AIEvalItemListResponse(BaseModel):
+    items: List[AIEvalItemOutputRead]
+    total: int
+    counts: Dict[str, int]  # by ITEM_STATUSES over the whole run
 
 
 class AIEvalGateRunResponse(BaseModel):
@@ -7036,6 +7166,12 @@ class AIEvalGateRunResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AIEvalGateRunListResponse(BaseModel):
+    """Agent-stack history (``gate_type IS NULL``) and the G2 history (W16)."""
+    items: List[AIEvalGateRunResponse]
+    total: int
+
+
 class AIEvalManifestResponse(BaseModel):
     eval_manifest_checksum: str
     source: str
@@ -7043,6 +7179,83 @@ class AIEvalManifestResponse(BaseModel):
     manifest: Dict[str, Any]
     gate_run_id: Optional[uuid.UUID] = None
     evaluated_at: Optional[datetime] = None
+
+
+class ReviewerQualityRunRead(BaseModel):
+    """An ``AIEvalReviewerQuality`` row WITHOUT its observation arrays (W16)."""
+    id: uuid.UUID
+    project_id: uuid.UUID
+    agent_id: str
+    source: str
+    status: str
+    window_started_at: datetime
+    window_ended_at: datetime
+    evaluated_at: datetime
+    metrics: List[Dict[str, Any]]
+    regressions: List[Dict[str, Any]]
+    semantic_sample_counts: Dict[str, Any]
+    clean_sample_count: int
+    human_outcome_count: int
+    deterministic_recall: Optional[float] = None
+    second_model_recall: Optional[float] = None
+    recall_delta: Optional[float] = None
+    false_flag_rate: Optional[float] = None
+    false_omission_rate: Optional[float] = None
+    auto_disable_eligible: bool
+    auto_disable_applied: bool
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ReviewerQualityRunListResponse(BaseModel):
+    items: List[ReviewerQualityRunRead]
+    total: int
+
+
+# ── W16 AGT-13: shadow pairs ─────────────────────────────────────────────────
+
+
+class ShadowPairSource(BaseModel):
+    kind: str  # "test_case" | "test_run"
+    id: str
+    label: Optional[str] = None  # the test name / "Run #<build>"
+    run_id: Optional[str] = None
+    build_number: Optional[str] = None
+    href: Optional[str] = None  # built from ids only
+
+
+class ShadowPairRead(BaseModel):
+    id: str
+    project_id: str
+    agent_id: str
+    agent_label: str  # SHADOW_AGENT_LABELS
+    sample_key: str
+    incumbent_tier: str
+    candidate_tier: str
+    incumbent_output: Dict[str, Any]  # re-sanitized on read
+    candidate_output: Dict[str, Any]
+    incumbent_tokens: int
+    candidate_tokens: int
+    label_status: str
+    label: Optional[Dict[str, Any]] = None  # {verdict, failure_category?, source, feedback_id?}
+    labelled_by_name: Optional[str] = None
+    labelled_at: Optional[str] = None
+    created_at: Optional[str] = None
+    source: Optional[ShadowPairSource] = None
+    expires_at: Optional[str] = None  # pending only: created_at + 30 d
+
+
+class ShadowPairListResponse(BaseModel):
+    items: List[ShadowPairRead]
+    total: int  # COUNT(*) OVER () of the filtered set
+    pending_total: int  # the project's pending pairs (the tab badge), any agent
+    live_tier_pairs_seen: bool  # False = the project has never produced a pair
+
+
+class ShadowPairLabelRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    verdict: str = Field(min_length=3, max_length=20)  # SHADOW_VERDICTS
+    failure_category: Optional[str] = Field(None, max_length=40)  # root-cause agent only (SHADOW_LABEL_FIELDS)
+    notes: Optional[str] = Field(None, max_length=500)  # sanitize_for_llm; stored in label.notes
 
 
 class EvalProvenanceHealthResponse(BaseModel):
@@ -8658,6 +8871,10 @@ class RetentionPreviewCandidates(BaseModel):
     #: (a FIXED window, ``USAGE_RETENTION_DAYS``, not the audit clock). An
     #: ``int = 0``: Postgres is always measurable.
     search_usage_rows: int = 0
+    #: W16 AGT-13: the project's ``pending`` shadow pairs older than
+    #: ``SHADOW_PAIR_RETENTION_DAYS`` (30, a fixed window). Labelled pairs are
+    #: G2 evidence and are kept.
+    shadow_pairs_unlabelled: int = 0
 
 
 class RetentionPreviewResponse(BaseModel):

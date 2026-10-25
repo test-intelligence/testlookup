@@ -55,7 +55,7 @@ The curated domain map groups the documented core tables into nine functional do
 | Identity, Tenancy & Access | 12 | Users, projects, membership, API keys, SSO/SCIM, refresh tokens, access audit |
 | Test Execution & Ingestion | 15 | Runs, per-run cases, suites, steps, attachments, canonical inventory, live sessions, reviews |
 | AI Analysis Pipeline | 15 | Agent pipeline runs + per-stage results, classifications, clusters, deep findings, provenance, agent memory |
-| AI Evaluation & Models | 6 | Model versions, eval datasets/runs/baselines, pre-release and tier gates, shadow pairs |
+| AI Evaluation & Models | 7 | Model versions, eval datasets/runs/baselines, candidate replay item outputs, pre-release and tier gates, shadow pairs |
 | Defects, Releases & Gates | 11 | Defects + candidates, release decisions and outcomes, releases/phases, gate policies, compliance packs, coverage |
 | Test Management (Authored Cases) | 11 | Managed cases, versions, reviews, comments, requirement links, duplicate review, plans, strategies, case audit |
 | Knowledge, RAG & Generation | 6 | Knowledge sources, sync events, chunks, generation batches + sources, requirement coverage |
@@ -87,8 +87,8 @@ flowchart TB
     D2 -->|1 FK| PROJECTS
     D2 -->|8 FK| TEST_RUNS
     D2 -->|4 FK| TEST_CASES
-    D3["AI Evaluation  Models<br/>(6 tables)"]
-    D3 -->|4 FK| USERS
+    D3["AI Evaluation  Models<br/>(7 tables)"]
+    D3 -->|5 FK| USERS
     D4["Defects Releases  Gates<br/>(11 tables)"]
     D4 -->|7 FK| USERS
     D4 -->|7 FK| PROJECTS
@@ -430,6 +430,8 @@ erDiagram
     MODEL_VERSIONS ||--o{ AI_EVAL_RUNS : "model_version_id"
     AI_EVAL_RUNS ||--o{ AI_EVAL_BASELINES : "eval_run_id"
     AI_EVAL_DATASETS ||--o{ AI_EVAL_BASELINES : "dataset_id"
+    AI_EVAL_RUNS ||--o{ AI_EVAL_ITEM_OUTPUTS : "eval_run_id"
+    PROJECTS ||--o{ AI_EVAL_RUNS : "project_id"
     PROJECTS ||--o{ AI_EVAL_GATE_RUNS : "project_id"
     PROJECTS ||--o{ AI_EVAL_SHADOW_PAIRS : "project_id"
     MODEL_VERSIONS {
@@ -447,6 +449,16 @@ erDiagram
         UUID id PK
         UUID dataset_id FK
         UUID model_version_id FK
+        UUID project_id FK
+        UUID requested_by FK
+        String metric_kind
+        String status
+    }
+    AI_EVAL_ITEM_OUTPUTS {
+        UUID id PK
+        UUID eval_run_id FK
+        Integer item_index
+        String status
     }
     AI_EVAL_BASELINES {
         UUID id PK
@@ -1940,8 +1952,42 @@ _Constraints:_ Index(`ix_aed_task_type`, `task_type`)
 | `fallback_used` | `Boolean` |  | NN def |  |
 | `evaluated_at` | `DateTime` |  | NN def |  |
 | `duration_ms` | `Integer` |  |  |  |
+| `metric_kind` | `String(20)` |  | NN def |  |
+| `status` | `String(20)` |  | NN def |  |
+| `candidate` | `JSONB` |  |  |  |
+| `project_id` | `UUID` | FK |  | → `projects.id` |
+| `requested_by` | `UUID` | FK |  | → `users.id` |
+| `started_at` | `DateTime` |  |  |  |
+| `completed_at` | `DateTime` |  |  |  |
+| `heartbeat_at` | `DateTime` |  |  |  |
+| `scored_items` | `Integer` |  | NN def |  |
+| `unscored_items` | `Integer` |  | NN def |  |
+| `error_items` | `Integer` |  | NN def |  |
+| `items_capped` | `Boolean` |  | NN def |  |
+| `error_code` | `String(100)` |  |  |  |
+| `metrics` | `JSONB` |  |  |  |
 
-_Constraints:_ Index(`ix_aer_dataset`, `dataset_id`); Index(`ix_aer_time`, `evaluated_at`)
+_Constraints:_ Index(`ix_aer_dataset`, `dataset_id`); Index(`ix_aer_time`, `evaluated_at`); CHECK `ck_aer_metric_kind` (`metric_kind IN ('label_agreement','replay')`); CHECK `ck_aer_status` (`status IN ('queued','running','completed','partial','failed')`); FK `fk_aer_project_id` / `fk_aer_requested_by` ON DELETE SET NULL. Migration 0231 (W16 AGT-09): a row is either the **legacy label-agreement metric** (`metric_kind = 'label_agreement'`, the nightly gate and the no-body `POST /api/v1/ai-eval/runs/evaluate/{dataset_id}`; every pre-W16 row reads `label_agreement` / `completed` and is never recomputed) or a **replay** of a candidate tier (`metric_kind = 'replay'`): `candidate` holds what was replayed (tier, model, provider, prompt version, offline mode), `project_id` the project whose LLM budget and release policy it used, the counters and `metrics` come from the stored `ai_eval_item_outputs` rows, `heartbeat_at` is bumped per item (a running run silent for 15 minutes is settled `partial` / `worker_lost` by the reconcile sweep). `item_results` stays unused.
+
+#### `ai_eval_item_outputs`  <sub>(model `AIEvalItemOutput`)</sub>
+
+| Column | Type | Key | Flags | References |
+|---|---|---|---|---|
+| `id` | `UUID` | PK | NN def |  |
+| `eval_run_id` | `UUID` | FK | NN | → `ai_eval_runs.id` |
+| `item_index` | `Integer` |  | NN |  |
+| `item_key` | `String(160)` |  |  |  |
+| `status` | `String(20)` |  | NN |  |
+| `error_code` | `String(100)` |  |  |  |
+| `expected` | `JSONB` |  | NN |  |
+| `output` | `JSONB` |  |  |  |
+| `score` | `JSONB` |  | NN def |  |
+| `latency_ms` | `Integer` |  |  |  |
+| `tokens` | `Integer` |  |  |  |
+| `mode_used` | `String(20)` |  |  |  |
+| `created_at` | `DateTime` |  | NN def |  |
+
+_Constraints:_ UniqueConstraint `uq_aeio_run_item` (`eval_run_id`, `item_index`); Index(`ix_aeio_run_status`, `eval_run_id`, `status`); CHECK `ck_aeio_status` (`status IN ('correct','incorrect','unscored','error')`); CHECK `ck_aeio_item_index_nonnegative` (`item_index >= 0`); `eval_run_id` ON DELETE CASCADE (deleting a run, or its dataset, deletes its items). Migration 0231 (W16 AGT-09): one row per item of a candidate replay, written one at a time by the worker with `INSERT … ON CONFLICT (eval_run_id, item_index) DO NOTHING` (a redelivered item is a no-op). `expected` / `output` are stored sanitized and re-sanitized on read; `status` is `error` for an item that timed out, raised or was answered by a fallback engine (never scored as the candidate) and `unscored` when the expected label is missing. Read by the ADMIN-only `GET /api/v1/ai-eval/runs/{eval_run_id}/items`.
 
 #### `ai_eval_baselines`  <sub>(model `AIEvalBaseline`)</sub>
 
@@ -1965,8 +2011,9 @@ _Constraints:_ Index(`ix_aer_dataset`, `dataset_id`); Index(`ix_aer_time`, `eval
 | `created_by` | `UUID` | FK |  | → `users.id` |
 | `created_at` | `DateTime` |  | NN def |  |
 | `updated_at` | `DateTime` |  | NN def |  |
+| `metric_kind` | `String(20)` |  | NN def |  |
 
-_Constraints:_ Index(`ix_aeb_task_agent`, `task_type`, `agent_name`); UniqueConstraint(`task_type`, `agent_name`, `prompt_version`)
+_Constraints:_ Index(`ix_aeb_task_agent`, `task_type`, `agent_name`); UniqueConstraint(`task_type`, `agent_name`, `prompt_version`); CHECK `ck_aeb_metric_kind` (`metric_kind IN ('label_agreement','replay')`). Migration 0231 (W16): every pre-W16 baseline is a legacy label-agreement one; a baseline set from a replay run carries `metric_kind = 'replay'`, its `eval_run_id` and `prompt_version = 'replay-<tier>'` (one replay baseline per tier).
 
 #### `ai_eval_gate_runs`  <sub>(model `AIEvalGateRun`)</sub>
 
