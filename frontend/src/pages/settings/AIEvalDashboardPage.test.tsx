@@ -28,12 +28,14 @@
  * than as "a Partially Correct label exists", so a future tile that renders
  * the wrong field still fails.
  */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 import { SWRConfig } from 'swr'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import AIEvalDashboardPage from './AIEvalDashboardPage'
+import { useShadowPairs } from '@/hooks/useAiEval'
+import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { expectTemplateHeader } from '@/test/expectTemplateHeader'
 import type { AIQualityDashboard } from '../../services/aiEvalService'
 
@@ -58,6 +60,11 @@ vi.mock('../../services/aiEvalService', async () => {
     generateDataset: vi.fn(),
   }
 })
+
+// W16: the page reads the shadow-pair badge through the AI-eval hooks and mounts G-D's Tiers tab; neither is this
+// file's subject (each has its own tests), so both answer nothing here.
+vi.mock('@/hooks/useAiEval', async () => (await import('@/test/aiEvalMocks')).aiEvalHookMocks())
+vi.mock('@/components/aiEval/TierComparisonTab', () => ({ default: () => null }))
 
 function dashboard(
   agreement: AIQualityDashboard['agreement'],
@@ -219,10 +226,83 @@ describe('the evaluation workflow timeline is collapsed at the bottom', () => {
     const pipeline = await screen.findByRole('button', { name: 'Pipeline' })
     expect(pipeline).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByText('Evaluation workflow')).toBeNull()
-    const tab = screen.getByRole('button', { name: 'Evaluation Gate' })
+    const tab = screen.getByRole('tab', { name: 'Gate' })
     expect(tab.compareDocumentPosition(pipeline) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     fireEvent.click(pipeline)
     expect(screen.getByText('Evaluation workflow')).toBeInTheDocument()
+  })
+})
+
+// W16 AGT-09: the hand-rolled three-button row became the Tabs primitive with six tabs kept in `?tab=`.
+describe('the six tabs', () => {
+  function renderAt(url: string) {
+    function Probe() {
+      const location = useLocation()
+      return <output data-testid="location">{location.search}</output>
+    }
+    return render(
+      <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
+        <MemoryRouter initialEntries={[url]}>
+          <AIEvalDashboardPage />
+          <Probe />
+        </MemoryRouter>
+      </SWRConfig>,
+    )
+  }
+
+  afterEach(() => {
+    useProjectStore.setState({ activeProjectId: ALL_PROJECTS_ID, activeProject: null })
+  })
+
+  it('shows the six short labels on one tab bar, Overview first', async () => {
+    mockGetDashboard.mockResolvedValue(dashboard(null))
+    renderAt('/settings/ai-eval')
+    const bar = screen.getByRole('tablist', { name: 'AI evaluation' })
+    expect(within(bar).getAllByRole('tab').map((t) => t.textContent)).toEqual(
+      ['Overview', 'Datasets', 'Gate', 'Agent stack', 'Tiers', 'Reviewer'],
+    )
+    expect(within(bar).getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('restores a tab from ?tab= and writes the choice back', async () => {
+    mockGetDashboard.mockResolvedValue(dashboard(null))
+    renderAt('/settings/ai-eval?tab=reviewer')
+    expect(screen.getByRole('tab', { name: 'Reviewer' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('Select a project')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: 'Agent stack' }))
+    expect(screen.getByTestId('location')).toHaveTextContent('?tab=stack')
+    fireEvent.click(screen.getByRole('tab', { name: 'Overview' }))
+    expect(screen.getByTestId('location')).toHaveTextContent(/^$/)
+  })
+
+  it('counts pending shadow pairs on Tiers only with one project pinned', async () => {
+    mockGetDashboard.mockResolvedValue(dashboard(null))
+    vi.mocked(useShadowPairs).mockReturnValue({
+      data: { items: [], total: 0, pending_total: 3, live_tier_pairs_seen: true },
+      error: undefined, isLoading: false, mutate: vi.fn(),
+    } as unknown as ReturnType<typeof useShadowPairs>)
+    const { unmount } = renderAt('/settings/ai-eval')
+    expect(vi.mocked(useShadowPairs)).toHaveBeenLastCalledWith(null, undefined, 'pending')
+    expect(screen.getByRole('tab', { name: 'Tiers' }).querySelector('[data-tab-count]')).toBeNull()
+    unmount()
+
+    useProjectStore.setState({ activeProjectId: 'prA1b2C3d4' })
+    renderAt('/settings/ai-eval')
+    expect(vi.mocked(useShadowPairs)).toHaveBeenLastCalledWith('prA1b2C3d4', undefined, 'pending')
+    expect(screen.getByRole('tab', { name: /Tiers/ }).querySelector('[data-tab-count]')).toHaveTextContent('3')
+  })
+
+  it('labels each recent run with its metric kind (legacy unless replay)', async () => {
+    const value = dashboard(null)
+    value.recent_eval_runs = [
+      { id: 'rnA1b2C3d4', dataset_id: 'dsA1b2C3d4', model_name: 'AnalysisAgent', task_type: 'classification', precision: null, recall: null, f1_score: 0.7, accuracy: 0.75, agreement_rate: null, total_items: 12, correct_items: 9, fallback_used: false, evaluated_at: '2026-10-20T09:00:00+00:00', duration_ms: 10 },
+      { id: 'rnB2c3D4e5', dataset_id: 'dsA1b2C3d4', model_name: 'rules', task_type: 'classification', precision: null, recall: null, f1_score: 0.8, accuracy: 0.82, agreement_rate: null, total_items: 12, correct_items: 9, fallback_used: false, evaluated_at: '2026-10-25T09:00:00+00:00', duration_ms: 10, metric_kind: 'replay', candidate: { tier: 'rules', offline_mode: false, requested: { tier: 'rules' } } },
+    ]
+    mockGetDashboard.mockResolvedValue(value)
+    renderAt('/settings/ai-eval')
+    await screen.findByText('Recent Evaluation Runs')
+    expect(document.querySelector('[data-eval-run-row="rnA1b2C3d4"] [data-metric-kind]')).toHaveTextContent('Legacy label agreement')
+    expect(document.querySelector('[data-eval-run-row="rnB2c3D4e5"] [data-metric-kind]')).toHaveTextContent('Replay · Rules')
   })
 })
 
