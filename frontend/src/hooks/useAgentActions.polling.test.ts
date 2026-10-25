@@ -57,6 +57,16 @@ describe('useDecidedAgentActions polling (real SWR)', () => {
     expect(service.listAgentActions, 'nothing runs any more: the poll stopped').toHaveBeenCalledTimes(4)
   })
 
+  it('an answer without items neither throws nor polls (review-gate world: a catch-all answers [])', async () => {
+    service.listAgentActions.mockImplementation(async () => [] as unknown as AgentActionList)
+
+    const { result } = renderHook(() => useDecidedAgentActions('proj-1', true), { wrapper })
+    await waitFor(() => expect(result.current.data).toEqual([]))
+    await pause(150)
+    expect(result.current.error).toBeUndefined()
+    expect(service.listAgentActions).toHaveBeenCalledTimes(1)
+  })
+
   it('a first load that already holds a running row polls until it finishes', async () => {
     const answers = [decided('executing'), decided('executed')]
     let call = 0

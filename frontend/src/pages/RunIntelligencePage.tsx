@@ -1673,7 +1673,7 @@ export function RunDecisionReport({ runId }: { runId: string }) {
   const { data: runActions } = useRunAgentActions(runId)
   const actionStatuses = useMemo<ProposedActionStatuses | undefined>(
     () =>
-      runActions
+      runActions && Array.isArray(runActions.items) // an answer without items is no answer, never a crash
         ? Object.fromEntries(
             runActions.items.map((a) => [a.idempotency_key, { id: a.id, status: a.status, outcome: a.outcome, outcome_text: a.outcome_text }]),
           )

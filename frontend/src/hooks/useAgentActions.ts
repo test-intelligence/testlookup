@@ -39,9 +39,12 @@ function oneProject(projectId: string | null | undefined): string | null {
   return projectId && projectId !== ALL_PROJECTS_ID ? projectId : null
 }
 
-/** The decided list's poll: REALTIME while anything runs, else off. */
+/** The decided list's poll: REALTIME while anything runs, else off. Runs on EVERY render now (the cached
+ *  value), so an answer without `items` (a catch-all mock, a proxy page) must not throw: it crashed /my-failures
+ *  in review-gate's hermetic world. */
 function decidedAgentActionsRefreshInterval(latest: AgentActionList | undefined): number {
-  return latest?.items.some(isAgentActionRunning) ? REFRESH_INTERVALS.REALTIME : 0
+  const items = latest?.items
+  return Array.isArray(items) && items.some(isAgentActionRunning) ? REFRESH_INTERVALS.REALTIME : 0
 }
 
 export function usePendingAgentActions(projectId: string | null, enabled: boolean) {
