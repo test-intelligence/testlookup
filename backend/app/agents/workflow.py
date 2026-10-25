@@ -1971,6 +1971,9 @@ async def _claim_pipeline_resume(
             "analysis_mode_resolution": mode_snapshot,
             "cost_budget_decision": metadata.get("cost_budget_decision") or {},
             "resume_attempt": resume_attempt,
+            # W14 AGT-07: a resume replays the run configuration it was
+            # accepted with (the plan hash checked above covers it).
+            "run_overrides": metadata.get("run_overrides") or initial_plan.get("run_overrides"),
         }
 
 
@@ -2644,6 +2647,8 @@ async def run_offline_pipeline(
     requested_by: str | None = None,
     workflow_id: str | None = None,
     workflow_version: int | None = None,
+    bulk_job_id: str | None = None,
+    run_overrides: dict[str, Any] | None = None,
 ) -> dict:
     """
     Execute the full offline analysis pipeline for a completed test run.
@@ -2675,6 +2680,8 @@ async def run_offline_pipeline(
                 requested_by=requested_by,
                 workflow_id=workflow_id,
                 workflow_version=workflow_version,
+                bulk_job_id=bulk_job_id,
+                run_overrides=run_overrides,
             )
         test_run_id = pipeline_setup["test_run_id"]
         project_id = pipeline_setup["project_id"]
@@ -2689,6 +2696,8 @@ async def run_offline_pipeline(
             requested_by=requested_by,
             workflow_id=workflow_id,
             workflow_version=workflow_version,
+            bulk_job_id=bulk_job_id,
+            run_overrides=run_overrides,
         )
 
     try:
@@ -2799,6 +2808,9 @@ async def run_offline_pipeline(
             "_checkpoint_stages": [],
             "_checkpoint_replay_metadata": {},
             "workflow_plan": pipeline_setup["initial_workflow_plan"],
+            # W14 AGT-07: the frozen run configuration (the failure subset the
+            # ingestion stage applies); None for an unconfigured run.
+            "run_overrides": pipeline_setup.get("run_overrides"),
             **_workflow_runtime_state(pipeline_setup),
             "workflow_verification": {},
             "agent_contracts": {},
@@ -2954,6 +2966,8 @@ async def run_deep_pipeline(
     requested_by: str | None = None,
     workflow_id: str | None = None,
     workflow_version: int | None = None,
+    bulk_job_id: str | None = None,
+    run_overrides: dict[str, Any] | None = None,
 ) -> dict:
     """
     Execute the deep investigation pipeline with clustering, flaky sentinel,
@@ -2978,6 +2992,8 @@ async def run_deep_pipeline(
                 requested_by=requested_by,
                 workflow_id=workflow_id,
                 workflow_version=workflow_version,
+                bulk_job_id=bulk_job_id,
+                run_overrides=run_overrides,
             )
         test_run_id = pipeline_setup["test_run_id"]
         project_id = pipeline_setup["project_id"]
@@ -2992,6 +3008,8 @@ async def run_deep_pipeline(
             requested_by=requested_by,
             workflow_id=workflow_id,
             workflow_version=workflow_version,
+            bulk_job_id=bulk_job_id,
+            run_overrides=run_overrides,
         )
 
     try:
@@ -3097,6 +3115,9 @@ async def run_deep_pipeline(
             "_checkpoint_stages": [],
             "_checkpoint_replay_metadata": {},
             "workflow_plan": pipeline_setup["initial_workflow_plan"],
+            # W14 AGT-07: the frozen run configuration (the failure subset the
+            # ingestion stage applies); None for an unconfigured run.
+            "run_overrides": pipeline_setup.get("run_overrides"),
             **_workflow_runtime_state(pipeline_setup),
             "workflow_verification": {},
             "agent_contracts": {},
@@ -3477,6 +3498,8 @@ async def _create_pipeline_run(
     invocation_stage: str | None = None,
     invocation_config_snapshot: dict[str, Any] | None = None,
     requested_by: str | None = None,
+    bulk_job_id: str | None = None,
+    run_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     async with AsyncSessionLocal() as db:
         from sqlalchemy import select  # noqa: PLC0415
@@ -3509,6 +3532,39 @@ async def _create_pipeline_run(
         global_ai_config = await get_effective_ai_config(db=db, fresh=True)
 
         from app.services import workflow_definition_service as workflow_svc
+
+        # W14 AGT-08: a request that names no workflow runs the project's
+        # default for its base, resolved HERE -- before any agent config is
+        # frozen -- so a default gets every gate a named fork gets. A default
+        # that no longer resolves runs the built-in and says so; it never
+        # fails the run and is never reported as the default. A single-agent
+        # invocation and a live pipeline keep their built-in (a default exists
+        # per offline / deep base only), and so does the rerun of a legacy row
+        # that froze no workflow id (a rerun replays its original's workflow).
+        from app.core.agent_ops_vocab import WORKFLOW_DEFAULT_BASES  # noqa: PLC0415
+
+        workflow_default_source = "named" if workflow_id is not None else "builtin"
+        workflow_default_reason: str | None = None
+        if (
+            workflow_id is None
+            and invocation_stage is None
+            and rerun_of is None
+            and workflow_type in WORKFLOW_DEFAULT_BASES
+        ):
+            from app.services import workflow_default_service  # noqa: PLC0415
+
+            resolution = await workflow_default_service.resolve_run_workflow(
+                db, authority_project_id, workflow_type
+            )
+            workflow_id, workflow_version = resolution.workflow_id, resolution.workflow_version
+            workflow_default_source = resolution.source
+            workflow_default_reason = resolution.reason
+            if resolution.source == "default_unavailable":
+                logger.warning(
+                    "pipeline_default_workflow_unavailable",
+                    pipeline_run_id=str(pipeline_run_id),
+                    workflow_type=workflow_type,
+                )
 
         selected = await workflow_svc.get_published_definition(
             db,
@@ -3590,16 +3646,51 @@ async def _create_pipeline_run(
         workflow_agent_configs: dict[str, dict[str, Any]] = {}
         resolved_agent_configs: dict[str, dict[str, Any]] = {}
         endpoint_authority_fingerprints: dict[str, str] = {}
+        # W14 AGT-07: a deep run configuration is ONE tighten-only patch on the
+        # Root Cause agent, applied through the resolver's own patch path. A
+        # project config tightened since the API accepted it wins (the patch
+        # would now loosen it): the run starts on the project's values and the
+        # metadata says ``superseded``; the failure subset still applies.
+        from app.core.agent_ops_vocab import RUN_CONFIG_AGENT_ID  # noqa: PLC0415
+        from app.services.agent_config_service import (  # noqa: PLC0415
+            AgentConfigPatch,
+            OverrideRejected,
+        )
+
+        agent_patches = dict((run_overrides or {}).get("agent_patches") or {})
+        run_overrides_status: str | None = "applied" if run_overrides else None
+        run_overrides_reasons: list[str] = []
         for agent_id in dict.fromkeys(step.agent_id for step in body.steps):
             # Freeze the effective provider/model and the full validated
             # authority document for every step. Runtime must not re-read a
             # project PUT that happened after this pipeline was accepted.
-            resolved = await resolve_for_project(
-                db,
-                authority_project_id,
-                agent_id,
-                global_ai_config=global_ai_config,
-            )
+            raw_patch = agent_patches.get(agent_id) if agent_id == RUN_CONFIG_AGENT_ID else None
+            run_patch = AgentConfigPatch.model_validate(raw_patch) if raw_patch else None
+            try:
+                resolved = await resolve_for_project(
+                    db,
+                    authority_project_id,
+                    agent_id,
+                    patch=run_patch,
+                    global_ai_config=global_ai_config,
+                )
+            except OverrideRejected as exc:
+                if run_patch is None:
+                    raise
+                resolved = await resolve_for_project(
+                    db,
+                    authority_project_id,
+                    agent_id,
+                    global_ai_config=global_ai_config,
+                )
+                run_overrides_status = "superseded"
+                run_overrides_reasons = [str(reason) for reason in exc.reasons]
+                logger.warning(
+                    "pipeline_run_overrides_superseded",
+                    pipeline_run_id=str(pipeline_run_id),
+                    agent_id=agent_id,
+                    reasons=len(run_overrides_reasons),
+                )
             snapshot = freeze_for_invocation(resolved)
             resolved_agent_configs[agent_id] = snapshot
             endpoint_authority_fingerprints[agent_id] = endpoint_authority_fingerprint(resolved)
@@ -3739,6 +3830,11 @@ async def _create_pipeline_run(
                 )
                 planned_stage["budget"] = allocated
                 break
+        # W14 AGT-07: a run configuration changes the scope, so it enters the
+        # plan (and its hash) -- a resume can never replay it under another
+        # scope. Absent when there is none: an unconfigured plan is unchanged.
+        if run_overrides:
+            initial_plan["run_overrides"] = run_overrides
         # Invocation-specific budget clamps are part of the executable plan,
         # so freeze and hash only after every accepted clamp is applied.
         plan_sha256 = compute_workflow_plan_hash(initial_plan)
@@ -3808,6 +3904,24 @@ async def _create_pipeline_run(
                 "endpoint_authority_fingerprints": endpoint_authority_fingerprints,
                 "prompt_versions": prompt_versions,
                 "runtime_versions": runtime_versions,
+                # W14: where the workflow came from (AGT-08), the bulk job that
+                # queued the run (AGT-12) and its run configuration (AGT-07).
+                "workflow_default_source": workflow_default_source,
+                "workflow_default_reason": workflow_default_reason,
+                **({"bulk_job_id": str(bulk_job_id)} if bulk_job_id else {}),
+                **(
+                    {
+                        "run_overrides": run_overrides,
+                        "run_overrides_status": run_overrides_status,
+                        **(
+                            {"run_overrides_reasons": run_overrides_reasons}
+                            if run_overrides_reasons
+                            else {}
+                        ),
+                    }
+                    if run_overrides
+                    else {}
+                ),
                 "budget_spend": {
                     "llm_calls": 0,
                     "tokens": 0,
@@ -3873,6 +3987,7 @@ async def _create_pipeline_run(
                 "defect_commander_settings": {"enabled": defect_commander_enabled},
                 "ai_config_snapshot": ai_config_snapshot,
                 "gap_refinement_settings": {"enabled": bool(gap_refinement_enabled)},
+            "run_overrides": run_overrides,
         }
 
 
@@ -4179,6 +4294,22 @@ async def _mark_pipeline_done(
                     "run_budget": prior_metadata.get("run_budget"),
                     "budget_spend": budget_metadata.get("budget_spend", {}),
                     "pending_settlements": budget_metadata.get("pending_settlements", {}),
+                    # W14: what the run was started with outlives this rebuild --
+                    # the bulk job counts its finished pipelines by
+                    # ``bulk_job_id``, the timeline names the workflow's source,
+                    # a degraded-completed resume replays the run configuration.
+                    **{
+                        key: prior_metadata[key]
+                        for key in (
+                            "workflow_default_source",
+                            "workflow_default_reason",
+                            "bulk_job_id",
+                            "run_overrides",
+                            "run_overrides_status",
+                            "run_overrides_reasons",
+                        )
+                        if key in prior_metadata
+                    },
                 }
             else:
                 prior_metadata = dict(run.execution_metadata or {})

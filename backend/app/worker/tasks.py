@@ -2180,6 +2180,8 @@ def run_agent_pipeline(
     workflow_version: int | None = None,
     rerun_of: str | None = None,
     requested_by: str | None = None,
+    bulk_job_id: str | None = None,
+    run_overrides: dict | None = None,
 ):
     """
     Background task: run the full multi-agent LangGraph pipeline for a completed test run.
@@ -2213,6 +2215,31 @@ def run_agent_pipeline(
     )
 
     async def _run():
+        # W14 AGT-12: a task of a cancelled bulk job that has not started yet
+        # returns here, before any pipeline row exists. Running pipelines keep
+        # their own Stop. A cache outage is not a cancellation: the task runs.
+        bulk_cancelled = False
+        if bulk_job_id:
+            try:
+                from app.services import bulk_pipeline_job_service
+
+                bulk_cancelled = await bulk_pipeline_job_service.is_cancelled(bulk_job_id)
+            except Exception as check_exc:  # noqa: BLE001 -- never a refusal
+                logger.warning(
+                    "[Task %s] Bulk-job cancel check failed (%s); the pipeline runs",
+                    self.request.id, type(check_exc).__name__,
+                )
+        if bulk_cancelled:
+            logger.info(
+                "[Task %s] Skipping a pipeline of a cancelled bulk job (run=%s)",
+                self.request.id, test_run_id,
+            )
+            return {
+                "completed_stages": [],
+                "error_count": 0,
+                "duplicate": True,
+                "bulk_cancelled": True,
+            }
         if durable_pipeline_id:
             from app.db.postgres import AsyncSessionLocal
             from app.services.run_downstream_outbox import (
@@ -2264,6 +2291,8 @@ def run_agent_pipeline(
                 workflow_id=workflow_id,
                 workflow_version=workflow_version,
                 requested_by=requested_by,
+                bulk_job_id=bulk_job_id,
+                run_overrides=run_overrides,
             )
         return await run_offline_pipeline(
             test_run_id=test_run_id,
@@ -2277,6 +2306,8 @@ def run_agent_pipeline(
             workflow_id=workflow_id,
             workflow_version=workflow_version,
             requested_by=requested_by,
+            bulk_job_id=bulk_job_id,
+            run_overrides=run_overrides,
         )
 
     logger.info(
@@ -2286,6 +2317,9 @@ def run_agent_pipeline(
     _pipeline_started = time.perf_counter()
     try:
         final_state = _run_async(_run())
+        if final_state.get("bulk_cancelled"):
+            # Nothing ran and no row exists: no metric, no snapshot work.
+            return final_state
         stages_done = final_state.get("completed_stages", [])
         errors = final_state.get("errors", [])
         # TestLookupAIPipelineFailures alerts on this counter and nothing
@@ -2407,6 +2441,8 @@ def run_agent_pipeline(
                 "workflow_version": workflow_version,
                 "rerun_of": rerun_of,
                 "requested_by": requested_by,
+                "bulk_job_id": bulk_job_id,
+                "run_overrides": run_overrides,
             },
             error=safe_error,
         ))

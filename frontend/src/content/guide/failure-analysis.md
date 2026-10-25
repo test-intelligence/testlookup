@@ -129,10 +129,37 @@ Every change is recorded in the [activity log](/docs/administration#activity-log
 
 1. The page picks the newest run; choose another from **Recent runs**, or narrow by suite.
 2. Read the verdict: **Ready to investigate**, **Nothing to investigate**, **No evidence sources**, **Investigation running**, **Last run failed** or **Awaiting runs**, with how many failures are eligible.
-3. **Run Deep Analysis** (or **Run on all N failures**) starts it. It needs the `QA_ENGINEER` role, and analysis in **Auto**, **LLM** or **ML** mode (not **Rules**).
+3. **Run Deep Analysis** (or **Run on all N failures**, or **Run on selection** in the run configuration) starts it. It needs the `QA_ENGINEER` role, and analysis in **Auto**, **LLM** or **ML** mode (not **Rules**). The buttons appear only when the server would accept the run: a configured **Auto** that resolves to rules shows the reason in their place, never a button that fails when clicked.
 4. **Proposed clusters** fills in as it works: for each cluster, the failure count, a likely severity, and when an AI finding exists, the suggested root cause with its confidence and where it came from (**the deep-analysis pipeline**, or **seeded demo data** on a demo install). A cluster without one says "No AI finding recorded for this cluster yet."
 
-**Recent runs** lists past investigations with their clusters, findings, average confidence, cost and status. The page also shows five KPIs: **Eligible** (eligible failures), **Clusters** (likely clusters), **Analyzed** (the last analysis), **Confidence** (average cluster confidence) and **Spend MTD**. Hover a label to see its full name.
+The page also shows five KPIs: **Eligible** (eligible failures), **Clusters** (the last analysis's clusters and their average confidence), **Analyzed** (the last analysis), **Confidence** (average cluster confidence) and **Spend MTD**. Hover a label to see its full name.
+
+### Pre-scan
+
+The **Pre-scan** facet groups the run's failing (failed and broken) results by error signature, before any AI runs: the same normalised first line of the error that the Runs page's signatures and the failure groups use. It reads **N groups** with the number of failing results. When an earlier deep analysis clustered this run, each group also names the cluster holding most of its failures (**clusters shown**); otherwise the page says it grouped by error signature only. The pre-scan calls no model and no embedding store, and changes nothing. A run without failing results shows **—** (no failing results), not "0 groups".
+
+### Recent and investigated runs
+
+**Recent runs** lists the six newest runs (the page's run picker). A run that was deep-investigated fills its **Clusters**, **Findings**, **Avg conf**, **Cost** and **Status** from its latest deep investigation; the others show **—**. **Investigated runs · N** switches the table to every investigated run of the project, newest first, with **Prev** / **Next**. Cost is the sum of the stages that reported one: an investigation whose stages reported none shows **—**, not $0.00. The history is per project, so with **All Projects** and no run picked the chip is not shown.
+
+### Cost & time
+
+**Cost & time** estimates a run from the project's last 20 completed deep investigations: the median time of each stage, with the Root Cause stage scaled by the number of failures it will analyse, and the four slowest stages listed. It always names its sample (**estimate from N past runs**); before the first completed investigation it says **Not measured yet** instead of a number. A local model (Ollama or another self-hosted endpoint) costs **$0.00 · local model — no charge**. A cloud model is priced from the built-in price table (its date is shown) or the deployment's `LLM_PRICE_OVERRIDES`; a model with no known price shows **—** and says that the cost cannot be estimated, never a quiet $0.00. Reading the estimate calls no model.
+
+### Run configuration
+
+QA engineers and above see **Run configuration** above Proposed clusters; other roles see the pre-scan groups only.
+
+- Tick pre-scan groups to analyse only their failures (at most 500 failures in one run).
+- **Model tier**: the project's tier for the Root Cause agent, or a cheaper one (**deterministic** calls no model).
+- **Failures analysed at most**: up to the project's cap.
+- **Evidence sources**: fewer of the Root Cause agent's evidence tools, when the project's agent settings allow narrowing.
+
+**Estimate** re-reads Cost & time for that configuration without starting anything; **Run on selection** starts the run. A configuration can only tighten the project's agent settings (**Settings › Agents**): a looser value is refused with the reasons, before anything is queued. The configuration is fixed when the run starts and a retry keeps it; if a QA lead tightened the project's settings in between, the stricter project value wins and the run says so in its record. Starting a run while one of the same run is in progress returns that one ("Deep investigation already in progress") instead of a second. Every start is recorded in the [activity log](/docs/administration#activity-log).
+
+### LLM and offline mode
+
+A deep investigation needs **Deep Investigation** turned on in **Settings › AI** and an analysis mode that resolves to a model (**LLM**, or **Auto** with a reachable model), not **Rules**. With offline mode on (the default) only a local model can run it: a tier whose only endpoint is a cloud model shows "No model endpoint is allowed for tier …" in Cost & time. The pre-scan, the history and the estimate need neither a model nor the embedding store, so they work on every install.
 
 The same clusters, for one run, are on that run's **Analysis** tab (**Analyze failures**), which is where old `/deep-investigate/<run id>` links open. To turn a cluster into a defect, use **File defect** there.
 
