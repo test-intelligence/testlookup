@@ -3129,6 +3129,30 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Error Code"
     },
+    "notes": {
+      "anyOf": [
+        {
+          "maxLength": 2000,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Notes"
+    },
+    "reason_code": {
+      "anyOf": [
+        {
+          "maxLength": 40,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason Code"
+    },
     "status": {
       "enum": [
         "approved",
@@ -3293,6 +3317,520 @@ These are the full generated JSON Schema definitions, including required fields,
     "temp_password"
   ],
   "title": "AdminCreateUserResponse",
+  "type": "object"
+}
+```
+
+## AgentActionListResponse
+
+```json
+{
+  "properties": {
+    "count": {
+      "title": "Count",
+      "type": "integer"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/AgentActionRead"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "total": {
+      "title": "Total",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "items",
+    "count",
+    "total"
+  ],
+  "title": "AgentActionListResponse",
+  "type": "object"
+}
+```
+
+## AgentActionRead
+
+```json
+{
+  "properties": {
+    "action_type": {
+      "title": "Action Type",
+      "type": "string"
+    },
+    "approvable": {
+      "default": false,
+      "title": "Approvable",
+      "type": "boolean"
+    },
+    "approval_required": {
+      "title": "Approval Required",
+      "type": "boolean"
+    },
+    "approve_blocked_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Approve Blocked Reason"
+    },
+    "approved_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Approved At"
+    },
+    "approved_by": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Approved By"
+    },
+    "approved_by_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Approved By Name"
+    },
+    "canonical_type": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Canonical Type"
+    },
+    "created_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Created At"
+    },
+    "error_code": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Error Code"
+    },
+    "execution_completed_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Execution Completed At"
+    },
+    "execution_started_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Execution Started At"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "idempotency_key": {
+      "title": "Idempotency Key",
+      "type": "string"
+    },
+    "outcome": {
+      "default": "unknown",
+      "title": "Outcome",
+      "type": "string"
+    },
+    "outcome_text": {
+      "default": "",
+      "title": "Outcome Text",
+      "type": "string"
+    },
+    "pipeline_run_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Pipeline Run Id"
+    },
+    "pipeline_workflow_type": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Pipeline Workflow Type"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "proposing_agent_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Proposing Agent Id"
+    },
+    "proposing_agent_label": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Proposing Agent Label"
+    },
+    "proposing_review_state": {
+      "default": "none",
+      "title": "Proposing Review State",
+      "type": "string"
+    },
+    "rationale": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Rationale"
+    },
+    "rejection_reason_code": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Rejection Reason Code"
+    },
+    "request_payload": {
+      "additionalProperties": true,
+      "title": "Request Payload",
+      "type": "object"
+    },
+    "request_sha256": {
+      "title": "Request Sha256",
+      "type": "string"
+    },
+    "result_link": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AgentActionResultLink"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "result_payload": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Result Payload"
+    },
+    "reversible": {
+      "default": false,
+      "title": "Reversible",
+      "type": "boolean"
+    },
+    "review_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Review Id"
+    },
+    "risk": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Risk"
+    },
+    "rollback_payload": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Rollback Payload"
+    },
+    "side_effect": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Side Effect"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    },
+    "target": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AgentActionTarget"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "target_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Target Id"
+    },
+    "target_type": {
+      "title": "Target Type",
+      "type": "string"
+    },
+    "test_run_branch": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Test Run Branch"
+    },
+    "test_run_build_number": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Test Run Build Number"
+    },
+    "test_run_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Test Run Id"
+    },
+    "title": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Title"
+    }
+  },
+  "required": [
+    "id",
+    "project_id",
+    "action_type",
+    "target_type",
+    "status",
+    "approval_required",
+    "idempotency_key",
+    "request_sha256",
+    "request_payload"
+  ],
+  "title": "AgentActionRead",
+  "type": "object"
+}
+```
+
+## AgentActionResultLink
+
+```json
+{
+  "properties": {
+    "href": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Href"
+    },
+    "id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Id"
+    },
+    "kind": {
+      "title": "Kind",
+      "type": "string"
+    },
+    "label": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Label"
+    }
+  },
+  "required": [
+    "kind"
+  ],
+  "title": "AgentActionResultLink",
+  "type": "object"
+}
+```
+
+## AgentActionTarget
+
+```json
+{
+  "properties": {
+    "href": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Href"
+    },
+    "id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Id"
+    },
+    "kind": {
+      "title": "Kind",
+      "type": "string"
+    },
+    "label": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Label"
+    }
+  },
+  "required": [
+    "kind"
+  ],
+  "title": "AgentActionTarget",
   "type": "object"
 }
 ```
@@ -18951,12 +19489,36 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## InvestigatorActConfig
+
+```json
+{
+  "additionalProperties": false,
+  "description": "W15 AGT-03 (D16): the action types Act may run in this project, each opt-in.\n\nInert outside Act (kept when the mode is lowered, so re-entering Act\nrestores the ticks). A missing block on a stored document = ``[]``.",
+  "properties": {
+    "allowed_action_types": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "title": "Allowed Action Types",
+      "type": "array"
+    }
+  },
+  "title": "InvestigatorActConfig",
+  "type": "object"
+}
+```
+
 ## InvestigatorConfigExtension
 
 ```json
 {
   "additionalProperties": false,
   "properties": {
+    "act": {
+      "$ref": "#/components/schemas/InvestigatorActConfig"
+    },
     "budgets": {
       "$ref": "#/components/schemas/InvestigatorPolicyBudgets"
     },

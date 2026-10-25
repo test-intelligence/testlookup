@@ -73,6 +73,15 @@ describe('extractErrorMessage', () => {
     expect(out).toContain('gate_run_id: gate-17')
   })
 
+  it('reads a { code, message } refusal as its sentence, not "message: …"', () => {
+    const sentence = 'The person who requested this run cannot review its act-mode proposals.'
+    expect(extractErrorMessage({ code: 'separation_of_duties', message: sentence }, 'Request failed')).toBe(sentence)
+    // With another reported field the key: value form stays, so nothing is dropped.
+    expect(extractErrorMessage({ message: 'Refused', reason: 'stale' }, 'Request failed')).toBe(
+      'message: Refused; reason: stale',
+    )
+  })
+
   it('falls back when detail is empty, missing, or unusable', () => {
     expect(extractErrorMessage(undefined, 'Request failed')).toBe('Request failed')
     expect(extractErrorMessage('', 'Request failed')).toBe('Request failed')

@@ -71,6 +71,13 @@ export function extractErrorMessage(detail: unknown, fallback: string): string {
   }
   if (detail && typeof detail === 'object') {
     const report = detail as Record<string, unknown>
+    // A `{ code, message }` refusal reads as its sentence — "The person who requested this run cannot
+    // review its act-mode proposals." — not "message: The person …". Any other field keeps the
+    // key: value form below (a tier-gate report needs every one of its fields).
+    const message = typeof report.message === 'string' ? report.message.trim() : ''
+    const otherFields = ['reason', 'verdict', 'candidate_tier', 'gate_run_id']
+      .some((key) => report[key] != null && report[key] !== '')
+    if (message && !otherFields) return message
     const preferred = ['message', 'reason', 'verdict', 'candidate_tier', 'gate_run_id']
       .flatMap((key) => {
         const value = report[key]
