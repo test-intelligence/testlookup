@@ -206,6 +206,11 @@ async def test_the_deep_guard_follows_the_stored_mode(monkeypatch):
     opened = install(monkeypatch, redis=redis)
     queue = MagicMock(return_value=MagicMock(id="task-1"))
     monkeypatch.setattr(deep_investigation.run_agent_pipeline, "apply_async", queue)
+    # W14 AGT-07: an accepted trigger records analysis.triggered, an ATTEMPT event that opens the
+    # ledger's own session by design (it survives a rollback). Not this test's subject: stub it, so
+    # `opened == []` keeps meaning "the mode read used no second session".
+    recorded = AsyncMock()
+    monkeypatch.setattr(deep_investigation, "record_activity", recorded)
     db = StoredConfigSession({"analysis_mode": "rules"})  # env says auto
     app = _deep_app(db)
 
@@ -227,6 +232,8 @@ async def test_the_deep_guard_follows_the_stored_mode(monkeypatch):
     assert accepted.status_code == 200, accepted.text
     queue.assert_called_once()
     assert opened == []
+    # The refused trigger recorded nothing; the accepted one recorded its dispatch once.
+    assert [c.kwargs["event_type"] for c in recorded.await_args_list] == ["analysis.triggered"]
 
 
 # ── 4. auto resolves through the EFFECTIVE provider ──────────────────────────
